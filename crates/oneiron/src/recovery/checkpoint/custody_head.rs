@@ -42,7 +42,7 @@ use crate::store::custody_protocol::{
 };
 use crate::store::{
     CUSTODY_HEAD_WRAP_CONTEXT, CustodyKind, CustodyRecipients, CustodyRoute, CustodySourceAt,
-    FileAnchor, FolderTarget, OutboxTarget, Publication, route_custody,
+    FileAnchor, FolderTarget, OutboxTarget, Publication, TargetRecipients, route_custody,
     standing_retirements_in_txn,
 };
 use crate::{Result, Vault, VaultConfig};
@@ -144,6 +144,18 @@ impl Vault {
             );
             Default::default()
         });
+        // KS-6: the credentials whose keys may ride a head; a lookup that
+        // faults keeps every credential's in this machine's custody, where
+        // they all stay today.
+        let credentials_eligible = crate::secret_custody::credentials_eligible_for_heads(self)
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a custody head's credential eligibility could not be read; every \
+                     credential's keys stay local"
+                );
+                Default::default()
+            });
         let data_key = self
             .unlock_vault_key()
             .and_then(|()| self.vault_subkey(CUSTODY_HEAD_WRAP_CONTEXT))
@@ -157,6 +169,17 @@ impl Vault {
             root,
             data_key,
             pad_worlds_kept_local,
+            credentials_eligible,
+        })
+    }
+
+    /// [`Self::custody_recipients`] for each kind of member (KS-5, FIX
+    /// 7191): a hosted member's head apart from a folder's or the residence
+    /// home's, so a hosted head never strips a pad a folder may keep.
+    fn custody_target_recipients(&self) -> Result<TargetRecipients> {
+        Ok(TargetRecipients {
+            own: self.custody_recipients(false)?,
+            hosted: self.custody_recipients(true)?,
         })
     }
 
@@ -215,10 +238,12 @@ impl Vault {
         outbox: Option<&CustodyOutbox>,
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<CustodyStatus> {
-        let hosted = declared
-            .iter()
-            .any(|spec| matches!(spec.kind(), TargetKind::Hosted(_)));
-        let recipients = self.custody_recipients(hosted)?;
+        // The policy each head follows is read, journaled when it changed
+        // and sealed under one lock held for the pass: no pass seals an
+        // older policy at a newer log position (KS-5, FIX 7191).
+        let _policy = self.store.custody_policy_guard()?;
+        let recipients = self.custody_target_recipients()?;
+        self.store.note_custody_policy(&recipients)?;
         let shipped: Vec<OutboxTarget> = declared
             .iter()
             .filter(|spec| spec.kind() == TargetKind::Hosted(HostedKind::HypnosOutbox))
@@ -300,8 +325,12 @@ impl Vault {
     /// when it is behind the local log position, seals a batch for it.
     /// `None` when it is current or nothing is in custody.
     pub fn custody_batch_for(&self, spec: &TargetSpec) -> Result<Option<CustodyBatch>> {
-        let recipients = self.custody_recipients(matches!(spec.kind(), TargetKind::Hosted(_)))?;
-        self.store.custody_batch_for(spec, &recipients)
+        // As a publication pass: the policy read, journaled when it changed
+        // and sealed under the policy lock (KS-5, FIX 7191).
+        let _policy = self.store.custody_policy_guard()?;
+        let recipients = self.custody_target_recipients()?;
+        self.store.note_custody_policy(&recipients)?;
+        self.store.custody_batch_for(spec, recipients.of(spec))
     }
 
     /// Accepts a member's acknowledgement of `batch`, once it names exactly

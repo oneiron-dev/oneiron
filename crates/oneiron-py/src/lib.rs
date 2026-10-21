@@ -5683,6 +5683,48 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_import(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.import")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.import", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_repos_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.repos.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.repos.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_forks_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.forks.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.forks.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_imports_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.imports.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.imports.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_imports_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.imports.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.imports.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_ingress_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.ingress.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.ingress.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_origin_register(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.origin.register")?;
         let output = py
@@ -6075,6 +6117,69 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.code.merge_queue.recover", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_init(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.init")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.merge_queue.init", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_check(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.check")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.merge_queue.check", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_diagnose(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.diagnose")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.diagnose", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_check_status(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.check_status")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.check_status", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_checks_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.checks.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.checks.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_export_green(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.export_green")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.export_green", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -7022,6 +7127,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.rooms.host.hand")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.rooms.host.hand", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_upkeep_pending(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.upkeep.pending")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.upkeep.pending", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_upkeep_voice(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.upkeep.voice")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.upkeep.voice", input))
             .map_err(raise)?;
         encode(&output)
     }

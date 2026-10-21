@@ -18,12 +18,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/budget_ids.rs` | src | s | 4 crate-vis | — | Durable per-pass budget-id derivation and occupied-row index scan |
 | `src/supervisor/budget_tests.rs` | test | m | — | — | Durable budget-id, index-scan, and config-validation tests |
 | `src/supervisor/config.rs` | src | s | 2 struct · 2 fn · 1 type · 7 crate-vis | RestartBackoffConfig, WakeSupervisorConfig | Static config, restart backoff, and budget-id length ceilings |
-| `src/supervisor/factory.rs` | src | m | 2 struct · 1 trait · 13 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan | Per-pass attempt-executor factory trait and default implementation |
+| `src/supervisor/factory.rs` | src | m | 2 struct · 1 trait · 14 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | XL | — | — | Factory, planner-routing, and attempt-fixture tests |
 | `src/supervisor/loop.rs` | src | m | 2 struct · 6 fn · 2 crate-vis | WakeSupervisor, WakeSupervisorReport | Biased-select supervisor loop with panic containment and backoff |
 | `src/supervisor/loop_tests.rs` | test | L | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
 | `src/supervisor/mod.rs` | src | s | 6 re-export | — | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
-| `src/supervisor/pass.rs` | src | s | 4 crate-vis | — | Single wake-pass assembly and engine delegation |
+| `src/supervisor/pass.rs` | src | s | 5 crate-vis | — | Single wake-pass assembly and engine delegation |
 | `src/supervisor/program_factory.rs` | src | s | 1 struct · 1 fn | ProgramExecutorFactory | The turn program runtime around a host's executor factory (DOOR-141 PR2) |
 | `src/supervisor/shutdown.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ShutdownHandle | Cooperative shutdown handle and listener channels |
 | `src/supervisor/tests/attachment.rs` | test | s | — | — | The generic pass-attachment seam: asked after the pass meter, refusal is pre-admission, and a linked host… |

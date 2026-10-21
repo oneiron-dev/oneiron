@@ -54,6 +54,7 @@ pub(crate) use admission::{
 };
 pub(crate) mod blocked_reports;
 mod centroid_evidence;
+pub(crate) mod consent_depth;
 mod consent_detector;
 pub mod tripwires;
 pub use centroid_evidence::{CentroidCorpus, CentroidReplay, DETECTOR_CENTROID_MIN_SIMILARITY};
@@ -64,7 +65,14 @@ mod detector_runner;
 mod diagnostic_codec;
 pub mod distillation;
 mod event;
+mod heal_context;
+pub(crate) use heal_context::CauseAncestry;
+pub use heal_context::{
+    HealContextPolicy, HealContextSeed, HealEvidenceContext, HealLink, HealUnavailable,
+};
 mod invariant_canonical;
+pub(crate) mod issue_evidence;
+pub(crate) mod issue_work;
 pub mod scheduled;
 pub mod served_signals;
 mod session_text;

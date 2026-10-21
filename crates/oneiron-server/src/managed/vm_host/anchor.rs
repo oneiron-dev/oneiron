@@ -11,7 +11,10 @@
 //! for every later one. It waits for the guest's reply before the ready
 //! byte. The credential is never in the profile, the boot arguments, a
 //! drive, the outbox or a log; a RAM snapshot holds the guest's copy as it
-//! holds the data key, and a resume runs no second exchange.
+//! holds the data key, and a resume runs no second exchange. Beside its RAM
+//! the snapshot keeps the URL its guest was handed, never the credential,
+//! and the resumed generation's proxy serves that URL: what was attached
+//! since takes effect at the next cold boot (FIX 7183).
 //!
 //! The proxy runs with each VMM generation, and its exit, a stop, a kill or
 //! the driver's drop ends it with every stream it carries. Each guest stream
@@ -23,6 +26,7 @@
 use super::restore::{distinct, proven};
 use super::{API_TIMEOUT, VaultVm, VmExitWatch};
 use crate::managed::listener::bind_unix_socket;
+use anyhow::Context as _;
 use oneiron_vault_contract::vm::{VM_ANCHOR_PORT, VM_ANCHOR_PROXY_PORT, guest_initiated_socket};
 use oneiron_vault_contract::vm_anchor::{
     MAX_VM_ANCHOR_CREDENTIAL_BYTES, MAX_VM_ANCHOR_PROXY_RECORD_BYTES, MAX_VM_ANCHOR_RECORD_BYTES,
@@ -32,8 +36,10 @@ use oneiron_vault_contract::vm_anchor::{
     vm_anchor_record_len,
 };
 use serde::de::DeserializeOwned;
-use std::io::Read as _;
+use serde::{Deserialize, Serialize};
+use std::io::{Read as _, Write as _};
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,6 +50,10 @@ use zeroize::Zeroizing;
 /// A failed proxy accept is retried after this pause rather than in a hot
 /// loop.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
+
+/// The file beside a published RAM snapshot that keeps the anchor URL its
+/// guest was handed (FIX 7183).
+const SNAPSHOT_ANCHOR: &str = "vm.anchor";
 
 /// What a vault VM's custody anchor takes from its supervisor (FIX 6517):
 /// the anchor URL, byte for byte as the vault's effective settings name it,
@@ -93,8 +103,8 @@ impl VmAnchorHostIo {
 /// A vault VM's two anchor sockets, bound before any VMM runs, and what the
 /// supervisor bound them to.
 pub(super) struct HostAnchor {
-    exchange: UnixListener,
-    proxy: Arc<UnixListener>,
+    pub(super) exchange: UnixListener,
+    pub(super) proxy: Arc<UnixListener>,
     bound: Option<Arc<BoundUrl>>,
     credential: Credential,
     /// The running generation's proxy.
@@ -118,14 +128,32 @@ enum Credential {
     Held(Zeroizing<Vec<u8>>),
 }
 
-/// One generation's proxy task, ended when this drops.
-struct Serving(tokio::task::AbortHandle);
+/// One generation's proxy task, ended when this drops, and the URL it
+/// serves: the one that generation's guest was handed.
+struct Serving {
+    task: tokio::task::AbortHandle,
+    bound: Option<Arc<BoundUrl>>,
+}
 
 impl Drop for Serving {
     fn drop(&mut self) {
-        self.0.abort();
+        self.task.abort();
     }
 }
+
+/// What [`SNAPSHOT_ANCHOR`] holds: the URL exactly as it was bound, or none
+/// when the generation was bound to none. Host-private, written by the sleep
+/// that publishes the snapshot and read by the restore that consumes it.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeptAnchor {
+    #[serde(deserialize_with = "Option::deserialize")]
+    anchor_url: Option<String>,
+}
+
+/// The anchor URL a published snapshot's guest was handed, taken with the
+/// snapshot for its resumed generation's proxy.
+pub(super) struct SnapshotAnchor(Option<Arc<BoundUrl>>);
 
 impl HostAnchor {
     /// Binds the exchange's and the proxy's host sockets beside `vsock`, the
@@ -179,7 +207,9 @@ impl VaultVm {
     /// Binds the vault's custody anchor to `io` for every cold boot from here
     /// on (FIX 6517): the URL the guest's header names and its proxy reaches,
     /// and the credential sent after each boot's credential frame. A VM bound
-    /// to neither sends a header with neither. Refused while a VMM runs.
+    /// to neither sends a header with neither. Refused while a VMM runs. A
+    /// published RAM snapshot still resumes on the URL kept with it, and
+    /// these take effect at the cold boot after it (FIX 7183).
     pub fn attach_anchor(&mut self, io: VmAnchorHostIo) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.is_running(),
@@ -224,7 +254,7 @@ impl VaultVm {
                 MAX_VM_ANCHOR_RECORD_BYTES,
             )?)
             .await?;
-        self.serve_anchor_proxy();
+        self.serve_anchor_proxy(self.anchor.bound.clone());
         Ok(stream)
     }
 
@@ -285,16 +315,77 @@ impl VaultVm {
         }
     }
 
-    /// Starts the running generation's proxy, ending any before it: it
-    /// serves until this generation's VMM exits or the driver ends it.
-    pub(super) fn serve_anchor_proxy(&mut self) {
+    /// Starts the running generation's proxy on `bound`, the URL its guest
+    /// was handed, ending any before it: it serves until this generation's
+    /// VMM exits or the driver ends it.
+    fn serve_anchor_proxy(&mut self, bound: Option<Arc<BoundUrl>>) {
         let task = tokio::spawn(proxy(
             Arc::clone(&self.anchor.proxy),
             self.vault.clone(),
-            self.anchor.bound.clone(),
+            bound.clone(),
             self.exit.clone(),
         ));
-        self.anchor.serving = Some(Serving(task.abort_handle()));
+        self.anchor.serving = Some(Serving {
+            task: task.abort_handle(),
+            bound,
+        });
+    }
+
+    /// Starts a RAM restore's proxy on the URL kept with its snapshot, the
+    /// one its guest was handed; inputs attached since then wait for the
+    /// next cold boot (FIX 7183).
+    pub(super) fn resume_anchor_proxy(&mut self, kept: SnapshotAnchor) {
+        self.serve_anchor_proxy(kept.0);
+    }
+
+    /// Keeps the running generation's anchor URL, the one its proxy serves,
+    /// beside its RAM snapshot (FIX 7183): written to a temporary file,
+    /// flushed, then renamed to [`SNAPSHOT_ANCHOR`], all before the sleep
+    /// publishes the snapshot. Only the URL is kept, never the credential,
+    /// which the guest's RAM holds a copy of. A generation with no proxy
+    /// keeps none.
+    pub(super) fn keep_snapshot_anchor(&self) -> anyhow::Result<()> {
+        let kept = KeptAnchor {
+            anchor_url: self
+                .anchor
+                .serving
+                .as_ref()
+                .and_then(|serving| serving.bound.as_ref())
+                .map(|bound| bound.url.clone()),
+        };
+        let temporary = self.path("vm.anchor.tmp");
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.write_all(&serde_json::to_vec(&kept)?)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, self.path(SNAPSHOT_ANCHOR))?;
+        Ok(())
+    }
+
+    /// Takes the anchor URL kept beside the snapshot a restore consumes,
+    /// and removes its file: the resumed generation's proxy serves it,
+    /// whatever was attached since (FIX 7183). A snapshot without the file,
+    /// or with one that does not read, does not restore; its error never
+    /// names what the file holds.
+    pub(super) fn take_snapshot_anchor(&self) -> anyhow::Result<SnapshotAnchor> {
+        let path = self.path(SNAPSHOT_ANCHOR);
+        let read = std::fs::read(&path);
+        let _ = std::fs::remove_file(&path);
+        let read = read.context("the vault VM's RAM snapshot has no anchor binding beside it")?;
+        let Ok(kept) = serde_json::from_slice::<KeptAnchor>(&read) else {
+            anyhow::bail!("the anchor binding beside the vault VM's RAM snapshot does not read");
+        };
+        let bound = kept
+            .anchor_url
+            .map(BoundUrl::parse)
+            .transpose()
+            .context("the anchor binding beside the vault VM's RAM snapshot")?;
+        Ok(SnapshotAnchor(bound.map(Arc::new)))
     }
 }
 

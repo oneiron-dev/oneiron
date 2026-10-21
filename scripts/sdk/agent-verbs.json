@@ -9295,6 +9295,91 @@
       "openapi": true
     },
     {
+      "name": "vault.code.import",
+      "description": "Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only.",
+      "input": "crate::memory::origin_doors::CodeRepoImportRequest",
+      "output": "crate::memory::origin_doors::CodeRepoImportView",
+      "call": "memory.code_repo_import_as(&memory.embedded_owner(\"vault.code.import\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.repos.get",
+      "description": "Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work.",
+      "input": "crate::memory::origin_doors::CodeRepoGetRequest",
+      "output": "Option<crate::memory::origin_doors::CodeRepoView>",
+      "call": "memory.code_repo_get_as(&memory.embedded_owner(\"vault.code.repos.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.forks.get",
+      "description": "Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork.",
+      "input": "crate::memory::origin_doors::CodeForkGetRequest",
+      "output": "Option<crate::memory::origin_doors::CodeForkView>",
+      "call": "memory.code_fork_get_as(&memory.embedded_owner(\"vault.code.forks.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.imports.create",
+      "description": "Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue.",
+      "input": "crate::memory::origin_doors::ExternalImportRequest",
+      "output": "crate::memory::origin_doors::ExternalImportReceipt",
+      "call": "memory.code_external_import_create_as(&memory.external_import_proof(\"vault.code.imports.create\"), input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.imports.get",
+      "description": "Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks.",
+      "input": "crate::memory::origin_doors::ExternalImportLookup",
+      "output": "Option<crate::memory::origin_doors::ExternalImportStatus>",
+      "call": "memory.code_external_import_get_as(&memory.external_import_proof(\"vault.code.imports.get\"), input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.ingress.get",
+      "description": "Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance.",
+      "input": "crate::memory::origin_doors::CodePushIngressGetRequest",
+      "output": "Option<crate::memory::origin_doors::CodePushIngressView>",
+      "call": "memory.code_push_ingress_get_as(&memory.embedded_owner(\"vault.code.ingress.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
       "name": "vault.code.origin.register",
       "description": "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused.",
       "input": "crate::memory::origin_doors::OriginRegisterRequest",
@@ -9916,6 +10001,91 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.init",
+      "description": "Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueInitializeRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
+      "call": "memory.merge_queue_init_as(&memory.embedded_owner(\"vault.code.merge_queue.init\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.check",
+      "description": "Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueCheckRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
+      "call": "memory.merge_queue_check_as(&memory.embedded_owner(\"vault.code.merge_queue.check\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.diagnose",
+      "description": "Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueDiagnoseRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
+      "call": "memory.merge_queue_diagnose_as(&memory.embedded_owner(\"vault.code.merge_queue.diagnose\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.check_status",
+      "description": "Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
+      "call": "memory.merge_queue_check_status_as(&memory.embedded_owner(\"vault.code.merge_queue.check_status\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.checks.get",
+      "description": "Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass.",
+      "input": "crate::memory::merge_queue_doors::CodeCheckReceiptRequest",
+      "output": "Option<crate::memory::merge_queue_doors::CodeCheckReceiptView>",
+      "call": "memory.merge_queue_check_receipt_as(&memory.embedded_owner(\"vault.code.checks.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.export_green",
+      "description": "Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueGreenExportRequest",
+      "output": "crate::memory::origin_doors::CodeExportResult",
+      "call": "memory.merge_queue_export_green_as(&memory.embedded_owner(\"vault.code.merge_queue.export_green\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.export",
@@ -11227,6 +11397,7 @@
         "/what/context_refs/*/claim",
         "/what/context_refs/*/turn"
       ],
+      "refs_check": "crate::task_verb::ask_world_hold::admit_ask_references",
       "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
@@ -11274,6 +11445,7 @@
         "/word/provenance_refs/*/claim",
         "/word/provenance_refs/*/turn"
       ],
+      "refs_check": "crate::task_verb::ask_world_hold::admit_ask_references",
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
       "mcp_served": "[input.handle.group_ref]",
@@ -12042,6 +12214,39 @@
       "output": "crate::workspace_roster::RoomStanding",
       "call": "memory.rooms_host_hand(&input)?",
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.upkeep.pending",
+      "description": "The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet.",
+      "input": "crate::workspace_roster::RoomUpkeepPendingRequest",
+      "output": "Vec<crate::workspace_roster::RoomUpkeepNudge>",
+      "call": "memory.rooms_upkeep_pending(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.upkeep.voice",
+      "description": "The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread.",
+      "input": "crate::workspace_roster::RoomUpkeepVoiceRequest",
+      "output": "crate::workspace_roster::RoomUpkeepVoiceReceipt",
+      "call": "memory.rooms_upkeep_voice(&input)?",
+      "scope": "Write",
+      "lands_turn": true,
       "admission": {
         "unrestricted_record_scope": true
       },

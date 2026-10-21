@@ -12,6 +12,12 @@ side_tables! {
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
     MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored;
+    /// One object store's checked queue configuration: the approved baseline, the plan frozen
+    /// from it and the owner's queued check approval (FIX 6868). Key: hex(repo identity).
+    MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored;
+    /// One requested queue init, check or diagnosis: its attempt, generation, status and
+    /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
+    MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored;
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;

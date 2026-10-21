@@ -2287,6 +2287,16 @@ class Oneiron:
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
         def export(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
             """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+        def import_(self, spec: Facade.CodeRepoImportRequest) -> Facade.CodeRepoImportView:
+            """Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."""
+        @property
+        def repos(self) -> "Oneiron._VaultCodeReposVerbs": ...
+        @property
+        def forks(self) -> "Oneiron._VaultCodeForksVerbs": ...
+        @property
+        def imports(self) -> "Oneiron._VaultCodeImportsVerbs": ...
+        @property
+        def ingress(self) -> "Oneiron._VaultCodeIngressVerbs": ...
         @property
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs": ...
         @property
@@ -2299,6 +2309,8 @@ class Oneiron:
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs": ...
         @property
         def merge_queue(self) -> "Oneiron._VaultCodeMergeQueueVerbs": ...
+        @property
+        def checks(self) -> "Oneiron._VaultCodeChecksVerbs": ...
     class _VaultCodeSymbolsVerbs:
         def declare(self, spec: Facade.CodeSymbolsDeclareRequest) -> Facade.CodeSymbolsDeclared:
             """Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing."""
@@ -2313,6 +2325,20 @@ class Oneiron:
             """Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."""
         def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
+    class _VaultCodeReposVerbs:
+        def get(self, spec: Facade.CodeRepoGetRequest) -> Facade.CodeRepoView | None:
+            """Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work."""
+    class _VaultCodeForksVerbs:
+        def get(self, spec: Facade.CodeForkGetRequest) -> Facade.CodeForkView | None:
+            """Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork."""
+    class _VaultCodeImportsVerbs:
+        def create(self, spec: Facade.ExternalImportRequest) -> Facade.ExternalImportReceipt:
+            """Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue."""
+        def get(self, spec: Facade.ExternalImportLookup) -> Facade.ExternalImportStatus | None:
+            """Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks."""
+    class _VaultCodeIngressVerbs:
+        def get(self, spec: Facade.CodePushIngressGetRequest) -> Facade.CodePushIngressView | None:
+            """Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance."""
     class _VaultCodeOriginVerbs:
         def register(self, spec: Facade.OriginRegisterRequest) -> Facade.OriginRegistered:
             """Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."""
@@ -2410,6 +2436,19 @@ class Oneiron:
             """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
         def recover(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
+        def init(self, spec: Facade.MergeQueueInitializeRequest) -> Facade.MergeQueueCheckWorkView:
+            """Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue."""
+        def check(self, spec: Facade.MergeQueueCheckRequest) -> Facade.MergeQueueCheckWorkView:
+            """Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller."""
+        def diagnose(self, spec: Facade.MergeQueueDiagnoseRequest) -> Facade.MergeQueueCheckWorkView:
+            """Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only."""
+        def check_status(self, spec: Facade.MergeQueueCheckStatusRequest) -> Facade.MergeQueueCheckWorkView:
+            """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
+        def export_green(self, spec: Facade.MergeQueueGreenExportRequest) -> Facade.CodeExportResult:
+            """Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."""
+    class _VaultCodeChecksVerbs:
+        def get(self, spec: Facade.CodeCheckReceiptRequest) -> Facade.CodeCheckReceiptView | None:
+            """Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass."""
     class _VaultResultsVerbs:
         def status(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
             """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""
@@ -2648,6 +2687,8 @@ class Oneiron:
             """One page of the current offer cards in a room or one of its threads."""
         @property
         def host(self) -> "Oneiron._VaultRoomsHostVerbs": ...
+        @property
+        def upkeep(self) -> "Oneiron._VaultRoomsUpkeepVerbs": ...
         def sharing(self, spec: Facade.RoomRefRequest) -> Facade.RoomSharingView:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
     class _VaultRoomsThreadAudienceVerbs:
@@ -2682,6 +2723,11 @@ class Oneiron:
             """Pins an agent as a room's host, or clears the stored host, pin or handoff."""
         def hand(self, spec: Facade.RoomHostHand) -> Facade.RoomStanding:
             """The room's current host hands the hosting duty to another agent that may host."""
+    class _VaultRoomsUpkeepVerbs:
+        def pending(self, spec: Facade.RoomUpkeepPendingRequest) -> list[Facade.RoomUpkeepNudge]:
+            """The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet."""
+        def voice(self, spec: Facade.RoomUpkeepVoiceRequest) -> Facade.RoomUpkeepVoiceReceipt:
+            """The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread."""
     class _VaultConversationsVerbs:
         @property
         def turn(self) -> "Oneiron._VaultConversationsTurnVerbs": ...

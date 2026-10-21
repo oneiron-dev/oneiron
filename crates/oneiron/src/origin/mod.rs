@@ -6,7 +6,14 @@
 //! additive `pub mod ...;` line when its file exists.
 
 pub(crate) mod actor_erase;
+mod document_candidate_types;
+mod document_candidates;
 mod document_ingress;
+pub use document_candidate_types::{
+    CodePushCandidateState, CodePushCandidateView, ReceivedCandidateRef, ReceivedRefIngress,
+    ReceivedRefSource,
+};
+pub(crate) use document_candidates::CandidateQueue;
 pub use document_ingress::ReceivedFileOperation;
 pub(crate) use document_ingress::erase_code_operations_actor_in_txn;
 pub mod lfs;
@@ -16,6 +23,7 @@ pub mod smart_http;
 pub mod change_index;
 pub mod conflict_tree;
 pub mod export;
+mod export_parent;
 pub mod mirror;
 pub mod mirror_auto;
 mod mirror_census;
@@ -26,6 +34,8 @@ mod mirror_wake;
 pub(crate) use mirror_wake::OriginMirrorWake;
 pub mod publish;
 pub mod registration;
+mod repo_import;
+pub(crate) use repo_import::{ImportedCodeRepo, ServedImportSource};
 pub mod residence;
 pub mod secret_manifest;
 pub mod tree;

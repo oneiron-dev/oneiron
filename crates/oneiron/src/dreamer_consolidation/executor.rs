@@ -2,12 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod decisions;
 pub(super) mod extraction;
+mod failure;
 mod merge_resolution;
 
 pub use decisions::ConsolidationDecisions;
 use merge_resolution::MergeResolution;
 
-use super::evidence::{ExtractedCandidate, VerifiedCandidate, VerifiedEvidenceSet};
+use super::evidence::{
+    ExtractedCandidate, ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,
+};
 use super::resources::BranchResources;
 use super::roles::{DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
@@ -30,7 +33,7 @@ use super::watermark::{WorkingSetTurn, conversation_of, read_turn_facts};
 use crate::claim::{ClaimSource, ClaimSubject};
 use crate::dreamer_runner::{DreamerClaimAuthoringStrategy, DreamerParkCause, dreamer_turn_role};
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
@@ -164,8 +167,10 @@ impl ConsolidationExecutor<'_> {
         let mut dropped: BTreeSet<usize> = BTreeSet::new();
         let mut merged: Vec<VerifiedCandidate> = Vec::new();
         let mut escalated: Vec<(ReflectionGap, VerifiedEvidenceSet)> = Vec::new();
-        // An accumulated member keeps the pack that kept it.
+        // An accumulated member keeps the pack that kept it, and the first
+        // try's open marker its conflict answers (FIX 7325).
         let mut kept_by: BTreeMap<usize, Vec<KeptDecision>> = BTreeMap::new();
+        let mut answered: BTreeMap<usize, Vec<ResolvedConflictOutput>> = BTreeMap::new();
         let mut waiting = false;
 
         for conflict in &conflicts {
@@ -192,6 +197,14 @@ impl ConsolidationExecutor<'_> {
                 for member in &members[1..] {
                     join_decisions(&mut candidate.proposal.decisions, &member.decisions);
                 }
+                let answer = ResolvedConflictOutput::of_first_try(
+                    ctx.vault,
+                    conflict,
+                    step_identity.0,
+                    vec![candidate.claim_id],
+                    "fast_path",
+                );
+                candidate.answers.extend(answer);
                 dropped.extend(conflict.candidate_indexes.iter().copied());
                 merged.push(candidate);
                 continue;
@@ -296,8 +309,16 @@ impl ConsolidationExecutor<'_> {
             match resolution {
                 // Keep every member, each with the pack that kept it.
                 MergeResolution::Accumulate => {
+                    let answer = ResolvedConflictOutput::of_first_try(
+                        ctx.vault,
+                        conflict,
+                        step_identity.0,
+                        members.iter().map(|member| member.claim_id).collect(),
+                        "accumulate",
+                    );
                     for index in &conflict.candidate_indexes {
                         join_decisions(kept_by.entry(*index).or_default(), &answers.decisions);
+                        answered.entry(*index).or_default().extend(answer.clone());
                     }
                 }
                 MergeResolution::Merge {
@@ -326,7 +347,7 @@ impl ConsolidationExecutor<'_> {
                         .into());
                     }
                     dropped.extend(conflict.candidate_indexes.iter().copied());
-                    merged.push(merged_candidate(
+                    let mut output = merged_candidate(
                         &selected,
                         &members,
                         &prior_heads,
@@ -334,7 +355,18 @@ impl ConsolidationExecutor<'_> {
                         decisions,
                         step_identity.0,
                         ctx.now_ms,
-                    )?);
+                    )?;
+                    // The marker is the original conflict's, minted before
+                    // a cross-predicate selection moved its identity.
+                    let answer = ResolvedConflictOutput::of_first_try(
+                        ctx.vault,
+                        conflict,
+                        step_identity.0,
+                        vec![output.claim_id],
+                        answers.resolution.as_deref().unwrap_or("merge"),
+                    );
+                    output.answers.extend(answer);
+                    merged.push(output);
                 }
                 MergeResolution::Escalate => {
                     // A durable outage fallback is still an unresolved question,
@@ -370,6 +402,9 @@ impl ConsolidationExecutor<'_> {
             .map(|(index, mut candidate)| {
                 if let Some(decisions) = kept_by.get(&index) {
                     join_decisions(&mut candidate.proposal.decisions, decisions);
+                }
+                if let Some(bound) = answered.remove(&index) {
+                    candidate.answers.extend(bound);
                 }
                 candidate
             })
@@ -407,7 +442,8 @@ impl ConsolidationExecutor<'_> {
     /// How a conflict step's failure ends the partition: a refusal of spent
     /// work checkpoints; any other failure parks the attempt with a durable
     /// Proposed marker (the marker and every source pin share the write
-    /// transaction) and fails it.
+    /// transaction) and fails it; a refused call's paid usage rides on the
+    /// error to the attempt's park, which records it (FIX 414).
     #[expect(
         clippy::too_many_arguments,
         reason = "the failure joins the conflict, its branch, the wake and the charge tally"
@@ -550,6 +586,7 @@ fn merged_candidate(
             decisions,
         },
         evidence: combined,
+        answers: Vec::new(),
     })
 }
 
@@ -597,7 +634,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
     ) -> Result<DreamerAttemptExecution> {
         // A resident dreams under its own stamp on the model its host lends
         // it (OF-490), and spends its free time for its human so too (FIX
-        // 4453); this Dreamer-bound executor never runs either.
+        // 4453); this Dreamer-bound executor never runs either. Each such
+        // park waits on the host's loan, no owner act: it resumes after its
+        // retry delay (FIX 7272).
         if attempt.status.payload.attempt_type
             == crate::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
             || attempt.status.payload.attempt_type
@@ -605,7 +644,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: "resident dreaming needs its host's model".to_owned(),
-                cause: DreamerParkCause::Other,
+                cause: DreamerParkCause::Retry,
             });
         }
         // A TASK realizes on the model and wording its host lends; this
@@ -615,7 +654,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: crate::dreamer_consolidation::TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
-                cause: DreamerParkCause::Other,
+                cause: DreamerParkCause::Retry,
             });
         }
         // A weave lens renders on the model its host lends; this executor
@@ -625,7 +664,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: crate::dreamer_consolidation::WEAVE_LENS_UNLENT_PARK_REASON.to_owned(),
-                cause: DreamerParkCause::Other,
+                cause: DreamerParkCause::Retry,
             });
         }
         if self.actor
@@ -853,10 +892,11 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 Ok(charges.checkpoint())
             }
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
-            // A refused extraction retries at the next pass, as a checkpoint
-            // does (FIX 7218): a private park would keep its row leased.
+            // A refused extraction, a refused citation (FIX 7274) among
+            // them, retries as the same try after its retry delay (FIX 7218,
+            // Engine 10-21): a private park would keep its row leased.
             Ok(PartitionRun::Refused { reason }) => {
-                Ok(charges.park_for(&reason, DreamerParkCause::Checkpoint))
+                Ok(charges.park_for(&reason, DreamerParkCause::Retry))
             }
             // A turn demoted after the model answered waits too (FIX 6060),
             // settling what the attempt already spent.
@@ -889,25 +929,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             Ok(PartitionRun::Trapped) => {
                 Ok(charges.park_for("durable step trapped for resume", DreamerParkCause::Signal))
             }
-            Err(crate::llm::DurableStepError::DeadlineHardCut) => {
-                Ok(DreamerAttemptExecution::Park {
-                    reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                    cause: DreamerParkCause::Checkpoint,
-                })
-            }
-            Err(crate::llm::DurableStepError::FinalizeRefused) => {
-                Ok(DreamerAttemptExecution::Park {
-                    reason: "wake pass finalize window".to_owned(),
-                    cause: DreamerParkCause::Checkpoint,
-                })
-            }
             Err(crate::llm::DurableStepError::Engine(error)) => {
                 super::residency::spent_or_deferred(error, ctx.now_ms, charges.units)
             }
-            Err(other) => Ok(DreamerAttemptExecution::Park {
-                cause: DreamerParkCause::of_step(&other),
-                reason: other.to_string(),
-            }),
+            // Every other failure parks with what the attempt spent, a
+            // refused conflict read's paid usage included (FIX 414).
+            Err(other) => Ok(failure::park_partition_failure_with_spend(
+                other,
+                &mut charges,
+            )),
         }
     }
 }

@@ -220,6 +220,9 @@ pub struct SyncServer {
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
     /// Where the owner's feedback goes; `None` until configured.
     pub(crate) feedback: Option<Arc<crate::feedback_delivery::FeedbackHost>>,
+    /// The GitHub repositories the Coach's feedback sweep reads,
+    /// `[feedback.triage]`; none until configured.
+    pub(crate) feedback_triage: crate::config::FeedbackTriageConfig,
     /// The open feedback inbox's flood cap, counted while the inbox is on.
     pub(crate) feedback_flood: crate::api::FloodCap,
     /// The port of the artifact-only listener on the API's host, set by the
@@ -505,6 +508,7 @@ impl SyncServer {
             extraction_egress: None,
             owner_host: None,
             feedback: None,
+            feedback_triage: crate::config::FeedbackTriageConfig::default(),
             feedback_flood,
             artifact_port: None,
             artifact_socket: false,
@@ -728,9 +732,13 @@ impl SyncServer {
     }
 
     /// Whether boot rooted this vault and provisioned the engine's machine
-    /// writers (the Dreamer among them).
+    /// writers (the Dreamer among them): from the configured secret, or on
+    /// a managed vault from its DEK-derived issuer, which managed boot sets
+    /// once it has provisioned them (FIX 7261). Never on a blind relay.
     pub(crate) fn host_root_provisioned(&self) -> bool {
         host_root_secret(&self.vault, &self.config).is_some()
+            || (self.managed_issuer.is_some()
+                && self.vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay)
     }
 
     /// Install the host's extraction egress predicate. An absent predicate
@@ -772,6 +780,15 @@ impl SyncServer {
         host: Option<crate::feedback_delivery::FeedbackHost>,
     ) -> Self {
         self.feedback = host.map(Arc::new);
+        self
+    }
+
+    /// Binds the GitHub repositories the Coach's feedback sweep reads.
+    pub(crate) fn with_feedback_triage(
+        mut self,
+        triage: crate::config::FeedbackTriageConfig,
+    ) -> Self {
+        self.feedback_triage = triage;
         self
     }
 

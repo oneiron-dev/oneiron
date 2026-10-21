@@ -564,10 +564,9 @@ fn start_turn(
     let board_at = messages
         .iter()
         .rposition(|message| message.role == LlmMessageRole::User);
-    let (board, board_rows) = board
-        .map(|board| ((board.block, board.context), board.rows))
-        .unzip();
-    let (admitted, recalled, context) = recall::admit(&server.ai, &vault, &seat, messages, board);
+    let board_rows = board.as_ref().map(|board| board.rows.clone());
+    let (admitted, recalled, context) =
+        recall::admit(&server.ai, &vault, &seat, auth, messages, board);
     let turn_context = turn_context.or(board_at.filter(|_| recalled));
     // A board the call goes without is no row it read.
     if recalled {

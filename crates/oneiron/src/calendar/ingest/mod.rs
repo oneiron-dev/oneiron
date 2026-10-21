@@ -76,6 +76,15 @@ pub use self::poll::{
 use super::CalendarError;
 
 pub(crate) fn credential(context: &'static str, err: &crate::Error) -> CalendarError {
+    // KS-6: a credential whose key does not open keeps custody's typed answer.
+    if matches!(
+        err,
+        crate::Error::Secret(crate::error::SecretError::CredentialLeafUnreadable { .. })
+    ) {
+        return CalendarError::IcsCredentialLeafUnreadable {
+            leaf: err.to_string(),
+        };
+    }
     CalendarError::IcsCredential {
         reason: format!("{context}: {err}"),
     }

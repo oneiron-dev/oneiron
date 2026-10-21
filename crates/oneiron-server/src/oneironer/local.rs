@@ -1,137 +1,51 @@
 //! Native extraction on candle, with no HTTP server or second runtime.
 //!
-//! A model directory contains `oneironer.json`: format_version 1, hashed
-//! `trunk`, `config` and `tokenizer` artifacts, `ner_labels` in classifier
-//! order, and optional `mentions`, `coref`, `vad` and `characters` heads.
-//! Artifact rows have `file` and full `sha256` fields. Head rows name their
-//! `trunk_sha16`. The SHA-256 prefix of this manifest is the served stack
-//! identity, binding the tokenizer, backbone config, all weights, label
-//! tables and decode knobs. Weights retain the model repository's state-dict
-//! names in safetensors.
+//! A model directory is a format-2 bundle ([`super::bundle`]): its
+//! `oneironer.json` names the hashed trunk, config and tokenizer, the label
+//! table in classifier order and the optional heads, each head naming its
+//! `trunk_sha16`, and its SHA-256 prefix is the served stack, binding every
+//! file, table and decode knob. Candle reads the common rows only; the
+//! platform rows are other runtimes'. Weights retain the model repository's
+//! state-dict names in safetensors.
 //!
 //! `characters` names the checkpoint's own training config, which holds the
 //! character vocabulary and width, and the decode revision; the head's
 //! weights ride in the trunk as `char_head.*`. With it, names take the full
 //! decode (BIO, the DATE snap, character refinement); without it, BIO alone.
+//!
+//! The Core ML worker decodes here too (FIX 6755 slice 2c): it loads the
+//! same character head ([`character_model`]), runs the head's tail on the
+//! projection its model returns, and takes the same decode and the same
+//! assembly of the current turn's spans ([`current_message_spans`]).
 
 mod backbone;
 mod heads;
 mod window;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Component, Path};
+use std::path::Path;
 use std::sync::Mutex;
 
-use candle_core::{DType, Device, Module};
+use candle_core::{Device, Module};
 use candle_nn::{Linear, VarBuilder, linear};
 use oneiron::ModelId;
 use oneiron::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use tokenizers::Tokenizer;
 
+use super::bundle::{CharacterConfig, Manifest, ReadManifest, character_vocab, read_manifest};
 use super::endpoint::{CONTRACT_VERSION, ModelCard, Returns};
 use crate::config::{EmbedderDevice, OneironerConfig};
 use backbone::{Backbone, Config};
 use heads::{Affect, CharacterBoundary, Coreference};
-use window::{
-    CharacterFeatures, Characters, DecodeLayers, Named, ONEIRONER_DECODE_REVISION, Window,
-    conversation_tokenizer, decode, decode_ner,
+use window::{Named, Span, conversation_tokenizer, decode};
+
+pub(super) use window::{
+    CHAR_REFINE_K, CHAR_REFINE_TAU, CharacterFeatures, Characters, DecodeLayers,
+    ONEIRONER_DECODE_REVISION, Window, decode_ner,
 };
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Artifact {
-    file: String,
-    sha256: String,
-}
-
-impl Artifact {
-    fn read(&self, dir: &Path) -> anyhow::Result<Vec<u8>> {
-        anyhow::ensure!(
-            !self.file.is_empty()
-                && Path::new(&self.file)
-                    .components()
-                    .all(|component| matches!(component, Component::Normal(_))),
-            "oneironer artifact file must be relative to its model directory"
-        );
-        let bytes = std::fs::read(dir.join(&self.file))?;
-        anyhow::ensure!(
-            format!("{:x}", Sha256::digest(&bytes)) == self.sha256,
-            "oneironer artifact SHA-256 mismatch"
-        );
-        Ok(bytes)
-    }
-
-    fn weights(&self, dir: &Path, device: &Device) -> anyhow::Result<VarBuilder<'static>> {
-        Ok(VarBuilder::from_buffered_safetensors(
-            self.read(dir)?,
-            DType::F32,
-            device,
-        )?)
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MentionHead {
-    weights: Artifact,
-    trunk_sha16: String,
-    labels: Vec<String>,
-    o_bias: f32,
-    /// Labels that are not overt mentions (for example predicate anchors).
-    ignored_labels: BTreeSet<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CorefHead {
-    weights: Artifact,
-    trunk_sha16: String,
-    repr_dim: usize,
-    tau: f32,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct VadHead {
-    weights: Artifact,
-    trunk_sha16: String,
-    hidden_size: usize,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CharacterHead {
-    /// The checkpoint's own training config.json, copied verbatim.
-    config: Artifact,
-    /// Must be this build's `ONEIRONER_DECODE_REVISION`, so a bundle never
-    /// runs a decode other than the one it names.
-    decode_revision: String,
-}
-
-/// The keys a checkpoint's training config holds for its character head.
-/// The file's other keys are training settings and go unread.
-#[derive(Deserialize)]
-struct CharacterConfig {
-    char_head: bool,
-    char_dim: u32,
-    char_vocab: BTreeMap<String, u32>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Manifest {
-    format_version: u32,
-    trunk: Artifact,
-    config: Artifact,
-    tokenizer: Artifact,
-    ner_labels: Vec<String>,
-    mentions: Option<MentionHead>,
-    coref: Option<CorefHead>,
-    vad: Option<VadHead>,
-    characters: Option<CharacterHead>,
-}
+/// A span's place in its window: its segment, then its start and end bytes.
+type Coordinates = (usize, usize, usize);
 
 struct Network {
     backbone: Backbone,
@@ -160,6 +74,198 @@ enum WindowMode {
     Conversation(Box<Tokenizer>),
 }
 
+/// A call's live window as every runtime of a slot builds it (FIX 6755):
+/// `Window::new` over the bundle's tokenizer, `max_input_tokens` and
+/// `live_window_tokens`, the window [`LocalTagger::infer`] tags in. The
+/// dispatcher counts each call by it once, outside every lock, to know
+/// which workers may run it; calibration holds a reference case to a row's
+/// max window by it. No runtime builds a shorter window to fit.
+#[derive(Clone)]
+pub(crate) struct WindowCounter {
+    tokenizer: Tokenizer,
+    cap: usize,
+    live: usize,
+}
+
+impl WindowCounter {
+    /// The counter of the section's bundle, `manifest` its parsed manifest,
+    /// loaded from its verified tokenizer with no model: what a platform
+    /// runtime's admission and its worker count and build windows by
+    /// (FIX 6755 slice 3), the same as a [`LocalTagger`] of the section's.
+    pub(crate) fn load(config: &OneironerConfig, manifest: &Manifest) -> anyhow::Result<Self> {
+        let dir = config
+            .model_dir
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("oneironer.model_dir is required"))?;
+        Ok(Self {
+            tokenizer: bundle_tokenizer(manifest, dir)?,
+            cap: config.max_input_tokens,
+            live: config.live_window_tokens as usize,
+        })
+    }
+
+    /// The tokens of `input`'s live window, special tokens included: its
+    /// context joined and cut to the live budget. A window that cannot be
+    /// built fails as the call's infer would.
+    pub(crate) fn count(&self, input: &EncoderInput) -> oneiron::Result<usize> {
+        Ok(self.window(input)?.tokens())
+    }
+
+    /// `input`'s live window, as [`Self::count`] counts it and Candle tags
+    /// in it: what a platform worker is sent.
+    pub(in crate::oneironer) fn window<'a>(
+        &self,
+        input: &'a EncoderInput,
+    ) -> oneiron::Result<Window<'a>> {
+        Window::new(input, &self.tokenizer, self.cap, self.live).map_err(|_| extraction_failed())
+    }
+}
+
+/// The bundle's tokenizer, its bytes verified against the manifest, with no
+/// padding and no truncation: every window is cut by `Window::new` alone.
+fn bundle_tokenizer(manifest: &Manifest, dir: &Path) -> anyhow::Result<Tokenizer> {
+    let mut tokenizer = Tokenizer::from_bytes(manifest.tokenizer.read(dir)?)
+        .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer"))?;
+    tokenizer.with_padding(None);
+    tokenizer
+        .with_truncation(None)
+        .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer truncation"))?;
+    Ok(tokenizer)
+}
+
+/// A bundle's character head as a runtime decodes with it: its trained
+/// weights, its vocabulary, and the width of the projected token states its
+/// tail reads (FIX 6755 slice 2c).
+pub(in crate::oneironer) struct CharacterModel {
+    pub(in crate::oneironer) boundary: CharacterBoundary,
+    pub(in crate::oneironer) vocab: HashMap<char, u32>,
+    /// `char_dim`.
+    pub(in crate::oneironer) width: usize,
+}
+
+/// `manifest`'s character head, its weights the trunk's `char_head.*` from
+/// `weights` over a `hidden`-wide encoder, on their device: what Candle
+/// loads beside its encoder and the Core ML worker loads alone, on the CPU
+/// in F32. Its decode revision must be this build's and its config must
+/// declare the head. `None` for a bundle that ships none.
+pub(in crate::oneironer) fn character_model(
+    manifest: &Manifest,
+    dir: &Path,
+    weights: &VarBuilder<'_>,
+    hidden: usize,
+) -> anyhow::Result<Option<CharacterModel>> {
+    let Some(head) = &manifest.characters else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        head.decode_revision == ONEIRONER_DECODE_REVISION,
+        "oneironer bundle names a decode revision this build does not run"
+    );
+    let options: CharacterConfig = serde_json::from_slice(&head.config.read(dir)?)?;
+    anyhow::ensure!(
+        options.char_head,
+        "oneironer character config declares no character head"
+    );
+    let (vocab, rows) = character_vocab(options.char_vocab)?;
+    let width = options.char_dim as usize;
+    let boundary = CharacterBoundary::load(weights.pp("char_head"), hidden, width, rows)?;
+    Ok(Some(CharacterModel {
+        boundary,
+        vocab,
+        width,
+    }))
+}
+
+/// The spans a call returns, by their window coordinates, and each mention
+/// a name moved off with the name's coordinates. Every returned mention is
+/// kept, then every returned name over it: a typed NER label wins over a
+/// generic mention label at the same coordinates; a pronoun retains its
+/// proposer label. A name the DATE snap or refinement moved still wins the
+/// mention proposed where BIO put it, and that mention's links resolve to
+/// the name.
+fn returned_spans<'s>(
+    named: &'s [Named],
+    mentioned: &'s [Span],
+    returned: impl Fn(usize) -> bool,
+) -> (
+    BTreeMap<Coordinates, &'s Span>,
+    Vec<(Coordinates, Coordinates)>,
+) {
+    let mut spans = BTreeMap::new();
+    for span in mentioned {
+        if returned(span.segment) {
+            spans.insert((span.segment, span.start, span.end), span);
+        }
+    }
+    let mut names = BTreeSet::new();
+    let mut moved = Vec::new();
+    for name in named {
+        let span = &name.span;
+        if returned(span.segment) {
+            let key = (span.segment, span.start, span.end);
+            let decoded = (span.segment, name.decoded.0, name.decoded.1);
+            let left = decoded != key && !names.contains(&decoded);
+            if left && spans.remove(&decoded).is_some() {
+                moved.push((decoded, key));
+            }
+            names.insert(key);
+            spans.insert(key, span);
+        }
+    }
+    (spans, moved)
+}
+
+/// `spans` in their messages' UTF-8 bytes, in window order, and each one's
+/// place among them by its window coordinates. In the conversation window a
+/// segment's index is its flattened message ordinal; in the live window a
+/// span names its message in the current turn.
+fn message_spans(
+    window: &Window<'_>,
+    spans: BTreeMap<Coordinates, &Span>,
+    conversation: bool,
+) -> (Vec<NerSpan>, BTreeMap<Coordinates, usize>) {
+    let mut placed = Vec::with_capacity(spans.len());
+    let mut coordinates = BTreeMap::new();
+    for (key, span) in spans {
+        let segment = &window.segments[span.segment];
+        let message = if conversation {
+            span.segment
+        } else {
+            segment.message_index
+        };
+        coordinates.insert(key, placed.len());
+        placed.push(NerSpan {
+            message,
+            start: span.start - segment.base + segment.source_offset,
+            end: span.end - segment.base + segment.source_offset,
+            label: span.label.clone(),
+            confidence: span.confidence,
+        });
+    }
+    (placed, coordinates)
+}
+
+/// The current turn's names as a live call returns them, by Candle's own
+/// assembly with no mention beside them: what the Core ML worker answers
+/// from its decode (FIX 6755 slice 2c).
+pub(in crate::oneironer) fn current_message_spans(
+    window: &Window<'_>,
+    named: &[Named],
+) -> Vec<NerSpan> {
+    let current = |segment: usize| window.segments[segment].current;
+    let (spans, _) = returned_spans(named, &[], current);
+    message_spans(window, spans, false).0
+}
+
+/// The failure of a native call, by class alone: never a tensor dump or any
+/// part of a conversation.
+fn extraction_failed() -> oneiron::Error {
+    oneiron::Error::UpstreamToolFailure {
+        tool: "oneironer-local",
+        code: "native extraction failed".to_owned(),
+    }
+}
+
 pub(crate) struct LocalTagger {
     model: ModelId,
     card: ModelCard,
@@ -181,19 +287,16 @@ impl LocalTagger {
             .model_dir
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("oneironer.model_dir is required"))?;
-        let manifest_bytes = std::fs::read(dir.join("oneironer.json"))?;
-        let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
-        anyhow::ensure!(
-            manifest.format_version == 1,
-            "unsupported local oneironer manifest version"
-        );
-        validate_labels(&manifest.ner_labels)?;
+        // The format, every closed row and every check no setting decides.
+        let ReadManifest {
+            manifest,
+            stack_sha16: stack,
+        } = read_manifest(dir)?;
         let checkpoint = config.checkpoint_sha16.as_deref().unwrap_or_default();
         anyhow::ensure!(
-            manifest.trunk.sha256.len() == 64 && manifest.trunk.sha256.starts_with(checkpoint),
+            manifest.trunk.sha256.starts_with(checkpoint),
             "local oneironer checkpoint does not match checkpoint_sha16"
         );
-        let stack = format!("{:x}", Sha256::digest(&manifest_bytes))[..16].to_owned();
         anyhow::ensure!(
             config
                 .stack_sha16
@@ -219,12 +322,7 @@ impl LocalTagger {
             // (`super::engines`); a direct load runs on the built-in CPU one.
             EmbedderDevice::Auto => Device::Cpu,
         };
-        let mut tokenizer = Tokenizer::from_bytes(manifest.tokenizer.read(dir)?)
-            .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer"))?;
-        tokenizer.with_padding(None);
-        tokenizer
-            .with_truncation(None)
-            .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer truncation"))?;
+        let tokenizer = bundle_tokenizer(&manifest, dir)?;
         let weights = manifest.trunk.weights(dir, &device)?;
         let backbone = Backbone::load(weights.pp("encoder"), &body, gte, config.max_input_tokens)?;
         let ner = linear(
@@ -232,38 +330,15 @@ impl LocalTagger {
             manifest.ner_labels.len(),
             weights.pp("classifier"),
         )?;
-        let (characters, char_vocab) = match &manifest.characters {
-            Some(head) => {
-                anyhow::ensure!(
-                    head.decode_revision == ONEIRONER_DECODE_REVISION,
-                    "oneironer bundle names a decode revision this build does not run"
-                );
-                let options: CharacterConfig = serde_json::from_slice(&head.config.read(dir)?)?;
-                anyhow::ensure!(
-                    options.char_head,
-                    "oneironer character config declares no character head"
-                );
-                let (vocab, rows) = character_vocab(options.char_vocab)?;
-                let boundary = CharacterBoundary::load(
-                    weights.pp("char_head"),
-                    body.hidden_size,
-                    options.char_dim as usize,
-                    rows,
-                )?;
-                (Some(boundary), vocab)
-            }
+        let characters = character_model(&manifest, dir, &weights, body.hidden_size)?;
+        let (characters, char_vocab) = match characters {
+            Some(model) => (Some(model.boundary), model.vocab),
             None => (None, HashMap::new()),
         };
         let mentions = manifest
             .mentions
             .as_ref()
             .map(|head| -> anyhow::Result<Linear> {
-                anyhow::ensure!(
-                    head.trunk_sha16 == checkpoint,
-                    "mention head belongs to another trunk"
-                );
-                anyhow::ensure!(head.o_bias.is_finite(), "invalid mention O bias");
-                validate_labels(&head.labels)?;
                 Ok(linear(
                     body.hidden_size,
                     head.labels.len(),
@@ -275,14 +350,6 @@ impl LocalTagger {
             .coref
             .as_ref()
             .map(|head| -> anyhow::Result<Coreference> {
-                anyhow::ensure!(
-                    head.trunk_sha16 == checkpoint && head.repr_dim > 0 && head.tau.is_finite(),
-                    "invalid coreference head or trunk binding"
-                );
-                anyhow::ensure!(
-                    mentions.is_some(),
-                    "coreference requires a mention proposer"
-                );
                 Ok(Coreference::load(
                     head.weights.weights(dir, &device)?,
                     body.hidden_size,
@@ -295,10 +362,6 @@ impl LocalTagger {
             .vad
             .as_ref()
             .map(|head| -> anyhow::Result<Affect> {
-                anyhow::ensure!(
-                    head.trunk_sha16 == checkpoint && head.hidden_size > 0,
-                    "invalid affect head or trunk binding"
-                );
                 Ok(Affect::load(
                     head.weights.weights(dir, &device)?,
                     body.hidden_size,
@@ -365,11 +428,27 @@ impl LocalTagger {
     pub(crate) fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
         // Inference errors can contain token ids. Traces retain the failure
         // class, never a tensor dump or any part of a conversation.
-        self.extract(input)
-            .map_err(|_| oneiron::Error::UpstreamToolFailure {
-                tool: "oneironer-local",
-                code: "native extraction failed".to_owned(),
-            })
+        self.extract(input).map_err(|_| extraction_failed())
+    }
+
+    /// The counter of this tagger's live windows: its own tokenizer, cap
+    /// and live budget, so a count is the window [`Self::infer`] tags in.
+    pub(crate) fn window_counter(&self) -> WindowCounter {
+        WindowCounter {
+            tokenizer: self.tokenizer.clone(),
+            cap: self.cap,
+            live: self.live,
+        }
+    }
+
+    /// The stack this tagger serves: the SHA-256 prefix of its manifest.
+    pub(crate) fn stack_sha16(&self) -> &str {
+        self.card.stack_sha16.as_deref().unwrap_or_default()
+    }
+
+    /// The configured `max_input_tokens`: the longest window it builds.
+    pub(crate) const fn max_input_tokens(&self) -> usize {
+        self.cap
     }
 
     /// The revision of this build's decoder: what a bundle's character head
@@ -441,58 +520,16 @@ impl LocalTagger {
         if let Some(head) = &self.manifest.mentions {
             mentioned.retain(|span| !head.ignored_labels.contains(&span.label));
         }
-        let mut spans = BTreeMap::new();
-        for span in &mentioned {
-            if returned(span.segment) {
-                spans.insert((span.segment, span.start, span.end), span);
-            }
-        }
-        // A typed NER label wins over a generic mention label at the same
-        // coordinates; a pronoun retains its proposer label. A name the DATE
-        // snap or refinement moved still wins the mention proposed where BIO
-        // put it, and that mention's links resolve to the name.
-        let mut names = BTreeSet::new();
-        let mut moved = Vec::new();
-        for name in &named {
-            let span = &name.span;
-            if returned(span.segment) {
-                let key = (span.segment, span.start, span.end);
-                let decoded = (span.segment, name.decoded.0, name.decoded.1);
-                let left = decoded != key && !names.contains(&decoded);
-                if left && spans.remove(&decoded).is_some() {
-                    moved.push((decoded, key));
-                }
-                names.insert(key);
-                spans.insert(key, span);
-            }
-        }
-        let mut coordinates = BTreeMap::new();
+        let (spans, moved) = returned_spans(&named, &mentioned, returned);
+        let (spans, mut coordinates) = message_spans(&window, spans, conversation);
         let mut output = EncoderOutput {
-            spans: Vec::new(),
+            spans,
             links: Vec::new(),
             vad: None,
             context_links: Vec::new(),
             speaker_links: Vec::new(),
             stack_sha16: self.card.stack_sha16.clone(),
         };
-        for (key, span) in spans {
-            let segment = &window.segments[span.segment];
-            // The conversation window keeps every message's segment in
-            // order, so a segment's index is its flattened message ordinal.
-            let message = if conversation {
-                span.segment
-            } else {
-                segment.message_index
-            };
-            coordinates.insert(key, output.spans.len());
-            output.spans.push(NerSpan {
-                message,
-                start: span.start - segment.base + segment.source_offset,
-                end: span.end - segment.base + segment.source_offset,
-                label: span.label.clone(),
-                confidence: span.confidence,
-            });
-        }
         for (decoded, key) in moved {
             if let Some(&index) = coordinates.get(&key) {
                 coordinates.entry(decoded).or_insert(index);
@@ -506,50 +543,4 @@ impl LocalTagger {
         }
         Ok(output)
     }
-}
-
-/// The character vocabulary as the head reads it, and the embedding rows it
-/// fills: ids run from 2 with no gap, 0 being padding and 1 an unknown
-/// character, as the model project's loader requires.
-fn character_vocab(vocab: BTreeMap<String, u32>) -> anyhow::Result<(HashMap<char, u32>, usize)> {
-    let mut ids = BTreeSet::new();
-    let mut table = HashMap::with_capacity(vocab.len());
-    for (key, id) in vocab {
-        let mut scalars = key.chars();
-        let (Some(character), None) = (scalars.next(), scalars.next()) else {
-            anyhow::bail!("oneironer character vocabulary keys must be single characters");
-        };
-        ids.insert(id);
-        table.insert(character, id);
-    }
-    let rows = table.len() + 2;
-    anyhow::ensure!(
-        ids.len() == table.len()
-            && ids.first() == Some(&2)
-            && ids.last().map(|&last| last as usize + 1) == Some(rows),
-        "oneironer character vocabulary ids must run from 2 with no gap"
-    );
-    Ok((table, rows))
-}
-
-fn validate_labels(labels: &[String]) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        labels.first().map(String::as_str) == Some("O"),
-        "local extraction BIO table must start with O"
-    );
-    let mut seen = BTreeSet::new();
-    for label in labels {
-        anyhow::ensure!(seen.insert(label), "duplicate extraction BIO label");
-        if label == "O" {
-            continue;
-        }
-        let Some((prefix, kind)) = label.split_once('-') else {
-            anyhow::bail!("invalid extraction BIO label");
-        };
-        anyhow::ensure!(
-            matches!(prefix, "B" | "I") && !kind.is_empty() && kind.len() <= 64,
-            "invalid extraction BIO label"
-        );
-    }
-    Ok(())
 }

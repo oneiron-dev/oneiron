@@ -54,6 +54,17 @@ pub(crate) async fn vault_code_export(
     .await
 }
 
+pub(crate) async fn vault_code_import(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeRepoImportRequest,
+) -> Listed<CodeRepoImportView> {
+    as_owner(server, auth, "vault.code.import", move |memory, owner| {
+        memory.code_repo_import_as(owner, input)
+    })
+    .await
+}
+
 pub(crate) async fn vault_code_origin_authority_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -190,6 +201,48 @@ pub(crate) async fn vault_code_origin_mirror_push(
         auth,
         "vault.code.origin.mirror.push",
         move |memory, owner| memory.origin_mirror_push_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_repos_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeRepoGetRequest,
+) -> Listed<Option<CodeRepoView>> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.repos.get",
+        move |memory, owner| memory.code_repo_get_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_forks_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeForkGetRequest,
+) -> Listed<Option<CodeForkView>> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.forks.get",
+        move |memory, owner| memory.code_fork_get_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_ingress_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodePushIngressGetRequest,
+) -> Listed<Option<CodePushIngressView>> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.ingress.get",
+        move |memory, owner| memory.code_push_ingress_get_as(owner, input),
     )
     .await
 }

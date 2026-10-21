@@ -645,6 +645,10 @@ impl<'a> ContextPackBuilder<'a> {
                 &retrieval_quality,
             );
 
+            // The snapshot's last read is above. `code_instruction_handles`
+            // opens its own read txn, and a second live reader on this thread
+            // fails as Storage (MDB_BAD_RSLOT), so this one ends first (FIX 7611).
+            drop(rtxn);
             let units: Vec<_> = results.iter().chain(&neighbors).map(|row| row.id).collect();
             let instruction_files = self.vault.code_instruction_handles(&units)?;
             Ok(ContextPackRun {

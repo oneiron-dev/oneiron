@@ -2,7 +2,8 @@
 //! pages through the vault's NOTEs, reads each one the Dreamer may read
 //! whose kind allows extraction, asks the extraction role which beliefs the
 //! note grounds, and promotes them through the promotion gate. Every belief
-//! cites byte ranges of the exact markdown read, so a model cannot ground a
+//! quotes the exact markdown read, and the review binds each quote to the one
+//! byte range of it that it names (FIX 7506), so a model cannot ground a
 //! belief in text the note does not hold. A NOTE whose markdown has not
 //! changed since its last review is not read again.
 //!
@@ -25,23 +26,27 @@
 //!
 //! The first review to finish in a calendar month also runs the NOTE
 //! tombstone review (`note/tombstone_review.rs`, FIX 2419).
+//!
+//! A review whose reply names the note's topic keeps it on the record as
+//! its topic membership, and that write also declares the topic group's
+//! summary (`note_topics.rs`, FIX 907). A reply that names none, or names
+//! one malformed, keeps none and declares nothing.
 
 use std::ops::Range;
 
-use rmpv::Value;
-
-use super::evidence::EvidenceLocator;
 use super::executor::ConsolidationExecutor;
-use super::executor::extraction::{
-    PadAsk, check_extraction_reply, decode_model_locator, entity_id_from_hex, extraction_reply,
+use super::executor::extraction::check_extraction_reply;
+use super::extracted_people::{MintNamespace, NoteSource, bind_people, mint_note_people};
+use super::neighbourhood::{Neighbourhood, Passage, discover_in};
+use super::note_classification::{PadAsk, note_classification_reply};
+use super::note_topics::{
+    NoteTopicLineage, NoteTopicMembership, queue_note_topic_summaries_in_txn,
 };
-use super::provenance::PromotionCandidate;
 use super::roles::DREAMER_EXTRACTION_ROLE;
 use super::step_charge::StepChargeTally;
-use super::support::{SCOPE_PROJECT_KEY, TURN_BODY_FACET_REF_KEY, invalid_consolidation};
-use super::value_projection::json_to_rmpv;
+use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
-use crate::claim::{ClaimSource, ClaimSubject, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
@@ -51,9 +56,10 @@ use crate::llm::{
 };
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::side_table::{self, Named, SideTable};
-use crate::temporal::TimeRange;
-use crate::write_envelope::ClaimCandidate;
 use crate::{EntityId, Result, Vault};
+
+mod candidates;
+use candidates::{NoteSources, cites, note_candidate};
 
 const CURSOR: SideTable<(), EntityId, Named> =
     SideTable::new(&side_table::DREAMER_NOTE_REVIEW_CURSOR);
@@ -95,6 +101,9 @@ struct NoteReviewRecord {
     /// The review attempt that wrote this record: an attempt resumed after a
     /// checkpoint never re-asks what it just asked.
     attempt: AttemptId,
+    /// The note's topic, when its classification named one (FIX 907): the
+    /// one record of its topic membership.
+    topic: Option<NoteTopicMembership>,
 }
 /// NOTEs per page. The cursor moves a page at a time, so a review cut by
 /// its deadline resumes where it stopped.
@@ -115,6 +124,9 @@ struct Note {
     facet: EntityId,
     project: EntityId,
     version: ScopeResource,
+    /// The known entities the markdown names, read as an extraction
+    /// transcript's listing is (FIX 7506): entities only, no claims.
+    listed: Neighbourhood,
 }
 
 impl ConsolidationExecutor<'_> {
@@ -190,24 +202,45 @@ impl ConsolidationExecutor<'_> {
         let mut scope = crate::llm::Scope::default();
         scope.project = Some(note.project);
         scope.readable.insert(note.version.clone());
-        let request =
-            match Self::note_request(&call, note.id, &note.markdown, note.sealed_pad, &scope) {
-                Ok(request) => request,
-                Err(error) => return Ok(Some(charges.park(&error.to_string()))),
-            };
+        // The people a reply declares are minted under the review's queued
+        // parent, from the NOTE's own axes (FIX 7506).
+        let namespace = MintNamespace::new(
+            run.attempt_id,
+            attempt.status.payload.parent_attempt,
+            None,
+            Some(note.facet),
+            None,
+        );
+        let (request, labels) = match Self::note_request(
+            &call,
+            note.id,
+            &note.listed,
+            &note.markdown,
+            note.sealed_pad,
+            &scope,
+            &namespace,
+        ) {
+            Ok(request) => request,
+            Err(error) => return Ok(Some(charges.park_on_error(&error))),
+        };
         let mut request =
             match ctx
                 .vault
                 .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &call.inference)
             {
                 Ok(request) => request.into_request(),
-                Err(error) => return Ok(Some(charges.park(&error.to_string()))),
+                Err(error) => return Ok(Some(charges.park_on_error(&error))),
             };
         if let Err(error) = super::roles::bind_reasoning(ctx.vault, call.backend, &mut request) {
-            return Ok(Some(charges.park(&error.to_string())));
+            return Ok(Some(charges.park_on_error(&error)));
         }
         let Ok(hash) = request.canonical_hash() else {
-            return Ok(Some(charges.park("note review request hash failed")));
+            // It waits on no owner act: it resumes after its retry delay
+            // (OF-193a).
+            return Ok(Some(charges.park_for(
+                "note review request hash failed",
+                DreamerParkCause::Retry,
+            )));
         };
         let step = DurableStepContext {
             vault: ctx.vault,
@@ -223,7 +256,7 @@ impl ConsolidationExecutor<'_> {
             call.backend,
             self.guard,
             request,
-            &check_extraction_reply,
+            &check_note_review_reply,
         )
         .await
         {
@@ -240,7 +273,7 @@ impl ConsolidationExecutor<'_> {
                         ctx.vault,
                         run.attempt_id,
                         hash,
-                        "note review needs the extraction model",
+                        NOTE_FALLBACK,
                         &response,
                     )?));
                 }
@@ -256,12 +289,14 @@ impl ConsolidationExecutor<'_> {
                 charges.record_usage(&usage);
                 return Ok(Some(charges.checkpoint()));
             }
+            // A refused reply asks again after its retry delay (FIX 7218,
+            // Engine 10-21): a private park would keep its row leased.
             Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
                 charges.record_usage(&usage);
-                return Ok(Some(charges.park(&format!(
-                    "note review reply refused: {}",
-                    errors.join("; ")
-                ))));
+                return Ok(Some(charges.park_for(
+                    &format!("note review reply refused: {}", errors.join("; ")),
+                    DreamerParkCause::Retry,
+                )));
             }
             Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
                 return Ok(Some(charges.checkpoint()));
@@ -275,19 +310,22 @@ impl ConsolidationExecutor<'_> {
         if ctx.deadline.expired() {
             return Ok(Some(charges.checkpoint()));
         }
-        let reply = match extraction_reply(&response) {
+        let reply = match note_classification_reply(&response) {
             Ok(reply) => reply,
-            Err(error) => return Ok(Some(charges.park(&error.to_string()))),
+            Err(error) => return Ok(Some(charges.park_on_error(&error))),
         };
-        let importance = reply
-            .importance
-            .as_ref()
-            .and_then(serde_json::Value::as_f64)
-            .filter(|importance| (0.0..=1.0).contains(importance));
+        let importance = reply.importance;
+        // The reply's labels read through the request's own map; each
+        // declared person binds once, before any candidate names it.
+        let sources = NoteSources {
+            labels: &labels,
+            note,
+        };
+        let people = bind_people(&reply.persons, &sources, &namespace);
         let mut candidates = Vec::new();
         let mut cited = Vec::new();
         for item in &reply.candidates {
-            match note_candidate(item, note, run) {
+            match note_candidate(item, note, run, &sources, &people) {
                 Ok((candidate, ranges)) => {
                     candidates.push(candidate);
                     cited.extend(ranges);
@@ -326,6 +364,14 @@ impl ConsolidationExecutor<'_> {
             .reask_of
             .as_ref()
             .map_or(0, |prior| prior.keep_reasks.saturating_add(1));
+        // A re-ask's topic stays the first review's, as its verdict does.
+        let topic = match &note.reask_of {
+            Some(prior) => prior.topic,
+            None => reply
+                .topic_key
+                .as_deref()
+                .map(|key| NoteTopicMembership::new(key, note.facet, note.project)),
+        };
         if !keep_missed.is_empty() {
             tracing::info!(
                 target: "oneiron::dreamer",
@@ -335,6 +381,17 @@ impl ConsolidationExecutor<'_> {
                 "note review: keep lines grounded no belief"
             );
         }
+        // The NOTE's people land before the beliefs about them.
+        mint_note_people(
+            ctx.vault,
+            &people,
+            &NoteSource {
+                id: note.id,
+                version: &note.version,
+                markdown: &note.markdown,
+            },
+            ctx.now_ms,
+        )?;
         if !candidates.is_empty() {
             // A refusal is the gate's answer about one belief (a persona
             // belief, say, needs turns from two sessions), never a reason
@@ -349,7 +406,13 @@ impl ConsolidationExecutor<'_> {
                 );
             }
         }
-        ctx.vault.with_write_txn_grouped(|txn| {
+        let lineage = NoteTopicLineage {
+            requester: run.agent_actor,
+            parent: run.attempt_id,
+            run_id: attempt.status.attempt.run_id.as_deref(),
+            now: ctx.now_ms / 1_000,
+        };
+        let declared = ctx.vault.with_write_txn_grouped(|txn| {
             SEEN.put(
                 &ctx.vault.store,
                 txn,
@@ -361,11 +424,66 @@ impl ConsolidationExecutor<'_> {
                     keep_missed,
                     keep_reasks,
                     attempt: run.attempt_id,
+                    topic,
                 },
-            )
+            )?;
+            // The membership and its topic's summary commit together (FIX
+            // 907): a replay never finds this NOTE reviewed and the summary
+            // unqueued.
+            match &topic {
+                Some(topic) => queue_note_topic_summaries_in_txn(ctx.vault, txn, topic, &lineage),
+                None => Ok(false),
+            }
         })?;
+        if declared {
+            ctx.vault.store.notify_attempt_observers();
+        }
         Ok(None)
     }
+}
+
+/// Every reviewed NOTE whose review record keeps `topic`, in id order: the
+/// record is the one membership, kept in no other index (FIX 907).
+pub(super) fn topic_members_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    topic: &NoteTopicMembership,
+) -> Result<Vec<EntityId>> {
+    let mut members = Vec::new();
+    for row in SEEN.iter_from(&vault.store, txn, &[])? {
+        let (note, record) = row?;
+        if record.topic.as_ref() == Some(topic) {
+            members.push(note);
+        }
+    }
+    Ok(members)
+}
+
+/// The topic `note`'s review record keeps, read in `txn`; `None` when the
+/// record keeps none, or is gone or does not read.
+pub(super) fn topic_of_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: &EntityId,
+) -> Option<NoteTopicMembership> {
+    SEEN.get(&vault.store, txn, note)
+        .ok()
+        .flatten()
+        .and_then(|record| record.topic)
+}
+
+/// Why a review parks on a deterministic fallback.
+const NOTE_FALLBACK: &str = "note review needs the extraction model";
+
+/// The review step's check (FIX 7431): a deterministic fallback whose park
+/// would resume as a Retry is refused inside the step, never memoized, so
+/// the Retry asks the model again; any other reply answers to the extraction
+/// contract, as before.
+fn check_note_review_reply(response: &crate::llm::LlmResponse) -> std::result::Result<(), String> {
+    if super::step_charge::retry_fallback(response) {
+        return Err(NOTE_FALLBACK.to_owned());
+    }
+    check_extraction_reply(response)
 }
 
 /// The NOTEs on `page` the review reads: live and readable by the Dreamer,
@@ -436,6 +554,16 @@ fn readable_notes(
         else {
             continue;
         };
+        // The entities the markdown names, by the transcript listing's own
+        // probes, through the review's own scoped read: no claims, so the
+        // review's scope holds no prior head. A NOTE carries no byline.
+        let passage = Passage {
+            turns: &[(&[][..], Some(markdown.as_str()))],
+            axes: None,
+            bound: None,
+            thing: None,
+        };
+        let (listed, _) = discover_in(vault, &txn, read, attempt, &passage)?;
         notes.push(Note {
             id: *id,
             version,
@@ -446,130 +574,8 @@ fn readable_notes(
             fingerprint,
             facet,
             project,
+            listed,
         });
     }
     Ok(notes)
-}
-
-/// One reply candidate as a belief `note` grounds, with the byte ranges it
-/// cites, or why it is not written. Every evidence ref must be a byte range
-/// of the note's markdown on character boundaries. A candidate citing anything else, or naming a
-/// correction or a relationship, is skipped: the review holds no prior head
-/// and a NOTE carries no relationship.
-fn note_candidate(
-    item: &serde_json::Value,
-    note: &Note,
-    run: &DreamerRunContext,
-) -> Result<(PromotionCandidate, Vec<Range<usize>>)> {
-    let named = |field: &str| item.get(field).is_some_and(|value| !value.is_null());
-    if named("corrects") || named("rel") {
-        return Err(invalid_consolidation(
-            "a note review holds no prior head or relationship",
-        ));
-    }
-    let subject = item
-        .get("subject")
-        .and_then(serde_json::Value::as_str)
-        .and_then(entity_id_from_hex)
-        .ok_or_else(|| invalid_consolidation("note candidate names no subject"))?;
-    let predicate = item
-        .get("predicate")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| invalid_consolidation("note candidate names no predicate"))?;
-    crate::claim::validate_predicate(predicate, false).map_err(|_| {
-        invalid_consolidation("note candidate's predicate breaks the claim grammar")
-    })?;
-    let value = match item.get("value") {
-        Some(value) if !value.is_null() => json_to_rmpv(value),
-        _ => return Err(invalid_consolidation("note candidate names no value")),
-    };
-    let confidence = item
-        .get("confidence")
-        .and_then(serde_json::Value::as_f64)
-        .unwrap_or(0.5) as f32;
-    let refs = item
-        .get("evidence_refs")
-        .and_then(serde_json::Value::as_array)
-        .filter(|refs| !refs.is_empty())
-        .ok_or_else(|| invalid_consolidation("note candidate cites no evidence"))?;
-    let mut cited_ranges = Vec::with_capacity(refs.len());
-    for cited in refs {
-        let EvidenceLocator::TurnTextRange {
-            source_id,
-            start,
-            end,
-        } = decode_model_locator(cited)?
-        else {
-            return Err(invalid_consolidation(
-                "note candidate cites something other than the note",
-            ));
-        };
-        // A blank range grounds nothing: a sealed pad's scratch lines read
-        // as blanks.
-        if source_id != note.id
-            || start >= end
-            || end > note.markdown.len()
-            || !note.markdown.is_char_boundary(start)
-            || !note.markdown.is_char_boundary(end)
-            || note.markdown[start..end].trim().is_empty()
-        {
-            return Err(invalid_consolidation(
-                "note candidate's evidence is not a range of the note",
-            ));
-        }
-        cited_ranges.push(start..end);
-    }
-    let mut fields = vec![(
-        Value::from(TURN_BODY_FACET_REF_KEY),
-        Value::Binary(note.facet.as_bytes().to_vec()),
-    )];
-    if let Some(topic) = item.get("topic_key").filter(|topic| !topic.is_null()) {
-        fields.push((Value::from("topic_key"), json_to_rmpv(topic)));
-    }
-    if note.project != crate::claim::default_project_id() {
-        fields.push((
-            Value::from(SCOPE_PROJECT_KEY),
-            Value::Binary(note.project.as_bytes().to_vec()),
-        ));
-    }
-    let candidate =
-        ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence)
-            .with_scope(Value::Map(fields));
-    let facts = super::conflict::candidate_facts(&candidate)?;
-    let claim_id = super::conflict::deterministic_claim_id(
-        run.attempt_id,
-        subject,
-        predicate,
-        &facts.value,
-        facts.world,
-        facts.facet,
-        facts.rel,
-        facts.project,
-        facts.topic.as_deref(),
-    )?;
-    let promotion = PromotionCandidate {
-        claim_id,
-        candidate,
-        evidence_turn_refs: vec![note.id],
-        provenance_chain: Vec::new(),
-        supersedes: None,
-        // The Dreamer's reading of a NOTE is its own inference, whoever
-        // wrote the NOTE.
-        evidence_meet: ClaimSource::Generated,
-        occurred: TimeRange {
-            start: run.now_ms,
-            end: run.now_ms,
-        },
-        learned_at: run.now_ms,
-        decisions: Vec::new(),
-    };
-    Ok((promotion, cited_ranges))
-}
-
-/// Whether a belief citing `range` cites the `keep` line whose text is
-/// `line`: the two share text that is not blank. Both are ranges of
-/// `markdown` on character boundaries.
-fn cites(markdown: &str, range: &Range<usize>, line: &Range<usize>) -> bool {
-    let (start, end) = (range.start.max(line.start), range.end.min(line.end));
-    start < end && !markdown[start..end].trim().is_empty()
 }

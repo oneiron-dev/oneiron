@@ -12,6 +12,7 @@
 //! thread; only the wait for dispatcher room and for a call's answer is
 //! async, and neither holds a transaction or an admission it has not claimed.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,7 +22,7 @@ use oneiron::tagging::{TaggingBackoff, TaggingReconciler};
 use super::core::SyncServer;
 use super::housekeeping::{PassControl, admit_every_pass};
 use crate::oneironer::endpoint::ProbeOutcome;
-use coordinator::Coordinator;
+use coordinator::{Coordinator, StopFuture};
 
 mod coordinator;
 
@@ -62,19 +63,33 @@ impl SyncServer {
         self: &Arc<Self>,
         pass: PassControl,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        self.tagger.as_ref()?;
-        let server = Arc::clone(self);
-        Some(tokio::spawn(async move { server.tag_forever(pass).await }))
+        self.spawn_tagging_worker_until(pass, std::future::pending::<()>())
     }
 
-    async fn tag_forever(self: Arc<Self>, control: PassControl) {
+    /// Starts the worker as [`Self::spawn_tagging_worker_admitted`] does,
+    /// until `stop` resolves (FIX 7252): from then on no marker is claimed
+    /// and no upkeep runs, a start not yet admitted ends at once, and the
+    /// task ends once every call it made has settled. A claim or a start
+    /// already admitted runs to its end, and a ready marker's call settles.
+    pub(crate) fn spawn_tagging_worker_until(
+        self: &Arc<Self>,
+        pass: PassControl,
+        stop: impl Future<Output = ()> + Send + 'static,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        self.tagger.as_ref()?;
+        let server = Arc::clone(self);
+        let stop: StopFuture = Box::pin(stop);
+        Some(tokio::spawn(server.tag_forever(pass, stop)))
+    }
+
+    async fn tag_forever(self: Arc<Self>, control: PassControl, mut stop: StopFuture) {
         // Subscribed before the first read, so a commit between it and the
         // first wait still wakes the loop.
         let wake = oneiron::attempt_queue::AttemptQueue::new(self.vault()).subscribe();
-        let Some(reconciler) = self.prepare_tagging(&control).await else {
+        let Some(reconciler) = self.prepare_tagging(&control, &mut stop).await else {
             return;
         };
-        if let Some(coordinator) = Coordinator::new(self, reconciler, control, wake) {
+        if let Some(coordinator) = Coordinator::new(self, reconciler, control, wake, stop) {
             coordinator.run().await;
         }
     }
@@ -83,15 +98,22 @@ impl SyncServer {
     /// admits the start, then builds the reconciler and returns this
     /// worker's stale leases from a previous process to the queue, until
     /// `control` pauses; the first round's upkeep releases what is left.
-    /// `None` when the tagger is refused.
+    /// `None` when the tagger is refused, or when `stop` comes before the
+    /// start is admitted; an admitted start runs to its end.
     async fn prepare_tagging(
         self: &Arc<Self>,
         control: &PassControl,
+        stop: &mut StopFuture,
     ) -> Option<Arc<TaggingReconciler>> {
         let admit = control.admission();
         let mut backoff = FIRST_BACKOFF;
         let admission = loop {
-            if !self.tagger_still_configured().await {
+            let configured = tokio::select! {
+                biased;
+                () = stop.as_mut() => return None,
+                configured = self.tagger_still_configured() => configured,
+            };
+            if !configured {
                 return None;
             }
             if self
@@ -102,7 +124,11 @@ impl SyncServer {
             {
                 break admission;
             }
-            tokio::time::sleep(backoff).await;
+            tokio::select! {
+                biased;
+                () = stop.as_mut() => return None,
+                () = tokio::time::sleep(backoff) => {}
+            }
             backoff = (backoff * 2).min(MAX_BACKOFF);
         };
         let server = Arc::clone(self);

@@ -650,6 +650,11 @@ pub struct DreamerRunTreeRecord {
     pub created_at: u64,
 }
 
+/// How long a [`DreamerParkCause::Retry`] park waits before a later pass
+/// resumes it, in store-clock seconds (Engine 10-21 ruling). Pacing, not a
+/// cap: the work always resumes, as the same try, once the delay passed.
+pub const DREAMER_RETRY_PARK_SECS: u64 = 900;
+
 /// Why a Dreamer attempt parked. The reason text is for people; this is
 /// what code reads. Only a [`Self::ProviderUnavailable`] park resumes when a
 /// model offer recovers (OF-305).
@@ -662,11 +667,18 @@ pub enum DreamerParkCause {
     ExecutorError,
     /// The wake pass hit its deadline and the attempt kept its progress.
     Checkpoint,
+    /// A refusal or error park: resumed as the same try, like Checkpoint,
+    /// once its retry delay has passed.
+    Retry,
+    /// The host's pause (a managed reap freeze, FIX 6909) stopped the pass
+    /// before the attempt dispatched: resumed like Checkpoint.
+    Paused,
     /// The pass was cancelled.
     Cancelled,
     /// It waits on a signal: a budget approval, a seat login, a peer.
     Signal,
-    /// Anything else: a missing route, a refused config, a failed step.
+    /// Anything else: a missing route, a refused config, a failed step only
+    /// an owner act clears.
     Other,
 }
 
@@ -678,9 +690,23 @@ impl DreamerParkCause {
             Self::ProviderUnavailable => "provider_unavailable",
             Self::ExecutorError => "executor_error",
             Self::Checkpoint => "checkpoint",
+            Self::Retry => "retry",
+            Self::Paused => "paused",
             Self::Cancelled => "cancelled",
             Self::Signal => "signal",
             Self::Other => "other",
+        }
+    }
+
+    /// Whether a later wake pass resumes a park of this cause as the same
+    /// try (DOOR-144), and how long after it parked: a Checkpoint or a
+    /// Paused park at once, a Retry after [`DREAMER_RETRY_PARK_SECS`].
+    #[must_use]
+    pub const fn later_pass_resume_delay(self) -> Option<u64> {
+        match self {
+            Self::Checkpoint | Self::Paused => Some(0),
+            Self::Retry => Some(DREAMER_RETRY_PARK_SECS),
+            _ => None,
         }
     }
 
@@ -689,6 +715,8 @@ impl DreamerParkCause {
             "provider_unavailable" => Some(Self::ProviderUnavailable),
             "executor_error" => Some(Self::ExecutorError),
             "checkpoint" => Some(Self::Checkpoint),
+            "retry" => Some(Self::Retry),
+            "paused" => Some(Self::Paused),
             "cancelled" => Some(Self::Cancelled),
             "signal" => Some(Self::Signal),
             "other" => Some(Self::Other),
@@ -696,19 +724,25 @@ impl DreamerParkCause {
         }
     }
 
-    /// The cause of a park a failed model call made.
+    /// The cause of a park a failed model call made (FIX 7382, Engine
+    /// 10-21): a provider outage when its provider is down; a private park
+    /// for a failure only an owner act clears (the wake driver's owner-act
+    /// check names them); and a Retry, resumed after its delay, for any other.
     #[must_use]
     pub fn of_llm(error: &crate::llm::LlmError) -> Self {
         if error.is_provider_unavailable() {
             Self::ProviderUnavailable
-        } else {
+        } else if crate::dreamer_wake::llm_waits_on_owner_act(error) {
             Self::Other
+        } else {
+            Self::Retry
         }
     }
 
-    /// The cause of a park a deterministic fallback's answer made: the
-    /// provider failure it stood in for, else other. A fallback for an
-    /// outage parks as one, so the offer's recovery resumes it.
+    /// The cause of a park a deterministic fallback's answer made: that of
+    /// the provider failure it stood in for ([`Self::of_llm`]), else other.
+    /// A fallback for an outage parks as one, so the offer's recovery
+    /// resumes it.
     #[must_use]
     pub fn of_response(response: &crate::llm::LlmResponse) -> Self {
         crate::llm::FallbackRegistry::source_of(response).map_or(Self::Other, |source| {
@@ -716,8 +750,12 @@ impl DreamerParkCause {
         })
     }
 
-    /// The cause of a park a failed durable step made: its model failure's
-    /// cause, a checkpoint at the wake-pass deadline, or other.
+    /// The cause of a park a failed durable step made (FIX 7382, Engine
+    /// 10-21): a checkpoint at the wake-pass deadline; a provider outage for
+    /// a model call whose provider is down; a private park for a failure
+    /// only an owner act clears (the model failures and engine error kinds
+    /// the wake driver's owner-act checks name); and a Retry, resumed after
+    /// its delay, for any other.
     #[must_use]
     pub fn of_step(error: &crate::llm::DurableStepError) -> Self {
         use crate::llm::DurableStepError;
@@ -725,10 +763,17 @@ impl DreamerParkCause {
             DurableStepError::Llm(source)
             | DurableStepError::ClassifiedLlm { source, .. }
             | DurableStepError::SpentLlm { source, .. } => Self::of_llm(source),
+            DurableStepError::Engine(engine) => {
+                if crate::dreamer_wake::waits_on_owner_act(engine.kind()) {
+                    Self::Other
+                } else {
+                    Self::Retry
+                }
+            }
             DurableStepError::DeadlineHardCut
             | DurableStepError::FinalizeRefused
             | DurableStepError::SpentFinalizeRefused { .. } => Self::Checkpoint,
-            _ => Self::Other,
+            _ => Self::Retry,
         }
     }
 }

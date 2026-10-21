@@ -191,8 +191,10 @@ impl Vault {
     /// it never fails the timer's own work. While a host Coach serves this
     /// vault, its model drafts each step (FIX 5609): the timer only queues
     /// its job, and the rule here never also runs. Serving means ready, not
-    /// spawned (FIX 6165): before its first round served, or after a round
-    /// erred, the rule here evaluates as with no host.
+    /// spawned (FIX 6165): before its first round served, after a round
+    /// erred, or once its readiness lapsed because no round served within
+    /// its liveness span (FIX 7211; a hung round runs on, uncancelled), the
+    /// rule here evaluates as with no host.
     pub(super) fn coach_weave_digest_settings(&self, now: u64) {
         if self.coach_weave_digest_host_ready() {
             self.queue_coach_weave_digest_settings(now);
@@ -201,7 +203,10 @@ impl Vault {
         let owners = match self.owner_schedule_ids() {
             Ok(owners) => owners,
             Err(error) => {
-                tracing::warn!(?error, "the Coach's digest settings pass was skipped");
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "the Coach's digest settings pass was skipped"
+                );
                 return;
             }
         };
@@ -211,7 +216,7 @@ impl Vault {
                 Ok(true) => self.store.notify_proactivity_changes(),
                 Ok(false) => {}
                 Err(error) => tracing::warn!(
-                    ?error,
+                    error_kind = ?error.kind(),
                     owner = %owner.to_hex(),
                     "the Coach skipped an owner's digest settings"
                 ),
@@ -312,7 +317,10 @@ impl Vault {
         let grant = self
             .coach_weave_digest_settings_grant_in_txn(txn, coach, owner)
             .unwrap_or_else(|error| {
-                tracing::warn!(?error, "the Coach's digest settings Grant was not read");
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "the Coach's digest settings Grant was not read"
+                );
                 None
             });
         let id = change_id(owner, generation, step, now)?;

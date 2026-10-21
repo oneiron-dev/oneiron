@@ -45,7 +45,7 @@ impl Purpose {
 }
 
 /// The filing's idempotency key: its purpose, then a digest of the purpose,
-/// room and subject, well inside OF-531's 128 printable bytes. The same
+/// room and subject, all printable bytes as OF-531 asks. The same
 /// filing replays its join; the decision is re-proved live on every use.
 fn intent_key(purpose: Purpose, room: EntityId, subject: &JoinSubject) -> String {
     let mut hasher = blake3::Hasher::new();

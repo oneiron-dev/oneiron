@@ -313,6 +313,7 @@ impl Vault {
                     )?
                     .map(|(name, hash)| format!("{name}:{hash:02x}"));
                     if let Some(secret) = archive_custody_secret(
+                        &self.store,
                         &id,
                         handle,
                         &raw[ENTITY_METADATA_HEADER_LEN..],
@@ -662,8 +663,12 @@ fn note_diary_author(
 /// The value goes with an active record when secrets are included, and for a
 /// caller off this device (`on_device` false) only when it is portable: a
 /// device-bound value never leaves this device (DEC-0005). Every other live
-/// record goes as its handle, to re-enter after import.
+/// record goes as its handle, to re-enter after import. The stored body is
+/// sealed (KS-6): the archive's is the plaintext DTO, its value opened
+/// explicitly from current custody; one that does not open goes as its
+/// handle, warned.
 fn archive_custody_secret(
+    store: &crate::store::Store,
     id: &EntityId,
     handle: Option<String>,
     body: &[u8],
@@ -672,19 +677,20 @@ fn archive_custody_secret(
 ) -> Result<Option<ArchiveSecretCustody>> {
     use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
     use base64::Engine as _;
-    let record = crate::secret_custody::decode_secret_custody_body(body)?;
+    let (record, plain) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
+        include_secrets
+            && record.status == SecretCustodyStatus::Active
+            && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable))
+    })?;
     if record.status == SecretCustodyStatus::Revoked {
         return Ok(None);
     }
-    let value = include_secrets
-        && record.status == SecretCustodyStatus::Active
-        && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable));
     Ok(Some(ArchiveSecretCustody {
         id: id.to_hex(),
         name: record.name.clone(),
         handle,
         metadata: record.metadata(),
-        body: value.then(|| base64::engine::general_purpose::STANDARD.encode(body)),
+        body: plain.map(|plain| base64::engine::general_purpose::STANDARD.encode(&*plain)),
     }))
 }
 

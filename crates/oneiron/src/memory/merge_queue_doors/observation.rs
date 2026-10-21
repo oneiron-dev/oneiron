@@ -25,6 +25,10 @@ impl Memory<'_> {
             .map(|id| queue.batch(id))
             .collect::<crate::error::Result<Vec<_>>>()?;
         let verdicts = self.merge_queue_verdicts(&batches)?;
+        let drive = batches
+            .iter()
+            .map(|batch| queue.queue_driver_observation(batch))
+            .collect();
         Ok(MergeQueueObservation {
             repo: pointers.repo,
             head_commit: pointers.head_commit,
@@ -32,6 +36,8 @@ impl Memory<'_> {
             pending_slow_batch_refs: pointers.pending_slow_batch_refs,
             batches: batches.into_iter().map(batch_view).collect(),
             verdicts,
+            drive,
+            green_export: queue.green_export_view(),
         })
     }
 

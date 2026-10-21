@@ -1,11 +1,13 @@
 //! The owner reads the self-healing loop (ARCH-0066): the three signed
 //! oversight receipts the vault emits, and the custom-agent dispatches the
-//! failure ladder ended, grouped by failure class, with a drill into one.
+//! failure ladder ended, grouped by failure class, with a drill into one, and the
+//! Coach's proposals still waiting for the owner, ordered by impact (OF-418 L4).
 
+use oneiron::EntityId;
 use oneiron::attempt_queue::{AttemptEvent, AttemptId, AttemptResultRef, AttemptState};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::failure_ladder::FailureSignalClass;
 use oneiron::failure_ladder::oversight::OversightCounts;
+use oneiron::failure_ladder::{FailureSignalClass, HealResidue};
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerResult, entity_id};
@@ -62,6 +64,157 @@ pub(crate) fn failure_groups(vault: &oneiron::Vault) -> OwnerResult<Vec<FailureG
             attempts: group.member_refs.iter().map(attempt_hex).collect(),
         })
         .collect())
+}
+
+/// One source of the self-healing loop's human residue, in the engine's impact order
+/// (OF-418 L4): what the Coach's proposals waiting for the owner were filed for, with the
+/// identifiers and proof the order rests on, never cause text. The grouped failure counts
+/// are their own read, unchanged.
+#[derive(Debug, Serialize)]
+pub(crate) struct HealResidueRead {
+    /// `case`, `report`, `issue` or `unproved`.
+    pub(crate) source_kind: &'static str,
+    /// A case's ref, a report's receipt, an issue's id, or an unproved row's pending claim.
+    pub(crate) source: String,
+    pub(crate) proposals: Vec<HealProposalRead>,
+    pub(crate) attempts: Vec<HealAttemptRead>,
+    pub(crate) task: Option<String>,
+    /// `unfinished`, a terminal disposition, or `unknown`.
+    pub(crate) task_state: Option<&'static str>,
+    pub(crate) stuck_since: Option<u64>,
+    pub(crate) stuck_on: Vec<String>,
+    /// Every distinct unfinished TASK that waits on the source, in walk order.
+    pub(crate) dependents: Vec<String>,
+    /// Every recorded `blocked_by` edge the walk read.
+    pub(crate) edges: Vec<HealEdgeRead>,
+    pub(crate) source_time: Option<u64>,
+    pub(crate) score: HealScoreRead,
+    /// Every part no record proves, with why it scores nothing.
+    pub(crate) unknown: Vec<HealUnknownRead>,
+}
+
+/// One Coach proposal waiting in the owner's tray. `decision` and `proposed_at` are null
+/// when its tray row is corrupt and names neither (FIX 7378).
+#[derive(Debug, Serialize)]
+pub(crate) struct HealProposalRead {
+    pub(crate) claim: String,
+    pub(crate) decision: Option<String>,
+    pub(crate) predicate: Option<String>,
+    pub(crate) proposed_at: Option<u64>,
+}
+
+/// The attempt a source names, as its row stands now.
+#[derive(Debug, Serialize)]
+pub(crate) struct HealAttemptRead {
+    pub(crate) attempt: String,
+    pub(crate) state: AttemptState,
+    pub(crate) updated_at: u64,
+    pub(crate) task_ref: Option<String>,
+    pub(crate) parked_at: Option<u64>,
+    pub(crate) park_cause: Option<&'static str>,
+}
+
+/// One recorded `blocked_by` edge: `dependent` waits on `blocker`.
+#[derive(Debug, Serialize)]
+pub(crate) struct HealEdgeRead {
+    pub(crate) dependent: String,
+    pub(crate) blocker: String,
+    pub(crate) recorded_at: u64,
+    pub(crate) dependent_state: &'static str,
+    pub(crate) blocker_state: &'static str,
+}
+
+/// What a row's records prove, in the order the engine compares it.
+#[derive(Debug, Serialize)]
+pub(crate) struct HealScoreRead {
+    pub(crate) chain: bool,
+    pub(crate) dependents: u64,
+    pub(crate) parked_or_stuck: bool,
+}
+
+/// One unproved part of a row.
+#[derive(Debug, Serialize)]
+pub(crate) struct HealUnknownRead {
+    pub(crate) marker: &'static str,
+    pub(crate) about: String,
+    pub(crate) explanation: &'static str,
+}
+
+pub(crate) fn residue(vault: &oneiron::Vault) -> OwnerResult<Vec<HealResidueRead>> {
+    Ok(vault
+        .healer_residue_by_impact()?
+        .into_iter()
+        .map(residue_read)
+        .collect())
+}
+
+fn residue_read(row: HealResidue) -> HealResidueRead {
+    let (stuck_since, stuck_on) = match row.stuck {
+        Some((since, on)) => (Some(since), on.iter().map(EntityId::to_hex).collect()),
+        None => (None, Vec::new()),
+    };
+    HealResidueRead {
+        source_kind: row.source.kind(),
+        source: row.source.id(),
+        proposals: row
+            .proposals
+            .into_iter()
+            .map(|proposal| HealProposalRead {
+                claim: proposal.claim.to_hex(),
+                decision: proposal.decision.map(|decision| bytes_hex(&decision)),
+                predicate: proposal.predicate,
+                proposed_at: proposal.proposed_at,
+            })
+            .collect(),
+        attempts: row
+            .attempts
+            .into_iter()
+            .map(|attempt| HealAttemptRead {
+                attempt: attempt_hex(&attempt.attempt),
+                state: attempt.state,
+                updated_at: attempt.updated_at,
+                task_ref: attempt.task_ref,
+                parked_at: attempt.parked.map(|(at, _)| at),
+                park_cause: attempt.parked.map(|(_, cause)| cause.as_str()),
+            })
+            .collect(),
+        task: row.task.map(|(task, _)| task.to_hex()),
+        task_state: row.task.map(|(_, state)| state.as_str()),
+        stuck_since,
+        stuck_on,
+        dependents: row.dependents.iter().map(EntityId::to_hex).collect(),
+        edges: row
+            .edges
+            .into_iter()
+            .map(|edge| HealEdgeRead {
+                dependent: edge.dependent.to_hex(),
+                blocker: edge.blocker.to_hex(),
+                recorded_at: edge.recorded_at,
+                dependent_state: edge.dependent_state.as_str(),
+                blocker_state: edge.blocker_state.as_str(),
+            })
+            .collect(),
+        source_time: row.source_time,
+        score: HealScoreRead {
+            chain: row.score.chain,
+            dependents: row.score.dependents,
+            parked_or_stuck: row.score.parked_or_stuck,
+        },
+        unknown: row
+            .unknown
+            .into_iter()
+            .map(|unknown| HealUnknownRead {
+                marker: unknown.marker,
+                about: unknown.about,
+                explanation: unknown.explanation,
+            })
+            .collect(),
+    }
+}
+
+/// Bytes in lowercase hex.
+fn bytes_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// One member of a group, named by the class it was listed under.

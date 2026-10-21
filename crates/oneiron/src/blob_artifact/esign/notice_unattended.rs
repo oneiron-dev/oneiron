@@ -29,7 +29,9 @@ use super::notice_door::EsignNoticesDispatchView;
 use super::notice_scope::NoticeScope;
 use super::notice_send_act::send_act_in;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
-use crate::authority::principal_standing_in_txn;
+use crate::authority::{
+    NoStanding, PACT_STANDING_LAPSED, principal_standing_in_txn, principal_standing_or_lapse_in_txn,
+};
 use crate::edge::EdgeActorClass;
 use crate::memory::MemoryResult;
 use crate::{EntityId, Result, Vault};
@@ -97,10 +99,18 @@ fn bind_in<'a>(
     if act.principal != group.principal {
         return Ok(Err("the recorded send act names another principal"));
     }
-    let Some(standing) =
-        principal_standing_in_txn(vault, txn, act.principal, act.class, NOTICE_DISPATCH_VERB)?
-    else {
-        return Ok(Err("the notices' principal no longer stands"));
+    let standing = match principal_standing_or_lapse_in_txn(
+        vault,
+        txn,
+        act.principal,
+        act.class,
+        NOTICE_DISPATCH_VERB,
+    )? {
+        Ok(standing) => standing,
+        Err(NoStanding::PactStandingLapsed) => return Ok(Err(PACT_STANDING_LAPSED)),
+        Err(NoStanding::NotStanding) => {
+            return Ok(Err("the notices' principal no longer stands"));
+        }
     };
     Ok(Ok(UnattendedNotices {
         vault,

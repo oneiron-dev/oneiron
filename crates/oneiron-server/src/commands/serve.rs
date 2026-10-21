@@ -150,6 +150,8 @@ pub(super) async fn serve_anchored(
                 Some(Box::new((pass, awake.hold())) as Box<dyn Send>)
             })
         },
+        // Tagging stops with serve and settles every call it made (FIX 7303).
+        true,
     )
     .await?;
     let sync_server = started.server;
@@ -279,7 +281,8 @@ pub(crate) async fn build_server(
                     .filter(|token| !token.is_empty())
                     .map(zeroize::Zeroizing::new),
             }
-        }));
+        }))
+        .with_feedback_triage(config.feedback.triage.clone());
     // `[models] extraction_egress = true` is the owner's opt-in for
     // extraction to leave the device (FIX 6621): the raw `/v1/llm` routes
     // and every door that reads the host's predicate admit it, still within
@@ -369,7 +372,15 @@ pub(crate) struct DesktopWorkers {
     oversight: crate::server::HealerOversight,
     lifecycle: crate::server::LifecycleScheduler,
     linear_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Plain serve's tagging worker and the sender of the stop it watches,
+    /// joined rather than aborted.
+    tagging: Option<(
+        tokio::task::JoinHandle<()>,
+        tokio::sync::watch::Sender<bool>,
+    )>,
     workers: Vec<tokio::task::JoinHandle<()>>,
+    /// The tagger slot's close, run once every worker has ended (FIX 7383).
+    tagger: Option<crate::oneironer::SlotClose>,
 }
 
 /// Starts every worker the unmanaged serve path runs on `sync_server`, in
@@ -377,12 +388,18 @@ pub(crate) struct DesktopWorkers {
 /// GPU pool's health poller, already running. `lifecycle_admission` is
 /// called where the lifecycle scheduler starts, after the Linear mirror,
 /// and gates each housekeeping pass. Embedded serve starts the same workers
-/// through here.
+/// through here. With `drain_tagging`, plain serve's, the tagging worker
+/// claims nothing once serving stops, and [`DesktopWorkers::shutdown`] waits
+/// until every call it made has settled (FIX 7303). Without it, embedded
+/// serve's, tagging is aborted with the other workers: the app never waits
+/// on a model call to stop, and a marker it left leased is tagged again at
+/// the next start.
 pub(crate) async fn start_desktop_workers(
     sync_server: SyncServer,
     config: &ServeConfig,
     gpu_poller: Option<tokio::task::JoinHandle<()>>,
     lifecycle_admission: impl FnOnce() -> crate::server::HousekeepingAdmission,
+    drain_tagging: bool,
 ) -> anyhow::Result<StartedWorkers> {
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(config);
@@ -415,7 +432,30 @@ pub(crate) async fn start_desktop_workers(
     // hooks or models it serves, before the connector settler starts
     // (DOOR-079 1a).
     crate::code_consent_host::ServerCodeConsentHost::install(&sync_server);
-    let mut workers = sync_server.spawn_slot_workers();
+    // Open sockets may never close by themselves, so the drain is bounded.
+    let (stopping, stopped) = tokio::sync::watch::channel(false);
+    let (mut workers, tagging) = if drain_tagging {
+        // The slot workers `spawn_slot_workers` starts, in its order, with
+        // tagging's own handle kept apart: it stops on serve's stop.
+        let embedding = sync_server.spawn_embedding_worker();
+        let mut tagging_stopped = stopped.clone();
+        let tagging = sync_server.spawn_tagging_worker_until(
+            crate::server::PassControl::unpaused(crate::server::admit_every_pass()),
+            async move {
+                let _ = tagging_stopped.wait_for(|stop| *stop).await;
+            },
+        );
+        let slots = [
+            embedding,
+            sync_server.spawn_media_embedding_worker(),
+            sync_server.spawn_resident_pump(),
+            Some(sync_server.spawn_connector_settler()),
+        ];
+        let tagging = tagging.map(|handle| (handle, stopping.clone()));
+        (slots.into_iter().flatten().collect::<Vec<_>>(), tagging)
+    } else {
+        (sync_server.spawn_slot_workers(), None)
+    };
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
@@ -528,8 +568,6 @@ pub(crate) async fn start_desktop_workers(
     workers.push(super::history_import::notes::folder::spawn_rescans(
         Arc::clone(&sync_server),
     ));
-    // Open sockets may never close by themselves, so the drain is bounded.
-    let (stopping, stopped) = tokio::sync::watch::channel(false);
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
@@ -559,6 +597,10 @@ pub(crate) async fn start_desktop_workers(
         None,
         crate::server::admit_every_pass(),
     );
+    let tagger = sync_server
+        .tagger
+        .as_ref()
+        .map(crate::oneironer::TaggerSlot::closer);
     Ok(StartedWorkers {
         server: sync_server,
         artifact_app,
@@ -574,7 +616,9 @@ pub(crate) async fn start_desktop_workers(
             oversight,
             lifecycle,
             linear_handle,
+            tagging,
             workers,
+            tagger,
         },
     })
 }
@@ -599,6 +643,12 @@ impl DesktopWorkers {
         if let Some(voice) = self.voice {
             voice.stop().await;
         }
+        // Plain serve's tagging claims nothing more, and every call it made
+        // settles while the models it calls still serve (FIX 7303).
+        if let Some((tagging, stopping)) = self.tagging {
+            let _ = stopping.send_replace(true);
+            let _ = tagging.await;
+        }
         // A pass or step in flight reaches its own boundary before this returns.
         self.ai.shutdown().await;
         // A receipt write already admitted ends before the process does.
@@ -613,6 +663,11 @@ impl DesktopWorkers {
         for handle in self.workers {
             handle.abort();
             let _ = handle.await;
+        }
+        // Tagging has ended on both paths (joined above, or aborted and
+        // awaited in the loop): each platform child is shut down and reaped.
+        if let Some(tagger) = self.tagger {
+            tagger.close().await;
         }
         Ok(())
     }

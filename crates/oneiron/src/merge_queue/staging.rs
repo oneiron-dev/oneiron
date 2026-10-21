@@ -1,4 +1,5 @@
 //! Bounded speculation, materialization and cleanup through the shared repo writer.
+use super::types::QueueRecord;
 use super::{BatchState, MergeBatch, MergeProposal, MergeQueue, RepoQueueOrder, SpeculativePath};
 use crate::{
     contract_oracle::{invalid, safe_path},
@@ -30,21 +31,7 @@ impl MergeQueue<'_> {
         self.require_current(&queue)?;
         self.require_clean(self.repo.repo_root())?;
         validate_proposals(&proposals, &queue.pointers.green)?;
-        // The sequence only salts the batch id, so it rolls over rather than
-        // ending the queue (rule 5), past any id a kept batch holds.
-        let id = loop {
-            queue.sequence = queue.sequence.wrapping_add(1);
-            let encoded = rmp_serde::to_vec_named(&(
-                self.repo.identity().as_hex(),
-                queue.sequence,
-                &proposals,
-            ))
-            .map_err(|_| invalid("merge batch identity encoding failed"))?;
-            let id = blake3::hash(&encoded).to_hex().to_string();
-            if !self.batch_exists(&id)? {
-                break id;
-            }
-        };
+        let id = self.next_batch_id(&mut queue, &proposals)?;
         let changed = proposals
             .iter()
             .flat_map(|p| p.files.iter().map(|f| f.path.as_str()));
@@ -64,6 +51,7 @@ impl MergeQueue<'_> {
             quarantine: None,
             selected_tests,
             run_order: None,
+            drive: None,
         };
         if let Err(refused) = self.save_checked(&queue, &mut batch, admit)? {
             return Ok(Err(refused));
@@ -71,9 +59,43 @@ impl MergeQueue<'_> {
         Ok(Ok(batch))
     }
 
+    /// The id a new batch of `proposals` takes. The sequence only salts the
+    /// batch id, so it rolls over rather than ending the queue (rule 5),
+    /// past any id a kept batch holds.
+    pub(super) fn next_batch_id(
+        &self,
+        queue: &mut QueueRecord,
+        proposals: &[MergeProposal],
+    ) -> Result<String> {
+        loop {
+            queue.sequence = queue.sequence.wrapping_add(1);
+            let encoded = rmp_serde::to_vec_named(&(
+                self.repo.identity().as_hex(),
+                queue.sequence,
+                proposals,
+            ))
+            .map_err(|_| invalid("merge batch identity encoding failed"))?;
+            let id = blake3::hash(&encoded).to_hex().to_string();
+            if !self.batch_exists(&id)? {
+                return Ok(id);
+            }
+        }
+    }
+
     /// Stage every inclusion/exclusion path. Staging may be resumed after a crash;
     /// already registered partial worktrees are removed and rebuilt, never trusted.
     pub fn stage(&self, id: &str) -> Result<MergeBatch> {
+        self.stage_with(id, &mut |_| Ok(()))
+    }
+
+    /// [`Self::stage`]'s one body. `pin` runs on the staged batch before it
+    /// is saved: the owner's stage pins nothing; the driver's pins every
+    /// candidate commit first (FIX 6868).
+    pub(super) fn stage_with(
+        &self,
+        id: &str,
+        pin: &mut dyn FnMut(&mut MergeBatch) -> Result<()>,
+    ) -> Result<MergeBatch> {
         let _guard = lock_repository(self.repo.common_dir())?;
         let queue = self.queue()?;
         self.require_current(&queue)?;
@@ -141,6 +163,7 @@ impl MergeQueue<'_> {
             });
         }
         batch.state = BatchState::Staged;
+        pin(&mut batch)?;
         self.save(&queue, &[&batch])?;
         Ok(batch)
     }
@@ -148,6 +171,15 @@ impl MergeQueue<'_> {
     fn materialize(&self, batch: &MergeBatch, mask: u64, root: &Path) -> Result<(String, String)> {
         for (index, proposal) in batch.proposals.iter().enumerate() {
             if mask & (1 << index) == 0 {
+                continue;
+            }
+            // A received bundle applies its exact entries through the index.
+            if proposal
+                .files
+                .iter()
+                .any(|file| file.metadata_edit.is_some())
+            {
+                super::file_metadata::materialize_received_merge_files(root, &proposal.files)?;
                 continue;
             }
             for file in &proposal.files {
@@ -355,7 +387,7 @@ impl MergeQueue<'_> {
     }
 }
 
-fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Result<()> {
+pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Result<()> {
     if proposals.is_empty() || proposals.len() > 6 {
         return Err(invalid("merge batch must contain one to six proposals"));
     }
@@ -371,14 +403,29 @@ fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Result<()> {
             return Err(invalid("merge proposal identity or green base is invalid"));
         }
         let mut paths = BTreeSet::new();
+        // A received bundle's files all carry their reviewed state change;
+        // an ordinary proposal's carry none (G4 PR2).
+        let received = proposal
+            .files
+            .iter()
+            .any(|file| file.metadata_edit.is_some());
         for file in &proposal.files {
-            if file.content.is_none() {
-                return Err(invalid(
-                    "merge deletion requires a reviewed delete operation",
-                ));
+            match &file.metadata_edit {
+                Some(edit) => super::file_metadata::validate_received_merge_file(file, edit)?,
+                None if received => {
+                    return Err(invalid("a received bundle's every file carries its state"));
+                }
+                None if file.content.is_none() => {
+                    return Err(invalid(
+                        "merge deletion requires a reviewed delete operation",
+                    ));
+                }
+                None if file.expected == file.content => {
+                    return Err(invalid("duplicate, oversized or empty merge edit"));
+                }
+                None => {}
             }
-            if !paths.insert(&file.path) || file.path.len() > 4096 || file.expected == file.content
-            {
+            if !paths.insert(&file.path) || file.path.len() > 4096 {
                 return Err(invalid("duplicate, oversized or empty merge edit"));
             }
             total = total

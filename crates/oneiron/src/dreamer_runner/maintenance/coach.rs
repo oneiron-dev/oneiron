@@ -20,6 +20,7 @@ use crate::actor_claims::{
     SessionActorDistiller, SessionDistillDrain, drain_pending_session_actor_distills,
 };
 use crate::attempt_queue::AttemptId;
+use crate::feedback::COACH_FEEDBACK_DELIVERY_FACET;
 use crate::llm::decision::{PersonChangedAnswer, PersonThreshold};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_attribution::{
@@ -138,10 +139,19 @@ pub const COACH_TRADEOFF_ROUTE_FACET: &str = "coach.tradeoff_route";
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 /// Predicate of the Coach's Proposed room nudge, its subject the room's host.
 pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
+/// One room nudge as `read` reads it in `txn`, for the host's own upkeep
+/// read and voice (OF-417); `None` for anything else. It writes nothing.
+pub(crate) fn room_upkeep_nudge_in_txn(
+    read: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: crate::EntityId,
+) -> crate::Result<Option<crate::workspace_roster::RoomUpkeepNudge>> {
+    super::room_upkeep::read_nudge_in_txn(read, txn, id)
+}
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 14] = [
+const HOST_FACETS: [&str; 16] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -156,6 +166,10 @@ const HOST_FACETS: [&str; 14] = [
     COACH_JUDGE_LABEL_RECHECKS_FACET,
     COACH_WEAVE_DIGEST_SETTINGS_FACET,
     COACH_RESEARCH_SELECT_FACET,
+    // The feedback sweep (OF-420): the inbox and each bound GitHub source,
+    // under the fixed dedupe key the owner's run-now door shares.
+    crate::feedback::COACH_FEEDBACK_SWEEP_FACET,
+    COACH_FEEDBACK_DELIVERY_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 9] = [
@@ -249,7 +263,8 @@ impl DreamerRunnerStore<'_> {
                 now,
             )?;
         }
-        if crate::self_heal::blocked_reports::any_pending_in_txn(self.vault, &*txn)? {
+        // A waiting report or model issue (OF-418 L3) wakes the Issues job.
+        if crate::self_heal::issue_work::any_pending_in_txn(self.vault, &*txn)? {
             self.enqueue_coach_issues_in_txn(txn, parent_attempt, run_id, now)?;
         }
         Ok(())
@@ -538,7 +553,7 @@ impl Vault {
 /// the same runs writes the same events again, and a miss already answered
 /// files no second reindex.
 pub(super) fn run_read_hardening(vault: &Vault, now: u64) -> Result<()> {
-    let misses = vault.run_retrieval_miss_detector(READ_HARDENING_SCOPE, usize::MAX)?;
+    let misses = vault.run_retrieval_miss_detector(READ_HARDENING_SCOPE)?;
     vault.propose_tier1_repairs(&misses, now)?;
     Ok(())
 }

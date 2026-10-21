@@ -306,40 +306,17 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Vec<AgentGrantStanding>> {
-        let mut grants = Vec::new();
-        for id in self
-            .store
-            .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
-        {
-            let id = id?;
-            let LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-                body,
-            } = live_entity_row_in_txn(&self.store, txn, &id)?
-            else {
-                continue;
-            };
-            let Ok(grant) = decode_federation_grant_body(&body) else {
-                continue;
-            };
-            if !grant.owner_agent {
-                continue;
-            }
-            let Some(delegated_by) = grant.delegated_by else {
-                continue;
-            };
-            let created_at = self
-                .store
-                .port_entity_record(txn, &id)?
-                .map_or(0, |row| row.learned_at);
-            grants.push(AgentGrantStanding {
-                id,
-                grant,
-                delegated_by,
-                created_at,
-            });
-        }
-        Ok(grants)
+        Ok(self.agent_grants_reporting_in_txn(txn)?.0)
+    }
+
+    /// [`Self::agent_grants_in_txn`], beside the ids of the live
+    /// FEDERATION_GRANT rows that did not decode, which it skips: a reader
+    /// that must count what it could not judge (FIX 7462) names them.
+    pub(crate) fn agent_grants_reporting_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<(Vec<AgentGrantStanding>, Vec<EntityId>)> {
+        agent_grants_reporting_for_store_in_txn(&self.store, txn)
     }
 
     /// The agent grants as `vault.consent.registry` reviews them: standing
@@ -410,4 +387,53 @@ impl Vault {
             true,
         )
     }
+}
+
+/// [`Vault::agent_grants_in_txn`] for a reader that holds a `Store` and no
+/// `Vault` (FIX 7461): the same live agent grants, in id order. A row that
+/// does not decode is no agent grant here.
+pub(crate) fn agent_grants_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AgentGrantStanding>> {
+    Ok(agent_grants_reporting_for_store_in_txn(store, txn)?.0)
+}
+
+/// [`Vault::agent_grants_reporting_in_txn`], read through `store`.
+fn agent_grants_reporting_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Vec<AgentGrantStanding>, Vec<EntityId>)> {
+    let mut grants = Vec::new();
+    let mut undecoded = Vec::new();
+    for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)? {
+        let id = id?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(store, txn, &id)?
+        else {
+            continue;
+        };
+        let Ok(grant) = decode_federation_grant_body(&body) else {
+            undecoded.push(id);
+            continue;
+        };
+        if !grant.owner_agent {
+            continue;
+        }
+        let Some(delegated_by) = grant.delegated_by else {
+            continue;
+        };
+        let created_at = store
+            .port_entity_record(txn, &id)?
+            .map_or(0, |row| row.learned_at);
+        grants.push(AgentGrantStanding {
+            id,
+            grant,
+            delegated_by,
+            created_at,
+        });
+    }
+    Ok((grants, undecoded))
 }

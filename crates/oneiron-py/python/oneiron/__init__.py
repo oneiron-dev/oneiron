@@ -3531,6 +3531,21 @@ class Oneiron:
         def export(self, spec):
             """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
             return json.loads(_translate(lambda: self._client.vault_code_export(json.dumps(spec))))
+        def import_(self, spec):
+            """Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_import(json.dumps(spec))))
+        @property
+        def repos(self) -> "Oneiron._VaultCodeReposVerbs":
+            return Oneiron._VaultCodeReposVerbs(self._client)
+        @property
+        def forks(self) -> "Oneiron._VaultCodeForksVerbs":
+            return Oneiron._VaultCodeForksVerbs(self._client)
+        @property
+        def imports(self) -> "Oneiron._VaultCodeImportsVerbs":
+            return Oneiron._VaultCodeImportsVerbs(self._client)
+        @property
+        def ingress(self) -> "Oneiron._VaultCodeIngressVerbs":
+            return Oneiron._VaultCodeIngressVerbs(self._client)
         @property
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs":
             return Oneiron._VaultCodeOriginVerbs(self._client)
@@ -3549,6 +3564,9 @@ class Oneiron:
         @property
         def merge_queue(self) -> "Oneiron._VaultCodeMergeQueueVerbs":
             return Oneiron._VaultCodeMergeQueueVerbs(self._client)
+        @property
+        def checks(self) -> "Oneiron._VaultCodeChecksVerbs":
+            return Oneiron._VaultCodeChecksVerbs(self._client)
     class _VaultCodeSymbolsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3573,6 +3591,33 @@ class Oneiron:
         def receipt(self, spec):
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
             return json.loads(_translate(lambda: self._client.vault_code_waits_receipt(json.dumps(spec))))
+    class _VaultCodeReposVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work."""
+            return json.loads(_translate(lambda: self._client.vault_code_repos_get(json.dumps(spec))))
+    class _VaultCodeForksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork."""
+            return json.loads(_translate(lambda: self._client.vault_code_forks_get(json.dumps(spec))))
+    class _VaultCodeImportsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue."""
+            return json.loads(_translate(lambda: self._client.vault_code_imports_create(json.dumps(spec))))
+        def get(self, spec):
+            """Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks."""
+            return json.loads(_translate(lambda: self._client.vault_code_imports_get(json.dumps(spec))))
+    class _VaultCodeIngressVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance."""
+            return json.loads(_translate(lambda: self._client.vault_code_ingress_get(json.dumps(spec))))
     class _VaultCodeOriginVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3732,6 +3777,27 @@ class Oneiron:
         def recover(self, spec):
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_recover(json.dumps(spec))))
+        def init(self, spec):
+            """Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_init(json.dumps(spec))))
+        def check(self, spec):
+            """Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_check(json.dumps(spec))))
+        def diagnose(self, spec):
+            """Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_diagnose(json.dumps(spec))))
+        def check_status(self, spec):
+            """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_check_status(json.dumps(spec))))
+        def export_green(self, spec):
+            """Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_export_green(json.dumps(spec))))
+    class _VaultCodeChecksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass."""
+            return json.loads(_translate(lambda: self._client.vault_code_checks_get(json.dumps(spec))))
     class _VaultResultsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4134,6 +4200,9 @@ class Oneiron:
         @property
         def host(self) -> "Oneiron._VaultRoomsHostVerbs":
             return Oneiron._VaultRoomsHostVerbs(self._client)
+        @property
+        def upkeep(self) -> "Oneiron._VaultRoomsUpkeepVerbs":
+            return Oneiron._VaultRoomsUpkeepVerbs(self._client)
         def sharing(self, spec):
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
@@ -4191,6 +4260,15 @@ class Oneiron:
         def hand(self, spec):
             """The room's current host hands the hosting duty to another agent that may host."""
             return json.loads(_translate(lambda: self._client.vault_rooms_host_hand(json.dumps(spec))))
+    class _VaultRoomsUpkeepVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pending(self, spec):
+            """The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_upkeep_pending(json.dumps(spec))))
+        def voice(self, spec):
+            """The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_upkeep_voice(json.dumps(spec))))
     class _VaultConversationsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

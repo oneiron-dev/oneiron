@@ -4,13 +4,17 @@
 //!
 //! The journal is synced before anything is shipped (each frame at its
 //! act). A pass registers the targets it drives (members are never dropped),
-//! seals one batch at the local log position when a member is behind it,
-//! and hands it to each target the pass reaches: the folders given, and every
-//! folder member an earlier configuration registered, retried at its own
-//! folder. A target acks (stored in the journal) or stays pending by name.
-//! Only once every member acked the position does the anchor advance, by
-//! compare-and-swap; the watermark then rises to the anchored position, and
-//! every retirement obligation at or before it is complete. A member that
+//! seals a batch at the local log position for each kind of member behind
+//! it, a hosted member's apart from the others' (KS-5, FIX 7191: each head
+//! carries the pads its own recipients admit), and hands each target the
+//! pass reaches its kind's batch: the folders given, and every folder member
+//! an earlier configuration registered, retried at its own folder. A change
+//! of the publication policy alone is journaled first, so every member's head
+//! is sealed again (`publication_policy`). A target acks (stored in the
+//! journal) or stays pending by name. Only once every member acked the
+//! position does the anchor advance, by compare-and-swap; the watermark then
+//! rises to the anchored position, and every retirement obligation at or
+//! before it is complete. A member that
 //! publishes on its own channel (the residence home, a hosted adapter) runs
 //! the same batch and ack through [`Store::custody_batch_for`]. Nothing here
 //! is ever waited on by a save or a backup: a step that does not go through
@@ -25,9 +29,10 @@ use crate::error::Result;
 use crate::store::Store;
 
 use super::anchor::{anchor_record, verified_position};
+use super::credential_faults::head_entry;
 use super::files::{EntryState, LocalCustody, read_whole, replace_file};
 use super::folder::FolderTarget;
-use super::head::{CustodyRecipients, HeadEntry, seal_head};
+use super::head::{CustodyRecipients, seal_head};
 use super::identity::CustodySubject;
 use super::log::{CustodyPosition, Journal, POSITION_LEN};
 use super::outbox::OutboxTarget;
@@ -35,6 +40,7 @@ use super::protocol::{
     AckRecord, AnchorAdvance, AnchorStore, CustodyBatch, CustodyTarget, Lineage, PendingCode,
     TargetId, TargetKind, TargetPending, TargetPublication, TargetSpec,
 };
+use super::publication_policy::TargetRecipients;
 use super::targets::{RequiredSet, RetirementProgress, acked_seq};
 
 const STATUS: &str = "status";
@@ -217,12 +223,13 @@ fn record_status(journal: &Journal, publication: &Publication) -> Result<()> {
 enum Sealed {
     /// Nothing is in custody yet.
     Nothing,
-    /// No target the caller drives is behind this position.
-    Current(CustodyPosition),
-    /// A head sealed at the position.
-    Batch(CustodyBatch),
-    /// The head did not seal: why, naming no secret.
-    Failed(CustodyPosition, String),
+    /// The position, and for each recipient group the caller named the head
+    /// sealed there: `None` when no target of the group is behind it, an
+    /// error naming no secret when it did not seal.
+    At(
+        CustodyPosition,
+        Vec<Option<std::result::Result<CustodyBatch, String>>>,
+    ),
 }
 
 /// The least advanced member's acknowledged position, once every member
@@ -244,60 +251,75 @@ fn least_acked(
 }
 
 /// Whether nothing was ever in this custody: no frame, no entry.
-fn custody_empty(store: &Store, custody: LocalCustody<'_>, journal: &Journal) -> Result<bool> {
+pub(super) fn custody_empty(
+    store: &Store,
+    custody: LocalCustody<'_>,
+    journal: &Journal,
+) -> Result<bool> {
     let _guard = store.core.key_custody.read_guard()?;
     Ok(journal.position()?.seq == 0 && custody.census()?.is_empty())
 }
 
 impl Store {
-    /// Under the read guard: the local position, then, when `behind` says a
-    /// target the caller drives lacks a head there, a head sealed at it:
-    /// every entry a frame up to the position mints is published before its
-    /// frame, and no retirement runs until the head is sealed.
+    /// Under the read guard: the local position, then, for each group of
+    /// `groups` whose target `behind` says lacks a head there, a head sealed
+    /// at it for that group's recipients, all from one census: every entry
+    /// a frame up to the position mints is published before its frame, and
+    /// no retirement runs until the heads are sealed.
     fn seal_batch(
         &self,
         custody: LocalCustody<'_>,
         journal: &Journal,
-        recipients: &CustodyRecipients,
+        groups: &[&CustodyRecipients],
         revision: u64,
-        behind: impl FnOnce(&CustodyPosition) -> bool,
+        behind: impl FnOnce(&CustodyPosition) -> Vec<bool>,
     ) -> Result<Sealed> {
         let _guard = self.core.key_custody.read_guard()?;
         let position = journal.position()?;
-        if position.seq == 0 && custody.census()?.is_empty() {
+        let census = custody.census()?;
+        if position.seq == 0 && census.is_empty() {
             return Ok(Sealed::Nothing);
         }
-        if !behind(&position) {
-            return Ok(Sealed::Current(position));
-        }
-        let control = journal.control_or_create()?;
-        let mut entries = Vec::new();
-        let mut retired = Vec::new();
-        for (id, state) in custody.census()? {
-            match state {
-                // KS-5: a pad its world keeps local stays out of the head.
-                EntryState::Live if recipients.keeps_local(&id) => {}
-                EntryState::Live => entries.push(HeadEntry {
-                    secret: custody.read(&id)?,
-                    id,
-                }),
-                EntryState::Retired => retired.push(id),
-                EntryState::Missing => {}
+        let mut sealed = Vec::with_capacity(groups.len());
+        for (recipients, behind) in groups.iter().zip(behind(&position)) {
+            if !behind {
+                sealed.push(None);
+                continue;
             }
+            let control = journal.control_or_create()?;
+            let mut entries = Vec::new();
+            let mut retired = Vec::new();
+            for (id, state) in &census {
+                match state {
+                    // KS-5: a pad its world keeps off this member stays out
+                    // of its head. KS-6: a credential key that does not read
+                    // stays local this pass, warned.
+                    EntryState::Live if recipients.keeps_local(id) => {}
+                    EntryState::Live => entries.extend(head_entry(&custody, id)?),
+                    // KS-6: a credential key kept off this member keeps its
+                    // retirement fact off too; an owner-only compartment
+                    // seals to the root alone.
+                    EntryState::Retired
+                        if crate::store::credential_kind(id.kind())
+                            && recipients.keeps_local(id) => {}
+                    EntryState::Retired => retired.push(id.clone()),
+                    EntryState::Missing => {}
+                }
+            }
+            let released = journal.recipient_facts()?;
+            sealed.push(Some(
+                seal_head(&position, &control, entries, retired, released, recipients)
+                    .map(|head| CustodyBatch {
+                        position,
+                        head,
+                        set_revision: revision,
+                        journal: journal.dir().to_path_buf(),
+                        data_key: recipients.data_key.is_some(),
+                    })
+                    .map_err(|error| error.to_string()),
+            ));
         }
-        let released = journal.recipient_facts()?;
-        Ok(
-            match seal_head(&position, &control, entries, retired, released, recipients) {
-                Ok(head) => Sealed::Batch(CustodyBatch {
-                    position,
-                    head,
-                    set_revision: revision,
-                    journal: journal.dir().to_path_buf(),
-                    data_key: recipients.data_key.is_some(),
-                }),
-                Err(error) => Sealed::Failed(position, error.to_string()),
-            },
-        )
+        Ok(Sealed::At(position, sealed))
     }
 
     /// One publication pass over this vault's custody lineage: its head to
@@ -311,7 +333,7 @@ impl Store {
     /// answers the status read (FIX 6394).
     pub(crate) fn publish_custody(
         &self,
-        recipients: &CustodyRecipients,
+        recipients: &TargetRecipients,
         given: &[&dyn CustodyTarget],
         outboxes: &[&OutboxTarget],
         anchor: Option<&dyn AnchorStore>,
@@ -345,7 +367,7 @@ impl Store {
         &self,
         custody: LocalCustody<'_>,
         journal: &Journal,
-        recipients: &CustodyRecipients,
+        recipients: &TargetRecipients,
         given: &[&dyn CustodyTarget],
         outboxes: &[&OutboxTarget],
         anchor: Option<&dyn AnchorStore>,
@@ -388,28 +410,45 @@ impl Store {
             .and_then(|previous| previous.data_key_wrapped);
         // A member holding a head sealed while the data key was not held
         // gets one wrapped to it as well, once it is (FIX 5791).
-        let reseal = |id: &TargetId| recipients.data_key.is_some() && journal.root_only(id);
+        let reseal = |id: &TargetId| recipients.own.data_key.is_some() && journal.root_only(id);
         let due = |id: &TargetId, position: &CustodyPosition| {
             acked_seq(&acks, id, position) != Some(position.seq) || reseal(id)
         };
-        let sealed = self.seal_batch(custody, journal, recipients, set.revision, |position| {
-            specs.iter().any(|spec| due(spec.id(), position))
-        })?;
-        let (position, batch) = match sealed {
-            Sealed::Nothing => return Ok(Some(Publication::nothing())),
-            Sealed::Failed(position, detail) => {
-                return Ok(Some(Publication {
-                    state: PublicationState::TargetPending,
-                    local: Some(position),
-                    published: least_acked(&set, &acks, &position),
-                    anchored: previous.and_then(|previous| previous.anchored),
-                    detail: Some(detail),
-                    data_key_wrapped: wrapped_before,
-                    anchor_unset: anchor.is_none(),
-                }));
+        // Each member's head is its own kind's (KS-5, FIX 7191): a hosted
+        // member's apart from a folder's or the residence home's.
+        let groups = [&recipients.own, &recipients.hosted];
+        let group = |spec: &TargetSpec| usize::from(matches!(spec.kind(), TargetKind::Hosted(_)));
+        let sealed = self.seal_batch(custody, journal, &groups, set.revision, |position| {
+            let mut behind = vec![false; groups.len()];
+            for spec in &specs {
+                behind[group(spec)] |= due(spec.id(), position);
             }
-            Sealed::Current(position) => (position, None),
-            Sealed::Batch(batch) => (batch.position(), Some(batch)),
+            behind
+        })?;
+        let (position, batches) = match sealed {
+            Sealed::Nothing => return Ok(Some(Publication::nothing())),
+            Sealed::At(position, batches) => {
+                let failed = batches
+                    .iter()
+                    .flatten()
+                    .find_map(|batch| batch.as_ref().err().cloned());
+                if let Some(detail) = failed {
+                    return Ok(Some(Publication {
+                        state: PublicationState::TargetPending,
+                        local: Some(position),
+                        published: least_acked(&set, &acks, &position),
+                        anchored: previous.and_then(|previous| previous.anchored),
+                        detail: Some(detail),
+                        data_key_wrapped: wrapped_before,
+                        anchor_unset: anchor.is_none(),
+                    }));
+                }
+                let batches: Vec<Option<CustodyBatch>> = batches
+                    .into_iter()
+                    .map(|batch| batch.and_then(std::result::Result::ok))
+                    .collect();
+                (position, batches)
+            }
         };
         let lineage = Lineage::of(&position);
         let control = journal.control_or_create()?;
@@ -454,36 +493,38 @@ impl Store {
         // A target holding a newer head of this log than the batch: a newer
         // pass published it there, and that pass acks it (FIX 6394).
         let mut covered = false;
-        if let Some(batch) = &batch {
-            for target in &targets {
-                let spec = target.spec();
-                if !due(spec.id(), &position) {
-                    continue;
-                }
-                let outcome =
-                    match target.publish(batch) {
-                        Ok(TargetPublication::Acked(ack)) => journal
-                            .accept_ack(batch, &ack)
-                            .map_err(|error| TargetPending {
-                                code: PendingCode::Failed,
-                                detail: error.to_string(),
-                            }),
-                        Ok(TargetPublication::Covered) => {
-                            covered = true;
-                            Ok(())
-                        }
-                        Ok(TargetPublication::Pending(pending)) => Err(pending),
-                        Err(error) => Err(TargetPending {
+        for target in &targets {
+            let spec = target.spec();
+            let Some(batch) = batches[group(&spec)].as_ref() else {
+                continue;
+            };
+            if !due(spec.id(), &position) {
+                continue;
+            }
+            let outcome = match target.publish(batch) {
+                Ok(TargetPublication::Acked(ack)) => {
+                    journal
+                        .accept_ack(batch, &ack)
+                        .map_err(|error| TargetPending {
                             code: PendingCode::Failed,
                             detail: error.to_string(),
-                        }),
-                    };
-                if let Err(pending) = outcome {
-                    journal.note_pending(spec.id(), &pending)?;
+                        })
                 }
+                Ok(TargetPublication::Covered) => {
+                    covered = true;
+                    Ok(())
+                }
+                Ok(TargetPublication::Pending(pending)) => Err(pending),
+                Err(error) => Err(TargetPending {
+                    code: PendingCode::Failed,
+                    detail: error.to_string(),
+                }),
+            };
+            if let Err(pending) = outcome {
+                journal.note_pending(spec.id(), &pending)?;
             }
         }
-        drop(batch);
+        drop(batches);
         // This pass is older than a head already published: it reports no
         // ack of its position as current, moves no watermark and advances
         // no anchor. The newer pass does all three.
@@ -649,22 +690,26 @@ impl Store {
         journal.reconcile()?;
         let acks = journal.acks()?;
         let reseal = recipients.data_key.is_some() && journal.root_only(spec.id());
-        let sealed = self.seal_batch(custody, &journal, recipients, set.revision, |position| {
-            reseal || acked_seq(&acks, spec.id(), position) != Some(position.seq)
-        })?;
+        let sealed =
+            self.seal_batch(custody, &journal, &[recipients], set.revision, |position| {
+                vec![reseal || acked_seq(&acks, spec.id(), position) != Some(position.seq)]
+            })?;
         match sealed {
-            Sealed::Batch(batch) => Ok(Some(batch)),
-            Sealed::Failed(_, detail) => {
-                journal.note_pending(
-                    spec.id(),
-                    &TargetPending {
-                        code: PendingCode::Failed,
-                        detail,
-                    },
-                )?;
-                Ok(None)
-            }
-            Sealed::Nothing | Sealed::Current(_) => Ok(None),
+            Sealed::At(_, mut batches) => match batches.pop().flatten() {
+                Some(Ok(batch)) => Ok(Some(batch)),
+                Some(Err(detail)) => {
+                    journal.note_pending(
+                        spec.id(),
+                        &TargetPending {
+                            code: PendingCode::Failed,
+                            detail,
+                        },
+                    )?;
+                    Ok(None)
+                }
+                None => Ok(None),
+            },
+            Sealed::Nothing => Ok(None),
         }
     }
 

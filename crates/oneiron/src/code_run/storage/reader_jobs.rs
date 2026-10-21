@@ -692,10 +692,10 @@ impl ExecutorStorage<'_> {
     }
 
     /// Queues one child of `new.parent_run`, its parent row made from `seat`
-    /// at its first spawn and read from there after: the clock and the meter
-    /// are fixed once. A child past the cutoff, or under a scope that is
-    /// gone, is refused with nothing written; one on the host's meter is
-    /// admitted with no ledger lookup.
+    /// at its first spawn and read from there after: the clock, the meter
+    /// and the model list are fixed once. A child past the cutoff, or under
+    /// a scope that is gone, is refused with nothing written; one on the
+    /// host's meter is admitted with no ledger lookup.
     pub(crate) fn spawn_reader_job(
         &self,
         seat: &SpawnHostSeat,
@@ -710,6 +710,7 @@ impl ExecutorStorage<'_> {
                 deadline: seat.deadline,
                 spend: seat.spend.clone(),
                 hold_units: seat.hold_units,
+                listed: seat.listed.clone(),
                 next_ordinal: 0,
                 queued: 0,
                 active: 0,
@@ -736,8 +737,9 @@ impl ExecutorStorage<'_> {
                     deadline: parent.deadline,
                     child_cutoff_unix_ms: child_cutoff,
                     // A read and a summary alike take the list the
-                    // spawning run froze (FIX 4539).
-                    listed: seat.listed.clone(),
+                    // spawning run froze at its first spawn (FIX 4539), never
+                    // a later entry's in its place.
+                    listed: parent.listed.clone(),
                 },
                 kind: new.kind,
                 ask: new.ask,
@@ -1156,6 +1158,8 @@ impl ExecutorStorage<'_> {
         };
         let mut sink = self.code_run_output_sink()?;
         sink.write(text.as_bytes())?;
+        // The path names the digest the body is published under (FIX 5399b).
+        sink.finalize_sweep()?;
         let path = crate::engine_executor::store_result_output_path(&sink.digest()?);
         let output = self.publish_code_run_output(path, sink, true, job.run)?;
         let mut from = Vec::with_capacity(members.len());

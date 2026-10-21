@@ -81,6 +81,12 @@
 //! * **Nothing here erases.** Retention archives and never routes to
 //!   erasure; emptying the archive is a ladder delete and erasure stays the
 //!   owner's, by hand.
+//! * **Any run reverts (OF-449).** Each archive records its run's snapshot
+//!   on the run's RUN row in the same write: per entry the kind, the id, the
+//!   revision of the bytes it hid and the marks before and after. The owner's
+//!   whole-run revert lifts only the marks that run wrote, one finding per
+//!   entry, and never undoes a delete or an erase. What the owner brings
+//!   back, by a revert or his own restore, he keeps at its revision.
 
 use rmpv::Value;
 
@@ -91,12 +97,16 @@ use crate::error::{Error, Result};
 
 mod cleanup_types;
 mod codec_receipts;
+mod erase;
+mod marks;
 mod owner_doors;
 mod person_provenance;
 mod proposals_archive;
 mod retention;
 mod rollout;
 mod run_record;
+mod run_revert;
+mod run_snapshot;
 mod scan;
 pub mod surface;
 mod tripwire;
@@ -114,13 +124,20 @@ pub use self::codec_receipts::{cleanup_digests, is_vault_cleanup_receipt};
 pub use self::proposals_archive::{
     accept_cleanup_proposal, cleanup_proposal, cleanup_proposals, reject_cleanup_proposal,
 };
+pub use self::run_revert::{
+    CleanupRevertEntry, CleanupRevertOutcome, CleanupRevertReason, CleanupRunRevert,
+    CleanupRunRevertAnswer,
+};
+pub use self::run_snapshot::{
+    CleanupRunRecord, CleanupRunSnapshot, CleanupRuns, CleanupSnapshotEntry, cleanup_runs,
+};
 pub use self::tripwire::{
     MACHINE_MINTED_CLAIM_SOURCES, claim_source_is_machine_minted, cleanup_posture,
     run_vault_cleanup, scan_cleanup_candidates, set_cleanup_posture, zero_live_members,
 };
 
-pub(crate) use self::cleanup_types::MAX_CLEANUP_SCAN_ROWS;
 pub(crate) use self::codec_receipts::{cleanup_digests_in_txn, cleanup_receipts};
+pub(crate) use self::erase::{erase_attempt_references_in_txn, erase_in_txn};
 pub(crate) use self::proposals_archive::cleanup_proposals_in_txn;
 pub(crate) use self::tripwire::zero_live_members_in_txn;
 pub(crate) use visibility::is_archived_in_txn;
@@ -128,11 +145,11 @@ pub(crate) use visibility::is_archived_in_txn;
 use self::cleanup_types::{
     DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION, KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES,
     KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_KIND, KEY_POSTURE, KEY_PROPOSAL,
-    KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION,
+    KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION, live_slots,
 };
 use self::codec_receipts::{
-    decode_proposal, decode_row, encode_row, field, fresh_row_id, id_list, id_value_list,
-    put_digest_in_txn, put_proposal_in_txn,
+    candidate_slot, candidate_value, decode_proposal, decode_row, encode_row, field, fresh_row_id,
+    id_list, id_value_list, put_digest_in_txn, put_proposal_in_txn,
 };
 use self::tripwire::{
     CLEANUP_CHECKS, apply_archives_in_txn, cleanup_posture_in_txn, run_cleanup_candidates_in_txn,

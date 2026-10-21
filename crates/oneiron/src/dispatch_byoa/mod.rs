@@ -25,9 +25,13 @@
 //! in a [`ProviderAdapterRegistry`]. An owner's [`RunnerSeatPolicy`] orders the
 //! seats a Dreamer's work may run on, and [`ByoaDispatcher::route_runner_terminal`]
 //! routes a spent seat's work under it: park, next seat, or back to the
-//! Dreamer's own model roles. A vendor login never crosses this seam; it stays
-//! with the official CLI on a runtime its vendor's terms allow
-//! ([`hosted_seat_bound`]).
+//! Dreamer's own model roles. A step bound once
+//! ([`ByoaDispatcher::bind_runner_work_in_txn`]) moves from seat to seat by
+//! reference ([`RunnerWorkBinding`]), whatever each seat's connector shape;
+//! its outcome is read back by id ([`runner_work_outcome`]), and each seat's
+//! quota as its captures read it ([`runner_seat_quotas`]). A vendor login
+//! never crosses this seam; it stays with the official CLI on a runtime its
+//! vendor's terms allow ([`hosted_seat_bound`]).
 //!
 //! Credentials cross this seam as [`SandboxCredentialHandle`](crate::code_sandbox::SandboxCredentialHandle) references and
 //! never as bytes. That is the whole redaction story: there is no secret in
@@ -55,19 +59,29 @@ pub use provider::{
 };
 mod seat;
 pub use seat::{
-    HostedSeatBound, MAX_RUNNER_SEATS, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeat,
-    RunnerSeatPolicy, RunnerWork, SeatAuth, SeatIdentity, SeatRoute, SeatSpent, SkippedRunnerSeat,
+    HostedSeatBound, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeat, RunnerSeatPolicy,
+    RunnerWork, SeatAuth, SeatIdentity, SeatPassedOver, SeatRoute, SeatSpent, SkippedRunnerSeat,
     hosted_seat_bound, skipped_seats_note, spent_seat_in,
+};
+mod seat_quota;
+pub use seat_quota::{RunnerSeatQuota, runner_seat_quotas};
+mod work_binding;
+pub use work_binding::{
+    BindRunnerWork, RunnerSeatChoice, RunnerTaskSource, RunnerWorkBinding, RunnerWorkBindingId,
+    RunnerWorkBound, RunnerWorkErrorKind, RunnerWorkOutcome, RunnerWorkTerminal,
+    runner_work_outcome,
 };
 mod connector;
 mod dispatcher;
 mod error;
 mod exhaust;
 pub mod official_seats;
+mod record;
 mod repo_binding;
 mod staged_input;
 mod stream;
 mod validate;
+mod work_hand_off;
 
 pub use self::official_seats::{
     ANTHROPIC_API_BASE_URL, ClaudeAgentSdkSeatAdapter, ClaudeCodeSeatAdapter, CodexSeatAdapter,
@@ -98,6 +112,7 @@ pub use self::exhaust::{
     read_checkpoint_frontier,
 };
 pub use self::repo_binding::ByoaRepoBinding;
+pub(crate) use self::staged_input::erase_staged_input_in_txn;
 pub use self::staged_input::{ByoaInputStager, StagedInputPin};
 pub use self::stream::{ByoaStream, ByoaStreamWriter};
 pub use self::validate::validate_connector;

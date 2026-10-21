@@ -104,6 +104,14 @@ impl Vault {
     }
 
     pub(crate) fn require_code_revision_promotion(&self, revision_id: EntityId) -> Result<()> {
+        // A queue-sealed record answers to its own multi-source verifier
+        // (G2 PR3); every other revision keeps these checks.
+        if self
+            .get_code_revision(&revision_id)?
+            .is_some_and(|revision| revision.tested_queue.is_some())
+        {
+            return self.require_queue_revision_promotion(revision_id);
+        }
         let reviews = self.code_revision_promotions(revision_id)?;
         self.require_inherited_file_mode_reviews(revision_id)?;
         self.check_code_revision_reviews(revision_id, &reviews, false)
@@ -133,7 +141,10 @@ impl Vault {
             if edit.session_id != proposal.session
                 || edit.actor.map(|actor| actor.entity_ref()) != proposal.actor.id()
                 || edit.provenance != proposal.op_provenance
-                || edit.edit.path != proposal.path
+                // A received bundle promotes through its queue only.
+                || !proposal
+                    .ordinary_file()
+                    .is_ok_and(|(path, _)| edit.edit.path == path)
                 || reviews
                     .insert(edit.document_id, (proposal, edit, reviewed_mode))
                     .is_some()
@@ -246,7 +257,7 @@ impl Vault {
                 .get_code_revision(&parent_id)?
                 .ok_or(Error::EntityNotFound)?;
             if !revision.file_frontiers.iter().any(|(id, file)| {
-                file_mode(&revision, id) != 0o100644
+                file_mode(&revision, id) != crate::codebase::DEFAULT_CODE_FILE_MODE
                     && parent.file_frontiers.get(id) == Some(file)
                     && file_mode(&parent, id) == file_mode(&revision, id)
             }) {
@@ -300,13 +311,33 @@ impl Vault {
     }
 }
 
+/// The immutable promotion receipt of `revision` in `txn`, for the queue
+/// verifier: the same table, never a second approval store.
+pub(super) fn promotion_receipt_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    revision: &EntityId,
+) -> Result<Option<Vec<String>>> {
+    PROMOTIONS.get(store, txn, revision)
+}
+
+/// Writes `revision`'s promotion receipt, which must be new.
+pub(super) fn put_promotion_receipt_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    revision: &EntityId,
+    ids: Vec<String>,
+) -> Result<()> {
+    PROMOTIONS.put(store, txn, revision, &ids)
+}
+
 fn file_mode(revision: &super::CodeRevision, document: &[u8; 32]) -> u32 {
     revision
         .commit_metadata
         .as_ref()
         .and_then(|metadata| metadata.file_modes.get(document))
         .copied()
-        .unwrap_or(0o100644)
+        .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE)
 }
 
 /// OF-222 (FIX 2768) archive seam: the promotion receipts a whole-vault archive carries beside

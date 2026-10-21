@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use heed::types::Bytes;
+use oneiron_crypto::backup::{BackupEvidence, CheckpointFact, SignedCheckpointFact};
 
 use super::watermark::SnapshotMark;
 use super::{
@@ -31,6 +32,16 @@ impl Vault {
         // The store's backup incarnation is minted before its first
         // snapshot reads it (the backup watermark).
         self.mint_backup_incarnation()?;
+        // Every pad a row holds goes into current custody first, outside
+        // the custody guard, so the image names it by reference (KS-5, FIX
+        // 5686 part 2). One that does not go rides as its carrier.
+        if let Err(error) = self.prepare_image_pads() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "world key pads were not prepared for this image; any custody lacks rides as \
+                 its carrier"
+            );
+        }
         loop {
             // Every body the image carries has its instance minted and bound
             // first, before the snapshot and its custody guard, the mints
@@ -173,11 +184,21 @@ impl Vault {
                 let value = if let Some(stripped) = stripped {
                     stripped
                 } else if entry.name == "entities"
-                    && let Some(carrier) = crate::world_keys::image_pad_row(&self.store, value)
+                    && let Some(carrier) =
+                        crate::secret_custody::image_credential_carrier(&self.store, key, value)
                 {
-                    // A pad row at rest names its pad in custody; the image
-                    // carries the pad as it always did, until FIX 5686 part 2.
+                    // A credential row rides with its value opened under
+                    // this guard, as on main, until KS-6 part 2 strips it
+                    // (CALLS `KS-6 image form`).
                     carrier
+                } else if entry.name == "entities"
+                    && let Some(reference) =
+                        crate::world_keys::image_pad_projection(&self.store, value)
+                {
+                    // A pad row goes by its bare reference, its pad left in
+                    // current custody, which a restore takes it from (KS-5,
+                    // FIX 5686 part 2).
+                    reference
                 } else if entry.name == "job_records" {
                     rebuild::unlease_attempt(key, value)?
                 } else {
@@ -253,10 +274,46 @@ impl Vault {
                 return Err(error);
             }
         };
+        // A backup's identity is complete and the chain took it: its
+        // checkpoint fact is signed with the keys that signed it (FIX 7326).
+        // A checkpoint publishes none.
+        let checkpoint_fact = (kind == ArtifactKind::Backup)
+            .then(|| sign_fact(&link.keys, id, &evidence))
+            .flatten();
         Ok(Some(BackupSnapshotReceipt {
             image_digest: blake3::Hash::from(id).to_hex().to_string(),
             covered: mark.covered(own),
             evidence,
+            checkpoint_fact,
         }))
+    }
+}
+
+/// The checkpoint fact of the backup `evidence` describes, whose image is
+/// `id`, signed with `keys`, the keys that signed its commitment. One that
+/// fails is logged and left unavailable: the backup stands without it.
+fn sign_fact(
+    keys: &commitment::SigningKeys,
+    id: [u8; 32],
+    evidence: &BackupEvidence,
+) -> Option<SignedCheckpointFact> {
+    let fact = CheckpointFact {
+        engine_vault_id: evidence.engine_vault_id,
+        checkpoint_id: id,
+        commitment_digest: evidence.commitment_digest,
+        outer_blake3: evidence.outer_blake3,
+        size: evidence.size,
+    };
+    match keys.sign_checkpoint_fact(&fact) {
+        Ok(signed) => Some(signed),
+        Err(error) => {
+            tracing::warn!(
+                reason = "backup_checkpoint_fact_unsigned",
+                kind = ?error.kind(),
+                "the backup landed with no checkpoint fact; its checkpoint id stays unsigned \
+                 beside it"
+            );
+            None
+        }
     }
 }

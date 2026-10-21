@@ -53,16 +53,20 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
                 attempt_ref,
                 launch,
+                unapplied,
             }) => Ok(AgentSpawnOutput::Queued {
                 kind: AgentSpawnKind::AgentSpawn,
                 attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
                 launch,
+                unapplied,
             }),
             SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
                 proposal_ref,
+                unapplied,
             }) => Ok(AgentSpawnOutput::ProposedWiden {
                 kind: AgentSpawnKind::AgentSpawn,
                 proposal: proposal_ref,
+                unapplied,
             }),
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))

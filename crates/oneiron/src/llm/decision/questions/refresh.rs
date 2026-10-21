@@ -3,6 +3,7 @@
 
 use super::backfill::{BackfillAtKey, QUESTION_BACKFILL_AT};
 use super::graph_ask::{self, GraphAnswerer, GraphDecision, GraphUnitContext};
+use super::reader_authority::question_lane;
 use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
@@ -253,7 +254,8 @@ fn refresh_with(
         // A graph context's neighbours and every source it showed are read
         // again through the principal's lane in this snapshot.
         let lane = if prepared.iter().any(|p| p.context.is_some()) {
-            Some(vault.scoped_read(graph_ask::asker_reader_in_txn(vault, txn, principal)?))
+            let key = graph_ask::asker_reader_in_txn(vault, txn, principal)?;
+            Some(question_lane(vault, key))
         } else {
             None
         };
@@ -478,6 +480,7 @@ pub fn refresh_due_questions_with<A: GraphAnswerer>(
     refresh_due_as(
         vault,
         now,
+        &mut || true,
         |principal| principal_actor(vault, principal),
         answerer_for,
     )
@@ -495,11 +498,25 @@ pub fn refresh_due_questions_with<A: GraphAnswerer>(
 pub fn refresh_due_questions_by_role<A: GraphAnswerer>(
     vault: &Vault,
     now: u64,
+    answerer_for: impl FnMut(&QuestionRecord, WriteActor, AskTo) -> Result<A>,
+) -> Result<RefreshBatch> {
+    refresh_due_questions_by_role_while(vault, now, &mut || true, answerer_for)
+}
+
+/// [`refresh_due_questions_by_role`] under a host's pause (FIX 7376): no
+/// next due question starts once `may_start` says no. The one in flight
+/// finishes, and the batch so far returns as an ordinary pass. A question
+/// left unstarted is neither failed nor held: it stays due for the next pass.
+pub fn refresh_due_questions_by_role_while<A: GraphAnswerer>(
+    vault: &Vault,
+    now: u64,
+    may_start: &mut impl FnMut() -> bool,
     mut answerer_for: impl FnMut(&QuestionRecord, WriteActor, AskTo) -> Result<A>,
 ) -> Result<RefreshBatch> {
     refresh_due_as(
         vault,
         now,
+        may_start,
         |principal| role_runner(vault, &standing_ask_route(principal)),
         |record, actor| answerer_for(record, actor, standing_ask_route(record.principal)),
     )
@@ -540,15 +557,20 @@ fn role_runner(vault: &Vault, to: &AskTo) -> Result<WriteActor> {
 }
 
 /// Every due question, run by the writer `runner` names for its principal,
-/// through the answerer `answerer_for` makes once per question.
+/// through the answerer `answerer_for` makes once per question, until
+/// `may_start` says no before one starts (FIX 7376).
 fn refresh_due_as<A: GraphAnswerer>(
     vault: &Vault,
     now: u64,
+    may_start: &mut impl FnMut() -> bool,
     mut runner: impl FnMut(EntityId) -> Result<WriteActor>,
     mut answerer_for: impl FnMut(&QuestionRecord, WriteActor) -> Result<A>,
 ) -> Result<RefreshBatch> {
     let mut batch = RefreshBatch::default();
     for (principal, question, trigger) in due_work(vault, now)? {
+        if !may_start() {
+            break;
+        }
         let answered = runner(principal).and_then(|actor| {
             let mut answerer: Option<A> = None;
             refresh_with(
@@ -702,7 +724,7 @@ fn graph_proposal(
     kind: u8,
     body: &[u8],
 ) -> Result<Option<Answered>> {
-    let lane = vault.scoped_read(graph_ask::asker_reader(vault, record.principal)?);
+    let lane = question_lane(vault, graph_ask::asker_reader(vault, record.principal)?);
     let Some(context) = graph_ask::unit_context(&lane, unit, kind, body.to_vec())? else {
         return Ok(None);
     };
@@ -965,14 +987,12 @@ fn source(
         source_actor_key(vault, txn, principal, None)?.require_access_grants(Some(principal));
     let actor_key = source_actor_key(vault, txn, actor.entity_ref(), Some(actor.actor_class()))?
         .require_access_grants(Some(principal));
-    let Some(raw) = vault
-        .scoped_read(principal_key)
-        .entity_raw_live_in(txn, &unit)?
-    else {
+    // FIX 7461: each lane also reads under its own reader's live owner
+    // authority once its own admission and Grants refuse.
+    let Some(raw) = question_lane(vault, principal_key).entity_raw_live_in(txn, &unit)? else {
         return Ok(None);
     };
-    if vault
-        .scoped_read(actor_key)
+    if question_lane(vault, actor_key)
         .entity_raw_live_in(txn, &unit)?
         .is_none()
     {

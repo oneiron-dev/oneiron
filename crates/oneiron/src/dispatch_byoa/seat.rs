@@ -16,6 +16,7 @@
 //! next is the owner's pick in [`OnSeatSpent`]; nothing spends by default.
 
 use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader, Read};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
@@ -25,33 +26,22 @@ use crate::checkout::CheckoutId;
 use crate::code_sandbox::SandboxCredentialHandle;
 use crate::config::HostingPrivacyPosture;
 use crate::entity_id::EntityId;
+use crate::error::Error;
 use crate::llm::{RetryableLlmError, SpentKind, limit};
 
 use super::connector::{ByoaConnectorSpec, ByoaDispatchOutcome, CliSandboxSpec};
 use super::error::{
-    ByoaResult, ERR_SEAT_COUNT, ERR_SEAT_INDEX, ERR_SEAT_KEY_HANDLE, ERR_SEAT_LOGIN_HANDLE, invalid,
+    ByoaError, ByoaResult, ERR_SEAT_EMPTY, ERR_SEAT_INDEX, ERR_SEAT_KEY_HANDLE,
+    ERR_SEAT_LOGIN_HANDLE, invalid,
 };
 use super::exhaust::{ByoaExhaust, ByoaTerminalReceipt};
 use super::official_seats::{OfficialSeatRoute, SIWC_RESPONSES_BASE_URL, SeatPlacementApproval};
 use super::provider::{CODEX_PROGRAM, DreamerProviderInput, ProviderAdapterRegistry};
 
-/// The most seats one policy orders.
-pub const MAX_RUNNER_SEATS: usize = 8;
-
 /// Dedupe prefix of the attempt a spent seat hands its work to. With the
 /// spent attempt and the next seat's index it makes a replayed route find
 /// the child it already dispatched instead of dispatching another.
 pub const RUNNER_SEAT_DEDUPE_PREFIX: &str = "byoa.seat:";
-
-/// The trailing bytes of one exhaust stream read for a spent seat. A CLI
-/// prints its terminal error last.
-const SPENT_SCAN_BYTES: usize = 64 * 1024;
-
-/// The most lines, from the end, read for a spent seat.
-const SPENT_SCAN_LINES: usize = 64;
-
-/// The longest line read as one structured event.
-const SPENT_EVENT_BYTES: usize = 16 * 1024;
 
 /// A reset an error names as a Unix-seconds suffix ("…limit reached|1760000000")
 /// is at least this, so a small number after a bar is never read as one.
@@ -217,19 +207,49 @@ pub fn hosted_seat_bound(
         .map(|row| row.bound)
 }
 
-/// A fallback seat a route passed over because a hosted-only bound keeps
-/// its login off this runtime.
+/// Why a route passed over a seat in the owner's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SeatPassedOver {
+    /// A hosted-only bound keeps the seat's login off this runtime.
+    Hosted(HostedSeatBound),
+    /// The seat's quota view ([`super::runner_seat_quotas`]) shows it spent
+    /// and not back yet (FIX 7453): back at `back_at`, or `None` while it
+    /// waits for the owner.
+    Spent { back_at: Option<u64> },
+    /// A CLI seat, and the work's original request record is erased or
+    /// unreadable, or none was kept (FIX 7449): the seat has no task to run.
+    TaskUnreadable,
+}
+
+impl std::fmt::Display for SeatPassedOver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hosted(bound) => write!(f, "{bound}"),
+            Self::Spent { back_at: Some(at) } => write!(f, "its quota is spent until {at}"),
+            Self::Spent { back_at: None } => {
+                f.write_str("its quota is spent and waits for the owner")
+            }
+            Self::TaskUnreadable => f.write_str(
+                "the work's task record is erased or unreadable, so this CLI seat has no task",
+            ),
+        }
+    }
+}
+
+/// A fallback seat a route passed over, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkippedRunnerSeat {
     /// The seat's index in the owner's order.
     pub seat: usize,
     /// The runner the seat names.
     pub runner: String,
-    pub bound: HostedSeatBound,
+    /// Why the route passed it over.
+    pub reason: SeatPassedOver,
 }
 
 /// The passed-over seats in words, for a park reason: empty when none was,
-/// else each seat with its runner and its bound, in the owner's order.
+/// else each seat with its runner and why, in the owner's order.
 #[must_use]
 pub fn skipped_seats_note(skipped: &[SkippedRunnerSeat]) -> String {
     skipped
@@ -237,7 +257,7 @@ pub fn skipped_seats_note(skipped: &[SkippedRunnerSeat]) -> String {
         .map(|skip| {
             format!(
                 "; seat {} ({}) skipped: {}",
-                skip.seat, skip.runner, skip.bound
+                skip.seat, skip.runner, skip.reason
             )
         })
         .collect()
@@ -325,15 +345,15 @@ pub struct RunnerSeatPolicy {
 }
 
 impl RunnerSeatPolicy {
-    /// Refuses an empty or oversized order, a runner the registry does not
-    /// know, a login seat that names a credential, and a key seat that names
-    /// none.
+    /// Refuses an empty order, a runner the registry does not know, a login
+    /// seat that names a credential, and a key seat that names none. An
+    /// order holds as many seats as the owner lists.
     ///
     /// # Errors
     /// Returns the first seat's refusal.
     pub fn validate(&self, registry: &ProviderAdapterRegistry) -> ByoaResult<()> {
-        if self.seats.is_empty() || self.seats.len() > MAX_RUNNER_SEATS {
-            return Err(invalid(ERR_SEAT_COUNT));
+        if self.seats.is_empty() {
+            return Err(invalid(ERR_SEAT_EMPTY));
         }
         self.seats
             .iter()
@@ -426,30 +446,82 @@ impl SeatSpent {
 /// Reads a runner's exhaust for a spent seat: a structured error event the
 /// CLI printed (an `error` field, a `type: "error"` event, or a result
 /// flagged `is_error`) whose words read as a limit. A nonzero exit or free
-/// text is never one. Only each stream's tail is read, however long it runs.
+/// text is never one. Each stream is read whole from its start, stdout
+/// first, one complete event at a time.
 ///
 /// # Errors
 ///
-/// Returns [`super::ByoaError::Store`] when a spooled stream's tail cannot be
-/// read.
+/// Returns [`super::ByoaError::Store`] when a spooled stream cannot be read.
 pub fn spent_seat_in(exhaust: &ByoaExhaust) -> ByoaResult<Option<SeatSpent>> {
     for stream in [&exhaust.stdout, &exhaust.stderr] {
-        let tail = stream.tail(SPENT_SCAN_BYTES)?;
-        let spent = String::from_utf8_lossy(&tail)
-            .lines()
-            .rev()
-            .take(SPENT_SCAN_LINES)
-            .find_map(spent_in_line);
-        if spent.is_some() {
-            return Ok(spent);
+        if let Some(spent) = spent_seat_from_reader(stream.reader())? {
+            return Ok(Some(spent));
         }
     }
     Ok(None)
 }
 
+/// Reads one exhaust stream from its start for a spent seat. Each line is
+/// one event, read whole however many buffer reads it spans; a line that
+/// does not open with `{` past its leading blanks is passed over without
+/// being held. The last event that reads as a limit wins. A buffer is a
+/// traversal unit only: no event is skipped for its length.
+///
+/// # Errors
+///
+/// Returns [`super::ByoaError::Store`] when the stream cannot be read.
+pub(crate) fn spent_seat_from_reader(reader: impl Read) -> ByoaResult<Option<SeatSpent>> {
+    let mut reader = BufReader::new(reader);
+    let mut event = Vec::new();
+    let mut spent = None;
+    loop {
+        let buffered = reader.fill_buf().map_err(read_error)?;
+        let Some(&first) = buffered.first() else {
+            return Ok(spent);
+        };
+        if first.is_ascii_whitespace() {
+            let blanks = buffered
+                .iter()
+                .take_while(|byte| byte.is_ascii_whitespace())
+                .count();
+            reader.consume(blanks);
+        } else if first == b'{' {
+            event.clear();
+            reader.read_until(b'\n', &mut event).map_err(read_error)?;
+            if let Some(found) = spent_in_line(&String::from_utf8_lossy(&event)) {
+                spent = Some(found);
+            }
+        } else {
+            skip_line(&mut reader)?;
+        }
+    }
+}
+
+/// Passes over the rest of one line without holding it.
+fn skip_line(reader: &mut impl BufRead) -> ByoaResult<()> {
+    loop {
+        let buffered = reader.fill_buf().map_err(read_error)?;
+        if buffered.is_empty() {
+            return Ok(());
+        }
+        let (take, ends) = buffered
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or((buffered.len(), false), |at| (at + 1, true));
+        reader.consume(take);
+        if ends {
+            return Ok(());
+        }
+    }
+}
+
+fn read_error(error: std::io::Error) -> ByoaError {
+    ByoaError::Store(Error::from(error))
+}
+
 fn spent_in_line(line: &str) -> Option<SeatSpent> {
     let line = line.trim();
-    if !line.starts_with('{') || line.len() > SPENT_EVENT_BYTES {
+    if !line.starts_with('{') {
         return None;
     }
     let event: JsonValue = serde_json::from_str(line).ok()?;

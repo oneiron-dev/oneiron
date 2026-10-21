@@ -3,7 +3,8 @@
 //!
 //! The ask saves what the caller's handle carried that the drain rebuilds:
 //! its sitting, its room turn's room, its read placement, whether a
-//! transport reached it and its origin conversation. In the ask's own write
+//! transport reached it, its origin conversation and where the owner's
+//! request reached this install, for audit alone. In the ask's own write
 //! it saves the authority the call is asked under: the vault's owner by the
 //! one owner resolver, with the guard of the host action it came through,
 //! or any other actor by every live Grant naming it, at its revision, and the
@@ -21,6 +22,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::authority::ActSurface;
 use crate::claim::CallerLocality;
 use crate::error::ClaimError;
 use crate::memory::{
@@ -42,6 +44,11 @@ const PLAIN_CEILING: &str = "oneiron verb hook plain ceiling v1";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PlainRowResume {
     caller: PlainCaller,
+    /// Where the owner's request reached this install (FIX 4650), so the
+    /// resumed call records the surface the call itself would have (FIX
+    /// 5364). Audit only: it admits nothing, and a retry from another
+    /// surface is the same call ([`Self::same_caller`]).
+    surface: ActSurface,
     /// The host action the call came through, if any.
     host_action: Option<PlainHostAction>,
     /// The authority the ask's write read for the call; `None` until an ask
@@ -180,9 +187,9 @@ impl PlainRefusal {
 impl PlainRowResume {
     /// The target of a plain call on a handle the drain can rebuild
     /// (`Memory::plain_resume`): its sitting, its room turn's room, where it
-    /// reads from, whether a transport reached it, its origin conversation
-    /// and the host action it came through. Its authority is read when an
-    /// ask saves it.
+    /// reads from, whether a transport reached it, its origin conversation,
+    /// the host action it came through and the owner surface it records. Its
+    /// authority is read when an ask saves it.
     pub(crate) fn of(
         session: Option<SessionKey>,
         room: Option<EntityId>,
@@ -190,6 +197,7 @@ impl PlainRowResume {
         transport: bool,
         origin_conversation: Option<EntityId>,
         host_action: Option<&crate::authority::HostActionAuthority>,
+        surface: ActSurface,
     ) -> Self {
         Self {
             caller: PlainCaller {
@@ -199,6 +207,7 @@ impl PlainRowResume {
                 transport,
                 origin_conversation,
             },
+            surface,
             host_action: host_action.map(|action| match action.guard().root_slip_id() {
                 Some(slip) => PlainHostAction::Root { slip },
                 None => PlainHostAction::Dev,
@@ -208,7 +217,8 @@ impl PlainRowResume {
     }
 
     /// Whether a call presenting `call` is the call this target was saved
-    /// for: the same handle, whatever authority the ask read for it.
+    /// for: the same handle, whatever authority the ask read for it and
+    /// whichever surface it came from.
     pub(super) fn same_caller(&self, call: &Self) -> bool {
         self.caller == call.caller
     }
@@ -244,10 +254,10 @@ pub(super) fn retain_in_txn(
 /// Runs a ready plain call again as its caller (`Vault::drain_verb_asks`).
 /// The authority its ask saved is proved again first. Then the native
 /// handle is rebuilt with the call's invocation, sitting, read placement,
-/// transport mark and origin conversation, and the generated dispatcher runs
-/// the row, in its room's turn when it had one, whose current terms admit it
-/// again or refuse it. A saved authority that no longer stands ends the call
-/// refused before anything runs.
+/// transport mark, origin conversation and owner surface, and the generated
+/// dispatcher runs the row, in its room's turn when it had one, whose
+/// current terms admit it again or refuse it. A saved authority that no
+/// longer stands ends the call refused before anything runs.
 ///
 /// # Errors
 ///
@@ -283,7 +293,8 @@ pub(super) fn run(
     let mut memory = vault
         .memory(actor, class)
         .with_invocation(invocation)
-        .at(placement.into());
+        .at(placement.into())
+        .with_owner_surface(plain.surface);
     if let Some(session) = session {
         memory = memory.with_session(session);
     }

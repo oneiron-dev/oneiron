@@ -5,8 +5,11 @@
 //! `MergeQueue` operation that exists, unchanged.
 //!
 //! None initializes or configures a queue, runs a check, diagnoses a red
-//! batch, takes a verdict, a test result or a receipt from the caller, or
-//! publishes a tested-tree record; the engine has no host checker for them.
+//! batch, or takes a verdict, a test result or a receipt from the caller.
+//! The checker doors (`checker`, FIX 6868) request those checks on the
+//! frozen plan; the server's drain runs them and seals each green tree's
+//! tested revision. `export_green` (G2 PR3) exports the current green's
+//! sealed revision through the unchanged reviewed origin export.
 //! Landing keeps every engine gate: unanimous multi-critic admission, the
 //! sealed queue permit, exact bytes and base, and durable mutation receipts.
 //! The owner proof is not a critic approval and never stands in for one.
@@ -14,10 +17,21 @@
 //! Authority is the owner's live proof alone (`Memory::merge_queue_owner`),
 //! checked before any id resolves, so a refusal is no existence oracle.
 
+mod check_receipt;
+mod checker;
+mod checker_types;
+mod export;
+mod export_types;
 mod observation;
 mod operations;
 mod types;
 
+pub use check_receipt::{
+    CodeCheckAttemptView, CodeCheckCommandResult, CodeCheckReceiptRequest, CodeCheckReceiptView,
+};
+pub(crate) use checker::check_work_view;
+pub use checker_types::*;
+pub use export_types::*;
 pub use types::*;
 
 use std::path::Path;

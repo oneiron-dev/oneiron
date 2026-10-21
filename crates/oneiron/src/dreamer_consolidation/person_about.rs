@@ -28,8 +28,8 @@ use crate::error::{Error, Result};
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    ModelId, ModelTierRef, ResponseFormat, ScopeResource, StepOutcome, TierPrecedence,
-    call_as_step,
+    LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource, StepOutcome, TierPrecedence,
+    call_as_step_checked,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, Named, SideTable};
@@ -203,6 +203,33 @@ fn one_line(text: &str, max_chars: usize) -> String {
     flat.chars().take(max_chars).collect()
 }
 
+/// Why an `about` reply is refused: it holds no line.
+const EMPTY_ABOUT: &str = "the model wrote an empty about line";
+
+/// The one `about` line a reply gives: its first non-blank line, flattened.
+/// The step's check and the landing read it alike (FIX 7431).
+fn about_line(response: &LlmResponse) -> std::result::Result<String, &'static str> {
+    let reply = super::step_charge::reply_text(response);
+    let text = one_line(
+        reply
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or(""),
+        usize::MAX,
+    );
+    if text.is_empty() {
+        Err(EMPTY_ABOUT)
+    } else {
+        Ok(text)
+    }
+}
+
+/// The step's check on an `about` reply (FIX 7431): an empty line is refused
+/// inside the step, paid and never memoized, so its Retry asks again.
+fn check_about_reply(response: &LlmResponse) -> std::result::Result<(), String> {
+    about_line(response).map(|_| ()).map_err(str::to_owned)
+}
+
 fn person_about_input(person: EntityId) -> rmpv::Value {
     rmpv::Value::Map(vec![(
         rmpv::Value::from("person"),
@@ -292,8 +319,6 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
         Ok(())
     })?;
     vault.store.notify_attempt_observers();
-    // FIX 6941: a queued about-pass re-arms the deadline watch after commit.
-    vault.store.notify_proactivity_changes();
     Ok(())
 }
 
@@ -587,7 +612,15 @@ impl<E> PersonAboutExecutor<'_, E> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
-            let response = match call_as_step(&step_ctx, self.backend, self.guard, request).await {
+            let response = match call_as_step_checked(
+                &step_ctx,
+                self.backend,
+                self.guard,
+                request,
+                &check_about_reply,
+            )
+            .await
+            {
                 Ok(StepOutcome::Finished { response, .. }) => {
                     charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
                     response
@@ -614,6 +647,13 @@ impl<E> PersonAboutExecutor<'_, E> {
                         cause: DreamerParkCause::Checkpoint,
                     });
                 }
+                // An empty line the check refused was paid and never
+                // memoized: it is asked again after its retry delay (FIX
+                // 7431).
+                Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
+                    charges.record_usage(&usage);
+                    return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
+                }
                 Err(DurableStepError::Engine(error)) => return Err(error),
                 Err(other) => {
                     return Ok(DreamerAttemptExecution::Park {
@@ -622,25 +662,14 @@ impl<E> PersonAboutExecutor<'_, E> {
                     });
                 }
             };
-            let reply: String = response
-                .message
-                .content
-                .iter()
-                .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect();
-            let text = one_line(
-                reply
-                    .lines()
-                    .find(|line| !line.trim().is_empty())
-                    .unwrap_or(""),
-                usize::MAX,
-            );
-            if text.is_empty() {
-                return Ok(charges.park("the model wrote an empty about line"));
-            }
+            let text = match about_line(&response) {
+                Ok(text) => text,
+                // Only a memo stored before the check can be empty: it goes,
+                // and the Retry asks again (FIX 7431, OF-193a).
+                Err(reason) => {
+                    return charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason);
+                }
+            };
             lines.push(AboutLine { band, text });
             below = Some(band_digest);
             if ctx.deadline.expired() {

@@ -41,6 +41,9 @@ use oneiron::dreamer_runner::maintenance::coach::{
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
 };
+use oneiron::feedback::{
+    COACH_FEEDBACK_DELIVERY_FACET, COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET,
+};
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{HumanAskReason, PersonChangedAnswer, PersonThreshold};
 use oneiron::session_lifecycle::SessionSpeakers;
@@ -103,11 +106,14 @@ pub(crate) fn spawn(
 ) -> tokio::task::JoinHandle<()> {
     // The Coach's model drafts the digest settings steps once a round of
     // this worker served, so the digest timer then only queues their job
-    // (FIX 5609); until then, after a round that errs and once the worker
-    // ends, the timer's closed-form rule evaluates (FIX 6165). The guard is
-    // the task's own state from here, so an abort before its first poll
-    // drops it too.
-    let digest = DigestHostReady(Arc::downgrade(server.vault()));
+    // (FIX 5609); until then, after a round that errs, once the worker ends
+    // and once too many of its ticks pass with no round served, the timer's
+    // closed-form rule evaluates (FIX 6165, 7211). The guard is the task's
+    // own state from here, so an abort before its first poll drops it too.
+    let digest = DigestHostReady {
+        vault: Arc::downgrade(server.vault()),
+        expected_round_interval: TICK,
+    };
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -131,8 +137,14 @@ pub(crate) fn spawn(
                     tracing::warn!(kind = ?error.kind(), "the Coach's host queue waits for the next round");
                     false
                 }
+                // A stopped round logs a static code, never its payload.
                 Err(error) => {
-                    tracing::warn!(%error, "the Coach's host round stopped");
+                    let code = if error.is_panic() {
+                        "coach_host_round_panicked"
+                    } else {
+                        "coach_host_round_cancelled"
+                    };
+                    tracing::warn!(code, "the Coach's host round stopped");
                     false
                 }
                 Ok(Ok(())) => true,
@@ -144,13 +156,19 @@ pub(crate) fn spawn(
 
 /// The worker's word on whether it serves the vault's digest settings steps
 /// (FIX 6165). Dropped with the worker's task, aborted or ended, it says not
-/// ready. It holds the vault weakly, so the worker keeps no vault open.
-struct DigestHostReady(std::sync::Weak<Vault>);
+/// ready. It holds the vault weakly, so the worker keeps no vault open. A
+/// ready word carries the worker's tick, so it lapses while no round serves
+/// (FIX 7211); the round itself is never cut short.
+struct DigestHostReady {
+    vault: std::sync::Weak<Vault>,
+    /// The worker's own tick: one round is expected per interval.
+    expected_round_interval: Duration,
+}
 
 impl DigestHostReady {
     fn set(&self, ready: bool) {
-        if let Some(vault) = self.0.upgrade() {
-            vault.set_coach_weave_digest_host_ready(ready);
+        if let Some(vault) = self.vault.upgrade() {
+            vault.set_coach_weave_digest_host_ready(ready, self.expected_round_interval);
         }
     }
 }
@@ -200,6 +218,11 @@ fn run_one(
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
         COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
         COACH_EVAL_AUTHORING_FACET => super::eval_authoring::run(server, admitted, now),
+        COACH_FEEDBACK_SWEEP_FACET => super::feedback_triage::run_sweep(server, admitted, now),
+        COACH_FEEDBACK_TRIAGE_FACET => super::feedback_triage::run_revision(server, admitted, now),
+        COACH_FEEDBACK_DELIVERY_FACET => {
+            super::feedback_report_delivery::run(server, admitted, now)
+        }
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
         COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
         COACH_SEAL_CHECKS_FACET => seal_checks::run(server, admitted, now),

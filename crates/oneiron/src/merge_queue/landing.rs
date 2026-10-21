@@ -103,9 +103,25 @@ impl MergeQueue<'_> {
     /// Consume slow results in commit order. Later successes wait for earlier
     /// results. Any red result rolls the full ungreen suffix back to last green.
     pub fn settle_slow(&self) -> Result<MergeQueuePointers> {
+        self.settle_slow_with(false)
+    }
+
+    /// [`Self::settle_slow`] for the queue driver (G2 PR3): each batch it
+    /// advances to green also keeps its pending tested-revision intent, in
+    /// the same save. Settlement itself is unchanged.
+    pub(crate) fn settle_slow_driven(&self) -> Result<MergeQueuePointers> {
+        self.settle_slow_with(true)
+    }
+
+    fn settle_slow_with(&self, driven: bool) -> Result<MergeQueuePointers> {
         let _guard = lock_repository(self.repo.common_dir())?;
         let mut queue = self.queue()?;
         self.require_current(&queue)?;
+        let sealing = if driven {
+            self.initialized_configuration()?.ok()
+        } else {
+            None
+        };
         let mut batches: Vec<_> = queue
             .pointers
             .pending_slow
@@ -125,8 +141,15 @@ impl MergeQueue<'_> {
                     .landed_head
                     .as_deref()
                     .ok_or(Error::CorruptedIndex("landed HEAD missing"))?;
-                let expected = format!("{}:{}:Slow:{}:{}", batch.id, path.mask, path.tree, commit);
-                if verdict.candidate != expected || verdict.baseline_id != batch.baseline_id {
+                if !self.require_check_binding(
+                    batch,
+                    path.mask,
+                    &path.tree,
+                    commit,
+                    super::CheckPhase::Slow,
+                    &verdict,
+                    None,
+                )? {
                     return Err(Error::CorruptedIndex("slow verdict scope differs"));
                 }
                 red |= !verdict.passes();
@@ -161,6 +184,9 @@ impl MergeQueue<'_> {
                     .clone()
                     .ok_or(Error::CorruptedIndex("landed HEAD missing"))?;
                 batch.state = BatchState::GreenAdvanced;
+                if let Some(config) = &sealing {
+                    self.attach_seal_intent(config, batch, self.vault.now_recorded_at())?;
+                }
                 consumed += 1;
             }
             queue.pointers.pending_slow.drain(..consumed);

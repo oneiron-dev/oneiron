@@ -31,11 +31,19 @@
 //! the one anchor URL the supervisor bound (FIX 6517, [`anchor`]). A profile
 //! with a `network` has the supervisor's TAP attached as the guest's one NIC
 //! on every boot, before the instance starts (FIX 6808, [`network`]).
+//! Every reap of a VMM reads its exit through the watch first, a dropped
+//! driver's on a thread of its own (FIX 7126, [`reaper`]), and each spawn
+//! first drops what an earlier, reaped generation left queued on the boot
+//! port's, the restore channel's and the custody anchor's two sockets (FIX
+//! 7077, FIX 7480, FIX 7182, [`backlog`]).
 
 mod anchor;
+mod backlog;
+mod credentials;
 mod exit;
 mod network;
 mod provision;
+mod reaper;
 mod restore;
 mod runner;
 
@@ -280,6 +288,8 @@ impl VaultVm {
     }
 
     async fn spawn_vmm(&mut self) -> anyhow::Result<()> {
+        // Before the new VMM exists, and only once the last one is reaped.
+        self.drop_stale_connections()?;
         let api = self.path("api.sock");
         for stale in [&api, &self.path("vsock.sock")] {
             match std::fs::remove_file(stale) {
@@ -637,8 +647,12 @@ impl VaultVm {
         for file in [&mem_tmp, &snap_tmp] {
             std::fs::File::open(file)?.sync_all()?;
         }
-        // The state file last: its presence is what publishes the snapshot.
+        // Beside the RAM, the anchor URL its guest was handed (FIX 7183).
+        self.keep_snapshot_anchor()?;
         std::fs::rename(&mem_tmp, self.path("vm.mem"))?;
+        // The state file last, once the files beside it are durable: its
+        // presence is what publishes the snapshot.
+        std::fs::File::open(&self.config.state_dir)?.sync_all()?;
         std::fs::rename(&snap_tmp, self.path("vm.snap"))?;
         std::fs::File::open(&self.config.state_dir)?.sync_all()?;
         self.kill().await;
@@ -651,6 +665,7 @@ impl VaultVm {
         let (snap, mem) = (self.path("vm.snap.taken"), self.path("vm.mem.taken"));
         std::fs::rename(self.path("vm.snap"), &snap)?;
         std::fs::rename(self.path("vm.mem"), &mem)?;
+        let anchor = self.take_snapshot_anchor()?;
         self.spawn_vmm().await?;
         let loaded = self
             .api(
@@ -665,8 +680,9 @@ impl VaultVm {
             .await;
         let _ = std::fs::remove_file(&snap);
         loaded?;
-        // The guest's anchor is the one its cold boot was handed.
-        self.serve_anchor_proxy();
+        // The guest's anchor is the one its cold boot was handed, kept with
+        // its snapshot whatever was attached since (FIX 7183).
+        self.resume_anchor_proxy(anchor);
         self.accept_join(timeout).await?;
         self.send(&VmHostFrame::Resumed).await?;
         // The memory file backs guest RAM until the VMM exits; unlinking it
@@ -679,9 +695,10 @@ impl VaultVm {
 
     /// Asks the vault to stop and kills the VMM when the grace runs out.
     /// The outbox attachment denies new transfers from here on and lets its
-    /// commit in flight finish; the next start opens it again. An exit the
-    /// grace saw is read through the exit watch before it is reaped, so its
-    /// waiters get the status; a killed VMM's waiters may get an error.
+    /// commit in flight finish; the next start opens it again. The VMM's
+    /// exit is read through the exit watch before it is reaped, whether the
+    /// grace saw it or a kill ended it, so its waiters get the status (FIX
+    /// 7126).
     pub async fn stop(&mut self, grace: Duration) -> anyhow::Result<()> {
         if let Some(outbox) = &self.outbox {
             outbox.drain();
@@ -690,19 +707,23 @@ impl VaultVm {
             let _ = self.send(&VmHostFrame::Stop).await;
         }
         let exit = self.exit.as_ref();
-        if let Some(child) = self.child.as_mut() {
-            let exited = async {
-                if let Some(exit) = exit {
-                    let _ = exit.wait().await;
-                }
-                child.wait().await
-            };
-            if tokio::time::timeout(grace, exited).await.is_err() {
-                let _ = child.kill().await;
+        let graceful = match self.child.as_mut() {
+            // The watch reads the exit without reaping it; with none, or
+            // one that fails, the reap is the grace's own.
+            Some(child) => {
+                let exited = async {
+                    if let Some(exit) = exit
+                        && exit.wait().await.is_ok()
+                    {
+                        return true;
+                    }
+                    child.wait().await.is_ok()
+                };
+                matches!(tokio::time::timeout(grace, exited).await, Ok(true))
             }
-        }
-        self.child = None;
-        self.exit = None;
+            None => true,
+        };
+        self.end_vmm(!graceful).await;
         self.lifecycle = None;
         self.source_attached = false;
         self.anchor.end_proxy();
@@ -710,10 +731,7 @@ impl VaultVm {
     }
 
     async fn kill(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill().await;
-        }
-        self.exit = None;
+        self.end_vmm(true).await;
         self.lifecycle = None;
         self.source_attached = false;
         self.anchor.end_proxy();

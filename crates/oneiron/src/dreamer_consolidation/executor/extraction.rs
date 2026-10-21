@@ -3,76 +3,42 @@
 
 use super::decisions::{id_options, named_id};
 use super::*;
+use crate::dreamer_consolidation::call_labels::CallLabelMap;
+use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
-use crate::llm::FinishReason;
 use crate::llm::decision::AnswerContract;
 use crate::llm::decision::catalogue::CORRECTION;
 
+mod cited;
+mod quote_binding;
+mod wire;
+pub(in crate::dreamer_consolidation) use cited::CitationCheck;
+pub(in crate::dreamer_consolidation) use wire::{
+    CallPins, ExtractedPerson, ExtractionReply, ReplyContext, check_extraction_reply,
+    contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply, reply_json,
+    resolve_subject,
+};
+use wire::{entity_id_from_hex, parse_candidate};
+
 impl ConsolidationExecutor<'_> {
+    /// The extraction request over one child's `transcript`, rendered with
+    /// `labels` (FIX 7506): the map and the person-mint `namespace` bind
+    /// into the request's identity, so its memo is read only against them.
     pub(in crate::dreamer_consolidation) fn extraction_request(
         call: &RoleCall<'_>,
-        partition: &ConsolidationPartitionKey,
         transcript: &str,
+        labels: &CallLabelMap,
         scope: &crate::llm::Scope,
+        namespace: &MintNamespace,
     ) -> Result<LlmRequest> {
-        Self::request_over(
-            call,
-            None,
-            format!(
-                "conversation {}\n{transcript}",
-                bytes_to_hex_lower(partition.conversation_ref.as_bytes())
-            ),
-            scope,
-        )
+        let mut request = Self::request_over(call, None, transcript.to_owned(), scope)?;
+        labels.bind_request(&mut request, Some(&namespace.identity()));
+        Ok(request)
     }
 
-    /// The extraction request over one NOTE (OF-073): the same prompt and
-    /// reply contract, with the NOTE's markdown as the only source. Its
-    /// byte ranges count over that markdown, so the review can check each
-    /// one against the exact text it read.
-    /// `sealed_pad` is a sealed scratchpad's review and how it asks for
-    /// the pad's `keep` lines (ARCH-0032 #scratchpad-marks).
-    pub(in crate::dreamer_consolidation) fn note_request(
-        call: &RoleCall<'_>,
-        note: EntityId,
-        markdown: &str,
-        sealed_pad: Option<PadAsk>,
-        scope: &crate::llm::Scope,
-    ) -> Result<LlmRequest> {
-        let id = bytes_to_hex_lower(note.as_bytes());
-        let mut rule = format!(
-            "The source is one note, not a conversation. Cite it as \
-             {{\"source_id\": \"{id}\", \"byte_range\": [start, end]}}, a range of \
-             UTF-8 bytes of the note's markdown, which starts on the line after its \
-             header. Also give the object a key \"importance\": a number from 0 to 1 \
-             for how much the note itself matters to keep."
-        );
-        match sealed_pad {
-            Some(PadAsk::First { keep }) => {
-                rule.push_str(
-                    " The note is a sealed scratchpad. Blank lines held text its writer \
-                     marked scratch: cite none of them.",
-                );
-                if keep {
-                    rule.push_str(
-                        " A line headed [keep] or [pin keep] states a fact its writer \
-                         asked to keep: extract each one.",
-                    );
-                }
-                rule.push_str(" Decide each other line on its own.");
-            }
-            Some(PadAsk::Missed) => rule.push_str(
-                " The note is a sealed scratchpad, asked again. Blank lines were read \
-                 before or marked scratch: cite none of them. Each line left is headed \
-                 [keep] or [pin keep]: a fact its writer asked to keep that the last \
-                 review grounded no belief in. Extract each one.",
-            ),
-            None => {}
-        }
-        Self::request_over(call, Some(rule), format!("note {id}\n{markdown}"), scope)
-    }
-
-    fn request_over(
+    /// The extraction request over `source`, `source_rule` before it: a
+    /// NOTE review's rule is `note_classification`'s (OF-073).
+    pub(in crate::dreamer_consolidation) fn request_over(
         call: &RoleCall<'_>,
         source_rule: Option<String>,
         source: String,
@@ -127,22 +93,24 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// The candidates one child's `scope` can take from `response`, before
-    /// the claim each corrects is decided, and how many it cannot. Decode
-    /// never fails the partition over one candidate: one it cannot take (a
-    /// candidate breaking a rule such as the evidence rules, or one in a reply
-    /// stored before the step checked candidates) is not written, and is
-    /// counted.
+    /// the claim each corrects is decided, and how many it cannot. Its
+    /// labels, quotes and declared people bind through `ctx`, its call's
+    /// own map. Decode never fails the partition over one candidate: one it
+    /// cannot take (a candidate breaking a rule such as the evidence rules,
+    /// or one in a reply stored before the step checked candidates) is not
+    /// written, and is counted.
     pub(in crate::dreamer_consolidation) fn parse_candidates<'s>(
         response: &LlmResponse,
         resources: &BranchResources<'_>,
         scope: &'s crate::llm::Scope,
+        ctx: ReplyContext<'_>,
     ) -> Result<(Vec<ParsedCandidate<'s>>, usize)> {
         let items = extraction_reply(response)?.candidates;
         let items = items.as_slice();
         // A child hash is not part of the return contract. If a model still
         // reports one, compare it with our pinned source reread only to flag
         // an integrity failure. It never enters dedup or the write envelope.
-        for source_id in disagreeing_child_hashes(resources, items) {
+        for source_id in disagreeing_child_hashes(resources, &ctx.call, items) {
             tracing::warn!(
                 target: "oneiron::dreamer",
                 child_integrity = "evidence_hash_mismatch",
@@ -153,7 +121,7 @@ impl ConsolidationExecutor<'_> {
         let mut parsed = Vec::new();
         let mut skipped = 0_usize;
         for item in items {
-            match parse_candidate(item, resources, scope) {
+            match parse_candidate(item, ctx, scope) {
                 Ok(candidate) => parsed.push(candidate),
                 Err(reason) => {
                     skipped += 1;
@@ -186,17 +154,10 @@ impl ConsolidationExecutor<'_> {
         // Each candidate's question indexes, and every listed claim asked about.
         let mut asks: Vec<Vec<usize>> = vec![Vec::new(); parsed.len()];
         let mut listed: Vec<(EntityId, EntityId, &str, &str)> = Vec::new();
+        let pins = resources.pins();
         for (position, candidate) in parsed.iter().enumerate() {
-            let shown: Vec<_> = resources
-                .known()
-                .shown_about(candidate.subject)
-                .filter(|(claim, ..)| {
-                    resources.prior(*claim).is_ok()
-                        && resources.source_version(claim).is_ok_and(|version| {
-                            candidate.scope.allows_read(&version)
-                                && candidate.scope.allows_write(&version)
-                        })
-                })
+            let shown: Vec<_> = pins
+                .correctable(candidate.subject, candidate.scope)
                 .collect();
             let ids: Vec<EntityId> = shown.iter().map(|(claim, ..)| *claim).collect();
             for (group, options) in id_options(&ids, true).into_iter().enumerate() {
@@ -312,17 +273,6 @@ impl ConsolidationExecutor<'_> {
     }
 }
 
-/// How a sealed scratchpad's review asks for its `keep` lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::dreamer_consolidation) enum PadAsk {
-    /// The first read: scratch lines blanked; `keep` when a line is marked
-    /// `keep`.
-    First { keep: bool },
-    /// The one re-ask (FIX 2240): only the `keep` lines the last review
-    /// grounded no belief in are left; every other line is blank.
-    Missed,
-}
-
 /// What the correction pack decided for one parsed candidate: the listed
 /// claim it corrects, if any, and its questions' decisions.
 pub(in crate::dreamer_consolidation) struct Correction {
@@ -360,77 +310,6 @@ pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
     evidence_turn_refs: Vec<EntityId>,
     project: EntityId,
     prospective_queries: Vec<String>,
-}
-
-/// One candidate's reading of the reply and of the branch's pinned
-/// resources, or why it is not written; an error is this candidate's alone.
-fn parse_candidate<'s>(
-    item: &serde_json::Value,
-    resources: &BranchResources<'_>,
-    scope: &'s crate::llm::Scope,
-) -> Result<ParsedCandidate<'s>> {
-    // A candidate that names no value carries no claim.
-    let value = item
-        .get("value")
-        .filter(|value| !value.is_null())
-        .ok_or_else(|| invalid_consolidation("extracted candidate names no value"))?
-        .clone();
-    let subject = item
-        .get("subject")
-        .and_then(|value| value.as_str())
-        .and_then(entity_id_from_hex)
-        .ok_or_else(|| invalid_consolidation("extracted candidate names no subject"))?;
-    // The contract's predicate rule is the claim grammar's.
-    let predicate = item
-        .get("predicate")
-        .and_then(|value| value.as_str())
-        .filter(|predicate| crate::claim::validate_predicate(predicate, false).is_ok())
-        .map(str::to_owned);
-    let confidence = item
-        .get("confidence")
-        .and_then(serde_json::Value::as_f64)
-        .unwrap_or(0.5) as f32;
-    let refs = item
-        .get("evidence_refs")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| invalid_consolidation("candidate evidence_refs must be an array"))?;
-    let locators: Vec<_> = refs
-        .iter()
-        .map(decode_model_locator)
-        .collect::<Result<_>>()?;
-    let mut evidence_turn_refs: Vec<_> = locators.iter().map(|entry| entry.source_id()).collect();
-    evidence_turn_refs.sort_unstable();
-    evidence_turn_refs.dedup();
-    for id in &evidence_turn_refs {
-        if !scope.allows_read(&resources.source_version(id)?) {
-            return Err(invalid_consolidation(
-                "extracted evidence crossed its child slice",
-            ));
-        }
-    }
-    // A claim drawn from two projects' turns has no one audience, and a
-    // project-bound branch writes only its own project's.
-    let project = resources
-        .evidence_project(&evidence_turn_refs)?
-        .ok_or_else(|| {
-            invalid_consolidation("extracted candidate's sources share no one branch project")
-        })?;
-    Ok(ParsedCandidate {
-        scope,
-        subject,
-        predicate,
-        value,
-        confidence,
-        rel: item.get("rel").filter(|value| !value.is_null()).cloned(),
-        topic: item
-            .get("topic_key")
-            .filter(|value| !value.is_null())
-            .cloned(),
-        locators,
-        evidence_turn_refs,
-        project,
-        prospective_queries: prospective_queries(item)?,
-    })
 }
 
 /// The candidates and the listed claims as the correction pack reads them:
@@ -499,11 +378,54 @@ fn build_candidate(
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> Result<super::super::evidence::ExtractedCandidate> {
-    let scope = parsed.scope;
     let corrects = correction
         .corrects
         .map(|claim| resources.prior(claim))
         .transpose()?;
+    build_resolved(
+        parsed,
+        corrects,
+        &correction.decisions,
+        partition,
+        attempt_id,
+        now_ms,
+    )
+}
+
+/// [`build_candidate`] once the head it corrects, if any, is read.
+fn build_resolved(
+    parsed: ParsedCandidate<'_>,
+    corrects: Option<&crate::dreamer_consolidation::PriorHead>,
+    decisions: &[KeptDecision],
+    partition: &ConsolidationPartitionKey,
+    attempt_id: crate::attempt_queue::AttemptId,
+    now_ms: u64,
+) -> Result<super::super::evidence::ExtractedCandidate> {
+    let (proposal, locators) =
+        resolve_proposal(parsed, corrects, decisions, partition, attempt_id, now_ms)?;
+    let extracted = super::super::evidence::ExtractedCandidate::new(proposal, locators)?;
+    // Only a head the listing shows is a correction target.
+    Ok(match corrects {
+        Some(prior) => extracted.correcting(prior.claim_id),
+        None => extracted,
+    })
+}
+
+/// [`build_resolved`]'s proposal and its evidence before they join: what
+/// the extraction step's citation check (FIX 7274) builds with no
+/// correction to tell whether a candidate would build (FIX 7506).
+fn resolve_proposal(
+    parsed: ParsedCandidate<'_>,
+    corrects: Option<&crate::dreamer_consolidation::PriorHead>,
+    decisions: &[KeptDecision],
+    partition: &ConsolidationPartitionKey,
+    attempt_id: crate::attempt_queue::AttemptId,
+    now_ms: u64,
+) -> Result<(
+    PromotionCandidate,
+    Vec<super::super::evidence::EvidenceLocator>,
+)> {
+    let scope = parsed.scope;
     let (subject, predicate) = match corrects {
         Some(prior) => {
             let ClaimSubject::Entity(subject) = prior.body.subject else {
@@ -529,6 +451,8 @@ fn build_candidate(
     let rel = match (corrects, parsed.rel) {
         (Some(prior), _) => prior.body.rel,
         (None, None) => scope.relationship,
+        // Not advertised, and no call shows a relationship id; still read
+        // as before (FIX 7506 left this one route unlabelled).
         (None, Some(value)) => Some(
             value
                 .as_str()
@@ -589,7 +513,7 @@ fn build_candidate(
         facts.project,
         facts.topic.as_deref(),
     )?;
-    let extracted = super::super::evidence::ExtractedCandidate::new(
+    Ok((
         PromotionCandidate {
             claim_id,
             candidate,
@@ -605,15 +529,10 @@ fn build_candidate(
                 end: now_ms,
             },
             learned_at: now_ms,
-            decisions: correction.decisions.clone(),
+            decisions: decisions.to_vec(),
         },
         parsed.locators,
-    )?;
-    // Only a head the listing shows is a correction target.
-    Ok(match corrects {
-        Some(prior) => extracted.correcting(prior.claim_id),
-        None => extracted,
-    })
+    ))
 }
 
 /// The shipped extraction prompt, as data: the system text and the worked
@@ -632,183 +551,6 @@ struct WorkedExample {
     assistant: String,
 }
 
-/// An extraction reply in its contract's shape: an object whose
-/// `candidates`, when present, are objects, and whose `persons`, when
-/// present, each name a 32-hex id, a name and at least one 32-hex turn.
-/// `importance` is a NOTE review's, read by that review only. Other keys
-/// are outside the contract and read by no one.
-#[derive(serde::Deserialize)]
-pub(in crate::dreamer_consolidation) struct ExtractionReply {
-    #[serde(default, deserialize_with = "objects")]
-    pub(in crate::dreamer_consolidation) candidates: Vec<serde_json::Value>,
-    #[serde(default)]
-    pub(in crate::dreamer_consolidation) persons: Vec<ExtractedPerson>,
-    #[serde(default)]
-    pub(in crate::dreamer_consolidation) importance: Option<serde_json::Value>,
-}
-
-#[derive(serde::Deserialize)]
-pub(in crate::dreamer_consolidation) struct ExtractedPerson {
-    pub(in crate::dreamer_consolidation) id: String,
-    pub(in crate::dreamer_consolidation) name: String,
-    pub(in crate::dreamer_consolidation) evidence_turn_refs: Vec<String>,
-}
-
-fn objects<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<Vec<serde_json::Value>, D::Error> {
-    let items: Vec<serde_json::Map<String, serde_json::Value>> =
-        serde::Deserialize::deserialize(deserializer)?;
-    Ok(items.into_iter().map(serde_json::Value::Object).collect())
-}
-
-/// `response`'s extraction reply, refused unless it has the contract's
-/// shape. Its candidates' fields are [`check_extraction_reply`]'s, so a
-/// reply stored before that check still reads here.
-///
-/// One narrow repair runs first: a reply that stopped one `}` short (it
-/// parses to the end and ends on the candidates' `]`) gets exactly one `}`
-/// appended, and the result must still parse and meet the contract. No
-/// other text is mended.
-pub(in crate::dreamer_consolidation) fn extraction_reply(
-    response: &LlmResponse,
-) -> Result<ExtractionReply> {
-    let text: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    let text = text.trim();
-    let reply = match serde_json::from_str::<serde_json::Value>(text) {
-        Ok(reply) => reply,
-        Err(error)
-            if error.is_eof()
-                && response.finish_reason == FinishReason::Stop
-                && text.starts_with('{')
-                && text.ends_with(']') =>
-        {
-            serde_json::from_str(&format!("{text}}}"))
-                .map_err(|_| invalid_consolidation("extraction response must be JSON"))?
-        }
-        Err(_) => return Err(invalid_consolidation("extraction response must be JSON")),
-    };
-    // A derived struct also reads a JSON array positionally; the contract
-    // names objects only.
-    let objects = reply.is_object()
-        && reply
-            .get("persons")
-            .and_then(serde_json::Value::as_array)
-            .is_none_or(|people| people.iter().all(serde_json::Value::is_object));
-    if !objects {
-        return Err(invalid_consolidation(
-            "extraction response breaks its contract",
-        ));
-    }
-    let reply: ExtractionReply = serde_json::from_value(reply)
-        .map_err(|_| invalid_consolidation("extraction response breaks its contract"))?;
-    let hex = |id: &str| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit());
-    if !reply.persons.iter().all(|person| {
-        hex(&person.id)
-            && !person.name.is_empty()
-            && !person.evidence_turn_refs.is_empty()
-            && person.evidence_turn_refs.iter().all(|turn| hex(turn))
-    }) {
-        return Err(invalid_consolidation(
-            "extraction response breaks its contract",
-        ));
-    }
-    Ok(reply)
-}
-
-/// The extraction step's check: the reply meets the contract, each of its
-/// candidates included, or it is refused and never memoized, so the next
-/// run asks again. A candidate names a 32-hex `subject`, a string
-/// `predicate`, a `value` that is not null, a `confidence` from 0 to 1, and
-/// one or more evidence refs as decode reads them. A candidate that meets
-/// them but breaks a rule (the predicate grammar, or a source or project the
-/// branch must hold) is decode's to skip, never a refusal.
-pub(in crate::dreamer_consolidation) fn check_extraction_reply(
-    response: &LlmResponse,
-) -> std::result::Result<(), String> {
-    let reply = extraction_reply(response).map_err(|error| error.to_string())?;
-    for (index, candidate) in reply.candidates.iter().enumerate() {
-        if let Some(field) = contract_fault(candidate) {
-            return Err(format!(
-                "extraction candidate {index} breaks its contract at {field}"
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// The first contract field `candidate` gets wrong, if any.
-fn contract_fault(candidate: &serde_json::Value) -> Option<&'static str> {
-    let id = |field: &str| {
-        candidate
-            .get(field)
-            .and_then(serde_json::Value::as_str)
-            .and_then(entity_id_from_hex)
-            .is_some()
-    };
-    let confidence = candidate
-        .get("confidence")
-        .and_then(serde_json::Value::as_f64);
-    let refs = candidate
-        .get("evidence_refs")
-        .and_then(serde_json::Value::as_array);
-    [
-        ("subject", id("subject")),
-        (
-            "predicate",
-            candidate
-                .get("predicate")
-                .is_some_and(serde_json::Value::is_string),
-        ),
-        (
-            "value",
-            candidate.get("value").is_some_and(|value| !value.is_null()),
-        ),
-        (
-            "confidence",
-            confidence.is_some_and(|confidence| (0.0..=1.0).contains(&confidence)),
-        ),
-        (
-            "evidence_refs",
-            refs.is_some_and(|refs| {
-                !refs.is_empty() && refs.iter().all(|cited| decode_model_locator(cited).is_ok())
-            }),
-        ),
-        (
-            "prospective_queries",
-            prospective_queries(candidate).is_ok(),
-        ),
-    ]
-    .into_iter()
-    .find_map(|(field, met)| (!met).then_some(field))
-}
-
-fn prospective_queries(candidate: &serde_json::Value) -> Result<Vec<String>> {
-    let Some(queries) = candidate.get("prospective_queries") else {
-        return Ok(Vec::new());
-    };
-    let queries = queries
-        .as_array()
-        .ok_or_else(|| invalid_consolidation("prospective_queries must be strings"))?;
-    let hints = queries
-        .iter()
-        .map(|query| {
-            query
-                .as_str()
-                .ok_or_else(|| invalid_consolidation("prospective_queries must be strings"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    crate::claim::normalize_lexical_query_hints(&hints)
-}
-
 /// The question key a stored head was filed under, as its scope map holds it.
 fn prior_topic(scope: Option<&Value>) -> Option<Value> {
     let Some(Value::Map(fields)) = scope else {
@@ -817,133 +559,4 @@ fn prior_topic(scope: Option<&Value>) -> Option<Value> {
     fields
         .iter()
         .find_map(|(key, value)| (key.as_str() == Some("topic_key")).then(|| value.clone()))
-}
-
-pub(in crate::dreamer_consolidation) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
-    let hex = hex.trim();
-    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut raw = [0_u8; 16];
-    for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-        let high = hex_nibble(chunk[0])?;
-        let low = hex_nibble(chunk[1])?;
-        raw[index] = (high << 4) | low;
-    }
-    EntityId::from_bytes(raw).ok()
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-/// A diagnostic side channel for out-of-contract hashes in the raw model
-/// response. The typed child return cannot carry them as evidence authority.
-pub(in crate::dreamer_consolidation) fn disagreeing_child_hashes(
-    resources: &BranchResources<'_>,
-    items: &[serde_json::Value],
-) -> Vec<EntityId> {
-    let mut disagreements = Vec::new();
-    for item in items {
-        let Some(hashes) = item
-            .get("evidence_hashes")
-            .and_then(serde_json::Value::as_object)
-        else {
-            continue;
-        };
-        let locators: Vec<_> = item
-            .get("evidence_refs")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|value| decode_model_locator(value).ok())
-            .collect();
-        for (raw_id, value) in hashes {
-            let (Some(id), Some(reported)) = (entity_id_from_hex(raw_id), value.as_str()) else {
-                continue;
-            };
-            // A diagnostic is never a new citation and cannot veto a valid
-            // judgement. Match only typed citations that the parent can read
-            // at its ledger pin; CLAIMs and TURN ranges retain their kind.
-            let cited: Vec<_> = locators
-                .iter()
-                .copied()
-                .filter(|locator| locator.source_id() == id)
-                .map(super::super::evidence::EvidenceLocator::reference)
-                .collect();
-            let Ok(verified) = resources.verify_evidence_refs(&cited) else {
-                continue;
-            };
-            if !verified.is_empty()
-                && verified.iter().all(|entry| {
-                    !reported.eq_ignore_ascii_case(&bytes_to_hex_lower(&entry.content_hash))
-                })
-            {
-                disagreements.push(id);
-            }
-        }
-    }
-    disagreements.sort_unstable();
-    disagreements.dedup();
-    disagreements
-}
-
-pub(in crate::dreamer_consolidation) fn decode_model_locator(
-    value: &serde_json::Value,
-) -> Result<super::super::evidence::EvidenceLocator> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| invalid_consolidation("evidence locator must be an object"))?;
-    let source_id = object
-        .get("source_id")
-        .and_then(serde_json::Value::as_str)
-        .and_then(entity_id_from_hex)
-        .ok_or_else(|| invalid_consolidation("invalid evidence source id"))?;
-    let claim_id = object
-        .get("claim_id")
-        .map(|value| {
-            value
-                .as_str()
-                .and_then(entity_id_from_hex)
-                .ok_or_else(|| invalid_consolidation("invalid evidence claim id"))
-        })
-        .transpose()?;
-    let byte_range = object
-        .get("byte_range")
-        .map(|value| {
-            let pair = value
-                .as_array()
-                .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?;
-            let [start, end] = pair.as_slice() else {
-                return Err(invalid_consolidation("invalid evidence byte range"));
-            };
-            Ok((
-                usize::try_from(
-                    start
-                        .as_u64()
-                        .ok_or_else(|| invalid_consolidation("invalid range start"))?,
-                )
-                .map_err(|_| invalid_consolidation("range start overflow"))?,
-                usize::try_from(
-                    end.as_u64()
-                        .ok_or_else(|| invalid_consolidation("invalid range end"))?,
-                )
-                .map_err(|_| invalid_consolidation("range end overflow"))?,
-            ))
-        })
-        .transpose()?;
-    match (claim_id, byte_range) {
-        (Some(claim), None) => super::super::evidence::EvidenceLocator::claim(source_id, claim),
-        (None, Some((start, end))) => {
-            super::super::evidence::EvidenceLocator::turn_range(source_id, start, end)
-        }
-        _ => Err(invalid_consolidation(
-            "evidence must cite a claim or a byte range",
-        )),
-    }
 }

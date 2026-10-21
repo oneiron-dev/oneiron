@@ -3,13 +3,31 @@
 //! Checks never mutate the live repository. Landing needs a host gate adapter and
 //! a queue-issued permit under the existing repository single-writer lock. The
 //! queue verifies the durable mutation receipt and the complete landed tree.
+mod candidate_intake;
+mod check_execute;
+mod check_inputs;
+mod check_requests;
+mod check_store;
+mod check_tree;
 mod checks;
+mod driver;
+mod driver_materialize;
+mod driver_store;
+mod driver_types;
+mod file_metadata;
+mod initialize;
 mod landing;
 mod mirror_green;
+mod plan;
 mod reviewed;
 mod run;
 mod staging;
 mod storage;
+mod tested;
+mod tested_export;
+mod tested_received;
+mod tested_store;
+mod tested_types;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -20,8 +38,34 @@ use crate::{
     error::Result,
     git_wire::{GitWire, GitWireRepo},
 };
+// The pinned-plan checker (FIX 6868).
+pub use check_inputs::{
+    QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckEnvironment, QueueCheckExecution, QueueCheckFile,
+    QueueCheckHold, QueueCheckHoldReason, QueueCheckHost, QueueCheckInputs, QueueCheckInvocation,
+    QueueCheckLimits, QueueCheckNeed, QueueCheckReceipt, QueueCheckRun, QueueCheckTarget,
+    QueueCheckTreeSource, QueueCommandReceipt,
+};
+pub use check_store::{
+    DEFAULT_QUEUE_CHECK_CONCURRENCY, QUEUE_CHECK_ATTEMPT_KIND, QueueCheckConfiguration,
+    QueueCheckInitStage, QueueCheckLease, QueueCheckRequest, QueueCheckStatus, QueueCheckWork,
+};
+// The restart driver and overlap handoff (FIX 6868, G2 PR2).
+pub(crate) use driver_types::QueueStageOverlap;
+pub use driver_types::{
+    QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDriveHold, QueueDriveHoldReason,
+    QueueDriveOutcome, QueueDrivePass, QueueDriveStatus, QueueDriveView, QueueDriverTarget,
+    QueueSurvivorLink, QueueWork,
+};
+pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
 pub use reviewed::ReviewedProposalLanding;
 pub use run::{RepoQueueOrder, RepoQueuePredecessor};
+// The tested-revision seal at green (FIX 6868, G2 PR3).
+pub(crate) use tested_types::QueueRevisionSeal;
+pub use tested_types::{
+    CodePushSourceLink, GreenQueueRevision, QueueAppliedSource, QueueExportHold,
+    QueueExportHoldReason, QueueGreenExportView, QueueReceiptLink, QueueRevisionIntent,
+    QueueRevisionLink, QueueSealTarget, QueueTestedRevision, QueueTestedTarget,
+};
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,
     MergeLanding, MergeProposal, MergeQueuePointers, Quarantine, SpeculativePath, TestedBatch,

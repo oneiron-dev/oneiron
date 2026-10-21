@@ -32,7 +32,8 @@ use crate::llm::manifest::ModelRole;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
+    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
+    call_as_step_checked,
 };
 use crate::self_heal::audit::AttemptConfession;
 use crate::task_verb::QueueTaskBrief;
@@ -62,6 +63,27 @@ pub struct TaskRealizeModel<'a> {
 
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("task realization: {reason}"))
+}
+
+/// Why a realization's reply is refused: it holds no answer.
+const EMPTY_ANSWER: &str = "the model wrote an empty answer";
+
+/// A realization's answer, trimmed. The step's check and the landing read it
+/// alike (FIX 7431).
+fn realize_answer(response: &LlmResponse) -> std::result::Result<String, &'static str> {
+    let answer = super::step_charge::reply_text(response);
+    let answer = answer.trim();
+    if answer.is_empty() {
+        Err(EMPTY_ANSWER)
+    } else {
+        Ok(answer.to_owned())
+    }
+}
+
+/// The step's check on a realization's reply (FIX 7431): an empty answer is
+/// refused inside the step, paid and never memoized, so its Retry asks again.
+fn check_realize_reply(response: &LlmResponse) -> std::result::Result<(), String> {
+    realize_answer(response).map(|_| ()).map_err(str::to_owned)
 }
 
 /// Realizes one TASK: asks the lent model with the instruction, the TASK's
@@ -165,7 +187,15 @@ pub async fn run_task_realize(
         now_ms: ctx.now_ms,
     };
     let mut charges = StepChargeTally::default();
-    let response = match call_as_step(&step_ctx, model.backend, model.guard, request).await {
+    let response = match call_as_step_checked(
+        &step_ctx,
+        model.backend,
+        model.guard,
+        request,
+        &check_realize_reply,
+    )
+    .await
+    {
         Ok(StepOutcome::Finished { response, .. }) => {
             charges.record_terminal(ctx.vault, record.id, step_hash, &response.usage)?;
             response
@@ -192,6 +222,12 @@ pub async fn run_task_realize(
                 cause: DreamerParkCause::Checkpoint,
             });
         }
+        // An empty answer the check refused was paid and never memoized: it
+        // is asked again after its retry delay (FIX 7431).
+        Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
+            charges.record_usage(&usage);
+            return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
+        }
         Err(DurableStepError::Engine(error)) => return Err(error),
         Err(other) => {
             return Ok(DreamerAttemptExecution::Park {
@@ -203,19 +239,13 @@ pub async fn run_task_realize(
     if ctx.deadline.expired() {
         return Ok(charges.checkpoint());
     }
-    let answer: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    let answer = answer.trim();
-    if answer.is_empty() {
-        return Ok(charges.park("the model wrote an empty answer"));
-    }
+    let answer = match realize_answer(&response) {
+        Ok(answer) => answer,
+        // Only a memo stored before the check can be empty: it goes, and the
+        // Retry asks again (FIX 7431, OF-193a).
+        Err(reason) => return charges.park_refused_reply(ctx.vault, record.id, step_hash, reason),
+    };
+    let answer = answer.as_str();
     let mut notes = Vec::new();
     for part in super::note_parts::parts(answer, crate::note::MAX_NOTE_BYTES) {
         notes.push(

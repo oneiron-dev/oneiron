@@ -237,7 +237,7 @@ pub(crate) fn pad_world_in_body(body: &[u8]) -> Result<EntityId> {
 
 /// The window a pad of `world` learned at `learned_at` rides: the world's
 /// window of that month (`ITEM11_LIVE_PAD_CARRIER`).
-fn pad_window(world: EntityId, learned_at: u64) -> String {
+pub(super) fn pad_window(world: EntityId, learned_at: u64) -> String {
     format!(
         "{}@{}",
         window_label_from_timestamp(learned_at),

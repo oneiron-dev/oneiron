@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1113 facade rows, 3805 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1065.
+// UniFFI census: 1127 facade rows, 3867 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1079.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -7292,6 +7292,10 @@ pub enum ExecutionRuntime {
     Candle,
     #[serde(rename = "endpoint")]
     Endpoint,
+    #[serde(rename = "mlx")]
+    Mlx,
+    #[serde(rename = "coreml")]
+    CoreMl,
 }
 
 /// `oneiron::memory::extraction::types::ExecutionCompute`.
@@ -7303,6 +7307,8 @@ pub enum ExecutionCompute {
     Metal,
     #[serde(rename = "cuda")]
     Cuda,
+    #[serde(rename = "cpu_and_ne")]
+    CpuAndNe,
     #[serde(rename = "opaque")]
     Opaque,
 }
@@ -25248,6 +25254,19 @@ pub enum NotWorse {
     Unknown,
 }
 
+/// `oneiron::embed::space_move::CohortProbe`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CohortProbe {
+    #[serde(rename = "probe")]
+    pub probe: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "from")]
+    pub from: u64,
+    #[serde(rename = "until")]
+    pub until: u64,
+}
+
 /// `oneiron::embed::space_move::KindProbeCheck`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct KindProbeCheck {
@@ -25287,6 +25306,12 @@ pub struct KindProbeCheck {
     pub rubric: Option<String>,
     #[serde(rename = "card", default, skip_serializing_if = "Option::is_none")]
     pub card: Option<SufficiencyCard>,
+    #[serde(
+        rename = "cohort_members",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cohort_members: Option<Vec<CohortProbe>>,
 }
 
 /// `oneiron::embed::space_move::SpaceMoveCheck`.
@@ -25298,6 +25323,12 @@ pub struct SpaceMoveCheck {
     pub kinds: Vec<KindProbeCheck>,
     #[serde(rename = "verdict")]
     pub verdict: NotWorse,
+    #[serde(
+        rename = "cohort_check",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cohort_check: Option<String>,
 }
 
 /// `oneiron::embed::space_move::SpaceMove`.
@@ -31174,6 +31205,47 @@ pub struct CodeProposedStamp {
     pub reasoning_effort: Option<String>,
 }
 
+/// `oneiron::code_document::file_metadata::CodeFilePresence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeFilePresence {
+    #[serde(rename = "present")]
+    pub present: bool,
+    #[serde(rename = "mode", default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<u32>,
+}
+
+/// `oneiron::code_document::file_metadata::CodeFileMetadataEdit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeFileMetadataEdit {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "expected")]
+    pub expected: CodeFilePresence,
+    #[serde(rename = "replacement")]
+    pub replacement: CodeFilePresence,
+    #[serde(rename = "new_path", default, skip_serializing_if = "Option::is_none")]
+    pub new_path: Option<String>,
+}
+
+/// `oneiron::code_document::review_views::CodeProposalFileView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeProposalFileView {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "changes")]
+    pub changes: Vec<CodeChangeView>,
+    #[serde(rename = "landed", default, skip_serializing_if = "Option::is_none")]
+    pub landed: Option<CodeOperationView>,
+    #[serde(
+        rename = "metadata_edit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub metadata_edit: Option<CodeFileMetadataEdit>,
+}
+
 /// `oneiron::code_document::review_views::CodeProposalView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeProposalView {
@@ -31181,18 +31253,22 @@ pub struct CodeProposalView {
     pub proposal_ref: String,
     #[serde(rename = "repo")]
     pub repo: String,
-    #[serde(rename = "path")]
-    pub path: String,
+    #[serde(rename = "operation_kind")]
+    pub operation_kind: String,
+    #[serde(rename = "path", default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     #[serde(rename = "message")]
     pub message: String,
     #[serde(rename = "status")]
     pub status: RepoProposalStatus,
     #[serde(rename = "proposed")]
     pub proposed: CodeProposedStamp,
-    #[serde(rename = "changes")]
-    pub changes: Vec<CodeChangeView>,
+    #[serde(rename = "changes", default, skip_serializing_if = "Option::is_none")]
+    pub changes: Option<Vec<CodeChangeView>>,
     #[serde(rename = "landed", default, skip_serializing_if = "Option::is_none")]
     pub landed: Option<CodeOperationView>,
+    #[serde(rename = "files")]
+    pub files: Vec<CodeProposalFileView>,
     #[serde(rename = "rendered")]
     pub rendered: String,
 }
@@ -32597,6 +32673,728 @@ pub struct CodeExportResult {
     pub wire_rejected: bool,
 }
 
+/// `oneiron::code_revision::import_types::CodeImportAcceptance`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeImportAcceptance {
+    #[serde(rename = "manifest_digest")]
+    pub manifest_digest: String,
+    #[serde(rename = "baseline_revision")]
+    pub baseline_revision: String,
+    #[serde(rename = "catalog")]
+    pub catalog: LensCatalog,
+    #[serde(
+        rename = "review_verdict",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub review_verdict: Option<String>,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeRepoImportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRepoImportRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "source_commit")]
+    pub source_commit: String,
+    #[serde(rename = "admission_receipt")]
+    pub admission_receipt: String,
+    #[serde(rename = "accept", default, skip_serializing_if = "Option::is_none")]
+    pub accept: Option<CodeImportAcceptance>,
+}
+
+/// `oneiron::code_revision::import_types::CodeImportAnchor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeImportAnchor {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "served_repo")]
+    pub served_repo: String,
+    #[serde(rename = "object_store")]
+    pub object_store: String,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "source_commit")]
+    pub source_commit: String,
+    #[serde(rename = "source_tree")]
+    pub source_tree: String,
+    #[serde(rename = "admission_receipt")]
+    pub admission_receipt: String,
+    #[serde(rename = "receive_provenance")]
+    pub receive_provenance: String,
+    #[serde(rename = "snapshot")]
+    pub snapshot: String,
+    #[serde(rename = "snapshot_fork_hash")]
+    pub snapshot_fork_hash: String,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeSnapshotFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "content_hash_blake3")]
+    pub content_hash_blake3: String,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+    #[serde(rename = "mode")]
+    pub mode: u32,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeImportManifestFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeImportManifestFile {
+    #[serde(rename = "git_oid")]
+    pub git_oid: String,
+    #[serde(rename = "file")]
+    pub file: CodeSnapshotFile,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeImportManifestView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeImportManifestView {
+    #[serde(rename = "manifest_ref")]
+    pub manifest_ref: String,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "anchor")]
+    pub anchor: CodeImportAnchor,
+    #[serde(rename = "inventory_digest")]
+    pub inventory_digest: String,
+    #[serde(rename = "files")]
+    pub files: Vec<CodeImportManifestFile>,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeRepoImportState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeRepoImportState {
+    #[serde(rename = "manifest_ready")]
+    ManifestReady,
+    #[serde(rename = "held_baseline")]
+    HeldBaseline,
+    #[serde(rename = "held_review")]
+    HeldReview,
+    #[serde(rename = "promoted")]
+    Promoted,
+}
+
+/// `oneiron::memory::origin_doors::import_types::CodeRepoImportView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoImportView {
+    #[serde(rename = "manifest")]
+    pub manifest: CodeImportManifestView,
+    #[serde(rename = "state")]
+    pub state: CodeRepoImportState,
+    #[serde(
+        rename = "baseline_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub baseline_revision: Option<String>,
+    #[serde(
+        rename = "promotion_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub promotion_receipt: Option<String>,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodeRepoGetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRepoGetRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodeRepoImportLink`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoImportLink {
+    #[serde(rename = "manifest")]
+    pub manifest: String,
+    #[serde(rename = "anchor")]
+    pub anchor: CodeImportAnchor,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueuePointersView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MergeQueuePointersView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "head_commit")]
+    pub head_commit: String,
+    #[serde(rename = "green_commit")]
+    pub green_commit: String,
+    #[serde(rename = "pending_slow_batch_refs")]
+    pub pending_slow_batch_refs: Vec<String>,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodeIngressRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeIngressRef {
+    #[serde(rename = "provenance")]
+    pub provenance: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodeRunWorkFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunWorkFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "content_hash_blake3")]
+    pub content_hash_blake3: String,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodeRunWorkLink`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunWorkLink {
+    #[serde(rename = "work")]
+    pub work: String,
+    #[serde(rename = "task")]
+    pub task: String,
+    #[serde(rename = "executor_run")]
+    pub executor_run: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(rename = "base_green")]
+    pub base_green: String,
+    #[serde(rename = "base_snapshot")]
+    pub base_snapshot: String,
+    #[serde(rename = "fork_hash")]
+    pub fork_hash: String,
+    #[serde(rename = "files")]
+    pub files: Vec<CodeRunWorkFile>,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodeRepoView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "served_repo")]
+    pub served_repo: String,
+    #[serde(rename = "imports")]
+    pub imports: Vec<CodeRepoImportLink>,
+    #[serde(rename = "queue", default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<MergeQueuePointersView>,
+    #[serde(
+        rename = "green_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub green_revision: Option<String>,
+    #[serde(rename = "batch_refs")]
+    pub batch_refs: Vec<String>,
+    #[serde(rename = "check_work_refs")]
+    pub check_work_refs: Vec<String>,
+    #[serde(rename = "task_refs")]
+    pub task_refs: Vec<String>,
+    #[serde(rename = "fork_sessions")]
+    pub fork_sessions: Vec<String>,
+    #[serde(rename = "ingress")]
+    pub ingress: Vec<CodeIngressRef>,
+    #[serde(rename = "run_works")]
+    pub run_works: Vec<CodeRunWorkLink>,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodeForkGetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeForkGetRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "fork_session")]
+    pub fork_session: String,
+}
+
+/// `oneiron::code_document::types::CodeDocumentFrontier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeDocumentFrontier {
+    #[serde(rename = "document_id")]
+    pub document_id: Vec<u8>,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "version")]
+    pub version: Vec<crate::WireJson>,
+    #[serde(rename = "op_fold")]
+    pub op_fold: Vec<u8>,
+    #[serde(rename = "text_hash")]
+    pub text_hash: Vec<u8>,
+    #[serde(
+        rename = "file_presence",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub file_presence: Option<CodeFilePresence>,
+}
+
+/// `oneiron::code_revision::tree_inventory::CodeTreeBlob`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeTreeBlob {
+    #[serde(rename = "git_oid")]
+    pub git_oid: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: Vec<u8>,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+    #[serde(rename = "mode")]
+    pub mode: u32,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodeForkDocumentView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeForkDocumentView {
+    #[serde(
+        rename = "document_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub document_id: Option<String>,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<CodeDocumentFrontier>,
+    #[serde(rename = "landed", default, skip_serializing_if = "Option::is_none")]
+    pub landed: Option<CodeDocumentFrontier>,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<CodeTreeBlob>,
+    #[serde(
+        rename = "metadata_edit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub metadata_edit: Option<CodeFileMetadataEdit>,
+    #[serde(
+        rename = "proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_ref: Option<String>,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodeForkView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeForkView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "fork_session")]
+    pub fork_session: String,
+    #[serde(rename = "parent_session")]
+    pub parent_session: String,
+    #[serde(rename = "base_revision")]
+    pub base_revision: String,
+    #[serde(rename = "forked_at")]
+    pub forked_at: u64,
+    #[serde(rename = "documents")]
+    pub documents: Vec<CodeForkDocumentView>,
+    #[serde(rename = "proposal_refs")]
+    pub proposal_refs: Vec<String>,
+    #[serde(rename = "revision_refs")]
+    pub revision_refs: Vec<String>,
+    #[serde(rename = "task_refs")]
+    pub task_refs: Vec<String>,
+    #[serde(rename = "ingress", default, skip_serializing_if = "Option::is_none")]
+    pub ingress: Option<CodeIngressRef>,
+}
+
+/// `oneiron::repo_mutation::external_import::types::ExternalImportSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalImportSource {
+    #[serde(rename = "host")]
+    pub host: String,
+    #[serde(rename = "repository")]
+    pub repository: String,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(
+        rename = "pull_request",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pull_request: Option<u64>,
+    #[serde(rename = "base_commit")]
+    pub base_commit: String,
+    #[serde(rename = "head_commit")]
+    pub head_commit: String,
+}
+
+/// `oneiron::repo_mutation::external_import::types::ExternalImportDoor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ExternalImportDoor {
+    #[serde(rename = "raw")]
+    Raw,
+    #[serde(rename = "checkout")]
+    Checkout {
+        #[serde(rename = "checkout")]
+        checkout: String,
+        #[serde(rename = "epoch")]
+        epoch: u64,
+    },
+}
+
+/// `oneiron::repo_mutation::external_import::types::ExternalImportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalImportRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "code_repo")]
+    pub code_repo: String,
+    #[serde(rename = "base_revision")]
+    pub base_revision: String,
+    #[serde(
+        rename = "imported_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub imported_ref: Option<String>,
+    #[serde(rename = "source")]
+    pub source: ExternalImportSource,
+    #[serde(
+        rename = "source_binding",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_binding: Option<String>,
+    #[serde(rename = "door")]
+    pub door: ExternalImportDoor,
+}
+
+/// `oneiron::repo_mutation::external_import::types::ExternalImportReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ExternalImportReceipt {
+    #[serde(rename = "import")]
+    pub import: String,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "code_repo")]
+    pub code_repo: String,
+    #[serde(rename = "source")]
+    pub source: ExternalImportSource,
+    #[serde(rename = "imported_ref")]
+    pub imported_ref: String,
+    #[serde(rename = "base_revision")]
+    pub base_revision: String,
+    #[serde(rename = "importer", default, skip_serializing_if = "Option::is_none")]
+    pub importer: Option<String>,
+    #[serde(
+        rename = "seed_publication",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub seed_publication: Option<String>,
+    #[serde(
+        rename = "receive_provenance",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receive_provenance: Option<String>,
+    #[serde(
+        rename = "publication",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub publication: Option<String>,
+}
+
+/// `oneiron::repo_mutation::external_import::types::ExternalImportLookup`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalImportLookup {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "code_repo")]
+    pub code_repo: String,
+    #[serde(rename = "import")]
+    pub import: String,
+    #[serde(rename = "door")]
+    pub door: ExternalImportDoor,
+}
+
+/// `oneiron::repo_mutation::external_import::types::ExternalImportPhase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ExternalImportPhase {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "fetch_refused")]
+    FetchRefused,
+    #[serde(rename = "source_moved")]
+    SourceMoved,
+    #[serde(rename = "held_base")]
+    HeldBase,
+    #[serde(rename = "door_refused")]
+    DoorRefused,
+    #[serde(rename = "transport_unknown")]
+    TransportUnknown,
+    #[serde(rename = "received")]
+    Received,
+}
+
+/// `oneiron::origin::document_ingress::ReceivedFileOperation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ReceivedFileOperation {
+    #[serde(rename = "operation_id")]
+    pub operation_id: String,
+    #[serde(rename = "actor_id")]
+    pub actor_id: String,
+    #[serde(rename = "session_id")]
+    pub session_id: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "before_hash")]
+    pub before_hash: Vec<u8>,
+    #[serde(rename = "after_hash")]
+    pub after_hash: Vec<u8>,
+    #[serde(rename = "old_mode", default, skip_serializing_if = "Option::is_none")]
+    pub old_mode: Option<u32>,
+    #[serde(rename = "new_mode", default, skip_serializing_if = "Option::is_none")]
+    pub new_mode: Option<u32>,
+    #[serde(rename = "document_edit")]
+    pub document_edit: bool,
+}
+
+/// `oneiron::origin::document_candidate_types::CodePushCandidateState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodePushCandidateState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "held_base")]
+    HeldBase,
+    #[serde(rename = "held_predecessor")]
+    HeldPredecessor,
+    #[serde(rename = "held_review_policy")]
+    HeldReviewPolicy,
+    #[serde(rename = "held_shape")]
+    HeldShape,
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "quarantined")]
+    Quarantined,
+    #[serde(rename = "rolled_back")]
+    RolledBack,
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "sealed")]
+    Sealed,
+}
+
+/// `oneiron::origin::document_candidate_types::CodePushCandidateView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodePushCandidateView {
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "state")]
+    pub state: CodePushCandidateState,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(
+        rename = "base_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub base_revision: Option<String>,
+    #[serde(
+        rename = "fork_session",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub fork_session: Option<String>,
+    #[serde(rename = "proposal_refs")]
+    pub proposal_refs: Vec<String>,
+    #[serde(rename = "batch_refs")]
+    pub batch_refs: Vec<String>,
+    #[serde(rename = "check_work_refs")]
+    pub check_work_refs: Vec<String>,
+    #[serde(rename = "revision_refs")]
+    pub revision_refs: Vec<String>,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodePushIngressView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodePushIngressView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "provenance")]
+    pub provenance: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(rename = "old_oid", default, skip_serializing_if = "Option::is_none")]
+    pub old_oid: Option<String>,
+    #[serde(rename = "new_oid", default, skip_serializing_if = "Option::is_none")]
+    pub new_oid: Option<String>,
+    #[serde(rename = "received_at")]
+    pub received_at: u64,
+    #[serde(rename = "published")]
+    pub published: bool,
+    #[serde(
+        rename = "publication",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub publication: Option<String>,
+    #[serde(rename = "operations")]
+    pub operations: Vec<ReceivedFileOperation>,
+    #[serde(rename = "candidate", default, skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<CodePushCandidateView>,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckWorkKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MergeQueueCheckWorkKind {
+    #[serde(rename = "init")]
+    Init,
+    #[serde(rename = "check")]
+    Check,
+    #[serde(rename = "diagnose")]
+    Diagnose,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MergeQueueCheckState {
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "needs_configuration")]
+    NeedsConfiguration,
+    #[serde(rename = "held")]
+    Held,
+    #[serde(rename = "passed")]
+    Passed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "settled")]
+    Settled,
+}
+
+/// `oneiron::merge_queue::check_inputs::QueueCheckHoldReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueCheckHoldReason {
+    #[serde(rename = "interrupted")]
+    Interrupted,
+    #[serde(rename = "executor_unavailable")]
+    ExecutorUnavailable,
+    #[serde(rename = "missing_offline_input")]
+    MissingOfflineInput,
+    #[serde(rename = "unstable_inputs")]
+    UnstableInputs,
+    #[serde(rename = "authority")]
+    Authority,
+    #[serde(rename = "tree_unavailable")]
+    TreeUnavailable,
+    #[serde(rename = "refused")]
+    Refused,
+}
+
+/// `oneiron::merge_queue::types::Quarantine`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Quarantine {
+    #[serde(rename = "proposal_ids")]
+    pub proposal_ids: Vec<String>,
+    #[serde(rename = "failing_mask")]
+    pub failing_mask: u64,
+    #[serde(rename = "verdict")]
+    pub verdict: String,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckWorkView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MergeQueueCheckWorkView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "work_ref")]
+    pub work_ref: String,
+    #[serde(rename = "kind")]
+    pub kind: MergeQueueCheckWorkKind,
+    #[serde(rename = "status")]
+    pub status: MergeQueueCheckState,
+    #[serde(rename = "configuration_keys")]
+    pub configuration_keys: Vec<String>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "hold", default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<QueueCheckHoldReason>,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(
+        rename = "baseline_commit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub baseline_commit: Option<String>,
+    #[serde(
+        rename = "plan_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub plan_digest: Option<String>,
+    #[serde(rename = "receipt_refs")]
+    pub receipt_refs: Vec<String>,
+    #[serde(rename = "verdict_refs")]
+    pub verdict_refs: Vec<String>,
+    #[serde(rename = "pointers", default, skip_serializing_if = "Option::is_none")]
+    pub pointers: Option<MergeQueuePointersView>,
+    #[serde(
+        rename = "quarantine",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub quarantine: Option<Quarantine>,
+}
+
+/// `oneiron::repo_mutation::external_import::types::ExternalImportStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ExternalImportStatus {
+    #[serde(rename = "receipt")]
+    pub receipt: ExternalImportReceipt,
+    #[serde(rename = "phase")]
+    pub phase: ExternalImportPhase,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "ingress", default, skip_serializing_if = "Option::is_none")]
+    pub ingress: Option<CodePushIngressView>,
+    #[serde(rename = "checks")]
+    pub checks: Vec<MergeQueueCheckWorkView>,
+}
+
+/// `oneiron::memory::origin_doors::workbench_types::CodePushIngressGetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodePushIngressGetRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "provenance")]
+    pub provenance: String,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+}
+
 /// `oneiron::memory::origin_doors::types::OriginRegisterRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -33564,24 +34362,6 @@ pub struct CodeViewMaterializeRequest {
     pub policy: VisibleFilePolicy,
 }
 
-/// `oneiron::code_document::types::CodeDocumentFrontier`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct CodeDocumentFrontier {
-    #[serde(rename = "document_id")]
-    pub document_id: Vec<u8>,
-    #[serde(rename = "repo")]
-    pub repo: String,
-    #[serde(rename = "path")]
-    pub path: String,
-    #[serde(rename = "version")]
-    pub version: Vec<crate::WireJson>,
-    #[serde(rename = "op_fold")]
-    pub op_fold: Vec<u8>,
-    #[serde(rename = "text_hash")]
-    pub text_hash: Vec<u8>,
-}
-
 /// `oneiron::memory::code_view_doors::types::CodeViewFile`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeViewFile {
@@ -33823,17 +34603,6 @@ pub struct CodeSnapshotIngestRequest {
     pub pointer: CodeRepoPointer,
 }
 
-/// `oneiron::memory::codebase_doors::types::CodeSnapshotFile`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct CodeSnapshotFile {
-    #[serde(rename = "path")]
-    pub path: String,
-    #[serde(rename = "content_hash_blake3")]
-    pub content_hash_blake3: String,
-    #[serde(rename = "size_bytes")]
-    pub size_bytes: u64,
-}
-
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeSnapshotView {
@@ -33986,17 +34755,6 @@ pub struct MergeQueuePathView {
     pub verdict_ref: Option<String>,
 }
 
-/// `oneiron::merge_queue::types::Quarantine`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct Quarantine {
-    #[serde(rename = "proposal_ids")]
-    pub proposal_ids: Vec<String>,
-    #[serde(rename = "failing_mask")]
-    pub failing_mask: u64,
-    #[serde(rename = "verdict")]
-    pub verdict: String,
-}
-
 /// `oneiron::contract_oracle::graph::AffectedTests`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AffectedTests {
@@ -34123,6 +34881,150 @@ pub struct ContractVerdict {
     pub diffs: Vec<ContractDiff>,
 }
 
+/// `oneiron::merge_queue::driver_types::QueueDriveStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueDriveStatus {
+    #[serde(rename = "unenrolled")]
+    Unenrolled,
+    #[serde(rename = "driving")]
+    Driving,
+    #[serde(rename = "waiting_check")]
+    WaitingCheck,
+    #[serde(rename = "waiting_symbols")]
+    WaitingSymbols,
+    #[serde(rename = "waiting_review")]
+    WaitingReview,
+    #[serde(rename = "waiting_admission")]
+    WaitingAdmission,
+    #[serde(rename = "held_needs_new_base")]
+    HeldNeedsNewBase,
+    #[serde(rename = "held_diverged")]
+    HeldDiverged,
+    #[serde(rename = "held_binding")]
+    HeldBinding,
+    #[serde(rename = "held_materialization")]
+    HeldMaterialization,
+    #[serde(rename = "held_overlap")]
+    HeldOverlap,
+    #[serde(rename = "held_task_authority")]
+    HeldTaskAuthority,
+    #[serde(rename = "held_recovery")]
+    HeldRecovery,
+    #[serde(rename = "held_check")]
+    HeldCheck,
+    #[serde(rename = "needs_configuration")]
+    NeedsConfiguration,
+    #[serde(rename = "held_seal")]
+    HeldSeal,
+    #[serde(rename = "unavailable")]
+    Unavailable,
+    #[serde(rename = "done")]
+    Done,
+}
+
+/// `oneiron::merge_queue::driver_types::QueueConflictView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueConflictView {
+    #[serde(rename = "source_proposals")]
+    pub source_proposals: Vec<String>,
+    #[serde(rename = "conflict")]
+    pub conflict: String,
+    #[serde(rename = "task", default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(
+        rename = "resolution_batch",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resolution_batch: Option<String>,
+}
+
+/// `oneiron::merge_queue::tested_types::QueueExportHoldReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueExportHoldReason {
+    #[serde(rename = "seal_pending")]
+    SealPending,
+    #[serde(rename = "held_seal_ancestor")]
+    HeldSealAncestor,
+    #[serde(rename = "held_binding")]
+    HeldBinding,
+    #[serde(rename = "held_object")]
+    HeldObject,
+    #[serde(rename = "held_unsupported_tree")]
+    HeldUnsupportedTree,
+    #[serde(rename = "held_unreviewed_change")]
+    HeldUnreviewedChange,
+    #[serde(rename = "held_store")]
+    HeldStore,
+    #[serde(rename = "held_untouched_promotion")]
+    HeldUntouchedPromotion,
+    #[serde(rename = "author_erased")]
+    AuthorErased,
+    #[serde(rename = "author_unavailable")]
+    AuthorUnavailable,
+    #[serde(rename = "unenrolled")]
+    Unenrolled,
+    #[serde(rename = "unavailable")]
+    Unavailable,
+}
+
+/// `oneiron::merge_queue::tested_types::QueueExportHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueExportHold {
+    #[serde(rename = "reason")]
+    pub reason: QueueExportHoldReason,
+    #[serde(rename = "detail")]
+    pub detail: String,
+    #[serde(rename = "way_out")]
+    pub way_out: String,
+}
+
+/// `oneiron::merge_queue::driver_types::QueueDriveView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueDriveView {
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+    #[serde(rename = "status")]
+    pub status: QueueDriveStatus,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "check_work_refs")]
+    pub check_work_refs: Vec<String>,
+    #[serde(rename = "receipt_refs")]
+    pub receipt_refs: Vec<String>,
+    #[serde(rename = "conflicts")]
+    pub conflicts: Vec<QueueConflictView>,
+    #[serde(
+        rename = "survivor_batch",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub survivor_batch: Option<String>,
+    #[serde(
+        rename = "tested_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tested_revision: Option<String>,
+    #[serde(rename = "seal_hold", default, skip_serializing_if = "Option::is_none")]
+    pub seal_hold: Option<QueueExportHold>,
+}
+
+/// `oneiron::merge_queue::tested_types::QueueGreenExportView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueGreenExportView {
+    #[serde(rename = "green_commit")]
+    pub green_commit: String,
+    #[serde(
+        rename = "tested_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tested_revision: Option<String>,
+    #[serde(rename = "hold", default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<QueueExportHold>,
+}
+
 /// `oneiron::memory::merge_queue_doors::types::MergeQueueObservation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MergeQueueObservation {
@@ -34138,6 +35040,10 @@ pub struct MergeQueueObservation {
     pub batches: Vec<MergeQueueBatchView>,
     #[serde(rename = "verdicts")]
     pub verdicts: Vec<ContractVerdict>,
+    #[serde(rename = "drive")]
+    pub drive: Vec<QueueDriveView>,
+    #[serde(rename = "green_export")]
+    pub green_export: QueueGreenExportView,
 }
 
 /// `oneiron::memory::merge_queue_doors::types::MergeQueueRequeueView`.
@@ -34157,17 +35063,188 @@ pub struct MergeQueueRepoRequest {
     pub repo: String,
 }
 
-/// `oneiron::memory::merge_queue_doors::types::MergeQueuePointersView`.
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueInitializeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct MergeQueuePointersView {
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueInitializeRequest {
     #[serde(rename = "repo")]
     pub repo: String,
-    #[serde(rename = "head_commit")]
-    pub head_commit: String,
-    #[serde(rename = "green_commit")]
-    pub green_commit: String,
-    #[serde(rename = "pending_slow_batch_refs")]
-    pub pending_slow_batch_refs: Vec<String>,
+    #[serde(rename = "baseline_commit")]
+    pub baseline_commit: String,
+    #[serde(
+        rename = "contract_baseline_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub contract_baseline_ref: Option<String>,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::QueueCheckPhase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueCheckPhase {
+    #[serde(rename = "fast")]
+    Fast,
+    #[serde(rename = "slow")]
+    Slow,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueCheckRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+    #[serde(rename = "mask")]
+    pub mask: u64,
+    #[serde(rename = "phase")]
+    pub phase: QueueCheckPhase,
+    #[serde(
+        rename = "force_refresh",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub force_refresh: Option<bool>,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueDiagnoseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueDiagnoseRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+}
+
+/// `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckStatusRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueCheckStatusRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "work_ref")]
+    pub work_ref: String,
+}
+
+/// `oneiron::memory::merge_queue_doors::check_receipt::CodeCheckReceiptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeCheckReceiptRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "work_ref")]
+    pub work_ref: String,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+}
+
+/// `oneiron::memory::merge_queue_doors::check_receipt::CodeCheckCommandResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeCheckCommandResult {
+    #[serde(rename = "index")]
+    pub index: u32,
+    #[serde(rename = "exit_code", default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(rename = "signal", default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<i32>,
+    #[serde(rename = "stdout_blake3")]
+    pub stdout_blake3: String,
+    #[serde(rename = "stderr_blake3")]
+    pub stderr_blake3: String,
+}
+
+/// `oneiron::memory::merge_queue_doors::check_receipt::CodeCheckAttemptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeCheckAttemptView {
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(rename = "phase")]
+    pub phase: QueueCheckPhase,
+    #[serde(rename = "commit")]
+    pub commit: String,
+    #[serde(rename = "tree")]
+    pub tree: String,
+    #[serde(rename = "plan_digest")]
+    pub plan_digest: String,
+    #[serde(rename = "inputs_digest")]
+    pub inputs_digest: String,
+    #[serde(rename = "attempt_id")]
+    pub attempt_id: String,
+    #[serde(rename = "attempt_count")]
+    pub attempt_count: u32,
+    #[serde(
+        rename = "stable_inputs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stable_inputs: Option<bool>,
+    #[serde(rename = "completed")]
+    pub completed: bool,
+    #[serde(
+        rename = "tests_passed",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tests_passed: Option<bool>,
+    #[serde(rename = "commands")]
+    pub commands: Vec<CodeCheckCommandResult>,
+    #[serde(rename = "hold", default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<QueueCheckHoldReason>,
+    #[serde(rename = "configuration_keys")]
+    pub configuration_keys: Vec<String>,
+    #[serde(
+        rename = "verdict_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verdict_ref: Option<String>,
+    #[serde(rename = "passes", default, skip_serializing_if = "Option::is_none")]
+    pub passes: Option<bool>,
+    #[serde(
+        rename = "reused_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reused_from: Option<String>,
+}
+
+/// `oneiron::memory::merge_queue_doors::check_receipt::CodeCheckReceiptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeCheckReceiptView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "work_ref")]
+    pub work_ref: String,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "receipts")]
+    pub receipts: Vec<CodeCheckAttemptView>,
+}
+
+/// `oneiron::memory::merge_queue_doors::export_types::MergeQueueGreenExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueGreenExportRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "served_repo")]
+    pub served_repo: String,
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(
+        rename = "expected_old_oid",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_old_oid: Option<String>,
+    #[serde(rename = "endpoint")]
+    pub endpoint: String,
 }
 
 /// `oneiron::blob_artifact::verbs::ArtifactExportRequest`.
@@ -41336,6 +42413,58 @@ pub struct RoomHostHand {
     pub to: String,
     #[serde(rename = "session", default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+}
+
+/// `oneiron::workspace_roster::rooms::upkeep_voice::RoomUpkeepPendingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RoomUpkeepPendingRequest {
+    #[serde(rename = "room", default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
+}
+
+/// `oneiron::workspace_roster::rooms::upkeep_voice::RoomUpkeepNudge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RoomUpkeepNudge {
+    #[serde(rename = "finding")]
+    pub finding: String,
+    #[serde(rename = "room")]
+    pub room: String,
+    #[serde(rename = "thread")]
+    pub thread: String,
+    #[serde(rename = "host")]
+    pub host: String,
+    #[serde(rename = "last_activity")]
+    pub last_activity: u64,
+    #[serde(rename = "open_tasks")]
+    pub open_tasks: Vec<String>,
+    #[serde(rename = "approval")]
+    pub approval: ClaimApprovalStatus,
+}
+
+/// `oneiron::workspace_roster::rooms::upkeep_voice::RoomUpkeepVoiceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RoomUpkeepVoiceRequest {
+    #[serde(rename = "finding")]
+    pub finding: String,
+    #[serde(rename = "content")]
+    pub content: String,
+}
+
+/// `oneiron::workspace_roster::rooms::upkeep_voice::RoomUpkeepVoiceReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RoomUpkeepVoiceReceipt {
+    #[serde(rename = "finding")]
+    pub finding: String,
+    #[serde(rename = "turn", default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<RecordRef>,
+    #[serde(rename = "message", default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<RecordRef>,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "replayed")]
+    pub replayed: bool,
 }
 
 /// `oneiron::workspace_roster::sharing::RoomSharingClamp`.
@@ -53153,6 +54282,10 @@ pub enum DreamerParkCauseView {
     ExecutorError,
     #[serde(rename = "checkpoint")]
     Checkpoint,
+    #[serde(rename = "retry")]
+    Retry,
+    #[serde(rename = "paused")]
+    Paused,
     #[serde(rename = "cancelled")]
     Cancelled,
     #[serde(rename = "signal")]
@@ -55736,6 +56869,38 @@ pub struct SummarySourceVersion {
     pub projected_text: Option<Vec<u8>>,
 }
 
+/// `oneiron::scope_summary::derivation::SummaryLineSpan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SummaryLineSpan {
+    #[serde(rename = "turn")]
+    pub turn: String,
+    #[serde(rename = "message", default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::scope_summary::derivation::SummaryLineSources`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SummaryLineSources {
+    #[serde(rename = "output_start")]
+    pub output_start: u64,
+    #[serde(rename = "output_end")]
+    pub output_end: u64,
+    #[serde(rename = "turn_refs")]
+    pub turn_refs: Vec<String>,
+    #[serde(
+        rename = "source_spans",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_spans: Option<Vec<SummaryLineSpan>>,
+}
+
 /// `oneiron::scope_summary::derivation::SummaryDerivation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -55764,6 +56929,18 @@ pub struct SummaryDerivation {
     pub generated_text_hash: Vec<u8>,
     #[serde(rename = "generated_keep_hash")]
     pub generated_keep_hash: Vec<u8>,
+    #[serde(
+        rename = "source_set",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_set: Option<Vec<u8>>,
+    #[serde(
+        rename = "line_sources",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub line_sources: Option<Vec<SummaryLineSources>>,
 }
 
 /// `oneiron::scope_summary::derivation::ScopeSummaryMetadata`.
@@ -55844,8 +57021,14 @@ pub struct ScopedReadResultOptionalSummaryReadView {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SummaryStatusRequest {
-    #[serde(rename = "attempt")]
-    pub attempt: String,
+    #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
+    #[serde(
+        rename = "session_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub session_ref: Option<String>,
 }
 
 /// `oneiron::scope_summary::status::ScopeSummaryResult`.
@@ -59942,6 +61125,42 @@ pub struct LaunchStatement {
     pub stated_at: u64,
 }
 
+/// `oneiron::agent_dispatch::direct_spawn::SpawnAskField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SpawnAskField {
+    #[serde(rename = "need")]
+    Need,
+    #[serde(rename = "care")]
+    Care,
+    #[serde(rename = "notes")]
+    Notes,
+    #[serde(rename = "model")]
+    Model,
+    #[serde(rename = "width")]
+    Width,
+    #[serde(rename = "pattern")]
+    Pattern,
+}
+
+/// `oneiron::agent_dispatch::direct_spawn::SpawnUnappliedReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SpawnUnappliedReason {
+    #[serde(rename = "planner_unbound")]
+    PlannerUnbound,
+    #[serde(rename = "agent_lease_unbound")]
+    AgentLeaseUnbound,
+}
+
+/// `oneiron::agent_dispatch::direct_spawn::SpawnUnapplied`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SpawnUnapplied {
+    #[serde(rename = "field")]
+    pub field: SpawnAskField,
+    #[serde(rename = "reason")]
+    pub reason: SpawnUnappliedReason,
+}
+
 /// `oneiron::code_run::run_verbs::AgentSpawnOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
@@ -59954,6 +61173,8 @@ pub enum AgentSpawnOutput {
         attempt: String,
         #[serde(rename = "launch", default, skip_serializing_if = "Option::is_none")]
         launch: Option<LaunchStatement>,
+        #[serde(rename = "unapplied", default, skip_serializing_if = "Option::is_none")]
+        unapplied: Option<Vec<SpawnUnapplied>>,
     },
     #[serde(rename = "proposed_widen")]
     ProposedWiden {
@@ -59961,6 +61182,8 @@ pub enum AgentSpawnOutput {
         kind: AgentSpawnKind,
         #[serde(rename = "proposal")]
         proposal: String,
+        #[serde(rename = "unapplied", default, skip_serializing_if = "Option::is_none")]
+        unapplied: Option<Vec<SpawnUnapplied>>,
     },
 }
 

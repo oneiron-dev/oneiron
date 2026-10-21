@@ -2,14 +2,22 @@
 //! These values have no public constructor or wire decoder. Diagnostic bytes
 //! alone can never mint one, and nothing here can grant repair authority.
 
+use super::consent_depth::{ConsentQueueDepthDetector, ConsentQueueSnapshot};
+use super::tripwires::{McpActionRejectedDetector, RetrievalRegressionDetector, TripwireBounds};
 use super::{
     ConsentDeniedDetector, DeterministicDetector, DiagnosticEvent, DiagnosticObservation,
     DiagnosticSourceKind, DiagnosticWorkingSet,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::receipt::ReceiptRecord;
+use crate::receipt::{CALL_RECEIPT_REF_PREFIX, CallReceipt, ReceiptRecord};
+use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionId, RetrievalRunId, RetrievalRunRecord, Store};
+
+/// The call receipt ledger, read in place (FIX 2449): an MCP refusal's
+/// witness is its stored receipt.
+const CALL_RECEIPTS: SideTable<EntityId, CallReceipt, Named> =
+    SideTable::new(&side_table::CALL_RECEIPT);
 
 #[derive(Clone)]
 enum SourceProof {
@@ -23,6 +31,12 @@ enum SourceProof {
     },
     CentroidSnapshot {
         hash: [u8; 32],
+    },
+    /// A refused MCP call's stored receipt, by its id and its whole row's
+    /// digest (FIX 2449).
+    McpCall {
+        id: EntityId,
+        digest: [u8; 32],
     },
 }
 
@@ -44,10 +58,23 @@ fn digest<T: serde::Serialize>(value: &T) -> Result<[u8; 32]> {
     Ok(*blake3::hash(&bytes).as_bytes())
 }
 
+/// The stored call receipt `id`, while its row still names itself.
+fn call_receipt_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<CallReceipt>> {
+    let receipt_ref = format!("{CALL_RECEIPT_REF_PREFIX}{}", id.to_hex());
+    Ok(CALL_RECEIPTS
+        .get(store, txn, &id)?
+        .filter(|receipt| receipt.receipt_ref == receipt_ref))
+}
+
 impl VerifiedSourceSet {
-    /// Existing single-observation deterministic producers. This validation
-    /// runs only in the producer after its own successful diagnostic emit, not
-    /// on arbitrary stored diagnostics at the public count door.
+    /// Existing single-observation deterministic producers, a served MCP
+    /// refusal's among them (FIX 2449). This validation runs only in the
+    /// producer after its own successful diagnostic emit, not on arbitrary
+    /// stored diagnostics at the public count door.
     pub(crate) fn point_producer(
         store: &Store,
         txn: &heed::RoTxn<'_>,
@@ -97,6 +124,18 @@ impl VerifiedSourceSet {
                     },
                 )
             }
+            ("mcp.rejected.v1", DiagnosticSourceKind::Receipt) => {
+                let receipt = call_receipt_in(store, txn, *source)?.ok_or_else(ineligible)?;
+                let observation = DiagnosticObservation::from_mcp_call_receipt(*source, &receipt)
+                    .ok_or_else(ineligible)?;
+                (
+                    observation,
+                    SourceProof::McpCall {
+                        id: *source,
+                        digest: digest(&receipt)?,
+                    },
+                )
+            }
             _ => return Err(ineligible()),
         };
         if observation.source_ref != *source
@@ -115,6 +154,7 @@ impl VerifiedSourceSet {
         let expected = match event.detector_id.as_str() {
             "consent.denied.v1" => ConsentDeniedDetector.detect(&input),
             "retrieval.miss.v1" => super::tripwires::RetrievalMissDetector.detect(&input),
+            "mcp.rejected.v1" => McpActionRejectedDetector.detect(&input),
             _ => return Err(ineligible()),
         };
         if expected.as_slice() != std::slice::from_ref(event) {
@@ -146,6 +186,96 @@ impl VerifiedSourceSet {
             proofs.push(SourceProof::Retrieval {
                 id: run.run_id,
                 digest: digest(&stored)?,
+            });
+        }
+        Ok(Self { proofs })
+    }
+
+    /// A served regression window (FIX 2449): `runs`, `bounds` and
+    /// `window_end` as the producer fired with them. The window is drawn
+    /// from them again as the producer's run drew it, and the detector run
+    /// again must yield `event` whole; then every run in the window, not
+    /// only the last, is point-read from base again.
+    pub(crate) fn retrieval_regression(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        event: &DiagnosticEvent,
+        runs: &[RetrievalRunRecord],
+        bounds: TripwireBounds,
+        window_end: u64,
+    ) -> Result<Self> {
+        let mut degraded: Vec<(DiagnosticObservation, &RetrievalRunRecord)> = runs
+            .iter()
+            .filter_map(|run| Some((DiagnosticObservation::from_retrieval_degradation(run)?, run)))
+            .collect();
+        degraded.sort_by_key(|(observation, _)| observation.order_key());
+        degraded.dedup_by(|a, b| a.0 == b.0);
+        let observations: Vec<DiagnosticObservation> = degraded
+            .iter()
+            .map(|(observation, _)| *observation)
+            .collect();
+        let input = DiagnosticWorkingSet {
+            scope_ref: super::served_signals::SERVED_RETRIEVAL_SCOPE,
+            observations: &observations,
+        };
+        let detector = RetrievalRegressionDetector { bounds, window_end };
+        if detector.detect(&input).as_slice() != std::slice::from_ref(event) {
+            return Err(ineligible());
+        }
+        let start = window_end.saturating_sub(bounds.window_secs);
+        let members: Vec<RetrievalRunRecord> = degraded
+            .into_iter()
+            .filter(|(observation, _)| {
+                observation.observed_at > start && observation.observed_at <= window_end
+            })
+            .map(|(_, run)| run.clone())
+            .collect();
+        Self::retrieval_window(store, txn, &members)
+    }
+
+    /// A whole-tray consent queue depth (OF-298): `snapshot` and `bounds` as
+    /// the producer fired with them over `scope`. The detector run again
+    /// over the snapshot's rows must yield `event` whole; then every row must
+    /// still be its claim's current tray row and name its base Gate
+    /// decision, unredacted, which is what the witness keeps.
+    pub(crate) fn consent_queue(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        event: &DiagnosticEvent,
+        scope: &str,
+        snapshot: &ConsentQueueSnapshot,
+        bounds: TripwireBounds,
+    ) -> Result<Self> {
+        if snapshot.rows.is_empty() {
+            return Err(ineligible());
+        }
+        let observations = snapshot.observations();
+        let input = DiagnosticWorkingSet {
+            scope_ref: scope,
+            observations: &observations,
+        };
+        let detector = ConsentQueueDepthDetector {
+            bounds,
+            snapshot_at: snapshot.snapshot_at,
+        };
+        if detector.detect(&input).as_slice() != std::slice::from_ref(event) {
+            return Err(ineligible());
+        }
+        let mut proofs = Vec::with_capacity(snapshot.rows.len());
+        for row in &snapshot.rows {
+            let claim = EntityId::from_bytes(row.claim_id).map_err(|_| ineligible())?;
+            if store.pending_gate_consent_in_txn(txn, &claim)?.as_ref() != Some(row) {
+                return Err(ineligible());
+            }
+            let decision = store
+                .gate_decision_in_txn(txn, row.decision_id)?
+                .ok_or_else(ineligible)?;
+            if decision.redacted_at.is_some() {
+                return Err(ineligible());
+            }
+            proofs.push(SourceProof::Gate {
+                id: row.decision_id,
+                digest: digest(&crate::receipt::gate_decision_receipt_from_base(&decision))?,
             });
         }
         Ok(Self { proofs })
@@ -234,6 +364,18 @@ impl VerifiedSourceSet {
                 }
                 SourceProof::CentroidSnapshot { hash } => {
                     if !super::centroid_evidence::snapshot_live_in_txn(store, txn, &hash)? {
+                        return Ok(false);
+                    }
+                }
+                SourceProof::McpCall {
+                    id,
+                    digest: expected,
+                } => {
+                    // An erase rewrites the row, and the witness goes with it.
+                    let Some(receipt) = call_receipt_in(store, txn, id)? else {
+                        return Ok(false);
+                    };
+                    if digest(&receipt)? != expected {
                         return Ok(false);
                     }
                 }

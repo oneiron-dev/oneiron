@@ -2,6 +2,7 @@
 
 use super::{
     arrival,
+    reader_authority::own_authority_readable_in_txn,
     records::*,
     store::{
         AnswerKey, HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_VERSION, VersionKey, encode,
@@ -207,7 +208,9 @@ pub(crate) fn validate_task_answer_unit(
     for principal in [principal, holder] {
         let reader = ScopedReadActorKey::new(principal.to_hex())
             .ok_or(Error::InvariantViolation("canonical ask principal"))?;
-        if !arrival::readable(&vault.store, txn, &policy, &reader, &unit)? {
+        if !arrival::readable(&vault.store, txn, &policy, &reader, &unit)?
+            && !own_authority_readable_in_txn(vault, txn, &policy, principal, &reader, &unit)?
+        {
             return Err(Error::EntityNotFound);
         }
     }

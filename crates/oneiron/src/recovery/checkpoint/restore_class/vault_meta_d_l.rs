@@ -111,6 +111,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // progress; the effects they join keep their own (LIVE) classes.
     (&t::DREAMER_TURN_PROGRAM_RUN, CONTENT),
     (&t::DREAMER_TURN_PROGRAM_STEP, CONTENT),
+    // FIX 7188: an owner Stop's owed abandon works on the outbound ledger,
+    // which stands as the live vault holds it; so does what it still owes.
+    (&t::DREAMER_TURN_PROGRAM_STOP_OWED, LIVE),
     (&t::DREAMER_TURN_PROGRAM_WAKE, CONTENT),
     (&t::DREAMER_WAKE_RECIPE_INPUT, CONTENT),
     (&t::DREAMER_WAKE_STATE, CONTENT),
@@ -192,8 +195,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::FEEDBACK_RECEIVED_DIGEST, CONTENT),
     (&t::FEEDBACK_REPORT_ARRIVAL, CONTENT),
     (&t::FEEDBACK_REPORT_CLUSTER, CONTENT),
+    (&t::FEEDBACK_REPORT_DELIVERY, CONTENT),
     (&t::FEEDBACK_REPORT_DISCLOSURE, LIVE),
+    (&t::FEEDBACK_REPORT_PUBLISHER_ENDPOINT, LIVE),
     (&t::FEEDBACK_REPORT_ROUTE, LIVE),
+    (&t::FEEDBACK_TRIAGE_BINDING, CONTENT),
+    (&t::FEEDBACK_TRIAGE_HANDOFF, CONTENT),
+    (&t::FEEDBACK_TRIAGE_SOURCE, CONTENT),
     (&t::FOLDER_SOURCE, LIVE),
     (&t::FOLDER_SOURCE_FILE, CONTENT),
     (&t::GATE_FOREIGN_AGENT_INTRODUCTION, LIVE),

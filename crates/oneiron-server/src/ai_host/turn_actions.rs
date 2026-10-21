@@ -218,7 +218,17 @@ async fn act(
     // reply and its suffix stay after it; the witness and the log never
     // hold it.
     let board = match server.and_then(Weak::upgrade) {
-        Some(server) => action_board(&server, &action, context.agent, &context.user_text).await,
+        Some(server) => {
+            action_board(
+                &server,
+                ai,
+                &seat,
+                &action,
+                context.agent,
+                &context.user_text,
+            )
+            .await
+        }
         None => None,
     };
     let answers = messages.len();
@@ -258,13 +268,18 @@ async fn act(
         Ok::<_, String>(admitted)
     };
     // A call its role does not admit with the board, first or with its
-    // suffix, is admitted exactly as it always was.
+    // suffix, is admitted exactly as it always was, and so is the final call
+    // admitted where the board may not go (FIX 7257), never sent with it.
     let (admitted, board_context) = match board {
-        Some((board, capture)) => {
+        Some(board) => {
             let mut framed = messages.clone();
-            framed.insert(answers, text_message(LlmMessageRole::User, board));
+            framed.insert(
+                answers,
+                text_message(LlmMessageRole::User, board.board.block.clone()),
+            );
             match request(framed) {
-                Ok(admitted) => (admitted, capture),
+                Ok(admitted) if board.rides(vault, &admitted) => (admitted, board.board.context),
+                Ok(_) => (request(messages)?, None),
                 Err(_) => {
                     tracing::info!(
                         "a turn action's call was not admitted with its context board; it goes without it"

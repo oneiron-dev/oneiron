@@ -1,6 +1,7 @@
 //! Outcome arrival projection in the materializing transaction. No model or timer.
 
 use super::{
+    reader_authority::{Reader, store_home},
     records::*,
     store::{
         LabelKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
@@ -417,6 +418,9 @@ pub(super) fn evaluate_fact(
         } => (source, Some(kind), Some(target)),
     };
     let actor = ScopedReadActorKey::new(record.principal.to_hex()).expect("canonical principal");
+    // FIX 7461: each permission below is the principal's bare read first,
+    // then its own live authority.
+    let reader = Reader::new(store_home(store), record.principal, actor);
     for id in [
         Some(fact.id),
         Some(answer.unit),
@@ -426,7 +430,7 @@ pub(super) fn evaluate_fact(
     .into_iter()
     .flatten()
     {
-        if !readable(store, txn, policy, &actor, &id)? {
+        if !reader.readable_in_txn(txn, policy, &id)? {
             return Ok(None);
         }
     }
@@ -442,11 +446,11 @@ pub(super) fn evaluate_fact(
         return Ok(None);
     }
     for source in crate::reaction::outcome_sources(body)? {
-        if !readable(store, txn, policy, &actor, &source)? {
+        if !reader.readable_in_txn(txn, policy, &source)? {
             return Ok(None);
         }
     }
-    if !answer_live(store, txn, policy, &actor, answer)? {
+    if !answer_live(store, txn, policy, &reader, answer)? {
         return Ok(None);
     }
     let value = match &binding.source {
@@ -490,12 +494,13 @@ pub(super) fn evaluate_fact(
 }
 
 /// Whether `answer`'s claim still stands as the prediction it recorded: live,
-/// unarchived, unrejected, readable by `actor` and an eligible claim input.
+/// unarchived, unrejected, readable by `reader` (its old key's positive gate,
+/// else its own live authority, FIX 7461) and an eligible claim input.
 pub(super) fn answer_live(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     policy: &PolicyManifestResolution,
-    actor: &ScopedReadActorKey,
+    reader: &Reader<'_>,
     answer: &AnswerRecord,
 ) -> Result<bool> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &answer.claim)?
@@ -515,13 +520,15 @@ pub(super) fn answer_live(
         .map_err(|_| Error::CorruptedIndex("outcome answer value"))?;
     let facets = crate::claim::facet_refs_in_port(store, txn, &answer.claim)?;
     if crate::vault_cleanup::is_archived_in_txn(store, txn, &answer.claim)?
-        || !crate::gate::scoped_read_claim_allowed(policy, actor, &prediction, &facets)
         || prediction.stale
         || prediction.lifecycle != crate::claim::ClaimLifecycleStatus::Active
         || prediction.approval == crate::claim::ClaimApprovalStatus::Rejected
         || prediction.predicate != "judgment.answer"
         || prediction.subject != ClaimSubject::Entity(answer.unit)
         || prediction.value != expected
+        // Only the permission widens: the old key's gate, else the reader's
+        // own live authority, resolved only once every other check holds.
+        || !reader.claim_allowed_in_txn(txn, policy, &prediction, &facets)?
         // The answer is a claim input too: matching its recorded value is not
         // its owner's Clear.
         || !crate::gate::claim_consolidation_eligible_in_txn(
@@ -567,6 +574,21 @@ pub(super) fn readable(
     actor: &ScopedReadActorKey,
     id: &EntityId,
 ) -> Result<bool> {
+    readable_with(store, txn, id, |body, facets| {
+        crate::gate::scoped_read_claim_allowed(policy, actor, body, facets)
+    })
+}
+
+/// [`readable`]'s row prerequisites, with the CLAIM read judged by `allowed`:
+/// an archived, absent, wiped or bodyless row is never readable, any other
+/// non-CLAIM row is, and a CLAIM is when it is surfaceable and `allowed`
+/// admits its body under its current facets.
+pub(super) fn readable_with(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    allowed: impl FnOnce(&ClaimBody, &[EntityId]) -> bool,
+) -> Result<bool> {
     if crate::vault_cleanup::is_archived_in_txn(store, txn, id)? {
         return Ok(false);
     }
@@ -583,8 +605,7 @@ pub(super) fn readable(
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     let facets = crate::claim::facet_refs_in_port(store, txn, id)?;
-    Ok(crate::claim::claim_surfaceable(&body)
-        && crate::gate::scoped_read_claim_allowed(policy, actor, &body, &facets))
+    Ok(crate::claim::claim_surfaceable(&body) && allowed(&body, &facets))
 }
 
 pub(super) fn value_hash(value: &rmpv::Value) -> Result<[u8; 32]> {

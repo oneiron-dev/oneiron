@@ -26,13 +26,14 @@ mod admitted;
 mod bodies;
 
 pub(crate) use self::admitted::ReplyBody;
-use self::bodies::owned_body;
 pub(crate) use self::bodies::{
     CodeRunResultBodyReader, FinishedOutput, StagedSinks, code_run_body_file_of_row,
-    code_run_body_row_key, code_run_inline_body_of_row,
+    code_run_body_held_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
+    code_run_row_inline, lift_code_run_file_hold_in_txn,
 };
 pub(super) use self::bodies::{
-    body_drifted, finish_output, load_whole_body, open_body_file, read_body_row_range,
+    body_drifted, finish_output, load_whole_body, open_body_file, owned_body,
+    raw_put_publishes_descriptor, read_body_row_range,
 };
 
 /// The replay record of one run, keyed by run id.
@@ -46,28 +47,50 @@ pub(super) const RAW_OUTPUTS: SideTable<String, StoredBody, Raw> =
 
 const STORED_INLINE: u8 = 0;
 const STORED_FILE: u8 = 1;
+/// The tag bit of a row that holds its body on its own (FIX 5399b), beside
+/// its body's place.
+const STORED_HELD: u8 = 2;
 
 /// Where one body's bytes are: in its row, within `[limits]
 /// code_result_inline_bytes`, or in the body file named by its digest, of
 /// `len` bytes. The row is written only once the file is whole on disk, so a
 /// row naming a file never names a partial one.
+///
+/// `held`: the row holds its body on its own, as a raw output no descriptor
+/// holds (FIX 5399b). A put that publishes no descriptor sets it and every
+/// later put of the same bytes keeps it, so no other holder's release
+/// queues or collects the body; only an erase lifts it. It owns nothing
+/// and grants nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StoredBody {
-    Inline(Vec<u8>),
-    File { len: u64 },
+    Inline { bytes: Vec<u8>, held: bool },
+    File { len: u64, held: bool },
+}
+
+impl StoredBody {
+    /// This body as a row that holds it on its own when `held`.
+    pub(super) fn holding(&self, held: bool) -> Self {
+        match self {
+            Self::Inline { bytes, .. } => Self::Inline {
+                bytes: bytes.clone(),
+                held,
+            },
+            Self::File { len, .. } => Self::File { len: *len, held },
+        }
+    }
 }
 
 impl RawValue for StoredBody {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
         Ok(match self {
-            Self::Inline(bytes) => {
+            Self::Inline { bytes, held } => {
                 let mut raw = Vec::with_capacity(bytes.len() + 1);
-                raw.push(STORED_INLINE);
+                raw.push(stored_tag(STORED_INLINE, *held));
                 raw.extend_from_slice(bytes);
                 raw
             }
-            Self::File { len } => {
-                let mut raw = vec![STORED_FILE];
+            Self::File { len, held } => {
+                let mut raw = vec![stored_tag(STORED_FILE, *held)];
                 raw.extend_from_slice(&len.to_be_bytes());
                 raw
             }
@@ -75,17 +98,40 @@ impl RawValue for StoredBody {
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        match bytes.split_first() {
-            Some((&STORED_INLINE, body)) => Ok(Self::Inline(body.to_vec())),
-            Some((&STORED_FILE, len)) => Ok(Self::File {
+        let held = row_held(bytes);
+        match split_row(bytes) {
+            Some((STORED_INLINE, body)) => Ok(Self::Inline {
+                bytes: body.to_vec(),
+                held,
+            }),
+            Some((STORED_FILE, len)) => Ok(Self::File {
                 len: u64::from_be_bytes(
                     len.try_into()
                         .map_err(|_| Error::CorruptedIndex("code-run raw output row"))?,
                 ),
+                held,
             }),
             _ => Err(Error::CorruptedIndex("code-run raw output row").into()),
         }
     }
+}
+
+/// A row's tag: its body's place, with the hold bit when the row holds its
+/// body on its own.
+const fn stored_tag(place: u8, held: bool) -> u8 {
+    if held { place | STORED_HELD } else { place }
+}
+
+/// A stored row's place (its tag without the hold bit) and the bytes after
+/// its tag; `None` for an empty row.
+fn split_row(row: &[u8]) -> Option<(u8, &[u8])> {
+    row.split_first()
+        .map(|(tag, rest)| (tag & !STORED_HELD, rest))
+}
+
+/// Whether a stored row holds its body on its own (FIX 5399b).
+fn row_held(row: &[u8]) -> bool {
+    row.first().is_some_and(|tag| (tag & STORED_HELD) != 0)
 }
 
 /// SECRET-04 (ONE-1922): the FORWARD taint sidecar of one result

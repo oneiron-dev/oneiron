@@ -13,6 +13,11 @@
 //! reaches the same dispatcher through [`ProviderTagger::claim_room`] and
 //! [`ProviderTagger::submit`] (FIX 6755), so its markers queue beside every
 //! other call.
+//!
+//! On a Mac, the serving build also starts the slot's platform admission
+//! ([`Admission`]), which adds the bundle's managed MLX worker ([`mlx`]) and
+//! its native Core ML worker ([`coreml`]) to the dispatcher in the
+//! background, each once it clears here.
 
 #[cfg(test)]
 use std::collections::VecDeque;
@@ -27,13 +32,18 @@ use oneiron::{ModelId, embed::EmbedderLocality};
 
 use crate::config::{OneironerConfig, OneironerProvider};
 use dispatcher::{Completion, Dispatcher, WorkerSpec};
+use engines::Admission;
+use local::WindowCounter;
 
 pub(crate) use dispatcher::DispatchClaim;
 
+pub(crate) mod bundle;
+mod coreml;
 mod dispatcher;
 pub(crate) mod endpoint;
 pub(crate) mod engines;
 mod local;
+mod mlx;
 pub(crate) mod release;
 
 #[cfg(test)]
@@ -83,25 +93,23 @@ enum Provider {
 }
 
 impl ProviderTagger {
-    /// The facade over `workers`. `pinned` says the slot serves one
-    /// configured worker, a named device or an endpoint.
+    /// The facade over a dispatcher with no worker yet. `pinned` says the
+    /// slot serves one configured worker, a named device or an endpoint;
+    /// `windows` counts each call's window, `None` for an endpoint, whose
+    /// window is its own.
     fn new(
         model: ModelId,
         locality: EmbedderLocality,
         provider: Provider,
         pinned: bool,
-        workers: Vec<WorkerSpec>,
-    ) -> anyhow::Result<Self> {
-        let dispatcher = Dispatcher::new(pinned);
-        for worker in workers {
-            dispatcher.add(worker)?;
-        }
-        Ok(Self {
+        windows: Option<WindowCounter>,
+    ) -> Self {
+        Self {
             model,
             locality,
             provider,
-            dispatcher,
-        })
+            dispatcher: Dispatcher::new(pinned, windows),
+        }
     }
 
     pub(crate) fn probe(&self) -> Result<endpoint::ProbeOutcome, endpoint::ProbeError> {
@@ -122,10 +130,22 @@ impl ProviderTagger {
         self.dispatcher.claim_async(work)
     }
 
-    /// Queues `input` under `claim`, never waiting; the answer comes back
-    /// through the returned completion.
-    pub(crate) fn submit(&self, claim: DispatchClaim, input: EncoderInput) -> Completion {
-        claim.submit(input)
+    /// The window `input` builds: a tokenizer encode, so a caller runs it on
+    /// a blocking unit and hands it to [`Self::submit`] (FIX 7331).
+    pub(crate) fn count_window(&self, input: &EncoderInput) -> oneiron::Result<usize> {
+        self.dispatcher.count(input)
+    }
+
+    /// Queues `input` under `claim` with its `window` from
+    /// [`Self::count_window`], never waiting; the answer comes back through
+    /// the returned completion.
+    pub(crate) fn submit(
+        &self,
+        claim: DispatchClaim,
+        input: EncoderInput,
+        window: oneiron::Result<usize>,
+    ) -> Completion {
+        claim.submit_counted(input, window)
     }
 
     /// The dispatcher's pending cap of `work`'s class, from its policy: the
@@ -142,6 +162,27 @@ impl ProviderTagger {
             Provider::Local {
                 decode_revision, ..
             } => Some(*decode_revision),
+        }
+    }
+}
+
+/// The slot's close, held apart from the slot by a teardown that outlives
+/// its borrow (FIX 7383). Serve and managed teardown close the slot once
+/// tagging has ended, so each platform child is shut down and reaped before
+/// the process exits, not left to the OS.
+pub(crate) struct SlotClose(Arc<ProviderTagger>);
+
+impl SlotClose {
+    /// Closes the slot's dispatcher on a blocking unit, which waits for each
+    /// supervised child's shutdown and reap.
+    pub(crate) async fn close(self) {
+        let tagger = self.0;
+        let closed = tokio::task::spawn_blocking(move || tagger.dispatcher.close()).await;
+        if let Err(error) = closed {
+            tracing::warn!(
+                panicked = error.is_panic(),
+                "oneironer slot close ended early"
+            );
         }
     }
 }
@@ -176,6 +217,8 @@ pub(crate) struct TaggerSlot {
     card: Mutex<Option<endpoint::ModelCard>>,
     /// The engine a local tagger runs on and how it was picked.
     serving: Option<engines::Serving>,
+    /// The platform admission the serving build starts, until it does.
+    platforms: Option<Admission>,
     /// The test door onto the traces the worker emitted, bounded.
     #[cfg(test)]
     traces: Mutex<VecDeque<LoggedTrace>>,
@@ -184,6 +227,11 @@ pub(crate) struct TaggerSlot {
 impl TaggerSlot {
     pub(crate) fn config(&self) -> &OneironerConfig {
         &self.config
+    }
+
+    /// The slot's close, for teardown ([`SlotClose`]).
+    pub(crate) fn closer(&self) -> SlotClose {
+        SlotClose(Arc::clone(&self.tagger))
     }
 
     pub(crate) fn tagger(&self) -> &Arc<ProviderTagger> {
@@ -268,6 +316,15 @@ impl TaggerSlot {
         }
     }
 
+    /// Starts the slot's platform admission once, on its own thread (FIX
+    /// 6755 slice 3). Only the serving build calls it, never `init`'s
+    /// check; a later call starts nothing.
+    fn start_platform_workers(&mut self) {
+        if let Some(admission) = self.platforms.take() {
+            admission.start();
+        }
+    }
+
     /// The emitted traces, oldest first.
     #[cfg(test)]
     pub(crate) fn traces(&self) -> Vec<LoggedTrace> {
@@ -282,9 +339,13 @@ impl TaggerSlot {
 /// listener binds.
 ///
 /// `None` and an absent section build nothing. Native artifacts are verified
-/// and loaded before the listener binds. A reachable endpoint that is not
-/// the configured tagger stops `serve`; an unreachable one is probed again.
-/// The engine rows sit at their XDG/HOME default ([`build_slot_with_rows`]).
+/// and loaded before the listener binds. A local bundle whose manifest is
+/// not format 2 builds nothing either: its typed refusal is logged once, and
+/// the server serves without a tagger, its markers waiting for a bundle that
+/// loads (FIX 6755). Any other load failure stops `serve`, as does a
+/// reachable endpoint that is not the configured tagger; an unreachable one
+/// is probed again. The engine rows sit at their XDG/HOME default
+/// ([`build_slot_with_rows`]).
 pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Option<TaggerSlot>> {
     build_slot_with_rows(config, None)
 }
@@ -300,10 +361,25 @@ pub(crate) fn build_slot_with_rows(
         return Ok(None);
     };
     config.validate()?;
-    let mut serving = None;
+    let (mut serving, mut platforms) = (None, None);
     let tagger = match config.provider {
         OneironerProvider::Local => {
-            let (tagger, engine) = engines::load(config, rows_location)?;
+            let (tagger, engine) = match engines::load(config, rows_location) {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    let format = error
+                        .chain()
+                        .find_map(|cause| cause.downcast_ref::<bundle::BundleFormat>());
+                    if let Some(format) = format {
+                        tracing::error!(
+                            error = %format,
+                            "oneironer bundle refused; serving without the tagger"
+                        );
+                        return Ok(None);
+                    }
+                    return Err(error);
+                }
+            };
             tracing::info!(
                 engine = %engine.engine.id(),
                 pick = engine.pick.as_str(),
@@ -311,8 +387,9 @@ pub(crate) fn build_slot_with_rows(
                 "oneironer engine serving"
             );
             serving = Some(engine);
+            let card = tagger.card();
             let provider = Provider::Local {
-                card: tagger.card(),
+                card: card.clone(),
                 decode_revision: tagger.decode_revision(),
             };
             let model = tagger.model_id().clone();
@@ -320,21 +397,33 @@ pub(crate) fn build_slot_with_rows(
             // default alone, so no second model is loaded beside it. A named
             // device is the one worker the owner pinned.
             let pinned = engine.pick == engines::Pick::Named;
-            let worker = WorkerSpec::local(engine.engine, 0, tagger);
-            ProviderTagger::new(
+            let windows = tagger.window_counter();
+            let worker = WorkerSpec::local(engine.engine, tagger);
+            let tagger = ProviderTagger::new(
                 model,
                 EmbedderLocality::OnDevice,
                 provider,
                 pinned,
-                vec![worker],
-            )?
+                Some(windows),
+            );
+            // The Candle baseline the rows chose, or the device the owner
+            // named, ranks first (FIX 6755).
+            let worker = tagger.dispatcher.add(worker)?;
+            tagger.dispatcher.publish_rank(worker, 0);
+            // A platform runtime joins it only from the serving build, in
+            // the background, and never beside a pinned engine.
+            let handle = tagger.dispatcher.handle();
+            platforms = Admission::new(config, rows_location, handle, engine, worker, card);
+            tagger
         }
         OneironerProvider::Endpoint => {
-            let tagger = Arc::new(endpoint::HttpTagger::from_config(config)?);
-            let (model, locality) = (tagger.model_id().clone(), tagger.locality());
-            let worker = WorkerSpec::endpoint(Arc::clone(&tagger));
-            let provider = Provider::Endpoint(tagger);
-            ProviderTagger::new(model, locality, provider, true, vec![worker])?
+            let http = Arc::new(endpoint::HttpTagger::from_config(config)?);
+            let (model, locality) = (http.model_id().clone(), http.locality());
+            let checkpoint = config.checkpoint_sha16.as_deref().unwrap_or_default();
+            let worker = WorkerSpec::endpoint(Arc::clone(&http), checkpoint);
+            let tagger = ProviderTagger::new(model, locality, Provider::Endpoint(http), true, None);
+            tagger.dispatcher.add(worker)?;
+            tagger
         }
         OneironerProvider::None => return Ok(None),
     };
@@ -343,6 +432,7 @@ pub(crate) fn build_slot_with_rows(
         tagger: Arc::new(tagger),
         card: Mutex::new(None),
         serving,
+        platforms,
         #[cfg(test)]
         traces: Mutex::new(VecDeque::new()),
     };
@@ -380,11 +470,19 @@ pub(crate) fn build_slot_with_rows(
 
 /// [`build_slot_with_rows`] off the async runtime: native loading and HTTP
 /// are blocking. `rows_location` is the engine rows file, `None` for the
-/// XDG/HOME default.
+/// XDG/HOME default. This is the serving build, `serve`'s and a managed
+/// vault's: it starts the slot's platform admission, which never holds back
+/// the listener (FIX 6755 slice 3).
 pub(crate) async fn build_slot_off_runtime(
     config: Option<OneironerConfig>,
     rows_location: Option<PathBuf>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
-    let build = move || build_slot_with_rows(config.as_ref(), rows_location.as_deref());
+    let build = move || {
+        let mut slot = build_slot_with_rows(config.as_ref(), rows_location.as_deref())?;
+        if let Some(slot) = slot.as_mut() {
+            slot.start_platform_workers();
+        }
+        Ok(slot)
+    };
     crate::logging::off_runtime("tagger slot task", build).await?
 }

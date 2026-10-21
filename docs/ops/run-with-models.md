@@ -377,9 +377,11 @@ or an IP address of the vault's; the intake sees the connection, as any HTTPS
 server does. Every receipt is checked against the intake's receipt keys (the
 current one or the one before it) and kept in the vault: `uploading`, `accepted`
 (held whole in quarantine, not yet trainable), `eligible` or `refused` after the
-intake's own filter, `rejected`, `conflict` or `invalid_submission` (sent again
-later), `removal_pending`, then `removed`. The offer's files go once it reads
-`eligible`, `refused` or `removed`, or once the vault withholds or withdraws it;
+intake's own filter, `rejected`, `conflict` or `invalid_submission` (final: never
+sent again), `removal_pending`, then `removed`. A request re-cut after a timeout
+resumes from the cursor the intake answers. The offer's files go once it reads
+`eligible`, `refused`, `rejected`, `conflict`, `invalid_submission` or `removed`,
+or once the vault withholds or withdraws it;
 its code stays in the vault after them, and the vault's training key is
 destroyed only after every offer of an erase reads `removed`. Requests start at
 19 MiB; a `413` or a request that runs out of time (30 s, plus a second for each
@@ -2656,13 +2658,18 @@ pins `stack_sha16` too.
 
 The engine carries a catalogue of shipped tagger bundles. Each one is pinned
 file by file, by size and SHA-256, under its `stack_sha16`. One release ships
-today: stack `fde950a412728a86`, checkpoint `eeeaf8bea4e8d166`, 53 labels,
-licence Apache-2.0. It has five files, about 1.2 GB in all: `oneironer.json`,
-`config.json`, `char_config.json`, `tokenizer.json` and `trunk.safetensors`.
+today: stack `b8cf6fb2f5d71020`, checkpoint `eeeaf8bea4e8d166`, 53 labels,
+licence Apache-2.0. It is a format-2 bundle with eight files. Six are common
+to every machine, about 1.2 GB in all: `config.json`, `oneironer.json`,
+`char_config.json`, `parity.json`, `tokenizer.json` and `trunk.safetensors`.
+The other two are platform archives for macOS on aarch64: the Core ML model
+`coreml-ane-port-v1.mlmodelc.tar` (about 238 MB, platform row `coreml-ane`)
+and the MLX worker `oneironer-mlx-worker-0.2.0-macos-arm64.tar` (about
+350 MB, platform row `mlx-worker`).
 
 ```sh
 oneiron oneironer fetch [--stack <stack_sha16>] [--into <models-root>] \
-  [--repo <org/name>] [--token-file <path>]
+  [--repo <org/name>] [--token-file <path>] [--platforms host|all|none]
 ```
 
 - `--stack` picks a release. Without it, the fetch takes the default. An
@@ -2681,27 +2688,56 @@ oneiron oneironer fetch [--stack <stack_sha16>] [--into <models-root>] \
   to `huggingface.co` only, never on a redirect to its CDN, and never prints
   or logs it. Pass a file, such as a systemd credential at
   `$CREDENTIALS_DIRECTORY/<name>`. There is no way to pass the token itself.
+- `--platforms` picks the platform archives placed beside the common files.
+  `host`, the default, places the rows whose OS and architecture this
+  build targets: none on Linux, both on an Apple silicon Mac. `all` places
+  every row, for a supervisor that fills a shared root other machines read.
+  `none` places the common files alone. The choice never changes
+  `oneironer.json` or the stack: every bundle of a release has the same
+  identity, whichever archives it holds. A row's `min_os` is checked when a
+  runtime loads it, not here.
 
 The fetch stages files in `<root>/oneironer/.staging-<stack_sha16>/`, under
 the lock file `<root>/oneironer/.staging-<stack_sha16>.lock`. A second fetch
-of the same stack waits for the first, then reuses its bundle. Each file
-downloads to `<file>.partial`. After an interrupted run, the next run resumes
-the partial with an HTTP `Range` request. Every file is checked for size, then
-for SHA-256. When a file's size or digest is wrong, the fetch deletes its
-partial and fails. Once all five files pass, the staging directory is renamed
-into place in one step, with directories at `0755` and files at `0644`.
+of the same stack waits for the first, then reuses its bundle. The common
+files come first; the staged `oneironer.json` then names the platform rows,
+and the fetch checks that each archive's pin is its row's own file, size
+and digest. Each file downloads to `<file>.partial`. After an interrupted
+run, the next run resumes the partial with an HTTP `Range` request. Every
+file is checked for size, then for SHA-256. When a file's size or digest is
+wrong, the fetch deletes its partial and fails.
 
-A bundle already in place is checked the same way and reused. If it fails the
-check, the fetch fails and leaves the directory as it is. Look at it, then
-remove it yourself.
+Each selected archive is then extracted in staging, beside itself, into the
+directory its name gives without `.tar`:
+`coreml-ane-port-v1.mlmodelc/` and `oneironer-mlx-worker-0.2.0-macos-arm64/`.
+The archive must be plain POSIX ustar: regular files and directories only,
+under relative paths, with no absolute path, no `..`, no link, device or
+fifo, and no PAX or GNU extension header. Anything else fails the fetch.
+Files keep `0755` when the archive marks them executable and get `0644`
+otherwise; directories get `0755`. The extraction writes `.extracted`, the
+archive's SHA-256, last. Once everything passes, the staging directory is
+renamed into place in one step. Its directories are at `0755`, its flat
+files at `0644`, and each extracted tree keeps the modes the archive gave it.
+
+A bundle already in place is checked the same way and reused. Each common
+file is checked for size and digest. Each platform row must be absent, or
+present as its archive beside an extraction that matches the archive entry
+by entry: type, size, mode and bytes, with nothing else in the tree but
+`.extracted`. If the check fails, the fetch fails and leaves the directory
+as it is. Look at it, then remove it yourself. A placed bundle is never
+added to. If `--platforms` selects a row the placed bundle lacks, the fetch
+fails and names the remedy: fetch into a fresh `--into` root and point
+`model_dir` at the bundle there.
 
 The command prints one JSON object:
 
 ```json
-{"outcome": "downloaded", "stack_sha16": "fde950a412728a86",
+{"outcome": "downloaded", "stack_sha16": "b8cf6fb2f5d71020",
  "repo": "oneiron-dev/oneironer", "licence": "Apache-2.0",
- "model_dir": "/srv/oneiron/models/oneironer/fde950a412728a86",
- "bytes": 1243862518, "resumed_bytes": 0, "file": null, "message": null,
+ "model_dir": "/srv/oneiron/models/oneironer/b8cf6fb2f5d71020",
+ "bytes": 1244146213, "resumed_bytes": 0,
+ "platforms_installed": [], "platforms_skipped": ["coreml-ane", "mlx-worker"],
+ "file": null, "message": null,
  "oneironer_block": "[oneironer]\nprovider = \"local\"\n..."}
 ```
 
@@ -2712,6 +2748,9 @@ The command prints one JSON object:
 - `bytes` and `resumed_bytes` are set on a download only. `bytes` came over
   the network on this run. `resumed_bytes` were already on disk from an
   earlier run.
+- `platforms_installed` and `platforms_skipped` name the platform rows the
+  placed bundle holds and those it does not. They are null until the bundle
+  is in place.
 - `file` and `message` are set on `not_published` and `unauthorized` only.
   For these two outcomes the command prints the object, then exits non-zero.
 - `oneironer_block` is the `[oneironer]` section that serves the bundle, ready
@@ -2720,9 +2759,9 @@ The command prints one JSON object:
 ```toml
 [oneironer]
 provider = "local"
-model_dir = "/srv/oneiron/models/oneironer/fde950a412728a86"
+model_dir = "/srv/oneiron/models/oneironer/b8cf6fb2f5d71020"
 checkpoint_sha16 = "eeeaf8bea4e8d166"
-stack_sha16 = "fde950a412728a86"
+stack_sha16 = "b8cf6fb2f5d71020"
 label_count = 53
 ```
 
@@ -2731,6 +2770,19 @@ setting or flag. Hypnos places the bundle: it runs this command as root once
 per node, with `--into <shared_model_root>`. Each vault's `[oneironer]
 model_dir` then names `<shared_model_root>/oneironer/<stack_sha16>/`, which
 the shared-root check in section 2 admits.
+
+#### The format-1 cutover
+
+This build loads format-2 bundles only. It has no format-1 reader, fallback
+or migration. A node configured for the format-1 stack `fde950a412728a86`
+still starts and serves. Its tagger slot logs one error, which names the
+format it found, the stack to fetch and the fetch command, and the server
+runs without the tagger. Tagging markers are kept and wait. The tagger comes
+back once the node fetches `b8cf6fb2f5d71020` and updates `oneironer.model_dir`
+and `stack_sha16` to it (the checkpoint and label count are unchanged).
+Derivations stored under the old stack are tagged again under the new one,
+as with any stack change. `--stack fde950a412728a86` is no longer in the
+catalogue and is refused as an unknown stack.
 
 ### Where the engine rows live
 
@@ -2747,11 +2799,21 @@ measures again.
 
 Each reference case is timed after 250 ms of idle, as a chat spaces its
 turns. An engine replaces the one ranked above it only when its median is at
-least 3% faster and its 95th percentile at most 5% slower. A row is keyed by
-the bundle's stack and reference, the engine, its runtime and artifact, the
-server build, the OS build and that idle, and is measured again when any of
-them moves; a rows file in an older format is measured over. An engine that
-fails to load or answer keeps no row, so the next start tries it again.
+least 3% faster and its 95th percentile at most 5% slower, both timed on the
+same cases. A row is keyed by the bundle's stack and reference, the engine,
+its runtime and artifact, the server build down to the SHA-256 of the server
+executable, the OS build, that idle, the window rules (the longest window a
+case may need, `max_input_tokens` and `live_window_tokens`), and the cases
+it is timed on. It is measured again when any of them moves; a rows file in
+an older format is measured over. If the server executable cannot be read,
+rows are measured at every start and never saved. An
+engine is held only to the reference cases whose live window, special
+tokens included, fits its window; a longer case is skipped, never failed,
+and the row records how many. Candle's window is `max_input_tokens`, so it
+holds every case. An engine that fails to load or answer, or that holds no
+case, keeps no row, so the next start tries it again. `parity.json` may also
+carry the publisher's `reference` and `checked` notes; they are read and
+never compared.
 
 ### Workers, live and bulk calls, and receipts
 
@@ -2762,6 +2824,18 @@ Only that one model is loaded. An endpoint slot's worker is the endpoint, and
 its receipts do not name a runtime inside it. A worker loads, warms on one
 short untimed call, and takes work once ready; one whose load or warm-up fails
 takes none until the next start.
+
+`runtime = "auto"`, the default, serves the Candle baseline; a platform
+runtime this machine installs may join it only once its answers clear the
+bundle's reference here. On an Apple silicon Mac that is the bundle's
+managed MLX worker, run beside Candle as
+[oneironer-workers.md](oneironer-workers.md) describes.
+`runtime = "candle"` or a named device pins the slot to Candle, and no
+receipt names `auto`. Each call's window is counted once as it is queued,
+and a worker runs only calls whose window fits the window it is qualified
+for: a longer window goes to Candle, whose window is `max_input_tokens`, and
+is never refused for its length, and a long bulk call at the front of the
+queue never holds back the shorter ones behind it.
 
 Calls come in two classes. A live call (the explicit tag door,
 `vault.models.roles.invoke` with a `tag` input) takes a free worker first,

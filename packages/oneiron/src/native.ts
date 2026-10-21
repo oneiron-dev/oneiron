@@ -635,6 +635,12 @@ vaultResultsRead(input: unknown): unknown
 vaultResultsSlice(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
+vaultCodeImport(input: unknown): unknown
+vaultCodeReposGet(input: unknown): unknown
+vaultCodeForksGet(input: unknown): unknown
+vaultCodeImportsCreate(input: unknown): unknown
+vaultCodeImportsGet(input: unknown): unknown
+vaultCodeIngressGet(input: unknown): unknown
 vaultCodeOriginRegister(input: unknown): unknown
 vaultCodeOriginMirrorGet(input: unknown): unknown
 vaultCodeOriginMirrorSet(input: unknown): unknown
@@ -677,6 +683,12 @@ vaultCodeMergeQueueRequeueSurvivors(input: unknown): unknown
 vaultCodeMergeQueueLandReviewed(input: unknown): unknown
 vaultCodeMergeQueueSettleSlow(input: unknown): unknown
 vaultCodeMergeQueueRecover(input: unknown): unknown
+vaultCodeMergeQueueInit(input: unknown): unknown
+vaultCodeMergeQueueCheck(input: unknown): unknown
+vaultCodeMergeQueueDiagnose(input: unknown): unknown
+vaultCodeMergeQueueCheckStatus(input: unknown): unknown
+vaultCodeChecksGet(input: unknown): unknown
+vaultCodeMergeQueueExportGreen(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown
@@ -795,6 +807,8 @@ vaultMessagesReact(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsHostPin(input: unknown): unknown
 vaultRoomsHostHand(input: unknown): unknown
+vaultRoomsUpkeepPending(input: unknown): unknown
+vaultRoomsUpkeepVoice(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown
 vaultCompanionsSharingSet(input: unknown): unknown

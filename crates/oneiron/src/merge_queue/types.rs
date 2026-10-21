@@ -15,6 +15,9 @@ pub struct MergeFile {
     pub expected: Option<Vec<u8>>,
     /// None deletes a file.
     pub content: Option<Vec<u8>>,
+    /// A received bundle's reviewed exact Git state change of this path
+    /// (G4 PR2); `None` on every ordinary file, which stages as before.
+    pub metadata_edit: Option<crate::code_document::CodeFileMetadataEdit>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeProposal {
@@ -74,6 +77,9 @@ pub struct MergeBatch {
     /// A leased run's accepted entry and the declarations it waits behind
     /// (FIX 6867); `None` for an owner or trusted batch, which waits on none.
     pub run_order: Option<super::RepoQueueOrder>,
+    /// What the automatic driver decided for it (FIX 6868, G2 PR2); `None`
+    /// until the driver acts on it. An owner's call needs none.
+    pub drive: Option<super::QueueBatchDrive>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeQueuePointers {

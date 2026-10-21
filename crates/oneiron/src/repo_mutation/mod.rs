@@ -3,12 +3,15 @@ mod conflict_doors;
 pub(crate) use conflict_doors::conflict_proposals;
 mod conflict_value;
 mod document;
+pub mod external_import;
 mod git;
 mod lift;
 pub mod mount;
 mod oplog;
 pub mod proposal;
 mod queue;
+mod received_file;
+mod reviewed_file;
 mod reviewed_stack;
 mod snapshot;
 mod support;
@@ -44,6 +47,12 @@ pub(crate) use self::conflict_value::validate_repo_conflict_claim_value;
 pub(crate) use self::git::canonical_mutation_scope;
 pub(crate) use self::oplog::erase_oplog_actor_in_txn;
 pub(crate) use self::proposal::actor_erase::erase_proposal_actor_in_txn;
+pub(crate) use self::proposal::persist::PreparedRepoProposal;
+pub(crate) use self::received_file::tree::{ReceivedTreeEdit, stage_received_tree_edits};
+pub(crate) use self::received_file::{
+    ReceivedFilesProposalInput, received_file_operation, received_merge_proposal,
+    received_proposal_id,
+};
 
 // The flat repo_mutation.rs module used to provide these names to the test
 // module through `use super::*`; after the directory split the seam re-imports

@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1163 code-mode rows (1123 host rows, 40 run rows), 3876 declarations.
-// Replies: 1043 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3938 declarations.
+// Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -518,8 +518,8 @@ declare namespace Sdk {
   type TaggingMarkerState = "unconfigured" | "absent" | "pending" | "retrying" | "settled" | "failed";
   type TaggingMarkerView = { attempt_ref: string; state: string; checkpoint?: string | null; stack?: string | null; attempt_count: number; retry_of?: string | null; scheduled_at?: number | null; last_error?: string | null; created_at: number; updated_at: number };
   type TaggingFailureView = { class: string; code?: string | null; refusal?: string | null };
-  type ExecutionRuntime = "candle" | "endpoint";
-  type ExecutionCompute = "cpu" | "metal" | "cuda" | "opaque";
+  type ExecutionRuntime = "candle" | "endpoint" | "mlx" | "coreml";
+  type ExecutionCompute = "cpu" | "metal" | "cuda" | "cpu_and_ne" | "opaque";
   type ExecutionPick = "calibrated" | "free" | "shorter_queue" | "fallback" | "pinned";
   type EncoderExecution = { runtime: ExecutionRuntime; compute: ExecutionCompute; engine: string; pick: ExecutionPick; queue_ms: number; infer_ms: number };
   type TaggingOutcomeView = { outcome: "saved"; spans: number; links: number; mood: boolean; linked: number; minted: number; context_links: number; speaker_links: number; unresolved_context_links: number; unresolved_speaker_links: number; surprise?: number | null } | { outcome: "shadowed"; spans: number; links: number; mood: boolean; mapped_spans: number; context_links: number; speaker_links: number } | { outcome: "imported"; spans: number; links: number; mood: boolean } | { outcome: "skipped"; reason: string } | { outcome: "superseded"; retry_at: number } | { outcome: "deferred"; retry_at: number } | { outcome: "failed"; failure: TaggingFailureView; retry_at: number } | { outcome: "rekeyed" } | { outcome: "handed_back"; reason: string; retry_at: number } | { outcome: "unreadable" };
@@ -1687,8 +1687,9 @@ declare namespace Sdk {
   type SpaceMoveState = "open" | { swapped_in: { at: number; by_owner: boolean } } | { kept: { at: number; timed_out: boolean } } | { undone: { at: number } };
   type PairedInterval = { mean: number; low: number; high: number };
   type NotWorse = "not_worse" | "worse" | "unknown";
-  type KindProbeCheck = { kind: InputKind; probes: number; families: number; difference?: PairedInterval | null; retest?: PairedInterval | null; tolerance?: number | null; verdict: NotWorse; canary?: PairedInterval | null; canary_verdict?: NotWorse | null; set_version?: string | null; rubric?: string | null; card?: SufficiencyCard | null };
-  type SpaceMoveCheck = { checked_at: number; kinds: KindProbeCheck[]; verdict: NotWorse };
+  type CohortProbe = { probe: string; source: EntityId; from: number; until: number };
+  type KindProbeCheck = { kind: InputKind; probes: number; families: number; difference?: PairedInterval | null; retest?: PairedInterval | null; tolerance?: number | null; verdict: NotWorse; canary?: PairedInterval | null; canary_verdict?: NotWorse | null; set_version?: string | null; rubric?: string | null; card?: SufficiencyCard | null; cohort_members?: CohortProbe[] };
+  type SpaceMoveCheck = { checked_at: number; kinds: KindProbeCheck[]; verdict: NotWorse; cohort_check?: string | null };
   type SpaceMove = { candidate: string; incumbent: SpaceRef; kinds: InputKind[]; margin?: number | null; started_at: number; state: SpaceMoveState; last_check?: SpaceMoveCheck | null };
   type EmbeddingSpacesView = { spaces: EmbeddingSpace[]; text_index: EmbeddingSpace; slots: Record<string, string>; moves: SpaceMove[]; probes: Record<string, number> };
   type EmbeddingSpaceDeclareRequest = EmbeddingSpace;
@@ -2090,7 +2091,10 @@ declare namespace Sdk {
   type CodeProposalViewRequest = { proposal_ref: string };
   type RepoProposalStatus = "Proposed" | "Approved" | "Applied" | "Failed" | "Rejected";
   type CodeProposedStamp = { actor_ref?: string | null; session_ref?: string | null; provenance_claim_ref?: string | null; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null };
-  type CodeProposalView = { proposal_ref: string; repo: string; path: string; message: string; status: RepoProposalStatus; proposed: CodeProposedStamp; changes: CodeChangeView[]; landed?: CodeOperationView | null; rendered: string };
+  type CodeFilePresence = { present: boolean; mode?: number | null };
+  type CodeFileMetadataEdit = { path: string; expected: CodeFilePresence; replacement: CodeFilePresence; new_path?: string | null };
+  type CodeProposalFileView = { path: string; changes: CodeChangeView[]; landed?: CodeOperationView | null; metadata_edit?: CodeFileMetadataEdit | null };
+  type CodeProposalView = { proposal_ref: string; repo: string; operation_kind: string; path?: string | null; message: string; status: RepoProposalStatus; proposed: CodeProposedStamp; changes?: CodeChangeView[] | null; landed?: CodeOperationView | null; files: CodeProposalFileView[]; rendered: string };
   type CodeSymbolsDeclareRequest = { repo: EntityId; task: EntityId; symbols: EntityId[]; ttl_seconds: number };
   type CodeSymbolLeaseView = { task: EntityId; holder: EntityId; symbols: EntityId[]; expires_at: number; held: boolean };
   type CodeSymbolsDeclared = { declaration: CodeSymbolLeaseView; blockers: EntityId[] };
@@ -2179,6 +2183,43 @@ declare namespace Sdk {
   type OriginPublicationState = "prepared" | "published" | "failed" | "conflicted";
   type OriginPublicationView = { receipt: EntityId; repo_id: EntityId; ref_name: string; git_commit: string; provenance_receipt: EntityId; publication_claim?: EntityId | null; actor?: EntityId | null; status: OriginPublicationState; failure?: string | null; created_at: number; finished_at?: number | null };
   type CodeExportResult = { revision: EntityId; git_commit: string; remote_url: string; receipt: EntityId; publication: OriginPublicationView; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
+  type CodeImportAcceptance = { manifest_digest: string; baseline_revision: EntityId; catalog: LensCatalog; review_verdict?: EntityId | null };
+  type CodeRepoImportRequest = { repo: string; project: EntityId; source_ref: string; source_commit: string; admission_receipt: EntityId; accept?: CodeImportAcceptance | null };
+  type CodeImportAnchor = { repo: EntityId; project: EntityId; served_repo: string; object_store: string; source_ref: string; source_commit: string; source_tree: string; admission_receipt: EntityId; receive_provenance: EntityId; snapshot: EntityId; snapshot_fork_hash: string };
+  type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number; mode: number };
+  type CodeImportManifestFile = { git_oid: string; file: CodeSnapshotFile };
+  type CodeImportManifestView = { manifest_ref: EntityId; digest: string; anchor: CodeImportAnchor; inventory_digest: string; files: CodeImportManifestFile[] };
+  type CodeRepoImportState = "manifest_ready" | "held_baseline" | "held_review" | "promoted";
+  type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null };
+  type CodeRepoGetRequest = { repo: EntityId };
+  type CodeRepoImportLink = { manifest: EntityId; anchor: CodeImportAnchor };
+  type MergeQueuePointersView = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[] };
+  type CodeIngressRef = { provenance: EntityId; ref_name: string };
+  type CodeRunWorkFile = { path: string; content_hash_blake3: string };
+  type CodeRunWorkLink = { work: EntityId; task: EntityId; executor_run: EntityId; ref_name: string; base_green: string; base_snapshot: string; fork_hash: string; files: CodeRunWorkFile[] };
+  type CodeRepoView = { repo: EntityId; project: EntityId; served_repo: string; imports: CodeRepoImportLink[]; queue?: MergeQueuePointersView | null; green_revision?: EntityId | null; batch_refs: string[]; check_work_refs: string[]; task_refs: EntityId[]; fork_sessions: EntityId[]; ingress: CodeIngressRef[]; run_works: CodeRunWorkLink[] };
+  type CodeForkGetRequest = { repo: EntityId; fork_session: EntityId };
+  type CodeDocumentFrontier = { document_id: number[]; repo: string; path: string; version: [number, number][]; op_fold: number[]; text_hash: number[]; file_presence?: CodeFilePresence | null };
+  type CodeTreeBlob = { git_oid: string; content_hash: number[]; size_bytes: number; mode: number };
+  type CodeForkDocumentView = { document_id?: string | null; path: string; base?: CodeDocumentFrontier | null; landed?: CodeDocumentFrontier | null; target?: CodeTreeBlob | null; metadata_edit?: CodeFileMetadataEdit | null; proposal_ref?: EntityId | null };
+  type CodeForkView = { repo: EntityId; fork_session: EntityId; parent_session: EntityId; base_revision: EntityId; forked_at: number; documents: CodeForkDocumentView[]; proposal_refs: EntityId[]; revision_refs: EntityId[]; task_refs: EntityId[]; ingress?: CodeIngressRef | null };
+  type ExternalImportSource = { host: string; repository: string; source_ref: string; pull_request?: number | null; base_commit: string; head_commit: string };
+  type ExternalImportDoor = "raw" | { checkout: { checkout: string; epoch: number } };
+  type ExternalImportRequest = { repo: string; code_repo: EntityId; base_revision: EntityId; imported_ref?: string | null; source: ExternalImportSource; source_binding?: string | null; door: ExternalImportDoor };
+  type ExternalImportReceipt = { import: EntityId; repo: string; code_repo: EntityId; source: ExternalImportSource; imported_ref: string; base_revision: EntityId; importer?: EntityId | null; seed_publication?: EntityId | null; receive_provenance?: EntityId | null; publication?: EntityId | null };
+  type ExternalImportLookup = { repo: string; code_repo: EntityId; import: EntityId; door: ExternalImportDoor };
+  type ExternalImportPhase = "pending" | "fetch_refused" | "source_moved" | "held_base" | "door_refused" | "transport_unknown" | "received";
+  type ReceivedFileOperation = { operation_id: string; actor_id: string; session_id: string; ref_name: string; path: string; before_hash: number[]; after_hash: number[]; old_mode?: number | null; new_mode?: number | null; document_edit: boolean };
+  type CodePushCandidateState = "pending" | "held_base" | "held_predecessor" | "held_review_policy" | "held_shape" | "proposed" | "rejected" | "queued" | "quarantined" | "rolled_back" | "landed" | "sealed";
+  type CodePushCandidateView = { candidate: EntityId; state: CodePushCandidateState; reason?: string | null; base_revision?: EntityId | null; fork_session?: EntityId | null; proposal_refs: EntityId[]; batch_refs: string[]; check_work_refs: string[]; revision_refs: EntityId[] };
+  type CodePushIngressView = { repo: EntityId; provenance: EntityId; ref_name: string; old_oid?: string | null; new_oid?: string | null; received_at: number; published: boolean; publication?: EntityId | null; operations: ReceivedFileOperation[]; candidate?: CodePushCandidateView | null };
+  type MergeQueueCheckWorkKind = "init" | "check" | "diagnose";
+  type MergeQueueCheckState = "queued" | "running" | "needs_configuration" | "held" | "passed" | "failed" | "settled";
+  type QueueCheckHoldReason = "interrupted" | "executor_unavailable" | "missing_offline_input" | "unstable_inputs" | "authority" | "tree_unavailable" | "refused";
+  type Quarantine = { proposal_ids: string[]; failing_mask: number; verdict: string };
+  type MergeQueueCheckWorkView = { repo: EntityId; work_ref: string; kind: MergeQueueCheckWorkKind; status: MergeQueueCheckState; configuration_keys: string[]; reason?: string | null; hold?: QueueCheckHoldReason | null; generation: number; baseline_commit?: string | null; plan_digest?: string | null; receipt_refs: string[]; verdict_refs: string[]; pointers?: MergeQueuePointersView | null; quarantine?: Quarantine | null };
+  type ExternalImportStatus = { receipt: ExternalImportReceipt; phase: ExternalImportPhase; reason?: string | null; ingress?: CodePushIngressView | null; checks: MergeQueueCheckWorkView[] };
+  type CodePushIngressGetRequest = { repo: EntityId; provenance: EntityId; ref_name: string };
   type OriginRegisterRequest = { repo: string; default_branch: string };
   type OriginRegistered = { repo: string; repo_id: EntityId; default_branch: string };
   type OriginRepoRequest = { repo: string };
@@ -2240,7 +2281,6 @@ declare namespace Sdk {
   type CheckoutTornDown = { status: "collected"; checkout: string; epoch: number } | { status: "retained"; checkout: string; epoch: number; reason: CheckoutRetention };
   type VisibleFilePolicy = { version: number; include_prefixes: string[]; exclude_prefixes: string[] };
   type CodeViewMaterializeRequest = { repo: EntityId; tested: EntityId; account: EntityId; policy: VisibleFilePolicy };
-  type CodeDocumentFrontier = { document_id: number[]; repo: string; path: string; version: [number, number][]; op_fold: number[]; text_hash: number[] };
   type CodeViewFile = { path: string; content_hash_blake3: string; frontier: CodeDocumentFrontier; text_sha256: string };
   type CodeWorkingView = { view: EntityId; repo: EntityId; base: EntityId; account: EntityId; fork_hash: string; files: CodeViewFile[]; receipt: EntityId; host_path: string };
   type CodeViewRequest = { view: EntityId; repo: EntityId; tested: EntityId; account: EntityId };
@@ -2260,7 +2300,6 @@ declare namespace Sdk {
   type CodeCacheReadRequest = { account: EntityId; action_digest: CodeActionDigest };
   type CodeRepoPointer = { local_folder: string; commit: string };
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
-  type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number };
   type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[] };
   type CodeSnapshotRequest = { repo: EntityId; snapshot: string };
   type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string };
@@ -2271,7 +2310,6 @@ declare namespace Sdk {
   type MergeQueueEnqueueRequest = { repo: EntityId; proposals: EntityId[]; base_green: string };
   type BatchState = "Queued" | "Staged" | "Ready" | "Landing" | "HeadAdvanced" | "GreenAdvanced" | "Quarantined" | "RollingBack" | "RolledBack" | "Cancelled";
   type MergeQueuePathView = { mask: number; commit: string; tree: string; verdict_ref?: string | null };
-  type Quarantine = { proposal_ids: string[]; failing_mask: number; verdict: string };
   type AffectedTests = { packages: string[]; targets: Record<string, string[]> };
   type MergeQueueBatchView = { batch_ref: string; baseline_ref: string; expected_head: string; base_green: string; proposals: string[]; state: BatchState; paths: MergeQueuePathView[]; landed_head?: string | null; slow_verdict_ref?: string | null; quarantine?: Quarantine | null; selected_tests: AffectedTests };
   type MergeQueueBatchRequest = { repo: EntityId; batch_ref: string };
@@ -2279,10 +2317,25 @@ declare namespace Sdk {
   type CommandOutput = { status: number; stdout: number[]; stderr: number[] };
   type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } };
   type ContractVerdict = { schema_version: number; id: string; baseline_id: string; candidate: string; tests_passed: boolean; diffs: ContractDiff[] };
-  type MergeQueueObservation = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[]; batches: MergeQueueBatchView[]; verdicts: ContractVerdict[] };
+  type QueueDriveStatus = "unenrolled" | "driving" | "waiting_check" | "waiting_symbols" | "waiting_review" | "waiting_admission" | "held_needs_new_base" | "held_diverged" | "held_binding" | "held_materialization" | "held_overlap" | "held_task_authority" | "held_recovery" | "held_check" | "needs_configuration" | "held_seal" | "unavailable" | "done";
+  type QueueConflictView = { source_proposals: string[]; conflict: string; task?: string | null; resolution_batch?: string | null };
+  type QueueExportHoldReason = "seal_pending" | "held_seal_ancestor" | "held_binding" | "held_object" | "held_unsupported_tree" | "held_unreviewed_change" | "held_store" | "held_untouched_promotion" | "author_erased" | "author_unavailable" | "unenrolled" | "unavailable";
+  type QueueExportHold = { reason: QueueExportHoldReason; detail: string; way_out: string };
+  type QueueDriveView = { batch_ref: string; status: QueueDriveStatus; reason?: string | null; check_work_refs: string[]; receipt_refs: string[]; conflicts: QueueConflictView[]; survivor_batch?: string | null; tested_revision?: string | null; seal_hold?: QueueExportHold | null };
+  type QueueGreenExportView = { green_commit: string; tested_revision?: string | null; hold?: QueueExportHold | null };
+  type MergeQueueObservation = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[]; batches: MergeQueueBatchView[]; verdicts: ContractVerdict[]; drive: QueueDriveView[]; green_export: QueueGreenExportView };
   type MergeQueueRequeueView = { source_batch_ref: string; batch?: MergeQueueBatchView | null };
   type MergeQueueRepoRequest = { repo: EntityId };
-  type MergeQueuePointersView = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[] };
+  type MergeQueueInitializeRequest = { repo: EntityId; baseline_commit: string; contract_baseline_ref?: string | null };
+  type QueueCheckPhase = "fast" | "slow";
+  type MergeQueueCheckRequest = { repo: EntityId; batch_ref: string; mask: number; phase: QueueCheckPhase; force_refresh?: boolean };
+  type MergeQueueDiagnoseRequest = { repo: EntityId; batch_ref: string };
+  type MergeQueueCheckStatusRequest = { repo: EntityId; work_ref: string };
+  type CodeCheckReceiptRequest = { repo: EntityId; work_ref: string; receipt_ref: string };
+  type CodeCheckCommandResult = { index: number; exit_code?: number | null; signal?: number | null; stdout_blake3: string; stderr_blake3: string };
+  type CodeCheckAttemptView = { generation: number; phase: QueueCheckPhase; commit: string; tree: string; plan_digest: string; inputs_digest: string; attempt_id: string; attempt_count: number; stable_inputs?: boolean | null; completed: boolean; tests_passed?: boolean | null; commands: CodeCheckCommandResult[]; hold?: QueueCheckHoldReason | null; configuration_keys: string[]; verdict_ref?: string | null; passes?: boolean | null; reused_from?: string | null };
+  type CodeCheckReceiptView = { repo: EntityId; work_ref: string; receipt_ref: string; receipts: CodeCheckAttemptView[] };
+  type MergeQueueGreenExportRequest = { repo: EntityId; served_repo: string; checkout: string; epoch: number; ref_name: string; expected_old_oid?: string | null; endpoint: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type AgentSkillInput = { skill_id: string; min_version?: string | null };
@@ -2693,6 +2746,10 @@ declare namespace Sdk {
   type RoomStanding = { hosting: RoomHosting; role?: RoomSpeakingRole | null };
   type RoomHostPin = { room: EntityId; agent?: EntityId | null };
   type RoomHostHand = { room: EntityId; to: EntityId; session?: EntityId | null };
+  type RoomUpkeepPendingRequest = { room?: EntityId | null };
+  type RoomUpkeepNudge = { finding: EntityId; room: EntityId; thread: EntityId; host: EntityId; last_activity: number; open_tasks: EntityId[]; approval: ClaimApprovalStatus };
+  type RoomUpkeepVoiceRequest = { finding: EntityId; content: string };
+  type RoomUpkeepVoiceReceipt = { finding: EntityId; turn?: RecordRef | null; message?: RecordRef | null; receipt_ref: string; replayed: boolean };
   type RoomSharingClamp = { clamp: "worlds" } | { clamp: "facets" } | { clamp: "contact_clearance"; members: number } | { clamp: "unknown"; members: number };
   type RoomSharingView = { room: EntityId; effective: Scope; clamps: RoomSharingClamp[] };
   type CompanionSharingRequest = { companion_ref: string; contact_ref: string };
@@ -3425,7 +3482,7 @@ declare namespace Sdk {
   type BlobContent = { content_base64: string };
   type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
   type ConsolidationStatusRequest = { job_ref: string };
-  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "cancelled" | "signal" | "other";
+  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "retry" | "paused" | "cancelled" | "signal" | "other";
   type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number; parked?: DreamerParkedAttemptView | null };
   type ConsolidationWakeStatusRequest = { job_ref?: string | null; wake_ref?: string | null; limit?: number | null; cursor?: string | null };
@@ -3640,13 +3697,15 @@ declare namespace Sdk {
   type SummaryReadRequest = { summary_ref: string; spans?: SummarySpan[] };
   type SummaryPurpose = { id: string; description: string };
   type SummarySourceVersion = { id: string; entity_type?: number | null; learned_at?: number | null; revision?: number[] | null; record_hash?: number[] | null; frontier?: number[] | null; projected_text?: number[] | null };
-  type SummaryDerivation = { request: number[]; trigger: number[]; content_hash: number[]; params_hash: number[]; instruction: string; model: string; policy_frontier: number[]; sources: SummarySourceVersion[]; previous?: string | null; recorded_at: number; generated_text_hash: number[]; generated_keep_hash: number[] };
+  type SummaryLineSpan = { turn: string; message?: string | null; start: number; end: number };
+  type SummaryLineSources = { output_start: number; output_end: number; turn_refs: string[]; source_spans?: SummaryLineSpan[] };
+  type SummaryDerivation = { request: number[]; trigger: number[]; content_hash: number[]; params_hash: number[]; instruction: string; model: string; policy_frontier: number[]; sources: SummarySourceVersion[]; previous?: string | null; recorded_at: number; generated_text_hash: number[]; generated_keep_hash: number[]; source_set?: number[] | null; line_sources?: SummaryLineSources[] | null };
   type ScopeSummaryMetadata = { purpose: SummaryPurpose; keep: string; derivation: SummaryDerivation };
   type TextAnchor = { entity: string; frontier: number[]; start: number[]; end: number[]; quote: string; hash: number[] };
   type DocActor = string;
   type Birth = { entity: string; actor: DocActor; at: number };
   type SummaryReadView = { summary_ref: string; document: string; frontier: number[]; text: string; metadata: ScopeSummaryMetadata; covers: string[]; read_refs: string[]; anchors: TextAnchor[]; birth: Birth };
-  type SummaryStatusRequest = { attempt: string };
+  type SummaryStatusRequest = { attempt?: string | null; session_ref?: string | null };
   type ScopeSummaryResult = { summary: string; claim?: string | null; record?: string | null };
   type ScopeSummaryStatus = { attempt: string; requester: string; current_attempt: string; state: string; result?: ScopeSummaryResult | null; failure?: string | null; retry_at?: number | null; updated_at: number };
   type SummaryKeepRequest = { summary_ref: string; frontier: number[]; keep: string };
@@ -3863,7 +3922,10 @@ declare namespace Sdk {
   type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: ContextSpec | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null };
   type AgentSpawnKind = "agent_spawn";
   type LaunchStatement = { agent_count: number; expected: ExpectedSpend; unit: LeaseUnit; cap_units?: number | null; available_units?: number | null; hard: boolean; reserved_units: number; scope?: SpendScopeId | null; parent_scope?: SpendScopeId | null; stated_at: number };
-  type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
+  type SpawnAskField = "need" | "care" | "notes" | "model" | "width" | "pattern";
+  type SpawnUnappliedReason = "planner_unbound" | "agent_lease_unbound";
+  type SpawnUnapplied = { field: SpawnAskField; reason: SpawnUnappliedReason };
+  type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null; unapplied?: SpawnUnapplied[] } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string; unapplied?: SpawnUnapplied[] };
   type WorkflowBoundDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId };
   type LeaderAdviceInput = { top?: number | null };
   type LeaderPatternInput = { skill: string };
@@ -4878,6 +4940,10 @@ declare const vault: Sdk.VaultHost & {
       /** Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees. */
       teardown(input: Sdk.CheckoutTeardownInput): Promise<Sdk.CheckoutTornDown | StoredResult>;
     };
+    checks: {
+      /** Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass. */
+      get(input: Sdk.CodeCheckReceiptRequest): Promise<Sdk.CodeCheckReceiptView | null | StoredResult>;
+    };
     /** Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves. */
     conflict_record(input: Sdk.CodeConflictRecordRequest): Promise<Sdk.CodeConflictView | StoredResult>;
     /** Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only. */
@@ -4886,9 +4952,35 @@ declare const vault: Sdk.VaultHost & {
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
     /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
     export(input: Sdk.CodeExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
+    forks: {
+      /** Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork. */
+      get(input: Sdk.CodeForkGetRequest): Promise<Sdk.CodeForkView | null | StoredResult>;
+    };
+    /** Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only. */
+    import(input: Sdk.CodeRepoImportRequest): Promise<Sdk.CodeRepoImportView | StoredResult>;
+    imports: {
+      /** Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue. */
+      create(input: Sdk.ExternalImportRequest): Promise<Sdk.ExternalImportReceipt | StoredResult>;
+      /** Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks. */
+      get(input: Sdk.ExternalImportLookup): Promise<Sdk.ExternalImportStatus | null | StoredResult>;
+    };
+    ingress: {
+      /** Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance. */
+      get(input: Sdk.CodePushIngressGetRequest): Promise<Sdk.CodePushIngressView | null | StoredResult>;
+    };
     merge_queue: {
+      /** Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller. */
+      check(input: Sdk.MergeQueueCheckRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
+      /** Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only. */
+      check_status(input: Sdk.MergeQueueCheckStatusRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
+      /** Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only. */
+      diagnose(input: Sdk.MergeQueueDiagnoseRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
       /** Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
       enqueue(input: Sdk.MergeQueueEnqueueRequest): Promise<Sdk.MergeQueueBatchView | StoredResult>;
+      /** Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result. */
+      export_green(input: Sdk.MergeQueueGreenExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
+      /** Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue. */
+      init(input: Sdk.MergeQueueInitializeRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
       /** Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing. */
       land_reviewed(input: Sdk.MergeQueueBatchRequest): Promise<Sdk.MergeQueueBatchView | StoredResult>;
       /** Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt. */
@@ -4958,6 +5050,10 @@ declare const vault: Sdk.VaultHost & {
     proposal_view(input: Sdk.CodeProposalViewRequest): Promise<Sdk.CodeProposalView | null | StoredResult>;
     /** Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it. */
     repo_diff(input: Sdk.CodeRepoDiffRequest): Promise<Sdk.CodeRepoDiffView | null | StoredResult>;
+    repos: {
+      /** Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work. */
+      get(input: Sdk.CodeRepoGetRequest): Promise<Sdk.CodeRepoView | null | StoredResult>;
+    };
     snapshots: {
       /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
       get(input: Sdk.CodeSnapshotRequest): Promise<Sdk.CodeSnapshotView | null | StoredResult>;
@@ -6247,6 +6343,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;
+    upkeep: {
+      /** The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet. */
+      pending(input: Sdk.RoomUpkeepPendingRequest): Promise<Sdk.RoomUpkeepNudge[] | StoredResult>;
+      /** The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread. */
+      voice(input: Sdk.RoomUpkeepVoiceRequest): Promise<Sdk.RoomUpkeepVoiceReceipt | StoredResult>;
+    };
   };
   roots: {
     requests: {

@@ -33,6 +33,11 @@
 //!   [`Vault::dispatch_outbound_intent`](crate::Vault::dispatch_outbound_intent)
 //!   ([`send_feedback`]) and an air-gapped export
 //!   ([`export_feedback_bundle`]).
+//! - The triage custody over the open inbox and each bound GitHub
+//!   repository ([`COACH_FEEDBACK_SWEEP_FACET`], [`FeedbackTriageHandoff`],
+//!   [`GithubIssuePage`]): each item's revision handed once to a Coach job on
+//!   the skill the owner bound, its result committed with the Proposed
+//!   findings it files.
 //!
 //! # What does NOT ship here
 //!
@@ -109,6 +114,7 @@ pub mod intake;
 mod preview_store;
 mod redaction;
 mod report;
+mod triage;
 
 pub use self::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2,
@@ -152,10 +158,28 @@ pub use self::redaction::{
     apply_recognised_spans,
 };
 pub use self::report::{
-    IssueCategory, REPORT_VERB, ReportDisclosure, ReportDisclosureChoice, ReportIssue, ReportKind,
-    ReportReceipt, ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
-    ReportStatus,
+    COACH_FEEDBACK_DELIVERY_FACET, IssueCategory, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
+    REPORT_SIGNATURE_VERB, REPORT_VERB, ReportDeliveryHold, ReportDeliveryKey,
+    ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRun,
+    ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest, ReportDisclosure,
+    ReportDisclosureChoice, ReportFrozenSend, ReportFrozenSignature, ReportIssue, ReportKind,
+    ReportPublisherBinding, ReportPublisherBindingRequest, ReportPublisherEndpoint,
+    ReportPublisherMetadata, ReportReceipt, ReportRequest, ReportReview, ReportRoute,
+    ReportRoutedPayload, ReportSignature, ReportSignatureTransport,
+    ReportSignatureTransportRequest, ReportStatus,
 };
+pub use self::triage::{
+    COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, FEEDBACK_TRIAGE_FINDING_PREDICATE,
+    FEEDBACK_TRIAGE_GITHUB_PREFIX, FEEDBACK_TRIAGE_INBOX_SOURCE, FeedbackTriageBinding,
+    FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageContinuation,
+    FeedbackTriageFinding, FeedbackTriageHandoff, FeedbackTriageHold, FeedbackTriageInput,
+    FeedbackTriageItem, FeedbackTriageJob, FeedbackTriageOutput, FeedbackTriageResult,
+    FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageSourceError,
+    FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault, FeedbackTriageSourceRef,
+    FeedbackTriageStatus, FeedbackTriageStatusRequest, FeedbackTriageSweep, GithubIssueKind,
+    GithubIssuePage, GithubIssueRevision, GithubSweepContinuation,
+};
+pub(crate) use self::triage::{acknowledge_feedback_triage_in_txn, job_handoff_in_txn};
 
 #[cfg(test)]
 mod tests;

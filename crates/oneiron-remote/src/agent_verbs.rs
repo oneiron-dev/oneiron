@@ -1888,6 +1888,24 @@ impl OneironClient {
                 "vault.code.export" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CodeExportResult,
                 >(client, verb, &input),
+                "vault.code.import" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::CodeRepoImportView,
+                >(client, verb, &input),
+                "vault.code.repos.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::origin_doors::CodeRepoView>,
+                >(client, verb, &input),
+                "vault.code.forks.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::origin_doors::CodeForkView>,
+                >(client, verb, &input),
+                "vault.code.imports.create" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::ExternalImportReceipt,
+                >(client, verb, &input),
+                "vault.code.imports.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::origin_doors::ExternalImportStatus>,
+                >(client, verb, &input),
+                "vault.code.ingress.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::origin_doors::CodePushIngressView>,
+                >(client, verb, &input),
                 "vault.code.origin.register" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::OriginRegistered,
                 >(client, verb, &input),
@@ -2015,6 +2033,24 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.code.merge_queue.recover" => remote_agent_verb_output::<
                     oneiron::memory::merge_queue_doors::MergeQueuePointersView,
+                >(client, verb, &input),
+                "vault.code.merge_queue.init" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView,
+                >(client, verb, &input),
+                "vault.code.merge_queue.check" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView,
+                >(client, verb, &input),
+                "vault.code.merge_queue.diagnose" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView,
+                >(client, verb, &input),
+                "vault.code.merge_queue.check_status" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView,
+                >(client, verb, &input),
+                "vault.code.checks.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::merge_queue_doors::CodeCheckReceiptView>,
+                >(client, verb, &input),
+                "vault.code.merge_queue.export_green" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::CodeExportResult,
                 >(client, verb, &input),
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
@@ -2373,6 +2409,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.rooms.host.hand" => remote_agent_verb_output::<
                     oneiron::workspace_roster::RoomStanding,
+                >(client, verb, &input),
+                "vault.rooms.upkeep.pending" => remote_agent_verb_output::<
+                    Vec<oneiron::workspace_roster::RoomUpkeepNudge>,
+                >(client, verb, &input),
+                "vault.rooms.upkeep.voice" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomUpkeepVoiceReceipt,
                 >(client, verb, &input),
                 "vault.rooms.sharing" => remote_agent_verb_output::<
                     oneiron::workspace_roster::RoomSharingView,
@@ -10880,6 +10922,78 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.export", value)
     }
+    pub fn vault_code_import(
+        &self,
+        input: &oneiron::memory::origin_doors::CodeRepoImportRequest,
+    ) -> Result<oneiron::memory::origin_doors::CodeRepoImportView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.import", value)
+    }
+    pub fn vault_code_repos_get(
+        &self,
+        input: &oneiron::memory::origin_doors::CodeRepoGetRequest,
+    ) -> Result<Option<oneiron::memory::origin_doors::CodeRepoView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.repos.get", value)
+    }
+    pub fn vault_code_forks_get(
+        &self,
+        input: &oneiron::memory::origin_doors::CodeForkGetRequest,
+    ) -> Result<Option<oneiron::memory::origin_doors::CodeForkView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.forks.get", value)
+    }
+    pub fn vault_code_imports_create(
+        &self,
+        input: &oneiron::memory::origin_doors::ExternalImportRequest,
+    ) -> Result<oneiron::memory::origin_doors::ExternalImportReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.imports.create", value)
+    }
+    pub fn vault_code_imports_get(
+        &self,
+        input: &oneiron::memory::origin_doors::ExternalImportLookup,
+    ) -> Result<Option<oneiron::memory::origin_doors::ExternalImportStatus>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.imports.get", value)
+    }
+    pub fn vault_code_ingress_get(
+        &self,
+        input: &oneiron::memory::origin_doors::CodePushIngressGetRequest,
+    ) -> Result<Option<oneiron::memory::origin_doors::CodePushIngressView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.ingress.get", value)
+    }
     pub fn vault_code_origin_register(
         &self,
         input: &oneiron::memory::origin_doors::OriginRegisterRequest,
@@ -11383,6 +11497,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.merge_queue.recover", value)
+    }
+    pub fn vault_code_merge_queue_init(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueInitializeRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.init", value)
+    }
+    pub fn vault_code_merge_queue_check(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueCheckRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.check", value)
+    }
+    pub fn vault_code_merge_queue_diagnose(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueDiagnoseRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.diagnose", value)
+    }
+    pub fn vault_code_merge_queue_check_status(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueCheckStatusRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueueCheckWorkView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.check_status", value)
+    }
+    pub fn vault_code_checks_get(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::CodeCheckReceiptRequest,
+    ) -> Result<Option<oneiron::memory::merge_queue_doors::CodeCheckReceiptView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.checks.get", value)
+    }
+    pub fn vault_code_merge_queue_export_green(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueGreenExportRequest,
+    ) -> Result<oneiron::memory::origin_doors::CodeExportResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.export_green", value)
     }
     /// One version's export file (base64), with its pinned name and media type.
     pub fn vault_artifacts_export(
@@ -12849,6 +13035,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.host.hand", value)
+    }
+    pub fn vault_rooms_upkeep_pending(
+        &self,
+        input: &oneiron::workspace_roster::RoomUpkeepPendingRequest,
+    ) -> Result<Vec<oneiron::workspace_roster::RoomUpkeepNudge>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.upkeep.pending", value)
+    }
+    pub fn vault_rooms_upkeep_voice(
+        &self,
+        input: &oneiron::workspace_roster::RoomUpkeepVoiceRequest,
+    ) -> Result<oneiron::workspace_roster::RoomUpkeepVoiceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.upkeep.voice", value)
     }
     pub fn vault_rooms_sharing(
         &self,

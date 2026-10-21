@@ -10,7 +10,9 @@
 // aliases keep every `federation::<module>::` path this crate uses.
 pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod agent_grant;
-pub(crate) use agent_grant::{AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding};
+pub(crate) use agent_grant::{
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
+};
 mod connect_grant;
 pub use connect_grant::ConnectGrantMinted;
 pub(crate) use connect_grant::{
@@ -29,6 +31,9 @@ mod grant;
 // The owner's git_push Grant and the receive-pack decision (FIX 6867, G1-PUSH).
 pub(crate) mod git_push;
 pub use git_push::{GitPushAdmission, GitPushCaller, GitPushCredential, GitPushSeal};
+// The sealed admission of a merge queue reconciliation (FIX 6868, G2 PR2).
+mod queue_reconciliation;
+pub(crate) use queue_reconciliation::QueueReconciliationAdmission;
 pub(crate) mod grant_policy;
 #[cfg(feature = "sync")]
 mod grant_travel;
@@ -38,6 +43,7 @@ mod booking_payer;
 mod membership_gate;
 pub use membership_gate::MembershipStanding;
 pub use membership_gate::SharedVaultWrite;
+pub(crate) use membership_gate::authenticated_grant_membership_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use membership_gate::grant_allows_content_write;
 pub(crate) mod grant_scope;
@@ -69,6 +75,7 @@ pub use shared_act::{
     SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
     shared_act_outcome_transcript,
 };
+pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod foreign_world;
 pub(crate) use foreign_world::PactDelivery;

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::contract_oracle::{AffectedTests, ContractVerdict};
-use crate::merge_queue::{BatchState, Quarantine};
+use crate::merge_queue::{BatchState, Quarantine, QueueDriveView, QueueGreenExportView};
 
 /// One merge queue, named by its repository.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -117,4 +117,12 @@ pub struct MergeQueueObservation {
     pub pending_slow_batch_refs: Vec<String>,
     pub batches: Vec<MergeQueueBatchView>,
     pub verdicts: Vec<ContractVerdict>,
+    /// The automatic driver's view of each named batch, in request order:
+    /// its status or typed hold, the checker work and receipts that bind
+    /// it and its overlap handoff (FIX 6868). An unenrolled queue answers
+    /// `unenrolled`.
+    pub drive: Vec<QueueDriveView>,
+    /// The current green's tested revision and whether `export_green`
+    /// holds, with its named reason and way out (G2 PR3, CALLS D and E).
+    pub green_export: QueueGreenExportView,
 }

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{CleanupCandidate, CleanupPosture, CleanupRunReport, MAX_CLEANUP_SCAN_ROWS};
+use super::{CleanupCandidate, CleanupPosture, CleanupRunReport};
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, Result, Vault};
@@ -34,17 +34,20 @@ impl From<CleanupRunReport> for CleanupRunView {
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
             posture: report.posture,
-            candidates: report.candidates,
+            // The owner door mints a fresh run each call, so its report is
+            // made here and never read from a stored row: no slot in it is
+            // erased (FIX 7517).
+            candidates: report.candidates.into_iter().flatten().collect(),
             proposal: report.proposal,
-            archived: report.archived,
+            archived: report.archived.into_iter().flatten().collect(),
             digest: report.digest,
         }
     }
 }
 
-/// Runs the existing rotating cleanup scan as the authenticated owner.
-/// The proof, scan cursors, proposal/archive decision and run result share
-/// one transaction. This never enables the automatic posture.
+/// Runs the existing cleanup scan as the authenticated owner, each eligible
+/// index read to its end. The proof, scan, proposal/archive decision and run
+/// result share one transaction. This never enables the automatic posture.
 ///
 /// # Errors
 ///
@@ -57,7 +60,6 @@ pub fn run_as_owner(
     vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         let attempt = AttemptId::from_bytes(&vault.store.clock.ulid()?)?;
-        super::scan::run_in_txn(vault, txn, &attempt, MAX_CLEANUP_SCAN_ROWS)
-            .map(CleanupRunView::from)
+        super::scan::run_in_txn(vault, txn, &attempt).map(CleanupRunView::from)
     })
 }

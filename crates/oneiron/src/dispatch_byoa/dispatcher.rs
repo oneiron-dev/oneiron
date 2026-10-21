@@ -44,18 +44,18 @@ use super::official_seats::{
 };
 use super::provider::ProviderAdapterRegistry;
 use super::repo_binding::{
-    claim_successor_in_txn, mark_stale_capture_in_txn, pin_checkout_in_txn, reserve_in_txn,
-    start_execution, successor_checkout,
+    mark_stale_capture_in_txn, pin_checkout_in_txn, reserve_in_txn, start_execution,
 };
 use super::seat::{
-    HostedSeatBound, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeatPolicy, RunnerWork,
-    SeatIdentity, SeatRoute, SeatSpent, SkippedRunnerSeat, hosted_seat_bound, runner_task,
-    spent_seat_in,
+    HostedSeatBound, OnSeatSpent, RunnerSeatPolicy, RunnerWork, SeatIdentity, SeatRoute, SeatSpent,
+    hosted_seat_bound, spent_seat_in,
 };
+use super::seat_quota::record_seat_quota_in_txn;
 use super::validate::{
     encode_execution_transcript, encoded_json_len, validate_cli_sandbox, validate_connector,
     validate_endpoint, validate_execution_budget, validate_exhaust,
 };
+use super::work_binding::{RunnerWorkBinding, SpentCapture, note_spent_hop_in_txn};
 use crate::error::ArtifactError;
 /// Resolves an endpoint config into a concrete host-owned backend.
 ///
@@ -121,18 +121,21 @@ pub trait ByoaCliExecutor {
 
 /// One attempt row a dispatch door lands, with its task scope already a
 /// queue-shaped reference.
-struct ByoaEnqueue {
-    user_login: bool,
-    connector: ByoaConnectorSpec,
-    task_ref: Option<String>,
-    parent_attempt: Option<[u8; 16]>,
-    run_id: Option<String>,
-    dedupe_key: Option<String>,
-    now: u64,
+pub(super) struct ByoaEnqueue {
+    pub(super) user_login: bool,
+    pub(super) connector: ByoaConnectorSpec,
+    pub(super) task_ref: Option<String>,
+    pub(super) parent_attempt: Option<[u8; 16]>,
+    pub(super) run_id: Option<String>,
+    pub(super) dedupe_key: Option<String>,
+    pub(super) now: u64,
     /// The official seat stamp a seat dispatch carries (OF-375), and a
     /// runner seat whose adapter names one (FIX 5104); the generic door
     /// leaves it empty.
-    official_seat: Option<OfficialSeatStamp>,
+    pub(super) official_seat: Option<OfficialSeatStamp>,
+    /// The runner work a bound dispatch carries (OF-137); none for
+    /// unbound work.
+    pub(super) work: Option<RunnerWorkBinding>,
 }
 
 /// The foreign-agent dispatch organ.
@@ -202,12 +205,13 @@ where
             dedupe_key: request.dedupe_key,
             now: request.now,
             official_seat,
+            work: None,
         };
         self.vault
             .try_with_write_txn_grouped(|txn| self.enqueue_in_txn(txn, enqueue))
     }
 
-    fn enqueue_in_txn(
+    pub(super) fn enqueue_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         request: ByoaEnqueue,
@@ -235,6 +239,14 @@ where
         // FIX 6867: a CLI attempt's checkout is pinned before encode and
         // reserved for the returned attempt in this same writer.
         let pinned = pin_checkout_in_txn(self.vault, txn, &request.connector, &request.task_ref)?;
+        // A bound work keeps the first custody a CLI seat of it pinned, so a
+        // successor of any shape claims its fresh checkout from it.
+        let work = request.work.map(|mut work| {
+            if work.repo_binding.is_none() {
+                work.repo_binding.clone_from(&pinned);
+            }
+            work
+        });
         let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
             user_login: request.user_login,
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
@@ -242,6 +254,7 @@ where
             parent_attempt: request.parent_attempt,
             official_seat: request.official_seat,
             repo_binding: pinned.clone(),
+            work,
         })?;
         let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
             self.vault,
@@ -321,6 +334,7 @@ where
                     dedupe_key: request.dedupe_key,
                     now: request.now,
                     official_seat: Some(request.seat.stamp()),
+                    work: None,
                 };
                 let outcome = self
                     .vault
@@ -367,18 +381,21 @@ where
 
     /// Captures a runner attempt's terminal exhaust and, when the seat it
     /// ran on is spent, routes its work under the owner's policy, all in one
-    /// write transaction (OF-137). A failed capture is read for a spent seat
-    /// unless the host already knows one (`spent`, from
-    /// [`ByoaError::SeatSpent`]). Stop parks the work until the seat is back;
-    /// NextSeat dispatches the next seat this runtime may run, as a child of
-    /// the spent attempt, and parks when none is left — or when the spent
-    /// attempt carries no CLI runner task to hand on (an endpoint or MCP
-    /// seat), so its capture still stands. A seat a hosted-only bound keeps
-    /// off this runtime is passed over and named in the receipt's
-    /// `skipped_seats`; a seat whose adapter names an official stamp is
-    /// judged, and dispatched, on that stamp (FIX 5104). InternalModels hands the work
-    /// back to the Dreamer's own model roles. A replay finds the same
-    /// capture and the same child.
+    /// write transaction (OF-137). A failed capture is read whole for a
+    /// spent seat unless the host already knows one (`spent`, from
+    /// [`ByoaError::SeatSpent`]), and what it read is kept as the seat's
+    /// quota ([`super::runner_seat_quotas`]). Stop parks the work until the
+    /// seat is back; NextSeat hands it to the next seat this runtime may
+    /// run, as a child of the spent attempt, from the durable row alone: a
+    /// bound work of any connector shape ([`super::RunnerWorkBinding`]), or
+    /// a CLI runner's task. It parks, its capture standing, when no seat is
+    /// left or the work has nothing to hand on (an unbound endpoint or MCP
+    /// seat's). A spent seat, a CLI seat with no readable task and a seat a
+    /// hosted-only bound keeps off this runtime are passed over and named in
+    /// `skipped_seats`; a stamped seat is judged, and dispatched, on its
+    /// stamp (FIX 5104). InternalModels hands the work
+    /// back to the Dreamer's own model roles. A bound work's record notes
+    /// each hop. A replay finds the same capture and the same child.
     ///
     /// # Errors
     ///
@@ -393,7 +410,7 @@ where
         spent: Option<SeatSpent>,
     ) -> ByoaResult<SeatRoute> {
         policy.validate(registry)?;
-        policy.seat(seat)?;
+        let ran = policy.seat(seat)?;
         let spent = match spent {
             None if capture.disposition == ByoaTerminalDisposition::Failed => {
                 spent_seat_in(&capture.exhaust)?
@@ -407,74 +424,38 @@ where
         }
         let now = capture.now;
         self.vault.try_with_write_txn_grouped(|wtxn| {
-            let mut receipt = self.capture_terminal_exhaust_in_txn(wtxn, capture)?;
+            let receipt = self.capture_terminal_exhaust_in_txn(wtxn, capture)?;
+            record_seat_quota_in_txn(self.vault, wtxn, ran, &receipt.attempt, spent.as_ref())?;
             let Some(spent) = spent else {
                 return Ok(SeatRoute::Settled(receipt));
             };
-            let park = |receipt, spent: SeatSpent| SeatRoute::Park {
-                until: spent.back_at(now),
-                receipt,
-                spent,
+            let route = match policy.on_spent {
+                OnSeatSpent::Stop => SeatRoute::Park {
+                    until: spent.back_at(now),
+                    receipt,
+                    spent: spent.clone(),
+                },
+                OnSeatSpent::InternalModels => SeatRoute::InternalModels {
+                    receipt,
+                    spent: spent.clone(),
+                },
+                OnSeatSpent::NextSeat => self.next_seat_in_txn(
+                    wtxn,
+                    registry,
+                    policy,
+                    SpentCapture {
+                        receipt,
+                        spent: spent.clone(),
+                        seat,
+                        now,
+                    },
+                )?,
             };
-            match policy.on_spent {
-                OnSeatSpent::Stop => Ok(park(receipt, spent)),
-                OnSeatSpent::InternalModels => Ok(SeatRoute::InternalModels { receipt, spent }),
-                OnSeatSpent::NextSeat => {
-                    // Only a CLI runner attempt carries its task (the argv
-                    // after `--`), so only it can hand the work on from the
-                    // durable row alone. An endpoint or MCP seat's work
-                    // parks instead: the capture stands, nothing is lost to
-                    // a refusal, and the host that holds the task may
-                    // dispatch the next seat itself.
-                    let ByoaConnectorSpec::CliSandbox(ran) =
-                        decode_byoa_record(&receipt.attempt)?.connector
-                    else {
-                        return Ok(park(receipt, spent));
-                    };
-                    let Some(task) = runner_task(&ran) else {
-                        return Ok(park(receipt, spent));
-                    };
-                    let parent = *receipt.attempt.id.as_bytes();
-                    for (index, next) in policy.seats.iter().enumerate().skip(seat + 1) {
-                        let checkout = successor_checkout(&receipt.attempt, &ran, index)?;
-                        let connector = next.connector(registry, task.to_owned(), checkout)?;
-                        let connector = super::staged_input::carry_staged_input(connector, &ran);
-                        let context = registry.resolve(&next.runner)?.placement_context();
-                        if let Some(bound) = self.seat_bound(next.logs_in(), &connector, context)? {
-                            receipt.skipped_seats.push(SkippedRunnerSeat {
-                                seat: index,
-                                runner: next.runner.clone(),
-                                bound,
-                            });
-                            continue;
-                        }
-                        claim_successor_in_txn(self.vault, wtxn, &receipt.attempt, checkout, now)?;
-                        let outcome = self.enqueue_in_txn(
-                            wtxn,
-                            ByoaEnqueue {
-                                user_login: next.logs_in(),
-                                connector,
-                                task_ref: receipt.attempt.task_ref.clone(),
-                                parent_attempt: Some(parent),
-                                run_id: receipt.attempt.run_id.clone(),
-                                dedupe_key: Some(format!(
-                                    "{RUNNER_SEAT_DEDUPE_PREFIX}{}:{index}",
-                                    bytes_to_hex_lower(&parent)
-                                )),
-                                now,
-                                official_seat: context,
-                            },
-                        )?;
-                        return Ok(SeatRoute::NextSeat {
-                            receipt,
-                            spent,
-                            seat: index,
-                            outcome,
-                        });
-                    }
-                    Ok(park(receipt, spent))
-                }
+            // A bound work the spend kept on this seat notes it for its outcome.
+            if !matches!(route, SeatRoute::NextSeat { .. }) {
+                note_spent_hop_in_txn(self.vault, wtxn, route.receipt(), seat, &spent)?;
             }
+            Ok(route)
         })
     }
 
@@ -509,7 +490,7 @@ where
     /// judged by its vendor's table when its adapter names an official stamp
     /// (FIX 5104), as its dispatch and execution judge it, else by the
     /// connector's login ([`Self::login_bound`]).
-    fn seat_bound(
+    pub(super) fn seat_bound(
         &self,
         user_login: bool,
         connector: &ByoaConnectorSpec,

@@ -74,6 +74,24 @@ impl Vault {
             .map(|oid| GitOid::parse_hex(&oid))
             .transpose()
     }
+    /// Every finalized revision of `repo`'s object store whose stable Git
+    /// projection is `oid`, by a read-only scan of the same typed table
+    /// (G4 PR2): no second index. A pushed old tip resolves its base here.
+    pub(crate) fn exported_engine_revisions(
+        &self,
+        repo: &GitWireRepo,
+        oid: &GitOid,
+    ) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let store = repo.identity().as_hex();
+        let prefix = format!("{store}:");
+        Ok(ENGINE_EXPORTS
+            .scan_from(&self.store, &txn, prefix.as_bytes())?
+            .into_iter()
+            .filter(|(key, exported)| key.repo_hex == store && exported == oid.as_str())
+            .map(|(key, _)| key.revision)
+            .collect())
+    }
     /// No caller-supplied tree is accepted: bytes regenerate from authenticated
     /// file frontiers on the persisted CodeRevision. Git remains a projection.
     pub fn export_engine_commit(
@@ -121,51 +139,39 @@ impl Vault {
         if self.get_entity_type(&metadata.author)?.is_none() {
             return Err(Error::EntityNotFound);
         }
-        if revision.file_frontiers.is_empty() {
+        let files = match &revision.tested_queue {
+            // A tested queue revision renders its complete tree, documents
+            // and untouched blobs, in its own object store (G2 PR3), through
+            // the one materializer that rechecks its import's custody (G4).
+            Some(_) => {
+                crate::code_revision::materialize_code_revision_tree(self, git, repo, &revision)?
+            }
+            None => self.document_files(repo, &revision, metadata)?,
+        };
+        // An import-bound tested revision keeps its original ancestry (CALL
+        // G, G4 PR1); every other revision its immediate exported parent.
+        let parents = match self.resolve_import_export_parents(git, repo, &revision)? {
+            Some(parents) => parents,
+            None => revision
+                .parent_revision_id
+                .map(|id| {
+                    self.exported_engine_commit(repo, id)?
+                        .ok_or(Error::InvariantViolation(
+                            "export the engine parent before its child",
+                        ))
+                })
+                .transpose()?
+                .into_iter()
+                .collect(),
+        };
+        let tree = write_tree_files(git, repo, &files, revision.finalized_at)?;
+        if let Some(tested) = &revision.tested_queue
+            && tree.as_str() != tested.tree
+        {
             return Err(Error::InvariantViolation(
-                "engine commit has no tested file frontier map",
+                "the rebuilt tree differs from the checked tree",
             ));
         }
-        let mut files = BTreeMap::new();
-        let target_scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
-        for frontier in revision.file_frontiers.values() {
-            if frontier.repo != target_scope {
-                return Err(Error::InvariantViolation(
-                    "engine commit belongs to another repository",
-                ));
-            }
-            let content = self.code_document_at(frontier)?.into_bytes();
-            if files
-                .insert(
-                    frontier.path.clone(),
-                    OriginTreeFile {
-                        mode: metadata
-                            .file_modes
-                            .get(&frontier.document_id)
-                            .copied()
-                            .unwrap_or(0o100644),
-                        content,
-                    },
-                )
-                .is_some()
-            {
-                return Err(Error::InvariantViolation(
-                    "engine commit duplicates a file path",
-                ));
-            }
-        }
-        let parents = revision
-            .parent_revision_id
-            .map(|id| {
-                self.exported_engine_commit(repo, id)?
-                    .ok_or(Error::InvariantViolation(
-                        "export the engine parent before its child",
-                    ))
-            })
-            .transpose()?
-            .into_iter()
-            .collect();
-        let tree = write_tree_files(git, repo, &files, revision.finalized_at)?;
         if crate::repo_mutation::parse_repo_provenance_trailer(&metadata.message)?.is_some() {
             return Err(Error::InvariantViolation(
                 "export message must not supply its own provenance trailer",
@@ -240,6 +246,52 @@ impl Vault {
             Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
             None => self.publish_origin_ref(git, publication),
         }
+    }
+}
+
+impl Vault {
+    /// An ordinary revision's files: its tested documents alone, in the
+    /// export's own repository.
+    fn document_files(
+        &self,
+        repo: &GitWireRepo,
+        revision: &crate::code_revision::CodeRevision,
+        metadata: &crate::code_revision::CodeCommitMetadata,
+    ) -> Result<BTreeMap<String, OriginTreeFile>> {
+        if revision.file_frontiers.is_empty() {
+            return Err(Error::InvariantViolation(
+                "engine commit has no tested file frontier map",
+            ));
+        }
+        let mut files = BTreeMap::new();
+        let target_scope = crate::repo_mutation::canonical_mutation_scope(repo.repo_root())?;
+        for frontier in revision.file_frontiers.values() {
+            if frontier.repo != target_scope {
+                return Err(Error::InvariantViolation(
+                    "engine commit belongs to another repository",
+                ));
+            }
+            let content = self.code_document_at(frontier)?.into_bytes();
+            if files
+                .insert(
+                    frontier.path.clone(),
+                    OriginTreeFile {
+                        mode: metadata
+                            .file_modes
+                            .get(&frontier.document_id)
+                            .copied()
+                            .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE),
+                        content,
+                    },
+                )
+                .is_some()
+            {
+                return Err(Error::InvariantViolation(
+                    "engine commit duplicates a file path",
+                ));
+            }
+        }
+        Ok(files)
     }
 }
 

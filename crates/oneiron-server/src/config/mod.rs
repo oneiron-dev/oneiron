@@ -18,6 +18,7 @@ mod line;
 mod linear;
 mod lookup;
 pub mod merge;
+pub mod merge_queue;
 pub mod models;
 pub mod native_mail;
 pub mod oneironer;
@@ -44,7 +45,10 @@ pub use embedding::{EmbeddingConfig, EmbeddingSlotsConfig};
 pub use failure_signals::{
     CLOUD_FAILURE_SIGNALS_ENDPOINT, FailureSignalsConfig, PublisherCandidateConfig,
 };
-pub use feedback::{CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig};
+pub(crate) use feedback::github_issue_source;
+pub use feedback::{
+    CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig, FeedbackTriageConfig,
+};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig, KeystoreInstall};
 pub use limits::LimitsConfig;
@@ -57,6 +61,7 @@ pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
     resolve_serve_config_with_sources,
 };
+pub use merge_queue::{CheckerBackend, CheckerNetwork, MergeQueueCheckerConfig};
 pub use models::ModelsConfig;
 pub use native_mail::NativeMailConfig;
 pub use oneironer::{

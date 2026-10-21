@@ -11,13 +11,25 @@
 //! served repository, through the same gate every lease-route git request
 //! redeems (`credential_door::require_checkout_lease`).
 
+mod external_import;
+mod import;
+mod import_types;
 mod operations;
 mod publish;
 mod setup;
 mod types;
+mod workbench;
+mod workbench_types;
 
+pub use crate::repo_mutation::external_import::{
+    ExternalImportDoor, ExternalImportLookup, ExternalImportPhase, ExternalImportReceipt,
+    ExternalImportRequest, ExternalImportSource, ExternalImportStatus,
+};
+pub use external_import::ExternalImportProof;
+pub use import_types::*;
 pub use publish::OriginPublishProof;
 pub use types::*;
+pub use workbench_types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::EntityId;

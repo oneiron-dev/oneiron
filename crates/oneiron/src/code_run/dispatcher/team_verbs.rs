@@ -15,9 +15,9 @@ use crate::context_projection::ContextSpec;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::team::run::{member_spawn_key, planned_start, record_led_team, start_stamp};
+use crate::team::run_binding::record_team_start_sourced_in_txn;
 use crate::team::{
     SelfTeamCall, TeamMemberAnswer, TeamRecordInput, TeamRunAnswer, TeamRunBinding, TeamStartInput,
-    record_team_start,
 };
 
 type Answered = std::result::Result<TeamRunAnswer, &'static str>;
@@ -98,6 +98,7 @@ impl HostSelfDispatcher<'_> {
                 }
                 SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
                     proposal_ref,
+                    ..
                 }) => {
                     observed.proposals.push(proposal_ref.clone());
                     (None, Some(proposal_ref))
@@ -133,7 +134,9 @@ impl HostSelfDispatcher<'_> {
     /// Keeps what a team start's spawns answered. Each spawn committed on
     /// its own, so a start a later member refused still keeps the members
     /// it queued; a replayed start adds to the same row. An off-record run
-    /// keeps none.
+    /// keeps none. Every fact of a code-run start (its key, the guest's
+    /// pattern choice, the attempt ids and the time) is read from no entity
+    /// row, so its sources are known and none (FIX 7266).
     fn keep_team_start(&self, observed: &TeamRunBinding) -> Result<()> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Ok(());
@@ -141,7 +144,9 @@ impl HostSelfDispatcher<'_> {
         if observed.members.is_empty() && observed.proposals.is_empty() {
             return Ok(());
         }
-        record_team_start(vault, observed)
+        vault.with_write_txn_grouped(|wtxn| {
+            record_team_start_sourced_in_txn(vault, wtxn, observed, Some(Vec::new()))
+        })
     }
 
     fn team_record(&self, input: &TeamRecordInput) -> Result<Answered> {

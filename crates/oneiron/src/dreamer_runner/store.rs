@@ -916,6 +916,72 @@ impl<'a> DreamerRunnerStore<'a> {
         RUN_TREE.get(&self.vault.store, &rtxn, &attempt_id)
     }
 
+    /// Every attempt `roots` lead to by stored lineage, read in `txn` (OF-418
+    /// L10): each root, then the try each row retries (`retry_of`) and its
+    /// private run-tree parent (`parent_attempt`), to the end. Each attempt
+    /// is visited once, so each link is followed once, and nothing bounds the
+    /// walk's depth or count. A link back to an attempt already reached is
+    /// kept and not walked again. A root or a link naming a row that is gone
+    /// or does not read is a gap in the walk, never an error. These are
+    /// stored links, not inferred causes.
+    pub(crate) fn cause_ancestry_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        roots: &[AttemptId],
+    ) -> crate::self_heal::CauseAncestry {
+        let mut walk = crate::self_heal::CauseAncestry::default();
+        let mut queue: std::collections::VecDeque<AttemptId> = roots.iter().copied().collect();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(id) = queue.pop_front() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let record = match self.attempts.get_in_txn(txn, id) {
+                Ok(Some(record)) => record,
+                Ok(None) => {
+                    walk.gaps.push((id, "missing".to_owned()));
+                    continue;
+                }
+                Err(error) => {
+                    walk.gaps.push((id, format!("{:?}", error.kind())));
+                    continue;
+                }
+            };
+            let parent = match RUN_TREE.get(&self.vault.store, txn, &id) {
+                Ok(row) => row.and_then(|row| row.parent_attempt),
+                Err(error) => {
+                    walk.gaps.push((id, format!("run_tree:{:?}", error.kind())));
+                    None
+                }
+            };
+            for (to, kind) in [(record.retry_of, "retry_of"), (parent, "run_parent")] {
+                if let Some(to) = to {
+                    walk.links.push((id, to, kind));
+                    queue.push_back(to);
+                }
+            }
+            walk.reached.push(record);
+        }
+        walk
+    }
+
+    /// The attempts whose private run-tree parent is `parent`, in attempt
+    /// order, read in `txn` (FIX 7495). A row that does not read is a gap,
+    /// skipped, never an error.
+    pub(crate) fn child_attempts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: AttemptId,
+    ) -> Result<Vec<AttemptId>> {
+        Ok(RUN_TREE
+            .iter_from(&self.vault.store, txn, &[])?
+            .filter_map(|row| match row {
+                Ok((id, record)) if record.parent_attempt == Some(parent) => Some(id),
+                _ => None,
+            })
+            .collect())
+    }
+
     /// Parks a Dreamer attempt in private runner state without changing the
     /// generic queue row.
     ///
@@ -1027,6 +1093,15 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<Option<DreamerParkedAttemptRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
         PARKED.get(&self.vault.store, &rtxn, &attempt_id)
+    }
+
+    /// [`Self::parked_attempt`] at `txn`'s revision.
+    pub(crate) fn parked_attempt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt_id: AttemptId,
+    ) -> Result<Option<DreamerParkedAttemptRecord>> {
+        PARKED.get(&self.vault.store, txn, &attempt_id)
     }
 
     /// Reads one Dreamer attempt and its parked row on one snapshot, so a

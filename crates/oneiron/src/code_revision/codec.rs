@@ -35,7 +35,7 @@ impl RawValue for CodeRevisionFork {
 
 pub(crate) const CODE_REVISION_CLAIM_PREDICATE: &str = "code.revision";
 
-pub const CODE_REVISION_RECORD_KEYS: [&str; 9] = [
+pub const CODE_REVISION_RECORD_KEYS: [&str; 13] = [
     "revision_id",
     "kind",
     "session_id",
@@ -45,6 +45,10 @@ pub const CODE_REVISION_RECORD_KEYS: [&str; 9] = [
     "finalized_at",
     "file_frontiers",
     "commit_metadata",
+    "blob_frontiers",
+    "tested_queue",
+    "snapshot_anchor",
+    "retired_paths",
 ];
 
 pub const CODE_REVISION_FORK_KEYS: [&str; 4] = [
@@ -71,6 +75,14 @@ pub(super) const KEY_FINALIZED_AT: &str = CODE_REVISION_RECORD_KEYS[6];
 const KEY_COMMIT_METADATA: &str = CODE_REVISION_RECORD_KEYS[8];
 
 const KEY_FILE_FRONTIERS: &str = CODE_REVISION_RECORD_KEYS[7];
+
+const KEY_BLOB_FRONTIERS: &str = CODE_REVISION_RECORD_KEYS[9];
+
+const KEY_TESTED_QUEUE: &str = CODE_REVISION_RECORD_KEYS[10];
+
+const KEY_SNAPSHOT_ANCHOR: &str = CODE_REVISION_RECORD_KEYS[11];
+
+const KEY_RETIRED_PATHS: &str = CODE_REVISION_RECORD_KEYS[12];
 
 const KEY_FORK_SESSION_ID: &str = CODE_REVISION_FORK_KEYS[0];
 
@@ -117,6 +129,22 @@ pub fn encode_code_revision(revision: &CodeRevision) -> Result<Vec<u8>> {
         (
             Value::from(KEY_FILE_FRONTIERS),
             super::file_frontiers::to_value(revision)?,
+        ),
+        (
+            Value::from(KEY_BLOB_FRONTIERS),
+            super::tree_codec::blobs_to_value(&revision.blob_frontiers),
+        ),
+        (
+            Value::from(KEY_TESTED_QUEUE),
+            super::tree_codec::tested_to_value(revision.tested_queue.as_ref())?,
+        ),
+        (
+            Value::from(KEY_SNAPSHOT_ANCHOR),
+            optional_entity_value(revision.snapshot_anchor),
+        ),
+        (
+            Value::from(KEY_RETIRED_PATHS),
+            super::tree_codec::retirements_to_value(&revision.retired_paths)?,
         ),
     ]);
     encode_value(&value, "code revision MessagePack encode failed")
@@ -190,6 +218,10 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
     let mut finalized_at = None;
     let mut file_frontiers = None;
     let mut commit_metadata = None;
+    let mut blob_frontiers = None;
+    let mut tested_queue = None;
+    let mut snapshot_anchor = None;
+    let mut retired_paths = None;
     let mut seen = [false; CODE_REVISION_RECORD_KEYS.len()];
 
     for (key, value) in entries {
@@ -242,6 +274,16 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
                 commit_metadata = Some(super::commit_metadata::from_value(value)?);
             }
             KEY_FILE_FRONTIERS => file_frontiers = Some(super::file_frontiers::from_value(value)?),
+            KEY_BLOB_FRONTIERS => {
+                blob_frontiers = Some(super::tree_codec::blobs_from_value(value)?);
+            }
+            KEY_TESTED_QUEUE => tested_queue = Some(super::tree_codec::tested_from_value(value)?),
+            KEY_SNAPSHOT_ANCHOR => {
+                snapshot_anchor = Some(optional_entity_from_value(value, "snapshot_anchor")?);
+            }
+            KEY_RETIRED_PATHS => {
+                retired_paths = Some(super::tree_codec::retirements_from_value(value)?);
+            }
             _ => unreachable!("index resolved from CODE_REVISION_RECORD_KEYS"),
         }
     }
@@ -280,6 +322,18 @@ fn decode_code_revision_value(value: &Value) -> Result<CodeRevision> {
             ArtifactError::InvalidCodeArtifactBody(
                 "missing required code revision key finalized_at",
             ),
+        ))?,
+        blob_frontiers: blob_frontiers.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("missing blob_frontiers"),
+        ))?,
+        tested_queue: tested_queue.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("missing tested_queue"),
+        ))?,
+        snapshot_anchor: snapshot_anchor.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("missing snapshot_anchor"),
+        ))?,
+        retired_paths: retired_paths.ok_or(Error::Artifact(
+            ArtifactError::InvalidCodeArtifactBody("missing retired_paths"),
         ))?,
     };
     validate_code_revision_shape(&revision)?;
@@ -361,6 +415,7 @@ fn decode_code_revision_fork_value(value: &Value) -> Result<CodeRevisionFork> {
 pub(super) fn validate_code_revision_shape(revision: &CodeRevision) -> Result<()> {
     super::commit_metadata::validate(revision)?;
     super::file_frontiers::validate(revision)?;
+    super::tree_inventory::CodeTreeInventory::validate_partition(revision)?;
     if revision.parent_revision_id == Some(revision.revision_id)
         || revision.reverted_to_revision_id == Some(revision.revision_id)
     {

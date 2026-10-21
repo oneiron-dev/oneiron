@@ -161,6 +161,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/cleanup/revert-run",
+        summary: "Revert one whole cleanup run (OF-449): `attempt` (32 hex) names a run from the review's `runs`. Only the archive marks that run wrote are lifted, and each restored entry is kept at its revision so cleanup leaves it until it changes. Every entry answers `restored`, `already_restored`, `changed` or `unavailable` (with `reason`: `archived_again`, `unreadable`, `deleted` or `gone`) and `edited`; a delete or an erase is never undone. A repeat answers the stored result with `repeated: true`. An unknown run is not found; a run whose proposal still waits, or that ran before runs kept snapshots, is refused.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/coach/code-fixes",
         summary: "The Coach's code-fix work, newest first (at most 256).",
@@ -755,6 +761,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "put",
+        path: "/feedback/delivery/binding",
+        summary: "Binds a publisher (`publisher_ref`) to this server's feedback destination, its channel and exact endpoint as configured now (`bound: true`), or unbinds it (`false`); binding needs a configured destination. Its content-free issue signatures go only there, and a lane that froze another destination holds as `changed_binding`, never redirected. Answers `{publisher_ref, endpoint}`.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/feedback/delivery/run",
+        summary: "Queues the Coach's publisher delivery now (`{}`), joining one already queued: every report routed to a publisher gets its content-free ED-08 issue signature, sent to the endpoint the owner bound while \"Help improve Oneiron\" and the publisher dial are both on. Text never leaves this way. Answers `{attempt}`.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/feedback/delivery/status",
+        summary: "One report issue's signature delivery (`issue_ref`, 32 hex): whether it is routed to a publisher, the publisher's binding, and its lane (key, frozen signature and send, hold, receipt and outcome). Holds: `metadata_unresolved` with its reason, `endpoint_unbound`, `destination_unsupported`, `changed_binding`, `withheld`. Not found when the vault holds no such issue.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/feedback/inbox",
         summary: "Feedback inbox.",
@@ -770,6 +794,30 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/feedback/send",
         summary: "Send feedback.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/feedback/triage/binding",
+        summary: "The skill the Coach's feedback triage runs (OF-420): `skill` (32 hex, null until the owner binds one), the `revision` a change names as `seen` (0 while never set) and `set_at`. With no skill bound every triage run fails and its status holds `skill_unbound`.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "put",
+        path: "/feedback/triage/binding",
+        summary: "Binds the SKILL the feedback triage runs (`skill`, 32 hex; null unbinds) at the `seen` revision the owner read; a binding that moved since is refused and nothing changes. Answers the binding.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/feedback/triage/run",
+        summary: "Queues the Coach's feedback sweep now (`{}`), joining one already queued: each open-inbox note not yet handed off gets its own triage job on the bound skill, whose findings land Proposed in the run tray. Answers `{attempt}`; the sweep completing is not each job finishing.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/feedback/triage/status",
+        summary: "One feedback sweep's status (`attempt`, 32 hex): its state and last error, the binding, each source's continuation, each revision it handed off or queued again with its job's state and committed result refs, and the holds (`skill_unbound`, each revision still unacknowledged). Not found when the queue holds no such attempt.",
         row: None,
     },
     OwnerRoute {
@@ -824,6 +872,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "get",
         path: "/healer/oversight",
         summary: "Healer oversight.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/healer/residue",
+        summary: "The Coach's proposals still waiting for the owner, one row per source they were filed for (a failure case, a blocked report or a model issue), ordered by impact (OF-418 L4): a non-success source that unfinished TASKs wait on through recorded blocked_by edges first, then more distinct unfinished TASKs waiting, then a parked or STUCK source, then the oldest source. Each row lists its proposals, attempt, TASK, dependents and the edges that prove them, ids only, and every unproved part with a marker saying why it scores nothing. The grouped counts stay at /healer/failures.",
         row: None,
     },
     OwnerRoute {

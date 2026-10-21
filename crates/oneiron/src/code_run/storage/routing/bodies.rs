@@ -2,9 +2,13 @@
 //! routed rows that publish one and the reads that open one (moved out of
 //! the routing module whole).
 
-use super::super::records::ReplyBody;
+use super::super::records::{
+    ReplyBody, code_run_body_held_in_txn, owned_body, raw_put_publishes_descriptor,
+};
 use super::*;
 use crate::code_run::result_read::unplaced_answer;
+use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
+use crate::side_table::RoutedDbs;
 
 impl ExecutorStorage<'_> {
     /// A spool for one reply body of the run (FIX 5718 part 3): on the
@@ -88,9 +92,11 @@ impl SessionBinding<'_> {
         complete: bool,
         owner: EntityId,
     ) -> Result<CodeRunRawOutput> {
-        let finished = finish_output(path, sink, complete, self.session.limit_watch())?;
+        let finished = finish_output(path, sink, complete, self.session.limit_watch(), |digest| {
+            self.session.pin_result_body(digest)
+        })?;
         self.mark_secret(&finished.output, owner, finished.secret)?;
-        self.put_output_row(&finished, &finished.output)?;
+        self.put_output_row(&finished, &finished.output, owner)?;
         Ok(finished.output)
     }
 
@@ -126,14 +132,20 @@ impl SessionBinding<'_> {
     ) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
+        let finished = finish_output(
+            output.path.clone(),
+            sink,
+            true,
+            self.session.limit_watch(),
+            |digest| self.session.pin_result_body(digest),
+        )?;
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
             ));
         }
         self.mark_secret(output, owner, finished.secret)?;
-        self.put_output_row(&finished, output)
+        self.put_output_row(&finished, output, owner)
     }
 
     /// The row of the body `finished` holds, as `output`, and the
@@ -142,11 +154,17 @@ impl SessionBinding<'_> {
     /// a key row whose file no row names. A vault instance's row pins the
     /// custody binding in that transaction. A key row the route's scope
     /// holds for the digest already stays, its file serving the body, and
-    /// the body's row is written all the same.
+    /// the body's row is written all the same. On an on-record stretch the
+    /// same transaction publishes the body in base as run `owner`'s
+    /// occurrence, as a canonical raw put does: the row takes no hold of its
+    /// own and a hold it kept before stays (FIX 7363). Off record, and where
+    /// `raw_put_publishes_descriptor` keeps the put as it was, no descriptor
+    /// holds the body, so its row holds it on its own (FIX 5399b).
     pub(super) fn put_output_row(
         &self,
         finished: &super::super::records::FinishedOutput,
         output: &CodeRunRawOutput,
+        owner: EntityId,
     ) -> Result<()> {
         self.answered(|| {
             let dir = finished
@@ -168,7 +186,26 @@ impl SessionBinding<'_> {
                             BODY_KEYS.put(&write, txn, key.digest(), key.row())?;
                         }
                     }
-                    RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body)
+                    // On an on-record stretch the run's descriptor is published
+                    // in base beside the row, with no second body key, custody
+                    // pin or secret mark (FIX 7363). An overlay row carries
+                    // none: a room save takes no overlay descriptor to base.
+                    let published = match write {
+                        RoutedDbs::Base(vault) => {
+                            let body = owned_body(owner, output, &finished.body)?;
+                            let prior =
+                                owned_body_in_txn(&vault.store, txn, &owner, &body.occurrence);
+                            raw_put_publishes_descriptor(&prior, &body).then_some((vault, body))
+                        }
+                        RoutedDbs::Session(_) => None,
+                    };
+                    let held = published.is_none()
+                        || code_run_body_held_in_txn(&write, txn, &output.raw_blake3)?;
+                    RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body.holding(held))?;
+                    match published {
+                        Some((vault, body)) => publish_body_in_txn(&vault.store, txn, &body),
+                        None => Ok(()),
+                    }
                 })
         })
     }

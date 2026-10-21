@@ -49,6 +49,7 @@ mod cleanup_doors;
 mod clustering_doors;
 mod coach_offer_doors;
 mod code_doors;
+mod code_import_doors;
 mod code_run_doors;
 mod code_view_doors;
 mod code_wait_doors;
@@ -105,6 +106,7 @@ mod lens_selection_doors;
 mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
+mod merge_queue_checker_doors;
 mod merge_queue_doors;
 mod mesh_doors;
 mod model_catalog_doors;
@@ -1633,6 +1635,13 @@ impl From<MemoryError> for FacadeApiError {
             // OF-123: the person the effect names is not settled yet; the
             // same request succeeds once `self.identity.settle` settles it.
             oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => StatusCode::CONFLICT,
+            // FIX 7463a: the owner's world read setting keeps a row the call
+            // reads from where its answer goes, or its placement cannot be
+            // verified. The row's state refuses, named, never a row not found.
+            oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT
+            | oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => {
+                StatusCode::CONFLICT
+            }
             // A paid call its line cannot cover, as a chat turn's is.
             MEMORY_CODE_BUDGET_SPENT => StatusCode::PAYMENT_REQUIRED,
             // A verb hook asked first: accepted, not run, and the body names
@@ -1659,6 +1668,12 @@ impl From<MemoryError> for FacadeApiError {
             // was not kept. A conflict with the call's own record, not this
             // server's failure, and no retry runs it again.
             HOOK_RESULT_NOT_RETAINED => StatusCode::CONFLICT,
+            // FIX 7664: a typed browser refusal (a press the owner owes, a page
+            // that timed out, a refused destination) is not this server's fault.
+            code if browser_doors::browser_refusal_status(code).is_some() => {
+                browser_doors::browser_refusal_status(code)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -1666,6 +1681,8 @@ impl From<MemoryError> for FacadeApiError {
             tracing::error!(code = %error.code, error = %error.message, "facade verb failed");
         } else if error.code == HOOK_RESULT_NOT_RETAINED {
             tracing::info!(code = %error.code, "facade verb ran; its result was not retained");
+        } else if browser_doors::browser_refusal_status(&error.code).is_some() {
+            tracing::info!(code = %error.code, error = %error.message, "browser verb refused");
         }
         Self {
             status,

@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use crate::error::{Error, Result};
 use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R};
 
+use super::credential_faults::{forgone, fork_step};
 use super::files::{EntryState, LocalCustody, container, entry_name, make_new_dir, marker_name};
 use super::identity::{CustodyBinding, CustodyId, CustodySubject, custody_corrupt};
 use super::platform;
@@ -35,11 +36,13 @@ pub(crate) enum Requirement {
 /// intent names, with the newest one a carried-out retirement destroys.
 /// A subject required by exact id (a holder's known-value history, KS-3)
 /// copies those ids alone: no slot an aborted writer left, nor one no row
-/// commits to.
+/// commits to. A subject a restore may land without (a world key pad, KS-5)
+/// is optional: a fork that cannot read it there copies it not, warned.
 pub(crate) struct CustodyPlan {
     source: Option<CustodyBinding>,
     subjects: BTreeMap<CustodySubject, (u64, Option<u64>)>,
     exact: BTreeMap<CustodySubject, BTreeSet<u64>>,
+    optional: BTreeSet<CustodySubject>,
 }
 
 impl CustodyPlan {
@@ -61,6 +64,7 @@ impl CustodyPlan {
             source,
             subjects,
             exact: BTreeMap::new(),
+            optional: BTreeSet::new(),
         }
     }
 
@@ -112,6 +116,32 @@ impl CustodyPlan {
             .or_default()
             .insert(id.generation());
         Ok(requirement)
+    }
+
+    /// [`Self::require`] for an id a restore may land without (KS-5, FIX
+    /// 5686 part 2): a world key pad an image row names. `None` when no
+    /// custody is there to hold it, or its entry there is missing; its
+    /// subject is planned all the same, optional, and a fork copies nothing
+    /// it lacks or cannot read. The row's restore decides what a missing one
+    /// means.
+    pub(crate) fn require_present(&mut self, id: &CustodyId) -> Result<Option<Requirement>> {
+        self.optional.insert(id.subject().clone());
+        let (through, committed) = self
+            .subjects
+            .entry(id.subject().clone())
+            .or_insert((id.generation(), None));
+        *through = (*through).max(id.generation());
+        if committed.is_some_and(|newest| id.generation() <= newest) {
+            return Ok(Some(Requirement::Retired));
+        }
+        let Some(source) = self.source.as_ref() else {
+            return Ok(None);
+        };
+        Ok(match LocalCustody::at(source).state(id)? {
+            EntryState::Retired => Some(Requirement::Retired),
+            EntryState::Live => Some(Requirement::Live),
+            EntryState::Missing => None,
+        })
     }
 
     /// Whether a fork copies `id` while it is live: every generation of a
@@ -175,7 +205,9 @@ impl LocalCustody<'_> {
     /// temporaries are not entries. A reader that needs a consistent census
     /// holds [`super::KeyCustody::read_guard`] across it: the fork reads its
     /// source's retirement facts here, and the KS-4 custody head reads every
-    /// live entry and retirement fact the same way.
+    /// live entry and retirement fact the same way. A credential's directory
+    /// that does not list is left out, warned (KS-6): its keys stay where
+    /// they are for that pass.
     pub(crate) fn census(&self) -> Result<Vec<(CustodyId, EntryState)>> {
         let subjects = match fs::read_dir(self.compartment()?) {
             Ok(subjects) => subjects,
@@ -192,32 +224,19 @@ impl LocalCustody<'_> {
             else {
                 continue;
             };
-            for file in fs::read_dir(entry.path())? {
-                let name = file?.file_name();
-                let Some(name) = name.to_str() else {
+            let generations = match subject_generations(&entry.path()) {
+                Ok(generations) => generations,
+                Err(error) => {
+                    forgone(&subject, error, "its directory did not list")?;
                     continue;
-                };
-                let (hex, state) = match name.strip_prefix(".retired-g") {
-                    Some(hex) => (hex, EntryState::Retired),
-                    None => match name.strip_prefix('g') {
-                        Some(hex) => (hex, EntryState::Live),
-                        None => continue,
-                    },
-                };
-                let Ok(generation) = u64::from_str_radix(hex, 16) else {
-                    continue;
-                };
-                let canonical = match state {
-                    EntryState::Retired => marker_name(generation),
-                    _ => entry_name(generation),
-                };
-                if canonical == name {
-                    let slot = census
-                        .entry(subject.at(generation))
-                        .or_insert(EntryState::Live);
-                    if state == EntryState::Retired {
-                        *slot = state;
-                    }
+                }
+            };
+            for (generation, state) in generations {
+                let slot = census
+                    .entry(subject.at(generation))
+                    .or_insert(EntryState::Live);
+                if state == EntryState::Retired {
+                    *slot = state;
                 }
             }
         }
@@ -230,7 +249,8 @@ impl LocalCustody<'_> {
     /// `plan` names, through its newest generation, one a carried-out
     /// retirement destroys is retired there as well, and every other entry
     /// still live here is copied (of a subject required by exact id, only
-    /// those ids), each re-checked here as it is copied. The copy thus
+    /// those ids), each re-checked here as it is copied; an optional one
+    /// this custody cannot read is not copied, warned. The copy thus
     /// counts generations as this custody does, so its own
     /// retirements reach every entry it holds. Everything is synced before
     /// this returns; a fork that fails removes what it created. `None` when
@@ -258,18 +278,47 @@ impl LocalCustody<'_> {
         };
         let copied = (|| -> Result<()> {
             target.open_compartment()?;
+            // KS-6: a credential's key a fork cannot copy stays behind,
+            // warned, and the fork goes on as it did (fork_step).
             for id in &retired {
-                if self.retired(id)? {
-                    target.retire_local(id)?;
-                }
+                let step = self.retired(id).and_then(|retired| {
+                    if retired {
+                        target.retire_local(id)
+                    } else {
+                        Ok(())
+                    }
+                });
+                fork_step(id, step)?;
             }
             for (subject, (through, committed)) in &plan.subjects {
                 for generation in 0..=*through {
                     let id = subject.at(generation);
                     if committed.is_some_and(|newest| generation <= newest) {
-                        target.retire_local(&id)?;
-                    } else if plan.copies(&id) && self.state(&id)? == EntryState::Live {
-                        target.publish(&id, &self.read(&id)?)?;
+                        fork_step(&id, target.retire_local(&id))?;
+                    } else if plan.copies(&id) {
+                        let read_live = || match self.state(&id)? {
+                            EntryState::Live => self.read(&id).map(Some),
+                            EntryState::Retired | EntryState::Missing => Ok(None),
+                        };
+                        // A pad its row may land without (KS-5): a failed
+                        // read never stops the fork; its row's restore decides.
+                        let live = match read_live() {
+                            Err(error) if crate::store::credential_kind(subject.kind()) => {
+                                fork_step(&id, Err(error))?;
+                                None
+                            }
+                            Err(error) if plan.optional.contains(subject) => {
+                                tracing::warn!(
+                                    kind = ?error.kind(),
+                                    "a world key pad custody could not read was not forked"
+                                );
+                                None
+                            }
+                            live => live?,
+                        };
+                        if let Some(secret) = live {
+                            fork_step(&id, target.publish(&id, &secret))?;
+                        }
                     }
                 }
             }
@@ -284,4 +333,35 @@ impl LocalCustody<'_> {
             }
         }
     }
+}
+
+/// Every generation one subject's directory `dir` holds an entry or a
+/// retirement marker for, by its canonical name, with its state; a name the
+/// engine would not write is not one it reads.
+fn subject_generations(dir: &std::path::Path) -> Result<Vec<(u64, EntryState)>> {
+    let mut generations = Vec::new();
+    for file in fs::read_dir(dir)? {
+        let name = file?.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let (hex, state) = match name.strip_prefix(".retired-g") {
+            Some(hex) => (hex, EntryState::Retired),
+            None => match name.strip_prefix('g') {
+                Some(hex) => (hex, EntryState::Live),
+                None => continue,
+            },
+        };
+        let Ok(generation) = u64::from_str_radix(hex, 16) else {
+            continue;
+        };
+        let canonical = match state {
+            EntryState::Retired => marker_name(generation),
+            _ => entry_name(generation),
+        };
+        if canonical == name {
+            generations.push((generation, state));
+        }
+    }
+    Ok(generations)
 }

@@ -12,9 +12,9 @@ use crate::{
 const QUEUE_STATE: SideTable<String, QueueRecord, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_STATE);
 
-/// One merge batch, keyed by `{repo_hex}:{batch_id}` exactly as `batch_key` spelled it —
-/// a plain `String` key rather than a split key type, since nothing ever scans this table.
-const BATCHES: SideTable<String, MergeBatch, Named> =
+/// One merge batch, keyed by `{repo_hex}:{batch_id}` exactly as `batch_key` spelled it.
+/// One repo's batches are read by the `{repo_hex}:` prefix (`repo_batches_in_txn`).
+pub(super) const BATCHES: SideTable<String, MergeBatch, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_BATCH);
 
 impl MergeQueue<'_> {
@@ -124,6 +124,8 @@ impl MergeQueue<'_> {
             )?;
         }
         txn.commit()?;
+        // The queue driver wakes on a committed queue write (FIX 6868).
+        self.vault.store.notify_attempt_observers();
         Ok(())
     }
     /// [`Self::save`] of one new batch whose writer's first act is `admit`
@@ -154,6 +156,7 @@ impl MergeQueue<'_> {
             batch,
         )?;
         txn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(Ok(()))
     }
 
@@ -177,11 +180,11 @@ impl MergeQueue<'_> {
     fn queue_key(&self) -> String {
         self.repo.identity().as_hex()
     }
-    fn batch_key(&self, id: &str) -> String {
+    pub(super) fn batch_key(&self, id: &str) -> String {
         format!("{}:{id}", self.repo.identity().as_hex())
     }
 }
-fn check_row_size(bytes: &[u8]) -> Result<()> {
+pub(super) fn check_row_size(bytes: &[u8]) -> Result<()> {
     if bytes.len() > 128 * 1024 * 1024 {
         return Err(invalid("merge queue row exceeds limit"));
     }

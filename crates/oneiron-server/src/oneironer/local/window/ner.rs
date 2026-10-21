@@ -1,12 +1,4 @@
-//! One causal window with byte-accurate message coordinates. Tokenization
-//! never truncates the current turn and never changes the stored text.
-//!
-//! `oneironer qualify` alone may build the conversation window instead: the
-//! whole conversation as the model project's reference predictor tags it,
-//! cut by the tokenizer at the end of that predictor's own window. No
-//! production caller builds it.
-//!
-//! A bundle with a character head decodes names in full
+//! The full decode of a bundle with a character head
 //! (`oneironer-decode-v1`): BIO, the DATE snap, character refinement. That
 //! decode counts in Unicode scalars, as the model project's does, from the
 //! same encoding the byte offsets come from; spans return to UTF-8 bytes
@@ -14,349 +6,20 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use oneiron::memory::extraction::{EncoderInput, EncoderMessage, SpeakerRole};
-use tokenizers::{Encoding, Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
-
-pub(super) struct Segment<'a> {
-    pub(super) turn: &'a str,
-    pub(super) message: &'a EncoderMessage,
-    pub(super) message_index: usize,
-    pub(super) turn_index: usize,
-    pub(super) speaker: Option<SpeakerRole>,
-    pub(super) current: bool,
-    pub(super) base: usize,
-    pub(super) end: usize,
-    pub(super) source_offset: usize,
-}
-
-pub(super) struct Window<'a> {
-    pub(super) text: String,
-    pub(super) segments: Vec<Segment<'a>>,
-    pub(super) encoding: Encoding,
-}
-
-fn encode(tokenizer: &Tokenizer, text: &str, special: bool) -> anyhow::Result<Encoding> {
-    tokenizer
-        .encode(text, special)
-        .map_err(|_| anyhow::anyhow!("local extraction tokenization failed"))
-}
-
-/// The loaded tokenizer, cut as the model project's reference predictor
-/// cuts a conversation: its `tokenizer(text, max_length=2048,
-/// truncation=True)` sets exactly these parameters on the same tokenizers
-/// core (keep the start, no stride, the special tokens inside `cap`). That
-/// 2,048-token truncation is the reference predictor's own window, used only
-/// to qualify against it; the live window never cuts its current turn.
-pub(super) fn conversation_tokenizer(
-    tokenizer: &Tokenizer,
-    cap: usize,
-) -> anyhow::Result<Tokenizer> {
-    // The tokenizers core subtracts its special tokens from `cap`, so a cap
-    // below them would underflow rather than fail.
-    let specials = encode(tokenizer, "", true)?.len();
-    anyhow::ensure!(
-        cap >= specials,
-        "oneironer.max_input_tokens leaves no room for the special tokens"
-    );
-    let mut tokenizer = tokenizer.clone();
-    tokenizer
-        .with_truncation(Some(TruncationParams {
-            max_length: cap,
-            strategy: TruncationStrategy::LongestFirst,
-            stride: 0,
-            direction: TruncationDirection::Right,
-        }))
-        .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer truncation"))?;
-    Ok(tokenizer)
-}
-
-impl<'a> Window<'a> {
-    pub(super) fn new(
-        input: &'a EncoderInput,
-        tokenizer: &Tokenizer,
-        cap: usize,
-        live: usize,
-    ) -> anyhow::Result<Self> {
-        let mut text = String::new();
-        let mut segments = Vec::new();
-        for (index, turn) in input.context.iter().enumerate() {
-            append(
-                &mut text,
-                &mut segments,
-                &turn.turn,
-                &turn.messages,
-                index,
-                turn.speaker,
-                false,
-            );
-        }
-        let context_end = text.len();
-        append(
-            &mut text,
-            &mut segments,
-            &input.turn,
-            &input.messages,
-            input.context.len(),
-            input.speaker,
-            true,
-        );
-        let current = encode(tokenizer, &text[context_end..], true)?;
-        anyhow::ensure!(
-            current.len() <= cap,
-            "current extraction turn exceeds oneironer.max_input_tokens"
-        );
-        let budget = live.min(cap.saturating_sub(current.len()));
-        let context = encode(tokenizer, &text[..context_end], false)?;
-        let mut cut = if context.len() > budget {
-            if budget == 0 {
-                context_end
-            } else {
-                context.get_offsets()[context.len() - budget].0
-            }
-        } else {
-            0
-        };
-        let encoding = loop {
-            let encoding = encode(tokenizer, &text[cut..], true)?;
-            if encoding.len() <= cap {
-                break encoding;
-            }
-            // The join may tokenize differently from its two pieces. Drop
-            // another context token rather than ever truncate current text.
-            let next = encoding.get_offsets().iter().find_map(|&(start, end)| {
-                (end > start && cut + end <= context_end).then_some(cut + end)
-            });
-            cut = next.filter(|next| *next > cut).unwrap_or(context_end);
-            if cut == context_end {
-                break current;
-            }
-        };
-        segments.retain_mut(|segment| {
-            if segment.end <= cut {
-                return false;
-            }
-            if segment.base < cut {
-                segment.source_offset = cut - segment.base;
-                segment.base = cut;
-            }
-            segment.base -= cut;
-            segment.end -= cut;
-            true
-        });
-        Ok(Self {
-            text: text[cut..].to_owned(),
-            segments,
-            encoding,
-        })
-    }
-
-    /// The whole conversation in one window, as the model project's
-    /// reference predictor tags it over its `flatten()`: every context turn
-    /// in order, then the current turn, each with the role prefix the live
-    /// window writes and its messages joined by a newline; turns joined by
-    /// one newline, with none after the last. One encoding with special
-    /// tokens through `tokenizer`, which must come from
-    /// [`conversation_tokenizer`]: a conversation longer than its window is
-    /// cut at the end, never refused. Every message keeps its segment, in
-    /// order, so a segment's index is the message's ordinal in the flattened
-    /// conversation. Only `oneironer qualify` builds this window.
-    pub(super) fn conversation(
-        input: &'a EncoderInput,
-        tokenizer: &Tokenizer,
-    ) -> anyhow::Result<Self> {
-        let mut text = String::new();
-        let mut segments = Vec::new();
-        for (index, turn) in input.context.iter().enumerate() {
-            append(
-                &mut text,
-                &mut segments,
-                &turn.turn,
-                &turn.messages,
-                index,
-                turn.speaker,
-                false,
-            );
-        }
-        append(
-            &mut text,
-            &mut segments,
-            &input.turn,
-            &input.messages,
-            input.context.len(),
-            input.speaker,
-            true,
-        );
-        // `append` ends every turn with a newline; `flatten()` ends none.
-        text.pop();
-        let encoding = encode(tokenizer, &text, true)?;
-        Ok(Self {
-            text,
-            segments,
-            encoding,
-        })
-    }
-
-    pub(super) fn segment(&self, start: usize, end: usize) -> Option<(usize, &Segment<'a>)> {
-        self.segments.iter().enumerate().find(|(_, segment)| {
-            segment.base <= start
-                && start < end
-                && end <= segment.end
-                && self.text.is_char_boundary(start)
-                && self.text.is_char_boundary(end)
-        })
-    }
-}
-
-fn append<'a>(
-    text: &mut String,
-    segments: &mut Vec<Segment<'a>>,
-    turn: &'a str,
-    messages: &'a [EncoderMessage],
-    turn_index: usize,
-    speaker: Option<SpeakerRole>,
-    current: bool,
-) {
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    // Unknown authors get no invented A/B side.
-    match speaker {
-        Some(SpeakerRole::User) => text.push_str("A: "),
-        Some(SpeakerRole::Companion) => text.push_str("B: "),
-        None => {}
-    }
-    for (message_index, message) in messages.iter().enumerate() {
-        if message_index > 0 {
-            text.push('\n');
-        }
-        let base = text.len();
-        text.push_str(&message.text);
-        segments.push(Segment {
-            turn,
-            message,
-            message_index,
-            turn_index,
-            speaker,
-            current,
-            base,
-            end: text.len(),
-            source_offset: 0,
-        });
-    }
-    text.push('\n');
-}
-
-pub(super) struct Span {
-    pub(super) segment: usize,
-    pub(super) start: usize,
-    pub(super) end: usize,
-    pub(super) first_token: usize,
-    pub(super) last_token: usize,
-    pub(super) label: String,
-    pub(super) confidence: f32,
-}
-
-/// BIO runs form over the window's whole token sequence, role prefixes and
-/// separators included: a special token or `O` ends a run, B opens one, and
-/// I extends a run of its own type or else opens one, an orphan repaired.
-/// A finished run is kept only wholly inside one message, never clipped or
-/// split (FIX 6805: oneiroNER `decode_bio_to_char_spans`, `decode_record`).
-/// The mention head decodes here too; its reference (`_decode_spans`, then
-/// `_unit_for_span`) also builds the whole run before it asks for a turn.
-pub(super) fn decode(
-    window: &Window<'_>,
-    logits: &[Vec<f32>],
-    labels: &[String],
-    o_bias: f32,
-) -> anyhow::Result<Vec<Span>> {
-    anyhow::ensure!(
-        logits.len() == window.encoding.len(),
-        "extraction classifier length mismatch"
-    );
-    let mut spans = Vec::new();
-    let mut active: Option<Span> = None;
-    let mut count = 0usize;
-    let finish = |active: &mut Option<Span>, count: &mut usize, spans: &mut Vec<Span>| {
-        if let Some(mut span) = active.take()
-            && let Some((segment, _)) = window.segment(span.start, span.end)
-        {
-            span.segment = segment;
-            span.confidence /= *count as f32;
-            spans.push(span);
-        }
-        *count = 0;
-    };
-    for (token, (&(start, end), scores)) in
-        window.encoding.get_offsets().iter().zip(logits).enumerate()
-    {
-        anyhow::ensure!(
-            scores.len() == labels.len(),
-            "extraction classifier label mismatch"
-        );
-        let mut scores = scores.clone();
-        scores[0] += o_bias;
-        let (choice, probability) = best_probability(&scores)?;
-        // A special token sits at (0, 0) and ends the run, as `O` does.
-        let special = (start, end) == (0, 0);
-        let label = labels[choice].split_once('-').filter(|_| !special);
-        let Some((prefix, label)) = label else {
-            finish(&mut active, &mut count, &mut spans);
-            continue;
-        };
-        let continues = prefix == "I" && active.as_ref().is_some_and(|span| span.label == label);
-        if !continues {
-            finish(&mut active, &mut count, &mut spans);
-            active = Some(Span {
-                // A run names its message when it ends.
-                segment: 0,
-                start,
-                end,
-                first_token: token,
-                last_token: token,
-                label: label.to_owned(),
-                confidence: 0.0,
-            });
-        }
-        if let Some(span) = active.as_mut() {
-            span.end = end;
-            span.last_token = token;
-            span.confidence += probability;
-            count += 1;
-        }
-    }
-    finish(&mut active, &mut count, &mut spans);
-    Ok(spans)
-}
-
-pub(super) fn best_probability(scores: &[f32]) -> anyhow::Result<(usize, f32)> {
-    anyhow::ensure!(
-        !scores.is_empty() && scores.iter().all(|value| value.is_finite()),
-        "non-finite extraction logits"
-    );
-    let choice = (1..scores.len()).fold(0, |best, index| {
-        if scores[index] > scores[best] {
-            index
-        } else {
-            best
-        }
-    });
-    let total: f32 = scores
-        .iter()
-        .map(|value| (value - scores[choice]).exp())
-        .sum();
-    Ok((choice, 1.0 / total))
-}
+use super::{Span, Window, best_probability, decode};
 
 /// The decode a bundle's `characters.decode_revision` must name. The
 /// refinement constants and the DATE particle tables below are this
 /// revision's; none of them is a bundle field.
-pub(super) const ONEIRONER_DECODE_REVISION: &str = "oneironer-decode-v1";
+pub(in crate::oneironer) const ONEIRONER_DECODE_REVISION: &str = "oneironer-decode-v1";
 
-/// How many characters refinement may move a span edge.
-const CHAR_REFINE_K: usize = 3;
+/// How many characters refinement may move a span edge. A platform worker's
+/// handshake must declare it.
+pub(in crate::oneironer) const CHAR_REFINE_K: usize = 3;
 
-/// The edge probability a moved edge must strictly exceed.
-const CHAR_REFINE_TAU: f32 = 0.5;
+/// The edge probability a moved edge must strictly exceed. A platform
+/// worker's handshake must declare it.
+pub(in crate::oneironer) const CHAR_REFINE_TAU: f32 = 0.5;
 
 /// Whether a call without `EncoderInput.language` runs the DATE snap. The
 /// snap's tables are keyed by language and no language source reaches the
@@ -376,24 +39,24 @@ const END_EDGE: usize = 1;
 /// ends before refinement; the served runtime snaps them again after it, as
 /// refinement can regrow a particle, and E4's frozen baseline does not.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct DecodeLayers {
-    pub(super) final_date_snap: bool,
+pub(in crate::oneironer) struct DecodeLayers {
+    pub(in super::super) final_date_snap: bool,
 }
 
 impl DecodeLayers {
-    /// What the slot serves.
-    pub(super) const SERVED: Self = Self {
+    /// What the slot serves, on every runtime that decodes here.
+    pub(in crate::oneironer) const SERVED: Self = Self {
         final_date_snap: true,
     };
     /// E4's baseline, which `oneironer qualify` compares against.
-    pub(super) const E4: Self = Self {
+    pub(in super::super) const E4: Self = Self {
         final_date_snap: false,
     };
 }
 
 /// The window's text as Unicode scalars, the unit the character head and
 /// its decode count in, beside the UTF-8 byte offsets every output keeps.
-pub(super) struct Characters {
+pub(in crate::oneironer) struct Characters {
     scalars: Vec<char>,
     /// The byte each scalar starts at, then the text's length.
     bytes: Vec<usize>,
@@ -402,7 +65,7 @@ pub(super) struct Characters {
 }
 
 impl Characters {
-    pub(super) fn new(window: &Window<'_>) -> Self {
+    pub(in crate::oneironer) fn new(window: &Window<'_>) -> Self {
         let (mut bytes, scalars): (Vec<usize>, Vec<char>) = window.text.char_indices().unzip();
         bytes.push(window.text.len());
         let tokens = window
@@ -436,18 +99,18 @@ fn scalar_at(bytes: &[usize], byte: usize) -> usize {
 /// The character head's inputs over the observed window: every scalar up to
 /// the furthest token end, prefixes, context and uncovered gaps included, so
 /// its convolutions see the characters around each one.
-pub(super) struct CharacterFeatures {
+pub(in crate::oneironer) struct CharacterFeatures {
     /// Vocabulary ids; `UNKNOWN_CHARACTER` for one outside the vocabulary.
-    pub(super) ids: Vec<u32>,
+    pub(in super::super) ids: Vec<u32>,
     /// The first token covering each character; none for a gap.
-    pub(super) tokens: Vec<Option<u32>>,
+    pub(in super::super) tokens: Vec<Option<u32>>,
     /// The character's offset in that token over the token's width less one
     /// (at least one), and the token's width over 32.
-    pub(super) positions: Vec<[f32; 2]>,
+    pub(in super::super) positions: Vec<[f32; 2]>,
 }
 
 impl CharacterFeatures {
-    pub(super) fn new(characters: &Characters, vocab: &HashMap<char, u32>) -> Self {
+    pub(in crate::oneironer) fn new(characters: &Characters, vocab: &HashMap<char, u32>) -> Self {
         let length = characters
             .tokens
             .iter()
@@ -481,9 +144,9 @@ impl CharacterFeatures {
 
 /// A decoded name, with the byte coordinates BIO gave it before the DATE
 /// snap and refinement moved them: a mention proposed there is this name.
-pub(super) struct Named {
-    pub(super) span: Span,
-    pub(super) decoded: (usize, usize),
+pub(in crate::oneironer) struct Named {
+    pub(in super::super) span: Span,
+    pub(in super::super) decoded: (usize, usize),
 }
 
 impl From<Span> for Named {
@@ -499,8 +162,9 @@ impl From<Span> for Named {
 /// snap, character refinement, then the DATE snap again when `layers` asks.
 /// Every stage counts in Unicode scalars, as the reference does. Confidence
 /// is the mean winning probability over the tokens a refined span overlaps,
-/// as the served runtime scores it.
-pub(super) fn decode_ner(
+/// as the served runtime scores it. The Core ML worker decodes its own
+/// logits and character probabilities here too (FIX 6755 slice 2c).
+pub(in crate::oneironer) fn decode_ner(
     window: &Window<'_>,
     characters: &Characters,
     logits: &[Vec<f32>],

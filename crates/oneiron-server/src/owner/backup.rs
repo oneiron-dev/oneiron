@@ -46,6 +46,7 @@ use super::stamp::file_stamp;
 use super::stamp::{parse_file_stamp, rfc3339};
 use crate::machine::DiskFloor;
 
+mod checkpoint_fact;
 mod custody;
 pub(crate) mod finalize;
 mod handoff;
@@ -282,6 +283,7 @@ pub(crate) fn prune(
     if vault.legal_hold_keeps_backups()? {
         return Ok(Vec::new());
     }
+    checkpoint_fact::sweep(vault, plan);
     let records: Vec<_> = list(plan)?
         .into_iter()
         .filter(|record| Some(record.file.as_str()) != spared)
@@ -297,7 +299,10 @@ pub(crate) fn prune(
             }
             for record in excess {
                 match std::fs::remove_file(&record.path) {
-                    Ok(()) => pruned.push(record.file),
+                    Ok(()) => {
+                        checkpoint_fact::remove(&plan.dir, &record.file);
+                        pruned.push(record.file);
+                    }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error.into()),
                 }
@@ -317,6 +322,7 @@ pub(crate) fn prune(
         for (record, ack) in released {
             match std::fs::remove_file(&record.path) {
                 Ok(()) => {
+                    checkpoint_fact::remove(&plan.dir, &record.file);
                     let _ = std::fs::remove_file(ack);
                     pruned.push(record.file);
                 }

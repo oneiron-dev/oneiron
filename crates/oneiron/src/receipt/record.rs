@@ -414,12 +414,28 @@ pub(crate) fn put_served_form_in_txn(
     if vault.store.port_entity_record(txn, &id)?.is_some() {
         return Err(Error::CorruptedIndex("served form record id occupied"));
     }
+    let (body, _) = served_form_carrier(&id, served, holder, at)?;
+    put_carrier_in_txn(vault, txn, id, body, at)
+}
+
+/// The served-form record at `id`, built and written nowhere: its carrier's
+/// body (`served`, served to `holder` at `at`) and its receipt ref,
+/// `served_form:<id>`. The canonical writer above and a room's own staging
+/// of the receipt (WILL L11-01 S01-2b) take the same carrier from here.
+pub(crate) fn served_form_carrier(
+    id: &EntityId,
+    served: &ServedForm,
+    holder: &ScopedReadActorKey,
+    at: u64,
+) -> Result<(Vec<u8>, String)> {
+    let receipt = served_form::served_form_receipt(id, served, holder, at);
+    let receipt_ref = receipt.receipt_id.clone();
     let body = rmp_serde::to_vec_named(&ReceiptRecordEnvelope {
         intent_id: None,
-        receipt: served_form::served_form_receipt(&id, served, holder, at),
+        receipt,
     })
     .map_err(|_| Error::InvariantViolation("served form record encode"))?;
-    put_carrier_in_txn(vault, txn, id, body, at)
+    Ok((body, receipt_ref))
 }
 
 /// Writes one reference-refusal receipt record (OF-063) at the fresh `id`,

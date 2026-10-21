@@ -982,7 +982,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 config: delivery,
                 bearer: None,
             }
-        }));
+        }))
+        .with_feedback_triage(config.feedback.triage.clone());
     // The owner's `[models] extraction_egress` opt-in, as plain serve
     // installs it (FIX 6621): off, nonlocal extraction stays refused.
     if config
@@ -1009,15 +1010,20 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // claims the MACRO home. A startup error below drops `ai`, which tells
     // its workers to stop.
     let device = crate::device_sync::dials_home_managed(&config, &vault);
-    let (sync_server, ai) =
-        crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
     // The Dreamer's passes are admitted like a served write, and refused
-    // until the managed state below exists.
+    // until the managed state below exists. Its control is installed before
+    // it starts, on the same reap freeze that state takes, so each pass also
+    // reads the freeze as its pause (FIX 6909).
+    let write_admission = Arc::new(admission::Admission::default());
     let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
-    ai.bind_pass_admission({
-        let gate = Arc::clone(&reap_gate);
-        Arc::new(move || gate.get()?.admit_background(WriteKind::Dreamer))
-    });
+    let control = admission::dreamer_control(&write_admission, &reap_gate);
+    let (sync_server, ai) = crate::ai_host::AiHost::attach_controlled(
+        sync_server,
+        config.models.as_ref(),
+        device,
+        Some(control),
+    )
+    .await;
     let sync_server = Arc::new(sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
@@ -1063,6 +1069,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .transpose()?;
     let state = Arc::new(
         ManagedState::new(managed.vault_name.clone(), Arc::clone(&sync_server), ledger)
+            .with_admission(write_admission)
             .with_readiness(readiness.clone())
             .with_backup_facts(backup_facts)
             .with_vm_outbox_revision(host.vm_outbox_revision())
@@ -1205,10 +1212,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ));
     // Pending vectors are filled while the vault admits writes (FIX 777).
     ladder_workers.extend(sync_server.spawn_embedding_worker_admitted(admitted()));
-    // Witnessed turns' tagging markers drain under the same admission,
-    // counted as tagging, with the reap freeze as their pause.
+    // Witnessed turns' tagging markers, paused by the freeze, drain at shutdown, never aborted.
     let tagging = state.pass_control(WriteKind::BackgroundTagging);
-    ladder_workers.extend(sync_server.spawn_tagging_worker_admitted(tagging));
+    let tagging = sync_server.spawn_tagging_worker_until(tagging, shutdown.triggered());
     // Stored media is embedded under the same admission (OF-370).
     ladder_workers.extend(sync_server.spawn_media_embedding_worker_admitted(admitted()));
     // Queued and resumed agent runs, each admitted with its permit (OF-533):
@@ -1253,9 +1259,15 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             crate::conversation_training::Placement::Managed,
         )
     }));
-    // Due standing questions are answered through the ladder (OF-506).
+    // Due standing questions are answered through the ladder (OF-506), each
+    // pass starting no next unit once the reap freeze holds (FIX 7376).
     if !ai.bind_question_timer(&sync_server) {
-        ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
+        let epochs = Arc::clone(&state.admission);
+        ladder_workers.push(crate::decision_graph::spawn_with_pause(
+            &sync_server,
+            admitted(),
+            move || Some(epochs.pass_pause()),
+        ));
         // Due digests, which a Dreamer's timer would otherwise serve (OF-499).
         ladder_workers.push(crate::ai_host::home_digests::spawn(
             &sync_server,
@@ -1268,167 +1280,188 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ladder_workers.push(crate::campaign_enrollment::spawn(&sync_server, admitted()));
     // Uncertain identities are decided, or asked of the person (OF-123).
     ladder_workers.push(crate::ai_host::identity::spawn(&sync_server, admitted()));
-    // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
-    ladder_workers.push(crate::ai_host::coach_heal::spawn(
-        &sync_server,
-        config.failure_signals.publisher_candidates()?,
-        admitted(),
-    ));
-    // The owner's model-graded detectors read the retrieval telemetry (OF-418).
-    ladder_workers.extend(crate::ai_host::self_heal_detectors::spawn(
-        &sync_server,
-        &config.self_heal,
-        admitted(),
-    ));
-    // The server's own voice loop (FIX 2391), off unless `[models.voice]`
-    // names its socket. A call opens on a hello the supervisor attests for
-    // the vault's owner, or on the owner's own slip from a machine that
-    // stands as his enrolled device (FIX 1949 = B), and is admitted like a
-    // served write for its whole length: a call in flight keeps a reap from
-    // finding the vault quiescent, and a frozen vault takes no call.
-    #[cfg(unix)]
-    let voice = crate::voice_host::VoiceBoot::start(
-        &sync_server,
-        config.models.as_ref().map(|models| &models.voice),
-        Some({
-            let state = Arc::clone(&state);
-            Arc::new(
-                move |action: &oneiron_vault_contract::ManagedOwnerAction,
-                      room: &str,
-                      roster: &str,
-                      issued_at: UnixTs,
-                      nonce: &[u8; oneiron_vault_contract::MANAGED_VOICE_NONCE_BYTES]| {
-                    state.verify_voice_owner(action, room, roster, issued_at, nonce)
-                },
-            )
-        }),
-        state.background_admission(WriteKind::OwnerWrite),
-    );
-    // The supervisor reaches the loop on the vault VM's voice port.
-    #[cfg(unix)]
-    if voice.is_some()
-        && let Some(socket) = config
-            .models
-            .as_ref()
-            .and_then(|models| models.voice.socket.clone())
-    {
-        host.bridge_voice(socket)?;
-    }
-    // The managed surface, not the bare one: the reap freeze has to be
-    // enforceable by the socket the supervisor routes traffic to, or
-    // `quiescent: true` is a claim about a gate that nothing reaches.
-    let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors);
-    // The paired-machine mesh listener (OF-535), as `serve` starts it: off
-    // unless the supervisor names its bind address on argv (WILL-PLAN L14
-    // row 14); managed mode never reads `ONEIRON_MESH_*`.
-    let mesh = crate::handler::mesh::start(
-        Arc::clone(&sync_server),
-        &crate::handler::mesh::MeshConfig::from_parts(
-            managed.mesh_bind,
-            managed.mesh_relays.clone(),
-        ),
-        &app,
-        config.limits.connections(),
-    )
-    .await?;
-    // A vault that is a device of another home dials it, on that mesh when
-    // the home has a paired address there, as plain serve does (WILL-PLAN
-    // L14 row 14): the owner's `[device_sync]` or `oneiron device enrol`
-    // names the home. The connection holds one admission for its whole run,
-    // so a frozen vault starts none and a reap waits for it.
-    let device_sync = crate::device_sync::DeviceSyncHost::start_admitted(
-        &sync_server,
-        &config,
-        mesh.as_ref(),
-        &state.background_admission(WriteKind::OwnerWrite),
-    )
-    .await;
-    let artifact_task = artifacts.map(|listener| {
-        let app = build_managed_artifact_app(Arc::clone(&sync_server), Arc::clone(&state));
-        let stop = shutdown.triggered();
-        tokio::spawn(async move { listener.serve_until(app, stop).await })
-    });
-    // Graceful shutdown couples "stop accepting" and "drain in-flight": the
-    // listener closes the moment SIGTERM lands, and this resolves once the
-    // requests already in the runtime have finished.
-    let result = http.serve_until(app, shutdown.triggered()).await;
-    // Its channel detaches before the mesh it rides closes.
-    if let Some(device_sync) = device_sync {
-        device_sync.stop().await;
-    }
-    if let Some(mesh) = mesh {
-        mesh.stop().await;
-    }
-    host.on_stop()?;
-    let _ = ctl_task.await;
-    if let Some(task) = artifact_task {
-        let _ = task.await;
-    }
-    // A call in flight ends through its usual teardown before the freeze.
-    #[cfg(unix)]
-    if let Some(voice) = voice {
-        voice.stop().await;
-    }
-    // So does every public live voice session, its journal finished, and
-    // none starts after (FIX 5324). A reap's freeze leaves them open; only
-    // this stop ends them.
-    sync_server.live_voice.stop_all().await;
-    // Drain observation writes without thawing a previously quiescent process.
-    let telemetry_drained = state.freeze();
-    // No new durable background work from here on.
-    background.stop().await;
-    connector_events.abort();
-    let _ = connector_events.await;
-    connector_sends.abort();
-    let _ = connector_sends.await;
-    builtin_host.abort();
-    let _ = builtin_host.await;
-    coach_host.abort();
-    let _ = coach_host.await;
-    failure_signals.abort();
-    let _ = failure_signals.await;
-    for worker in ladder_workers {
-        worker.abort();
-        let _ = worker.await;
-    }
-    // A backup before an idle reap ends before exit; none starts after.
-    state.idle_backup.stopped().await;
-    // A relay delete in flight finishes its unlink and sync; none starts after.
-    state.relay_delete.stopped().await;
-    // A hook pass in flight commits or fails whole before the runner stops.
-    let _ = hooks_stop.send(true);
-    if let Some(fact_hooks) = fact_hooks {
-        let _ = fact_hooks.await;
-    }
-    // A pass or step in flight reaches its own boundary before this returns.
-    ai.shutdown().await;
-    // Frozen, so nothing new is admitted; an admitted write ends before exit.
-    oversight.stop().await;
+    // Tagging stays outside this scope: an error in it returns only once
+    // tagging has stopped and every call it made has settled (FIX 7304).
+    let mut tagging = tagging;
+    let outcome = async {
+        // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
+        ladder_workers.push(crate::ai_host::coach_heal::spawn(
+            &sync_server,
+            config.failure_signals.publisher_candidates()?,
+            admitted(),
+        ));
+        // The owner's model-graded detectors read the retrieval telemetry (OF-418).
+        ladder_workers.extend(crate::ai_host::self_heal_detectors::spawn(
+            &sync_server,
+            &config.self_heal,
+            admitted(),
+        ));
+        // The server's own voice loop (FIX 2391), off unless `[models.voice]`
+        // names its socket. A call opens on a hello the supervisor attests for
+        // the vault's owner, or on the owner's own slip from a machine that
+        // stands as his enrolled device (FIX 1949 = B), and is admitted like a
+        // served write for its whole length: a call in flight keeps a reap from
+        // finding the vault quiescent, and a frozen vault takes no call.
+        #[cfg(unix)]
+        let voice = crate::voice_host::VoiceBoot::start(
+            &sync_server,
+            config.models.as_ref().map(|models| &models.voice),
+            Some({
+                let state = Arc::clone(&state);
+                Arc::new(
+                    move |action: &oneiron_vault_contract::ManagedOwnerAction,
+                          room: &str,
+                          roster: &str,
+                          issued_at: UnixTs,
+                          nonce: &[u8; oneiron_vault_contract::MANAGED_VOICE_NONCE_BYTES]| {
+                        state.verify_voice_owner(action, room, roster, issued_at, nonce)
+                    },
+                )
+            }),
+            state.background_admission(WriteKind::OwnerWrite),
+        );
+        // The supervisor reaches the loop on the vault VM's voice port.
+        #[cfg(unix)]
+        if voice.is_some()
+            && let Some(socket) = config
+                .models
+                .as_ref()
+                .and_then(|models| models.voice.socket.clone())
+        {
+            host.bridge_voice(socket)?;
+        }
+        // The managed surface, not the bare one: the reap freeze has to be
+        // enforceable by the socket the supervisor routes traffic to, or
+        // `quiescent: true` is a claim about a gate that nothing reaches.
+        let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors);
+        // The paired-machine mesh listener (OF-535), as `serve` starts it: off
+        // unless the supervisor names its bind address on argv (WILL-PLAN L14
+        // row 14); managed mode never reads `ONEIRON_MESH_*`.
+        let mesh = crate::handler::mesh::start(
+            Arc::clone(&sync_server),
+            &crate::handler::mesh::MeshConfig::from_parts(
+                managed.mesh_bind,
+                managed.mesh_relays.clone(),
+            ),
+            &app,
+            config.limits.connections(),
+        )
+        .await?;
+        // A vault that is a device of another home dials it, on that mesh when
+        // the home has a paired address there, as plain serve does (WILL-PLAN
+        // L14 row 14): the owner's `[device_sync]` or `oneiron device enrol`
+        // names the home. The connection holds one admission for its whole run,
+        // so a frozen vault starts none and a reap waits for it.
+        let device_sync = crate::device_sync::DeviceSyncHost::start_admitted(
+            &sync_server,
+            &config,
+            mesh.as_ref(),
+            &state.background_admission(WriteKind::OwnerWrite),
+        )
+        .await;
+        let artifact_task = artifacts.map(|listener| {
+            let app = build_managed_artifact_app(Arc::clone(&sync_server), Arc::clone(&state));
+            let stop = shutdown.triggered();
+            tokio::spawn(async move { listener.serve_until(app, stop).await })
+        });
+        // Graceful shutdown couples "stop accepting" and "drain in-flight": the
+        // listener closes the moment SIGTERM lands, and this resolves once the
+        // requests already in the runtime have finished.
+        let result = http.serve_until(app, shutdown.triggered()).await;
+        // Its channel detaches before the mesh it rides closes.
+        if let Some(device_sync) = device_sync {
+            device_sync.stop().await;
+        }
+        if let Some(mesh) = mesh {
+            mesh.stop().await;
+        }
+        host.on_stop()?;
+        let _ = ctl_task.await;
+        if let Some(task) = artifact_task {
+            let _ = task.await;
+        }
+        // A call in flight ends through its usual teardown before the freeze.
+        #[cfg(unix)]
+        if let Some(voice) = voice {
+            voice.stop().await;
+        }
+        // So does every public live voice session, its journal finished, and
+        // none starts after (FIX 5324). A reap's freeze leaves them open; only
+        // this stop ends them.
+        sync_server.live_voice.stop_all().await;
+        // Drain observation writes without thawing a previously quiescent process.
+        let telemetry_drained = state.freeze();
+        // No new durable background work from here on.
+        background.stop().await;
+        connector_events.abort();
+        let _ = connector_events.await;
+        connector_sends.abort();
+        let _ = connector_sends.await;
+        builtin_host.abort();
+        let _ = builtin_host.await;
+        coach_host.abort();
+        let _ = coach_host.await;
+        failure_signals.abort();
+        let _ = failure_signals.await;
+        let _ = futures_util::future::OptionFuture::from(tagging.take()).await;
+        // Tagging has ended: each platform child is shut down and reaped (FIX 7383).
+        if let Some(slot) = sync_server.tagger.as_ref() {
+            slot.closer().close().await;
+        }
+        for worker in ladder_workers {
+            worker.abort();
+            let _ = worker.await;
+        }
+        // A backup before an idle reap ends before exit; none starts after.
+        state.idle_backup.stopped().await;
+        // A relay delete in flight finishes its unlink and sync; none starts after.
+        state.relay_delete.stopped().await;
+        // A hook pass in flight commits or fails whole before the runner stops.
+        let _ = hooks_stop.send(true);
+        if let Some(fact_hooks) = fact_hooks {
+            let _ = fact_hooks.await;
+        }
+        // A pass or step in flight reaches its own boundary before this returns.
+        ai.shutdown().await;
+        // Frozen, so nothing new is admitted; an admitted write ends before exit.
+        oversight.stop().await;
 
-    if let Some(path) = http_owned_path {
-        // Only ever the path this process created. An inherited socket's inode
-        // belongs to the supervisor and has to survive us.
-        if let Err(error) = std::fs::remove_file(&path)
+        if let Some(path) = http_owned_path {
+            // Only ever the path this process created. An inherited socket's inode
+            // belongs to the supervisor and has to survive us.
+            if let Err(error) = std::fs::remove_file(&path)
+                && error.kind() != ErrorKind::NotFound
+            {
+                tracing::warn!(%error, path = %path.display(), "http socket unlink failed");
+            }
+        }
+        if let Some(path) = artifacts_owned_path
+            && let Err(error) = std::fs::remove_file(&path)
             && error.kind() != ErrorKind::NotFound
         {
-            tracing::warn!(%error, path = %path.display(), "http socket unlink failed");
+            tracing::warn!(%error, path = %path.display(), "artifact socket unlink failed");
+        }
+
+        // The report task stops before the final push, which reads the setting
+        // again itself.
+        training_report.abort();
+        let _ = training_report.await;
+        final_ledger_push(&state, &sync_server).await;
+        result?;
+        telemetry_drained?;
+        anyhow::Ok(())
+    }
+    .await;
+    // Still running only when an error left the scope before its join.
+    if let Some(tagging) = tagging {
+        shutdown.trigger();
+        let _ = tagging.await;
+        // A failed start reaps its platform children too (FIX 7383).
+        if let Some(slot) = sync_server.tagger.as_ref() {
+            slot.closer().close().await;
         }
     }
-    if let Some(path) = artifacts_owned_path
-        && let Err(error) = std::fs::remove_file(&path)
-        && error.kind() != ErrorKind::NotFound
-    {
-        tracing::warn!(%error, path = %path.display(), "artifact socket unlink failed");
-    }
-
-    // The report task stops before the final push, which reads the setting
-    // again itself.
-    training_report.abort();
-    let _ = training_report.await;
-    final_ledger_push(&state, &sync_server).await;
-    result?;
-    telemetry_drained?;
-    Ok(())
+    outcome
 }
 
 /// Reports the vault's training setting to the supervisor as it changes

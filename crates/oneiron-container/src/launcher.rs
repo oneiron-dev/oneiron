@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -283,7 +283,12 @@ fn child(
     let abi = linux::landlock()?;
     let listener = linux::install(parent_pid, channel.as_raw_fd())?;
     wire::send_fd(channel, listener.as_raw_fd())?;
-    wire::write(&mut &*channel, &(abi, channel.as_raw_fd()))?;
+    // The filter hands send(2) to the parent's handler, which starts only
+    // once it has this frame, and a UnixStream writes with send(2). So the
+    // frame goes out as plain write(2) on a CLOEXEC copy of the channel.
+    let mut frame = std::fs::File::from(channel.as_fd().try_clone_to_owned()?);
+    wire::write(&mut frame, &(abi, channel.as_raw_fd()))?;
+    drop(frame);
     drop(listener);
     Err(Command::new(&command[0]).args(&command[1..]).exec())
 }

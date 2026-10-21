@@ -72,8 +72,15 @@ pub(super) fn artifact_hash(
     body: &[u8],
 ) -> Result<[u8; 32]> {
     validate(revision)?;
+    super::tree_inventory::CodeTreeInventory::validate_partition(revision)?;
     let body_hash: [u8; 32] = Sha256::digest(body).into();
-    if revision.file_frontiers.is_empty() && revision.commit_metadata.is_none() {
+    if revision.file_frontiers.is_empty()
+        && revision.commit_metadata.is_none()
+        && revision.blob_frontiers.is_empty()
+        && revision.tested_queue.is_none()
+        && revision.snapshot_anchor.is_none()
+        && revision.retired_paths.is_empty()
+    {
         return Ok(body_hash);
     }
     let mut h = Sha256::new();
@@ -99,5 +106,10 @@ pub(super) fn artifact_hash(
         h.update((encoded.len() as u64).to_be_bytes());
         h.update(encoded);
     }
+    // A tested queue revision's blobs and record fold after its documents;
+    // an ordinary revision adds nothing (G2 PR3).
+    super::tree_codec::hash_queue_fields(&mut h, revision)?;
+    // Its import binding and retirements fold last; none adds nothing (G4).
+    super::tree_codec::hash_import_fields(&mut h, revision)?;
     Ok(h.finalize().into())
 }

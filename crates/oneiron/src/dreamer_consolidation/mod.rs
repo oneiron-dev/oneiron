@@ -26,6 +26,7 @@
 
 mod assembly;
 pub(crate) mod branch_scope;
+mod call_labels;
 pub mod confession;
 mod conflict;
 pub(crate) mod evidence;
@@ -43,15 +44,18 @@ mod judge_context;
 mod kept_ask;
 mod neighbourhood;
 pub(crate) mod nightly_merge;
+mod note_classification;
 mod note_parts;
 mod note_review;
 mod note_text;
+mod note_topics;
 mod open_conflict;
 mod parallel;
 mod partition;
 mod persistence;
 mod person_about;
 mod provenance;
+mod recipe_failure;
 pub(crate) mod redirty;
 mod residency;
 mod resident_dream;
@@ -122,10 +126,12 @@ pub use roles::{
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
+pub(crate) use settle::keep_approval::{KeepApproval, KeepAs};
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,
     ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass,
     RevertedSettlement, SettledAnswer, SettledConflict, settle_parked_conflicts,
+    settle_parked_conflicts_while,
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,

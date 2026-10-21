@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1113 facade rows, 3823 declarations.
-Inputs: 1048 of 1113 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1000 of 1113 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1127 facade rows, 3885 declarations.
+Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -2523,8 +2523,8 @@ class TaggingMarkerView(TypedDict):
     created_at: int
     updated_at: int
 TaggingFailureView = TypedDict("TaggingFailureView", {"class": str, "code": NotRequired[str | None], "refusal": NotRequired[str | None]})
-ExecutionRuntime = Literal["candle", "endpoint"]
-ExecutionCompute = Literal["cpu", "metal", "cuda", "opaque"]
+ExecutionRuntime = Literal["candle", "endpoint", "mlx", "coreml"]
+ExecutionCompute = Literal["cpu", "metal", "cuda", "cpu_and_ne", "opaque"]
 ExecutionPick = Literal["calibrated", "free", "shorter_queue", "fallback", "pinned"]
 class EncoderExecution(TypedDict):
     runtime: ExecutionRuntime
@@ -8232,6 +8232,7 @@ class PairedInterval(TypedDict):
     low: float
     high: float
 NotWorse = Literal["not_worse", "worse", "unknown"]
+CohortProbe = TypedDict("CohortProbe", {"probe": str, "source": EntityId, "from": int, "until": int})
 class KindProbeCheck(TypedDict):
     kind: InputKind
     probes: int
@@ -8245,10 +8246,12 @@ class KindProbeCheck(TypedDict):
     set_version: NotRequired[str | None]
     rubric: NotRequired[str | None]
     card: NotRequired[SufficiencyCard | None]
+    cohort_members: NotRequired[list[CohortProbe]]
 class SpaceMoveCheck(TypedDict):
     checked_at: int
     kinds: list[KindProbeCheck]
     verdict: NotWorse
+    cohort_check: NotRequired[str | None]
 class SpaceMove(TypedDict):
     candidate: str
     incumbent: SpaceRef
@@ -9988,15 +9991,30 @@ class CodeProposedStamp(TypedDict):
     intent_ref: NotRequired[str | None]
     model_ref: NotRequired[str | None]
     reasoning_effort: NotRequired[str | None]
+class CodeFilePresence(TypedDict):
+    present: bool
+    mode: NotRequired[int | None]
+class CodeFileMetadataEdit(TypedDict):
+    path: str
+    expected: CodeFilePresence
+    replacement: CodeFilePresence
+    new_path: NotRequired[str | None]
+class CodeProposalFileView(TypedDict):
+    path: str
+    changes: list[CodeChangeView]
+    landed: NotRequired[CodeOperationView | None]
+    metadata_edit: NotRequired[CodeFileMetadataEdit | None]
 class CodeProposalView(TypedDict):
     proposal_ref: str
     repo: str
-    path: str
+    operation_kind: str
+    path: NotRequired[str | None]
     message: str
     status: RepoProposalStatus
     proposed: CodeProposedStamp
-    changes: list[CodeChangeView]
+    changes: NotRequired[list[CodeChangeView] | None]
     landed: NotRequired[CodeOperationView | None]
+    files: list[CodeProposalFileView]
     rendered: str
 class CodeSymbolsDeclareRequest(TypedDict):
     repo: EntityId
@@ -10450,6 +10468,212 @@ class CodeExportResult(TypedDict):
     ref_was_already_applied: bool
     wire_replayed: bool
     wire_rejected: bool
+class CodeImportAcceptance(TypedDict):
+    manifest_digest: str
+    baseline_revision: EntityId
+    catalog: LensCatalog
+    review_verdict: NotRequired[EntityId | None]
+class CodeRepoImportRequest(TypedDict):
+    repo: str
+    project: EntityId
+    source_ref: str
+    source_commit: str
+    admission_receipt: EntityId
+    accept: NotRequired[CodeImportAcceptance | None]
+class CodeImportAnchor(TypedDict):
+    repo: EntityId
+    project: EntityId
+    served_repo: str
+    object_store: str
+    source_ref: str
+    source_commit: str
+    source_tree: str
+    admission_receipt: EntityId
+    receive_provenance: EntityId
+    snapshot: EntityId
+    snapshot_fork_hash: str
+class CodeSnapshotFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+    size_bytes: int
+    mode: int
+class CodeImportManifestFile(TypedDict):
+    git_oid: str
+    file: CodeSnapshotFile
+class CodeImportManifestView(TypedDict):
+    manifest_ref: EntityId
+    digest: str
+    anchor: CodeImportAnchor
+    inventory_digest: str
+    files: list[CodeImportManifestFile]
+CodeRepoImportState = Literal["manifest_ready", "held_baseline", "held_review", "promoted"]
+class CodeRepoImportView(TypedDict):
+    manifest: CodeImportManifestView
+    state: CodeRepoImportState
+    baseline_revision: NotRequired[EntityId | None]
+    promotion_receipt: NotRequired[EntityId | None]
+class CodeRepoGetRequest(TypedDict):
+    repo: EntityId
+class CodeRepoImportLink(TypedDict):
+    manifest: EntityId
+    anchor: CodeImportAnchor
+class MergeQueuePointersView(TypedDict):
+    repo: EntityId
+    head_commit: str
+    green_commit: str
+    pending_slow_batch_refs: list[str]
+class CodeIngressRef(TypedDict):
+    provenance: EntityId
+    ref_name: str
+class CodeRunWorkFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+class CodeRunWorkLink(TypedDict):
+    work: EntityId
+    task: EntityId
+    executor_run: EntityId
+    ref_name: str
+    base_green: str
+    base_snapshot: str
+    fork_hash: str
+    files: list[CodeRunWorkFile]
+class CodeRepoView(TypedDict):
+    repo: EntityId
+    project: EntityId
+    served_repo: str
+    imports: list[CodeRepoImportLink]
+    queue: NotRequired[MergeQueuePointersView | None]
+    green_revision: NotRequired[EntityId | None]
+    batch_refs: list[str]
+    check_work_refs: list[str]
+    task_refs: list[EntityId]
+    fork_sessions: list[EntityId]
+    ingress: list[CodeIngressRef]
+    run_works: list[CodeRunWorkLink]
+class CodeForkGetRequest(TypedDict):
+    repo: EntityId
+    fork_session: EntityId
+class CodeDocumentFrontier(TypedDict):
+    document_id: list[int]
+    repo: str
+    path: str
+    version: list[tuple[int, int]]
+    op_fold: list[int]
+    text_hash: list[int]
+    file_presence: NotRequired[CodeFilePresence | None]
+class CodeTreeBlob(TypedDict):
+    git_oid: str
+    content_hash: list[int]
+    size_bytes: int
+    mode: int
+class CodeForkDocumentView(TypedDict):
+    document_id: NotRequired[str | None]
+    path: str
+    base: NotRequired[CodeDocumentFrontier | None]
+    landed: NotRequired[CodeDocumentFrontier | None]
+    target: NotRequired[CodeTreeBlob | None]
+    metadata_edit: NotRequired[CodeFileMetadataEdit | None]
+    proposal_ref: NotRequired[EntityId | None]
+class CodeForkView(TypedDict):
+    repo: EntityId
+    fork_session: EntityId
+    parent_session: EntityId
+    base_revision: EntityId
+    forked_at: int
+    documents: list[CodeForkDocumentView]
+    proposal_refs: list[EntityId]
+    revision_refs: list[EntityId]
+    task_refs: list[EntityId]
+    ingress: NotRequired[CodeIngressRef | None]
+class ExternalImportSource(TypedDict):
+    host: str
+    repository: str
+    source_ref: str
+    pull_request: NotRequired[int | None]
+    base_commit: str
+    head_commit: str
+class ExternalImportDoorCheckoutBody(TypedDict):
+    checkout: str
+    epoch: int
+class ExternalImportDoorCheckout(TypedDict):
+    checkout: ExternalImportDoorCheckoutBody
+ExternalImportDoor = Literal["raw"] | ExternalImportDoorCheckout
+class ExternalImportRequest(TypedDict):
+    repo: str
+    code_repo: EntityId
+    base_revision: EntityId
+    imported_ref: NotRequired[str | None]
+    source: ExternalImportSource
+    source_binding: NotRequired[str | None]
+    door: ExternalImportDoor
+ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None]})
+ExternalImportLookup = TypedDict("ExternalImportLookup", {"repo": str, "code_repo": EntityId, "import": EntityId, "door": ExternalImportDoor})
+ExternalImportPhase = Literal["pending", "fetch_refused", "source_moved", "held_base", "door_refused", "transport_unknown", "received"]
+class ReceivedFileOperation(TypedDict):
+    operation_id: str
+    actor_id: str
+    session_id: str
+    ref_name: str
+    path: str
+    before_hash: list[int]
+    after_hash: list[int]
+    old_mode: NotRequired[int | None]
+    new_mode: NotRequired[int | None]
+    document_edit: bool
+CodePushCandidateState = Literal["pending", "held_base", "held_predecessor", "held_review_policy", "held_shape", "proposed", "rejected", "queued", "quarantined", "rolled_back", "landed", "sealed"]
+class CodePushCandidateView(TypedDict):
+    candidate: EntityId
+    state: CodePushCandidateState
+    reason: NotRequired[str | None]
+    base_revision: NotRequired[EntityId | None]
+    fork_session: NotRequired[EntityId | None]
+    proposal_refs: list[EntityId]
+    batch_refs: list[str]
+    check_work_refs: list[str]
+    revision_refs: list[EntityId]
+class CodePushIngressView(TypedDict):
+    repo: EntityId
+    provenance: EntityId
+    ref_name: str
+    old_oid: NotRequired[str | None]
+    new_oid: NotRequired[str | None]
+    received_at: int
+    published: bool
+    publication: NotRequired[EntityId | None]
+    operations: list[ReceivedFileOperation]
+    candidate: NotRequired[CodePushCandidateView | None]
+MergeQueueCheckWorkKind = Literal["init", "check", "diagnose"]
+MergeQueueCheckState = Literal["queued", "running", "needs_configuration", "held", "passed", "failed", "settled"]
+QueueCheckHoldReason = Literal["interrupted", "executor_unavailable", "missing_offline_input", "unstable_inputs", "authority", "tree_unavailable", "refused"]
+class Quarantine(TypedDict):
+    proposal_ids: list[str]
+    failing_mask: int
+    verdict: str
+class MergeQueueCheckWorkView(TypedDict):
+    repo: EntityId
+    work_ref: str
+    kind: MergeQueueCheckWorkKind
+    status: MergeQueueCheckState
+    configuration_keys: list[str]
+    reason: NotRequired[str | None]
+    hold: NotRequired[QueueCheckHoldReason | None]
+    generation: int
+    baseline_commit: NotRequired[str | None]
+    plan_digest: NotRequired[str | None]
+    receipt_refs: list[str]
+    verdict_refs: list[str]
+    pointers: NotRequired[MergeQueuePointersView | None]
+    quarantine: NotRequired[Quarantine | None]
+class ExternalImportStatus(TypedDict):
+    receipt: ExternalImportReceipt
+    phase: ExternalImportPhase
+    reason: NotRequired[str | None]
+    ingress: NotRequired[CodePushIngressView | None]
+    checks: list[MergeQueueCheckWorkView]
+class CodePushIngressGetRequest(TypedDict):
+    repo: EntityId
+    provenance: EntityId
+    ref_name: str
 class OriginRegisterRequest(TypedDict):
     repo: str
     default_branch: str
@@ -10747,13 +10971,6 @@ class CodeViewMaterializeRequest(TypedDict):
     tested: EntityId
     account: EntityId
     policy: VisibleFilePolicy
-class CodeDocumentFrontier(TypedDict):
-    document_id: list[int]
-    repo: str
-    path: str
-    version: list[tuple[int, int]]
-    op_fold: list[int]
-    text_hash: list[int]
 class CodeViewFile(TypedDict):
     path: str
     content_hash_blake3: str
@@ -10826,10 +11043,6 @@ class CodeRepoPointer(TypedDict):
 class CodeSnapshotIngestRequest(TypedDict):
     project_id: str
     pointer: CodeRepoPointer
-class CodeSnapshotFile(TypedDict):
-    path: str
-    content_hash_blake3: str
-    size_bytes: int
 class CodeSnapshotView(TypedDict):
     repo: EntityId
     repo_ref: str
@@ -10877,10 +11090,6 @@ class MergeQueuePathView(TypedDict):
     commit: str
     tree: str
     verdict_ref: NotRequired[str | None]
-class Quarantine(TypedDict):
-    proposal_ids: list[str]
-    failing_mask: int
-    verdict: str
 class AffectedTests(TypedDict):
     packages: list[str]
     targets: dict[str, list[str]]
@@ -10931,6 +11140,31 @@ class ContractVerdict(TypedDict):
     candidate: str
     tests_passed: bool
     diffs: list[ContractDiff]
+QueueDriveStatus = Literal["unenrolled", "driving", "waiting_check", "waiting_symbols", "waiting_review", "waiting_admission", "held_needs_new_base", "held_diverged", "held_binding", "held_materialization", "held_overlap", "held_task_authority", "held_recovery", "held_check", "needs_configuration", "held_seal", "unavailable", "done"]
+class QueueConflictView(TypedDict):
+    source_proposals: list[str]
+    conflict: str
+    task: NotRequired[str | None]
+    resolution_batch: NotRequired[str | None]
+QueueExportHoldReason = Literal["seal_pending", "held_seal_ancestor", "held_binding", "held_object", "held_unsupported_tree", "held_unreviewed_change", "held_store", "held_untouched_promotion", "author_erased", "author_unavailable", "unenrolled", "unavailable"]
+class QueueExportHold(TypedDict):
+    reason: QueueExportHoldReason
+    detail: str
+    way_out: str
+class QueueDriveView(TypedDict):
+    batch_ref: str
+    status: QueueDriveStatus
+    reason: NotRequired[str | None]
+    check_work_refs: list[str]
+    receipt_refs: list[str]
+    conflicts: list[QueueConflictView]
+    survivor_batch: NotRequired[str | None]
+    tested_revision: NotRequired[str | None]
+    seal_hold: NotRequired[QueueExportHold | None]
+class QueueGreenExportView(TypedDict):
+    green_commit: str
+    tested_revision: NotRequired[str | None]
+    hold: NotRequired[QueueExportHold | None]
 class MergeQueueObservation(TypedDict):
     repo: EntityId
     head_commit: str
@@ -10938,16 +11172,71 @@ class MergeQueueObservation(TypedDict):
     pending_slow_batch_refs: list[str]
     batches: list[MergeQueueBatchView]
     verdicts: list[ContractVerdict]
+    drive: list[QueueDriveView]
+    green_export: QueueGreenExportView
 class MergeQueueRequeueView(TypedDict):
     source_batch_ref: str
     batch: NotRequired[MergeQueueBatchView | None]
 class MergeQueueRepoRequest(TypedDict):
     repo: EntityId
-class MergeQueuePointersView(TypedDict):
+class MergeQueueInitializeRequest(TypedDict):
     repo: EntityId
-    head_commit: str
-    green_commit: str
-    pending_slow_batch_refs: list[str]
+    baseline_commit: str
+    contract_baseline_ref: NotRequired[str | None]
+QueueCheckPhase = Literal["fast", "slow"]
+class MergeQueueCheckRequest(TypedDict):
+    repo: EntityId
+    batch_ref: str
+    mask: int
+    phase: QueueCheckPhase
+    force_refresh: NotRequired[bool]
+class MergeQueueDiagnoseRequest(TypedDict):
+    repo: EntityId
+    batch_ref: str
+class MergeQueueCheckStatusRequest(TypedDict):
+    repo: EntityId
+    work_ref: str
+class CodeCheckReceiptRequest(TypedDict):
+    repo: EntityId
+    work_ref: str
+    receipt_ref: str
+class CodeCheckCommandResult(TypedDict):
+    index: int
+    exit_code: NotRequired[int | None]
+    signal: NotRequired[int | None]
+    stdout_blake3: str
+    stderr_blake3: str
+class CodeCheckAttemptView(TypedDict):
+    generation: int
+    phase: QueueCheckPhase
+    commit: str
+    tree: str
+    plan_digest: str
+    inputs_digest: str
+    attempt_id: str
+    attempt_count: int
+    stable_inputs: NotRequired[bool | None]
+    completed: bool
+    tests_passed: NotRequired[bool | None]
+    commands: list[CodeCheckCommandResult]
+    hold: NotRequired[QueueCheckHoldReason | None]
+    configuration_keys: list[str]
+    verdict_ref: NotRequired[str | None]
+    passes: NotRequired[bool | None]
+    reused_from: NotRequired[str | None]
+class CodeCheckReceiptView(TypedDict):
+    repo: EntityId
+    work_ref: str
+    receipt_ref: str
+    receipts: list[CodeCheckAttemptView]
+class MergeQueueGreenExportRequest(TypedDict):
+    repo: EntityId
+    served_repo: str
+    checkout: str
+    epoch: int
+    ref_name: str
+    expected_old_oid: NotRequired[str | None]
+    endpoint: str
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
@@ -13238,6 +13527,25 @@ class RoomHostHand(TypedDict):
     room: EntityId
     to: EntityId
     session: NotRequired[EntityId | None]
+class RoomUpkeepPendingRequest(TypedDict):
+    room: NotRequired[EntityId | None]
+class RoomUpkeepNudge(TypedDict):
+    finding: EntityId
+    room: EntityId
+    thread: EntityId
+    host: EntityId
+    last_activity: int
+    open_tasks: list[EntityId]
+    approval: ClaimApprovalStatus
+class RoomUpkeepVoiceRequest(TypedDict):
+    finding: EntityId
+    content: str
+class RoomUpkeepVoiceReceipt(TypedDict):
+    finding: EntityId
+    turn: NotRequired[RecordRef | None]
+    message: NotRequired[RecordRef | None]
+    receipt_ref: str
+    replayed: bool
 class RoomSharingClampWorlds(TypedDict):
     clamp: Literal["worlds"]
 class RoomSharingClampFacets(TypedDict):
@@ -17030,7 +17338,7 @@ class ConsolidationEnqueueRequest(TypedDict):
     now: NotRequired[int | None]
 class ConsolidationStatusRequest(TypedDict):
     job_ref: str
-DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "cancelled", "signal", "other"]
+DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "retry", "paused", "cancelled", "signal", "other"]
 class DreamerParkedAttemptView(TypedDict):
     job_ref: str
     cause: DreamerParkCauseView
@@ -18176,6 +18484,16 @@ class SummarySourceVersion(TypedDict):
     record_hash: NotRequired[list[int] | None]
     frontier: NotRequired[list[int] | None]
     projected_text: NotRequired[list[int] | None]
+class SummaryLineSpan(TypedDict):
+    turn: str
+    message: NotRequired[str | None]
+    start: int
+    end: int
+class SummaryLineSources(TypedDict):
+    output_start: int
+    output_end: int
+    turn_refs: list[str]
+    source_spans: NotRequired[list[SummaryLineSpan]]
 class SummaryDerivation(TypedDict):
     request: list[int]
     trigger: list[int]
@@ -18189,6 +18507,8 @@ class SummaryDerivation(TypedDict):
     recorded_at: int
     generated_text_hash: list[int]
     generated_keep_hash: list[int]
+    source_set: NotRequired[list[int] | None]
+    line_sources: NotRequired[list[SummaryLineSources] | None]
 class ScopeSummaryMetadata(TypedDict):
     purpose: SummaryPurpose
     keep: str
@@ -18216,7 +18536,8 @@ class SummaryReadView(TypedDict):
     anchors: list[TextAnchor]
     birth: Birth
 class SummaryStatusRequest(TypedDict):
-    attempt: str
+    attempt: NotRequired[str | None]
+    session_ref: NotRequired[str | None]
 class ScopeSummaryResult(TypedDict):
     summary: str
     claim: NotRequired[str | None]
@@ -19353,15 +19674,22 @@ class LaunchStatement(TypedDict):
     scope: NotRequired[SpendScopeId | None]
     parent_scope: NotRequired[SpendScopeId | None]
     stated_at: int
+SpawnAskField = Literal["need", "care", "notes", "model", "width", "pattern"]
+SpawnUnappliedReason = Literal["planner_unbound", "agent_lease_unbound"]
+class SpawnUnapplied(TypedDict):
+    field: SpawnAskField
+    reason: SpawnUnappliedReason
 class AgentSpawnOutputQueued(TypedDict):
     state: Literal["queued"]
     kind: AgentSpawnKind
     attempt: str
     launch: NotRequired[LaunchStatement | None]
+    unapplied: NotRequired[list[SpawnUnapplied]]
 class AgentSpawnOutputProposedWiden(TypedDict):
     state: Literal["proposed_widen"]
     kind: AgentSpawnKind
     proposal: str
+    unapplied: NotRequired[list[SpawnUnapplied]]
 AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden
 class LeaderSplitInput(TypedDict):
     leader: NotRequired[str | None]

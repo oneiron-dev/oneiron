@@ -5,9 +5,11 @@
 //! removed (retired at its origin) when it is gone here and the kind lets
 //! this end retire it. A transfer sent and not acked is sent again with its
 //! identity while the tree still matches it; once the tree moved on, the next
-//! change takes a revision past it. A digest is computed only when a file's
-//! stamp changed. A training outbox is read under its lock, so a manifest and
-//! its chunks are one snapshot.
+//! change takes a revision past it, and past every revision this end ever
+//! sent, so a scan run again after a record that did not write never gives
+//! one twice. A digest is computed only when a file's stamp changed. A
+//! training outbox is read under its lock, so a manifest and its chunks are
+//! one snapshot.
 
 use super::Carrier;
 use super::local::{self, FileStamp};
@@ -44,11 +46,24 @@ pub(super) struct OutSet {
 
 impl Carrier {
     /// Every set this end has to send now, kind by kind. A set the other end
-    /// deferred waits out its pacing first.
-    pub(super) fn outgoing(&mut self) -> anyhow::Result<Vec<OutSet>> {
+    /// deferred waits out its pacing first. A backup kind waiting on a
+    /// backup label the session did not keep is not scanned, so its records
+    /// stay as they are until it goes. A kind waiting on its carrier records
+    /// is scanned again once that wait is due: a scan whose records do not
+    /// write sends none of the kind and makes it wait again, and one that
+    /// writes them ends the wait.
+    pub(super) fn outgoing(&mut self) -> Vec<OutSet> {
         let mut sets = Vec::new();
         let now = Instant::now();
         for kind in VmOutboxKind::ALL {
+            if self.backup_waits(kind).is_some()
+                || self
+                    .record_wait
+                    .get(&kind)
+                    .is_some_and(|wait| wait.at > now)
+            {
+                continue;
+            }
             let root = match self.roots.open(kind) {
                 Ok(Some(root)) => root,
                 Ok(None) => continue,
@@ -65,8 +80,16 @@ impl Carrier {
                 self.say(kind, "", &format!("its lock is not taken: {error}"));
                 continue;
             }
-            let ops = self.scan_kind(kind, &root)?;
+            let scanned = self.scan_kind(kind, &root);
             drop(lock);
+            let ops = match scanned {
+                Ok(ops) => ops,
+                Err(error) => {
+                    self.records_failed(kind, None, &error);
+                    continue;
+                }
+            };
+            self.records_written(kind);
             let mut grouped: BTreeMap<String, Vec<OutOp>> = BTreeMap::new();
             for (set, op) in ops {
                 grouped.entry(set).or_default().push(op);
@@ -83,15 +106,16 @@ impl Carrier {
                 sets.push(OutSet { kind, set, ops });
             }
         }
-        Ok(sets)
+        sets
     }
 
-    /// `kind`'s changes under `root`, each with its set.
+    /// `kind`'s changes under `root`, each with its set; or, once one of its
+    /// records does not write, that failure and none of them.
     fn scan_kind(
         &mut self,
         kind: VmOutboxKind,
         root: &File,
-    ) -> anyhow::Result<Vec<(String, OutOp)>> {
+    ) -> std::io::Result<Vec<(String, OutOp)>> {
         let roots = &self.roots;
         let listed = local::list(root, kind, self.owner, &|member: &str| {
             roots.takes(kind, member)
@@ -173,7 +197,7 @@ fn put_op(
     stamp: Option<FileStamp>,
     rank: u8,
 ) -> Option<OutOp> {
-    let mut past = record.revision;
+    let mut past = record.revision.max(record.floor);
     if let Some(pending) = record.pending.take() {
         if pending.operation == VmOutboxOperation::Put
             && pending.blake3 == version.blake3
@@ -209,7 +233,7 @@ fn put_op(
 /// The remove a gone `member` needs, if any: `retires` says whether this
 /// end's loss of it retires it at the other end.
 fn remove_op(record: &mut MemberRecord, member: &str, retires: bool, rank: u8) -> Option<OutOp> {
-    let mut past = record.revision;
+    let mut past = record.revision.max(record.floor);
     let mut held = record.agreed.clone();
     if let Some(pending) = record.pending.take() {
         if pending.operation == VmOutboxOperation::Remove && pending.revision > record.revision {

@@ -118,6 +118,20 @@ pub const MEMORY_CODE_INVENTED_REFERENCE: &str = "INVENTED_REFERENCE";
 /// owner; an owner act inside the vault takes the customer's support grant.
 pub const MEMORY_CODE_HOST_ACTION_REFUSED: &str = "HOST_ACTION_REQUIRES_SUPPORT_GRANT";
 
+/// The owner's world recipient choice keeps a row the call reads from where
+/// its answer goes (FIX 7463a): the message names his choice (one named
+/// machine, or machines marked his) and why this destination is not one it
+/// admits, never the world. Distinct from `NOT_FOUND`: the row is there,
+/// and the world's read setting is what keeps it. It is no location limit
+/// on the caller: the same call reads it where the owner's choice admits.
+pub const MEMORY_CODE_WORLD_RECIPIENT_LIMIT: &str = "WORLD_RECIPIENT_LIMIT";
+
+/// The world placement of a row the call reads, or the rows a result was
+/// derived from, or the vault root, cannot be verified, so nothing is
+/// released (FIX 7463a): an integrity hold, never the owner's choice.
+/// Content-free, like `WORLD_RECIPIENT_LIMIT`.
+pub const MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE: &str = "WORLD_PLACEMENT_UNVERIFIABLE";
+
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
 /// engine→binding error mapping (S8); the HTTP mapping stays server-side.
@@ -528,6 +542,22 @@ impl From<Error> for MemoryError {
                     "Ask the customer for a support grant; the operator's own admin commands (status, backup, restore, repair, move) need none.",
                 ],
             ),
+            // FIX 7463a: a world's read setting keeps a row the call reads,
+            // named as that setting rather than as a row that is not there.
+            ErrorKind::WorldRecipientLimit => Self::new(
+                MEMORY_CODE_WORLD_RECIPIENT_LIMIT,
+                message,
+                &[
+                    "The owner's read setting for the row's world keeps it from where this answer goes; read it where his choice admits, or ask him to change that setting.",
+                ],
+            ),
+            ErrorKind::WorldPlacementUnverifiable => Self::new(
+                MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE,
+                message,
+                &[
+                    "Nothing was released: the world placement or policy named here cannot be verified now. No change to the request helps; retry once the vault has settled it.",
+                ],
+            ),
             ErrorKind::ConsentGuestNotRecorded => Self::new(
                 MEMORY_CODE_FORBIDDEN,
                 message,
@@ -690,6 +720,16 @@ impl From<Error> for MemoryError {
                     "An erase took this reply: what the call did stands, and no call sends it again.",
                 ],
             ),
+            // A credential's custody key does not open, or custody could not
+            // take a new one (KS-6): the vault's state, never the request's
+            // shape, and the message names the credential and its way out.
+            ErrorKind::CredentialLeafUnreadable | ErrorKind::CredentialCustodyUnavailable => {
+                Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &["Do what the message names: retry, or re-enter or reissue that credential."],
+                )
+            }
             // The host skipped a setup step, so neither the request nor the
             // caller's standing is what has to change.
             ErrorKind::EngineIdentitiesNotProvisioned => Self::new(

@@ -8,7 +8,8 @@
 //! depends on moved. A drafter that is unavailable leaves the step to the
 //! closed-form rule, on a fresh read.
 
-use std::sync::atomic::Ordering;
+use std::sync::PoisonError;
+use std::time::{Duration, Instant};
 
 use super::super::coach::{
     CoachDraft, CoachInput, CoachStep, WeaveDigestSettingsDrafter, coach_brief_sources,
@@ -29,6 +30,12 @@ use crate::{EntityId, Vault};
 /// The hub skill the Coach's model drafts with (ARCH-0053): loaded by name
 /// from what a skill hub provided, never embedded in the engine.
 const WEAVE_DIGEST_SETTINGS_SKILL_NAME: &str = "weave-digest-settings";
+
+/// How many of a host Coach's own expected round intervals may pass with no
+/// round completed before its digest readiness lapses and the closed-form
+/// rule decides again (FIX 7211, Engine ruling 10-21: a liveness expiry, not
+/// a round timeout; the round itself runs on).
+const COACH_HOST_LIVENESS_INTERVALS: u32 = 2;
 
 /// What one owner's filing must find unchanged since his draft was read.
 struct Basis {
@@ -71,18 +78,37 @@ impl Basis {
 impl Vault {
     /// Says whether a host Coach whose model drafts this vault's digest
     /// settings steps is serving it (FIX 5609, 6165): its worker says ready
-    /// after a round that served, and not ready after a round that erred or
-    /// when it ends. While ready the digest timer queues the Coach's job;
-    /// while not, the closed-form rule evaluates each owner whose evaluation
-    /// is due, as with no host. In memory only: a reopened vault starts not
-    /// ready.
-    pub fn set_coach_weave_digest_host_ready(&self, ready: bool) {
-        self.coach_weave_digest_host.store(ready, Ordering::Release);
+    /// after a round that served, with the interval its rounds are expected
+    /// at, and not ready after a round that erred or when it ends. Ready
+    /// lapses once `COACH_HOST_LIVENESS_INTERVALS` of those intervals pass
+    /// with no further round served, and returns with the next one that
+    /// serves (FIX 7211). While ready the digest timer queues the Coach's
+    /// job; while not, the closed-form rule evaluates each owner whose
+    /// evaluation is due, as with no host. In memory only: a reopened vault
+    /// starts not ready.
+    pub fn set_coach_weave_digest_host_ready(
+        &self,
+        ready: bool,
+        expected_round_interval: Duration,
+    ) {
+        let mark = ready.then(|| (Instant::now(), expected_round_interval));
+        *self
+            .coach_weave_digest_host
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = mark;
     }
 
-    /// A host Coach serving this vault drafts its digest settings steps.
+    /// A host Coach serving this vault drafts its digest settings steps: its
+    /// last round served less than `COACH_HOST_LIVENESS_INTERVALS` of its
+    /// expected round intervals ago (FIX 7211).
     pub(super) fn coach_weave_digest_host_ready(&self) -> bool {
-        self.coach_weave_digest_host.load(Ordering::Acquire)
+        let mark = *self
+            .coach_weave_digest_host
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        mark.is_some_and(|(served_at, interval)| {
+            served_at.elapsed() < interval.saturating_mul(COACH_HOST_LIVENESS_INTERVALS)
+        })
     }
 
     /// The timer's part while a host Coach serves this vault: the Coach's
@@ -91,7 +117,10 @@ impl Vault {
     /// owner evaluated. A failure is logged and skipped.
     pub(super) fn queue_coach_weave_digest_settings(&self, now: u64) {
         if let Err(error) = self.try_queue_coach_weave_digest_settings(now) {
-            tracing::warn!(?error, "the Coach's digest settings job was not queued");
+            tracing::warn!(
+                error_kind = ?error.kind(),
+                "the Coach's digest settings job was not queued"
+            );
         }
     }
 
@@ -204,7 +233,7 @@ impl Vault {
                 Ok(true) => self.store.notify_proactivity_changes(),
                 Ok(false) => {}
                 Err(error) => tracing::warn!(
-                    ?error,
+                    error_kind = ?error.kind(),
                     owner = %owner.to_hex(),
                     "the Coach skipped an owner's digest settings"
                 ),

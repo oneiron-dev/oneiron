@@ -1981,6 +1981,26 @@ export class Oneiron {
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
       export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
+      /** Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only. */
+      import: (input: Facade.CodeRepoImportRequest): Facade.CodeRepoImportView => this.#call(() => this.#client.vaultCodeImport(input) as Facade.CodeRepoImportView),
+      repos: {
+        /** Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work. */
+        get: (input: Facade.CodeRepoGetRequest): Facade.CodeRepoView | null => this.#call(() => this.#client.vaultCodeReposGet(input) as Facade.CodeRepoView | null),
+      },
+      forks: {
+        /** Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork. */
+        get: (input: Facade.CodeForkGetRequest): Facade.CodeForkView | null => this.#call(() => this.#client.vaultCodeForksGet(input) as Facade.CodeForkView | null),
+      },
+      imports: {
+        /** Fetch one exact outside source and send it through the existing authenticated Git door; retain source and receive links without approval or enqueue. */
+        create: (input: Facade.ExternalImportRequest): Facade.ExternalImportReceipt => this.#call(() => this.#client.vaultCodeImportsCreate(input) as Facade.ExternalImportReceipt),
+        /** Read one external import and its actual receive, aggregate candidate and checker work. Local only; never fetches, pushes or runs checks. */
+        get: (input: Facade.ExternalImportLookup): Facade.ExternalImportStatus | null => this.#call(() => this.#client.vaultCodeImportsGet(input) as Facade.ExternalImportStatus | null),
+      },
+      ingress: {
+        /** Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance. */
+        get: (input: Facade.CodePushIngressGetRequest): Facade.CodePushIngressView | null => this.#call(() => this.#client.vaultCodeIngressGet(input) as Facade.CodePushIngressView | null),
+      },
       origin: {
         /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
         register: (input: Facade.OriginRegisterRequest): Facade.OriginRegistered => this.#call(() => this.#client.vaultCodeOriginRegister(input) as Facade.OriginRegistered),
@@ -2080,6 +2100,20 @@ export class Oneiron {
         settle_slow: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueSettleSlow(input) as Facade.MergeQueuePointersView),
         /** Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased. */
         recover: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueRecover(input) as Facade.MergeQueuePointersView),
+        /** Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue. */
+        init: (input: Facade.MergeQueueInitializeRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueInit(input) as Facade.MergeQueueCheckWorkView),
+        /** Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller. */
+        check: (input: Facade.MergeQueueCheckRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueCheck(input) as Facade.MergeQueueCheckWorkView),
+        /** Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only. */
+        diagnose: (input: Facade.MergeQueueDiagnoseRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueDiagnose(input) as Facade.MergeQueueCheckWorkView),
+        /** Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only. */
+        check_status: (input: Facade.MergeQueueCheckStatusRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueCheckStatus(input) as Facade.MergeQueueCheckWorkView),
+        /** Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result. */
+        export_green: (input: Facade.MergeQueueGreenExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeMergeQueueExportGreen(input) as Facade.CodeExportResult),
+      },
+      checks: {
+        /** Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass. */
+        get: (input: Facade.CodeCheckReceiptRequest): Facade.CodeCheckReceiptView | null => this.#call(() => this.#client.vaultCodeChecksGet(input) as Facade.CodeCheckReceiptView | null),
       },
     },
     results: {
@@ -2339,6 +2373,12 @@ export class Oneiron {
         /** The room's current host hands the hosting duty to another agent that may host. */
         hand: (input: Facade.RoomHostHand): Facade.RoomStanding => this.#call(() => this.#client.vaultRoomsHostHand(input) as Facade.RoomStanding),
       }),
+      upkeep: {
+        /** The room upkeep nudges addressed to the caller for rooms it hosts now, that its lane reads and no voice has used yet. */
+        pending: (input: Facade.RoomUpkeepPendingRequest): Facade.RoomUpkeepNudge[] => this.#call(() => this.#client.vaultRoomsUpkeepPending(input) as Facade.RoomUpkeepNudge[]),
+        /** The room's current host voices one upkeep nudge addressed to it as its own reply to the newest turn of the nudge's thread. */
+        voice: (input: Facade.RoomUpkeepVoiceRequest): Facade.RoomUpkeepVoiceReceipt => this.#call(() => this.#client.vaultRoomsUpkeepVoice(input) as Facade.RoomUpkeepVoiceReceipt),
+      },
       /** A room's effective sharing scope and why it is clamped, for a member of the room. */
       sharing: (input: Facade.RoomRefRequest): Facade.RoomSharingView => this.#call(() => this.#client.vaultRoomsSharing(input) as Facade.RoomSharingView),
     },

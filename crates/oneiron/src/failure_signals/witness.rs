@@ -136,6 +136,80 @@ impl Vault {
         self.capture_tier1_diagnostic(id, sources)
     }
 
+    /// The served regressions in `ids` (FIX 2449), each drawn again from the
+    /// producer's own `runs`, `bounds` and `window_end`, its whole event
+    /// matched and every run in its window re-read from base before the
+    /// witness exists. One that proves nothing is not captured; its
+    /// diagnostic stands as stored.
+    pub(crate) fn capture_tier1_served_regression(
+        &self,
+        ids: &[EntityId],
+        runs: &[crate::store::RetrievalRunRecord],
+        bounds: crate::self_heal::tripwires::TripwireBounds,
+        window_end: u64,
+    ) -> Result<()> {
+        if !self.config.failure_signals.exports() {
+            return Ok(());
+        }
+        for id in ids {
+            let Some(body) = self.get(id)? else {
+                continue;
+            };
+            let event = crate::self_heal::decode_diagnostic_event_body(&body)?;
+            let txn = self.store.env.read_txn()?;
+            let sources = VerifiedSourceSet::retrieval_regression(
+                &self.store,
+                &txn,
+                &event,
+                runs,
+                bounds,
+                window_end,
+            );
+            drop(txn);
+            if let Ok(sources) = sources {
+                self.capture_tier1_diagnostic(*id, sources)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The whole-tray consent depths in `ids` (OF-298), each drawn again
+    /// from the producer's own `snapshot`, `bounds` and `scope`, its whole
+    /// event matched, and every row read again as its claim's current tray
+    /// row over its base Gate decision before the witness exists. One that
+    /// proves nothing is not captured; its diagnostic stands as stored.
+    pub(crate) fn capture_tier1_consent_queue(
+        &self,
+        ids: &[EntityId],
+        scope: &str,
+        snapshot: &crate::self_heal::consent_depth::ConsentQueueSnapshot,
+        bounds: crate::self_heal::tripwires::TripwireBounds,
+    ) -> Result<()> {
+        if !self.config.failure_signals.exports() {
+            return Ok(());
+        }
+        for id in ids {
+            let Some(body) = self.get(id)? else {
+                continue;
+            };
+            let event = crate::self_heal::decode_diagnostic_event_body(&body)?;
+            let txn = self.store.env.read_txn()?;
+            let sources = VerifiedSourceSet::consent_queue(
+                &self.store,
+                &txn,
+                &event,
+                scope,
+                snapshot,
+                bounds,
+            );
+            drop(txn);
+            if let Ok(sources) = sources {
+                self.capture_tier1_diagnostic(*id, sources)?;
+            }
+        }
+        Ok(())
+    }
+
     /// An adapter may supply receipt bytes, but only a byte-identical base
     /// Gate projection can become a witness. Unverifiable drafts still emit
     /// diagnostics; they cannot become exportable observations.

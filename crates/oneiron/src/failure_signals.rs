@@ -26,8 +26,8 @@ pub use code_fix::{
     InventedRole, ReplayFidelity, ReplayRun, ScrubRun, ShadowRun,
 };
 pub(crate) use code_fix::{
-    ExactReplay, SealedCodeFix, Sealing, code_fix_subject_in, dispatch_worlds_in, exact_replay,
-    failed_case_in, queue_sealed_in_txn,
+    CodeFixSourceSnapshot, ExactReplay, SealedCodeFix, Sealing, code_fix_source_snapshot,
+    code_fix_subject_in, dispatch_worlds_in, exact_replay, failed_case_in, queue_sealed_in_txn,
 };
 pub use delivery::{
     FAILURE_SIGNAL_BATCH_VERSION, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB,
@@ -383,13 +383,14 @@ fn executed_model(
 /// Only compiled detector identities may travel across vaults in clear.
 /// Unknown/custom detector IDs remain per-vault opaque tokens.
 fn registered_detector(id: &str) -> Option<&'static str> {
-    const IDS: [&str; 7] = [
+    const IDS: [&str; 8] = [
         "consent.denied.v1",
         "retrieval.miss.v1",
         "consolidation.error.v1",
         "dreamer.degenerate.v1",
         "conversation.silent.v1",
         "consent.storm.v1",
+        "consent.queue_depth.v1",
         "predicate.drift.v1",
     ];
     IDS.into_iter().find(|registered| *registered == id)

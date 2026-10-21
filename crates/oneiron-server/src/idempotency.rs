@@ -113,17 +113,17 @@ impl IdempotencyStore {
         Ok(IdempotencyLookup::Replay(response))
     }
 
-    /// Keeps `response` under `store_key`, stamped with its `caller` when the
-    /// request's credential names one (KS-2B2).
+    /// Keeps `response` under `store_key`, stamped with its caller when the
+    /// request's credential names one (KS-2B2, FIX 7357).
     fn insert(
         &self,
         store_key: &str,
         request_target: String,
         request_body: Vec<u8>,
         response: CachedHttpResponse,
-        caller: Option<oneiron::EntityId>,
+        stamp: caller::EntryStamp,
     ) -> Result<(), IdempotencyStoreError> {
-        let stored = response.into_stored(self.now_secs(), request_target, request_body, caller);
+        let stored = response.into_stored(self.now_secs(), request_target, request_body, stamp);
         self.vault
             .http_idempotency_put(store_key, &stored)
             .map_err(IdempotencyStoreError::storage)
@@ -271,7 +271,7 @@ impl CachedHttpResponse {
         created_at_secs: u64,
         request_target: String,
         request_body: Vec<u8>,
-        caller: Option<oneiron::EntityId>,
+        stamp: caller::EntryStamp,
     ) -> StoredIdempotencyEntry {
         let mut headers = Vec::with_capacity(self.headers.len());
         for (name, value) in &self.headers {
@@ -289,10 +289,11 @@ impl CachedHttpResponse {
                 .admit
                 .map(|admit| admit.iter().map(oneiron::EntityId::to_hex).collect()),
             stamps: oneiron::store::ResponseStamps {
-                actor: caller,
+                actor: stamp.caller,
                 ..Default::default()
             },
             erased: false,
+            erase_drops: stamp.erase_drops,
         }
     }
 
@@ -435,11 +436,16 @@ async fn idempotent(
     } else {
         None
     };
+    // Any other route's own owner gate, whose verdict also names the
+    // partition of a verified individual caller (FIX 5404).
+    let owner_auth = core_auth
+        .is_none()
+        .then(|| require_owner_auth(request.headers(), &state.server.config, revoked));
     let auth_ok = match &core_auth {
         Some(Ok(auth)) if legacy_caller => auth.is_owner_grade(),
         Some(Ok(auth)) => !auth.principal().is_empty(),
         Some(Err(_)) => false,
-        None => require_owner_auth(request.headers(), &state.server.config, revoked).is_ok(),
+        None => owner_auth.as_ref().is_some_and(Result::is_ok),
     };
     if has_idempotency_header && !auth_ok {
         return api_error_response(ApiError::unauthorized(), is_core_auth_route);
@@ -451,12 +457,19 @@ async fn idempotent(
         IdempotencyKey::Invalid => return invalid_key_response(is_core_auth_route),
     };
 
+    // A verified individual on any other route keys its entries under its
+    // own partition (FIX 5404) and stamps them as its own (FIX 7357).
+    let (individual, individual_stamp) = owner_auth
+        .as_ref()
+        .and_then(|auth| auth.as_ref().ok())
+        .and_then(|auth| caller::individual_partition(auth, request.headers()))
+        .unzip();
     let principal = match &core_auth {
         Some(Ok(auth)) => auth.idempotency_principal(),
         Some(Err(_)) => {
             return api_error_response(ApiError::unauthorized(), is_core_auth_route);
         }
-        None => principal_for_non_core_route(&state.server.config),
+        None => individual.unwrap_or_else(|| principal_for_non_core_route(&state.server.config)),
     };
     let store_key = store_key(&principal, &key);
     let target = request_target(&request);
@@ -574,14 +587,17 @@ async fn idempotent(
         };
 
         // The caller owns the response beside the rows it served: its
-        // principal's entity, when its credential names one (KS-2B2).
-        let caller = core_auth
+        // principal's entity, when its credential names one (KS-2B2), a
+        // verified individual's on any other route (FIX 7357).
+        let stamp = core_auth
             .as_ref()
             .and_then(|auth| auth.as_ref().ok())
-            .and_then(CoreAuth::principal_entity);
+            .map(caller::EntryStamp::core)
+            .or(individual_stamp)
+            .unwrap_or_default();
         if let Err(_error) = state
             .store
-            .insert(&store_key, target, request_body, cached, caller)
+            .insert(&store_key, target, request_body, cached, stamp)
         {
             tracing::error!(
                 reason = "idempotency_cache_write_failed",
@@ -673,13 +689,15 @@ fn is_core_auth_route(path: &str) -> bool {
     path.starts_with("/v1/core/") || path.starts_with("/v1/companion/")
 }
 
-/// Idempotency principal for non-core routes.
+/// Idempotency principal for non-core routes whose caller presents no
+/// verified individual credential ([`caller::individual_principal`] keys one
+/// that does under its own, FIX 5404).
 ///
-/// A configured secret means every caller here is the same owner-grade
+/// A configured secret means every such caller here is the same owner-grade
 /// principal; without one the server is in unauthenticated dev mode and all
-/// callers share the anonymous principal. There is no per-caller partition to
-/// derive, and the previous header-derived one was never a boundary — any
-/// client could pick its own.
+/// such callers share the anonymous principal. Nothing in their requests
+/// names a caller to partition by, and the previous header-derived one was
+/// never a boundary — any client could pick its own.
 fn principal_for_non_core_route(config: &SyncServerConfig) -> String {
     if config.auth_secret.is_some() {
         SHARED_SECRET_PRINCIPAL.to_owned()
@@ -728,6 +746,7 @@ fn hex(bytes: &[u8]) -> String {
     encoded
 }
 
+mod caller;
 mod reclaim;
 
 #[cfg(test)]

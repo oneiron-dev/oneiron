@@ -3301,6 +3301,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.import",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeRepoImportRequest,
+                >(),
+            ),
+            (
+                "vault.code.repos.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeRepoGetRequest,
+                >(),
+            ),
+            (
+                "vault.code.forks.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeForkGetRequest,
+                >(),
+            ),
+            (
+                "vault.code.imports.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::ExternalImportRequest,
+                >(),
+            ),
+            (
+                "vault.code.imports.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::ExternalImportLookup,
+                >(),
+            ),
+            (
+                "vault.code.ingress.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodePushIngressGetRequest,
+                >(),
+            ),
+            (
                 "vault.code.origin.register",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginRegisterRequest,
@@ -3550,6 +3586,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.merge_queue.recover",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::merge_queue_doors::MergeQueueRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.init",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueInitializeRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.check",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueCheckRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.diagnose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueDiagnoseRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.check_status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest,
+                >(),
+            ),
+            (
+                "vault.code.checks.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::CodeCheckReceiptRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.export_green",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueGreenExportRequest,
                 >(),
             ),
             (
@@ -4238,6 +4310,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.rooms.host.hand",
                 crate::code_run::vault_read::request_schema::<crate::workspace_roster::RoomHostHand>(
                 ),
+            ),
+            (
+                "vault.rooms.upkeep.pending",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::RoomUpkeepPendingRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.upkeep.voice",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::RoomUpkeepVoiceRequest,
+                >(),
             ),
             (
                 "vault.rooms.sharing",
@@ -6834,6 +6918,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.results.read",
     "vault.results.slice",
     "vault.code.export",
+    "vault.code.import",
     "vault.code.origin.register",
     "vault.code.origin.mirror.get",
     "vault.code.origin.mirror.set",
@@ -6869,6 +6954,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
     "vault.code.symbols.definitions",
+    "vault.code.merge_queue.export_green",
     "vault.agents.create",
     "vault.agents.get",
     "vault.agents.update",
@@ -8466,6 +8552,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.export" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeExportResult,
         >(),
+        "vault.code.import" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::CodeRepoImportView,
+        >(),
         "vault.code.origin.register" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginRegistered,
         >(),
@@ -8570,6 +8659,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.symbols.definitions" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotDefinitionsView,
+        >(),
+        "vault.code.merge_queue.export_green" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::CodeExportResult,
         >(),
         "vault.agents.create" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentDefinitionView,
@@ -13748,6 +13840,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.repos.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.forks.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.imports.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.imports.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.ingress.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.origin.register" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14036,6 +14170,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.merge_queue.recover" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.init" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.check" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.diagnose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.check_status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checks.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.export_green" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -14898,6 +15074,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.rooms.host.hand" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.upkeep.pending" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.upkeep.voice" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19354,6 +19544,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.export" => {
             let _input: crate::memory::origin_doors::CodeExportRequest = decode(value.clone())?;
         }
+        "vault.code.import" => {
+            let _input: crate::memory::origin_doors::CodeRepoImportRequest = decode(value.clone())?;
+        }
+        "vault.code.repos.get" => {
+            let _input: crate::memory::origin_doors::CodeRepoGetRequest = decode(value.clone())?;
+        }
+        "vault.code.forks.get" => {
+            let _input: crate::memory::origin_doors::CodeForkGetRequest = decode(value.clone())?;
+        }
+        "vault.code.imports.create" => {
+            let _input: crate::memory::origin_doors::ExternalImportRequest = decode(value.clone())?;
+        }
+        "vault.code.imports.get" => {
+            let _input: crate::memory::origin_doors::ExternalImportLookup = decode(value.clone())?;
+        }
+        "vault.code.ingress.get" => {
+            let _input: crate::memory::origin_doors::CodePushIngressGetRequest =
+                decode(value.clone())?;
+        }
         "vault.code.origin.register" => {
             let _input: crate::memory::origin_doors::OriginRegisterRequest = decode(value.clone())?;
         }
@@ -19504,6 +19713,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.merge_queue.recover" => {
             let _input: crate::memory::merge_queue_doors::MergeQueueRepoRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.init" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueInitializeRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.check" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueCheckRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.diagnose" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueDiagnoseRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.check_status" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.checks.get" => {
+            let _input: crate::memory::merge_queue_doors::CodeCheckReceiptRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.export_green" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueGreenExportRequest =
                 decode(value.clone())?;
         }
         "vault.artifacts.export" => {
@@ -19904,6 +20137,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.rooms.host.hand" => {
             let _input: crate::workspace_roster::RoomHostHand = decode(value.clone())?;
+        }
+        "vault.rooms.upkeep.pending" => {
+            let _input: crate::workspace_roster::RoomUpkeepPendingRequest = decode(value.clone())?;
+        }
+        "vault.rooms.upkeep.voice" => {
+            let _input: crate::workspace_roster::RoomUpkeepVoiceRequest = decode(value.clone())?;
         }
         "vault.rooms.sharing" => {
             let _input: RoomRefRequest = decode(value.clone())?;
@@ -22418,6 +22657,12 @@ pub fn invoke(
         "vault.results.slice" => encode(vault_results_slice(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
+        "vault.code.import" => encode(vault_code_import(memory, decode(value)?)?),
+        "vault.code.repos.get" => encode(vault_code_repos_get(memory, decode(value)?)?),
+        "vault.code.forks.get" => encode(vault_code_forks_get(memory, decode(value)?)?),
+        "vault.code.imports.create" => encode(vault_code_imports_create(memory, decode(value)?)?),
+        "vault.code.imports.get" => encode(vault_code_imports_get(memory, decode(value)?)?),
+        "vault.code.ingress.get" => encode(vault_code_ingress_get(memory, decode(value)?)?),
         "vault.code.origin.register" => encode(vault_code_origin_register(memory, decode(value)?)?),
         "vault.code.origin.mirror.get" => {
             encode(vault_code_origin_mirror_get(memory, decode(value)?)?)
@@ -22516,6 +22761,22 @@ pub fn invoke(
         }
         "vault.code.merge_queue.recover" => {
             encode(vault_code_merge_queue_recover(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.init" => {
+            encode(vault_code_merge_queue_init(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.check" => {
+            encode(vault_code_merge_queue_check(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.diagnose" => {
+            encode(vault_code_merge_queue_diagnose(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.check_status" => {
+            encode(vault_code_merge_queue_check_status(memory, decode(value)?)?)
+        }
+        "vault.code.checks.get" => encode(vault_code_checks_get(memory, decode(value)?)?),
+        "vault.code.merge_queue.export_green" => {
+            encode(vault_code_merge_queue_export_green(memory, decode(value)?)?)
         }
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
@@ -22701,6 +22962,8 @@ pub fn invoke(
         "vault.rooms.host" => encode(vault_rooms_host(memory, decode(value)?)?),
         "vault.rooms.host.pin" => encode(vault_rooms_host_pin(memory, decode(value)?)?),
         "vault.rooms.host.hand" => encode(vault_rooms_host_hand(memory, decode(value)?)?),
+        "vault.rooms.upkeep.pending" => encode(vault_rooms_upkeep_pending(memory, decode(value)?)?),
+        "vault.rooms.upkeep.voice" => encode(vault_rooms_upkeep_voice(memory, decode(value)?)?),
         "vault.rooms.sharing" => encode(vault_rooms_sharing(memory, decode(value)?)?),
         "vault.companions.sharing.get" => {
             encode(vault_companions_sharing_get(memory, decode(value)?)?)
@@ -28591,6 +28854,48 @@ pub fn vault_code_export(
 ) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
     memory.code_export_as(&memory.embedded_owner("vault.code.export")?, input)
 }
+pub fn vault_code_import(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeRepoImportRequest,
+) -> MemoryResult<crate::memory::origin_doors::CodeRepoImportView> {
+    memory.code_repo_import_as(&memory.embedded_owner("vault.code.import")?, input)
+}
+pub fn vault_code_repos_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeRepoGetRequest,
+) -> MemoryResult<Option<crate::memory::origin_doors::CodeRepoView>> {
+    memory.code_repo_get_as(&memory.embedded_owner("vault.code.repos.get")?, input)
+}
+pub fn vault_code_forks_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeForkGetRequest,
+) -> MemoryResult<Option<crate::memory::origin_doors::CodeForkView>> {
+    memory.code_fork_get_as(&memory.embedded_owner("vault.code.forks.get")?, input)
+}
+pub fn vault_code_imports_create(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::ExternalImportRequest,
+) -> MemoryResult<crate::memory::origin_doors::ExternalImportReceipt> {
+    memory.code_external_import_create_as(
+        &memory.external_import_proof("vault.code.imports.create"),
+        input,
+    )
+}
+pub fn vault_code_imports_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::ExternalImportLookup,
+) -> MemoryResult<Option<crate::memory::origin_doors::ExternalImportStatus>> {
+    memory.code_external_import_get_as(
+        &memory.external_import_proof("vault.code.imports.get"),
+        input,
+    )
+}
+pub fn vault_code_ingress_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodePushIngressGetRequest,
+) -> MemoryResult<Option<crate::memory::origin_doors::CodePushIngressView>> {
+    memory.code_push_ingress_get_as(&memory.embedded_owner("vault.code.ingress.get")?, input)
+}
 pub fn vault_code_origin_register(
     memory: &Memory<'_>,
     input: crate::memory::origin_doors::OriginRegisterRequest,
@@ -28912,6 +29217,57 @@ pub fn vault_code_merge_queue_recover(
 ) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueuePointersView> {
     memory.merge_queue_recover_as(
         &memory.embedded_owner("vault.code.merge_queue.recover")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_init(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueInitializeRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueCheckWorkView> {
+    memory.merge_queue_init_as(
+        &memory.embedded_owner("vault.code.merge_queue.init")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_check(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueCheckRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueCheckWorkView> {
+    memory.merge_queue_check_as(
+        &memory.embedded_owner("vault.code.merge_queue.check")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_diagnose(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueDiagnoseRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueCheckWorkView> {
+    memory.merge_queue_diagnose_as(
+        &memory.embedded_owner("vault.code.merge_queue.diagnose")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_check_status(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueCheckWorkView> {
+    memory.merge_queue_check_status_as(
+        &memory.embedded_owner("vault.code.merge_queue.check_status")?,
+        input,
+    )
+}
+pub fn vault_code_checks_get(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::CodeCheckReceiptRequest,
+) -> MemoryResult<Option<crate::memory::merge_queue_doors::CodeCheckReceiptView>> {
+    memory.merge_queue_check_receipt_as(&memory.embedded_owner("vault.code.checks.get")?, input)
+}
+pub fn vault_code_merge_queue_export_green(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueGreenExportRequest,
+) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
+    memory.merge_queue_export_green_as(
+        &memory.embedded_owner("vault.code.merge_queue.export_green")?,
         input,
     )
 }
@@ -29560,7 +29916,7 @@ pub fn ask(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskAskRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskReceipt> {
-    crate::gate::record_references::admit_row_references(
+    crate::task_verb::ask_world_hold::admit_ask_references(
         memory,
         "ask",
         &input,
@@ -29583,7 +29939,7 @@ pub fn tasks_answer(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskAnswerRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskAnswer> {
-    crate::gate::record_references::admit_row_references(
+    crate::task_verb::ask_world_hold::admit_ask_references(
         memory,
         "tasks.answer",
         &input,
@@ -29895,6 +30251,18 @@ pub fn vault_rooms_host_hand(
     input: crate::workspace_roster::RoomHostHand,
 ) -> MemoryResult<crate::workspace_roster::RoomStanding> {
     memory.rooms_host_hand(&input)
+}
+pub fn vault_rooms_upkeep_pending(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomUpkeepPendingRequest,
+) -> MemoryResult<Vec<crate::workspace_roster::RoomUpkeepNudge>> {
+    memory.rooms_upkeep_pending(&input)
+}
+pub fn vault_rooms_upkeep_voice(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomUpkeepVoiceRequest,
+) -> MemoryResult<crate::workspace_roster::RoomUpkeepVoiceReceipt> {
+    memory.rooms_upkeep_voice(&input)
 }
 pub fn vault_rooms_sharing(
     memory: &Memory<'_>,

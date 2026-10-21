@@ -81,14 +81,6 @@ pub const FIELD_CLEANUP_TOMBSTONE_REASON: &str = "cleanup_tombstone_reason";
 /// The value of [`FIELD_CLEANUP_PHASE`] on every row this projector mints.
 pub const CLEANUP_PHASE: &str = "cleanup";
 
-/// Ceiling on rows one run will EXAMINE per entity type.
-///
-/// A cron that walks an unbounded index holds a read transaction for an
-/// unbounded time. Stopping early is safe in a way that stopping early on a
-/// deletion never is: the rows not examined are simply not archived this run,
-/// and the next run starts over.
-pub(crate) const MAX_CLEANUP_SCAN_ROWS: usize = 50_000;
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -241,11 +233,16 @@ pub struct CleanupProposal {
     pub id: EntityId,
     pub attempt: AttemptId,
     pub created_at: u64,
-    pub candidates: Vec<CleanupCandidate>,
+    /// Each candidate in proposal order; `None` is one an erase reached since
+    /// the proposal opened, which names no one and which an accept skips
+    /// (FIX 7517).
+    pub candidates: Vec<Option<CleanupCandidate>>,
 }
 
 impl CleanupProposal {
-    /// The impact preview this proposal carries.
+    /// The impact preview this proposal carries. `total` counts every slot,
+    /// an erased one too; the kind counts and the ids are the live ones, the
+    /// ones an accept can archive.
     #[must_use]
     pub fn impact_preview(&self) -> CleanupImpactPreview {
         CleanupImpactPreview {
@@ -253,14 +250,16 @@ impl CleanupProposal {
             claimless_persons: self
                 .candidates
                 .iter()
+                .flatten()
                 .filter(|c| c.kind == CleanupKind::ClaimlessExtractionPerson)
                 .count(),
             empty_summaries: self
                 .candidates
                 .iter()
+                .flatten()
                 .filter(|c| c.kind == CleanupKind::EmptySummary)
                 .count(),
-            entities: self.candidates.iter().map(|c| c.entity).collect(),
+            entities: self.candidates.iter().flatten().map(|c| c.entity).collect(),
         }
     }
 }
@@ -274,10 +273,13 @@ pub struct CleanupDigest {
     pub decision: CleanupDecision,
     pub posture: CleanupPosture,
     pub at: u64,
-    pub archived: Vec<EntityId>,
+    /// The ids the decision archived; `None` is one an erase reached since,
+    /// kept in its place so the count stays (FIX 7517).
+    pub archived: Vec<Option<EntityId>>,
     /// Candidates that were NOT archived because the re-check found them no
-    /// longer empty. The stale-candidate guard's audit trail.
-    pub skipped: Vec<EntityId>,
+    /// longer empty. The stale-candidate guard's audit trail. `None` as in
+    /// `archived`.
+    pub skipped: Vec<Option<EntityId>>,
 }
 
 /// What one cron pass did.
@@ -285,11 +287,15 @@ pub struct CleanupDigest {
 pub struct CleanupRunReport {
     pub attempt: AttemptId,
     pub posture: CleanupPosture,
-    pub candidates: Vec<CleanupCandidate>,
+    /// What the run found, in scan order; `None` is a candidate an erase
+    /// reached since the run recorded it (FIX 7517). A run just made holds
+    /// none.
+    pub candidates: Vec<Option<CleanupCandidate>>,
     /// The proposal this run opened, under [`CleanupPosture::ProposeFirst`].
     pub proposal: Option<EntityId>,
-    /// Ids archived by this run, under [`CleanupPosture::AutoWithDigest`].
-    pub archived: Vec<EntityId>,
+    /// Ids archived by this run, under [`CleanupPosture::AutoWithDigest`];
+    /// `None` as in `candidates`.
+    pub archived: Vec<Option<EntityId>>,
     /// The one digest this run recorded, if it archived anything.
     pub digest: Option<EntityId>,
 }
@@ -300,7 +306,16 @@ pub struct CleanupAcceptOutcome {
     pub proposal: EntityId,
     pub archived: Vec<EntityId>,
     pub skipped: Vec<EntityId>,
+    /// How many of the proposal's candidates an erase reached before the
+    /// accept: they name no one, and nothing was looked up or archived for
+    /// them (FIX 7517).
+    pub erased: usize,
     pub digest: EntityId,
+}
+
+/// `items` as slots, each live.
+pub(super) fn live_slots<T>(items: Vec<T>) -> Vec<Option<T>> {
+    items.into_iter().map(Some).collect()
 }
 
 /// An archived row, flagged as archived.

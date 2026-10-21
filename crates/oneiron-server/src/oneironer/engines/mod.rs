@@ -14,28 +14,42 @@
 //! No bar and no speed sits in this file. The bar and the reference cases
 //! ship in the bundle's `parity.json`; the measured speeds are rows in this
 //! machine's engine file, and a row is measured again when the stack, the
-//! reference, the runtime, its artifact, the server build, the OS build or
-//! the calibration idle moves. A bundle with no reference holds no engine to
-//! a bar, so the built-in one serves.
+//! reference, the runtime, its artifact, the server build, the OS build, the
+//! calibration idle, the window rules or the timing cohort move. A row holds
+//! an engine to the reference cases whose live window fits its max window; a
+//! longer case is skipped, the only skip. A bundle with no reference holds no
+//! engine to a bar, so the built-in one serves.
+//!
+//! These engines are the Candle baseline (FIX 6755, Engine call 4): the
+//! default `runtime = "auto"` and an explicit `candle` both load, survey and
+//! qualify on Candle here, and neither is recorded as anything else. Each
+//! Candle engine's window is the configured `max_input_tokens`, and its row
+//! is timed on every case it holds.
+//!
+//! A platform runtime is admitted beside the baseline after the slot is
+//! built, in the background ([`admission`], FIX 6755 slices 3 and 2c): on a
+//! Mac, the bundle's managed MLX worker and its native Core ML worker, each
+//! once its installation verifies ([`candidate`]) and its answers clear the
+//! reference here.
 
 use std::path::Path;
 
-use serde::Deserialize;
-
+use super::bundle::read_manifest;
+use super::dispatcher::WorkerDescriptor;
 use super::local::LocalTagger;
 use crate::config::oneironer::OneironerRuntime;
 use crate::config::{EmbedderDevice, OneironerConfig};
 
+mod admission;
 mod calibration;
+mod candidate;
 mod rows;
 
 use calibration::{Reference, Timing, measure, prefers};
-use rows::{RowKey, build_id, os_build, read_rows, rows_path, sha16, write_rows};
+use rows::{RowKey, WindowRules, build_id, os_build, read_rows, rows_path, write_rows};
 
+pub(crate) use admission::Admission;
 pub(crate) use rows::Row;
-
-/// The bundle file the local tagger loads; its SHA-256 prefix is the stack.
-const MANIFEST_FILE: &str = "oneironer.json";
 
 /// One runtime on one device.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,7 +58,8 @@ pub(crate) struct Engine {
     pub(crate) device: EmbedderDevice,
 }
 
-/// Every engine this build carries, the built-in one first.
+/// Every engine this build carries, the built-in one first: the Candle
+/// baseline's.
 pub(crate) const ENGINES: &[Engine] = &[
     Engine {
         runtime: OneironerRuntime::Candle,
@@ -111,40 +126,16 @@ pub(crate) struct BundleIdentity {
     pub(crate) label_count: u32,
 }
 
-/// The two manifest fields the identity needs. The local tagger reads the
-/// manifest whole, strictly, when it loads.
-#[derive(Deserialize)]
-struct ManifestIdentity {
-    trunk: TrunkIdentity,
-    ner_labels: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct TrunkIdentity {
-    sha256: String,
-}
-
+/// Reads the identity through the strict reader every runtime loads by, so
+/// a bundle of another format is the same typed refusal here
+/// ([`super::bundle::BundleFormat`]).
 pub(crate) fn bundle_identity(dir: &Path) -> anyhow::Result<BundleIdentity> {
-    let bytes = std::fs::read(dir.join(MANIFEST_FILE)).map_err(|error| {
-        anyhow::anyhow!(
-            "oneironer model_dir {} holds no readable {MANIFEST_FILE}: {error}",
-            dir.display()
-        )
-    })?;
-    let manifest: ManifestIdentity = serde_json::from_slice(&bytes)
-        .map_err(|_| anyhow::anyhow!("oneironer {MANIFEST_FILE} is not a bundle manifest"))?;
-    let trunk = manifest.trunk.sha256;
-    anyhow::ensure!(
-        trunk.len() == 64
-            && trunk
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-        "oneironer {MANIFEST_FILE} trunk sha256 is not 64 lowercase hex digits"
-    );
+    let read = read_manifest(dir)?;
     Ok(BundleIdentity {
-        checkpoint_sha16: trunk[..16].to_owned(),
-        stack_sha16: sha16(&bytes),
-        label_count: u32::try_from(manifest.ner_labels.len())?,
+        // 64 lowercase hex digits: the parse checked them.
+        checkpoint_sha16: read.manifest.trunk.sha256[..16].to_owned(),
+        stack_sha16: read.stack_sha16,
+        label_count: u32::try_from(read.manifest.ner_labels.len())?,
     })
 }
 
@@ -170,10 +161,12 @@ impl Pick {
     }
 }
 
-/// What this machine knows about the slot's engines for one bundle.
+/// What this machine knows about the slot's Candle baseline for one bundle:
+/// the baseline survey. A platform runtime is measured on its own, never
+/// here.
 pub(crate) struct Survey {
-    /// Every engine this machine runs for the runtime, with its row when the
-    /// bundle ships a reference.
+    /// Every Candle engine this machine runs, with its row when the bundle
+    /// ships a reference.
     pub(crate) engines: Vec<(Engine, Option<Row>)>,
     /// The engine `auto` serves; `None` when the bundle ships a reference
     /// and no engine here clears it.
@@ -183,9 +176,9 @@ pub(crate) struct Survey {
     loaded: Option<LocalTagger>,
 }
 
-/// Measures the engines this machine runs for the section's bundle, reading
-/// each row from this machine's file when one is there for its key
-/// ([`RowKey`]).
+/// The baseline survey: measures the Candle engines this machine runs for
+/// the section's bundle, whichever runtime setting it names, reading each
+/// row from this machine's file when one is there for its key ([`RowKey`]).
 ///
 /// The default is the preferred clearing engine: the scan starts from the
 /// first clearing one, the built-in engine when it clears, and a later one
@@ -208,18 +201,14 @@ pub(crate) fn survey(
         .ok_or_else(|| anyhow::anyhow!("local oneironer requires oneironer.model_dir"))?;
     let identity = bundle_identity(dir)?;
     let stack = identity.stack_sha16.as_str();
-    let here = engines_here(config.runtime);
+    // `auto` and `candle` both survey the Candle baseline.
+    let here = engines_here(OneironerRuntime::Candle);
     let Some(reference) = Reference::read(dir, stack)? else {
         let default = here
             .iter()
             .copied()
             .find(|engine| engine.built_in())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "oneironer runtime {} has no built-in engine",
-                    config.runtime.as_str()
-                )
-            })?;
+            .ok_or_else(|| anyhow::anyhow!("oneironer runtime candle has no built-in engine"))?;
         return Ok(Survey {
             engines: here.into_iter().map(|engine| (engine, None)).collect(),
             default: Some(default),
@@ -230,17 +219,33 @@ pub(crate) fn survey(
     let path = rows_path(rows_location);
     let mut rows = path.as_deref().map(read_rows).unwrap_or_default();
     let (build, os_build) = (build_id(), os_build());
+    let window = WindowRules {
+        max_input_tokens: config.max_input_tokens,
+        live_window_tokens: config.live_window_tokens,
+    };
     let mut engines = Vec::with_capacity(here.len());
     let mut preferred: Option<(Engine, Timing)> = None;
     let mut loaded: Option<LocalTagger> = None;
     let mut measured = false;
     for engine in here {
-        let key = RowKey::new(stack, &reference.sha16, engine, &build, &os_build);
+        // Candle holds a case to the window it is configured to build, and
+        // times every case it holds: its full-window row.
+        let candidate = WorkerDescriptor::candle(engine, stack, config.max_input_tokens);
+        let cohort = candidate.max_window_tokens();
+        let key = RowKey::new(
+            stack,
+            &reference.sha16,
+            &candidate,
+            build,
+            &os_build,
+            window,
+            cohort,
+        );
         let kept = rows.iter().find(|row| row.is_for(&key)).cloned();
         let (row, tagger) = match kept {
             Some(row) => (row, None),
             None => {
-                let run = measure(config, engine, &key, &reference);
+                let run = measure(config, engine, &candidate, &key, &reference);
                 tracing::info!(
                     engine = %run.row.engine,
                     clears = run.row.clears,
@@ -250,7 +255,8 @@ pub(crate) fn survey(
                     kept = run.keep,
                     "oneironer engine measured"
                 );
-                if run.keep {
+                // A build nothing tells apart keeps no row across starts.
+                if run.keep && key.reusable() {
                     measured = true;
                     rows.retain(|old| !old.is_for(&key));
                     rows.push(run.row.clone());
@@ -293,8 +299,9 @@ pub(crate) fn load(
     rows_location: Option<&Path>,
 ) -> anyhow::Result<(LocalTagger, Serving)> {
     if config.device != EmbedderDevice::Auto {
+        // A named device pins the Candle baseline, under `auto` too.
         let engine = Engine {
-            runtime: config.runtime,
+            runtime: OneironerRuntime::Candle,
             device: config.device,
         };
         // A named engine this machine cannot run is a refusal rather than a
@@ -305,7 +312,7 @@ pub(crate) fn load(
             "oneironer engine {} does not run on this machine",
             engine.id()
         );
-        let tagger = LocalTagger::load(config)?;
+        let tagger = LocalTagger::load(&engine.configured(config))?;
         return Ok((
             tagger,
             Serving {

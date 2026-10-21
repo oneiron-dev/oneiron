@@ -3016,6 +3016,36 @@ export_facade! {
     let output = client.vault_code_export(&input)?;
     crate::codec::lift_record("vault.code.export", &output)
 };
+"vault.code.import" => fn vault_code_import(&self, input: CodeRepoImportRequest) -> CodeRepoImportView = |client| {
+    let input: oneiron::memory::origin_doors::CodeRepoImportRequest = crate::codec::lower_record("vault.code.import", input)?;
+    let output = client.vault_code_import(&input)?;
+    crate::codec::lift_record("vault.code.import", &output)
+};
+"vault.code.repos.get" => fn vault_code_repos_get(&self, input: CodeRepoGetRequest) -> Option<CodeRepoView> = |client| {
+    let input: oneiron::memory::origin_doors::CodeRepoGetRequest = crate::codec::lower_record("vault.code.repos.get", input)?;
+    let output = client.vault_code_repos_get(&input)?;
+    crate::codec::lift_record("vault.code.repos.get", &output)
+};
+"vault.code.forks.get" => fn vault_code_forks_get(&self, input: CodeForkGetRequest) -> Option<CodeForkView> = |client| {
+    let input: oneiron::memory::origin_doors::CodeForkGetRequest = crate::codec::lower_record("vault.code.forks.get", input)?;
+    let output = client.vault_code_forks_get(&input)?;
+    crate::codec::lift_record("vault.code.forks.get", &output)
+};
+"vault.code.imports.create" => fn vault_code_imports_create(&self, input: ExternalImportRequest) -> ExternalImportReceipt = |client| {
+    let input: oneiron::memory::origin_doors::ExternalImportRequest = crate::codec::lower_record("vault.code.imports.create", input)?;
+    let output = client.vault_code_imports_create(&input)?;
+    crate::codec::lift_record("vault.code.imports.create", &output)
+};
+"vault.code.imports.get" => fn vault_code_imports_get(&self, input: ExternalImportLookup) -> Option<ExternalImportStatus> = |client| {
+    let input: oneiron::memory::origin_doors::ExternalImportLookup = crate::codec::lower_record("vault.code.imports.get", input)?;
+    let output = client.vault_code_imports_get(&input)?;
+    crate::codec::lift_record("vault.code.imports.get", &output)
+};
+"vault.code.ingress.get" => fn vault_code_ingress_get(&self, input: CodePushIngressGetRequest) -> Option<CodePushIngressView> = |client| {
+    let input: oneiron::memory::origin_doors::CodePushIngressGetRequest = crate::codec::lower_record("vault.code.ingress.get", input)?;
+    let output = client.vault_code_ingress_get(&input)?;
+    crate::codec::lift_record("vault.code.ingress.get", &output)
+};
 "vault.code.origin.register" => fn vault_code_origin_register(&self, input: OriginRegisterRequest) -> OriginRegistered = |client| {
     let input: oneiron::memory::origin_doors::OriginRegisterRequest = crate::codec::lower_record("vault.code.origin.register", input)?;
     let output = client.vault_code_origin_register(&input)?;
@@ -3225,6 +3255,36 @@ export_facade! {
     let input: oneiron::memory::merge_queue_doors::MergeQueueRepoRequest = crate::codec::lower_record("vault.code.merge_queue.recover", input)?;
     let output = client.vault_code_merge_queue_recover(&input)?;
     crate::codec::lift_record("vault.code.merge_queue.recover", &output)
+};
+"vault.code.merge_queue.init" => fn vault_code_merge_queue_init(&self, input: MergeQueueInitializeRequest) -> MergeQueueCheckWorkView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueInitializeRequest = crate::codec::lower_record("vault.code.merge_queue.init", input)?;
+    let output = client.vault_code_merge_queue_init(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.init", &output)
+};
+"vault.code.merge_queue.check" => fn vault_code_merge_queue_check(&self, input: MergeQueueCheckRequest) -> MergeQueueCheckWorkView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueCheckRequest = crate::codec::lower_record("vault.code.merge_queue.check", input)?;
+    let output = client.vault_code_merge_queue_check(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.check", &output)
+};
+"vault.code.merge_queue.diagnose" => fn vault_code_merge_queue_diagnose(&self, input: MergeQueueDiagnoseRequest) -> MergeQueueCheckWorkView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueDiagnoseRequest = crate::codec::lower_record("vault.code.merge_queue.diagnose", input)?;
+    let output = client.vault_code_merge_queue_diagnose(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.diagnose", &output)
+};
+"vault.code.merge_queue.check_status" => fn vault_code_merge_queue_check_status(&self, input: MergeQueueCheckStatusRequest) -> MergeQueueCheckWorkView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueCheckStatusRequest = crate::codec::lower_record("vault.code.merge_queue.check_status", input)?;
+    let output = client.vault_code_merge_queue_check_status(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.check_status", &output)
+};
+"vault.code.checks.get" => fn vault_code_checks_get(&self, input: CodeCheckReceiptRequest) -> Option<CodeCheckReceiptView> = |client| {
+    let input: oneiron::memory::merge_queue_doors::CodeCheckReceiptRequest = crate::codec::lower_record("vault.code.checks.get", input)?;
+    let output = client.vault_code_checks_get(&input)?;
+    crate::codec::lift_record("vault.code.checks.get", &output)
+};
+"vault.code.merge_queue.export_green" => fn vault_code_merge_queue_export_green(&self, input: MergeQueueGreenExportRequest) -> CodeExportResult = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueGreenExportRequest = crate::codec::lower_record("vault.code.merge_queue.export_green", input)?;
+    let output = client.vault_code_merge_queue_export_green(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.export_green", &output)
 };
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;
@@ -3815,6 +3875,16 @@ export_facade! {
     let input: oneiron::workspace_roster::RoomHostHand = crate::codec::lower_record("vault.rooms.host.hand", input)?;
     let output = client.vault_rooms_host_hand(&input)?;
     crate::codec::lift_record("vault.rooms.host.hand", &output)
+};
+"vault.rooms.upkeep.pending" => fn vault_rooms_upkeep_pending(&self, input: RoomUpkeepPendingRequest) -> Vec<RoomUpkeepNudge> = |client| {
+    let input: oneiron::workspace_roster::RoomUpkeepPendingRequest = crate::codec::lower_record("vault.rooms.upkeep.pending", input)?;
+    let output = client.vault_rooms_upkeep_pending(&input)?;
+    crate::codec::lift_record("vault.rooms.upkeep.pending", &output)
+};
+"vault.rooms.upkeep.voice" => fn vault_rooms_upkeep_voice(&self, input: RoomUpkeepVoiceRequest) -> RoomUpkeepVoiceReceipt = |client| {
+    let input: oneiron::workspace_roster::RoomUpkeepVoiceRequest = crate::codec::lower_record("vault.rooms.upkeep.voice", input)?;
+    let output = client.vault_rooms_upkeep_voice(&input)?;
+    crate::codec::lift_record("vault.rooms.upkeep.voice", &output)
 };
 "vault.rooms.sharing" => fn vault_rooms_sharing(&self, input: RoomRefRequest) -> RoomSharingView = |client| {
     let input: oneiron::task_verb::sdk::RoomRefRequest = crate::codec::lower_record("vault.rooms.sharing", input)?;

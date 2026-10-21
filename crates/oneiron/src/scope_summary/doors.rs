@@ -80,7 +80,7 @@ fn validate_covers_in_txn(
         }
     }
     let Some(scope) = &body.scope else {
-        return validate_note_covers_in_txn(vault, txn, summary, &body.covers);
+        return validate_note_covers_in_txn(vault, txn, summary, body);
     };
     if let ScopePath::BranchSpan { after, through } = scope.path {
         // The span's records, of which the body covers those it was written
@@ -143,27 +143,46 @@ fn validate_covers_in_txn(
 }
 
 /// A NOTE set's summary (FIX 5757) covers NOTEs its saved declaration named,
-/// each still live. No conversation, session or path holds them.
+/// each still live, and names no MESSAGE: NOTEs carry none. No conversation,
+/// session or path holds them. A sitting's summary (FIX 7509), the other
+/// summary in no conversation, is checked against its sitting instead.
 fn validate_note_covers_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     summary: &EntityId,
-    covers: &[EntityId],
+    body: &ScopeSummaryBody,
 ) -> Result<()> {
     let declared = crate::entity_doc::summary_meta_in_txn(vault, txn, summary)
         .and_then(|meta| super::derivation::decode(&meta.derivation.request))
-        .and_then(|input| super::request::decode_request(&input))
+        .and_then(|input| match super::request::decode_target(&input)? {
+            // A sitting's declaration names no requester (FIX 7509).
+            target @ super::ScopeSummaryTarget::Session { .. } => Ok(target),
+            _ => super::request::decode_request(vault, txn, &input).map(|request| request.target),
+        })
         .map_err(|_| invalid("NOTE summary has no saved declaration"))?;
-    let super::ScopeSummaryTarget::Sources {
-        scope: None,
-        sources,
-    } = declared.target
-    else {
-        return Err(invalid(
-            "summary in no conversation was not declared over NOTEs",
-        ));
+    let sources = match declared {
+        super::ScopeSummaryTarget::Session { session } => {
+            return super::session::validate_session_covers_in_txn(
+                vault,
+                txn,
+                &session,
+                &body.covers,
+            );
+        }
+        super::ScopeSummaryTarget::Sources {
+            scope: None,
+            sources,
+        } => sources,
+        _ => {
+            return Err(invalid(
+                "summary in no conversation was not declared over NOTEs",
+            ));
+        }
     };
-    for covered in covers {
+    if !body.messages.is_empty() {
+        return Err(invalid("a NOTE set's summary is composed from its NOTEs"));
+    }
+    for covered in &body.covers {
         if !sources.contains(covered)
             || crate::vault::live_entity_row_in_txn(&vault.store, txn, covered)?.live_type()
                 != Some(ENTITY_TYPE_NOTE)
@@ -302,11 +321,7 @@ pub(super) fn note_sources_in_txn(
     let read = requester_read_in(vault, txn, requester)?;
     let rows = read.get_entities_parts_in_txn(txn, &notes)?;
     for (note, row) in notes.iter().zip(rows) {
-        if row.is_none()
-            || crate::vault::live_entity_row_in_txn(&vault.store, txn, note)?.live_type()
-                != Some(ENTITY_TYPE_NOTE)
-            || vault.archive_tombstone_in_txn(txn, note)?.is_some()
-        {
+        if !note_source_admitted(vault, txn, note, row.is_some())? {
             return Err(invalid("summary source is not a NOTE its requester reads"));
         }
     }
@@ -314,6 +329,46 @@ pub(super) fn note_sources_in_txn(
         members: notes.clone(),
         sources: notes,
     })
+}
+
+/// Whether a NOTE set's summary takes `note`, which its requester's read
+/// returned (`read`) or did not: a live NOTE that is not archived.
+fn note_source_admitted(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    note: &EntityId,
+    read: bool,
+) -> Result<bool> {
+    Ok(read
+        && crate::vault::live_entity_row_in_txn(&vault.store, txn, note)?.live_type()
+            == Some(ENTITY_TYPE_NOTE)
+        && vault.archive_tombstone_in_txn(txn, note)?.is_none())
+}
+
+impl Vault {
+    /// The NOTEs of `notes` a NOTE set's summary `requester` declares takes
+    /// now, in `notes`' order: each one `note_sources_in_txn` admits, read
+    /// on the requester's own read, never a wider one. A NOTE whose read
+    /// fails is not taken. The NOTE review's topic trigger (FIX 907)
+    /// declares only such a set.
+    pub(crate) fn note_summary_sources_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        requester: WriteActor,
+        notes: &[EntityId],
+    ) -> Result<Vec<EntityId>> {
+        let read = requester_read_in(self, txn, requester)?;
+        let mut admitted = Vec::with_capacity(notes.len());
+        for note in notes {
+            let returned = read
+                .get_entities_parts_in_txn(txn, std::slice::from_ref(note))
+                .is_ok_and(|rows| rows.first().is_some_and(Option::is_some));
+            if note_source_admitted(self, txn, note, returned)? {
+                admitted.push(*note);
+            }
+        }
+        Ok(admitted)
+    }
 }
 
 /// The requester's own read, built in `txn`: the vault owner's key for the

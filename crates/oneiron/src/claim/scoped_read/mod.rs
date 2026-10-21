@@ -24,6 +24,7 @@ mod context_pack_filter;
 mod diagnostic_reads;
 mod facet_gate;
 mod graph_reads;
+mod loop_decision_read;
 mod named_reads;
 mod note_visibility;
 mod pinned_reads;
@@ -75,6 +76,8 @@ pub use weave_trigger::WeaveDigestRendered;
 mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;
+mod agent_grants;
+mod owner_authority;
 pub use actor_key::{CallerLocality, ScopedReadActorKey};
 #[cfg(feature = "sync")]
 mod residence;
@@ -114,6 +117,11 @@ pub struct ScopedRead<'a> {
     /// thread under the CURRENT rule, whether it is in the thread now, never
     /// per turn (FIX 5545).
     room_peer: bool,
+    /// Set only on a question's own locally built reader
+    /// (`ScopedRead::with_own_owner_authority`, FIX 7461): a row its own
+    /// admission and its reader's own Grants refuse is judged again, whole,
+    /// under that reader's live owner authority.
+    own_owner_authority: bool,
 }
 
 mod admission;

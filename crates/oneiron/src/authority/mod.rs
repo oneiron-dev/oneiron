@@ -175,7 +175,9 @@ pub use oneiron_authority::authority::{
     verify_authority_signature,
 };
 // The custody work body's own types (WILL L04 row 04).
-pub use oneiron_authority::authority::{CustodyChange, CustodyRecipientPermit};
+pub use oneiron_authority::authority::{
+    CustodyChange, CustodyRecipientPermit, CustodyRequestAuthority,
+};
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
 // The heads a root request's revision is over, its witness (FIX 5551).
@@ -334,7 +336,10 @@ pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
-pub(crate) use principal_standing::principal_standing_in_txn;
+pub(crate) use principal_standing::{
+    NoStanding, PACT_STANDING_LAPSED, StandingHome, principal_standing_in,
+    principal_standing_in_txn, principal_standing_or_lapse_in_txn,
+};
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;

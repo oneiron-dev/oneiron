@@ -23,7 +23,10 @@ use crate::error::GateError;
 
 mod lineage;
 mod person_credential;
+mod queue_check;
 mod request_credential;
+
+pub(crate) use queue_check::QueuedCheckApproval;
 
 // ---------------------------------------------------------------------------
 // Owner authentication — invariant 2
@@ -368,13 +371,37 @@ pub(crate) fn person_is_live_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let human = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+    person_is_live_with(&vault.store, txn, id, || {
+        vault.entity_lifecycle_state_in_txn(txn, id)
+    })
+}
+
+/// [`person_is_live_in_txn`] for a reader that holds a `Store` and no `Vault`
+/// (FIX 7461): the same test, the lifecycle read through its store form.
+pub(crate) fn person_is_live_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    person_is_live_with(store, txn, id, || {
+        crate::identity_topology::entity_lifecycle_state_for_store_in_txn(store, txn, id)
+    })
+}
+
+/// The liveness test, `id`'s lifecycle read by `lifecycle` only once its row
+/// is a PERSON.
+fn person_is_live_with(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    lifecycle: impl FnOnce() -> Result<crate::identity_topology::EntityLifecycleState>,
+) -> Result<bool> {
+    let human = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
         .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON);
     Ok(human
-        && vault.entity_lifecycle_state_in_txn(txn, id)?
-            == crate::identity_topology::EntityLifecycleState::Active
-        && !crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, id)?.deleted)
+        && lifecycle()? == crate::identity_topology::EntityLifecycleState::Active
+        && !crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, id)?.deleted)
 }
 
 /// The pinned Gate `actor_class` for owner-authored consent decisions.

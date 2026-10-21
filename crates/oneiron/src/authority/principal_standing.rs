@@ -7,7 +7,8 @@
 //! principal is still live. A person stands while its PERSON row is live and
 //! active. An agent stands while its agent row is live (an enabled, active
 //! agent definition, or a base agent's MACHINE principal) AND one live Grant
-//! the owner gave it names it, confers now and lists the work's verb. Grants
+//! the owner gave it names it, confers now and lists the work's verb, and,
+//! on a shared vault, whose pact membership still stands (FIX 7511). Grants
 //! are never unioned and no other holder is picked. It mints nothing, and
 //! the work still crosses every gate it crosses for a caller.
 
@@ -15,8 +16,8 @@ use crate::Vault;
 use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::Result;
-use crate::federation::ScopeAxis;
+use crate::error::{Error, Result};
+use crate::federation::{AgentGrantStanding, ScopeAxis};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
@@ -30,12 +31,104 @@ pub(crate) struct PrincipalStanding {
     pub(crate) grant: Option<EntityId>,
 }
 
+/// Why a recorded principal does not stand, for a caller that refuses and
+/// names the reason (FIX 7511).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoStanding {
+    /// Every case [`principal_standing_in_txn`] answers `None` for but the
+    /// one below.
+    NotStanding,
+    /// On a shared vault, a Grant stood for the agent's verb by the Grant
+    /// rule ([`AgentGrantStanding::stands_for`]) but its authenticated pact
+    /// membership is gone, and no other Grant stands.
+    PactStandingLapsed,
+}
+
+/// The typed reason a refusing caller names for [`NoStanding::PactStandingLapsed`]
+/// (CALLS `FIX 7511 lapse refusal`, accepted by the Engine 10-21 21:2x); its
+/// code leads the text.
+pub(crate) const PACT_STANDING_LAPSED: &str = "pact_standing_lapsed: on this shared vault the \
+     agent's Grant for the verb stands only while its pact membership does, and that membership \
+     has lapsed";
+
+/// What the Grant rule does when the pact membership check itself fails with
+/// a store or decode error rather than a refusal (CALLS `FIX 7511 membership
+/// check error`, open).
+#[derive(Debug, Clone, Copy)]
+enum PactStandingCheckError {
+    /// The Grant stands as it did before the check, and a key-only warning
+    /// names the Grant and the error's kind.
+    PreserveCurrentPath,
+}
+
+const PACT_STANDING_CHECK_ERROR: PactStandingCheckError =
+    PactStandingCheckError::PreserveCurrentPath;
+
+/// Where the standing rule reads its snapshot (FIX 7461): through a vault
+/// handle, or through the `Store` a materializing batch holds and the
+/// posture its vault opened with. A PERSON's liveness, the clock and the
+/// owners census each keep the reader their home has; every other seam is
+/// read through the store alike.
+#[derive(Clone, Copy)]
+pub(crate) enum StandingHome<'a> {
+    Vault(&'a Vault),
+    Store(&'a crate::store::Store, crate::HostingPrivacyPosture),
+}
+
+impl<'a> StandingHome<'a> {
+    /// The store every row is read through.
+    pub(crate) fn store(self) -> &'a crate::store::Store {
+        match self {
+            Self::Vault(vault) => &vault.store,
+            Self::Store(store, _) => store,
+        }
+    }
+
+    /// The posture the vault opened with.
+    pub(crate) fn posture(self) -> crate::HostingPrivacyPosture {
+        match self {
+            Self::Vault(vault) => vault.privacy_posture(),
+            Self::Store(_, posture) => posture,
+        }
+    }
+
+    /// Whether `id` names a live PERSON (`consent::person_is_live_in_txn`).
+    pub(crate) fn person_is_live_in(self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        match self {
+            Self::Vault(vault) => crate::consent::person_is_live_in_txn(vault, txn, id),
+            Self::Store(store, _) => {
+                crate::consent::person_is_live_for_store_in_txn(store, txn, id)
+            }
+        }
+    }
+
+    /// The vault's authoritative instant in unix seconds
+    /// (`Vault::instant_in_txn`).
+    pub(crate) fn instant_secs_in(self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        match self {
+            Self::Vault(vault) => Ok(vault.instant_in_txn(txn)?.secs()),
+            Self::Store(store, _) => super::authority_instant_secs_for_store_in_txn(store, txn),
+        }
+    }
+
+    /// The vault's live owners (`policy_model::owners_in_txn`).
+    pub(crate) fn owners_in(self, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+        match self {
+            Self::Vault(vault) => crate::policy_model::owners_in_txn(vault, txn),
+            Self::Store(store, posture) => {
+                crate::policy_model::owners_for_store_in_txn(store, posture, txn)
+            }
+        }
+    }
+}
+
 /// Whether `principal`, of `class`, still stands in `txn` for work under
 /// `verb`.
 ///
 /// `Ok(None)`: the principal is dead, retired, erased, switched off or of
 /// another class, or, for an agent, no single live Grant names it, confers
-/// now (unexpired, given by a live owner) and lists `verb`.
+/// now (unexpired, given by a live owner), lists `verb` and, on a shared
+/// vault, keeps its pact membership.
 /// # Errors
 /// A store, fold or clock failure, or an agent definition that does not
 /// decode; never "no principal".
@@ -46,24 +139,64 @@ pub(crate) fn principal_standing_in_txn(
     class: EdgeActorClass,
     verb: &str,
 ) -> Result<Option<PrincipalStanding>> {
+    principal_standing_in(StandingHome::Vault(vault), txn, principal, class, verb)
+}
+
+/// [`principal_standing_in_txn`], its snapshot read through `home`.
+/// # Errors
+/// As [`principal_standing_in_txn`].
+pub(crate) fn principal_standing_in(
+    home: StandingHome<'_>,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+) -> Result<Option<PrincipalStanding>> {
+    Ok(principal_standing_or_lapse_in(home, txn, principal, class, verb)?.ok())
+}
+
+/// [`principal_standing_in_txn`], naming why the principal does not stand:
+/// [`NoStanding::PactStandingLapsed`] where a shared vault's pact lapse
+/// alone took the agent's Grant, [`NoStanding::NotStanding`] for every
+/// other `None`.
+/// # Errors
+/// As [`principal_standing_in_txn`].
+pub(crate) fn principal_standing_or_lapse_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+) -> Result<std::result::Result<PrincipalStanding, NoStanding>> {
+    principal_standing_or_lapse_in(StandingHome::Vault(vault), txn, principal, class, verb)
+}
+
+/// [`principal_standing_or_lapse_in_txn`], its snapshot read through `home`.
+fn principal_standing_or_lapse_in(
+    home: StandingHome<'_>,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+) -> Result<std::result::Result<PrincipalStanding, NoStanding>> {
     let grant = match class {
         EdgeActorClass::Human => {
-            if !crate::consent::person_is_live_in_txn(vault, txn, &principal)? {
-                return Ok(None);
+            if !home.person_is_live_in(txn, &principal)? {
+                return Ok(Err(NoStanding::NotStanding));
             }
             None
         }
         EdgeActorClass::Agent | EdgeActorClass::System => {
-            if !live_agent_principal_in_txn(vault, txn, principal, class)? {
-                return Ok(None);
+            if !live_agent_principal_in(home.store(), txn, principal, class)? {
+                return Ok(Err(NoStanding::NotStanding));
             }
-            let Some(grant) = agent_grant_listing_in_txn(vault, txn, principal, verb)? else {
-                return Ok(None);
-            };
-            Some(grant)
+            match agent_grant_listing_in(home, txn, principal, verb)? {
+                Ok(grant) => Some(grant),
+                Err(no_standing) => return Ok(Err(no_standing)),
+            }
         }
     };
-    Ok(Some(PrincipalStanding {
+    Ok(Ok(PrincipalStanding {
         principal,
         class,
         grant,
@@ -72,14 +205,16 @@ pub(crate) fn principal_standing_in_txn(
 
 /// Whether `agent` is a live agent principal acting as `class`: an enabled,
 /// active agent definition the archive has not taken, acting as an agent, or
-/// a base agent's MACHINE principal, which acts as the system class.
-fn live_agent_principal_in_txn(
-    vault: &Vault,
+/// a base agent's MACHINE principal, which acts as the system class. The
+/// cleanup-archive marker is read as every module outside deletion reads it.
+fn live_agent_principal_in(
+    store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
     class: EdgeActorClass,
 ) -> Result<bool> {
-    match (class, live_entity_row_in_txn(&vault.store, txn, &agent)?) {
+    use crate::ports::{DeletionMarker, TombstoneStoreRead};
+    match (class, live_entity_row_in_txn(store, txn, &agent)?) {
         (
             EdgeActorClass::Agent,
             LiveEntityRow::Live {
@@ -87,7 +222,7 @@ fn live_agent_principal_in_txn(
                 body,
             },
         ) => {
-            if vault.archive_tombstone_in_txn(txn, &agent)?.is_some() {
+            if store.port_deletion_marked(txn, DeletionMarker::Archive, &agent)? {
                 return Ok(false);
             }
             let definition = crate::agent_def::decode_agent_definition(&body)?;
@@ -105,27 +240,131 @@ fn live_agent_principal_in_txn(
 }
 
 /// The first live owner-agent Grant, in id order, that alone names `agent`,
-/// confers now, was given by a live owner of this vault and lists `verb` in
-/// its explicit verb set.
-fn agent_grant_listing_in_txn(
-    vault: &Vault,
+/// confers now, was given by a live owner of this vault, lists `verb` in its
+/// explicit verb set and, on a shared vault, keeps its pact membership
+/// ([`AgentGrantStanding::stands_in_txn`]). With none, the lapse when a
+/// Grant failed on its pact membership alone.
+fn agent_grant_listing_in(
+    home: StandingHome<'_>,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
     verb: &str,
-) -> Result<Option<EntityId>> {
-    let now = vault.instant_in_txn(txn)?.secs();
-    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
-    Ok(vault
-        .agent_grants_in_txn(txn)?
-        .into_iter()
-        .find(|standing| {
-            standing.grant.member_ref == agent
-                && standing.grant.confers_at(now)
-                && owners.contains(&standing.delegated_by)
-                && matches!(
-                    &standing.grant.authority_scope.verbs,
-                    ScopeAxis::Some(verbs) if verbs.contains(verb)
-                )
-        })
-        .map(|standing| standing.id))
+) -> Result<std::result::Result<EntityId, NoStanding>> {
+    let now = home.instant_secs_in(txn)?;
+    let owners = home.owners_in(txn)?;
+    let mut lapsed = false;
+    for standing in crate::federation::agent_grants_for_store_in_txn(home.store(), txn)? {
+        if !standing.stands_for(agent, verb, now, &owners) {
+            continue;
+        }
+        if standing.pact_standing_lapsed_for_store_in_txn(home.store(), home.posture(), txn) {
+            lapsed = true;
+            continue;
+        }
+        return Ok(Ok(standing.id));
+    }
+    Ok(Err(if lapsed {
+        NoStanding::PactStandingLapsed
+    } else {
+        NoStanding::NotStanding
+    }))
+}
+
+/// [`PACT_STANDING_CHECK_ERROR`] for a check of `grant` that failed with
+/// `error`: never a lapse. The warning carries the Grant id and the error's
+/// kind only.
+fn lapse_on_check_error(grant: EntityId, error: &Error) -> bool {
+    match PACT_STANDING_CHECK_ERROR {
+        PactStandingCheckError::PreserveCurrentPath => {
+            tracing::warn!(
+                grant = %grant.to_hex(),
+                error_kind = ?error.kind(),
+                policy = ?PACT_STANDING_CHECK_ERROR,
+                "an agent Grant's pact standing could not be read; the Grant stands as it did \
+                 (FIX 7511)"
+            );
+            false
+        }
+    }
+}
+
+impl AgentGrantStanding {
+    /// [`Self::stands_for`], and on a shared vault this Grant's own pact
+    /// membership too (FIX 7511): the whole rule [`principal_standing_in_txn`]
+    /// picks its Grant by, for a reader that takes every Grant it holds
+    /// (FIX 7462). A personal vault reads as [`Self::stands_for`] alone.
+    pub(crate) fn stands_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        verb: &str,
+        now: u64,
+        owners: &[EntityId],
+    ) -> bool {
+        self.stands_for(agent, verb, now, owners) && !self.pact_standing_lapsed_in_txn(vault, txn)
+    }
+
+    /// Whether this Grant's pact standing has lapsed (FIX 7511, Engine 10-21
+    /// 21:2x): on a shared vault, the shipped membership gate for this one
+    /// Grant (`Vault::authenticated_grant_membership_in_txn`: vault not
+    /// deleted, root not conflicted, the Grant live, unexpired and not
+    /// inactive under its pact) no longer admits it, its refusal
+    /// (`Error::Claim`) among them, as federation/repo_access.rs reads it. A
+    /// personal vault has no pact standing to lapse. A store or decode
+    /// failure of the check is no lapse ([`PACT_STANDING_CHECK_ERROR`]). The
+    /// pact half of [`Self::stands_in_txn`], for a reader that picks its
+    /// Grants by its own rule.
+    pub(crate) fn pact_standing_lapsed_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> bool {
+        self.pact_standing_lapsed_for_store_in_txn(&vault.store, vault.privacy_posture(), txn)
+    }
+
+    /// [`Self::pact_standing_lapsed_in_txn`] through a `Store` and the
+    /// posture its vault opened with (FIX 7461): the same check, which reads
+    /// nothing else of a vault.
+    pub(crate) fn pact_standing_lapsed_for_store_in_txn(
+        &self,
+        store: &crate::store::Store,
+        posture: crate::HostingPrivacyPosture,
+        txn: &heed::RoTxn<'_>,
+    ) -> bool {
+        match crate::federation::shared_vault_creation_for_store_in_txn(store, txn) {
+            Ok(Some(_)) => {}
+            Ok(None) => return false,
+            Err(error) => return lapse_on_check_error(self.id, &error),
+        }
+        match crate::federation::authenticated_grant_membership_for_store_in_txn(
+            store,
+            posture,
+            txn,
+            self.grant.scope,
+            self.grant.member_ref,
+            self.id,
+        ) {
+            Ok(Some(_)) => false,
+            Ok(None) | Err(Error::Claim(_)) => true,
+            Err(error) => lapse_on_check_error(self.id, &error),
+        }
+    }
+
+    /// Whether this Grant alone stands for `agent`'s work under `verb` at
+    /// `now`: it names `agent`, confers now, was given by one of `owners`
+    /// (this vault's live owners) and lists `verb` in its explicit verb set.
+    /// The rule's half that reads no snapshot; [`Self::stands_in_txn`] adds
+    /// the shared vault's pact membership.
+    pub(crate) fn stands_for(
+        &self,
+        agent: EntityId,
+        verb: &str,
+        now: u64,
+        owners: &[EntityId],
+    ) -> bool {
+        self.grant.member_ref == agent
+            && self.grant.confers_at(now)
+            && owners.contains(&self.delegated_by)
+            && matches!(
+                &self.grant.authority_scope.verbs,
+                ScopeAxis::Some(verbs) if verbs.contains(verb)
+            )
+    }
 }

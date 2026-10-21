@@ -32,6 +32,8 @@ const ROOM_TURN_VERBS: &[&str] = &[
     "vault.rooms.offer",
     "vault.rooms.host",
     "vault.rooms.host.hand",
+    "vault.rooms.upkeep.pending",
+    "vault.rooms.upkeep.voice",
     "vault.rooms.sharing",
     "vault.rooms.participants",
 ];
@@ -242,6 +244,7 @@ impl<'v> Memory<'v> {
                 credential_door: self.credential_door.clone(),
                 rewrite_admit: self.rewrite_admit.clone(),
                 task_work_turn: self.task_work_turn.clone(),
+                external_git_source_host: None,
             },
         })
     }

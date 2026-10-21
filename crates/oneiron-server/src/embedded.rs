@@ -166,6 +166,9 @@ async fn serve_prepared<A: AppHost>(
         &config,
         gpu_poller,
         crate::server::admit_every_pass,
+        // The app never waits on a tagging call to stop: tagging is aborted
+        // with the other workers, and tags again at the next start.
+        false,
     )
     .await?;
     let next_wake = started.workers.ai().next_wake();

@@ -178,6 +178,8 @@ pub(crate) use super::checkout_doors::*;
 pub(crate) use super::origin_doors::*;
 // The exact publish doors (FIX 6866): the owner, or one Grant's holder.
 pub(crate) use super::origin_publish_doors::*;
+// The outside import doors (FIX 6871): the owner, or the push's standing.
+pub(crate) use super::code_import_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::code_view_doors::*;
 pub(crate) use super::codebase_doors::*;
@@ -237,6 +239,8 @@ pub(crate) use super::hook_regen_doors::*;
 pub(crate) use super::host_trigger_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
+// The owner's merge queue checker doors (FIX 6868), likewise.
+pub(crate) use super::merge_queue_checker_doors::*;
 // The owner's root-request cancel door (FIX 5586), likewise.
 pub(crate) use super::root_request_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1739,6 +1743,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.waits.resolve"
         | "vault.code.waits.receipt"
         | "vault.code.export"
+        | "vault.code.import"
+        | "vault.code.repos.get"
+        | "vault.code.forks.get"
+        | "vault.code.ingress.get"
         | "vault.code.origin.register"
         | "vault.code.origin.mirror.get"
         | "vault.code.origin.mirror.set"
@@ -1781,6 +1789,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.merge_queue.land_reviewed"
         | "vault.code.merge_queue.settle_slow"
         | "vault.code.merge_queue.recover"
+        | "vault.code.merge_queue.init"
+        | "vault.code.merge_queue.check"
+        | "vault.code.merge_queue.diagnose"
+        | "vault.code.merge_queue.check_status"
+        | "vault.code.checks.get"
+        | "vault.code.merge_queue.export_green"
         | "vault.trusted_contacts.name"
         | "vault.trusted_contacts.dial.set"
         | "vault.trusted_contacts.tier.set"
@@ -1854,6 +1868,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.publish.execute"
         | "vault.code.origin.publish.cancel" => {
             super::origin_publish_doors::publish_admits(server, auth, verb)
+        }
+        // The outside import rows (FIX 6871): a bound principal; the engine
+        // door admits the owner or the push's own standing.
+        "vault.code.imports.create" | "vault.code.imports.get" => {
+            super::code_import_doors::imports_admit(server, auth, verb)
         }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.

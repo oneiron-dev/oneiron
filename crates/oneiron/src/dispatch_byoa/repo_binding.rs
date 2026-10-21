@@ -3,12 +3,13 @@
 //!
 //! - **Dispatch** pins, in the dispatch writer and before the payload is
 //!   encoded, the stored checkout the connector names: its id, epoch and
-//!   holder, its repo with the pin, and its TASK ([`ByoaRepoBinding`]). The
-//!   lease must be live at the vault's time, and for the TASK the dispatch
-//!   names. The same writer reserves that epoch for the attempt the queue
-//!   returns, so two live tries never share one writable checkout epoch,
-//!   the same agent's included. A dedupe hit compares the stored binding
-//!   and never rebinds it.
+//!   holder, its repo with the pin, and its TASK ([`ByoaRepoBinding`]), when
+//!   the lease is live at the vault's time and for the TASK the dispatch
+//!   names; otherwise the attempt enqueues unbound and execute's unbound
+//!   check judges it (FIX 7197). The same writer reserves a pinned epoch
+//!   for the attempt the queue returns, so two live tries never share one
+//!   writable checkout epoch, the same agent's included. A dedupe hit
+//!   compares the stored binding and never rebinds it.
 //! - **Execute** checks, in a short writer before staging or spawning,
 //!   the acquired attempt, the stored binding, the TASK's standing and the
 //!   lease at the vault's time, and saves the generation that runs. No
@@ -38,7 +39,7 @@ use super::dispatcher::ByoaExecutionFence;
 use super::error::{ByoaResult, ERR_EXECUTION_CHECKOUT, invalid};
 use super::exhaust::{ByoaExhaustEnvelope, ByoaTerminalDisposition, decode_byoa_record};
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState, EnqueueOutcome};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, EnqueueOutcome};
 use crate::checkout::lease::attempt_binding::{
     CHECKOUT_BINDING_SHARED, attempt_holds_in_txn, reserve_attempt_in_txn, start_attempt_in_txn,
 };
@@ -106,11 +107,14 @@ fn checkout_error(error: CheckoutError) -> super::error::ByoaError {
 
 /// Pins the stored checkout a CLI `connector` names, in the dispatch writer
 /// `txn`, for the TASK `task_ref` names when it names one. `None` for an
-/// endpoint or MCP connector.
+/// endpoint or MCP connector, and for a checkout that is missing, not live
+/// at the vault's time, or claimed for another TASK: that attempt enqueues
+/// unbound and execute's unbound check judges it, as before the binding, so
+/// a checkout made live between enqueue and execute still runs (FIX 7197).
 ///
 /// # Errors
-/// [`ERR_EXECUTION_CHECKOUT`] for a checkout that is missing, not live at
-/// the vault's time, or claimed for another TASK; a store failure.
+/// A store failure; [`ERR_EXECUTION_CHECKOUT`] for a checkout row that does
+/// not read.
 pub(super) fn pin_checkout_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
@@ -121,7 +125,7 @@ pub(super) fn pin_checkout_in_txn(
         return Ok(None);
     };
     let now = vault.instant_in_txn(txn)?.secs();
-    let lease = load_act_in_txn(vault, txn, spec.checkout_id)
+    let Some(lease) = load_act_in_txn(vault, txn, spec.checkout_id)
         .map_err(checkout_error)?
         .filter(|lease| live(lease, now))
         .filter(|lease| {
@@ -129,7 +133,9 @@ pub(super) fn pin_checkout_in_txn(
                 .as_deref()
                 .is_none_or(|task| task == lease.task_ref.to_hex())
         })
-        .ok_or_else(|| invalid(ERR_EXECUTION_CHECKOUT))?;
+    else {
+        return Ok(None);
+    };
     Ok(Some(ByoaRepoBinding {
         checkout: *lease.checkout_id.as_bytes(),
         epoch: lease.epoch,
@@ -306,21 +312,24 @@ pub(super) fn mark_stale_capture_in_txn<E>(
 }
 
 /// The checkout a next seat's successor of `spent` at seat `seat` runs
-/// against: a fresh id derived from the spent attempt and the seat when
-/// the spent attempt was bound, else the checkout it ran on, as before.
+/// against: a fresh id derived from the spent attempt and the seat when the
+/// work is bound to a checkout (`source`: the spent attempt's own custody,
+/// else the custody its bound work kept), else `base`, the checkout the
+/// work ran on or names, as before.
 ///
 /// # Errors
-/// A payload that does not decode.
+/// A derived id the checkout door refuses.
 pub(super) fn successor_checkout(
-    spent: &AttemptRecord,
-    ran: &CliSandboxSpec,
+    spent: AttemptId,
+    base: CheckoutId,
+    source: Option<&ByoaRepoBinding>,
     seat: usize,
 ) -> ByoaResult<CheckoutId> {
-    if decode_byoa_record(spent)?.repo_binding.is_none() {
-        return Ok(ran.checkout_id);
+    if source.is_none() {
+        return Ok(base);
     }
     let mut hasher = blake3::Hasher::new_derive_key(SUCCESSOR_CHECKOUT_DOMAIN);
-    hasher.update(spent.id.as_bytes());
+    hasher.update(spent.as_bytes());
     hasher.update(&(seat as u64).to_le_bytes());
     let digest = hasher.finalize();
     let mut bytes = [0_u8; 16];
@@ -331,11 +340,12 @@ pub(super) fn successor_checkout(
     CheckoutId::from_bytes(bytes).map_err(|_| invalid(ERR_EXECUTION_CHECKOUT))
 }
 
-/// Claims the fresh checkout `checkout` for the successor of `spent`,
-/// through the shipped claim path in the routing writer: the spent
-/// attempt's repo, TASK and holder, its lease's class and lifetime (none
-/// stays none). A replay finds it claimed and claims nothing; an unbound
-/// spent attempt runs its successor on its own checkout, as before.
+/// Claims the fresh checkout `checkout` for a next seat's successor,
+/// through the shipped claim path in the routing writer: the repo, TASK and
+/// holder of `source` (the custody [`successor_checkout`] derived it from),
+/// its lease's class and lifetime (none stays none). A replay finds it
+/// claimed and claims nothing; unbound work runs its successor on its own
+/// checkout, as before.
 ///
 /// # Errors
 /// [`ERR_EXECUTION_CHECKOUT`] for a derived id holding another lease; a
@@ -343,11 +353,11 @@ pub(super) fn successor_checkout(
 pub(super) fn claim_successor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    spent: &AttemptRecord,
+    source: Option<&ByoaRepoBinding>,
     checkout: CheckoutId,
     now: u64,
 ) -> ByoaResult<()> {
-    let Some(binding) = decode_byoa_record(spent)?.repo_binding else {
+    let Some(binding) = source else {
         return Ok(());
     };
     let task = EntityId::from_bytes(binding.task)?;
@@ -377,7 +387,7 @@ pub(super) fn claim_successor_in_txn(
             checkout_id: checkout,
             task_ref: task,
             repo_ref,
-            holder_ref: binding.holder,
+            holder_ref: binding.holder.clone(),
             task_class,
             ttl_secs,
             now,

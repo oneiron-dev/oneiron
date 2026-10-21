@@ -129,9 +129,26 @@ impl Memory<'_> {
         &self,
         input: &SummaryStatusRequest,
     ) -> MemoryResult<super::ScopeSummaryStatus> {
-        let id = side_id(&input.attempt)?;
-        let attempt = crate::attempt_queue::AttemptId::from_bytes(id.as_bytes())?;
-        let status = self.vault().scope_summary_status(attempt)?;
+        let status = match (&input.attempt, &input.session_ref) {
+            (Some(attempt), None) => {
+                let id = side_id(attempt)?;
+                let attempt = crate::attempt_queue::AttemptId::from_bytes(id.as_bytes())?;
+                self.vault().scope_summary_status(attempt)?
+            }
+            // A sitting's summary is its own actor's (FIX 7509): the caller
+            // is bound to the sitting's actor before its attempt is read.
+            (None, Some(session)) => {
+                let session = crate::memory::resolve_entity_ref(self.vault(), session)?;
+                self.vault()
+                    .session_summary_status(&session, self.actor())?
+                    .ok_or_else(absent)?
+            }
+            _ => {
+                return Err(MemoryError::bad_request(
+                    "a summary status names an attempt or a session_ref, exactly one",
+                ));
+            }
+        };
         if status.requester != self.actor().to_hex() {
             return Err(absent());
         }

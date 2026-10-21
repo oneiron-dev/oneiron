@@ -7,8 +7,10 @@ use std::time::{Duration, Instant};
 
 use loro::{ExportMode, VersionVector};
 use oneiron::SyncEngineContext;
+use oneiron::attempt_queue::AttemptQueue;
 use oneiron::sync::lease::{self, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::{self, WindowKey};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use super::core::{SyncServer, unix_seconds_now};
@@ -63,6 +65,7 @@ pub(super) enum LifecycleJobKind {
     MirrorPush,
     AuthorityCheckpoint,
     OwnerWork,
+    MergeQueueChecks,
 }
 
 /// The lifecycle loop, and the housekeeping pass it last started. Dropping it
@@ -122,6 +125,10 @@ impl SyncServer {
             // The served repositories' maintenance runs on the first tick and
             // then once an interval.
             let mut repositories_due = Instant::now();
+            // A committed queue write wakes the merge queue checker alone
+            // (FIX 6868, G2 PR2): subscribed before its first snapshot.
+            let mut queue_writes = AttemptQueue::new(server.vault()).subscribe();
+            let mut queue_writes_open = true;
             loop {
                 // A published-ref move or a green landing wakes the mirror
                 // pushes alone, at once (FIX 6866); every other job keeps
@@ -129,6 +136,14 @@ impl SyncServer {
                 let woken = tokio::select! {
                     _ = interval.tick() => false,
                     () = server.vault().origin_mirror_wake().notified() => true,
+                    written = queue_writes.recv(), if queue_writes_open => {
+                        if matches!(written, Err(broadcast::error::RecvError::Closed)) {
+                            queue_writes_open = false;
+                        } else {
+                            server.wake_merge_queue_checker(&admit).await;
+                        }
+                        continue;
+                    }
                 };
                 if woken {
                     server.start_mirror_pushes(&admit, true).await;
@@ -154,6 +169,7 @@ impl SyncServer {
                 // The owner work naming this install as executor runs on the
                 // same tick, with no interval of its own.
                 server.start_owner_work_drain(&admit).await;
+                server.start_merge_queue_checker(&admit).await;
             }
         });
         LifecycleScheduler {

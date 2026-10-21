@@ -43,6 +43,10 @@ pub(crate) use self::continuation::{
     PromptInjectApproval, apply_prompt_inject_in_txn, continuation_checkpoint,
     prompt_inject_application,
 };
+mod direct_spawn;
+pub use direct_spawn::{
+    DirectSpawnReceipt, SpawnAskField, SpawnUnapplied, SpawnUnappliedReason, direct_spawn_receipt,
+};
 mod dispatch;
 mod fanout_statement;
 mod healer_context;
@@ -126,8 +130,8 @@ pub use self::planner::{
 };
 pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
 pub use self::task_type_tree::{
-    TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at, store_team_type_tree,
-    team_shape_skill_in_force,
+    SourcedTypeTree, TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at,
+    load_vault_type_tree_sourced, store_team_type_tree, team_shape_skill_in_force,
 };
 pub(crate) use self::task_type_tree::{
     load_team_type_tree_at_in_txn, load_team_type_tree_in_txn, team_shape_skill_in_force_in_txn,

@@ -11,7 +11,9 @@ use super::conflict::{
 };
 use super::wake_plan::PreparedWake;
 
+mod pins;
 mod prior;
+pub(super) use pins::{BranchPins, OwnedPins};
 pub(super) use prior::standing;
 pub(super) mod signals;
 pub(crate) use signals::facet as claim_facet;
@@ -320,21 +322,7 @@ impl<'a> BranchResources<'a> {
         &self,
         refs: &[EntityId],
     ) -> Result<Option<EntityId>> {
-        let mut project = self.scope.project;
-        for id in refs {
-            let pin = self
-                .sources
-                .get(id)
-                .ok_or_else(|| invalid_consolidation("unadmitted evidence source"))?;
-            match (pin.project, project) {
-                (None, _) => return Ok(None),
-                (Some(source), Some(project)) if source != project => return Ok(None),
-                (source, _) => project = source,
-            }
-        }
-        Ok(Some(
-            project.unwrap_or_else(crate::claim::default_project_id),
-        ))
+        self.pins().evidence_project(refs)
     }
 
     /// The version a decision receipt names for each of `ids` the branch
@@ -356,10 +344,7 @@ impl<'a> BranchResources<'a> {
     }
 
     pub(super) fn source_version(&self, id: &EntityId) -> Result<ScopeResource> {
-        self.sources
-            .get(id)
-            .map(|pin| pin.resource.clone())
-            .ok_or_else(|| invalid_consolidation("unadmitted evidence source"))
+        self.pins().source_version(id)
     }
 
     pub(super) fn bind_fallback(&self, pin: FallbackOutputPin) -> Result<()> {
@@ -501,14 +486,18 @@ impl<'a> BranchResources<'a> {
     }
 
     /// The extraction input: the known entities with the claims this branch
-    /// holds as priors, then each turn.
+    /// holds as priors, then each turn, each named by a call-local label.
+    #[cfg(test)]
     pub(super) fn transcript(&self, scope: &Scope, turns: &[EntityId]) -> Result<String> {
-        let mut transcript = self.known.render(|id| self.priors.contains_key(id));
+        let mut labels = super::call_labels::CallLabelMap::default();
+        let mut transcript = self
+            .known
+            .render(&mut labels, |id| self.priors.contains_key(id));
         for id in turns {
             let facts = self.turn(scope, id)?;
+            let turn = labels.assign(super::call_labels::LabelKind::Turn, *id);
             transcript.push_str(&format!(
-                "[{} {}] {}\n",
-                id.to_hex(),
+                "[{turn} {}] {}\n",
                 facts.speaker.as_deref().unwrap_or("unknown"),
                 facts.text.as_deref().unwrap_or_default()
             ));
@@ -607,17 +596,9 @@ impl<'a> BranchResources<'a> {
                     turn_trust_class(role, facts.imported)
                         .ok_or_else(|| invalid_consolidation("inadmissible branch evidence role"))?
                 };
-                let text = self.texts.get(&entry.source_id);
-                let text = text
-                    .map(|text| text.readable_text(&self.scope))
-                    .transpose()?;
-                super::conflict::verify_swarm_evidence_bytes(
-                    *entry,
-                    kind,
-                    &body,
-                    text.flatten(),
-                    trust_class,
-                )
+                // The text a reply's check cites against too (FIX 7274).
+                let text = self.cited_text(&entry.source_id)?;
+                super::conflict::verify_swarm_evidence_bytes(*entry, kind, &body, text, trust_class)
             })
             .collect()
     }
