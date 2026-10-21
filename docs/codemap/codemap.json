@@ -6949,7 +6949,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -7291,14 +7291,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SignatureImagePlan"
+     ],
      "path": "src/blob_artifact/esign/signature_image.rs",
      "purpose": "Capability-bound, decoded and re-encoded signature images",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -7377,7 +7380,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactExport",
@@ -7391,7 +7394,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 4
      }
     },
@@ -7540,7 +7543,8 @@
      "path": "src/blob_artifact/version_rows.rs",
      "purpose": "The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -12448,7 +12452,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 14,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -74678,7 +74682,7 @@
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2,
       "trait": 1
      }
@@ -84886,7 +84890,7 @@
      "path": "src/api/esign/ingress.rs",
      "purpose": "Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -91729,13 +91733,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 21
      }
     },
     {
@@ -96340,7 +96344,7 @@
     "machine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
