@@ -15,8 +15,9 @@ use super::*;
 /// act folds through [`super::apply_owner_answer`] instead. Only an
 /// owner-held key answers "yours", "work/school" or "rented" here (truthful
 /// custody): a cloud or custodial root, which the hosted posture lets
-/// consent, can register its own node or demote and remove a machine, but
-/// never vouch for a machine as the owner's. Neither can the host's own root
+/// consent, registers its own node at bootstrap and carries that bootstrap
+/// under a successor root, but never demotes or removes a machine (FIX 7920)
+/// nor vouches for one as the owner's. Neither can the host's own root
 /// on a hosted vault, whatever its role labels say (FIX 2222): an unproved
 /// host-root `Owned` answer refuses.
 pub(in crate::authority) fn apply_machine_profile(
@@ -41,6 +42,7 @@ pub(in crate::authority) fn apply_machine_profile(
     } else {
         SignerClass::Custodial
     };
+    let head = roster_chain(state, profile.machine).map(|chain| &chain.head);
     let admitted = match profile.role {
         MachineRole::Owned(_) => signer_class == SignerClass::OwnerHeld,
         // An unanswered install answers nothing for the owner: the root
@@ -48,12 +50,16 @@ pub(in crate::authority) fn apply_machine_profile(
         MachineRole::HostedNode
         | MachineRole::ExecutionNode
         | MachineRole::Unanswered
-        | MachineRole::Removed => context.device_can_consent(device),
+        | MachineRole::Removed => {
+            context.device_can_consent(device)
+                && (signer_class == SignerClass::OwnerHeld
+                    || !CUSTODIAL_PROFILE_BOOTSTRAP_ONLY
+                    || custodial_bootstrap_or_carry(profile, head))
+        }
     };
     if !admitted {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
-    let head = roster_chain(state, profile.machine).map(|chain| &chain.head);
     if refused_revision(state, profile, head) {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
@@ -184,6 +190,35 @@ pub(in crate::authority) fn apply_anchor_profile(
             act_carrier: None,
         });
     Ok(())
+}
+
+/// A custodial key provisions a bootstrap node only (FIX 7920, identity.md;
+/// CALLS "Phase2 custodial bootstrap only"): a later demotion or removal takes
+/// the owner's act, through [`super::apply_owner_answer`].
+pub(in crate::authority) const CUSTODIAL_PROFILE_BOOTSTRAP_ONLY: bool = true;
+
+/// An act-free custodial revision the roster takes (FIX 7920): a fresh
+/// bootstrap of a machine no roster revision in its ancestry names, never a
+/// removal, or the same bootstrap carried on under a successor root, every
+/// field its head's but a higher revision and the acknowledgments it saw
+/// (re-root carry, C3). Judged on the entry's parents, never on arrival.
+fn custodial_bootstrap_or_carry(profile: &MachineProfile, head: Option<&MachineRevision>) -> bool {
+    let Some(head) = head else {
+        return profile.role != MachineRole::Removed;
+    };
+    let carried = &head.profile;
+    profile.role != MachineRole::Removed
+        && head.act.is_none()
+        && carried.act.is_none()
+        && profile.machine == carried.machine
+        && profile.owner == carried.owner
+        && profile.machine_key == carried.machine_key
+        && profile.device_class == carried.device_class
+        && profile.encryption_key == carried.encryption_key
+        && profile.role == carried.role
+        && profile.machine_proof == carried.machine_proof
+        && profile.carrier == carried.carrier
+        && profile.act == carried.act
 }
 
 /// A revision no chain takes: a key that is authority, a row that is an

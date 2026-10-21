@@ -253,6 +253,19 @@ pub(crate) fn ask_guest_grant_in(
         .and_then(|group| group.guest_grants.get(&person).copied()))
 }
 
+/// Whether TASK `task` is a member TASK the ask `group_ref` addressed, as its
+/// group record holds it (FIX 7928): the work an ask guest's grant reaches.
+pub(crate) fn ask_member_task_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_ref: EntityId,
+    task: EntityId,
+) -> Result<bool> {
+    let task = task.to_hex();
+    Ok(super::ask_record::read_group(vault, txn, group_ref)?
+        .is_some_and(|group| group.members.iter().any(|member| member.task == task)))
+}
+
 pub(super) fn check_companion_answer(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

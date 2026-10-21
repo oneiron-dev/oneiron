@@ -91,6 +91,11 @@ fn claim_revocation_causal_admitted(fold: &AuthorityFold, body: &ClaimBody) -> b
     fold.actor_write_disposition(&actor, class, frontier) == CausalWriteDisposition::Admitted
 }
 
+/// The causal write-window check on this batch's LOCAL claim writes (FIX
+/// 7925): the batch passes only ids it wrote itself. A replicated claim is
+/// stored as it came, its structure and origin checked at put, and the read
+/// predicate ([`claim_causal_admitted`]) quarantines it while it is not
+/// admitted; it authorizes nothing meanwhile.
 pub(crate) fn check_materialized_claim_causality(
     store: &Store,
     txn: &heed::RoTxn<'_>,

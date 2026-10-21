@@ -79,6 +79,16 @@ impl VerifiedSlip {
     pub fn pact(&self) -> Option<&(crate::EntityId, crate::federation::FederationDirectionScope)> {
         self.pact.as_ref()
     }
+    /// This view met with its guest grant's current effective scope (FIX
+    /// 7929): only the Vault's admission, which read the grant's own row,
+    /// asks for it.
+    pub(in crate::authority) fn meet_current_scope(
+        mut self,
+        current: &crate::federation::FederationDirectionScope,
+    ) -> Self {
+        self.claims.scope = super::current_scope::clamp_scope(&self.claims.scope, current);
+        self
+    }
     pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> EngineResult<()> {
         let Some((grant, requested)) = &self.pact else {
             return Ok(());

@@ -540,10 +540,11 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .federation_confirms
         .extend(right.federation_confirms.clone());
+    let local = merged.vault_id;
     for (pact_id, right_pact) in &right.federation_pacts {
         match merged.federation_pacts.get_mut(pact_id) {
             Some(left_pact) => {
-                *left_pact = merge_pact_states(left_pact, right_pact);
+                *left_pact = merge_pact_states(&local, left_pact, right_pact);
             }
             None => {
                 merged.federation_pacts.insert(*pact_id, right_pact.clone());

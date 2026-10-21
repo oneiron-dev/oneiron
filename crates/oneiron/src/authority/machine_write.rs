@@ -690,7 +690,10 @@ pub(crate) fn verify_machine_claim_in_txn(
         return Err(invalid_origin(replicated));
     }
     let fold = super::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
-    if fold.vault_root_is_conflicted() {
+    // FIX 7934: a current-root conflict refuses local writes only. Replay
+    // keeps every shape and origin check below and lands provisional;
+    // read/export withhold it until its history verifies.
+    if fold.vault_root_is_conflicted() && !replicated {
         return Err(denied());
     }
     let proof = proof.ok_or_else(|| invalid_origin(replicated))?;

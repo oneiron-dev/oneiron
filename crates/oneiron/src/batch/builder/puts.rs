@@ -445,6 +445,8 @@ impl BatchBuilder<'_> {
             self.commit_checks
                 .push(CommitCheck::Replicated(self.ops.len()));
         }
+        // FIX 7925: replay's provenance, never the op's admit flags alone.
+        self.replicated_puts.insert(*id);
         self.ops.push(replicated_put_op(
             id,
             entity_type,

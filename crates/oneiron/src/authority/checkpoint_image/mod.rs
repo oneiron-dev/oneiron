@@ -56,8 +56,10 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// custody request names its authority, an install's or the pinned kit's,
 /// and the fold keeps the owner's kit push as a counted request (FIX 6053).
 /// 12: the fold admits frontier joins, and an image carries their bodies
-/// (FIX 7908).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 12;
+/// (FIX 7908). 13: an act-free custodial machine revision lands only as a
+/// bootstrap or its carry (FIX 7920), and a pact keeps each party's narrowing
+/// (FIX 7933).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 13;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

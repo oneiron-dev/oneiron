@@ -39,6 +39,11 @@ pub(crate) struct ApplyOpsGateMode {
     /// The body file each ASSET put this batch stages as a manifest names,
     /// published before the batch (FIX 3677); consumed by that put.
     pub(super) asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
+    /// The rows this batch's replication applier put
+    /// (`BatchBuilder::put_replicated`) and nothing else (FIX 7925): replay
+    /// keeps its signed bytes for read quarantine instead of the local
+    /// write-window refusal.
+    pub(super) replicated_puts: std::collections::BTreeSet<EntityId>,
 }
 
 impl ApplyOpsGateMode {
@@ -60,6 +65,7 @@ impl ApplyOpsGateMode {
             nsw_plans: HashMap::new(),
             owner_authored: None,
             asset_files: HashMap::new(),
+            replicated_puts: std::collections::BTreeSet::new(),
         }
     }
 
@@ -100,6 +106,15 @@ impl ApplyOpsGateMode {
         files: HashMap<EntityId, crate::store::AssetBodyFacts>,
     ) -> Self {
         self.asset_files = files;
+        self
+    }
+
+    /// Marks the rows the replication applier put (FIX 7925).
+    pub(super) fn with_replicated_puts(
+        mut self,
+        ids: std::collections::BTreeSet<EntityId>,
+    ) -> Self {
+        self.replicated_puts = ids;
         self
     }
 

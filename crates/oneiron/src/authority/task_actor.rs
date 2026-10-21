@@ -46,6 +46,17 @@ pub(crate) enum TaskActorProof<'a> {
     Native(&'a WriteActor),
 }
 
+impl TaskActorProof<'_> {
+    /// The grant a Grant proof, or a grant-bound Slip proof, presents.
+    fn guest_grant(&self) -> Option<EntityId> {
+        match self {
+            Self::Grant { grant, .. } => Some(*grant),
+            Self::Slip { slip, .. } => EntityId::from_hex(slip.claims().grant_ref.as_deref()?).ok(),
+            Self::Bound(_) | Self::Native(_) => None,
+        }
+    }
+}
+
 /// A runner's lease on the try realizing one TASK, as its host binding
 /// names it: the attempt, the lease owner and the attempt count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +196,13 @@ impl Vault {
         verb: TaskActorVerb<'_>,
     ) -> Result<TaskStanding> {
         let actor = self.task_actor_proven_in_txn(txn, proof)?;
+        // FIX 7928, 7929: a guest's grant reaches its own ask's work, or a
+        // TASK inside its current effective scope, and no other TASK.
+        if let Some(grant) = proof.guest_grant()
+            && !self.guest_reaches_task_in_txn(txn, grant, task)
+        {
+            return Err(Error::EntityNotFound);
+        }
         let standing = self
             .task_standing_in(txn, task)?
             .ok_or(Error::EntityNotFound)?;
