@@ -22828,7 +22828,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/engine.rs",
      "purpose": "A publisher's engine candidate replayed against the real failure (FIX 1661, 2144, 6357): one matched pair on…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -22859,7 +22859,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/publisher.rs",
      "purpose": "A publisher's candidates beyond an instruction (FIX 1661, 2144): a candidate engine build, or a patch over…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 7,
       "fn": 3,
       "struct": 2,
@@ -23339,6 +23339,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "StewardshipDraftOutcome",
       "StewardshipDraftRequest",
       "StewardshipDraftRoute",
       "StewardshipRule",
@@ -23349,7 +23350,8 @@
      "surface": {
       "const": 2,
       "crate-vis": 4,
-      "fn": 4,
+      "enum": 1,
+      "fn": 6,
       "struct": 4
      }
     },
