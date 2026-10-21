@@ -9,7 +9,7 @@
 //! that parses changes nothing.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::skill_optimize::{
-    EvalAuthoringPlan, eval_authoring_inventory, eval_authoring_skill_id,
+    EvalAuthoringPlan, eval_authoring_inventory_sourced, eval_authoring_skill_id, union_source_rows,
 };
 use oneiron::{EntityId, Error, LlmMessageRole};
 
@@ -30,7 +30,7 @@ pub(super) fn run(
     now: u64,
 ) -> oneiron::Result<()> {
     let vault = server.vault();
-    let inventory = eval_authoring_inventory(vault, now)?;
+    let (inventory, inventory_rows) = eval_authoring_inventory_sourced(vault, now)?;
     // No new candidate, label, cut or exposure: no model call.
     if !inventory.has_work() {
         return Ok(());
@@ -80,12 +80,15 @@ pub(super) fn run(
     let skill = (loaded.entity, loaded.record.version);
     let data = serde_json::to_string(&inventory)
         .map_err(|_| Error::InvalidConfig("the eval inventory could not be encoded".into()))?;
-    let Some(text) = models.generate(
+    // The call reads the inventory's rows and the skill it loaded (FIX 6997).
+    let rows = union_source_rows([inventory_rows, Some(vec![skill.0])]);
+    let Some(text) = models.generate_sourced(
         models.coach(),
         vec![
             message(LlmMessageRole::System, instruction),
             message(LlmMessageRole::User, data),
         ],
+        rows,
     )?
     else {
         // No seat took the call: the next night asks again.

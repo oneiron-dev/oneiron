@@ -22665,7 +22665,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/loaded.rs",
      "purpose": "The skills a card's run loaded (OF-568, FIX 3724): each SKILL revision the pack manifest of the card's…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "struct": 2
      }
     },
@@ -22875,7 +22875,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/work.rs",
      "purpose": "A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -50856,7 +50856,7 @@
      "path": "src/skill_attribution/trace.rs",
      "purpose": "What the standing attribution classifier reads about one terminal attempt (ARCH-0056 §5, ARCH-0066 T2): the…",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -52175,7 +52175,7 @@
      "surface": {
       "crate-vis": 1,
       "fn": 2,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 8
      }
     },
@@ -52207,6 +52207,16 @@
      "purpose": "The lineage fixed code resolves for a candidate, from the existing readers' explicit links only: the…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/authoring/sourced.rs",
+     "purpose": "The eval-authoring inventory and the rows it was read from, in one set of reads (FIX 6997): the Coach's…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -60852,7 +60862,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -67477,7 +67487,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67738,7 +67748,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4256,
+   "source_files": 4257,
    "test_files": 902
   },
   "oneiron-android": {
