@@ -81,6 +81,12 @@
 //! * **Nothing here erases.** Retention archives and never routes to
 //!   erasure; emptying the archive is a ladder delete and erasure stays the
 //!   owner's, by hand.
+//! * **Any run reverts (OF-449).** Each archive records its run's snapshot
+//!   on the run's RUN row in the same write: per entry the kind, the id, the
+//!   revision of the bytes it hid and the marks before and after. The owner's
+//!   whole-run revert lifts only the marks that run wrote, one finding per
+//!   entry, and never undoes a delete or an erase. What the owner brings
+//!   back, by a revert or his own restore, he keeps at its revision.
 
 use rmpv::Value;
 
@@ -91,12 +97,15 @@ use crate::error::{Error, Result};
 
 mod cleanup_types;
 mod codec_receipts;
+mod marks;
 mod owner_doors;
 mod person_provenance;
 mod proposals_archive;
 mod retention;
 mod rollout;
 mod run_record;
+mod run_revert;
+mod run_snapshot;
 mod scan;
 pub mod surface;
 mod tripwire;
@@ -113,6 +122,13 @@ pub use self::cleanup_types::{
 pub use self::codec_receipts::{cleanup_digests, is_vault_cleanup_receipt};
 pub use self::proposals_archive::{
     accept_cleanup_proposal, cleanup_proposal, cleanup_proposals, reject_cleanup_proposal,
+};
+pub use self::run_revert::{
+    CleanupRevertEntry, CleanupRevertOutcome, CleanupRevertReason, CleanupRunRevert,
+    CleanupRunRevertAnswer,
+};
+pub use self::run_snapshot::{
+    CleanupRunRecord, CleanupRunSnapshot, CleanupRuns, CleanupSnapshotEntry, cleanup_runs,
 };
 pub use self::tripwire::{
     MACHINE_MINTED_CLAIM_SOURCES, claim_source_is_machine_minted, cleanup_posture,

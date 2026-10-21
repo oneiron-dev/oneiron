@@ -1,7 +1,9 @@
 //! Closed-form cleanup checks, the posture door, and the job body.
 
+use super::marks;
 use super::person_provenance;
 use super::rollout;
+use super::run_snapshot::{self, CleanupRunSnapshot, CleanupSnapshotEntry};
 use super::scan;
 use super::{
     CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
@@ -94,9 +96,10 @@ pub(super) const CLEANUP_CHECKS: [(u8, CleanupKind, EmptinessPredicate); 4] = [
 /// The tripwire: which cleanup arm, if any, `entity` trips.
 ///
 /// `Ok(None)` for a row that is not a candidate — wrong type, absent,
-/// already archived or deleted, or simply not empty. Closed-form: the answer
-/// is a function of the row's type byte, its liveness, its inbound claims and
-/// its edges, and nothing else. There is no score anywhere on this path.
+/// already archived or deleted, kept by the owner at this revision, or simply
+/// not empty. Closed-form: the answer is a function of the row's type byte,
+/// its liveness, the owner's kept mark, its inbound claims and its edges, and
+/// nothing else. There is no score anywhere on this path.
 ///
 /// # Errors
 ///
@@ -138,6 +141,11 @@ pub(crate) fn zero_live_members_in_txn(
             .store
             .entity_deletion_present_in_txn(rtxn, entity, header.learned_at)?
     {
+        return Ok(None);
+    }
+    // The owner kept this exact revision, by reverting its run or restoring
+    // it himself: no arm takes it again until the record changes.
+    if marks::kept_in_txn(&vault.store, rtxn, entity.as_bytes(), &raw)? {
         return Ok(None);
     }
     for (type_byte, kind, predicate) in CLEANUP_CHECKS {
@@ -354,7 +362,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
             })
         }
         CleanupPosture::AutoWithDigest => {
-            let applied = apply_archives_in_txn(vault, wtxn, &candidates)?;
+            let applied = apply_archives_in_txn(vault, wtxn, attempt, &candidates)?;
             let digest = CleanupDigest {
                 id: fresh_row_id(vault)?,
                 attempt: Some(*attempt),
@@ -366,6 +374,17 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 skipped: applied.skipped,
             };
             put_digest_in_txn(vault, wtxn, &digest)?;
+            run_snapshot::record_in_txn(
+                vault,
+                wtxn,
+                attempt,
+                &CleanupRunSnapshot {
+                    at: now,
+                    decision: CleanupDecision::AutoArchived,
+                    digest: digest.id,
+                    entries: applied.entries,
+                },
+            )?;
             Ok(CleanupRunReport {
                 attempt: *attempt,
                 posture,
@@ -381,6 +400,8 @@ pub(super) fn run_cleanup_candidates_in_txn(
 pub(super) struct AppliedArchives {
     pub(super) archived: Vec<EntityId>,
     pub(super) skipped: Vec<EntityId>,
+    /// One snapshot entry per archived id, read before its mark was written.
+    pub(super) entries: Vec<CleanupSnapshotEntry>,
 }
 
 /// Re-checks each candidate and archives the ones still empty.
@@ -392,21 +413,30 @@ pub(super) struct AppliedArchives {
 /// archive, and a candidate that changed is SKIPPED and named on the digest.
 ///
 /// The caller owns ONE write transaction for re-checks, archive markers,
-/// the digest, and proposal consumption. A failure rolls back the whole batch.
+/// the run's snapshot, the digest, and proposal consumption. A failure rolls
+/// back the whole batch.
+///
+/// `run` is the cleanup run the archives belong to: the run that scanned, or
+/// for an accept the run that opened the proposal. Each archived entry's
+/// snapshot entry is read just before its mark is written.
 pub(super) fn apply_archives_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
+    run: &AttemptId,
     candidates: &[CleanupCandidate],
 ) -> Result<AppliedArchives> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let mut archived = Vec::new();
     let mut skipped = Vec::new();
+    let mut entries = Vec::new();
     for candidate in candidates {
         if candidate.kind == CleanupKind::CompletedAttempt {
-            if super::attempt_retention::archive(vault, wtxn, candidate.entity)? {
-                archived.push(candidate.entity);
-            } else {
-                skipped.push(candidate.entity);
+            match super::attempt_retention::archive(vault, wtxn, candidate.entity, *run)? {
+                Some(entry) => {
+                    archived.push(candidate.entity);
+                    entries.push(entry);
+                }
+                None => skipped.push(candidate.entity),
             }
             continue;
         }
@@ -415,6 +445,12 @@ pub(super) fn apply_archives_in_txn(
             skipped.push(candidate.entity);
             continue;
         }
+        // The archive keeps the record at this revision. Its door refuses a
+        // row that already carries a mark, so no mark was in force before.
+        let Some(revision) = marks::record_revision_in_txn(vault, wtxn, &candidate.entity)? else {
+            skipped.push(candidate.entity);
+            continue;
+        };
         let tombstone = crate::deletion::TombstoneValueV2 {
             reason: DeleteReason::ArchivedByCleanup.into(),
             deleted_at: mutation_recorded_at,
@@ -422,9 +458,20 @@ pub(super) fn apply_archives_in_txn(
         };
         if vault.archive_cleanup_candidate_in_txn(wtxn, &candidate.entity, &tombstone)? {
             archived.push(candidate.entity);
+            entries.push(CleanupSnapshotEntry {
+                entity: candidate.entity,
+                kind: candidate.kind,
+                revision,
+                before: None,
+                after: tombstone.encode().to_vec(),
+            });
         } else {
             skipped.push(candidate.entity);
         }
     }
-    Ok(AppliedArchives { archived, skipped })
+    Ok(AppliedArchives {
+        archived,
+        skipped,
+        entries,
+    })
 }

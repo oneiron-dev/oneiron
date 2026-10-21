@@ -2,6 +2,7 @@
 
 use super::codec_receipts::PROPOSAL;
 use super::person_provenance;
+use super::run_snapshot::{self, CleanupRunSnapshot};
 use super::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupDecision, CleanupDigest, CleanupProposal,
     apply_archives_in_txn, cleanup_posture_in_txn, decode_proposal, fresh_row_id,
@@ -83,7 +84,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
         ));
     };
     let row = decode_proposal(*proposal, &raw)?;
-    let applied = apply_archives_in_txn(vault, wtxn, &row.candidates)?;
+    let applied = apply_archives_in_txn(vault, wtxn, &row.attempt, &row.candidates)?;
     let digest = CleanupDigest {
         id: fresh_row_id(vault)?,
         attempt: Some(row.attempt),
@@ -95,6 +96,19 @@ pub(super) fn accept_cleanup_proposal_in_txn(
         skipped: applied.skipped.clone(),
     };
     put_digest_in_txn(vault, wtxn, &digest)?;
+    // What the accept archived joins the RUN row of the run that opened the
+    // proposal, in this transaction.
+    run_snapshot::record_accept_in_txn(
+        vault,
+        wtxn,
+        &row,
+        &CleanupRunSnapshot {
+            at: mutation_recorded_at,
+            decision: CleanupDecision::ProposalAccepted,
+            digest: digest.id,
+            entries: applied.entries,
+        },
+    )?;
     PROPOSAL.delete(&vault.store, wtxn, proposal)?;
     // The owner's answer is the proposal's review, and it reached a person.
     crate::failure_ladder::oversight::reviewed_in_txn(
@@ -262,6 +276,24 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         entity: &EntityId,
     ) -> Result<()> {
+        self.restore_archived_record_in_txn(wtxn, entity)?;
+        super::restore_task_attempts(self, wtxn, *entity)?;
+        // FIX 6058: a restored grant or actor may stand a held program's
+        // authority again. Rechecked in this commit, best-effort: a recheck
+        // that fails is logged and never fails the restore.
+        self.resume_turn_programs_after_authority_change_in_txn(wtxn);
+        Ok(())
+    }
+
+    /// [`Self::restore_archived_in_txn`] for the record alone: its checks,
+    /// its marker and the restore bookkeeping, without the task's archived
+    /// attempts or the held-program recheck. A run's revert restores those
+    /// attempts by its own entries and rechecks programs once for the run.
+    pub(super) fn restore_archived_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+    ) -> Result<()> {
         let Some(decoded) = self.archive_tombstone_in_txn(wtxn, entity)? else {
             return Err(Error::Maintenance(
                 MaintenanceError::VaultCleanupRestoreNotArchived {
@@ -311,11 +343,6 @@ impl Vault {
         }
         crate::dreamer_consolidation::strength::restored_in_txn(self, wtxn, entity)?;
         person_provenance::clear_mint_evidence_in_txn(self, wtxn, entity)?;
-        super::restore_task_attempts(self, wtxn, *entity)?;
-        // FIX 6058: a restored grant or actor may stand a held program's
-        // authority again. Rechecked in this commit, best-effort: a recheck
-        // that fails is logged and never fails the restore.
-        self.resume_turn_programs_after_authority_change_in_txn(wtxn);
         Ok(())
     }
 }

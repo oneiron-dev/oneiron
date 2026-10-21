@@ -195,8 +195,9 @@ side_tables! {
     /// checkpointed. Value: the byte 1 (archived wherever it is), or the byte 2 and an encoded
     /// canonical root (archived unless it is at that root). Key: ().
     VAULT_ARCHIVED_BY_RESTORE: VaultMeta b"vault_archived:v1" Raw;
-    /// Marks a completed queue-record attempt as archived, pinned to the exact bytes archived. Key:
-    /// id16 (AttemptId).
+    /// Cleanup marks by id16. 48 bytes: a cleanup run archived a completed queue-record attempt,
+    /// pinned to the exact bytes archived and naming the run. 32 bytes: the owner kept a restored
+    /// attempt or record at that revision. Key: id16 (AttemptId, or a kept record's entity id).
     VAULT_CLEANUP_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.attempt_archive.v1/" Raw;
     /// One recorded vault-cleanup decision (accepted/auto), listing archived and skipped candidates.
     /// Key: id16.
