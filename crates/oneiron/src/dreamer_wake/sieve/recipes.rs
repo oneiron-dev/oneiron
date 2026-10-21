@@ -14,7 +14,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::super::recipes::WakeRecipePolicy;
-use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, SpanBand, chunks, policy};
+use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, chunks};
 use crate::dreamer_consolidation::KeptDecision;
 use crate::llm::decision::EvidenceVersion;
 
