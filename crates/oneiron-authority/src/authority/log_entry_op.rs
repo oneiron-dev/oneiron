@@ -462,7 +462,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::HomeCandidacy(declaration) => declaration.validate(),
         AuthorityOp::AgentGrantAct(record) => record.validate(),
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
-        AuthorityOp::FrontierJoin(join) => join.validate(),
+        AuthorityOp::FrontierJoin(_) => Ok(()),
     }
 }
 

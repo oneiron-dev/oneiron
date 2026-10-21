@@ -45,6 +45,9 @@ pub(crate) struct AuthorityStructure {
     /// The install keys only other anchors' revisions named. Such a key
     /// signs as a machine key does, but as a stranger ([`Self::is_stranger`]).
     stranger_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
+    /// The machines a filed removal names: removal is terminal, so a
+    /// frontier join one of them carries is a stranger's (FIX 7908).
+    removed: BTreeSet<crate::EntityId>,
     /// The owner anchors a root record named, each signed by its own anchor
     /// alone (world privacy P6b). An anchor signs only what the fold's anchor
     /// rules let it: its own root records and its machine marks. It never
@@ -225,6 +228,7 @@ impl<'a> StructureBuilder<'a> {
             self.structure.issuers.clear();
             self.structure.machine_keys.clear();
             self.structure.stranger_keys.clear();
+            self.structure.removed.clear();
             self.structure.anchors.clear();
             self.structure.own_anchors.clear();
             self.structure.awaited_anchors.clear();
@@ -342,6 +346,9 @@ impl<'a> StructureBuilder<'a> {
         if verify_entry_signatures(entry).is_err() {
             return;
         }
+        if profile.role == MachineRole::Removed {
+            self.structure.removed.insert(profile.machine);
+        }
         let key = (profile.machine, AuthorityKey::Ed25519(profile.machine_key));
         let vouched = self.structure.vouching_key(&key);
         if own {
@@ -389,7 +396,9 @@ impl AuthorityStructure {
             AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
             AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
             // A frontier join: its carrier's install key, as for the act it
-            // leads to; the host issuer's falls to the admitters below.
+            // leads to, a stranger's once its carrier is removed
+            // ([`Self::is_stranger`]); the host issuer's falls to the
+            // admitters below.
             AuthorityOp::FrontierJoin(FrontierJoin {
                 carrier: Some(carrier),
             }) => install_key(*carrier),
@@ -453,7 +462,7 @@ impl AuthorityStructure {
             AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
             AuthorityOp::FrontierJoin(FrontierJoin {
                 carrier: Some(carrier),
-            }) => machine_key(*carrier),
+            }) => machine_key(*carrier) || self.removed.contains(carrier),
             AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
                 !self.is_own_anchor(signer)
                     && !matches!(signer, AuthorityKey::Ed25519(anchor)

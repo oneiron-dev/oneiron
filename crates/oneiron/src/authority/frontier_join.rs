@@ -14,27 +14,28 @@
 //! answer turns stale. A frontier that fits keeps today's path and bytes.
 //!
 //! A join is signed by the key that signs the act: the carrier's install
-//! key, or the host's slip issuer for a host-issued op. The store doors vouch
-//! for it in that key's domain, as for the act, and the fold admits its
-//! signer by the lookup the act's own carrier check uses
-//! ([`apply_frontier_join`]): an install key some chain of the named carrier
-//! names, or a live owner roster key, never a key the join names for itself.
-//! A join signed by any other key folds as every unvouched row does: invalid,
-//! with no sequence slot, so it never forks or blocks the act's sequence. It
-//! reads no role, clearance or owner act beyond that, and grants nothing.
+//! key, or the host's slip issuer for a host-issued op. The fold admits its
+//! signer by the act's own carrier rule on the join's parent state
+//! ([`admits_join_signer`]): the one carrier rule in the roster view, or a
+//! live Ed25519 owner roster key, never a key the join names for itself. A
+//! join signed by any other key folds as every unvouched row does: invalid,
+//! with no sequence slot, so it never forks or blocks the act's sequence.
+//! Every group names the frontier's admission tip, the lowest-hash head whose
+//! own state admits the signer, so each join's parents carry the signer's
+//! standing. It reads no role, clearance or owner act beyond that, and grants
+//! nothing.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::SigningKey;
 
-use super::machine_standing::{InstallCounted, Standing};
+use super::machine_standing::{InstallCounted, Standing, StandingView, every_chain};
 use super::*;
 use crate::error::Result;
 use crate::{EntityId, TimeRange, Vault};
 
-/// A staged join did not fold here: no head of its group carries the
-/// carrier's standing, so the act keeps today's refusal of a frontier wider
-/// than one entry names.
+/// A staged join did not fold here, so the act keeps today's refusal of a
+/// frontier wider than one entry names.
 const JOIN_NOT_FOLDED: &str = "the authority log has more concurrent heads than one entry may name, \
                                and a join of them did not fold; nothing was written";
 
@@ -48,14 +49,25 @@ pub(crate) enum FrontierSigner<'a> {
 }
 
 impl FrontierSigner<'_> {
+    fn carrier(self) -> Option<EntityId> {
+        match self {
+            Self::Install(carrier, _) => Some(carrier),
+            Self::Host(_) => None,
+        }
+    }
+
+    fn key(self) -> AuthorityKey {
+        match self {
+            Self::Install(_, signing) => AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
+            Self::Host(issuer) => issuer.public_key(),
+        }
+    }
+
     /// The first sequence a join takes: the one the act itself would take,
     /// by its signer's own rule.
     fn first_sequence(self, fold: &AuthorityFold) -> Result<u64> {
         match self {
-            Self::Install(_, signing) => next_sequence(
-                fold,
-                &AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
-            ),
+            Self::Install(..) => next_sequence(fold, &self.key()),
             Self::Host(issuer) => fold
                 .append_sequences
                 .get(&issuer.public_key())
@@ -72,70 +84,76 @@ impl FrontierSigner<'_> {
         parents: BTreeSet<AuthorityEntryHash>,
         now: u64,
     ) -> Result<AuthorityLogEntry> {
+        let op = AuthorityOp::FrontierJoin(FrontierJoin {
+            carrier: self.carrier(),
+        });
         match self {
-            Self::Install(carrier, signing) => {
-                let join = FrontierJoin {
-                    carrier: Some(carrier),
-                };
-                sign_side_entry(
-                    fold,
-                    signing,
-                    seq,
-                    parents,
-                    AuthorityOp::FrontierJoin(join),
-                    now,
-                )
+            Self::Install(_, signing) => sign_side_entry(fold, signing, seq, parents, op, now),
+            Self::Host(issuer) => {
+                issuer.sign_entry(fold.vault_id, seq, parents.into_iter().collect(), op, now)
             }
-            Self::Host(issuer) => issuer.sign_entry(
-                fold.vault_id,
-                seq,
-                parents.into_iter().collect(),
-                AuthorityOp::FrontierJoin(FrontierJoin { carrier: None }),
-                now,
-            ),
         }
     }
 }
 
+/// Whether `state` admits `signer` to sign a join for `carrier`, as the act
+/// the join leads to admits its own carrier there: for a carrier, the one
+/// carrier rule in the roster view ([`super::owner_act_signer_admits`]: not
+/// a roster key, no removed chain, a live chain whose machine key it is);
+/// for no carrier, a live Ed25519 owner roster key, as the host's slip
+/// issuer is. A P-256 key signs no join.
+fn admits_join_signer(
+    state: &FoldState,
+    carrier: Option<EntityId>,
+    signer: &AuthorityKey,
+    (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
+) -> bool {
+    match (carrier, signer) {
+        (Some(carrier), AuthorityKey::Ed25519(key)) => Standing::new(state, pin, counted)
+            .admits_owner_act_signer(carrier, key, StandingView::Under(MachineAdmitter::Roster)),
+        (None, AuthorityKey::Ed25519(_)) => roster_has_live_owner(&state.roster, signer),
+        (_, AuthorityKey::P256(_)) => false,
+    }
+}
+
 /// One level of a frontier's joins: `tips` in hash order, in groups of
-/// [`AUTHORITY_FRONTIER_JOIN_ARITY`], a last group of one tip left a tip.
-/// Canonical: the groups read the tips' immutable hashes alone, never a
-/// clock, an arrival order or a signer.
+/// [`AUTHORITY_FRONTIER_JOIN_ARITY`]. On the first level every group names
+/// the admission tip `tip` and at most one fewer other heads; above it, a
+/// last group of one join is left a tip. Canonical: the groups read the
+/// tips' immutable hashes alone, never a clock, an arrival order or a
+/// signer.
 pub(super) fn plan_frontier_joins(
     tips: &BTreeSet<AuthorityEntryHash>,
+    tip: Option<AuthorityEntryHash>,
 ) -> Vec<BTreeSet<AuthorityEntryHash>> {
-    let tips: Vec<AuthorityEntryHash> = tips.iter().copied().collect();
-    tips.chunks(AUTHORITY_FRONTIER_JOIN_ARITY)
+    let others: Vec<AuthorityEntryHash> = tips
+        .iter()
+        .copied()
+        .filter(|head| Some(*head) != tip)
+        .collect();
+    let arity = AUTHORITY_FRONTIER_JOIN_ARITY - usize::from(tip.is_some());
+    others
+        .chunks(arity)
+        .map(|group| group.iter().copied().chain(tip).collect::<BTreeSet<_>>())
         .filter(|group| group.len() > 1)
-        .map(|group| group.iter().copied().collect())
         .collect()
 }
 
 /// The `FrontierJoin` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
-/// check. Its signer is admitted as the act it leads to admits its own: for
-/// a carrier, an install key some chain of that machine names in the join's
-/// parent state ([`Standing::names_key`], the floor every carried act's
-/// check starts from); for no carrier, a live owner roster key, as the
-/// host's slip issuer is. Any other signer is not in its ancestry. Its state
-/// is its parents' merge, and only its signer's sequence moves, past its last
-/// one there; it applies nothing.
+/// check: its signer must be one [`admits_join_signer`] admits in the join's
+/// parent state, else it is not in its ancestry. Its state is its parents'
+/// merge, and only its signer's sequence moves, past its last one there; it
+/// applies nothing.
 pub(super) fn apply_frontier_join(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
     join: &FrontierJoin,
     hash: AuthorityEntryHash,
-    (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
+    standing: (Option<&PinnedRoot>, InstallCounted<'_>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let signer = entry.signer_key();
-    let admitted = match (join.carrier, signer) {
-        (Some(carrier), AuthorityKey::Ed25519(key)) => {
-            Standing::new(state, pin, counted).names_key(carrier, key)
-        }
-        (Some(_), AuthorityKey::P256(_)) => false,
-        (None, signer) => roster_has_live_owner(&state.roster, signer),
-    };
-    if !admitted {
+    if !admits_join_signer(state, join.carrier, signer, standing) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if state
@@ -154,11 +172,13 @@ impl Vault {
     /// them than `room`, the heads it may name beside its other rows (one
     /// entry's [`MAX_PARENTS`] for an act that names the heads alone). Each
     /// level of [`plan_frontier_joins`] is signed by `signer`, at the
-    /// sequences its act would take, until the tips fit; the joins land in
-    /// one put, and the fold read back is returned, for the act's sequence
-    /// and parents. `None` when the heads fit: today's path, nothing written.
-    /// A wide frontier is measured on Phase2 A's `authority_record_items`
-    /// row, which asks past it and never waits or refuses.
+    /// sequences its act would take, until the tips fit, and every first-level
+    /// group names the admission tip; the joins land in one put, and the fold
+    /// read back is returned, for the act's sequence and parents. `None` when
+    /// the heads fit, or when no single head admits the signer: today's path,
+    /// nothing written. A wide frontier is measured on Phase2 A's
+    /// `authority_record_items` row, which asks past it and never waits or
+    /// refuses.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] when a join did not
@@ -177,6 +197,9 @@ impl Vault {
             return Ok(None);
         }
         measure_authority_work(self.limit_watch(), fold.append_heads.len());
+        let Some(tip) = self.admission_tip_in_txn(txn, fold, signer)? else {
+            return Ok(None);
+        };
         let now = self.instant_in_txn(txn)?.secs();
         let at = TimeRange {
             start: now,
@@ -184,10 +207,11 @@ impl Vault {
         };
         let mut seq = signer.first_sequence(fold)?;
         let mut tips = fold.append_heads.clone();
+        let mut level_tip = Some(tip);
         let mut rows = Vec::new();
         let mut joins = Vec::new();
         while tips.len() > room {
-            for group in plan_frontier_joins(&tips) {
+            for group in plan_frontier_joins(&tips, level_tip) {
                 let join = signer.sign(fold, seq, group.clone(), now)?;
                 seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
                 let hash = authority_entry_hash(&join)?;
@@ -196,6 +220,7 @@ impl Vault {
                 joins.push(hash);
                 rows.push((join, at, now));
             }
+            level_tip = None;
         }
         self.put_authority_log_entries_in_txn(txn, &rows)?;
         let joined = self.authority_view_readonly_in_txn(txn)?;
@@ -203,5 +228,32 @@ impl Vault {
             return Err(authority_refused(JOIN_NOT_FOLDED));
         }
         Ok(Some(joined))
+    }
+
+    /// The admission tip of `fold`'s heads for `signer`: the lowest-hash
+    /// head whose own state admits it ([`admits_join_signer`]), read from
+    /// the capture the causal points read. `None` when no head does, or when
+    /// the states cannot be read here
+    /// ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+    fn admission_tip_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        signer: FrontierSigner<'_>,
+    ) -> Result<Option<AuthorityEntryHash>> {
+        let states: Option<BTreeMap<AuthorityEntryHash, Option<FoldState>>> =
+            match super::act_standing::head_states_in_txn(&self.store, txn, &fold.append_heads) {
+                Ok(states) => states,
+                Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
+                Err(error) => return Err(error),
+            };
+        let key = signer.key();
+        Ok(states.into_iter().flatten().find_map(|(head, state)| {
+            state
+                .filter(|state| {
+                    admits_join_signer(state, signer.carrier(), &key, (None, &every_chain))
+                })
+                .map(|_| head)
+        }))
     }
 }

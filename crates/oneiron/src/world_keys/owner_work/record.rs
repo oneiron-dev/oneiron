@@ -243,13 +243,9 @@ impl Vault {
             Err(why) => return Ok(OwnerWorkReceipt::unassigned(kind, target, why)),
         };
         // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Install(machine, &signing);
         let fold = self
-            .prepare_authority_frontier_in_txn(
-                txn,
-                &fold,
-                FrontierSigner::Install(machine, &signing),
-                MAX_PARENTS,
-            )?
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
         // The main-log heads alone (FIX 4987): the settings edit key work
         // follows is a main-log row among them or their ancestors, and the
@@ -311,13 +307,9 @@ impl Vault {
         let seen = OwnerWorkCancel::seen_for(request);
         let act = OwnerAct::by_owner(actor, OwnerActKind::RootRequest, target, surface, seen);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Install(machine, &signing);
         let fold = self
-            .prepare_authority_frontier_in_txn(
-                txn,
-                &fold,
-                FrontierSigner::Install(machine, &signing),
-                MAX_PARENTS,
-            )?
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
         let parents = fold.owner_work_parents();
         if parents.len() > MAX_PARENTS {

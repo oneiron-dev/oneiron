@@ -43,13 +43,9 @@ impl Vault {
             return Err(no_executor_key());
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Install(executor, &signing);
         let fold = self
-            .prepare_authority_frontier_in_txn(
-                txn,
-                &fold,
-                FrontierSigner::Install(executor, &signing),
-                MAX_PARENTS,
-            )?
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
         let parents = fold.owner_work_parents();
         if parents.len() > MAX_PARENTS {

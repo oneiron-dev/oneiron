@@ -353,12 +353,8 @@ impl Vault {
         });
         profile.validate()?;
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joined = self.prepare_authority_frontier_in_txn(
-            txn,
-            fold,
-            FrontierSigner::Install(carrier, &key),
-            MAX_PARENTS,
-        )?;
+        let joiner = FrontierSigner::Install(carrier, &key);
+        let joined = self.prepare_authority_frontier_in_txn(txn, fold, joiner, MAX_PARENTS)?;
         let fold = joined.as_deref().unwrap_or(fold);
         let parents = fold.append_heads.clone();
         if parents.len() > MAX_PARENTS {
@@ -435,12 +431,8 @@ impl Vault {
             super::act_standing::acknowledged_by_in_txn(&self.store, txn, fold, profile.machine)?;
         profile.validate()?;
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joined = self.prepare_authority_frontier_in_txn(
-            txn,
-            fold,
-            FrontierSigner::Host(issuer),
-            MAX_PARENTS,
-        )?;
+        let joiner = FrontierSigner::Host(issuer);
+        let joined = self.prepare_authority_frontier_in_txn(txn, fold, joiner, MAX_PARENTS)?;
         let fold = joined.as_deref().unwrap_or(fold);
         let now = self.instant_in_txn(txn)?.secs();
         let entry = next_entry(

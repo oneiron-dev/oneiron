@@ -36,17 +36,13 @@ pub struct FrontierJoin {
 }
 
 impl FrontierJoin {
-    /// A join has no field to judge alone.
-    pub fn validate(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// A join names at least two parents and is signed by one key alone, an
-    /// Ed25519 install key when a machine carries it.
+    /// A join has no field to judge alone; it names at least two parents
+    /// and is signed by one Ed25519 key alone: an install key, or the host's
+    /// slip issuer, both Ed25519.
     pub(super) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
         if entry.parent_hashes.len() < 2
             || !entry.cosigns.is_empty()
-            || (self.carrier.is_some() && entry.signer.suite != AuthoritySignatureSuite::Ed25519)
+            || entry.signer.suite != AuthoritySignatureSuite::Ed25519
         {
             return Err(invalid_authority());
         }

@@ -75,13 +75,9 @@ impl Vault {
             return Err(denied());
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Host(issuer);
         let fold = self
-            .prepare_authority_frontier_in_txn(
-                txn,
-                &fold,
-                FrontierSigner::Host(issuer),
-                MAX_PARENTS,
-            )?
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
         let seq = fold
             .append_sequences
