@@ -290,7 +290,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/linear_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6) |
 | `src/api/facade/live_run_doors.rs` | src | s | 7 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
-| `src/api/facade/merge_queue_checker_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the owner's merge queue checker doors (FIX 6868) |
+| `src/api/facade/merge_queue_checker_doors.rs` | src | s | 8 crate-vis | — | Credential-bound host projections of the owner's merge queue checker doors (FIX 6868) |
 | `src/api/facade/merge_queue_doors.rs` | src | s | 9 crate-vis | — | Credential-bound host projections of the typed speculative merge queue doors (DOOR-132) |
 | `src/api/facade/mesh_doors.rs` | src | s | 5 crate-vis | — | Owner-bound mesh setup and a real admission-only dial |
 | `src/api/facade/model_catalog_doors.rs` | src | m | 13 crate-vis | — | The model catalog is evidence |
