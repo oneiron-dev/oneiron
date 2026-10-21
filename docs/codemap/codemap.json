@@ -24151,6 +24151,7 @@
      "purpose": "The wake loop: admit, warn, dispatch under panic containment, stop conditions",
      "surface": {
       "const": 4,
+      "crate-vis": 1,
       "fn": 10,
       "struct": 1
      }
@@ -24212,7 +24213,7 @@
      "path": "src/dreamer_wake/driver/park_cause.rs",
      "purpose": "What a non-deadline executor error parks as (FIX 7272)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -24249,7 +24250,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 1,
       "re-export": 15
      }
