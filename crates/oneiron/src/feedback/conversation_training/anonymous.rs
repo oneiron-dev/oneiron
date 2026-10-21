@@ -23,11 +23,12 @@
 //! generation counts its withdrawal unavailable.
 //!
 //! Its outbox files (CALLS TL6_ANON_FILE_RETENTION) stay while the piece
-//! uploads, reads unknown or accepted, and through the retryable rejected,
-//! conflict and invalid states; they go once the re-filter answered
-//! (eligible or refused), once it is removed, or once it is withheld or
-//! withdrawn here, through the outbox's own purge. The row, its C and its
-//! withdrawal intent outlive them. No log names a C, a scope or a code.
+//! uploads or reads unknown or accepted; they go once the intake signed it
+//! final (rejected, conflict or invalid: never sent again, FIX 7414, as a
+//! hosted rejected offer's go), once the re-filter answered (eligible or
+//! refused), once it is removed, or once it is withheld or withdrawn here,
+//! through the outbox's own purge. The row, its C and its withdrawal intent
+//! outlive them. No log names a C, a scope or a code.
 //!
 //! No C is ever sealed under twice. When the intake answers
 //! `recipient_refresh_required` for a piece it holds no accepted facts for,
@@ -79,13 +80,14 @@ pub enum TrainingPieceState {
     /// The piece is whole in the intake's quarantined custody: custody only,
     /// never eligibility.
     Accepted,
-    /// The intake refused the piece; it is sent again later.
+    /// The intake refused the piece: final for its C, so never sent again
+    /// (FIX 7414).
     Rejected,
-    /// A window changed what the intake already held; it is sent again
-    /// later.
+    /// A window changed what the intake already held: final for its C, so
+    /// never sent again (FIX 7414).
     Conflict,
-    /// The piece's facts or bytes made no valid submission; it is sent again
-    /// later.
+    /// The piece's facts or bytes made no valid submission: final for its
+    /// C, so never sent again (FIX 7414).
     InvalidSubmission,
     /// The re-filter passed the piece.
     Eligible,
@@ -237,9 +239,10 @@ pub(super) fn withdraw(row: &mut SubmissionCustody) {
 
 /// CALLS TL6_ANON_FILE_RETENTION: whether an anonymous piece's outbox files
 /// may go now. They stay while it is held, uploads, reads unknown or
-/// accepted, and through the retryable rejected, conflict and invalid
-/// states, and while its removal is pending; they go once the re-filter
-/// answered, once it is removed, or once it is withheld or withdrawn here.
+/// accepted, and while its removal is pending; they go once the intake
+/// signed it final (rejected, conflict or invalid: never sent again, FIX
+/// 7414, as a hosted rejected offer's go), once the re-filter answered,
+/// once it is removed, or once it is withheld or withdrawn here.
 pub(super) fn files_due(row: &SubmissionCustody) -> bool {
     match row.state {
         SubmissionState::Held => false,
@@ -247,7 +250,10 @@ pub(super) fn files_due(row: &SubmissionCustody) -> bool {
         SubmissionState::Published => matches!(
             row.anonymous.state,
             Some(
-                TrainingPieceState::Eligible
+                TrainingPieceState::Rejected
+                    | TrainingPieceState::Conflict
+                    | TrainingPieceState::InvalidSubmission
+                    | TrainingPieceState::Eligible
                     | TrainingPieceState::Refused
                     | TrainingPieceState::Removed
             )
