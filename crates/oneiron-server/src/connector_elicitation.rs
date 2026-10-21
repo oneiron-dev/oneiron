@@ -32,10 +32,13 @@
 //!   that carries content waits, within the round's deadline, for the
 //!   owner's yes on exactly that answer; a no sends a decline, a lapse
 //!   cancels.
+//! - [`check_answer`]: the answer that goes is read by the release check's
+//!   secret shapes; a match raises the owner's typed "is everything okay"
+//!   check and never stops the answer (FIX 3841).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
-use std::sync::{Mutex, MutexGuard, PoisonError, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
@@ -479,6 +482,7 @@ pub(crate) fn answer_connector_question(
             }
         }
     };
+    check_answer(server, &claim, &authority, &responses);
     let (name, tool, intent) = (
         claim.binding.name.clone(),
         claim.binding.tool.clone(),
@@ -522,6 +526,46 @@ pub(crate) fn answer_connector_question(
         },
     }
     .noting(reasons))
+}
+
+/// Runs the release check's secret shapes over the answer about to go, as
+/// it goes (FIX 3841, ruled 10-22): a match raises the owner's typed "is
+/// everything okay" check on detached work, and the answer goes either way.
+/// Nothing here refuses, holds or waits on the check, its storage or the
+/// owner; a check that cannot be raised is logged.
+fn check_answer(
+    server: &SyncServer,
+    claim: &Claim<'_>,
+    authority: &ConnectorElicitationBinding,
+    responses: &BTreeMap<String, Value>,
+) {
+    let mut checked = Value::Object(responses.clone().into_iter().collect());
+    let digest = *blake3::hash(checked.to_string().as_bytes()).as_bytes();
+    // The check reads a copy: what goes is `responses`, untouched.
+    if !oneiron::batch::export::redact_credentials(&mut checked) {
+        return;
+    }
+    let vault = Arc::clone(server.vault());
+    let (authority, handle, generation) =
+        (authority.clone(), claim.handle.clone(), claim.generation);
+    let raise = move || {
+        if let Err(error) =
+            vault.queue_connector_elicitation_answer_check(&authority, &handle, generation, digest)
+        {
+            tracing::warn!(%error, "connector answer check not queued");
+        }
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => drop(runtime.spawn_blocking(raise)),
+        Err(_) => {
+            if let Err(error) = std::thread::Builder::new()
+                .name("connector-answer-check".to_owned())
+                .spawn(raise)
+            {
+                tracing::warn!(%error, "connector answer check not started");
+            }
+        }
+    }
 }
 
 /// The reply to an answer whose round lapsed before it went: nothing was

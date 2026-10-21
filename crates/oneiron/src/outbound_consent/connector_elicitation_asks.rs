@@ -16,6 +16,11 @@
 //! the one yes/no ask names them. Nothing is cut. A part decides nothing:
 //! the yes/no ask alone decides the whole answer, and its caller withdraws
 //! the parts once it is decided or lapses.
+//!
+//! An answer the release check's secret shapes match raises a typed "is
+//! everything okay" check instead (FIX 3841, ruled 10-22): it names the
+//! connector, the tool and the answer's digest, never the answer, and it
+//! decides nothing. The answer has gone either way.
 
 use std::fmt::Write as _;
 
@@ -41,6 +46,17 @@ const ELICITATION_ASK_DOMAIN: &[u8] = b"oneiron:connector-elicitation-ask:v1";
 
 /// The derivation domain of a linked part's question id.
 const ELICITATION_ASK_PART_DOMAIN: &[u8] = b"oneiron:connector-elicitation-ask-part:v1";
+
+/// The host-issued queue identity of an answer's secret-shape check
+/// (FIX 3841), apart from the approval ask's.
+const ANSWER_CHECK_QUEUE: &str = "outbound.connector_elicitation_answer_check";
+const ANSWER_CHECK_QUEUE_VERSION: &str = "v1";
+
+/// The version of the check's question; bump it with its wording.
+const ANSWER_CHECK_VERSION: u32 = 1;
+
+/// The derivation domain of the check's correlation.
+const ANSWER_CHECK_DOMAIN: &[u8] = b"oneiron:connector-elicitation-answer-check:v1";
 
 /// The most characters of a connector or tool name the ask quotes.
 const ASK_NAME_MAX_CHARS: usize = 120;
@@ -145,6 +161,19 @@ fn part_text(
          the yes/no ask that names \"{label}\" decides the whole answer.\n{chunk}",
         name = clip(&binding.name),
         tool = clip(&binding.tool),
+    )
+}
+
+/// The wording of an answer's secret-shape check (FIX 3841): the one place
+/// it lives. It quotes no answer and asks for nothing to be done.
+fn answer_check_text(binding: &ConnectorElicitationBinding, digest: &[u8; 32]) -> String {
+    format!(
+        "An answer to connector \"{name}\" (tool \"{tool}\") matched the shape of a \
+         credential or secret in the release check. It went to the connector as given; \
+         nothing held it. Its digest begins {digest}. Is everything okay?",
+        name = clip(&binding.name),
+        tool = clip(&binding.tool),
+        digest = crate::entity_id::bytes_to_hex_lower(&digest[..4]),
     )
 }
 
@@ -258,6 +287,53 @@ impl Vault {
                 Err(error)
             }
         }
+    }
+
+    /// Queues the owner's typed "is everything okay" check on an answer to
+    /// round `generation` of the live question `handle` whose final bytes
+    /// (`digest`) the release check's secret shapes matched (FIX 3841), and
+    /// returns its arrival number; the same answer to the same round is the
+    /// same check. It decides nothing: the answer goes whatever the owner
+    /// says. Never call it inside a write transaction, nor on the answer's
+    /// own path: the ask queue opens its own.
+    ///
+    /// # Errors
+    ///
+    /// A principal that is no actor id; storage errors.
+    pub fn queue_connector_elicitation_answer_check(
+        &self,
+        binding: &ConnectorElicitationBinding,
+        handle: &str,
+        generation: u64,
+        digest: [u8; 32],
+    ) -> crate::Result<u64> {
+        let principal = EntityId::from_hex(&binding.principal_ref)?;
+        let correlation = EntityId::derive(
+            ANSWER_CHECK_DOMAIN,
+            &[handle.as_bytes(), &generation.to_le_bytes(), &digest],
+        )?;
+        self.queue_decision_ask(&HumanDecisionRequest {
+            question: DecisionQuestion {
+                id: correlation,
+                version: ANSWER_CHECK_VERSION,
+                text: answer_check_text(binding, &digest),
+                class: DecisionClass::Triage,
+                contract: AnswerContract::Noul,
+                accept_type: false,
+            },
+            principal,
+            evidence: vec![correlation],
+            reason: HumanAskReason::OwnerSelected,
+            prior: None,
+            prior_provider: None,
+            queue_pin: ProviderPin {
+                rung: DecisionRung::Human,
+                model: ANSWER_CHECK_QUEUE.to_owned(),
+                version: ANSWER_CHECK_QUEUE_VERSION.to_owned(),
+            },
+            to: AskTo::owner(),
+            correlation: Some(correlation),
+        })
     }
 
     /// Withdraws linked parts an ask no longer needs; a part already gone
