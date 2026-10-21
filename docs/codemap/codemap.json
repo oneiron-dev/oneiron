@@ -6106,7 +6106,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "enum": 1,
       "re-export": 1
      }
@@ -6344,7 +6344,17 @@
      "path": "src/batch/secret_scan/mask/retained_repo.rs",
      "purpose": "The mark of each key a retained repository blob holds (FIX 7608, owner ruling SECRETS-IN-REPOS = A)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/retained_repo/read.rs",
+     "purpose": "The masked copy a reader gets of a marked retained repository blob (FIX 7608 slice 2a)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -16138,6 +16148,16 @@
      "purpose": "Reclaim excluded historical codebase assets without deleting retained shared blobs",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codebase/secret_projection.rs",
+     "purpose": "A snapshot file as a masked reader reads it (FIX 7608 slice 2a)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -38212,7 +38232,7 @@
      "path": "src/memory/code_view_doors/mod.rs",
      "purpose": "Owner-credential working views and account-local build/verify reuse",
      "surface": {
-      "fn": 5,
+      "fn": 7,
       "re-export": 1
      }
     },
@@ -38307,7 +38327,7 @@
      "path": "src/memory/codebase_doors/snapshots.rs",
      "purpose": "—",
      "surface": {
-      "fn": 3
+      "fn": 5
      }
     },
     {
@@ -38338,6 +38358,7 @@
      "path": "src/memory/codebase_doors/types.rs",
      "purpose": "—",
      "surface": {
+      "re-export": 1,
       "struct": 10
      }
     },
@@ -39148,7 +39169,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 27,
       "re-export": 55
      }
@@ -39833,6 +39854,16 @@
      "surface": {
       "crate-vis": 9,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/repo_secret_reads.rs",
+     "purpose": "Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1)",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -43113,7 +43144,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 15,
       "re-export": 2
      }
@@ -43497,7 +43528,52 @@
      "path": "src/origin/secret_marks.rs",
      "purpose": "A pushed key's mark (FIX 7608, owner ruling SECRETS-IN-REPOS = A): the immutable `repo.secret_mark` facts an…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_marks/read.rs",
+     "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection.rs",
+     "purpose": "Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1)",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/git.rs",
+     "purpose": "The exact-source identity (FIX 7608, owner ruling A2): an export back to a repo's own original source is…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoFileProjectionKind",
+      "RepoFileProjectionView"
+     ],
+     "path": "src/origin/secret_projection/types.rs",
+     "purpose": "The value-free shapes a projected repo read carries (FIX 7608 slice 2a, CALL P1): the opaque placeholder's…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -69910,7 +69986,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 139,
+     "files": 140,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70099,7 +70175,7 @@
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
     "codebase": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70673,7 +70749,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 247,
+     "files": 248,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70715,7 +70791,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 107,
+     "files": 111,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71354,7 +71430,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4548,
+   "source_files": 4555,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88402,7 +88478,7 @@
      "path": "src/api/mcp_gateway/skill_execution.rs",
      "purpose": "The original MCP credential context lent to a callable skill's host door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -101080,6 +101156,8 @@
       "RepoCheckoutBindOutput",
       "RepoExportInput",
       "RepoExportOutput",
+      "RepoFileProjectionKind",
+      "RepoFileProjectionView",
       "RepoMergeQueueEnqueueInput",
       "RepoMergeQueueObserveInput",
       "RepoMergeQueueObserveOutput",
@@ -102277,8 +102355,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 953,
-      "struct": 2971
+      "enum": 954,
+      "struct": 2972
      }
     },
     {
