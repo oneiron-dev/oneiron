@@ -396,10 +396,13 @@ impl<'a> AgentDispatcher<'a> {
                     .parent_dispatch_input_in_txn(wtxn, parent)?
                     .and_then(|input| input.scope)
                     .unwrap_or_default();
-                Some(
-                    parent_scope
-                        .attenuate(spawn.scope.clone().unwrap_or_else(|| parent_scope.clone()))?,
-                )
+                let child_scope = spawn.scope.clone().unwrap_or_else(|| parent_scope.clone());
+                // FIX 8626: a child project proven to descend from the
+                // parent's, in this transaction, narrows it too.
+                let descends = |project, ancestor| {
+                    super::scope::project_descends_from_in_txn(self.vault, wtxn, project, ancestor)
+                };
+                Some(parent_scope.attenuate_with(child_scope, descends)?)
             }
         };
         let requested_definition = self.dispatchable_definition_in_txn(wtxn, &input.target)?;

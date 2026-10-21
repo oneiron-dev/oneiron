@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use oneiron::claim::CallerLocality;
 use oneiron::memory::resolve_entity_ref;
-use oneiron::{LlmMessage, LlmMessageRole, Vault};
+use oneiron::{LlmMessage, LlmMessageRole, ModelLocality, Vault};
 
 use super::{ChatTurnRequest, assistant, chat_request, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
@@ -22,11 +22,14 @@ use crate::server::SyncServer;
 /// written, beside every row it served (FIX 6935); `None` when the turn reads
 /// none: a caller or request the turn refuses, no chat seat, a refused
 /// assembly, an empty frame, or rows a world keeps from where the call goes.
-/// The board is read as an off-device read is. Its rows meet the hold of a
-/// prompt that goes back to the caller and as far as the chat role's live
-/// route may take the call (FIX 7257): a route that only stays on this device
-/// reads it, and any other, or one that is not read, holds it as a prompt
-/// that leaves the device.
+/// The board reads as an on-device read does only when the caller sits on
+/// this device and the chat role's live route never leaves it: where it is
+/// admitted and every rung or fallback it may reach (FIX 6922). Any other
+/// caller or route, or one that is not read, reads it as an off-device read
+/// does. Its rows then meet the hold of a prompt that goes back to the caller
+/// and as far as that route may take the call (FIX 7257), judged again here
+/// and on the admitted call, so a route that moved since never carries them
+/// off the device.
 pub(super) async fn turn_board(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -35,18 +38,25 @@ pub(super) async fn turn_board(
     if auth.require(CoreScope::Read).is_err()
         || auth.require(CoreScope::Write).is_err()
         || request.text.trim().is_empty()
-        || server.ai.chat_seat().is_none()
     {
         return None;
     }
+    let seat = server.ai.chat_seat()?;
     let vault = server.vault();
     let (agent, _) = assistant(auth, vault, request.agent_ref.as_deref()).ok()?;
     // A new conversation has no room yet; one that resolves narrows the read
     // to its audience.
     let conversation = resolve_entity_ref(vault, &request.conversation_ref).ok();
+    let reads_at = if auth.locality() == CallerLocality::OnDevice
+        && PromptBoard::route_locality(&server.ai, vault, seat) == ModelLocality::OnDevice
+    {
+        CallerLocality::OnDevice
+    } else {
+        CallerLocality::OffDevice
+    };
     let board = match crate::api::context_board::chat_board(
         server,
-        auth.clone().at(CallerLocality::OffDevice),
+        auth.clone().at(reads_at),
         conversation,
         agent,
         &request.text,
@@ -63,7 +73,6 @@ pub(super) async fn turn_board(
             return None;
         }
     };
-    let seat = server.ai.chat_seat()?;
     let board = PromptBoard::new(board, auth.destination());
     board
         .rides_route(&server.ai, vault, seat)

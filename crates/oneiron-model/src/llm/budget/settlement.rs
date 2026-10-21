@@ -5,6 +5,11 @@ use super::{
 };
 
 impl BudgetGuard {
+    /// Settles one lease from a cumulative meter reading, exactly once. Only
+    /// the reading's rise over the global watermark is new spend (FIX 8624):
+    /// that increment, and never the full reading, lands on the global total,
+    /// every matched row and the floor/shared partitions. A reading at or
+    /// below the watermark adds nothing.
     pub fn settle_absolute(
         &self,
         lease: &BudgetLease,
@@ -31,8 +36,9 @@ impl BudgetGuard {
         if let Some(record) = settled {
             release_reservations_for_lease(&mut state, &record);
             if record.metered {
+                let increment = absolute_used_units.saturating_sub(state.used_units);
                 state.used_units = state.used_units.max(absolute_used_units);
-                apply_usage_for_lease(&mut state, &record, absolute_used_units);
+                apply_usage_for_lease(&mut state, &record, increment);
             }
         }
         let ladder_events = state.fire_ladder_events();

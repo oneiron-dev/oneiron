@@ -43,7 +43,10 @@ impl Stream for StreamSubscription {
 pub struct LlmEventBus {
     subscribers: Vec<Weak<Mutex<SubscriberState>>>,
     history: Vec<LlmStreamEvent>,
-    parts: BTreeMap<String, ContentPart>,
+    /// Every part the stream started, in `order`, the order it started in
+    /// (FIX 8625): text and reasoning as they stand, a tool call, tool result
+    /// or image once it ends, `None` while it has not.
+    parts: BTreeMap<String, Option<ContentPart>>,
     order: Vec<String>,
     closed: bool,
     sink: Box<dyn TerminalSink>,
@@ -108,7 +111,8 @@ impl LlmEventBus {
         });
         Ok(())
     }
-    /// A host supplies actual usage on cancellation; incomplete tools are omitted.
+    /// A host supplies actual usage on cancellation. The reply keeps every
+    /// part in the order it started; incomplete tools are omitted.
     pub fn abort(&mut self, usage: LlmUsage) -> LlmResult<()> {
         if self.closed {
             return Ok(());
@@ -119,7 +123,7 @@ impl LlmEventBus {
                 content: self
                     .order
                     .iter()
-                    .filter_map(|id| self.parts.get(id).cloned())
+                    .filter_map(|id| self.parts.get(id)?.clone())
                     .collect(),
             },
             usage,
@@ -238,10 +242,15 @@ impl LlmEventBus {
             | LlmStreamEvent::ReasoningDelta { part_id, text } => {
                 if let Some(
                     ContentPart::Text { text: value } | ContentPart::Reasoning { text: value, .. },
-                ) = self.parts.get_mut(part_id)
+                ) = self.parts.get_mut(part_id).and_then(Option::as_mut)
                 {
                     value.push_str(text);
                 }
+            }
+            LlmStreamEvent::ToolCallStart { part_id, .. }
+            | LlmStreamEvent::ToolResultStart { part_id, .. }
+            | LlmStreamEvent::ImageStart { part_id, .. } => {
+                self.reserve_part(part_id);
             }
             LlmStreamEvent::ToolCallEnd {
                 part_id,
@@ -284,10 +293,15 @@ impl LlmEventBus {
         }
     }
     fn insert(&mut self, id: &str, content: ContentPart) {
+        *self.reserve_part(id) = Some(content);
+    }
+    /// `id`'s slot, its place in `order` taken the first time the stream
+    /// names it, so content that fills it later keeps that place.
+    fn reserve_part(&mut self, id: &str) -> &mut Option<ContentPart> {
         if !self.parts.contains_key(id) {
             self.order.push(id.into());
         }
-        self.parts.insert(id.into(), content);
+        self.parts.entry(id.into()).or_default()
     }
 }
 impl Drop for LlmEventBus {

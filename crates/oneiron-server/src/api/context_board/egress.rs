@@ -29,15 +29,22 @@ impl PromptBoard {
         Self { board, caller }
     }
 
-    /// Whether the board may ride a call of the chat role, judged before
-    /// the call is admitted: as far as the role's live route from `seat`
-    /// may take it, or a third party's when that route is not read.
-    pub(crate) fn rides_route(&self, ai: &AiHandle, vault: &Vault, seat: &Seat) -> bool {
-        let reach = match ai.models().route_role(vault, CHAT_ROLE, seat) {
+    /// As far as a call of the chat role may go from `seat` on its live
+    /// route: where it is admitted, and the widest rung or fallback of the
+    /// ladder that sends it; a third party's when that route is not read.
+    /// `OnDevice` only when no rung it may reach leaves the device (FIX 6922).
+    pub(crate) fn route_locality(ai: &AiHandle, vault: &Vault, seat: &Seat) -> ModelLocality {
+        match ai.models().route_role(vault, CHAT_ROLE, seat) {
             Ok(route) => route.locality.max(route.ladder.prompt_locality_bound()),
             Err(_) => ModelLocality::ThirdParty,
-        };
-        self.may_go(vault, reach, "route")
+        }
+    }
+
+    /// Whether the board may ride a call of the chat role, judged before
+    /// the call is admitted: as far as the role's live route from `seat`
+    /// may take it ([`Self::route_locality`]).
+    pub(crate) fn rides_route(&self, ai: &AiHandle, vault: &Vault, seat: &Seat) -> bool {
+        self.may_go(vault, Self::route_locality(ai, vault, seat), "route")
     }
 
     /// Whether the board may ride `call`, the admitted call that carries it:
