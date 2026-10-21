@@ -250,7 +250,10 @@ impl AutoCheckDecisions {
             self.dial,
             &self.bands,
             Reversibility::OutboundEffect,
-            &RetrievalDeadline::hard(Instant::now(), due.saturating_duration_since(Instant::now())),
+            &RetrievalDeadline::hard(
+                Instant::now(),
+                due.saturating_duration_since(Instant::now()),
+            ),
         )?;
         let (DecisionAnswer::Choice(label), Some(probability)) =
             (&decision.answer, decision.probability)

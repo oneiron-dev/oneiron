@@ -37,7 +37,7 @@ pub(super) fn unresolved_claim_reference(
         return Ok(Some("/subject".to_owned()));
     }
     let refs = claim_record_references(body);
-    let unresolved = validate_record_references_with(&refs, |reference| {
+    let unresolved = validate_record_references_with(&refs, |reference| -> Result<bool> {
         let Ok(id) = EntityId::from_hex(reference) else {
             return Ok(false);
         };
@@ -92,7 +92,11 @@ fn evidence_references(at: &str, evidence: &Value, refs: &mut Vec<NamedRecordRef
             // A peer hop names the answering actor, an identity rather than a
             // cited record, as the stamp's own actor is.
             if hop.kind != ConsolidationProvenanceHopKind::PeerActor {
-                push(refs, format!("{at}/chain/{index}/entity_ref"), &hop.entity_ref);
+                push(
+                    refs,
+                    format!("{at}/chain/{index}/entity_ref"),
+                    &hop.entity_ref,
+                );
             }
         }
         if field(evidence, "locators").is_some()
