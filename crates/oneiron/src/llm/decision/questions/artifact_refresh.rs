@@ -395,9 +395,10 @@ impl Asking<'_> {
         };
         let run = ask_selection(vault, artifact, &selection, &files, only.as_ref(), ask)?;
         let proposed = match &run.proposal {
-            Some(proposal) => {
-                Some(vault.retain_edit_proposal(&artifact, proposal, None, self.actor, self.now)?)
-            }
+            Some(proposal) => Some(
+                vault
+                    .retain_edit_proposal(&artifact, proposal, None, None, self.actor, self.now)?,
+            ),
             None => None,
         };
         let stamp = ArtifactAsked {

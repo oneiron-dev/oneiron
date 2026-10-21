@@ -40,6 +40,9 @@ use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
+mod admission;
+pub use admission::MadeByReader;
+
 /// Key: id16 + hash32 (blake3 of the proposal ref), as the settlement ledger.
 pub(super) const PENDING: SideTable<(EntityId, [u8; 32]), PendingRow, Named> =
     SideTable::new(&side_table::EDIT_SETTLE_PENDING_PROPOSAL);
@@ -292,12 +295,15 @@ impl Vault {
     /// Holds an edit proposal beside its artifact until a Keep or Discard
     /// names it by its ref. A rejected or already settled proposal, or a ref
     /// already waiting, is refused. `made_by` is the envelope Keep gives the
-    /// version; its trigger is checked when the version lands.
+    /// version; a named one is admitted under `reader` as it is retained
+    /// (FIX 1229, [`MadeByReader`]), and its trigger is checked again when
+    /// the version lands.
     pub fn retain_edit_proposal(
         &self,
         artifact_id: &EntityId,
         proposal: &EditProposal,
         made_by: Option<&MadeBy>,
+        reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
@@ -327,19 +333,21 @@ impl Vault {
                 sheet_answers: proposal.sheet_answers.as_deref().cloned(),
             },
         };
-        self.put_pending(artifact_id, &row)
+        self.put_pending(artifact_id, &row, reader)
     }
 
     /// Offers one native organ result to an artifact as a waiting proposal,
-    /// pinned to the head it was made against (none for a new artifact).
+    /// pinned to the head it was made against (none for a new artifact). Its
+    /// named made_by is admitted under `reader` (FIX 1229).
     pub fn propose_native_output(
         &self,
         artifact_id: &EntityId,
         output: &NativeOutput,
+        reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
-        self.propose_output(artifact_id, output, actor, retained_at, None)
+        self.propose_output(artifact_id, output, reader, (actor, retained_at), None)
     }
 
     /// Offers a deck export as a waiting proposal pinned to `base`, the
@@ -349,19 +357,26 @@ impl Vault {
         &self,
         artifact_id: &EntityId,
         output: &NativeOutput,
+        reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         base: (u64, [u8; 32]),
         hold: DeckExportHold,
     ) -> Result<PendingProposalView> {
-        self.propose_output(artifact_id, output, actor, retained_at, Some((base, hold)))
+        self.propose_output(
+            artifact_id,
+            output,
+            reader,
+            (actor, retained_at),
+            Some((base, hold)),
+        )
     }
 
     fn propose_output(
         &self,
         artifact_id: &EntityId,
         output: &NativeOutput,
-        actor: WriteActor,
-        retained_at: u64,
+        reader: Option<MadeByReader<'_>>,
+        (actor, retained_at): (WriteActor, u64),
         deck: Option<((u64, [u8; 32]), DeckExportHold)>,
     ) -> Result<PendingProposalView> {
         let body = self
@@ -412,7 +427,7 @@ impl Vault {
                 report,
             },
         };
-        self.put_pending(artifact_id, &row)
+        self.put_pending(artifact_id, &row, reader)
     }
 
     /// The proposals waiting beside one artifact, oldest ref hash first.
@@ -643,10 +658,22 @@ impl Vault {
         })
     }
 
-    fn put_pending(&self, artifact_id: &EntityId, row: &PendingRow) -> Result<PendingProposalView> {
+    fn put_pending(
+        &self,
+        artifact_id: &EntityId,
+        row: &PendingRow,
+        reader: Option<MadeByReader<'_>>,
+    ) -> Result<PendingProposalView> {
         validate_pending_ref(&row.proposal_ref)?;
         let key = settlement_key_parts(artifact_id, &row.proposal_ref);
+        let lane =
+            admission::retention_lane(artifact_id, row.made_by.as_ref(), row.retained_by, reader)?;
         self.with_write_txn_grouped(|wtxn| {
+            // A named envelope is admitted in the transaction that keeps it
+            // (FIX 1229).
+            if let (Some(lane), Some(made_by)) = (&lane, &row.made_by) {
+                admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
+            }
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                 return Err(already_settled(&existing));
             }

@@ -799,6 +799,21 @@ pub(crate) fn principal_actor(vault: &Vault, principal: EntityId) -> Result<Writ
     Ok(WriteActor::new(principal, class))
 }
 
+/// The read `principal`'s own question work reads under (FIX 1229): its key
+/// as a question's reads build it, with its own live owner authority. A
+/// withdrawal wake's carried made_by is admitted through it when the fresh
+/// proposal waits.
+pub(crate) fn principal_lane(
+    vault: &Vault,
+    principal: EntityId,
+) -> Result<crate::claim::ScopedRead<'_>> {
+    let key = {
+        let txn = vault.store.env.read_txn()?;
+        source_actor_key(vault, &txn, principal, None)?.require_access_grants(Some(principal))
+    };
+    Ok(question_lane(vault, key))
+}
+
 /// The scheduled, backfill and materialized-arrival work due at `now`, with
 /// each question's principal. A question's arrivals wait while its scheduled
 /// refresh or backfill runs.

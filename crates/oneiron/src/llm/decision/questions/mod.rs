@@ -44,12 +44,12 @@ pub(crate) use recipe::run_graph_question_with_proposals;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;
 pub(crate) use refresh::answer_records_in_txn;
-pub(crate) use refresh::principal_actor;
 pub use refresh::{
     RefreshBatch, RefreshFailure, answer_records, refresh_due_questions,
     refresh_due_questions_by_role, refresh_due_questions_by_role_while, refresh_due_questions_with,
     refresh_question, refresh_question_with, standing_ask_route,
 };
+pub(crate) use refresh::{principal_actor, principal_lane};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::read_question_in_txn;
 pub use store::{
