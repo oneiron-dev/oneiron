@@ -6,6 +6,7 @@ use super::files::{BodyEntry, body_entries, remove_unnamed, sync_dir, unlink_bod
 use super::{
     RAW_OUTPUT_ROWS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, raw_output_handle, unowned_mark_key,
 };
+use crate::code_run::code_run_body_held_in_txn;
 use crate::provenance::body::{
     digest_is_held_in_txn, released_bodies_in_txn, take_released_in_txn,
 };
@@ -20,8 +21,10 @@ const SWEEP_BATCH: usize = 256;
 pub struct ResultBodyCollectReport {
     /// Released bodies whose raw-output row, unowned marks and file went.
     pub collected: usize,
-    /// Released digests a descriptor holds again, or another pass took
-    /// first: off the queue, left as they are.
+    /// Released digests a descriptor holds again, a raw output holds on its
+    /// own (FIX 5399b), or another pass took first, and released bodies a
+    /// publisher named again before their file went: off the queue, left
+    /// as they are.
     pub held: usize,
     /// Released bodies a reader still pinned: left for a later pass.
     pub pinned: usize,
@@ -44,10 +47,13 @@ impl Vault {
     /// released digest is rechecked in the write transaction that drops its
     /// raw-output row and its unowned occurrence's taint sidecar and secret
     /// mark and its sealed file's key row (FIX 5348), and its file and line
-    /// index are unlinked only once that commits. An owned occurrence's marks stay with its manifest. An orphan is a body file no
-    /// raw-output row or descriptor names, older than an hour, so a body
-    /// whose row has yet to commit stays. A pinned body is left for a later
-    /// pass. Idempotent; a file already gone is fine.
+    /// index are unlinked only once that commits, in a fresh writer that
+    /// finds no row, descriptor or key row naming it again (FIX 5399b). An
+    /// owned occurrence's marks stay with its manifest. An orphan is a body
+    /// file no raw-output row or descriptor names, older than an hour, so a
+    /// body whose row has yet to commit stays; it too goes only once a fresh
+    /// writer finds it unnamed. A pinned body is left for a later pass.
+    /// Idempotent; a file already gone is fine.
     ///
     /// # Errors
     ///
@@ -109,18 +115,29 @@ impl Vault {
         if taken.is_empty() {
             return Ok(report);
         }
-        // The rows are gone for good, so each file may go now. One a reader
-        // pinned since stays until the orphan sweep finds it unpinned.
+        // The rows are gone for good, so each file may go now, in a fresh
+        // writer that reads them again: no row naming the digest commits
+        // between that check and the unlink, and a publisher whose file is
+        // out before its row holds its pin (FIX 5399b). One a publisher
+        // named again, or a reader pinned since, stays until the orphan
+        // sweep finds it unnamed and unpinned.
         let dir = self.store.body_dir()?;
-        for (digest, instance) in &taken {
-            match pins.unless_pinned(digest, || unlink_body(&dir, digest, instance.as_ref())) {
-                Some(unlinked) => {
-                    unlinked?;
-                    report.collected += 1;
+        self.with_write_txn_grouped(|txn| {
+            for (digest, instance) in &taken {
+                if self.released_named_in_txn(txn, digest)? {
+                    report.held += 1;
+                    continue;
                 }
-                None => report.pinned += 1,
+                match pins.unless_pinned(digest, || unlink_body(&dir, digest, instance.as_ref())) {
+                    Some(unlinked) => {
+                        unlinked?;
+                        report.collected += 1;
+                    }
+                    None => report.pinned += 1,
+                }
             }
-        }
+            Ok(())
+        })?;
         if report.collected > 0 {
             sync_dir(&dir)?;
         }
@@ -145,14 +162,17 @@ impl Vault {
     /// Takes the released `digest` off the queue in `txn` and drops its
     /// raw-output row, its unowned occurrence's taint sidecar and secret
     /// mark, and its sealed file's key row (FIX 5348, the live vault only),
-    /// when no descriptor holds it again: `Some` with that file's instance,
-    /// if it had one. `None` leaves it as it is.
+    /// when no descriptor holds it again and no raw output holds it on its
+    /// own (FIX 5399b): `Some` with that file's instance, if it had one.
+    /// `None` leaves it as it is.
     fn retire_released_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         digest: &[u8; 32],
     ) -> Result<Option<Option<[u8; 16]>>> {
-        if !take_released_in_txn(&self.store, txn, digest)? {
+        if !take_released_in_txn(&self.store, txn, digest)?
+            || code_run_body_held_in_txn(&self.store, txn, digest)?
+        {
             return Ok(None);
         }
         let marks = unowned_mark_key(digest)?;
@@ -162,12 +182,24 @@ impl Vault {
         Ok(Some(retire_body_key_in_txn(&self.store, txn, digest)?))
     }
 
+    /// Whether anything in `txn` names the body `digest` its retirement
+    /// took: a raw-output row, a descriptor, or a key row bound since (FIX
+    /// 5399b).
+    fn released_named_in_txn(&self, txn: &heed::RoTxn<'_>, digest: &[u8; 32]) -> Result<bool> {
+        Ok(
+            RAW_OUTPUT_ROWS.contains(&self.store, txn, &raw_output_handle(digest))?
+                || digest_is_held_in_txn(&self.store, txn, digest)?
+                || body_key_row_in_txn(&self.store, txn, digest)?.is_some(),
+        )
+    }
+
     /// Removes up to `limit` body files in `dir` that no raw-output row or
     /// descriptor names, each with its line index, and line indexes whose
     /// body is gone: what a writer left before its row committed, or the
     /// collector left to a reader. Returns how many went.
     fn sweep_orphan_result_bodies(&self, dir: &BodyDir, limit: usize) -> Result<usize> {
         let now = SystemTime::now();
+        let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
         let mut entries = body_entries(dir)?;
         let mut removed = 0;
         while removed < limit {
@@ -178,14 +210,28 @@ impl Vault {
             if batch.is_empty() {
                 break;
             }
-            for entry in self.unnamed_result_bodies(batch)? {
-                if removed == limit {
-                    break;
-                }
-                if remove_unnamed(dir, &entry, now, &self.result_body_pins)? {
-                    removed += 1;
-                }
+            let unnamed = self.unnamed_result_bodies(batch, sealed)?;
+            if unnamed.is_empty() {
+                continue;
             }
+            // Each goes in a fresh writer that finds it unnamed again, so no
+            // row naming it commits between that check and the unlink (FIX
+            // 5399b).
+            let went = self.with_write_txn_grouped(|txn| {
+                let mut went = 0;
+                for entry in &unnamed {
+                    if removed + went == limit {
+                        break;
+                    }
+                    if self.entry_unnamed_in_txn(txn, entry, sealed)?
+                        && remove_unnamed(dir, entry, now, &self.result_body_pins)?
+                    {
+                        went += 1;
+                    }
+                }
+                Ok(went)
+            })?;
+            removed += went;
         }
         if removed > 0 {
             sync_dir(dir)?;
@@ -193,29 +239,40 @@ impl Vault {
         Ok(removed)
     }
 
-    /// The entries of `batch` whose digest no raw-output row or descriptor
-    /// names, read in one transaction, and the files of a digest its key
-    /// row does not name: a sealed file of another instance, or a plain one
-    /// beside a sealed pair (FIX 5348).
-    fn unnamed_result_bodies(&self, batch: Vec<BodyEntry>) -> Result<Vec<BodyEntry>> {
-        let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
+    /// The entries of `batch` nothing names, read in one transaction (see
+    /// [`Self::entry_unnamed_in_txn`]); `sealed`: the vault's directory is
+    /// sealed.
+    fn unnamed_result_bodies(&self, batch: Vec<BodyEntry>, sealed: bool) -> Result<Vec<BodyEntry>> {
         let rtxn = self.store.env.read_txn()?;
         let mut unnamed = Vec::new();
         for entry in batch {
-            let named =
-                RAW_OUTPUT_ROWS.contains(&self.store, &rtxn, &raw_output_handle(&entry.digest))?
-                    || digest_is_held_in_txn(&self.store, &rtxn, &entry.digest)?;
-            // A plain file is named by its digest alone; a sealed one by the
-            // instance its row names.
-            let keyed = if sealed {
-                body_key_row_in_txn(&self.store, &rtxn, &entry.digest)?.map(|row| row.instance)
-            } else {
-                None
-            };
-            if !named || keyed != entry.instance {
+            if self.entry_unnamed_in_txn(&rtxn, &entry, sealed)? {
                 unnamed.push(entry);
             }
         }
         Ok(unnamed)
+    }
+
+    /// Whether `entry` is unnamed in `txn`: no raw-output row or descriptor
+    /// names its digest, or its digest's key row does not name it, as a
+    /// sealed file of another instance or a plain one beside a sealed pair
+    /// is not (FIX 5348).
+    fn entry_unnamed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entry: &BodyEntry,
+        sealed: bool,
+    ) -> Result<bool> {
+        let named =
+            RAW_OUTPUT_ROWS.contains(&self.store, txn, &raw_output_handle(&entry.digest))?
+                || digest_is_held_in_txn(&self.store, txn, &entry.digest)?;
+        // A plain file is named by its digest alone; a sealed one by the
+        // instance its row names.
+        let keyed = if sealed {
+            body_key_row_in_txn(&self.store, txn, &entry.digest)?.map(|row| row.instance)
+        } else {
+            None
+        };
+        Ok(!named || keyed != entry.instance)
     }
 }
