@@ -243,7 +243,7 @@ impl OriginActor {
     }
 
     /// Reads [`Self::to_hex`]'s spelling back.
-    pub(in crate::origin) fn from_hex(text: &str) -> Result<Self> {
+    pub(crate) fn from_hex(text: &str) -> Result<Self> {
         if text == ERASED_CALL_IDENTITY {
             return Ok(Self::Erased);
         }
