@@ -166,11 +166,61 @@ impl Vault {
         manifest: &LfsManifest,
         occurred: TimeRange,
         learned_at: u64,
+        supply: F,
+    ) -> Result<LfsPutOutcome>
+    where
+        F: FnMut(&LfsChunkRef) -> Result<Vec<u8>>,
+    {
+        self.install_lfs_manifest_marking(
+            (whole_scan_max, None),
+            oid,
+            manifest,
+            (occurred, learned_at),
+            supply,
+        )
+    }
+
+    /// [`Self::install_lfs_manifest`] of an object pulled over the owner's
+    /// device sync lane whose source sent its lift mark with it (FIX 2897):
+    /// `mark`, its reason and when it was made. Every integrity check and
+    /// every scan runs as for any install; a scan's detection is what the
+    /// mark already says, so it marks rather than refuses, and the object is
+    /// published with the mark, on the row and version the sweep marks it
+    /// by, bytes already stored included. Any other failure refuses as
+    /// before. With no mark it is [`Self::install_lfs_manifest`].
+    pub(crate) fn install_lfs_manifest_with_mark<F>(
+        &self,
+        oid: LfsOid,
+        manifest: &LfsManifest,
+        mark: Option<(&str, u64)>,
+        occurred: TimeRange,
+        learned_at: u64,
+        supply: F,
+    ) -> Result<LfsPutOutcome>
+    where
+        F: FnMut(&LfsChunkRef) -> Result<Vec<u8>>,
+    {
+        self.install_lfs_manifest_marking(
+            (LFS_WHOLE_SCAN_MAX, mark),
+            oid,
+            manifest,
+            (occurred, learned_at),
+            supply,
+        )
+    }
+
+    fn install_lfs_manifest_marking<F>(
+        &self,
+        (whole_scan_max, mark): (u64, Option<(&str, u64)>),
+        oid: LfsOid,
+        manifest: &LfsManifest,
+        (occurred, learned_at): (TimeRange, u64),
         mut supply: F,
     ) -> Result<LfsPutOutcome>
     where
         F: FnMut(&LfsChunkRef) -> Result<Vec<u8>>,
     {
+        let marked = mark.is_some();
         let encoded = manifest.encode()?;
         let asset_id = manifest.asset_id()?;
         let owner = EntityId::now();
@@ -206,7 +256,7 @@ impl Vault {
                 {
                     return Err(chunks::invalid("lfs chunk does not match manifest"));
                 }
-                scanner.feed(&bytes)?;
+                marking(scanner.feed(&bytes), marked)?;
                 sha.update(&bytes);
                 if bounded {
                     whole.extend_from_slice(&bytes);
@@ -233,7 +283,10 @@ impl Vault {
                         // A stored chunk may have landed with the switch off:
                         // reusing it is a write, and the batch door reads it.
                         if scan_on_in_txn(self, txn)? {
-                            crate::batch::secret_scan::scan_write_payload(&bytes)?;
+                            marking(
+                                crate::batch::secret_scan::scan_write_payload(&bytes),
+                                marked,
+                            )?;
                         }
                     } else {
                         self.batch_in()
@@ -247,7 +300,7 @@ impl Vault {
                     Ok(())
                 })?;
             }
-            scanner.finish()?;
+            marking(scanner.finish(), marked)?;
             let actual: [u8; 32] = sha.finalize().into();
             if actual != *oid.as_bytes() {
                 return Err(chunks::invalid("lfs manifest pointer mismatch"));
@@ -255,7 +308,10 @@ impl Vault {
             // The chunks are the journal's until the object is published; a
             // refusal leaves them to GC.
             if scan && bounded {
-                crate::batch::secret_scan::scan_write_payload(&whole)?;
+                marking(
+                    crate::batch::secret_scan::scan_write_payload(&whole),
+                    marked,
+                )?;
             }
             self.with_write_txn_grouped(|txn| {
                 if !JOURNAL.contains(&self.store, txn, &owner)?
@@ -264,6 +320,10 @@ impl Vault {
                     return Err(chunks::invalid("lfs upload was cancelled"));
                 }
                 if let Some(record) = OBJECTS.get(&self.store, txn, &oid)? {
+                    // Matching bytes already stored keep the mark they came with.
+                    if let Some(mark) = mark {
+                        self.carry_lfs_object_mark_in_txn(txn, oid, mark)?;
+                    }
                     return Ok(LfsPutOutcome {
                         object: record.with_oid(oid),
                         deduplicated: true,
@@ -272,13 +332,15 @@ impl Vault {
                 // Switched on since the object was first read: read it now, or,
                 // past the bound, where its edges went unread, refuse it.
                 if !scan && scan_on_in_txn(self, txn)? {
-                    if !bounded {
-                        return Err(Error::Gate(GateError::GateWriteRejected {
+                    let scanned = if bounded {
+                        crate::batch::secret_scan::scan_write_payload(&whole)
+                    } else {
+                        Err(Error::Gate(GateError::GateWriteRejected {
                             outcome: "deny",
                             reason_codes: vec!["gate.secret_scan.switched_on_mid_object"],
-                        }));
-                    }
-                    crate::batch::secret_scan::scan_write_payload(&whole)?;
+                        }))
+                    };
+                    marking(scanned, marked)?;
                 }
                 self.batch_in()
                     .put(&asset_id, ENTITY_TYPE_ASSET, occurred, learned_at, &encoded)
@@ -297,6 +359,9 @@ impl Vault {
                     &LfsObjectRecord::from_object(&object),
                 )?;
                 REVERSE.put(&self.store, txn, &asset_id, &oid)?;
+                if let Some(mark) = mark {
+                    self.carry_lfs_object_mark_in_txn(txn, oid, mark)?;
+                }
                 JOURNAL.delete(&self.store, txn, &owner)?;
                 Ok(LfsPutOutcome {
                     object,
@@ -314,6 +379,16 @@ impl Vault {
             while self.collect_lfs_garbage(32)? != 0 {}
         }
         outcome
+    }
+}
+
+/// `scanned` for an install whose object came with its lift mark (FIX
+/// 2897): a scan's detection marks the object rather than refusing it, as
+/// the mark already says what it found; every other failure refuses.
+fn marking(scanned: Result<()>, marked: bool) -> Result<()> {
+    match scanned {
+        Err(Error::Gate(GateError::GateWriteRejected { .. })) if marked => Ok(()),
+        scanned => scanned,
     }
 }
 

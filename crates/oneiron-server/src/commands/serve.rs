@@ -197,6 +197,9 @@ pub(super) async fn serve_anchored(
     let pool = crate::http_listener::ConnectionPool::new(&limits, questions);
     let floor_vault = mesh_server.vault();
     floor_vault.lend_host_net_floor(pool.host_net_floor());
+    // Foreign guests' proposal spools keep the disk floor uploads keep, on
+    // its one shared ledger (FIX 7650).
+    floor_vault.lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
     let owner_judge = Arc::clone(&mesh_server);
     let api = crate::http_listener::serve_api_with_pool(
         listener,

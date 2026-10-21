@@ -25,7 +25,11 @@ oneiron-bench cua drift --plan /srv/cua/frozen/s5.json --programs /srv/cua/submi
 `drift` freezes S5 assignments, checks the same forward pins and validates reset
 entries against the same virtual origin. Its live adapter still needs access to
 the original admitted workflows' vault and attached-run continuity; this is
-`s5_original_workflow_vault_unavailable`, not a missing engine forward. See `CUA-S5.md`
+`s5_original_workflow_vault_unavailable`, not a missing engine forward. Before
+attempting those operations S5 runs one cached fresh-vault browser setup preflight
+through the same served helper, with evidence under `browser-preflight/`; a setup
+failure is retained for later rows, not retried. That preflight vault never
+receives copied workflows and cannot prove original-vault continuity. See `CUA-S5.md`
 for the protocol, input schema, lifecycle/repair state machine and limitations.
 No replay or repair is aliased to a fresh solve. Use prebuilt binaries on a booked, isolated Linux host.
 No Cargo dependency was added. No tests are part of this change.
@@ -66,10 +70,16 @@ also cover readiness; the outer executor is not claimed model-free. The replay
 itself is the engine's no-model admission check. No send or submit is authorized.
 
 Use a new private output directory. Terminal or interrupted readiness work is
-not retried there. Browser-pack installation and verified connection setup are
-still required by the served engine; missing setup fails closed, never by
-writing a verification bit. Linux compilation and this live matrix have not
-been run on this machine.
+not retried there. The shared fresh-vault setup installs/qualifies the seeded
+`oneiron.browser` Candidate, approves its permission card through the owner door,
+and checks `browser-guest` against the pinned browser config. Only active,
+pack/connection ready and verified passes. `browser-setup.json`, beside
+`transport.json`, retains the actual active install receipt, connection id and
+full verify verdict; step requests/replies and private owner pairing evidence
+stay beside it. Pack/setup failures name `browser_pack_unavailable`; a refused
+or non-ready check names `browser_guest_unverified` with the verdict. Verify is
+called once within the original startup clock, never silently retried. Linux
+compilation and this live matrix have not been run on this machine.
 
 ## Runtime pin manifest (JSON, schema 1)
 
@@ -158,10 +168,15 @@ The plan/pins are checked before any execution; the actual written forward is
 checked before `serve`. The orchestration uses a new scratch vault and issuer per trial, shipped `init`
 with no embedder, a stopped-vault agent mint, loopback `serve`, and the official
 `mcp --surface tool-first` bridge. It discovers schemas from `tools/list` after MCP
-initialization. It never signs credentials itself or reads LMDB. The candidate
-holds its own agent credential, never the issuer/PRIVATE token, and receives only
-public instructions/entry URL. Browser-pack installation and normal verified
-connector setup still belong to deployment, not a hand-edited verification bit.
+initialization. It reads no LMDB and mints no authority itself. While stopped,
+`token bootstrap` creates an owner link; after serve, the harness signs the public
+pairing enrollment proof and redeems it over loopback HTTP, as acceptance does.
+The owner API CLI signs prepare/approve/verify calls and reads the actual active
+install receipt. Setup completes before MCP/candidate work. The candidate holds
+its own agent credential, never the owner credential, issuer or PRIVATE token,
+and receives only public instructions/entry URL. A failed setup stops later S2
+cells with the same named cause, including after resume; no verification bit,
+engine switch, egress relaxation or send grant is installed by the harness.
 
 S1 has an owned process/token/event log per trial. It is not mounted into the
 guest. PRIVATE health/reset/state use authenticated host-loopback HTTP. No second
@@ -197,7 +212,16 @@ F5 600s/60. F5 inherits S1's research cap assumption. Setup/candidate/drain/tota
 elapsed times are separate. Reports show observed medians, missing counts and
 successful-run medians separately, never p95 or success-only all-assigned latency.
 
-E6 field provenance is `unavailable_e6`; E3 monitoring is `unavailable_e3`.
+E6 field provenance is `unavailable_e6`. E3 `no_progress_detection` observes
+engine batches' `stop_cause.cause == "no_progress"`, with the failed receipt's
+step, URL and title. No such stop records false, with the checked receipt count
+and batch stop evidence; this says nothing about whether the page made progress.
+Host-recorded MCP verb-output JSON is decoded, never candidate prose. E1
+`admission_model_free` reads admission replay decision receipts (including an
+empty decision list); E2 `execution_model_free` reads library-run receipts,
+keeping incomplete `model_free_unproven` evidence null. Available observations
+clear their unavailable reason. Whole-TASK freedom stays null without its model
+edge ledger, unless a browser receipt positively records model use (false).
 E4 TASK-before-planner and E5 browser-planner routing are present. A direct
 library call or configured role alone does not prove whole-TASK model freedom
 or complete observed role coverage. Physical attempts and raw usage are archived, but incomplete public
