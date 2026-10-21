@@ -12,6 +12,11 @@
 //! counts as unattributed. Nothing samples on a timer: frames count their
 //! bytes as they arrive, and a read works out the rest. It lives in this
 //! process only, as the sockets it counts do.
+//!
+//! It also counts the pool's open connections by how each holds it: a floor
+//! permit, the owner's one reserve beside the floor, or a place parked
+//! beside it while the floor's line is awaited (FIX 8274). A connection
+//! counts there with or without a request body open.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -27,6 +32,10 @@ use super::{LimitRow, WireQuestionKind, lock};
 /// the list only: every open body is counted, and the connections of the
 /// credentials past it are summed in `other_credential_open_body_permits`.
 const MAX_PRESSURE_CREDENTIALS: usize = 16;
+
+/// Connections the owner's reserve keeps beside the floor (FIX 8274). They
+/// are never counted in the floor's bound.
+const OWNER_RESERVE_CONNECTIONS: u64 = 1;
 
 /// What the owner can do, and what the check does not promise.
 const REMEDY: &str = r#"Is everything okay? This connection pool has a waiter. The listed credential keys hold the most open request bodies. Pause the client using a listed key, or revoke its credential. For a slip key, revoke with POST /v1/core/slips/revoke, passing {"slip_id":[32 bytes decoded from the listed hex ID]}. For an engine-run client, its existing pause door is POST /v1/core/facade/vault.runs.pause with {"branch":"<attempt-id>"}; that pauses a run branch, not a credential. Account-key pause/revoke belongs to the host control plane. This check does not cut a body or guarantee that revocation releases an already-open body."#;
@@ -64,7 +73,57 @@ pub(crate) struct ConnectionPoolPressureCheck {
     other_credential_open_body_permits: u64,
     /// Connections with an open body no accepted credential is attached to.
     unattributed_open_body_permits: u64,
+    /// The pool's open connections now, by how each holds it.
+    connections: PoolConnections,
+    /// Connections the owner's reserve keeps beside the floor: one, never
+    /// counted in `bound`.
+    reserve_bound: u64,
+    /// How many sockets may wait parked beside the floor at once: the
+    /// floor's own bound.
+    parking_bound: u64,
     remedy: String,
+}
+
+/// The pool's open connections by how each holds it (FIX 8274).
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct PoolConnections {
+    /// Connections holding a floor permit. Guests' network work may hold
+    /// the floor's other permits.
+    floor: u64,
+    /// The connection on the owner's reserve whose latest request was his
+    /// proven read, served or idle since: 0 or 1.
+    reserve_owner: u64,
+    /// The connection on the owner's reserve whose request is not judged
+    /// yet: 0 or 1.
+    reserve_classifying: u64,
+    /// Sockets whose request went back from the reserve to wait for the
+    /// floor. They hold no permit, and their bodies count only once the
+    /// floor admits them.
+    parked: u64,
+}
+
+impl PoolConnections {
+    fn count(&mut self, hold: SocketHold) -> &mut u64 {
+        match hold {
+            SocketHold::Floor => &mut self.floor,
+            SocketHold::Owner => &mut self.reserve_owner,
+            SocketHold::Classifying => &mut self.reserve_classifying,
+            SocketHold::Parked => &mut self.parked,
+        }
+    }
+}
+
+/// How a connection holds the pool, as the check counts it (FIX 8274).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SocketHold {
+    /// A floor permit.
+    Floor,
+    /// The owner's reserve, its latest request his proven read.
+    Owner,
+    /// The owner's reserve, its request not judged yet.
+    Classifying,
+    /// Parked beside the floor, in its line, holding no permit.
+    Parked,
 }
 
 /// One credential's open request bodies.
@@ -98,6 +157,8 @@ pub(crate) struct PoolPressure {
     episodes: Mutex<Episodes>,
     /// Each open body, by its socket's id and its own.
     bodies: Mutex<BTreeMap<(u64, u64), Arc<BodyRecord>>>,
+    /// The open connections, by how each holds the pool.
+    connections: Mutex<PoolConnections>,
     /// The next socket or body id.
     next: AtomicU64,
 }
@@ -169,11 +230,14 @@ impl PoolPressure {
         }
     }
 
-    /// A newly admitted socket's place in the check.
-    pub(crate) fn socket(self: &Arc<Self>) -> ObservedSocket {
+    /// A newly admitted socket's place in the check, holding the pool as
+    /// `hold`.
+    pub(crate) fn socket(self: &Arc<Self>, hold: SocketHold) -> ObservedSocket {
+        *lock(&self.connections).count(hold) += 1;
         ObservedSocket {
             pressure: Arc::clone(self),
             socket: self.next.fetch_add(1, Ordering::Relaxed),
+            hold: Mutex::new(hold),
         }
     }
 
@@ -207,6 +271,7 @@ impl PoolPressure {
             .map(|row| row.open_body_permits)
             .sum();
         credentials.truncate(MAX_PRESSURE_CREDENTIALS);
+        let connections = lock(&self.connections).clone();
         ConnectionPoolPressure::Active {
             check: ConnectionPoolPressureCheck {
                 kind: WireQuestionKind::InspectConnectionPoolPressure,
@@ -218,6 +283,9 @@ impl PoolPressure {
                 top_credentials: credentials,
                 other_credential_open_body_permits: other,
                 unattributed_open_body_permits: unattributed,
+                connections,
+                reserve_bound: OWNER_RESERVE_CONNECTIONS,
+                parking_bound: episode.bound,
                 remedy: REMEDY.to_owned(),
             },
         }
@@ -269,13 +337,25 @@ impl Held {
 }
 
 /// One admitted socket's place in the check. Dropped with the socket, it
-/// ends the record of every body that came on it.
+/// ends the record of every body that came on it, and its count.
 pub(crate) struct ObservedSocket {
     pressure: Arc<PoolPressure>,
     socket: u64,
+    /// How its connection holds the pool now.
+    hold: Mutex<SocketHold>,
 }
 
 impl ObservedSocket {
+    /// Its connection holds the pool as `hold` from now on.
+    pub(crate) fn holds(&self, hold: SocketHold) {
+        let mut current = lock(&self.hold);
+        let mut connections = lock(&self.pressure.connections);
+        let was = connections.count(*current);
+        *was = was.saturating_sub(1);
+        *connections.count(hold) += 1;
+        *current = hold;
+    }
+
     /// A record of a request body arriving on this socket, counted from now,
     /// and the handle its request's credential is attached through.
     pub(crate) fn body(&self) -> (ObservedBody, BodyCredential) {
@@ -306,6 +386,11 @@ impl Drop for ObservedSocket {
         while let Some(at) = bodies.range(socket.clone()).next().map(|(at, _)| *at) {
             bodies.remove(&at);
         }
+        drop(bodies);
+        let hold = *lock(&self.hold);
+        let mut connections = lock(&self.pressure.connections);
+        let count = connections.count(hold);
+        *count = count.saturating_sub(1);
     }
 }
 
@@ -331,6 +416,7 @@ impl Drop for ObservedBody {
 }
 
 /// Where the credential a request is accepted on is attached to its body.
+#[derive(Clone)]
 pub(crate) struct BodyCredential(Arc<BodyRecord>);
 
 tokio::task_local! {

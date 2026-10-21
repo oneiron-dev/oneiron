@@ -8,6 +8,7 @@ use crate::error::ApiError;
 use crate::server::SyncServer;
 use axum::extract::{Request, State};
 use axum::http::HeaderMap;
+use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use oneiron::authority::PeerMachine;
@@ -95,67 +96,23 @@ pub(crate) async fn admit_http_binding(
     {
         return refusal;
     }
-    // Public endpoints retain their no-credential behavior. Their protected
-    // siblings still reject absent or malformed credentials in the handler.
-    // The OpenAI proxy takes the MCP connector credential as `/mcp` does, so
-    // its holder proof is spent here once too (FIX 5124).
-    let mcp_credential = matches!(
-        request.uri().path(),
-        "/mcp" | "/mcp/tool-first" | "/v1/chat/completions"
-    )
-    .then(|| {
-        request
-            .headers()
-            .get("x-oneiron-mcp-credential")
-            .and_then(|value| value.to_str().ok())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    })
-    .flatten();
-    // MCP's credential header has the same precedence at admission and use.
-    // It cannot sidestep nonce consumption with an unrelated Bearer header.
-    let mut machine = PeerMachine::Unknown;
-    let mut admitted = None;
-    if let Some(token) = mcp_credential.or_else(|| bearer_token(request.headers()).ok().flatten())
-        && token.starts_with("v2.slip.")
-    {
-        let accepted = BindingProof::from_headers(request.headers()).and_then(|proof| {
-            CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref())
-                .map(|auth| (auth, proof))
-        });
-        match accepted {
-            Ok((auth, proof)) => {
-                machine = super::machine_proof::peer_machine(
-                    request.headers(),
-                    token,
-                    &proof,
-                    server.vault(),
-                );
-                // A managed vault keeps the caller admitted here, with the
-                // token and holder proof it accepted and the machine proof
-                // it carries over them, for its renewal door (FIX 4559) and
-                // the readers that reuse them (FIX 6160). A missing or
-                // malformed machine proof refuses nothing here.
-                if server.managed_issuer.is_some() {
-                    let device =
-                        super::machine_proof::machine_proof_over(request.headers(), token, &proof);
-                    admitted = Some(AdmittedCaller::new(auth, token, &proof, device.ok()));
-                }
-            }
+    let mut request = request;
+    // A request the owner's reserve admitted (FIX 8274) carries that
+    // admission here, used once: no second nonce is spent.
+    let early = request.extensions_mut().remove::<AdmittedBinding>();
+    let AdmittedBinding { machine, admitted } = match early {
+        Some(binding) => binding,
+        None => match admit_binding(&server, request.uri().path(), request.headers()) {
+            Ok(binding) => binding,
             Err(error) => {
-                let error = if server.managed_issuer.is_some() {
-                    managed_refusal(error, token, request.headers(), server.vault())
-                } else {
-                    error
-                };
                 // Keep the /v1 envelope when the transport door refuses first.
                 if request.uri().path().starts_with("/v1/") {
                     return crate::error::EnvelopedApiError::from(error).into_response();
                 }
                 return error.into_response();
             }
-        }
-    }
+        },
+    };
     // A mesh stream's handshake proved its MACHINE: an HTTP proof of another
     // machine refuses (FIX 997). A request with no proof stays Unknown, as on
     // any transport.
@@ -172,10 +129,109 @@ pub(crate) async fn admit_http_binding(
         return error.into_response();
     }
     // Every admitted request carries the machine it proved, or Unknown.
-    let mut request = request;
     request.extensions_mut().insert(machine);
     if let Some(admitted) = admitted {
         request.extensions_mut().insert(admitted);
     }
     next.run(request).await
+}
+
+/// One request's admission at this door: the machine it proved, or
+/// Unknown, and on a managed vault the caller it admitted. Only
+/// [`admit_binding`] makes one, and only [`admit_owner_proof`] puts one on
+/// its own request, for [`admit_http_binding`] to take once (FIX 8274).
+#[derive(Clone)]
+struct AdmittedBinding {
+    machine: PeerMachine,
+    admitted: Option<AdmittedCaller>,
+}
+
+/// This door's decision on a request to `path` with `headers`, with no
+/// reply made yet: its slip's holder proof spent once, or the refusal it
+/// gets. A request with no slip is admitted on no proof.
+fn admit_binding(
+    server: &SyncServer,
+    path: &str,
+    headers: &HeaderMap,
+) -> Result<AdmittedBinding, ApiError> {
+    // Public endpoints retain their no-credential behavior. Their protected
+    // siblings still reject absent or malformed credentials in the handler.
+    // The OpenAI proxy takes the MCP connector credential as `/mcp` does, so
+    // its holder proof is spent here once too (FIX 5124).
+    let mcp_credential = matches!(path, "/mcp" | "/mcp/tool-first" | "/v1/chat/completions")
+        .then(|| {
+            headers
+                .get("x-oneiron-mcp-credential")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .flatten();
+    // MCP's credential header has the same precedence at admission and use.
+    // It cannot sidestep nonce consumption with an unrelated Bearer header.
+    let mut machine = PeerMachine::Unknown;
+    let mut admitted = None;
+    if let Some(token) = mcp_credential.or_else(|| bearer_token(headers).ok().flatten())
+        && token.starts_with("v2.slip.")
+    {
+        let accepted = BindingProof::from_headers(headers).and_then(|proof| {
+            CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref())
+                .map(|auth| (auth, proof))
+        });
+        match accepted {
+            Ok((auth, proof)) => {
+                machine =
+                    super::machine_proof::peer_machine(headers, token, &proof, server.vault());
+                // A managed vault keeps the caller admitted here, with the
+                // token and holder proof it accepted and the machine proof
+                // it carries over them, for its renewal door (FIX 4559) and
+                // the readers that reuse them (FIX 6160). A missing or
+                // malformed machine proof refuses nothing here.
+                if server.managed_issuer.is_some() {
+                    let device = super::machine_proof::machine_proof_over(headers, token, &proof);
+                    admitted = Some(AdmittedCaller::new(auth, token, &proof, device.ok()));
+                }
+            }
+            Err(error) => {
+                return Err(if server.managed_issuer.is_some() {
+                    managed_refusal(error, token, headers, server.vault())
+                } else {
+                    error
+                });
+            }
+        }
+    }
+    Ok(AdmittedBinding { machine, admitted })
+}
+
+/// The owner's own proof on a request his reserve connection may serve
+/// (FIX 8274), judged before this door runs. The caller
+/// [`CoreAuth::for_request`] names must be the owner by
+/// [`crate::api::owner`] before anything is spent; only then is its holder
+/// proof spent, once, by this door's own [`admit_binding`], and the request
+/// carries that admission on to [`admit_http_binding`] in place of a second
+/// nonce. `false` spends and answers nothing: the request then meets this
+/// door as every request does. An account key never names the owner, so it
+/// is not shown to its verifier here.
+pub(crate) async fn admit_owner_proof(server: &SyncServer, parts: &mut Parts) -> bool {
+    let account_key = server.account_keys.is_some()
+        && bearer_token(&parts.headers)
+            .ok()
+            .flatten()
+            .is_some_and(|token| !token.starts_with(super::CORE_TOKEN_V2_PREFIX));
+    if account_key {
+        return false;
+    }
+    let owner = CoreAuth::for_request(parts, server)
+        .await
+        .is_ok_and(|auth| crate::api::owner(&auth, server).is_ok());
+    let path = parts.uri.path();
+    if !owner || (!served_after_deletion(path) && deleted_vault_refusal(server, path).is_some()) {
+        return false;
+    }
+    let Ok(binding) = admit_binding(server, path, &parts.headers) else {
+        return false;
+    };
+    parts.extensions.insert(binding);
+    true
 }
