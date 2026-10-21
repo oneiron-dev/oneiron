@@ -2,6 +2,7 @@
 //! These values have no public constructor or wire decoder. Diagnostic bytes
 //! alone can never mint one, and nothing here can grant repair authority.
 
+use super::consent_depth::{ConsentQueueDepthDetector, ConsentQueueSnapshot};
 use super::tripwires::{McpActionRejectedDetector, RetrievalRegressionDetector, TripwireBounds};
 use super::{
     ConsentDeniedDetector, DeterministicDetector, DiagnosticEvent, DiagnosticObservation,
@@ -230,6 +231,54 @@ impl VerifiedSourceSet {
             .map(|(_, run)| run.clone())
             .collect();
         Self::retrieval_window(store, txn, &members)
+    }
+
+    /// A whole-tray consent queue depth (OF-298): `snapshot` and `bounds` as
+    /// the producer fired with them over `scope`. The detector run again
+    /// over the snapshot's rows must yield `event` whole; then every row must
+    /// still be its claim's current tray row and name its base Gate
+    /// decision, unredacted, which is what the witness keeps.
+    pub(crate) fn consent_queue(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        event: &DiagnosticEvent,
+        scope: &str,
+        snapshot: &ConsentQueueSnapshot,
+        bounds: TripwireBounds,
+    ) -> Result<Self> {
+        if snapshot.rows.is_empty() {
+            return Err(ineligible());
+        }
+        let observations = snapshot.observations();
+        let input = DiagnosticWorkingSet {
+            scope_ref: scope,
+            observations: &observations,
+        };
+        let detector = ConsentQueueDepthDetector {
+            bounds,
+            snapshot_at: snapshot.snapshot_at,
+        };
+        if detector.detect(&input).as_slice() != std::slice::from_ref(event) {
+            return Err(ineligible());
+        }
+        let mut proofs = Vec::with_capacity(snapshot.rows.len());
+        for row in &snapshot.rows {
+            let claim = EntityId::from_bytes(row.claim_id).map_err(|_| ineligible())?;
+            if store.pending_gate_consent_in_txn(txn, &claim)?.as_ref() != Some(row) {
+                return Err(ineligible());
+            }
+            let decision = store
+                .gate_decision_in_txn(txn, row.decision_id)?
+                .ok_or_else(ineligible)?;
+            if decision.redacted_at.is_some() {
+                return Err(ineligible());
+            }
+            proofs.push(SourceProof::Gate {
+                id: row.decision_id,
+                digest: digest(&crate::receipt::gate_decision_receipt_from_base(&decision))?,
+            });
+        }
+        Ok(Self { proofs })
     }
 
     pub(crate) fn with_centroid_snapshot(

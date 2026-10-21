@@ -1,8 +1,10 @@
 //! One worker: a model loaded on one engine, or the one opaque endpoint, on
-//! its own thread. The thread brings it up (Loading, Warming, Calibrating),
-//! then runs the units the dispatcher gives it, one at a time, until the
-//! dispatcher closes. Only a Ready worker takes work. A cold or failed load
-//! leaves the worker Failed for this process and writes no row.
+//! its own thread. The thread brings it up (Loading, Warming), then runs the
+//! units the dispatcher gives it, one at a time, until the dispatcher
+//! closes. Only a Ready worker takes work. A cold or failed load leaves the
+//! worker Failed for this process and writes no row. A platform runtime's
+//! worker is supervised instead (`super::lifecycle`): measured before it is
+//! Ready, and restarted on the same worker after a crash (FIX 6755 slice 3).
 //!
 //! The worker seam is batch-capable (FIX 6755 slice 2b). A worker is built
 //! on its own thread by its spec's loader, which alone crosses threads, and
@@ -24,7 +26,8 @@ use oneiron::memory::extraction::{
 use super::super::endpoint::HttpTagger;
 use super::super::engines::Engine;
 use super::super::local::LocalTagger;
-use super::{Job, Shared, failure};
+use super::lifecycle::{Fault, Lifeline, Restart, Supervised};
+use super::{Job, Shared, Unit, failure};
 use crate::config::EmbedderDevice;
 
 /// Tool name on a failure a worker reports for its own thread.
@@ -47,6 +50,13 @@ pub(crate) trait Worker {
     fn run_batch(&mut self, inputs: &[&EncoderInput]) -> Vec<oneiron::Result<EncoderOutput>> {
         inputs.iter().map(|input| self.run(input)).collect()
     }
+
+    /// Why it can take no further unit, once its process died or its
+    /// stream broke: its supervisor then restarts it. A worker that runs in
+    /// this process never breaks so.
+    fn broken(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 impl Worker for LocalTagger {
@@ -64,10 +74,6 @@ impl Worker for Arc<HttpTagger> {
 /// Brings a worker's model up on its own thread: the one part of a spec that
 /// crosses threads.
 type Load = Box<dyn FnOnce() -> anyhow::Result<Box<dyn Worker>> + Send>;
-/// Measures a worker on its own thread against the bundle's reference: the
-/// rank its owner gives its measured speed when its answers clear, `None`
-/// when they do not.
-type Calibrate = Box<dyn FnOnce(&mut dyn Worker) -> Option<usize> + Send>;
 
 /// How far up a worker is.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,9 +86,11 @@ pub(crate) enum WorkerState {
     Calibrating,
     /// It takes work.
     Ready,
-    /// It runs, but its answers do not clear the bundle's reference here.
+    /// It runs, but it is not the pinned worker or its answers do not clear
+    /// the bundle's reference here: it takes no work in this process.
     Unavailable,
-    /// Its load failed: it takes no work in this process.
+    /// Its load failed, or a supervised worker crashed: it takes no work
+    /// until its supervisor restarts it, if it has one.
     Failed,
 }
 
@@ -184,13 +192,20 @@ pub(crate) struct WorkerSpec {
     /// Inputs one unit of its may hold: 1 for a worker that runs them one at
     /// a time.
     batch: usize,
-    load: Load,
-    /// The untimed call it makes before it is Ready; `None` for a worker
+    bring: Bring,
+}
+
+/// How a worker's thread brings it up.
+enum Bring {
+    /// Once: a load that fails leaves it Failed for this process. `warm` is
+    /// the untimed call it makes before it is Ready; `None` for a worker
     /// that warms itself.
-    warm: Option<EncoderInput>,
-    /// Its calibration before it is Ready; `None` when the slot's rows
-    /// already rank it.
-    calibrate: Option<Calibrate>,
+    Once {
+        load: Load,
+        warm: Option<EncoderInput>,
+    },
+    /// Again after each crash, by its supervisor (`super::lifecycle`).
+    Supervised(Supervised),
 }
 
 impl WorkerSpec {
@@ -205,9 +220,10 @@ impl WorkerSpec {
             ),
             // Candle runs one unpadded sequence at a time.
             batch: 1,
-            load: Box::new(move || Ok(Box::new(tagger) as Box<dyn Worker>)),
-            warm: Some(warm_input()),
-            calibrate: None,
+            bring: Bring::Once {
+                load: Box::new(move || Ok(Box::new(tagger) as Box<dyn Worker>)),
+                warm: Some(warm_input()),
+            },
         }
     }
 
@@ -219,33 +235,35 @@ impl WorkerSpec {
             descriptor: WorkerDescriptor::endpoint(checkpoint),
             // The dispatcher sends it one call at a time.
             batch: 1,
-            load: Box::new(move || Ok(Box::new(tagger) as Box<dyn Worker>)),
-            warm: None,
-            calibrate: None,
+            bring: Bring::Once {
+                load: Box::new(move || Ok(Box::new(tagger) as Box<dyn Worker>)),
+                warm: None,
+            },
         }
     }
 
-    /// A platform runtime's worker, started after the listener binds: `load`
-    /// builds it on its own thread and warms it, then `calibrate` measures
-    /// it there before it is Ready, and the rank it returns is published. A
-    /// unit of its carries up to `batch` bulk calls in one
-    /// [`Worker::run_batch`].
-    #[expect(
-        dead_code,
-        reason = "the MLX and Core ML adapters build their workers by it (FIX 6755 slices 3, 2c)"
-    )]
+    /// A platform runtime's worker, started after the listener binds and
+    /// supervised for the dispatcher's life (`super::lifecycle`): `factory`
+    /// starts each session on the worker's own thread, warmed, then `admit`
+    /// measures it there before it is Ready and returns the rank published
+    /// for it. A crashed session starts again after `restart`'s backoff, on
+    /// the same worker. A unit of its carries up to `batch` bulk calls in
+    /// one [`Worker::run_batch`].
     pub(crate) fn background(
         descriptor: WorkerDescriptor,
         batch: usize,
-        load: impl FnOnce() -> anyhow::Result<Box<dyn Worker>> + Send + 'static,
-        calibrate: impl FnOnce(&mut dyn Worker) -> Option<usize> + Send + 'static,
+        factory: impl FnMut(&Lifeline) -> Result<Box<dyn Worker>, Fault> + Send + 'static,
+        admit: impl FnMut(&mut dyn Worker) -> Result<usize, Fault> + Send + 'static,
+        restart: Restart,
     ) -> Self {
         Self {
             descriptor,
             batch,
-            load: Box::new(load),
-            warm: None,
-            calibrate: Some(Box::new(calibrate)),
+            bring: Bring::Supervised(Supervised {
+                factory: Box::new(factory),
+                admit: Box::new(admit),
+                restart,
+            }),
         }
     }
 
@@ -255,6 +273,11 @@ impl WorkerSpec {
 
     pub(super) const fn batch(&self) -> usize {
         self.batch
+    }
+
+    /// Whether a supervisor runs it, which the dispatcher's close joins.
+    pub(super) const fn supervised(&self) -> bool {
+        matches!(self.bring, Bring::Supervised(_))
     }
 }
 
@@ -274,74 +297,94 @@ fn warm_input() -> EncoderInput {
 }
 
 /// Worker `index`'s thread: brings it up, then runs what the dispatcher gives
-/// it until the dispatcher closes. Every call it runs, failed or not, comes
-/// back with its execution.
-pub(super) fn serve(shared: &Shared, index: usize, spec: WorkerSpec) {
+/// it until the dispatcher closes; a supervised worker's supervisor runs it
+/// instead. Every call it runs, failed or not, comes back with its execution.
+pub(super) fn start(shared: &Arc<Shared>, index: usize, spec: WorkerSpec) {
     let WorkerSpec {
-        descriptor,
-        load,
-        warm,
-        calibrate,
-        ..
+        descriptor, bring, ..
     } = spec;
-    let Some(mut worker) = bring_up(shared, index, load, warm, calibrate) else {
-        return;
-    };
-    while let Some(unit) = shared.next_unit(index) {
-        let started = Instant::now();
-        let results = run_unit(worker.as_mut(), &unit);
-        let ran = started.elapsed();
-        let answered = unit
-            .into_iter()
-            .zip(results)
-            .map(|((job, pick), result)| {
-                // Each call waited to the unit's start; the unit's whole run
-                // is each call's, never divided among them.
-                let execution = EncoderExecution::new(
-                    descriptor.runtime,
-                    descriptor.compute,
-                    pick,
-                    started.saturating_duration_since(job.queued_at),
-                    ran,
-                );
-                let attempt = EncoderAttempt {
-                    execution: Some(execution),
-                    result,
-                };
-                (job, attempt)
-            })
-            .collect();
-        shared.finish(index, answered);
+    match bring {
+        Bring::Once { load, warm } => {
+            let Some(mut worker) = bring_up(shared, index, load, warm) else {
+                return;
+            };
+            while let Some(unit) = shared.next_unit(index) {
+                // A unit's fault fails its calls; this worker serves on.
+                serve_unit(shared, index, &descriptor, worker.as_mut(), unit);
+            }
+        }
+        Bring::Supervised(supervised) => {
+            super::lifecycle::supervise(shared, index, &descriptor, supervised);
+        }
     }
+}
+
+/// Runs one unit and answers each of its calls with its execution: its wait
+/// to the unit's start, and the unit's whole run, never divided among them.
+/// The fault that takes a supervised worker down, when the worker panicked
+/// or answered another number of calls.
+pub(super) fn serve_unit(
+    shared: &Shared,
+    index: usize,
+    descriptor: &WorkerDescriptor,
+    worker: &mut dyn Worker,
+    unit: Unit,
+) -> Option<&'static str> {
+    let started = Instant::now();
+    let (results, fault) = run_unit(worker, &unit);
+    let ran = started.elapsed();
+    let answered = unit
+        .into_iter()
+        .zip(results)
+        .map(|((job, pick), result)| {
+            let execution = EncoderExecution::new(
+                descriptor.runtime,
+                descriptor.compute,
+                pick,
+                started.saturating_duration_since(job.queued_at),
+                ran,
+            );
+            let attempt = EncoderAttempt {
+                execution: Some(execution),
+                result,
+            };
+            (job, attempt)
+        })
+        .collect();
+    shared.finish(index, answered);
+    fault
 }
 
 /// One unit as one [`Worker::run_batch`] call: one result per call, in
 /// order. A worker that panics, or answers another number of calls, fails
-/// every call of the unit.
+/// every call of the unit, and the fault is named.
 fn run_unit(
     worker: &mut dyn Worker,
     unit: &[(Job, ExecutionPick)],
-) -> Vec<oneiron::Result<EncoderOutput>> {
+) -> (Vec<oneiron::Result<EncoderOutput>>, Option<&'static str>) {
     let inputs: Vec<&EncoderInput> = unit.iter().map(|(job, _)| &job.input).collect();
-    let code = match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs))) {
-        Ok(results) if results.len() == inputs.len() => return results,
-        Ok(_) => "the worker answered another number of calls",
-        Err(_) => "the worker panicked",
+    let (code, fault) = match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs))) {
+        Ok(results) if results.len() == inputs.len() => return (results, None),
+        Ok(_) => (
+            "the worker answered another number of calls",
+            "wrong_result_count",
+        ),
+        Err(_) => ("the worker panicked", "worker_panicked"),
     };
-    inputs
+    let failed = inputs
         .iter()
         .map(|_| Err(failure(WORKER_TOOL, code)))
-        .collect()
+        .collect();
+    (failed, Some(fault))
 }
 
-/// Loading, then Warming and Calibrating when the spec asks, then Ready.
-/// `None` when the worker ends Failed or Unavailable.
+/// Loading, then Warming when the spec asks, then Ready. `None` when the
+/// worker ends Failed.
 fn bring_up(
     shared: &Shared,
     index: usize,
     load: Load,
     warm: Option<EncoderInput>,
-    calibrate: Option<Calibrate>,
 ) -> Option<Box<dyn Worker>> {
     let mut worker = match catch_unwind(AssertUnwindSafe(load)) {
         Ok(Ok(worker)) => worker,
@@ -363,17 +406,6 @@ fn bring_up(
         if !matches!(warmed, Ok(Ok(_))) {
             tracing::warn!(worker = index, "an Oneironer worker's warm-up call failed");
         }
-    }
-    if let Some(calibrate) = calibrate {
-        shared.settle(index, WorkerState::Calibrating, None);
-        let measured = catch_unwind(AssertUnwindSafe(|| calibrate(worker.as_mut())));
-        let Ok(Some(rank)) = measured else {
-            let why = "its answers do not clear the bundle's reference";
-            shared.settle(index, WorkerState::Unavailable, Some(why));
-            return None;
-        };
-        // Its owner's rank for it, published before it takes work.
-        shared.publish_rank(index, rank);
     }
     shared.settle(index, WorkerState::Ready, None);
     Some(worker)
