@@ -1,8 +1,8 @@
 //! The Coach's scheduled tier-1 sweep (ARCH-0066 §4) and its proposed-only
 //! repair bridge. The sweep runs the receipt tripwires over the last day of
 //! Gate receipts, one tripwire window at a time, and the served-signal
-//! detectors over the stored retrieval runs and call receipts, as the
-//! signed scheduled detector instance. Each accepted firing a closed-form
+//! detectors over the stored retrieval runs, call receipts and the whole
+//! pending consent tray, as the signed scheduled detector instance. Each accepted firing a closed-form
 //! repair answers gets one repair intent, every one of them in the same
 //! pass (OF-418 L8), filed through the production healer host for the owner
 //! to review and counted by the healer oversight receipts under its
