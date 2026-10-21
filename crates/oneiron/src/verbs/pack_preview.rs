@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::sdk::{PackFileInput, decode_pack_files};
+use super::{PackFileInput, decode_pack_files};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::skill_hub::pack_catalog::PackImportPreview;

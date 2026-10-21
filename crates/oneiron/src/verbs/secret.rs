@@ -15,8 +15,7 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::create_origin::task_create_origin_in_txn;
-use super::sdk::AgentVerb;
+use super::AgentVerb;
 use crate::EntityId;
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
@@ -27,6 +26,7 @@ use crate::secret_custody::{
     HandleReveal, RevealAsker, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt,
     SecretSight,
 };
+use crate::task_verb::task_create_origin_in_txn;
 use crate::typed_body::LiftedSources;
 
 /// `reveal`'s input: the handle, and why the agent needs the value.

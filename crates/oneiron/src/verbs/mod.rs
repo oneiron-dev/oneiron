@@ -1,7 +1,98 @@
 //! Shared typed agent-verb inputs and generated transport dispatch.
-use super::{TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAskTarget};
+mod act_answer;
+mod agent_grant;
+mod agents;
+mod anonymous_chat;
+mod asr;
+mod authority_history;
+mod browser;
+mod calendar;
+mod campaign_archive;
+mod campaign_split;
+mod catalog_fragment;
+mod connector;
+mod connector_call;
+mod connector_pack;
+mod coreference;
+mod courtesy_delete;
+mod credential;
+mod describe;
+mod diary;
+mod disclosure;
+mod embedding_space;
+mod eval_cohort;
+mod explain;
+mod fanout_launch;
+mod federation;
+mod federation_burst;
+mod feedback;
+mod git_push_grant;
+mod goal_optimize;
+mod guest_document;
+mod guest_revoke;
+mod host;
+mod hub;
+mod identity_topology;
+mod legal_hold;
+mod live_run;
+mod live_voice;
+mod mesh;
+mod model_manifest;
+mod note_history;
+mod off_record;
+mod off_record_rooms;
+mod pack_preview;
+mod persona;
+mod proxy;
+mod record_erase;
+mod reply;
+mod research;
+mod residence;
+mod retrieval;
+mod root_requests;
+mod scratchpad;
+mod secret;
+mod secret_grant;
+mod secret_use;
+#[path = "self.rs"]
+mod self_verbs;
+mod share;
+mod shared;
+mod shared_admin;
+mod shared_members;
+mod shared_policy;
+mod skill_attribution;
+mod skill_defaults;
+mod skill_execution;
+mod skill_fork;
+mod skills;
+mod standing;
+mod support_grant;
+mod trusted_contact;
+mod voice_bank;
+mod weave;
+mod wire_health;
+mod workflows;
+mod workspace;
+
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::task_verb::{TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAskTarget};
 use serde::{Deserialize, Serialize};
+
+// FIX 8907: the files moved here from task_verb still name their siblings
+// by the old `sdk_*` module names, this root as `sdk`, and a few task
+// items as `super::…`; these private aliases keep those bytes.
+use self::connector_call as sdk_connector_call;
+use self::host as sdk_host;
+use self::hub as sdk_hub;
+use self::secret as sdk_secret;
+use self::shared_members as sdk_shared_members;
+use self::skills as sdk_skills;
+use crate::task_verb::{AttemptHandle, TaskDescription, TaskHandle, TaskStatusQuery};
+use crate::verbs as sdk;
+mod brief {
+    pub(super) use crate::task_verb::{decode_hex, hex32};
+}
 
 /// `can(ask(...))`: one read-only preflight for a typed ask spec.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -457,86 +548,86 @@ impl QueryAffect {
     }
 }
 
-pub use super::fanout_batch::*;
-pub use super::recall_door::{
+pub use crate::task_verb::fanout_batch::*;
+pub use crate::task_verb::recall_door::{
     RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
     recall_with_vector,
 };
-pub use super::sdk_act_answer::*;
-pub use super::sdk_agent_grant::*;
-pub use super::sdk_agents::*;
-pub use super::sdk_anonymous_chat::*;
-pub use super::sdk_asr::*;
-pub use super::sdk_authority_history::*;
-pub use super::sdk_browser::*;
-pub use super::sdk_calendar::*;
-pub use super::sdk_campaign_archive::*;
-pub use super::sdk_campaign_split::*;
-pub use super::sdk_catalog_fragment::{
+pub use self::act_answer::*;
+pub use self::agent_grant::*;
+pub use self::agents::*;
+pub use self::anonymous_chat::*;
+pub use self::asr::*;
+pub use self::authority_history::*;
+pub use self::browser::*;
+pub use self::calendar::*;
+pub use self::campaign_archive::*;
+pub use self::campaign_split::*;
+pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
-pub use super::sdk_connector::*;
-pub use super::sdk_connector_call::*;
-pub use super::sdk_connector_pack::*;
-pub use super::sdk_coreference::*;
-pub use super::sdk_courtesy_delete::*;
-pub use super::sdk_credential::*;
-pub use super::sdk_describe::*;
-pub use super::sdk_diary::*;
-pub use super::sdk_disclosure::*;
-pub use super::sdk_embedding_space::*;
-pub use super::sdk_eval_cohort::*;
-pub use super::sdk_explain::*;
-pub use super::sdk_fanout_launch::*;
-pub use super::sdk_federation::*;
-pub use super::sdk_federation_burst::*;
-pub use super::sdk_feedback::*;
-pub use super::sdk_git_push_grant::*;
-pub use super::sdk_goal_optimize::*;
-pub use super::sdk_guest_document::*;
-pub use super::sdk_guest_revoke::*;
-pub use super::sdk_host::*;
-pub use super::sdk_hub::*;
-pub use super::sdk_identity_topology::*;
-pub use super::sdk_legal_hold::*;
-pub use super::sdk_live_run::*;
-pub use super::sdk_live_voice::*;
-pub use super::sdk_mesh::*;
-pub use super::sdk_model_manifest::*;
-pub use super::sdk_note_history::*;
-pub use super::sdk_off_record::*;
-pub use super::sdk_off_record_rooms::*;
-pub use super::sdk_pack_preview::*;
-pub use super::sdk_persona::*;
-pub use super::sdk_proxy::*;
-pub use super::sdk_record_erase::*;
-pub use super::sdk_reply::*;
-pub use super::sdk_research::*;
-pub use super::sdk_residence::*;
-pub use super::sdk_retrieval::*;
-pub use super::sdk_root_requests::*;
-pub use super::sdk_scratchpad::*;
-pub use super::sdk_secret::*;
-pub use super::sdk_secret_grant::*;
-pub use super::sdk_secret_use::*;
-pub use super::sdk_self::*;
-pub use super::sdk_share::*;
-pub use super::sdk_shared::*;
-pub use super::sdk_shared_admin::*;
-pub use super::sdk_shared_members::*;
-pub use super::sdk_shared_policy::*;
-pub use super::sdk_skill_attribution::*;
-pub use super::sdk_skill_defaults::*;
-pub use super::sdk_skill_execution::*;
-pub use super::sdk_skills::*;
-pub use super::sdk_standing::*;
-pub use super::sdk_support_grant::*;
-pub use super::sdk_trusted_contact::*;
-pub use super::sdk_voice_bank::*;
-pub use super::sdk_weave::*;
-pub use super::sdk_wire_health::*;
-pub use super::sdk_workflows::*;
-pub use super::sdk_workspace::*;
+pub use self::connector::*;
+pub use self::connector_call::*;
+pub use self::connector_pack::*;
+pub use self::coreference::*;
+pub use self::courtesy_delete::*;
+pub use self::credential::*;
+pub use self::describe::*;
+pub use self::diary::*;
+pub use self::disclosure::*;
+pub use self::embedding_space::*;
+pub use self::eval_cohort::*;
+pub use self::explain::*;
+pub use self::fanout_launch::*;
+pub use self::federation::*;
+pub use self::federation_burst::*;
+pub use self::feedback::*;
+pub use self::git_push_grant::*;
+pub use self::goal_optimize::*;
+pub use self::guest_document::*;
+pub use self::guest_revoke::*;
+pub use self::host::*;
+pub use self::hub::*;
+pub use self::identity_topology::*;
+pub use self::legal_hold::*;
+pub use self::live_run::*;
+pub use self::live_voice::*;
+pub use self::mesh::*;
+pub use self::model_manifest::*;
+pub use self::note_history::*;
+pub use self::off_record::*;
+pub use self::off_record_rooms::*;
+pub use self::pack_preview::*;
+pub use self::persona::*;
+pub use self::proxy::*;
+pub use self::record_erase::*;
+pub use self::reply::*;
+pub use self::research::*;
+pub use self::residence::*;
+pub use self::retrieval::*;
+pub use self::root_requests::*;
+pub use self::scratchpad::*;
+pub use self::secret::*;
+pub use self::secret_grant::*;
+pub use self::secret_use::*;
+pub use self::self_verbs::*;
+pub use self::share::*;
+pub use self::shared::*;
+pub use self::shared_admin::*;
+pub use self::shared_members::*;
+pub use self::shared_policy::*;
+pub use self::skill_attribution::*;
+pub use self::skill_defaults::*;
+pub use self::skill_execution::*;
+pub use self::skills::*;
+pub use self::standing::*;
+pub use self::support_grant::*;
+pub use self::trusted_contact::*;
+pub use self::voice_bank::*;
+pub use self::weave::*;
+pub use self::wire_health::*;
+pub use self::workflows::*;
+pub use self::workspace::*;
 
 /// `vault.writes.pending`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -575,13 +666,13 @@ pub struct InboxMarkRequest {
     pub mark: crate::inbox::NotificationMark,
 }
 
-#[path = "sdk_memory.rs"]
+#[path = "memory.rs"]
 mod memory_requests;
 pub use memory_requests::*;
 
-include!("../verbs/generated/verb_catalog.rs");
-include!("../verbs/generated/run_verb_catalog.rs");
-include!("../verbs/generated/sdk_generated.rs");
+include!("generated/verb_catalog.rs");
+include!("generated/run_verb_catalog.rs");
+include!("generated/sdk_generated.rs");
 
 /// The verb table as code mode serves it, each row at its full path (`vault.recall`,
 /// `self.focus.refresh`, a bare `describe`): the rows a host door answers, then

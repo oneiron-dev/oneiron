@@ -12,7 +12,7 @@ use crate::skill_hub::{
 };
 use crate::{EntityId, TimeRange, Vault};
 
-use super::sdk::PackPutReceipt;
+use super::PackPutReceipt;
 
 /// A configured hub's identity, never a fabricated source row.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

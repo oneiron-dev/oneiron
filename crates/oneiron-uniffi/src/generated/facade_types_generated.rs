@@ -623,7 +623,7 @@ pub enum FeedbackCategory {
     FeatureWish,
 }
 
-/// `oneiron::task_verb::sdk_feedback::FeedbackPreviewRequest`.
+/// `oneiron::verbs::feedback::FeedbackPreviewRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackPreviewRequest {
@@ -639,7 +639,7 @@ pub struct FeedbackPreviewRequest {
     pub include_text: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk_feedback::FeedbackSubjectPreview`.
+/// `oneiron::verbs::feedback::FeedbackSubjectPreview`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct FeedbackSubjectPreview {
     #[serde(rename = "issue_ref")]
@@ -666,7 +666,7 @@ pub struct FeedbackSubjectPreview {
     pub previewed_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_feedback::FeedbackSendSubjectRequest`.
+/// `oneiron::verbs::feedback::FeedbackSendSubjectRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackSendSubjectRequest {
@@ -688,7 +688,7 @@ pub struct FeedbackSendSubjectRequest {
     pub previewed_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_feedback::FeedbackSubjectSent`.
+/// `oneiron::verbs::feedback::FeedbackSubjectSent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct FeedbackSubjectSent {
     #[serde(rename = "issue_ref")]
@@ -726,7 +726,7 @@ pub enum ReportDisclosureChoice {
     Deny,
 }
 
-/// `oneiron::task_verb::sdk_feedback::ReportDisclosureRequest`.
+/// `oneiron::verbs::feedback::ReportDisclosureRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ReportDisclosureRequest {
@@ -776,7 +776,7 @@ pub struct ReportIssue {
     pub disclosure: ReportDisclosure,
 }
 
-/// `oneiron::task_verb::sdk_feedback::ReportRouteRequest`.
+/// `oneiron::verbs::feedback::ReportRouteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ReportRouteRequest {
@@ -786,7 +786,7 @@ pub struct ReportRouteRequest {
     pub route: ReportRoute,
 }
 
-/// `oneiron::task_verb::sdk_feedback::ReportRouteReceipt`.
+/// `oneiron::verbs::feedback::ReportRouteReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ReportRouteReceipt {
     #[serde(rename = "subject_ref")]
@@ -797,7 +797,7 @@ pub struct ReportRouteReceipt {
     pub updated: bool,
 }
 
-/// `oneiron::task_verb::sdk_feedback::ReportOutboundRequest`.
+/// `oneiron::verbs::feedback::ReportOutboundRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ReportOutboundRequest {
@@ -805,7 +805,7 @@ pub struct ReportOutboundRequest {
     pub issue_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_feedback::ReportSignatureView`.
+/// `oneiron::verbs::feedback::ReportSignatureView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ReportSignatureView {
     #[serde(rename = "issue_ref")]
@@ -818,7 +818,7 @@ pub struct ReportSignatureView {
     pub kind: ReportKind,
 }
 
-/// `oneiron::task_verb::sdk_feedback::ReportPayloadView`.
+/// `oneiron::verbs::feedback::ReportPayloadView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ReportPayloadView {
     #[serde(rename = "route")]
@@ -829,7 +829,7 @@ pub struct ReportPayloadView {
     pub disclosed: Option<ReportRequest>,
 }
 
-/// `oneiron::task_verb::sdk_feedback::ReportOutboundView`.
+/// `oneiron::verbs::feedback::ReportOutboundView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ReportOutboundView {
     #[serde(rename = "issue_ref")]
@@ -838,12 +838,12 @@ pub struct ReportOutboundView {
     pub payload: Option<ReportPayloadView>,
 }
 
-/// `oneiron::task_verb::sdk::BoardWakeRequest`.
+/// `oneiron::verbs::BoardWakeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BoardWakeRequest {}
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `BoardWakeRequest`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `BoardWakeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestBoardWakeRequest {
@@ -872,7 +872,7 @@ pub struct WakeEnvelope {
     pub review_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk::BoardWakeReply`.
+/// `oneiron::verbs::BoardWakeReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BoardWakeReply {
@@ -880,7 +880,7 @@ pub struct BoardWakeReply {
     pub wakes: Vec<WakeEnvelope>,
 }
 
-/// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallRequest`.
+/// `oneiron::verbs::scratchpad::ScratchpadRecallRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ScratchpadRecallRequest {
@@ -890,7 +890,7 @@ pub struct ScratchpadRecallRequest {
     pub query: String,
 }
 
-/// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallMark`.
+/// `oneiron::verbs::scratchpad::ScratchpadRecallMark`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ScratchpadRecallMark {
     #[serde(rename = "keep")]
@@ -899,7 +899,7 @@ pub enum ScratchpadRecallMark {
     Scratch,
 }
 
-/// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallReplyLine`.
+/// `oneiron::verbs::scratchpad::ScratchpadRecallReplyLine`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ScratchpadRecallReplyLine {
     #[serde(rename = "index")]
@@ -912,7 +912,7 @@ pub struct ScratchpadRecallReplyLine {
     pub text: String,
 }
 
-/// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallReply`.
+/// `oneiron::verbs::scratchpad::ScratchpadRecallReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ScratchpadRecallReply {
     #[serde(rename = "pad", default, skip_serializing_if = "Option::is_none")]
@@ -925,7 +925,7 @@ pub struct ScratchpadRecallReply {
     pub lines: Vec<ScratchpadRecallReplyLine>,
 }
 
-/// `oneiron::task_verb::sdk_scratchpad::ScratchpadAppendRequest`.
+/// `oneiron::verbs::scratchpad::ScratchpadAppendRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ScratchpadAppendRequest {
@@ -939,7 +939,7 @@ pub struct ScratchpadAppendRequest {
     pub pin: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk_scratchpad::ScratchpadWriteReply`.
+/// `oneiron::verbs::scratchpad::ScratchpadWriteReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ScratchpadWriteReply {
     #[serde(rename = "pad", default, skip_serializing_if = "Option::is_none")]
@@ -954,7 +954,7 @@ pub struct ScratchpadWriteReply {
     pub sealed_prior: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_scratchpad::ScratchpadSealRequest`.
+/// `oneiron::verbs::scratchpad::ScratchpadSealRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ScratchpadSealRequest {
@@ -962,7 +962,7 @@ pub struct ScratchpadSealRequest {
     pub session_id: String,
 }
 
-/// `oneiron::task_verb::sdk_self::DiaryEntryRequest`.
+/// `oneiron::verbs::self::DiaryEntryRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DiaryEntryRequest {
@@ -985,7 +985,7 @@ pub struct RecordRef {
     pub label: String,
 }
 
-/// `oneiron::task_verb::sdk_self::DiaryEntryReceipt`.
+/// `oneiron::verbs::self::DiaryEntryReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DiaryEntryReceipt {
     #[serde(rename = "entry_id")]
@@ -1088,7 +1088,7 @@ pub struct DiaryReviewAnswer {
     pub approve: bool,
 }
 
-/// `oneiron::task_verb::sdk_standing::OwnStandingBlockRequest`.
+/// `oneiron::verbs::standing::OwnStandingBlockRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OwnStandingBlockRequest {
@@ -1096,7 +1096,7 @@ pub struct OwnStandingBlockRequest {
     pub world_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_standing::StandingBlockView`.
+/// `oneiron::verbs::standing::StandingBlockView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct StandingBlockView {
     #[serde(rename = "handle")]
@@ -1111,7 +1111,7 @@ pub struct StandingBlockView {
     pub token_floor: u64,
 }
 
-/// `oneiron::task_verb::sdk_standing::StandingBlockEditRequest`.
+/// `oneiron::verbs::standing::StandingBlockEditRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct StandingBlockEditRequest {
@@ -1131,7 +1131,7 @@ pub struct StandingBlockEditRequest {
     pub evidence_refs: Option<Vec<String>>,
 }
 
-/// `oneiron::task_verb::sdk_standing::StandingBlockEditReceipt`.
+/// `oneiron::verbs::standing::StandingBlockEditReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct StandingBlockEditReceipt {
     #[serde(rename = "handle")]
@@ -1225,7 +1225,7 @@ pub enum IdentityActNow {
     },
 }
 
-/// `oneiron::task_verb::sdk::InboxListRequest`.
+/// `oneiron::verbs::InboxListRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct InboxListRequest {
@@ -1341,7 +1341,7 @@ pub enum NotificationMark {
     Acked,
 }
 
-/// `oneiron::task_verb::sdk::InboxMarkRequest`.
+/// `oneiron::verbs::InboxMarkRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct InboxMarkRequest {
@@ -3713,7 +3713,7 @@ pub struct GrantAskReceipt {
     pub status: String,
 }
 
-/// `oneiron::task_verb::sdk_persona::CompanionAccessRequestAnswer`.
+/// `oneiron::verbs::persona::CompanionAccessRequestAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CompanionAccessRequestAnswer {
     #[serde(rename = "approve")]
@@ -3722,7 +3722,7 @@ pub enum CompanionAccessRequestAnswer {
     Deny,
 }
 
-/// `oneiron::task_verb::sdk_persona::CompanionAccessRequestAnswerRequest`.
+/// `oneiron::verbs::persona::CompanionAccessRequestAnswerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CompanionAccessRequestAnswerRequest {
@@ -3732,7 +3732,7 @@ pub struct CompanionAccessRequestAnswerRequest {
     pub answer: CompanionAccessRequestAnswer,
 }
 
-/// `oneiron::task_verb::sdk_persona::CompanionProfileRequestedScope`.
+/// `oneiron::verbs::persona::CompanionProfileRequestedScope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -3757,7 +3757,7 @@ pub enum AccessRequestStatus {
     Denied,
 }
 
-/// `oneiron::task_verb::sdk_persona::CompanionAccessRequestAnswered`.
+/// `oneiron::verbs::persona::CompanionAccessRequestAnswered`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CompanionAccessRequestAnswered {
     #[serde(rename = "request")]
@@ -3786,7 +3786,7 @@ pub struct CompanionAccessRequestAnswered {
     pub decided_at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_persona::PersonaSnapshotPreviewRequest`.
+/// `oneiron::verbs::persona::PersonaSnapshotPreviewRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PersonaSnapshotPreviewRequest {
@@ -3794,7 +3794,7 @@ pub struct PersonaSnapshotPreviewRequest {
     pub subject: String,
 }
 
-/// `oneiron::task_verb::sdk_persona::PersonaSnapshotPreviewRow`.
+/// `oneiron::verbs::persona::PersonaSnapshotPreviewRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PersonaSnapshotPreviewRow {
     #[serde(rename = "row_id")]
@@ -3815,7 +3815,7 @@ pub struct PersonaSnapshotPreviewRow {
     pub struck: bool,
 }
 
-/// `oneiron::task_verb::sdk_persona::PersonaSnapshotPreview`.
+/// `oneiron::verbs::persona::PersonaSnapshotPreview`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PersonaSnapshotPreview {
     #[serde(rename = "subject")]
@@ -3846,7 +3846,7 @@ pub struct PersonaSnapshotCopyRequest {
     pub unstrike: Option<Vec<String>>,
 }
 
-/// `oneiron::task_verb::sdk_persona::PersonaSnapshotMemoryPackRow`.
+/// `oneiron::verbs::persona::PersonaSnapshotMemoryPackRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PersonaSnapshotMemoryPackRow {
     #[serde(rename = "row_id")]
@@ -3877,7 +3877,7 @@ pub struct PersonaSnapshotMemoryPackRow {
     pub attribution: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_persona::PersonaSnapshotMemoryPack`.
+/// `oneiron::verbs::persona::PersonaSnapshotMemoryPack`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PersonaSnapshotMemoryPack {
     #[serde(rename = "schema")]
@@ -3910,7 +3910,7 @@ pub struct PersonaSnapshotMemoryPack {
     pub rows: Vec<PersonaSnapshotMemoryPackRow>,
 }
 
-/// `oneiron::task_verb::sdk_persona::PersonaSnapshotExportedCopy`.
+/// `oneiron::verbs::persona::PersonaSnapshotExportedCopy`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PersonaSnapshotExportedCopy {
     #[serde(rename = "export_id")]
@@ -3965,7 +3965,7 @@ pub struct PersonaSnapshotCopyEditRequest {
     pub unstrike: Option<Vec<String>>,
 }
 
-/// `oneiron::task_verb::sdk_diary::DiaryQueryRequest`.
+/// `oneiron::verbs::diary::DiaryQueryRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DiaryQueryRequest {
@@ -3975,7 +3975,7 @@ pub struct DiaryQueryRequest {
     pub reason: String,
 }
 
-/// `oneiron::task_verb::sdk_diary::DiaryQueryEntry`.
+/// `oneiron::verbs::diary::DiaryQueryEntry`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DiaryQueryEntry {
     #[serde(rename = "id")]
@@ -3986,7 +3986,7 @@ pub struct DiaryQueryEntry {
     pub markdown: String,
 }
 
-/// `oneiron::task_verb::sdk_diary::DiaryQueryOutcome`.
+/// `oneiron::verbs::diary::DiaryQueryOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum DiaryQueryOutcome {
@@ -4051,7 +4051,7 @@ pub struct TaskCancelReceipt {
     pub forced: bool,
 }
 
-/// `oneiron::task_verb::sdk_self::SteerRequest`.
+/// `oneiron::verbs::self::SteerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SteerRequest {
@@ -4063,7 +4063,7 @@ pub struct SteerRequest {
     pub key: String,
 }
 
-/// `oneiron::task_verb::sdk_self::SteerReceipt`.
+/// `oneiron::verbs::self::SteerReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SteerReceipt {
     #[serde(rename = "task_ref")]
@@ -5227,7 +5227,7 @@ pub struct TaskTtl {
     pub deadline_at: u64,
 }
 
-/// `oneiron::task_verb::sdk::TaskCreateRequest`.
+/// `oneiron::verbs::TaskCreateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCreateRequest {
@@ -5286,7 +5286,7 @@ pub struct TaskCreateReceipt {
     pub proposal_record: Option<RecordRef>,
 }
 
-/// `oneiron::task_verb::sdk::TaskWaveRequest`.
+/// `oneiron::verbs::TaskWaveRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWaveRequest {
@@ -5304,7 +5304,7 @@ pub struct TaskWaveRequest {
     pub constraints: Option<crate::WireJson>,
 }
 
-/// `oneiron::task_verb::sdk::TaskWaveReceipt`.
+/// `oneiron::verbs::TaskWaveReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TaskWaveReceipt {
     #[serde(rename = "attempt_ref")]
@@ -5335,7 +5335,7 @@ pub struct FanoutBatchInput {
     pub children: Vec<FanoutChildInput>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `FanoutBatchInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `FanoutBatchInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestFanoutBatchInput {
@@ -5484,7 +5484,7 @@ pub struct FanoutStatement {
     pub stated_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchHold`.
+/// `oneiron::verbs::fanout_launch::FanoutLaunchHold`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct FanoutLaunchHold {
     #[serde(rename = "surface_ref")]
@@ -5493,7 +5493,7 @@ pub struct FanoutLaunchHold {
     pub denied: bool,
 }
 
-/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchView`.
+/// `oneiron::verbs::fanout_launch::FanoutLaunchView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct FanoutLaunchView {
     #[serde(rename = "launch_ref")]
@@ -5744,7 +5744,7 @@ pub struct FanoutBatchView {
     pub accounting: FanoutSharedAccounting,
 }
 
-/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchRequest`.
+/// `oneiron::verbs::fanout_launch::FanoutLaunchRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FanoutLaunchRequest {
@@ -6493,7 +6493,7 @@ pub enum RsiTopUp {
     },
 }
 
-/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchRuling`.
+/// `oneiron::verbs::fanout_launch::FanoutLaunchRuling`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum FanoutLaunchRuling {
     #[serde(rename = "approve_once")]
@@ -6504,7 +6504,7 @@ pub enum FanoutLaunchRuling {
     Deny,
 }
 
-/// `oneiron::task_verb::sdk_fanout_launch::FanoutResumeRequest`.
+/// `oneiron::verbs::fanout_launch::FanoutResumeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FanoutResumeRequest {
@@ -6522,7 +6522,7 @@ pub struct FanoutResumeRequest {
     pub remembered_cap: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_act_answer::DetailsOnDevice`.
+/// `oneiron::verbs::act_answer::DetailsOnDevice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DetailsOnDevice {
@@ -6530,7 +6530,7 @@ pub struct DetailsOnDevice {
     pub details_on_device: bool,
 }
 
-/// `oneiron::task_verb::sdk_act_answer::ActAnswer` with `T` = `FanoutLaunchView`.
+/// `oneiron::verbs::act_answer::ActAnswer` with `T` = `FanoutLaunchView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ActAnswerFanoutLaunchView {
@@ -6547,7 +6547,7 @@ pub enum FanoutCheckChoice {
     AckAndRemember,
 }
 
-/// `oneiron::task_verb::sdk_fanout_launch::FanoutAckRequest`.
+/// `oneiron::verbs::fanout_launch::FanoutAckRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FanoutAckRequest {
@@ -6861,7 +6861,7 @@ pub enum TaskReportBody {
     },
 }
 
-/// `oneiron::task_verb::sdk::TaskUpdateRequest`.
+/// `oneiron::verbs::TaskUpdateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TaskUpdateRequest {
@@ -7675,7 +7675,7 @@ pub struct HydeHostReceiptRequest {
     pub request_id: String,
 }
 
-/// `oneiron::task_verb::sdk::QueryAffect`.
+/// `oneiron::verbs::QueryAffect`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WireQueryAffect {
@@ -8790,7 +8790,7 @@ pub struct RetrievalTurn {
     pub turn_idx: u64,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RecallTelemetry`.
+/// `oneiron::verbs::retrieval::RecallTelemetry`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RecallTelemetry {
@@ -8804,7 +8804,7 @@ pub struct RecallTelemetry {
     pub turn: Option<RetrievalTurn>,
 }
 
-/// `oneiron::task_verb::sdk::RecallRequest`.
+/// `oneiron::verbs::RecallRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RecallRequest {
     #[serde(rename = "query")]
@@ -8837,7 +8837,7 @@ pub struct RecallRequest {
     pub telemetry: Option<RecallTelemetry>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalRunsRequest`.
+/// `oneiron::verbs::retrieval::RetrievalRunsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalRunsRequest {
@@ -9295,7 +9295,7 @@ pub struct RetrievalOutcomeRecord {
     pub reward_evidence: Option<RetrievalRewardEvidence>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalRunEvidence`.
+/// `oneiron::verbs::retrieval::RetrievalRunEvidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RetrievalRunEvidence {
     #[serde(rename = "run")]
@@ -9304,7 +9304,7 @@ pub struct RetrievalRunEvidence {
     pub outcomes: Vec<RetrievalOutcomeRecord>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalRunRequest`.
+/// `oneiron::verbs::retrieval::RetrievalRunRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalRunRequest {
@@ -9312,7 +9312,7 @@ pub struct RetrievalRunRequest {
     pub run_id: RetrievalRunId,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalTurnRequest`.
+/// `oneiron::verbs::retrieval::RetrievalTurnRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalTurnRequest {
@@ -9356,7 +9356,7 @@ pub struct RetrievalEndOutcome {
     pub metadata: std::collections::HashMap<String, String>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalTraceRequest`.
+/// `oneiron::verbs::retrieval::RetrievalTraceRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalTraceRequest {
@@ -9364,7 +9364,7 @@ pub struct RetrievalTraceRequest {
     pub fork_hash: Vec<u8>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalDiagnosticRequest`.
+/// `oneiron::verbs::retrieval::RetrievalDiagnosticRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalDiagnosticRequest {
@@ -9372,7 +9372,7 @@ pub struct RetrievalDiagnosticRequest {
     pub run_ids: Vec<RetrievalRunId>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalDiagnosticExport`.
+/// `oneiron::verbs::retrieval::RetrievalDiagnosticExport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RetrievalDiagnosticExport {
     #[serde(rename = "contract_version")]
@@ -9381,7 +9381,7 @@ pub struct RetrievalDiagnosticExport {
     pub runs: Vec<RetrievalRunEvidence>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalReplayRun`.
+/// `oneiron::verbs::retrieval::RetrievalReplayRun`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RetrievalReplayRun {
     #[serde(rename = "source_run_id")]
@@ -9398,7 +9398,7 @@ pub struct RetrievalReplayRun {
     pub trace: Option<RetrievalTrace>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalDiagnosticReplay`.
+/// `oneiron::verbs::retrieval::RetrievalDiagnosticReplay`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RetrievalDiagnosticReplay {
     #[serde(rename = "contract_version")]
@@ -9538,7 +9538,7 @@ pub enum ModelLocality {
     ThirdParty,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalRoutingPin`.
+/// `oneiron::verbs::retrieval::RetrievalRoutingPin`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RetrievalRoutingPin {
     #[serde(rename = "slot")]
@@ -9547,7 +9547,7 @@ pub struct RetrievalRoutingPin {
     pub locality: ModelLocality,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyView`.
+/// `oneiron::verbs::retrieval::RetrievalPolicyView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RetrievalPolicyView {
     #[serde(rename = "policy_version")]
@@ -9574,7 +9574,7 @@ pub struct RetrievalPolicyView {
     pub routing: Vec<RetrievalRoutingPin>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyPinRequest`.
+/// `oneiron::verbs::retrieval::RetrievalPolicyPinRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalPolicyPinRequest {
@@ -9584,7 +9584,7 @@ pub struct RetrievalPolicyPinRequest {
     pub value: Option<f64>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyTrainRequest`.
+/// `oneiron::verbs::retrieval::RetrievalPolicyTrainRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalPolicyTrainRequest {
@@ -9649,7 +9649,7 @@ pub struct RetrievalPolicyCandidate {
     pub algorithm: String,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyEvaluateRequest`.
+/// `oneiron::verbs::retrieval::RetrievalPolicyEvaluateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalPolicyEvaluateRequest {
@@ -9678,7 +9678,7 @@ pub struct RetrievalPolicyEvaluation {
     pub ungated_outcomes_skipped: u32,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyAdmitRequest`.
+/// `oneiron::verbs::retrieval::RetrievalPolicyAdmitRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RetrievalPolicyAdmitRequest {
@@ -9690,7 +9690,7 @@ pub struct RetrievalPolicyAdmitRequest {
     pub config: Option<RetrievalPolicyTrainRequest>,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyAdmitReceipt`.
+/// `oneiron::verbs::retrieval::RetrievalPolicyAdmitReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RetrievalPolicyAdmitReceipt {
     #[serde(rename = "evaluation")]
@@ -9699,7 +9699,7 @@ pub struct RetrievalPolicyAdmitReceipt {
     pub view: RetrievalPolicyView,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyDisposition`.
+/// `oneiron::verbs::retrieval::RetrievalPolicyDisposition`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RetrievalPolicyDisposition {
     #[serde(rename = "applied")]
@@ -9708,7 +9708,7 @@ pub enum RetrievalPolicyDisposition {
     Offered,
 }
 
-/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyUpdateReceipt`.
+/// `oneiron::verbs::retrieval::RetrievalPolicyUpdateReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RetrievalPolicyUpdateReceipt {
     #[serde(rename = "disposition")]
@@ -9894,7 +9894,7 @@ pub struct FederationDirectionScope {
     pub bands: ScopeAxisSelectorRange,
 }
 
-/// `oneiron::task_verb::sdk_credential::CredentialPactCeiling`.
+/// `oneiron::verbs::credential::CredentialPactCeiling`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialPactCeiling {
@@ -9917,7 +9917,7 @@ pub enum CommReach {
     Vault,
 }
 
-/// `oneiron::task_verb::sdk_credential::CredentialCaveat`.
+/// `oneiron::verbs::credential::CredentialCaveat`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialCaveat {
@@ -9947,7 +9947,7 @@ pub struct CredentialCaveat {
     pub comm: Option<CommReach>,
 }
 
-/// `oneiron::task_verb::sdk_credential::CredentialAttenuationRequest`.
+/// `oneiron::verbs::credential::CredentialAttenuationRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialAttenuationRequest {
@@ -9963,7 +9963,7 @@ pub struct CredentialAttenuationRequest {
     pub next_binding_key: Option<Vec<u8>>,
 }
 
-/// `oneiron::task_verb::sdk_credential::CredentialAttenuated`.
+/// `oneiron::verbs::credential::CredentialAttenuated`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialAttenuated {
@@ -10614,7 +10614,7 @@ pub struct AdmissionReceiptsRequest {
     pub intent_keys: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_explain::ExplainMemoryRequest`.
+/// `oneiron::verbs::explain::ExplainMemoryRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ExplainMemoryRequest {
@@ -10628,7 +10628,7 @@ pub struct ExplainMemoryRequest {
     pub session_id: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_explain::ExplainScoreEvidence`.
+/// `oneiron::verbs::explain::ExplainScoreEvidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ExplainScoreEvidence {
     #[serde(rename = "result_id")]
@@ -10647,7 +10647,7 @@ pub struct ExplainScoreEvidence {
     pub components: Vec<RetrievalScoreComponent>,
 }
 
-/// `oneiron::task_verb::sdk_explain::ExplainMemoryReply`.
+/// `oneiron::verbs::explain::ExplainMemoryReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ExplainMemoryReply {
     #[serde(rename = "id")]
@@ -10666,7 +10666,7 @@ pub struct ExplainMemoryReply {
     pub score: Option<ExplainScoreEvidence>,
 }
 
-/// `oneiron::task_verb::sdk_explain::ExplainGateRequest`.
+/// `oneiron::verbs::explain::ExplainGateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ExplainGateRequest {
@@ -10674,7 +10674,7 @@ pub struct ExplainGateRequest {
     pub receipt: String,
 }
 
-/// `oneiron::task_verb::sdk_explain::ExplainGateNotice`.
+/// `oneiron::verbs::explain::ExplainGateNotice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ExplainGateNotice {
     #[serde(rename = "notice_type")]
@@ -10683,7 +10683,7 @@ pub struct ExplainGateNotice {
     pub row_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_explain::ExplainGateReply`.
+/// `oneiron::verbs::explain::ExplainGateReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ExplainGateReply {
     #[serde(rename = "receipt_id")]
@@ -13165,7 +13165,7 @@ pub struct WeaveItemCorrectionView {
     pub recorded_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_weave::WeaveEnqueueRequest`.
+/// `oneiron::verbs::weave::WeaveEnqueueRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WeaveEnqueueRequest {
@@ -13244,7 +13244,7 @@ pub struct WeaveScheduleView {
     pub held: Option<WeaveScheduleHold>,
 }
 
-/// `oneiron::task_verb::sdk_weave::WeaveScheduleCleared`.
+/// `oneiron::verbs::weave::WeaveScheduleCleared`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WeaveScheduleCleared {
     #[serde(rename = "cleared")]
@@ -13744,7 +13744,7 @@ pub struct HubRef {
     pub pin: HubPin,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryLifecycle`.
+/// `oneiron::verbs::skills::SkillLibraryLifecycle`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SkillLibraryLifecycle {
     #[serde(rename = "candidate")]
@@ -13759,7 +13759,7 @@ pub enum SkillLibraryLifecycle {
     Superseded,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryCall`.
+/// `oneiron::verbs::skills::SkillLibraryCall`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillLibraryCall {
     #[serde(rename = "reference")]
@@ -13770,7 +13770,7 @@ pub struct SkillLibraryCall {
     pub returns: crate::WireJson,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryDependency`.
+/// `oneiron::verbs::skills::SkillLibraryDependency`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillLibraryDependency {
     #[serde(rename = "skill_id")]
@@ -13783,7 +13783,7 @@ pub struct SkillLibraryDependency {
     pub min_version: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillSourceEvidence`.
+/// `oneiron::verbs::skills::SkillSourceEvidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillSourceEvidence {
     #[serde(rename = "message_ref")]
@@ -13792,7 +13792,7 @@ pub struct SkillSourceEvidence {
     pub available: bool,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillStaleView`.
+/// `oneiron::verbs::skills::SkillStaleView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillStaleView {
     #[serde(rename = "reason")]
@@ -13801,7 +13801,7 @@ pub struct SkillStaleView {
     pub deleted_refs: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillForkLineage`.
+/// `oneiron::verbs::skills::SkillForkLineage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillForkLineage {
     #[serde(rename = "parent")]
@@ -13830,7 +13830,7 @@ pub struct SkillForkLineage {
     pub hub_sources: Vec<HubRef>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryFile`.
+/// `oneiron::verbs::skills::SkillLibraryFile`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillLibraryFile {
     #[serde(rename = "path")]
@@ -13839,7 +13839,7 @@ pub struct SkillLibraryFile {
     pub content: Vec<u8>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillCapabilityView`.
+/// `oneiron::verbs::skills::SkillCapabilityView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillCapabilityView {
     #[serde(rename = "bins")]
@@ -13852,7 +13852,7 @@ pub struct SkillCapabilityView {
     pub allowed_tools: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryScan`.
+/// `oneiron::verbs::skills::SkillLibraryScan`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillLibraryScan {
     #[serde(rename = "contentHash")]
@@ -14022,7 +14022,7 @@ pub struct HubAdmissionReceipt {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubSkillReceipts`.
+/// `oneiron::verbs::hub::HubSkillReceipts`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HubSkillReceipts {
     #[serde(rename = "sources")]
@@ -14033,7 +14033,7 @@ pub struct HubSkillReceipts {
     pub admission: Option<HubAdmissionReceipt>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryView`.
+/// `oneiron::verbs::skills::SkillLibraryView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillLibraryView {
     #[serde(rename = "entity")]
@@ -14096,7 +14096,7 @@ pub struct SkillLibraryView {
     pub receipts: HubSkillReceipts,
 }
 
-/// `oneiron::task_verb::sdk_skill_defaults::BootstrapSkillView`.
+/// `oneiron::verbs::skill_defaults::BootstrapSkillView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct BootstrapSkillView {
     #[serde(rename = "skill_id")]
@@ -14191,7 +14191,7 @@ pub struct DefaultSkillHub {
     pub skills: TrackedHubRef,
 }
 
-/// `oneiron::task_verb::sdk_hub::SkillHubPutRequest`.
+/// `oneiron::verbs::hub::SkillHubPutRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillHubPutRequest {
@@ -14207,7 +14207,7 @@ pub struct SkillHubPutRequest {
     pub sync_policy: HubSyncPolicy,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubConsentOutcome`.
+/// `oneiron::verbs::hub::HubConsentOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HubConsentOutcome {
     #[serde(rename = "approved")]
@@ -14218,7 +14218,7 @@ pub enum HubConsentOutcome {
     Revoked,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubConsentReceipt`.
+/// `oneiron::verbs::hub::HubConsentReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HubConsentReceipt {
     #[serde(rename = "outcome")]
@@ -14229,7 +14229,7 @@ pub struct HubConsentReceipt {
     pub grant_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_hub::SkillHubConfigured`.
+/// `oneiron::verbs::hub::SkillHubConfigured`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillHubConfigured {
     #[serde(rename = "hub")]
@@ -14238,7 +14238,7 @@ pub struct SkillHubConfigured {
     pub consent: HubConsentReceipt,
 }
 
-/// `oneiron::task_verb::sdk_hub::SkillHubRequest`.
+/// `oneiron::verbs::hub::SkillHubRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillHubRequest {
@@ -14246,7 +14246,7 @@ pub struct SkillHubRequest {
     pub hub: String,
 }
 
-/// `oneiron::task_verb::sdk_hub::SkillPublisherRequest`.
+/// `oneiron::verbs::hub::SkillPublisherRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillPublisherRequest {
@@ -14256,7 +14256,7 @@ pub struct SkillPublisherRequest {
     pub identity: String,
 }
 
-/// `oneiron::task_verb::sdk_hub::SkillPublisherAdmission`.
+/// `oneiron::verbs::hub::SkillPublisherAdmission`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillPublisherAdmission {
     #[serde(rename = "hub")]
@@ -14267,7 +14267,7 @@ pub struct SkillPublisherAdmission {
     pub grant_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubRefRequest`.
+/// `oneiron::verbs::hub::HubRefRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HubRefRequest {
@@ -14277,7 +14277,7 @@ pub struct HubRefRequest {
     pub ref_string: String,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubRefSetRequest`.
+/// `oneiron::verbs::hub::HubRefSetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HubRefSetRequest {
@@ -14287,7 +14287,7 @@ pub struct HubRefSetRequest {
     pub sync_policy: HubSyncPolicy,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubImportRequest`.
+/// `oneiron::verbs::hub::HubImportRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HubImportRequest {
@@ -14297,7 +14297,7 @@ pub struct HubImportRequest {
     pub publisher: String,
 }
 
-/// `oneiron::task_verb::sdk_host::PackPutOutcome`.
+/// `oneiron::verbs::host::PackPutOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum PackPutOutcome {
     #[serde(rename = "installed")]
@@ -14562,7 +14562,7 @@ pub struct PackInstallReceipt {
     pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
-/// `oneiron::task_verb::sdk_host::PackPutReceipt`.
+/// `oneiron::verbs::host::PackPutReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PackPutReceipt {
     #[serde(rename = "outcome")]
@@ -14573,7 +14573,7 @@ pub struct PackPutReceipt {
     pub receipt: Option<PackInstallReceipt>,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubPackRequest`.
+/// `oneiron::verbs::hub::HubPackRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HubPackRequest {
@@ -14581,14 +14581,14 @@ pub struct HubPackRequest {
     pub name: String,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubSkillImported`.
+/// `oneiron::verbs::hub::HubSkillImported`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HubSkillImported {
     #[serde(rename = "entity")]
     pub entity: String,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubSkillRequest`.
+/// `oneiron::verbs::hub::HubSkillRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HubSkillRequest {
@@ -14596,7 +14596,7 @@ pub struct HubSkillRequest {
     pub entity: String,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubSkillSyncOutcome`.
+/// `oneiron::verbs::hub::HubSkillSyncOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HubSkillSyncOutcome {
     #[serde(rename = "applied")]
@@ -14607,7 +14607,7 @@ pub enum HubSkillSyncOutcome {
     RefusedByPolicy,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubSkillSyncReceipt`.
+/// `oneiron::verbs::hub::HubSkillSyncReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HubSkillSyncReceipt {
     #[serde(rename = "outcome")]
@@ -14618,7 +14618,7 @@ pub struct HubSkillSyncReceipt {
     pub approval: Option<ClaimApprovalStatus>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillConvertRequest`.
+/// `oneiron::verbs::skills::SkillConvertRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillConvertRequest {
@@ -14628,7 +14628,7 @@ pub struct SkillConvertRequest {
     pub hint: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillConvertReceipt`.
+/// `oneiron::verbs::skills::SkillConvertReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "outcome")]
 pub enum SkillConvertReceipt {
@@ -14651,7 +14651,7 @@ pub enum SkillConvertReceipt {
     },
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryListRequest`.
+/// `oneiron::verbs::skills::SkillLibraryListRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillLibraryListRequest {
@@ -14661,7 +14661,7 @@ pub struct SkillLibraryListRequest {
     pub limit: u64,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryPage`.
+/// `oneiron::verbs::skills::SkillLibraryPage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillLibraryPage {
     #[serde(rename = "skills")]
@@ -14674,7 +14674,7 @@ pub struct SkillLibraryPage {
     pub next_after: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillRestoreAdmission`.
+/// `oneiron::verbs::skills::SkillRestoreAdmission`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillRestoreAdmission {
@@ -14692,7 +14692,7 @@ pub struct SkillRestoreAdmission {
     pub effect_digest: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryRestoreRequest`.
+/// `oneiron::verbs::skills::SkillLibraryRestoreRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillLibraryRestoreRequest {
@@ -14702,7 +14702,7 @@ pub struct SkillLibraryRestoreRequest {
     pub admission: Option<SkillRestoreAdmission>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryRestoreReceipt`.
+/// `oneiron::verbs::skills::SkillLibraryRestoreReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "outcome")]
 pub enum SkillLibraryRestoreReceipt {
@@ -14731,7 +14731,7 @@ pub enum SkillLibraryRestoreReceipt {
     },
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillLibraryForkRequest`.
+/// `oneiron::verbs::skills::SkillLibraryForkRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillLibraryForkRequest {
@@ -14743,7 +14743,7 @@ pub struct SkillLibraryForkRequest {
     pub skill_id: String,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillHashRuleRequest`.
+/// `oneiron::verbs::skills::SkillHashRuleRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillHashRuleRequest {
@@ -14753,7 +14753,7 @@ pub struct SkillHashRuleRequest {
     pub blocked: bool,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillCodeAutoInstallRequest`.
+/// `oneiron::verbs::skills::SkillCodeAutoInstallRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillCodeAutoInstallRequest {
@@ -14761,7 +14761,7 @@ pub struct SkillCodeAutoInstallRequest {
     pub enabled: bool,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubSkillPermissionRequest`.
+/// `oneiron::verbs::hub::HubSkillPermissionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HubSkillPermissionRequest {
@@ -14771,7 +14771,7 @@ pub struct HubSkillPermissionRequest {
     pub hub_ref: HubRef,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillOptimizeStartRequest`.
+/// `oneiron::verbs::skills::SkillOptimizeStartRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeStartRequest {
@@ -14791,7 +14791,7 @@ pub struct SkillOptimizeStartRequest {
     pub now: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillGovernanceView`.
+/// `oneiron::verbs::skills::SkillGovernanceView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillGovernanceView {
     #[serde(rename = "entity")]
@@ -14812,7 +14812,7 @@ pub struct SkillGovernanceView {
     pub optimizable: bool,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillOptimizeStartReceipt`.
+/// `oneiron::verbs::skills::SkillOptimizeStartReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeStartReceipt {
     #[serde(rename = "outcome")]
@@ -14831,7 +14831,7 @@ pub struct SkillOptimizeStartReceipt {
     pub governance: Option<SkillGovernanceView>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillOptimizeResultRequest`.
+/// `oneiron::verbs::skills::SkillOptimizeResultRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeResultRequest {
@@ -14841,7 +14841,7 @@ pub struct SkillOptimizeResultRequest {
     pub proposal: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillOptimizeAxisView`.
+/// `oneiron::verbs::skills::SkillOptimizeAxisView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeAxisView {
     #[serde(rename = "axis")]
@@ -14852,7 +14852,7 @@ pub struct SkillOptimizeAxisView {
     pub after: f64,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillOptimizeVerdictView`.
+/// `oneiron::verbs::skills::SkillOptimizeVerdictView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeVerdictView {
     #[serde(rename = "id")]
@@ -14903,7 +14903,7 @@ pub struct SkillOptimizeVerdictView {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillOptimizeResultView`.
+/// `oneiron::verbs::skills::SkillOptimizeResultView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeResultView {
     #[serde(rename = "job_ref", default, skip_serializing_if = "Option::is_none")]
@@ -15018,7 +15018,7 @@ pub struct GoalRecord {
     pub exploration_budget: GoalExplorationBudget,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::ProjectGoalIntakeCompleteRequest`.
+/// `oneiron::verbs::goal_optimize::ProjectGoalIntakeCompleteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGoalIntakeCompleteRequest {
@@ -15032,7 +15032,7 @@ pub struct ProjectGoalIntakeCompleteRequest {
     pub record: GoalRecord,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::ProjectGoalIntakeReceipt`.
+/// `oneiron::verbs::goal_optimize::ProjectGoalIntakeReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProjectGoalIntakeReceipt {
     #[serde(rename = "project_ref")]
@@ -15043,7 +15043,7 @@ pub struct ProjectGoalIntakeReceipt {
     pub record: GoalRecord,
 }
 
-/// `oneiron::task_verb::sdk::ProjectRefRequest`.
+/// `oneiron::verbs::ProjectRefRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectRefRequest {
@@ -15051,7 +15051,7 @@ pub struct ProjectRefRequest {
     pub project_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::ProjectGoalView`.
+/// `oneiron::verbs::goal_optimize::ProjectGoalView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProjectGoalView {
     #[serde(rename = "project_ref")]
@@ -15066,7 +15066,7 @@ pub struct ProjectGoalView {
     pub record: Option<GoalRecord>,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeProposeRequest`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeProposeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeProposeRequest {
@@ -15082,7 +15082,7 @@ pub struct SkillOptimizeProposeRequest {
     pub rationale: String,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeProposalReceipt`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeProposalReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeProposalReceipt {
     #[serde(rename = "skill")]
@@ -15091,7 +15091,7 @@ pub struct SkillOptimizeProposalReceipt {
     pub proposal: String,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeMeasureRequest`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeMeasureRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeMeasureRequest {
@@ -15187,7 +15187,7 @@ pub struct GoalAxisReport {
     pub human_minutes: Option<AxisScores>,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeMeasurement`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeMeasurement`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeMeasurement {
     #[serde(rename = "preflight")]
@@ -15196,7 +15196,7 @@ pub struct SkillOptimizeMeasurement {
     pub report: Option<GoalAxisReport>,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeProposalRequest`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeProposalRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeProposalRequest {
@@ -15204,7 +15204,7 @@ pub struct SkillOptimizeProposalRequest {
     pub proposal: String,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeGoalRequest`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeGoalRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeGoalRequest {
@@ -15233,7 +15233,7 @@ pub struct GoalAxisSpec {
     pub kind: GoalAxisKind,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeGoalView`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeGoalView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeGoalView {
     #[serde(rename = "goal_id")]
@@ -15252,7 +15252,7 @@ pub struct SkillOptimizeGoalView {
     pub goal_claim: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeGoalBindRequest`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeGoalBindRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeGoalBindRequest {
@@ -15262,7 +15262,7 @@ pub struct SkillOptimizeGoalBindRequest {
     pub project: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeGoalRevision`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeGoalRevision`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeGoalRevision {
     #[serde(rename = "goal_revision")]
@@ -15316,7 +15316,7 @@ pub struct SkillTradeoffPreferences {
     pub jev_band: Option<DecisionBand>,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizePreferencesSetRequest`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizePreferencesSetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizePreferencesSetRequest {
@@ -15414,7 +15414,7 @@ pub struct SkillTradeoffAsk {
     pub rung: u32,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeTradeoffAskView`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffAskView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeTradeoffAskView {
     #[serde(rename = "question_digest")]
@@ -15423,7 +15423,7 @@ pub struct SkillOptimizeTradeoffAskView {
     pub ask: SkillTradeoffAsk,
 }
 
-/// `oneiron::task_verb::sdk_goal_optimize::SkillOptimizeTradeoffPickRequest`.
+/// `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffPickRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeTradeoffPickRequest {
@@ -15435,7 +15435,7 @@ pub struct SkillOptimizeTradeoffPickRequest {
     pub choice: TradeoffChoice,
 }
 
-/// `oneiron::task_verb::sdk_skills::SkillGovernanceSetRequest`.
+/// `oneiron::verbs::skills::SkillGovernanceSetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillGovernanceSetRequest {
@@ -15445,7 +15445,7 @@ pub struct SkillGovernanceSetRequest {
     pub tier: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubHookBindRequest`.
+/// `oneiron::verbs::hub::HubHookBindRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HubHookBindRequest {
@@ -15608,7 +15608,7 @@ pub struct HookGrant {
     pub worlds: Option<Vec<String>>,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubHookBindingRow`.
+/// `oneiron::verbs::hub::HubHookBindingRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HubHookBindingRow {
     #[serde(rename = "id")]
@@ -15619,7 +15619,7 @@ pub struct HubHookBindingRow {
     pub grant: HookGrant,
 }
 
-/// `oneiron::task_verb::sdk_hub::HookGrantSetRequest`.
+/// `oneiron::verbs::hub::HookGrantSetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HookGrantSetRequest {
@@ -15629,7 +15629,7 @@ pub struct HookGrantSetRequest {
     pub grant: HookGrant,
 }
 
-/// `oneiron::task_verb::sdk_hub::HookGrantView`.
+/// `oneiron::verbs::hub::HookGrantView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HookGrantView {
     #[serde(rename = "binding")]
@@ -15638,7 +15638,7 @@ pub struct HookGrantView {
     pub grant: HookGrant,
 }
 
-/// `oneiron::task_verb::sdk_hub::HookGrantRequest`.
+/// `oneiron::verbs::hub::HookGrantRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HookGrantRequest {
@@ -15646,7 +15646,7 @@ pub struct HookGrantRequest {
     pub binding: String,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubHookQualifyRequest`.
+/// `oneiron::verbs::hub::HubHookQualifyRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HubHookQualifyRequest {
@@ -15713,7 +15713,7 @@ pub enum HookReplayCompare {
     Incomplete,
 }
 
-/// `oneiron::task_verb::sdk_host::HookReplayOutcome`.
+/// `oneiron::verbs::host::HookReplayOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "status")]
 pub enum HookReplayOutcome {
@@ -15751,7 +15751,7 @@ pub enum HookReplayOutcome {
     },
 }
 
-/// `oneiron::task_verb::sdk_host::HookReplayRow`.
+/// `oneiron::verbs::host::HookReplayRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HookReplayRow {
     #[serde(rename = "case")]
@@ -15760,7 +15760,7 @@ pub struct HookReplayRow {
     pub result: HookReplayOutcome,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubHookReplay`.
+/// `oneiron::verbs::hub::HubHookReplay`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HubHookReplay {
     #[serde(rename = "hook")]
@@ -15769,7 +15769,7 @@ pub struct HubHookReplay {
     pub entries: Vec<HookReplayRow>,
 }
 
-/// `oneiron::task_verb::sdk_hub::HubHookQualificationReceipt`.
+/// `oneiron::verbs::hub::HubHookQualificationReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HubHookQualificationReceipt {
     #[serde(rename = "put")]
@@ -15778,7 +15778,7 @@ pub struct HubHookQualificationReceipt {
     pub replays: Vec<HubHookReplay>,
 }
 
-/// `oneiron::task_verb::sdk_host::PackTextFile`.
+/// `oneiron::verbs::host::PackTextFile`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackTextFile {
@@ -15788,7 +15788,7 @@ pub struct PackTextFile {
     pub text: String,
 }
 
-/// `oneiron::task_verb::sdk_host::PackBytesFile`.
+/// `oneiron::verbs::host::PackBytesFile`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackBytesFile {
@@ -15798,7 +15798,7 @@ pub struct PackBytesFile {
     pub content_base64: String,
 }
 
-/// `oneiron::task_verb::sdk_host::PackFileInput`.
+/// `oneiron::verbs::host::PackFileInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum PackFileInput {
@@ -15806,7 +15806,7 @@ pub enum PackFileInput {
     Bytes(PackBytesFile),
 }
 
-/// `oneiron::task_verb::sdk_host::PackPutRequest`.
+/// `oneiron::verbs::host::PackPutRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackPutRequest {
@@ -15814,7 +15814,7 @@ pub struct PackPutRequest {
     pub files: Vec<PackFileInput>,
 }
 
-/// `oneiron::task_verb::sdk_pack_preview::PackPreviewRequest`.
+/// `oneiron::verbs::pack_preview::PackPreviewRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackPreviewRequest {
@@ -15931,7 +15931,7 @@ pub struct SlateManifest {
     pub elicitation: Option<SlateElicitationManifest>,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackPrepareRequest`.
+/// `oneiron::verbs::connector_pack::ConnectorPackPrepareRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorPackPrepareRequest {
@@ -15953,7 +15953,7 @@ pub struct ConnectorPackPrepareRequest {
     pub manifest: SlateManifest,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackBasis`.
+/// `oneiron::verbs::connector_pack::ConnectorPackBasis`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorPackBasis {
@@ -16044,7 +16044,7 @@ pub struct SlateRow {
     pub holder_narrow: Option<SlateHolderNarrow>,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackAdvisory`.
+/// `oneiron::verbs::connector_pack::ConnectorPackAdvisory`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorPackAdvisory {
     #[serde(rename = "contentHash")]
@@ -16069,7 +16069,7 @@ pub struct ConnectorPackAdvisory {
     pub scanned_at_declared: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackView`.
+/// `oneiron::verbs::connector_pack::ConnectorPackView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorPackView {
     #[serde(rename = "basis")]
@@ -16096,7 +16096,7 @@ pub struct ConnectorPackView {
     pub advisories: Vec<ConnectorPackAdvisory>,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackGetRequest`.
+/// `oneiron::verbs::connector_pack::ConnectorPackGetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorPackGetRequest {
@@ -16198,7 +16198,7 @@ pub struct ConnectorQualificationKit {
     pub effect_state_uri: String,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackQualifyRequest`.
+/// `oneiron::verbs::connector_pack::ConnectorPackQualifyRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorPackQualifyRequest {
@@ -16210,7 +16210,7 @@ pub struct ConnectorPackQualifyRequest {
     pub runtime: Option<PackRuntimeRecipe>,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackAcceptRequest`.
+/// `oneiron::verbs::connector_pack::ConnectorPackAcceptRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorPackAcceptRequest {
@@ -16228,7 +16228,7 @@ pub struct ConnectorPackAcceptRequest {
     pub all_manual: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackUpdateRequest`.
+/// `oneiron::verbs::connector_pack::ConnectorPackUpdateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorPackUpdateRequest {
@@ -16242,7 +16242,7 @@ pub struct ConnectorPackUpdateRequest {
     pub manifest: SlateManifest,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackDelta`.
+/// `oneiron::verbs::connector_pack::ConnectorPackDelta`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorPackDelta {
     #[serde(rename = "prior")]
@@ -16259,7 +16259,7 @@ pub struct ConnectorPackDelta {
     pub dropped: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackGrantsGetRequest`.
+/// `oneiron::verbs::connector_pack::ConnectorPackGrantsGetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorPackGrantsGetRequest {
@@ -16332,7 +16332,7 @@ pub struct ConnectorConsentView {
     pub elicitation: Option<SlateDisposition>,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackGrants`.
+/// `oneiron::verbs::connector_pack::ConnectorPackGrants`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorPackGrants {
     #[serde(rename = "basis")]
@@ -16343,7 +16343,7 @@ pub struct ConnectorPackGrants {
     pub authority: ConnectorConsentView,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackGrantRow`.
+/// `oneiron::verbs::connector_pack::ConnectorPackGrantRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorPackGrantRow {
@@ -16355,7 +16355,7 @@ pub struct ConnectorPackGrantRow {
     pub headers: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk_connector_pack::ConnectorPackGrantsPutRequest`.
+/// `oneiron::verbs::connector_pack::ConnectorPackGrantsPutRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorPackGrantsPutRequest {
@@ -16369,7 +16369,7 @@ pub struct ConnectorPackGrantsPutRequest {
     pub rows: Vec<ConnectorPackGrantRow>,
 }
 
-/// `oneiron::task_verb::sdk_host::PackRemoveRequest`.
+/// `oneiron::verbs::host::PackRemoveRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackRemoveRequest {
@@ -16677,7 +16677,7 @@ pub struct PluginSuggestionsSetRequest {
     pub enabled: bool,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatRole`.
+/// `oneiron::verbs::proxy::ChatRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChatRole {
     #[serde(rename = "system")]
@@ -16690,7 +16690,7 @@ pub enum ChatRole {
     Assistant,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatPart`.
+/// `oneiron::verbs::proxy::ChatPart`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "type")]
 pub enum ChatPart {
@@ -16701,7 +16701,7 @@ pub enum ChatPart {
     },
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatContent`.
+/// `oneiron::verbs::proxy::ChatContent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ChatContent {
@@ -16709,7 +16709,7 @@ pub enum ChatContent {
     Parts(Vec<ChatPart>),
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatMessage`.
+/// `oneiron::verbs::proxy::ChatMessage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ChatMessage {
@@ -16721,7 +16721,7 @@ pub struct ChatMessage {
     pub name: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatStop`.
+/// `oneiron::verbs::proxy::ChatStop`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ChatStop {
@@ -16729,7 +16729,7 @@ pub enum ChatStop {
     Many(Vec<String>),
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionRequest`.
+/// `oneiron::verbs::proxy::ChatCompletionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ChatCompletionRequest {
@@ -16781,21 +16781,21 @@ pub struct ChatCompletionRequest {
     pub user: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionObject`.
+/// `oneiron::verbs::proxy::ChatCompletionObject`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChatCompletionObject {
     #[serde(rename = "chat.completion")]
     ChatCompletion,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionRole`.
+/// `oneiron::verbs::proxy::ChatCompletionRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChatCompletionRole {
     #[serde(rename = "assistant")]
     Assistant,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionMessage`.
+/// `oneiron::verbs::proxy::ChatCompletionMessage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChatCompletionMessage {
     #[serde(rename = "role")]
@@ -16804,7 +16804,7 @@ pub struct ChatCompletionMessage {
     pub content: String,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionChoice`.
+/// `oneiron::verbs::proxy::ChatCompletionChoice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChatCompletionChoice {
     #[serde(rename = "index")]
@@ -16815,7 +16815,7 @@ pub struct ChatCompletionChoice {
     pub finish_reason: String,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionUsage`.
+/// `oneiron::verbs::proxy::ChatCompletionUsage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChatCompletionUsage {
     #[serde(rename = "prompt_tokens")]
@@ -16826,7 +16826,7 @@ pub struct ChatCompletionUsage {
     pub total_tokens: u64,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionRememberError`.
+/// `oneiron::verbs::proxy::ChatCompletionRememberError`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChatCompletionRememberError {
     #[serde(rename = "code")]
@@ -16835,7 +16835,7 @@ pub struct ChatCompletionRememberError {
     pub message: String,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionRemembered`.
+/// `oneiron::verbs::proxy::ChatCompletionRemembered`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ChatCompletionRemembered {
@@ -16851,7 +16851,7 @@ pub enum ChatCompletionRemembered {
     },
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionMemory`.
+/// `oneiron::verbs::proxy::ChatCompletionMemory`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChatCompletionMemory {
     #[serde(rename = "injected")]
@@ -16860,7 +16860,7 @@ pub struct ChatCompletionMemory {
     pub remembered: ChatCompletionRemembered,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ChatCompletionResponse`.
+/// `oneiron::verbs::proxy::ChatCompletionResponse`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChatCompletionResponse {
     #[serde(rename = "id")]
@@ -16879,7 +16879,7 @@ pub struct ChatCompletionResponse {
     pub oneiron: ChatCompletionMemory,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ProxyConnectorAdmitRequest`.
+/// `oneiron::verbs::proxy::ProxyConnectorAdmitRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyConnectorAdmitRequest {
@@ -16887,7 +16887,7 @@ pub struct ProxyConnectorAdmitRequest {
     pub actor: String,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ConnectorPendingManifestView`.
+/// `oneiron::verbs::proxy::ConnectorPendingManifestView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorPendingManifestView {
     #[serde(rename = "candidate")]
@@ -16902,7 +16902,7 @@ pub struct ConnectorPendingManifestView {
     pub report_hash: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ConnectorKeyView`.
+/// `oneiron::verbs::proxy::ConnectorKeyView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorKeyView {
     #[serde(rename = "id")]
@@ -16949,7 +16949,7 @@ pub struct ConnectorKeyView {
     pub pending_manifest: Option<ConnectorPendingManifestView>,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ConnectorSlateView`.
+/// `oneiron::verbs::proxy::ConnectorSlateView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorSlateView {
     #[serde(rename = "id")]
@@ -16972,7 +16972,7 @@ pub struct ConnectorSlateView {
     pub reach: ShapePlanReach,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ProxyConnectorRegistration`.
+/// `oneiron::verbs::proxy::ProxyConnectorRegistration`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProxyConnectorRegistration {
     #[serde(rename = "connector")]
@@ -16983,7 +16983,7 @@ pub struct ProxyConnectorRegistration {
     pub slate: ConnectorSlateView,
 }
 
-/// `oneiron::task_verb::sdk_proxy::ProxyConnectorRevokeWriteRequest`.
+/// `oneiron::verbs::proxy::ProxyConnectorRevokeWriteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyConnectorRevokeWriteRequest {
@@ -16995,7 +16995,7 @@ pub struct ProxyConnectorRevokeWriteRequest {
     pub revision: u64,
 }
 
-/// `oneiron::task_verb::sdk_host::ChannelSubscriptionRequest`.
+/// `oneiron::verbs::host::ChannelSubscriptionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSubscriptionRequest {
@@ -17020,7 +17020,7 @@ pub struct ChannelMessageSubscription {
     pub existing: bool,
 }
 
-/// `oneiron::task_verb::sdk_host::ChannelSubscriptionsRequest`.
+/// `oneiron::verbs::host::ChannelSubscriptionsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSubscriptionsRequest {
@@ -17028,7 +17028,7 @@ pub struct ChannelSubscriptionsRequest {
     pub agent: String,
 }
 
-/// `oneiron::task_verb::sdk_host::ChannelSubscriptionRow`.
+/// `oneiron::verbs::host::ChannelSubscriptionRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChannelSubscriptionRow {
     #[serde(rename = "subscription")]
@@ -17049,7 +17049,7 @@ pub struct ChannelSubscriptionRow {
     pub active: bool,
 }
 
-/// `oneiron::task_verb::sdk_host::ChannelSubscriptions`.
+/// `oneiron::verbs::host::ChannelSubscriptions`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChannelSubscriptions {
     #[serde(rename = "agent")]
@@ -17058,7 +17058,7 @@ pub struct ChannelSubscriptions {
     pub subscriptions: Vec<ChannelSubscriptionRow>,
 }
 
-/// `oneiron::task_verb::sdk_host::ChannelSubscriptionRevokeRequest`.
+/// `oneiron::verbs::host::ChannelSubscriptionRevokeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSubscriptionRevokeRequest {
@@ -17066,14 +17066,14 @@ pub struct ChannelSubscriptionRevokeRequest {
     pub subscription: String,
 }
 
-/// `oneiron::task_verb::sdk_host::ChannelSubscriptionRevoked`.
+/// `oneiron::verbs::host::ChannelSubscriptionRevoked`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChannelSubscriptionRevoked {
     #[serde(rename = "subscription")]
     pub subscription: String,
 }
 
-/// `oneiron::task_verb::sdk_host::PackSetupRequest`.
+/// `oneiron::verbs::host::PackSetupRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupRequest {
@@ -17304,7 +17304,7 @@ pub struct PackSetupView {
     pub ready: bool,
 }
 
-/// `oneiron::task_verb::sdk_host::PackSetupStoreSecret`.
+/// `oneiron::verbs::host::PackSetupStoreSecret`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PackSetupStoreSecret {
     #[serde(rename = "door")]
@@ -17317,7 +17317,7 @@ pub struct PackSetupStoreSecret {
     pub effector: String,
 }
 
-/// `oneiron::task_verb::sdk_host::PackSetupReceipt`.
+/// `oneiron::verbs::host::PackSetupReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PackSetupReceipt {
     #[serde(rename = "setup")]
@@ -17362,7 +17362,7 @@ pub enum PackSetupAnswer {
     },
 }
 
-/// `oneiron::task_verb::sdk_host::PackSetupCardActionInput`.
+/// `oneiron::verbs::host::PackSetupCardActionInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupCardActionInput {
@@ -17372,7 +17372,7 @@ pub struct PackSetupCardActionInput {
     pub state: Option<std::collections::HashMap<String, SelfUiStateValue>>,
 }
 
-/// `oneiron::task_verb::sdk_host::PackSetupAnswerRequest`.
+/// `oneiron::verbs::host::PackSetupAnswerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupAnswerRequest {
@@ -17390,7 +17390,7 @@ pub struct PackSetupAnswerRequest {
     pub card_action: Option<PackSetupCardActionInput>,
 }
 
-/// `oneiron::task_verb::sdk_host::PackSetupVerifyRequest`.
+/// `oneiron::verbs::host::PackSetupVerifyRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupVerifyRequest {
@@ -17555,7 +17555,7 @@ pub struct AuthorityAuditPage {
     pub cold_attested: Option<Vec<ColdAuthorityAuditRow>>,
 }
 
-/// `oneiron::task_verb::sdk_authority_history::SignedAuthorityHistory`.
+/// `oneiron::verbs::authority_history::SignedAuthorityHistory`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SignedAuthorityHistory {
@@ -17563,7 +17563,7 @@ pub struct SignedAuthorityHistory {
     pub entries: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_authority_history::AuthorityHistoryImported`.
+/// `oneiron::verbs::authority_history::AuthorityHistoryImported`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityHistoryImported {
@@ -17571,7 +17571,7 @@ pub struct AuthorityHistoryImported {
     pub entry_refs: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_wire_health::WireThresholds`.
+/// `oneiron::verbs::wire_health::WireThresholds`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WireThresholds {
@@ -17583,7 +17583,7 @@ pub struct WireThresholds {
     pub per_actor: u64,
 }
 
-/// `oneiron::task_verb::sdk_wire_health::WireThresholdsReceipt`.
+/// `oneiron::verbs::wire_health::WireThresholdsReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WireThresholdsReceipt {
     #[serde(rename = "previous")]
@@ -17852,7 +17852,7 @@ pub struct SlimResumeReceipt {
     pub outcome: SlimResumeOutcome,
 }
 
-/// `oneiron::task_verb::sdk_mesh::MeshPathReceiptsRequest`.
+/// `oneiron::verbs::mesh::MeshPathReceiptsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MeshPathReceiptsRequest {
@@ -17987,7 +17987,7 @@ pub struct MeshMachineBinding {
     pub transport_proof: Vec<u8>,
 }
 
-/// `oneiron::task_verb::sdk_mesh::MeshMachineBound`.
+/// `oneiron::verbs::mesh::MeshMachineBound`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MeshMachineBound {
@@ -18011,7 +18011,7 @@ pub struct MeshAlpnGrant {
     pub allow: bool,
 }
 
-/// `oneiron::task_verb::sdk_mesh::MeshMachineRevokeRequest`.
+/// `oneiron::verbs::mesh::MeshMachineRevokeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MeshMachineRevokeRequest {
@@ -18019,7 +18019,7 @@ pub struct MeshMachineRevokeRequest {
     pub machine: String,
 }
 
-/// `oneiron::task_verb::sdk_mesh::MeshMachineRevoked`.
+/// `oneiron::verbs::mesh::MeshMachineRevoked`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MeshMachineRevoked {
@@ -18027,7 +18027,7 @@ pub struct MeshMachineRevoked {
     pub machine: String,
 }
 
-/// `oneiron::task_verb::sdk_mesh::MeshDialRequest`.
+/// `oneiron::verbs::mesh::MeshDialRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MeshDialRequest {
@@ -18098,7 +18098,7 @@ pub struct InspectionResolved {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedVaultRequest`.
+/// `oneiron::verbs::shared::SharedVaultRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedVaultRequest {
@@ -18167,7 +18167,7 @@ pub struct PendingAuthorityAct {
     pub execution: Option<ActExecution>,
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedTransferRequest`.
+/// `oneiron::verbs::shared::SharedTransferRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedTransferRequest {
@@ -18183,7 +18183,7 @@ pub struct SharedTransferRequest {
     pub from_keeps: Option<FederationGrantRole>,
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedRemoveOwnerRequest`.
+/// `oneiron::verbs::shared::SharedRemoveOwnerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedRemoveOwnerRequest {
@@ -18203,7 +18203,7 @@ pub struct SharedRemoveOwnerRequest {
     pub export_first: bool,
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedActRequest`.
+/// `oneiron::verbs::shared::SharedActRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedActRequest {
@@ -18399,7 +18399,7 @@ pub struct RemovalExportDelivery {
     pub expires_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedActExecuted`.
+/// `oneiron::verbs::shared::SharedActExecuted`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SharedActExecuted {
     #[serde(rename = "receipt")]
@@ -18408,7 +18408,7 @@ pub struct SharedActExecuted {
     pub delivery: Option<RemovalExportDelivery>,
 }
 
-/// `oneiron::task_verb::sdk_act_answer::ActAnswer` with `T` = `SharedActExecuted`.
+/// `oneiron::verbs::act_answer::ActAnswer` with `T` = `SharedActExecuted`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ActAnswerSharedActExecuted {
@@ -18416,7 +18416,7 @@ pub enum ActAnswerSharedActExecuted {
     Done(SharedActExecuted),
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedReceiptRequest`.
+/// `oneiron::verbs::shared::SharedReceiptRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedReceiptRequest {
@@ -18483,7 +18483,7 @@ pub struct OrgAdminPolicy {
     pub powers: Vec<OrgAdminPower>,
 }
 
-/// `oneiron::task_verb::sdk_shared_admin::OrgAdminConfigureRequest`.
+/// `oneiron::verbs::shared_admin::OrgAdminConfigureRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OrgAdminConfigureRequest {
@@ -18491,7 +18491,7 @@ pub struct OrgAdminConfigureRequest {
     pub policy: OrgAdminPolicy,
 }
 
-/// `oneiron::task_verb::sdk_shared_admin::OrgAdminConfigured`.
+/// `oneiron::verbs::shared_admin::OrgAdminConfigured`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OrgAdminConfigured {
     #[serde(rename = "org_ref")]
@@ -18500,7 +18500,7 @@ pub struct OrgAdminConfigured {
     pub configured: bool,
 }
 
-/// `oneiron::task_verb::sdk_shared_admin::OrgAdminPowersRequest`.
+/// `oneiron::verbs::shared_admin::OrgAdminPowersRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OrgAdminPowersRequest {
@@ -18508,7 +18508,7 @@ pub struct OrgAdminPowersRequest {
     pub org_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_shared_admin::OrgAdminPowers`.
+/// `oneiron::verbs::shared_admin::OrgAdminPowers`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OrgAdminPowers {
     #[serde(rename = "powers")]
@@ -18714,7 +18714,7 @@ pub struct ProjectRosterWriteRequest {
     pub record: ProjectRecord,
 }
 
-/// `oneiron::task_verb::sdk_shared_admin::SharedProjectAccessResetRequest`.
+/// `oneiron::verbs::shared_admin::SharedProjectAccessResetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedProjectAccessResetRequest {
@@ -18724,7 +18724,7 @@ pub struct SharedProjectAccessResetRequest {
     pub roster: ProjectRosterWriteRequest,
 }
 
-/// `oneiron::task_verb::sdk_shared_admin::SharedProjectAccessReset`.
+/// `oneiron::verbs::shared_admin::SharedProjectAccessReset`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SharedProjectAccessReset {
     #[serde(rename = "project")]
@@ -18735,7 +18735,7 @@ pub struct SharedProjectAccessReset {
     pub invitations: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_shared_admin::FederationDelegateRequest`.
+/// `oneiron::verbs::shared_admin::FederationDelegateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FederationDelegateRequest {
@@ -18749,7 +18749,7 @@ pub struct FederationDelegateRequest {
     pub expires_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_shared_admin::FederationMemberGrant`.
+/// `oneiron::verbs::shared_admin::FederationMemberGrant`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct FederationMemberGrant {
     #[serde(rename = "grant_ref")]
@@ -18778,7 +18778,7 @@ pub struct FederationMemberGrant {
     pub active: bool,
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedMemberRequest`.
+/// `oneiron::verbs::shared::SharedMemberRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedMemberRequest {
@@ -18832,7 +18832,7 @@ pub enum MemberRelationship {
     Unbound,
 }
 
-/// `oneiron::task_verb::sdk_shared_admin::MemberProjection`.
+/// `oneiron::verbs::shared_admin::MemberProjection`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MemberProjection {
     #[serde(rename = "member_ref")]
@@ -18843,7 +18843,7 @@ pub struct MemberProjection {
     pub relationship: MemberRelationship,
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedMemberAddRequest`.
+/// `oneiron::verbs::shared::SharedMemberAddRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedMemberAddRequest {
@@ -18861,7 +18861,7 @@ pub struct SharedMemberAddRequest {
     pub holder_key: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_shared::InvitationSlip`.
+/// `oneiron::verbs::shared::InvitationSlip`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct InvitationSlip {
     #[serde(rename = "slip_id")]
@@ -18872,7 +18872,7 @@ pub struct InvitationSlip {
     pub expires_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedMemberInvited`.
+/// `oneiron::verbs::shared::SharedMemberInvited`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SharedMemberInvited {
     #[serde(rename = "receipt")]
@@ -18885,7 +18885,7 @@ pub struct SharedMemberInvited {
     pub credential: Option<InvitationSlip>,
 }
 
-/// `oneiron::task_verb::sdk_shared_members::InvitationSlipRequest`.
+/// `oneiron::verbs::shared_members::InvitationSlipRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct InvitationSlipRequest {
@@ -18899,7 +18899,7 @@ pub struct InvitationSlipRequest {
     pub holder_key: String,
 }
 
-/// `oneiron::task_verb::sdk_shared::SharedMemberRoleRequest`.
+/// `oneiron::verbs::shared::SharedMemberRoleRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedMemberRoleRequest {
@@ -18959,7 +18959,7 @@ pub struct SharedInvitation {
     pub founding: bool,
 }
 
-/// `oneiron::task_verb::sdk_shared_members::SharedInvitationRequest`.
+/// `oneiron::verbs::shared_members::SharedInvitationRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedInvitationRequest {
@@ -18969,7 +18969,7 @@ pub struct SharedInvitationRequest {
     pub invitation: String,
 }
 
-/// `oneiron::task_verb::sdk_shared_members::SharedInvitationWithdrawRequest`.
+/// `oneiron::verbs::shared_members::SharedInvitationWithdrawRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedInvitationWithdrawRequest {
@@ -19015,7 +19015,7 @@ pub struct PendingActMatured {
     pub noticed_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_shared_members::SharedEraseAskRequest`.
+/// `oneiron::verbs::shared_members::SharedEraseAskRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedEraseAskRequest {
@@ -19075,7 +19075,7 @@ pub struct SharedEraseAsk {
     pub closed_at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_shared_members::SharedEraseAskCloseRequest`.
+/// `oneiron::verbs::shared_members::SharedEraseAskCloseRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedEraseAskCloseRequest {
@@ -19136,7 +19136,7 @@ pub struct SharedActPoliciesView {
     pub policy_hash: String,
 }
 
-/// `oneiron::task_verb::sdk_shared_policy::SharedActPolicyProposeRequest`.
+/// `oneiron::verbs::shared_policy::SharedActPolicyProposeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedActPolicyProposeRequest {
@@ -19197,7 +19197,7 @@ pub struct SharedActPolicyChange {
     pub awaiting: Option<Vec<String>>,
 }
 
-/// `oneiron::task_verb::sdk_shared_policy::SharedActPolicyAnswerRequest`.
+/// `oneiron::verbs::shared_policy::SharedActPolicyAnswerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedActPolicyAnswerRequest {
@@ -19207,7 +19207,7 @@ pub struct SharedActPolicyAnswerRequest {
     pub approve: bool,
 }
 
-/// `oneiron::task_verb::sdk_shared_policy::SharedActPolicyChangeRequest`.
+/// `oneiron::verbs::shared_policy::SharedActPolicyChangeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SharedActPolicyChangeRequest {
@@ -19224,7 +19224,7 @@ pub enum CoreferenceStatus {
     Confirmed,
 }
 
-/// `oneiron::task_verb::sdk_coreference::CoreferenceLinkRequest`.
+/// `oneiron::verbs::coreference::CoreferenceLinkRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CoreferenceLinkRequest {
@@ -19236,7 +19236,7 @@ pub struct CoreferenceLinkRequest {
     pub status: CoreferenceStatus,
 }
 
-/// `oneiron::task_verb::sdk_coreference::CoreferenceLinkReceipt`.
+/// `oneiron::verbs::coreference::CoreferenceLinkReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreferenceLinkReceipt {
     #[serde(rename = "local_person")]
@@ -19249,7 +19249,7 @@ pub struct CoreferenceLinkReceipt {
     pub status_claim: String,
 }
 
-/// `oneiron::task_verb::sdk_coreference::CoreferencePairRequest`.
+/// `oneiron::verbs::coreference::CoreferencePairRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CoreferencePairRequest {
@@ -19259,7 +19259,7 @@ pub struct CoreferencePairRequest {
     pub other_person: String,
 }
 
-/// `oneiron::task_verb::sdk_coreference::CoreferenceShareConsentRequest`.
+/// `oneiron::verbs::coreference::CoreferenceShareConsentRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CoreferenceShareConsentRequest {
@@ -19271,7 +19271,7 @@ pub struct CoreferenceShareConsentRequest {
     pub pact: String,
 }
 
-/// `oneiron::task_verb::sdk_coreference::CoreferenceShareConsentReceipt`.
+/// `oneiron::verbs::coreference::CoreferenceShareConsentReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreferenceShareConsentReceipt {
     #[serde(rename = "local_person")]
@@ -19284,7 +19284,7 @@ pub struct CoreferenceShareConsentReceipt {
     pub consent_claim: String,
 }
 
-/// `oneiron::task_verb::sdk_coreference::CoreferenceUnlinkReceipt`.
+/// `oneiron::verbs::coreference::CoreferenceUnlinkReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreferenceUnlinkReceipt {
     #[serde(rename = "local_person")]
@@ -19414,7 +19414,7 @@ pub struct FederationBurstPolicySetRequest {
     pub policy: FederationBurstPolicy,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectWindow`.
+/// `oneiron::verbs::federation::ConnectWindow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectWindow {
@@ -19438,7 +19438,7 @@ pub struct ConnectWindow {
     pub update: Vec<u8>,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectDelivery`.
+/// `oneiron::verbs::federation::ConnectDelivery`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectDelivery {
@@ -19555,7 +19555,7 @@ pub struct FederationBurstReviewReceipt {
     pub batches: Vec<FederationBurstReceipt>,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectIdentity`.
+/// `oneiron::verbs::federation::ConnectIdentity`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectIdentity {
     #[serde(rename = "vault")]
@@ -19564,7 +19564,7 @@ pub struct ConnectIdentity {
     pub host_key: String,
 }
 
-/// `oneiron::task_verb::sdk_federation::MintConnectGrant`.
+/// `oneiron::verbs::federation::MintConnectGrant`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MintConnectGrant {
@@ -19580,7 +19580,7 @@ pub struct MintConnectGrant {
     pub expires_at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectGrant`.
+/// `oneiron::verbs::federation::ConnectGrant`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectGrant {
     #[serde(rename = "grant")]
@@ -19597,7 +19597,7 @@ pub struct ConnectGrant {
     pub expires_at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_federation::OfferConnect`.
+/// `oneiron::verbs::federation::OfferConnect`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OfferConnect {
@@ -19620,7 +19620,7 @@ pub struct FederationPactScope {
     pub hi_to_lo: FederationDirectionScope,
 }
 
-/// `oneiron::task_verb::sdk_federation::Offer`.
+/// `oneiron::verbs::federation::Offer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct Offer {
@@ -19640,7 +19640,7 @@ pub struct Offer {
     pub signature: String,
 }
 
-/// `oneiron::task_verb::sdk_federation::AcceptConnect`.
+/// `oneiron::verbs::federation::AcceptConnect`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptConnect {
@@ -19650,7 +19650,7 @@ pub struct AcceptConnect {
     pub grant: String,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectAccepted`.
+/// `oneiron::verbs::federation::ConnectAccepted`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectAccepted {
     #[serde(rename = "pact")]
@@ -19663,7 +19663,7 @@ pub struct ConnectAccepted {
     pub counter: Offer,
 }
 
-/// `oneiron::task_verb::sdk_federation::NarrowConnect`.
+/// `oneiron::verbs::federation::NarrowConnect`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct NarrowConnect {
@@ -19690,7 +19690,7 @@ pub enum FederationPactStatus {
     Dissolved,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectPactReceipt`.
+/// `oneiron::verbs::federation::ConnectPactReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectPactReceipt {
     #[serde(rename = "pact")]
@@ -19705,7 +19705,7 @@ pub struct ConnectPactReceipt {
     pub effective_scope: FederationDirectionScope,
 }
 
-/// `oneiron::task_verb::sdk_federation::RescopeConnect`.
+/// `oneiron::verbs::federation::RescopeConnect`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RescopeConnect {
@@ -19719,7 +19719,7 @@ pub struct RescopeConnect {
     pub inbound: FederationDirectionScope,
 }
 
-/// `oneiron::task_verb::sdk_federation::RescopeOffer`.
+/// `oneiron::verbs::federation::RescopeOffer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RescopeOffer {
@@ -19741,7 +19741,7 @@ pub struct RescopeOffer {
     pub signature: String,
 }
 
-/// `oneiron::task_verb::sdk_federation::AcceptRescopeConnect`.
+/// `oneiron::verbs::federation::AcceptRescopeConnect`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptRescopeConnect {
@@ -19749,7 +19749,7 @@ pub struct AcceptRescopeConnect {
     pub offer: RescopeOffer,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectRescoped`.
+/// `oneiron::verbs::federation::ConnectRescoped`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectRescoped {
     #[serde(rename = "receipt")]
@@ -19758,7 +19758,7 @@ pub struct ConnectRescoped {
     pub counter: RescopeOffer,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectPactRequest`.
+/// `oneiron::verbs::federation::ConnectPactRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectPactRequest {
@@ -19773,7 +19773,7 @@ pub enum GuestCopyState {
     Unknown,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectDisconnected`.
+/// `oneiron::verbs::federation::ConnectDisconnected`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectDisconnected {
     #[serde(rename = "receipt")]
@@ -19790,7 +19790,7 @@ pub struct ConnectDisconnected {
     pub recipient_copy_state: GuestCopyState,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectExportRequest`.
+/// `oneiron::verbs::federation::ConnectExportRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectExportRequest {
@@ -19806,7 +19806,7 @@ pub struct ConnectExportRequest {
     pub bands: Option<Vec<SelectorRange>>,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectRejoinStatus`.
+/// `oneiron::verbs::federation::ConnectRejoinStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ConnectRejoinStatus {
     #[serde(rename = "imported")]
@@ -19815,7 +19815,7 @@ pub enum ConnectRejoinStatus {
     Deferred,
 }
 
-/// `oneiron::task_verb::sdk_federation::ConnectRejoined`.
+/// `oneiron::verbs::federation::ConnectRejoined`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectRejoined {
     #[serde(rename = "pact")]
@@ -19852,7 +19852,7 @@ pub enum TrustedContactDial {
     JustCall,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactNameRequest`.
+/// `oneiron::verbs::trusted_contact::TrustedContactNameRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactNameRequest {
@@ -19912,7 +19912,7 @@ pub struct TrustedContact {
     pub revoked: Option<TrustedContactRevocation>,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactConsentRequest`.
+/// `oneiron::verbs::trusted_contact::TrustedContactConsentRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactConsentRequest {
@@ -19924,7 +19924,7 @@ pub struct TrustedContactConsentRequest {
     pub adult: bool,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactRevokeRequest`.
+/// `oneiron::verbs::trusted_contact::TrustedContactRevokeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactRevokeRequest {
@@ -19934,7 +19934,7 @@ pub struct TrustedContactRevokeRequest {
     pub contact_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactDialRequest`.
+/// `oneiron::verbs::trusted_contact::TrustedContactDialRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactDialRequest {
@@ -19953,7 +19953,7 @@ pub enum TrustedContactTier {
     Imminent,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactTierRequest`.
+/// `oneiron::verbs::trusted_contact::TrustedContactTierRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactTierRequest {
@@ -19963,7 +19963,7 @@ pub struct TrustedContactTierRequest {
     pub tier: TrustedContactTier,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactTierSet`.
+/// `oneiron::verbs::trusted_contact::TrustedContactTierSet`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactTierSet {
@@ -20009,7 +20009,7 @@ pub struct TrustedContactAsk {
     pub superseded: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactAuthorizeRequest`.
+/// `oneiron::verbs::trusted_contact::TrustedContactAuthorizeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactAuthorizeRequest {
@@ -20019,7 +20019,7 @@ pub struct TrustedContactAuthorizeRequest {
     pub yes: bool,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactAuthorizationOutcome`.
+/// `oneiron::verbs::trusted_contact::TrustedContactAuthorizationOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum TrustedContactAuthorizationOutcome {
     #[serde(rename = "staged")]
@@ -20076,7 +20076,7 @@ pub struct GateSystemNoticeRecord {
     pub docs_url: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactAuthorization`.
+/// `oneiron::verbs::trusted_contact::TrustedContactAuthorization`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactAuthorization {
@@ -20090,7 +20090,7 @@ pub struct TrustedContactAuthorization {
     pub system_notices: Vec<GateSystemNoticeRecord>,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactConcernRequest`.
+/// `oneiron::verbs::trusted_contact::TrustedContactConcernRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactConcernRequest {
@@ -20098,14 +20098,14 @@ pub struct TrustedContactConcernRequest {
     pub content_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactConcernFact`.
+/// `oneiron::verbs::trusted_contact::TrustedContactConcernFact`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum TrustedContactConcernFact {
     #[serde(rename = "fact_of_concern")]
     FactOfConcern,
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactConcernProposal`.
+/// `oneiron::verbs::trusted_contact::TrustedContactConcernProposal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactConcernProposal {
@@ -20144,7 +20144,7 @@ pub enum TrustedContactNoticeAuthorization {
     },
 }
 
-/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactDeliveryReceipt`.
+/// `oneiron::verbs::trusted_contact::TrustedContactDeliveryReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactDeliveryReceipt {
@@ -20196,7 +20196,7 @@ pub struct TrustedContactDeliveryReceipt {
     pub approval_digest: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_guest_document::GuestDocumentShareRequest`.
+/// `oneiron::verbs::guest_document::GuestDocumentShareRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GuestDocumentShareRequest {
@@ -20212,7 +20212,7 @@ pub struct GuestDocumentShareRequest {
     pub bands: Option<Vec<SelectorRange>>,
 }
 
-/// `oneiron::task_verb::sdk_guest_document::GuestDocumentContext`.
+/// `oneiron::verbs::guest_document::GuestDocumentContext`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GuestDocumentContext {
@@ -20270,7 +20270,7 @@ pub struct GuestShareEnvelope {
     pub signature: Vec<u8>,
 }
 
-/// `oneiron::task_verb::sdk_guest_document::GuestDocumentEnvelope`.
+/// `oneiron::verbs::guest_document::GuestDocumentEnvelope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GuestDocumentEnvelope {
@@ -20284,7 +20284,7 @@ pub struct GuestDocumentEnvelope {
     pub signature: Vec<u8>,
 }
 
-/// `oneiron::task_verb::sdk_guest_revoke::GuestRevokeRequest`.
+/// `oneiron::verbs::guest_revoke::GuestRevokeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GuestRevokeRequest {
@@ -20388,7 +20388,7 @@ pub struct GuestRevokeResponse {
     pub courtesy_skipped: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_shared_members::GuestSlipMintRequest`.
+/// `oneiron::verbs::shared_members::GuestSlipMintRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GuestSlipMintRequest {
@@ -20402,7 +20402,7 @@ pub struct GuestSlipMintRequest {
     pub comm: Option<CommReach>,
 }
 
-/// `oneiron::task_verb::sdk_shared_members::GuestSlipMinted`.
+/// `oneiron::verbs::shared_members::GuestSlipMinted`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct GuestSlipMinted {
     #[serde(rename = "slip_id")]
@@ -20422,7 +20422,7 @@ pub enum SupportHolderClass {
     Agent,
 }
 
-/// `oneiron::task_verb::sdk_support_grant::SupportGrantMintRequest`.
+/// `oneiron::verbs::support_grant::SupportGrantMintRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SupportGrantMintRequest {
@@ -20463,7 +20463,7 @@ pub enum SupportGrantStatus {
     Ended,
 }
 
-/// `oneiron::task_verb::sdk_support_grant::SupportGrantView`.
+/// `oneiron::verbs::support_grant::SupportGrantView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SupportGrantView {
@@ -20499,7 +20499,7 @@ pub struct SupportGrantView {
     pub revoke_command: String,
 }
 
-/// `oneiron::task_verb::sdk_support_grant::SupportGrantMintAnswer`.
+/// `oneiron::verbs::support_grant::SupportGrantMintAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SupportGrantMintAnswer {
@@ -20511,7 +20511,7 @@ pub struct SupportGrantMintAnswer {
     pub decision_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_support_grant::SupportGrantListRequest`.
+/// `oneiron::verbs::support_grant::SupportGrantListRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SupportGrantListRequest {
@@ -20525,7 +20525,7 @@ pub struct SupportGrantListRequest {
     pub limit: Option<u32>,
 }
 
-/// `oneiron::task_verb::sdk_support_grant::SupportGrantList`.
+/// `oneiron::verbs::support_grant::SupportGrantList`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SupportGrantList {
@@ -20533,7 +20533,7 @@ pub struct SupportGrantList {
     pub grants: Vec<SupportGrantView>,
 }
 
-/// `oneiron::task_verb::sdk_support_grant::SupportGrantRevokeRequest`.
+/// `oneiron::verbs::support_grant::SupportGrantRevokeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SupportGrantRevokeRequest {
@@ -20541,7 +20541,7 @@ pub struct SupportGrantRevokeRequest {
     pub grant_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_support_grant::SupportGrantRevokeAnswer`.
+/// `oneiron::verbs::support_grant::SupportGrantRevokeAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SupportGrantRevokeAnswer {
@@ -20567,7 +20567,7 @@ pub struct SupportGrantRevokeAnswer {
     pub delivered_recallable: bool,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceModeName`.
+/// `oneiron::verbs::residence::ResidenceModeName`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ResidenceModeName {
     #[serde(rename = "opened")]
@@ -20576,7 +20576,7 @@ pub enum ResidenceModeName {
     All,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceModeRequest`.
+/// `oneiron::verbs::residence::ResidenceModeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResidenceModeRequest {
@@ -20586,7 +20586,7 @@ pub struct ResidenceModeRequest {
     pub mode: ResidenceModeName,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceModeChanged`.
+/// `oneiron::verbs::residence::ResidenceModeChanged`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResidenceModeChanged {
     #[serde(rename = "mode")]
@@ -20599,7 +20599,7 @@ pub struct ResidenceModeChanged {
     pub pruned_items: u64,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceQueued`.
+/// `oneiron::verbs::residence::ResidenceQueued`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResidenceQueued {
     #[serde(rename = "directive")]
@@ -20608,7 +20608,7 @@ pub struct ResidenceQueued {
     pub machine: String,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceModeAnswer`.
+/// `oneiron::verbs::residence::ResidenceModeAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum ResidenceModeAnswer {
@@ -20628,7 +20628,7 @@ pub struct NoteReadSpan {
     pub end: u64,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceOpenRequest`.
+/// `oneiron::verbs::residence::ResidenceOpenRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResidenceOpenRequest {
@@ -20699,7 +20699,7 @@ pub struct NoteReadView {
     pub source: NoteReadSource,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceOpened`.
+/// `oneiron::verbs::residence::ResidenceOpened`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResidenceOpened {
     #[serde(rename = "item")]
@@ -20716,7 +20716,7 @@ pub struct ResidenceOpened {
     pub note: Option<NoteReadView>,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceOpenAnswer`.
+/// `oneiron::verbs::residence::ResidenceOpenAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum ResidenceOpenAnswer {
@@ -20726,7 +20726,7 @@ pub enum ResidenceOpenAnswer {
     Queued(ResidenceQueued),
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceMachineRequest`.
+/// `oneiron::verbs::residence::ResidenceMachineRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResidenceMachineRequest {
@@ -20734,7 +20734,7 @@ pub struct ResidenceMachineRequest {
     pub machine: String,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceIndexEntry`.
+/// `oneiron::verbs::residence::ResidenceIndexEntry`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResidenceIndexEntry {
     #[serde(rename = "entity_id")]
@@ -20745,7 +20745,7 @@ pub struct ResidenceIndexEntry {
     pub learned_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceIndexWindowView`.
+/// `oneiron::verbs::residence::ResidenceIndexWindowView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResidenceIndexWindowView {
     #[serde(rename = "window")]
@@ -20754,14 +20754,14 @@ pub struct ResidenceIndexWindowView {
     pub items: Vec<ResidenceIndexEntry>,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceIndex`.
+/// `oneiron::verbs::residence::ResidenceIndex`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResidenceIndex {
     #[serde(rename = "windows")]
     pub windows: Vec<ResidenceIndexWindowView>,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceIndexAnswer`.
+/// `oneiron::verbs::residence::ResidenceIndexAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum ResidenceIndexAnswer {
@@ -20771,7 +20771,7 @@ pub enum ResidenceIndexAnswer {
     Queued(ResidenceQueued),
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidencePruneRequest`.
+/// `oneiron::verbs::residence::ResidencePruneRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResidencePruneRequest {
@@ -20781,14 +20781,14 @@ pub struct ResidencePruneRequest {
     pub before: u64,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidencePruned`.
+/// `oneiron::verbs::residence::ResidencePruned`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResidencePruned {
     #[serde(rename = "dropped")]
     pub dropped: u64,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidencePruneAnswer`.
+/// `oneiron::verbs::residence::ResidencePruneAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum ResidencePruneAnswer {
@@ -20798,7 +20798,7 @@ pub enum ResidencePruneAnswer {
     Queued(ResidenceQueued),
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceDirectivesRequest`.
+/// `oneiron::verbs::residence::ResidenceDirectivesRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResidenceDirectivesRequest {
@@ -20808,7 +20808,7 @@ pub struct ResidenceDirectivesRequest {
     pub directive: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceActView`.
+/// `oneiron::verbs::residence::ResidenceActView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 pub enum ResidenceActView {
@@ -20832,7 +20832,7 @@ pub enum ResidenceActView {
     },
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceResultStatusName`.
+/// `oneiron::verbs::residence::ResidenceResultStatusName`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ResidenceResultStatusName {
     #[serde(rename = "applied")]
@@ -20841,7 +20841,7 @@ pub enum ResidenceResultStatusName {
     Refused,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceResultView`.
+/// `oneiron::verbs::residence::ResidenceResultView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResidenceResultView {
     #[serde(rename = "finished_at")]
@@ -20854,7 +20854,7 @@ pub struct ResidenceResultView {
     pub reason: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_residence::ResidenceDirectiveView`.
+/// `oneiron::verbs::residence::ResidenceDirectiveView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResidenceDirectiveView {
     #[serde(rename = "directive")]
@@ -20871,7 +20871,7 @@ pub struct ResidenceDirectiveView {
     pub result: Option<ResidenceResultView>,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordEnterMode`.
+/// `oneiron::verbs::off_record::OffRecordEnterMode`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum OffRecordEnterMode {
     #[serde(rename = "off_record")]
@@ -20889,7 +20889,7 @@ pub enum OffRecordBackendClass {
     RemoteProvider,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordStartRequest`.
+/// `oneiron::verbs::off_record::OffRecordStartRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordStartRequest {
@@ -20912,7 +20912,7 @@ pub enum OffRecordMode {
     Anonymous,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordSessionView`.
+/// `oneiron::verbs::off_record::OffRecordSessionView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordSessionView {
     #[serde(rename = "session_ref")]
@@ -20929,7 +20929,7 @@ pub struct OffRecordSessionView {
     pub closing: bool,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordSessionRequest`.
+/// `oneiron::verbs::off_record::OffRecordSessionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordSessionRequest {
@@ -20985,7 +20985,7 @@ pub struct WireWitnessTurn {
     pub assertions: Option<WitnessAssertions>,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordWitnessRequest`.
+/// `oneiron::verbs::off_record::OffRecordWitnessRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordWitnessRequest {
@@ -20997,7 +20997,7 @@ pub struct OffRecordWitnessRequest {
     pub summary: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordClosed`.
+/// `oneiron::verbs::off_record::OffRecordClosed`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordClosed {
     #[serde(rename = "session_ref")]
@@ -21014,7 +21014,7 @@ pub struct OffRecordClosed {
     pub promoted_turns_kept: u64,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordRecallRequest`.
+/// `oneiron::verbs::off_record::OffRecordRecallRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordRecallRequest {
@@ -21026,7 +21026,7 @@ pub struct OffRecordRecallRequest {
     pub limit: u64,
 }
 
-/// `oneiron::task_verb::sdk_memory::CreateNoteRequest`.
+/// `oneiron::verbs::memory::CreateNoteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CreateNoteRequest {
@@ -21036,7 +21036,7 @@ pub struct CreateNoteRequest {
     pub markdown: String,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordNoteRequest`.
+/// `oneiron::verbs::off_record::OffRecordNoteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordNoteRequest {
@@ -21046,7 +21046,7 @@ pub struct OffRecordNoteRequest {
     pub note: CreateNoteRequest,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordClaimRequest`.
+/// `oneiron::verbs::off_record::OffRecordClaimRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordClaimRequest {
@@ -21056,7 +21056,7 @@ pub struct OffRecordClaimRequest {
     pub claim: ScopedClaimInput,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordExecuteRequest`.
+/// `oneiron::verbs::off_record::OffRecordExecuteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordExecuteRequest {
@@ -21068,7 +21068,7 @@ pub struct OffRecordExecuteRequest {
     pub task: String,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordRunStatus`.
+/// `oneiron::verbs::off_record::OffRecordRunStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum OffRecordRunStatus {
     #[serde(rename = "complete")]
@@ -21081,7 +21081,7 @@ pub enum OffRecordRunStatus {
     WindowFull,
 }
 
-/// `oneiron::task_verb::sdk_off_record::OffRecordExecuted`.
+/// `oneiron::verbs::off_record::OffRecordExecuted`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordExecuted {
     #[serde(rename = "run_ref")]
@@ -21102,7 +21102,7 @@ pub struct OffRecordExecuted {
     pub bridge_calls: u64,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomRequest`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordRoomRequest {
@@ -21131,7 +21131,7 @@ pub enum OffRecordNoticeAct {
     SaveDeclined,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomNotice`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomNotice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordRoomNotice {
     #[serde(rename = "act")]
@@ -21142,7 +21142,7 @@ pub struct OffRecordRoomNotice {
     pub at: String,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomSuggestion`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomSuggestion`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordRoomSuggestion {
     #[serde(rename = "by")]
@@ -21151,7 +21151,7 @@ pub struct OffRecordRoomSuggestion {
     pub at: String,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomView`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordRoomView {
     #[serde(rename = "session_ref")]
@@ -21178,7 +21178,7 @@ pub struct OffRecordRoomView {
     pub waiting_suggestions: Vec<OffRecordRoomSuggestion>,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomStartRequest`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomStartRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordRoomStartRequest {
@@ -21190,7 +21190,7 @@ pub struct OffRecordRoomStartRequest {
     pub backend: OffRecordBackendClass,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomWitnessRequest`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomWitnessRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordRoomWitnessRequest {
@@ -21204,7 +21204,7 @@ pub struct OffRecordRoomWitnessRequest {
     pub summary: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomShortIdPair`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomShortIdPair`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordRoomShortIdPair {
     #[serde(rename = "room")]
@@ -21213,7 +21213,7 @@ pub struct OffRecordRoomShortIdPair {
     pub vault: String,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomSavedTurn`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomSavedTurn`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordRoomSavedTurn {
     #[serde(rename = "turn")]
@@ -21224,7 +21224,7 @@ pub struct OffRecordRoomSavedTurn {
     pub short_ids: Vec<OffRecordRoomShortIdPair>,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomSaved`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomSaved`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordRoomSaved {
     #[serde(rename = "saved")]
@@ -21295,7 +21295,7 @@ pub struct OffRecordTalkMessage {
     pub result: Option<MessageResultAttachment>,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomExportTurn`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomExportTurn`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordRoomExportTurn {
     #[serde(rename = "turn")]
@@ -21310,7 +21310,7 @@ pub struct OffRecordRoomExportTurn {
     pub messages: Vec<OffRecordTalkMessage>,
 }
 
-/// `oneiron::task_verb::sdk_off_record_rooms::OffRecordRoomExport`.
+/// `oneiron::verbs::off_record_rooms::OffRecordRoomExport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OffRecordRoomExport {
     #[serde(rename = "session_ref")]
@@ -21323,7 +21323,7 @@ pub struct OffRecordRoomExport {
     pub turns: Vec<OffRecordRoomExportTurn>,
 }
 
-/// `oneiron::task_verb::sdk_record_erase::RecordEraseRequest`.
+/// `oneiron::verbs::record_erase::RecordEraseRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RecordEraseRequest {
@@ -21331,7 +21331,7 @@ pub struct RecordEraseRequest {
     pub record: String,
 }
 
-/// `oneiron::task_verb::sdk_record_erase::EraseShare`.
+/// `oneiron::verbs::record_erase::EraseShare`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EraseShare {
     #[serde(rename = "grant")]
@@ -21340,7 +21340,7 @@ pub struct EraseShare {
     pub recipient: String,
 }
 
-/// `oneiron::task_verb::sdk_record_erase::EraseHeldBytes`.
+/// `oneiron::verbs::record_erase::EraseHeldBytes`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EraseHeldBytes {
     #[serde(rename = "content_hash")]
@@ -21349,7 +21349,7 @@ pub struct EraseHeldBytes {
     pub other_holders: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_record_erase::EraseLfsChunk`.
+/// `oneiron::verbs::record_erase::EraseLfsChunk`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EraseLfsChunk {
     #[serde(rename = "chunk_hash")]
@@ -21358,7 +21358,7 @@ pub struct EraseLfsChunk {
     pub other_owners: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_record_erase::RecordErasePreview`.
+/// `oneiron::verbs::record_erase::RecordErasePreview`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RecordErasePreview {
     #[serde(rename = "record")]
@@ -21377,7 +21377,7 @@ pub struct RecordErasePreview {
     pub preview_digest: String,
 }
 
-/// `oneiron::task_verb::sdk_record_erase::RecordEraseConfirmRequest`.
+/// `oneiron::verbs::record_erase::RecordEraseConfirmRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RecordEraseConfirmRequest {
@@ -21408,7 +21408,7 @@ pub struct WireDeleteReceipt {
     pub receipt_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_record_erase::EraseSameBytesRow`.
+/// `oneiron::verbs::record_erase::EraseSameBytesRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EraseSameBytesRow {
     #[serde(rename = "record")]
@@ -21425,7 +21425,7 @@ pub struct EraseSameBytesRow {
     pub error: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_record_erase::RecordEraseOutcome`.
+/// `oneiron::verbs::record_erase::RecordEraseOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RecordEraseOutcome {
     #[serde(rename = "first")]
@@ -21436,7 +21436,7 @@ pub struct RecordEraseOutcome {
     pub same_bytes: Vec<EraseSameBytesRow>,
 }
 
-/// `oneiron::task_verb::sdk_act_answer::ActAnswer` with `T` = `RecordEraseOutcome`.
+/// `oneiron::verbs::act_answer::ActAnswer` with `T` = `RecordEraseOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ActAnswerRecordEraseOutcome {
@@ -21496,7 +21496,7 @@ pub struct RecordEraseSweep {
     pub custody: Option<RecordEraseCustody>,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchChildWire`.
+/// `oneiron::verbs::research::ResearchChildWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchChildWire {
@@ -21512,7 +21512,7 @@ pub struct ResearchChildWire {
     pub briefing: String,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchChildReceipt`.
+/// `oneiron::verbs::research::ResearchChildReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchChildReceipt {
@@ -21524,7 +21524,7 @@ pub struct ResearchChildReceipt {
     pub child: String,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchArchiveWire`.
+/// `oneiron::verbs::research::ResearchArchiveWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchArchiveWire {
@@ -22383,7 +22383,7 @@ pub struct PromotionBasis {
     pub promotion: Option<CampaignPromotionReceipt>,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchArchive`.
+/// `oneiron::verbs::research::ResearchArchive`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchArchive {
@@ -22609,7 +22609,7 @@ pub struct CampaignArchiveAdmission {
     pub admitted: bool,
 }
 
-/// `oneiron::task_verb::sdk_eval_cohort::EvalInventoryWire`.
+/// `oneiron::verbs::eval_cohort::EvalInventoryWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EvalInventoryWire {
@@ -23954,7 +23954,7 @@ pub struct OfferPilotRef {
     pub pilot: String,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchBindWire`.
+/// `oneiron::verbs::research::ResearchBindWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchBindWire {
@@ -23995,7 +23995,7 @@ pub enum ForkKind {
     Debug,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchForkWire`.
+/// `oneiron::verbs::research::ResearchForkWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchForkWire {
@@ -24011,7 +24011,7 @@ pub struct ResearchForkWire {
     pub candidate: CandidateRef,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchWeaveWire`.
+/// `oneiron::verbs::research::ResearchWeaveWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchWeaveWire {
@@ -24031,7 +24031,7 @@ pub struct ResearchWeaveWire {
     pub claim: String,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchSearchWire`.
+/// `oneiron::verbs::research::ResearchSearchWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchSearchWire {
@@ -24043,7 +24043,7 @@ pub struct ResearchSearchWire {
     pub evidence: SearchEvidence,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchHeldOutWire`.
+/// `oneiron::verbs::research::ResearchHeldOutWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchHeldOutWire {
@@ -24357,7 +24357,7 @@ pub enum CampaignSmokeOutcome {
     },
 }
 
-/// `oneiron::task_verb::sdk_campaign_split::CampaignSplitWire`.
+/// `oneiron::verbs::campaign_split::CampaignSplitWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CampaignSplitWire {
@@ -24580,7 +24580,7 @@ pub struct CampaignSplitReport {
     pub effective_taste_score: f64,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchInvalidWire`.
+/// `oneiron::verbs::research::ResearchInvalidWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchInvalidWire {
@@ -24594,7 +24594,7 @@ pub struct ResearchInvalidWire {
     pub evidence_refs: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchPruneCause`.
+/// `oneiron::verbs::research::ResearchPruneCause`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 pub enum ResearchPruneCause {
@@ -24614,7 +24614,7 @@ pub enum ResearchPruneCause {
     Stopped,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchPruneWire`.
+/// `oneiron::verbs::research::ResearchPruneWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchPruneWire {
@@ -24628,7 +24628,7 @@ pub struct ResearchPruneWire {
     pub evidence_refs: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchSelectWire`.
+/// `oneiron::verbs::research::ResearchSelectWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchSelectWire {
@@ -24638,7 +24638,7 @@ pub struct ResearchSelectWire {
     pub goal_met: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchBasisWire`.
+/// `oneiron::verbs::research::ResearchBasisWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchBasisWire {
@@ -24650,7 +24650,7 @@ pub struct ResearchBasisWire {
     pub archive: Option<CampaignArchivePin>,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchCandidateWire`.
+/// `oneiron::verbs::research::ResearchCandidateWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchCandidateWire {
@@ -24660,7 +24660,7 @@ pub struct ResearchCandidateWire {
     pub candidate: String,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchRefereeScores`.
+/// `oneiron::verbs::research::ResearchRefereeScores`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchRefereeScores {
@@ -24672,7 +24672,7 @@ pub struct ResearchRefereeScores {
     pub referee_pin: String,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchPromoteWire`.
+/// `oneiron::verbs::research::ResearchPromoteWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchPromoteWire {
@@ -24703,7 +24703,7 @@ pub enum RsiSpendPurpose {
     HeldOut,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchWorkWire`.
+/// `oneiron::verbs::research::ResearchWorkWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchWorkWire {
@@ -24717,7 +24717,7 @@ pub struct ResearchWorkWire {
     pub attempt: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchSettleWire`.
+/// `oneiron::verbs::research::ResearchSettleWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchSettleWire {
@@ -24774,7 +24774,7 @@ pub struct ResearchReservation {
     pub reserved_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchRefundWire`.
+/// `oneiron::verbs::research::ResearchRefundWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchRefundWire {
@@ -24784,7 +24784,7 @@ pub struct ResearchRefundWire {
     pub reservation: String,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchExplorationWire`.
+/// `oneiron::verbs::research::ResearchExplorationWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchExplorationWire {
@@ -24805,7 +24805,7 @@ pub struct RsiOverdraftReceipt {
     pub units: u64,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchReservationWire`.
+/// `oneiron::verbs::research::ResearchReservationWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResearchReservationWire {
     #[serde(rename = "id")]
@@ -24854,7 +24854,7 @@ pub struct RsiExplorationRead {
     pub suspended: bool,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchBudgetView`.
+/// `oneiron::verbs::research::ResearchBudgetView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ResearchBudgetView {
     #[serde(rename = "budget")]
@@ -24871,7 +24871,7 @@ pub struct ResearchBudgetView {
     pub rsi_exploration: Option<RsiExplorationRead>,
 }
 
-/// `oneiron::task_verb::sdk_research::ResearchBenchmarkWire`.
+/// `oneiron::verbs::research::ResearchBenchmarkWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchBenchmarkWire {
@@ -24941,7 +24941,7 @@ pub struct AuthorityHandoffAlarm {
     pub seen: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_shared::HandoffAlarmRequest`.
+/// `oneiron::verbs::shared::HandoffAlarmRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HandoffAlarmRequest {
@@ -24949,7 +24949,7 @@ pub struct HandoffAlarmRequest {
     pub signer: String,
 }
 
-/// `oneiron::task_verb::sdk_root_requests::RootRequestCancelRequest`.
+/// `oneiron::verbs::root_requests::RootRequestCancelRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RootRequestCancelRequest {
@@ -25306,7 +25306,7 @@ pub enum LegalHoldTarget {
     GatePartition(Option<String>),
 }
 
-/// `oneiron::task_verb::sdk_legal_hold::LegalHoldPlaceRequest`.
+/// `oneiron::verbs::legal_hold::LegalHoldPlaceRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldPlaceRequest {
@@ -25410,7 +25410,7 @@ pub struct LegalHold {
     pub requires_non_use: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk_legal_hold::LegalHoldWidenRequest`.
+/// `oneiron::verbs::legal_hold::LegalHoldWidenRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldWidenRequest {
@@ -25506,7 +25506,7 @@ pub struct LegalHoldEvent {
     pub request_id: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_legal_hold::LegalHoldLiftAndEraseRequest`.
+/// `oneiron::verbs::legal_hold::LegalHoldLiftAndEraseRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldLiftAndEraseRequest {
@@ -25558,7 +25558,7 @@ pub struct LegalHoldBound {
     pub ends_at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_legal_hold::LegalHoldEraseState`.
+/// `oneiron::verbs::legal_hold::LegalHoldEraseState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum LegalHoldEraseState {
@@ -25598,7 +25598,7 @@ pub enum LegalHoldEraseState {
     },
 }
 
-/// `oneiron::task_verb::sdk_legal_hold::LegalHoldErasedRecord`.
+/// `oneiron::verbs::legal_hold::LegalHoldErasedRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldErasedRecord {
@@ -25608,7 +25608,7 @@ pub struct LegalHoldErasedRecord {
     pub status: LegalHoldEraseState,
 }
 
-/// `oneiron::task_verb::sdk_legal_hold::LegalHoldLiftAndErased`.
+/// `oneiron::verbs::legal_hold::LegalHoldLiftAndErased`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldLiftAndErased {
@@ -25618,7 +25618,7 @@ pub struct LegalHoldLiftAndErased {
     pub records: Vec<LegalHoldErasedRecord>,
 }
 
-/// `oneiron::task_verb::sdk_courtesy_delete::CourtesyDeleteSendRequest`.
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteSendRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CourtesyDeleteSendRequest {
@@ -25638,7 +25638,7 @@ pub struct CourtesyDeleteSendRequest {
     pub signed: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_courtesy_delete::CourtesyDeleteSent`.
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteSent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CourtesyDeleteSent {
     #[serde(rename = "request")]
@@ -25655,7 +25655,7 @@ pub struct CourtesyDeleteSent {
     pub updated: String,
 }
 
-/// `oneiron::task_verb::sdk_courtesy_delete::CourtesyDeleteAskedWorld`.
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteAskedWorld`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CourtesyDeleteAskedWorld {
     #[serde(rename = "world")]
@@ -25687,7 +25687,7 @@ pub enum CooperativeDeletionDispositionKind {
     Decline,
 }
 
-/// `oneiron::task_verb::sdk_courtesy_delete::CourtesyDeleteChoice`.
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteChoice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CourtesyDeleteChoice {
     #[serde(rename = "choice")]
@@ -25706,7 +25706,7 @@ pub struct CourtesyDeleteChoice {
     pub recorded: String,
 }
 
-/// `oneiron::task_verb::sdk_courtesy_delete::CourtesyDeleteIncoming`.
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteIncoming`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CourtesyDeleteIncoming {
     #[serde(rename = "request")]
@@ -25741,7 +25741,7 @@ pub struct CourtesyDeleteIncoming {
     pub reply_status: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_courtesy_delete::CourtesyDeleteAnswerRequest`.
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteAnswerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CourtesyDeleteAnswerRequest {
@@ -25948,7 +25948,7 @@ pub struct SpaceMove {
     pub last_check: Option<SpaceMoveCheck>,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpacesView`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpacesView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EmbeddingSpacesView {
     #[serde(rename = "spaces")]
@@ -25963,7 +25963,7 @@ pub struct EmbeddingSpacesView {
     pub probes: std::collections::HashMap<String, u64>,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceBindRequest`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceBindRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingSpaceBindRequest {
@@ -25973,7 +25973,7 @@ pub struct EmbeddingSpaceBindRequest {
     pub space: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceRequest`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingSpaceRequest {
@@ -25981,7 +25981,7 @@ pub struct EmbeddingSpaceRequest {
     pub space: String,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceMoveRequest`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceMoveRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingSpaceMoveRequest {
@@ -25993,7 +25993,7 @@ pub struct EmbeddingSpaceMoveRequest {
     pub margin: Option<f64>,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceCandidateRequest`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceCandidateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingSpaceCandidateRequest {
@@ -26001,7 +26001,7 @@ pub struct EmbeddingSpaceCandidateRequest {
     pub candidate: String,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceMoveOutcome`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceMoveOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum EmbeddingSpaceMoveOutcome {
     #[serde(rename = "filling")]
@@ -26014,7 +26014,7 @@ pub enum EmbeddingSpaceMoveOutcome {
     Undecided,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceMoveChecked`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceMoveChecked`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EmbeddingSpaceMoveChecked {
     #[serde(rename = "outcome")]
@@ -26048,7 +26048,7 @@ pub struct SpaceProbe {
     pub cohort: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbe`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceProbe`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EmbeddingSpaceProbe {
     #[serde(rename = "id")]
@@ -26057,14 +26057,14 @@ pub struct EmbeddingSpaceProbe {
     pub space_probe: SpaceProbe,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbes`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceProbes`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EmbeddingSpaceProbes {
     #[serde(rename = "probes")]
     pub probes: Vec<EmbeddingSpaceProbe>,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbePutRequest`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceProbePutRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingSpaceProbePutRequest {
@@ -26086,7 +26086,7 @@ pub struct EmbeddingSpaceProbePutRequest {
     pub author: String,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbeDeleteRequest`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceProbeDeleteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingSpaceProbeDeleteRequest {
@@ -26094,7 +26094,7 @@ pub struct EmbeddingSpaceProbeDeleteRequest {
     pub id: String,
 }
 
-/// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbeDeleted`.
+/// `oneiron::verbs::embedding_space::EmbeddingSpaceProbeDeleted`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EmbeddingSpaceProbeDeleted {
     #[serde(rename = "ok")]
@@ -29751,7 +29751,7 @@ pub struct ScopedReadResultLensFrameCard {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::task_verb::sdk_disclosure::DisclosureOfferRequest`.
+/// `oneiron::verbs::disclosure::DisclosureOfferRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DisclosureOfferRequest {
@@ -29773,7 +29773,7 @@ pub struct DisclosureOfferRequest {
     pub expires_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_disclosure::DisclosureOffered`.
+/// `oneiron::verbs::disclosure::DisclosureOffered`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DisclosureOffered {
@@ -29849,7 +29849,7 @@ pub struct DisclosureCeilingSet {
     pub ceiling: DisclosureBand,
 }
 
-/// `oneiron::task_verb::sdk_disclosure::RevealAsksRequest`.
+/// `oneiron::verbs::disclosure::RevealAsksRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealAsksRequest {
@@ -29859,7 +29859,7 @@ pub struct RevealAsksRequest {
     pub limit: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_secret::RevealReceipt`.
+/// `oneiron::verbs::secret::RevealReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealReceipt {
@@ -29903,7 +29903,7 @@ pub struct RevealReceipt {
     pub delivered_at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_disclosure::RevealAskView`.
+/// `oneiron::verbs::disclosure::RevealAskView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealAskView {
@@ -29929,7 +29929,7 @@ pub struct RevealAskView {
     pub grant_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_disclosure::RevealOutcome`.
+/// `oneiron::verbs::disclosure::RevealOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RevealOutcome {
     #[serde(rename = "once")]
@@ -29940,7 +29940,7 @@ pub enum RevealOutcome {
     Deny,
 }
 
-/// `oneiron::task_verb::sdk_disclosure::RevealAnswerRequest`.
+/// `oneiron::verbs::disclosure::RevealAnswerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealAnswerRequest {
@@ -29952,7 +29952,7 @@ pub struct RevealAnswerRequest {
     pub outcome: RevealOutcome,
 }
 
-/// `oneiron::task_verb::sdk_disclosure::RevealAnsweredView`.
+/// `oneiron::verbs::disclosure::RevealAnsweredView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealAnsweredView {
@@ -29966,7 +29966,7 @@ pub struct RevealAnsweredView {
     pub grant_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_secret::RevealRequest`.
+/// `oneiron::verbs::secret::RevealRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealRequest {
@@ -29976,7 +29976,7 @@ pub struct RevealRequest {
     pub why: String,
 }
 
-/// `oneiron::task_verb::sdk_secret::RevealPending`.
+/// `oneiron::verbs::secret::RevealPending`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealPending {
@@ -29984,7 +29984,7 @@ pub struct RevealPending {
     pub reveal: String,
 }
 
-/// `oneiron::task_verb::sdk_secret::RevealWaitRequest`.
+/// `oneiron::verbs::secret::RevealWaitRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealWaitRequest {
@@ -29992,7 +29992,7 @@ pub struct RevealWaitRequest {
     pub reveal: String,
 }
 
-/// `oneiron::task_verb::sdk_secret::RevealDecision`.
+/// `oneiron::verbs::secret::RevealDecision`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RevealDecision {
     #[serde(rename = "pending")]
@@ -30005,7 +30005,7 @@ pub enum RevealDecision {
     Expired,
 }
 
-/// `oneiron::task_verb::sdk_secret::RevealWaitAnswer`.
+/// `oneiron::verbs::secret::RevealWaitAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealWaitAnswer {
@@ -30023,7 +30023,7 @@ pub struct RevealWaitAnswer {
     pub receipt: Option<RevealReceipt>,
 }
 
-/// `oneiron::task_verb::sdk_secret::RevealDescribeRequest`.
+/// `oneiron::verbs::secret::RevealDescribeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealDescribeRequest {
@@ -30031,7 +30031,7 @@ pub struct RevealDescribeRequest {
     pub handle: String,
 }
 
-/// `oneiron::task_verb::sdk_secret::RevealProvenance`.
+/// `oneiron::verbs::secret::RevealProvenance`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealProvenance {
@@ -30051,7 +30051,7 @@ pub struct RevealProvenance {
     pub learned_at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_secret::RevealHandleCard`.
+/// `oneiron::verbs::secret::RevealHandleCard`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealHandleCard {
@@ -30079,7 +30079,7 @@ pub struct RevealHandleCard {
     pub refusal: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_secret_use::SecretUseRequest`.
+/// `oneiron::verbs::secret_use::SecretUseRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretUseRequest {
@@ -30091,7 +30091,7 @@ pub struct SecretUseRequest {
     pub arguments: Option<crate::WireJson>,
 }
 
-/// `oneiron::task_verb::sdk_secret_use::SecretUseStatus`.
+/// `oneiron::verbs::secret_use::SecretUseStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SecretUseStatus {
     #[serde(rename = "answered")]
@@ -30102,7 +30102,7 @@ pub enum SecretUseStatus {
     Withheld,
 }
 
-/// `oneiron::task_verb::sdk_secret_use::SecretUseRecord`.
+/// `oneiron::verbs::secret_use::SecretUseRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretUseRecord {
@@ -30120,7 +30120,7 @@ pub struct SecretUseRecord {
     pub used_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_secret_use::SecretUseAnswer`.
+/// `oneiron::verbs::secret_use::SecretUseAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretUseAnswer {
@@ -30134,7 +30134,7 @@ pub struct SecretUseAnswer {
     pub receipt: SecretUseRecord,
 }
 
-/// `oneiron::task_verb::sdk_secret_grant::SecretGrantPurpose`.
+/// `oneiron::verbs::secret_grant::SecretGrantPurpose`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -30165,7 +30165,7 @@ pub enum SecretGrantPurpose {
     },
 }
 
-/// `oneiron::task_verb::sdk_secret_grant::SecretGrantMintRequest`.
+/// `oneiron::verbs::secret_grant::SecretGrantMintRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretGrantMintRequest {
@@ -30177,7 +30177,7 @@ pub struct SecretGrantMintRequest {
     pub ttl_secs: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SecretGrantMintRequest`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `SecretGrantMintRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestSecretGrantMintRequest {
@@ -30187,7 +30187,7 @@ pub struct LiveRunRequestSecretGrantMintRequest {
     pub spec: SecretGrantMintRequest,
 }
 
-/// `oneiron::task_verb::sdk_secret_grant::SecretGrantViewStatus`.
+/// `oneiron::verbs::secret_grant::SecretGrantViewStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SecretGrantViewStatus {
     #[serde(rename = "active")]
@@ -30200,7 +30200,7 @@ pub enum SecretGrantViewStatus {
     Replaced,
 }
 
-/// `oneiron::task_verb::sdk_secret_grant::SecretGrantRegistration`.
+/// `oneiron::verbs::secret_grant::SecretGrantRegistration`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretGrantRegistration {
@@ -30210,7 +30210,7 @@ pub struct SecretGrantRegistration {
     pub project_id: String,
 }
 
-/// `oneiron::task_verb::sdk_secret_grant::SecretGrantCleanup`.
+/// `oneiron::verbs::secret_grant::SecretGrantCleanup`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SecretGrantCleanup {
     #[serde(rename = "removed")]
@@ -30221,7 +30221,7 @@ pub enum SecretGrantCleanup {
     Kept,
 }
 
-/// `oneiron::task_verb::sdk_secret_grant::SecretGrantView`.
+/// `oneiron::verbs::secret_grant::SecretGrantView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretGrantView {
@@ -30267,7 +30267,7 @@ pub struct SecretGrantView {
     pub cleanup: Option<SecretGrantCleanup>,
 }
 
-/// `oneiron::task_verb::sdk_secret_grant::SecretGrantRenewRequest`.
+/// `oneiron::verbs::secret_grant::SecretGrantRenewRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretGrantRenewRequest {
@@ -30277,7 +30277,7 @@ pub struct SecretGrantRenewRequest {
     pub ttl_secs: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SecretGrantRenewRequest`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `SecretGrantRenewRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestSecretGrantRenewRequest {
@@ -30287,7 +30287,7 @@ pub struct LiveRunRequestSecretGrantRenewRequest {
     pub spec: SecretGrantRenewRequest,
 }
 
-/// `oneiron::task_verb::sdk_secret_grant::SecretGrantTeardownRequest`.
+/// `oneiron::verbs::secret_grant::SecretGrantTeardownRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretGrantTeardownRequest {
@@ -30295,7 +30295,7 @@ pub struct SecretGrantTeardownRequest {
     pub grant: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SecretGrantTeardownRequest`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `SecretGrantTeardownRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestSecretGrantTeardownRequest {
@@ -30305,7 +30305,7 @@ pub struct LiveRunRequestSecretGrantTeardownRequest {
     pub spec: SecretGrantTeardownRequest,
 }
 
-/// `oneiron::task_verb::sdk_secret_grant::SecretGrantUseRequest`.
+/// `oneiron::verbs::secret_grant::SecretGrantUseRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretGrantUseRequest {
@@ -30317,7 +30317,7 @@ pub struct SecretGrantUseRequest {
     pub arguments: Option<crate::WireJson>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SecretGrantUseRequest`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `SecretGrantUseRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestSecretGrantUseRequest {
@@ -30348,7 +30348,7 @@ pub struct TravelChoice {
     pub born_with: Option<Vec<BornWithField>>,
 }
 
-/// `oneiron::task_verb::sdk_share::ShareCreateRequest`.
+/// `oneiron::verbs::share::ShareCreateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ShareCreateRequest {
@@ -30388,7 +30388,7 @@ pub struct ShareCreateRequest {
     pub mention: Option<WireMentionProvenance>,
 }
 
-/// `oneiron::task_verb::sdk_share::ShareCreated`.
+/// `oneiron::verbs::share::ShareCreated`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ShareCreated {
@@ -30410,7 +30410,7 @@ pub struct ShareCreated {
     pub travel: TravelChoice,
 }
 
-/// `oneiron::task_verb::sdk_share::ShareRevokeRequest`.
+/// `oneiron::verbs::share::ShareRevokeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ShareRevokeRequest {
@@ -30434,7 +30434,7 @@ pub struct ShareRevokeReceipt {
     pub revoked_at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_share::ShareViewNarrowing`.
+/// `oneiron::verbs::share::ShareViewNarrowing`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ShareViewNarrowing {
@@ -30458,7 +30458,7 @@ pub struct ShareViewNarrowing {
     pub include_unscoped: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk_share::ShareViewRequest`.
+/// `oneiron::verbs::share::ShareViewRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ShareViewRequest {
@@ -30650,7 +30650,7 @@ pub struct HostBudgetHitResult {
     pub accounting: HostBudgetAccounting,
 }
 
-/// `oneiron::task_verb::sdk_host::HooksReplayRequest`.
+/// `oneiron::verbs::host::HooksReplayRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HooksReplayRequest {
@@ -36239,7 +36239,7 @@ pub struct ArtifactExportFile {
     pub content_base64: String,
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentSkillInput`.
+/// `oneiron::verbs::agents::AgentSkillInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSkillInput {
@@ -36253,7 +36253,7 @@ pub struct AgentSkillInput {
     pub min_version: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentMcpInput`.
+/// `oneiron::verbs::agents::AgentMcpInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentMcpInput {
@@ -36267,7 +36267,7 @@ pub struct AgentMcpInput {
     pub min_version: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentScopeInput`.
+/// `oneiron::verbs::agents::AgentScopeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -36283,7 +36283,7 @@ pub enum AgentScopeInput {
     },
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentCeilingInput`.
+/// `oneiron::verbs::agents::AgentCeilingInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentCeilingInput {
     #[serde(rename = "auto")]
@@ -36325,7 +36325,7 @@ pub struct AgentModel {
     pub when: String,
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentDefinitionSpec`.
+/// `oneiron::verbs::agents::AgentDefinitionSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinitionSpec {
@@ -36391,7 +36391,7 @@ pub struct AgentDefinitionSpec {
     pub compaction_model: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentDefinitionCreateRequest`.
+/// `oneiron::verbs::agents::AgentDefinitionCreateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinitionCreateRequest {
@@ -36401,7 +36401,7 @@ pub struct AgentDefinitionCreateRequest {
     pub definition: AgentDefinitionSpec,
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentDefinitionLifecycle`.
+/// `oneiron::verbs::agents::AgentDefinitionLifecycle`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentDefinitionLifecycle {
     #[serde(rename = "active")]
@@ -36412,7 +36412,7 @@ pub enum AgentDefinitionLifecycle {
     Retracted,
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentDefinitionView`.
+/// `oneiron::verbs::agents::AgentDefinitionView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AgentDefinitionView {
     #[serde(rename = "agent_def_ref")]
@@ -36425,7 +36425,7 @@ pub struct AgentDefinitionView {
     pub lifecycle_status: AgentDefinitionLifecycle,
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentDefinitionRequest`.
+/// `oneiron::verbs::agents::AgentDefinitionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinitionRequest {
@@ -36433,7 +36433,7 @@ pub struct AgentDefinitionRequest {
     pub agent_def_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_agents::AgentDefinitionUpdateRequest`.
+/// `oneiron::verbs::agents::AgentDefinitionUpdateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinitionUpdateRequest {
@@ -36445,7 +36445,7 @@ pub struct AgentDefinitionUpdateRequest {
     pub definition: AgentDefinitionSpec,
 }
 
-/// `oneiron::task_verb::sdk_standing::AgentDreamingRequest`.
+/// `oneiron::verbs::standing::AgentDreamingRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDreamingRequest {
@@ -36453,7 +36453,7 @@ pub struct AgentDreamingRequest {
     pub agent_def_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_standing::DreamingModeInput`.
+/// `oneiron::verbs::standing::DreamingModeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DreamingModeInput {
     #[serde(rename = "own")]
@@ -36464,7 +36464,7 @@ pub enum DreamingModeInput {
     Off,
 }
 
-/// `oneiron::task_verb::sdk_standing::AgentDreamingView`.
+/// `oneiron::verbs::standing::AgentDreamingView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AgentDreamingView {
     #[serde(rename = "agent_def_ref")]
@@ -36483,7 +36483,7 @@ pub struct AgentDreamingView {
     pub dreaming_model: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_standing::AgentDreamingSetRequest`.
+/// `oneiron::verbs::standing::AgentDreamingSetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDreamingSetRequest {
@@ -36519,7 +36519,7 @@ pub struct RepoAccessBounds {
     pub editable: Option<Vec<String>>,
 }
 
-/// `oneiron::task_verb::sdk_agent_grant::AgentGrantMintRequest`.
+/// `oneiron::verbs::agent_grant::AgentGrantMintRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentGrantMintRequest {
@@ -36541,7 +36541,7 @@ pub struct AgentGrantMintRequest {
     pub repo_bounds: Option<RepoAccessBounds>,
 }
 
-/// `oneiron::task_verb::sdk_agent_grant::AgentGrantView`.
+/// `oneiron::verbs::agent_grant::AgentGrantView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentGrantView {
@@ -36571,7 +36571,7 @@ pub struct AgentGrantView {
     pub revoke_command: String,
 }
 
-/// `oneiron::task_verb::sdk_agent_grant::AgentGrantMinted`.
+/// `oneiron::verbs::agent_grant::AgentGrantMinted`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentGrantMinted {
@@ -36581,7 +36581,7 @@ pub struct AgentGrantMinted {
     pub act_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_agent_grant::AgentGrantRevokeRequest`.
+/// `oneiron::verbs::agent_grant::AgentGrantRevokeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentGrantRevokeRequest {
@@ -36591,7 +36591,7 @@ pub struct AgentGrantRevokeRequest {
     pub seen: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_agent_grant::AgentGrantRevoked`.
+/// `oneiron::verbs::agent_grant::AgentGrantRevoked`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentGrantRevoked {
@@ -36615,7 +36615,7 @@ pub struct GitPushRepo {
     pub project: String,
 }
 
-/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantMintInput`.
+/// `oneiron::verbs::git_push_grant::GitPushGrantMintInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GitPushGrantMintInput {
@@ -36631,7 +36631,7 @@ pub struct GitPushGrantMintInput {
     pub expires_at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantView`.
+/// `oneiron::verbs::git_push_grant::GitPushGrantView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GitPushGrantView {
@@ -36655,7 +36655,7 @@ pub struct GitPushGrantView {
     pub revoke_command: String,
 }
 
-/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantMintOutput`.
+/// `oneiron::verbs::git_push_grant::GitPushGrantMintOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GitPushGrantMintOutput {
@@ -36665,7 +36665,7 @@ pub struct GitPushGrantMintOutput {
     pub act_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantRevokeInput`.
+/// `oneiron::verbs::git_push_grant::GitPushGrantRevokeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GitPushGrantRevokeInput {
@@ -36675,7 +36675,7 @@ pub struct GitPushGrantRevokeInput {
     pub seen: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_git_push_grant::GitPushGrantRevokeOutput`.
+/// `oneiron::verbs::git_push_grant::GitPushGrantRevokeOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GitPushGrantRevokeOutput {
@@ -36689,7 +36689,7 @@ pub struct GitPushGrantRevokeOutput {
     pub act_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_git_push_grant::RepoAnchorBindInput`.
+/// `oneiron::verbs::git_push_grant::RepoAnchorBindInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindInput {
@@ -36699,7 +36699,7 @@ pub struct RepoAnchorBindInput {
     pub project: String,
 }
 
-/// `oneiron::task_verb::sdk_git_push_grant::RepoAnchorBindOutput`.
+/// `oneiron::verbs::git_push_grant::RepoAnchorBindOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindOutput {
@@ -36723,7 +36723,7 @@ pub struct RepoSnapshotsGetInput {
     pub snapshot: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoSnapshotsGetInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoSnapshotsGetInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoSnapshotsGetInput {
@@ -36764,7 +36764,7 @@ pub struct RepoSnapshotsReadInput {
     pub path: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoSnapshotsReadInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoSnapshotsReadInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoSnapshotsReadInput {
@@ -36805,7 +36805,7 @@ pub struct RepoSymbolsDefinitionsInput {
     pub name: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoSymbolsDefinitionsInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoSymbolsDefinitionsInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoSymbolsDefinitionsInput {
@@ -36836,7 +36836,7 @@ pub struct RepoViewsGetInput {
     pub work: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoViewsGetInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoViewsGetInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoViewsGetInput {
@@ -36884,7 +36884,7 @@ pub struct RepoViewsReadInput {
     pub path: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoViewsReadInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoViewsReadInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoViewsReadInput {
@@ -36915,7 +36915,7 @@ pub struct RepoMergeQueueObserveInput {
     pub work: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoMergeQueueObserveInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoMergeQueueObserveInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoMergeQueueObserveInput {
@@ -36987,7 +36987,7 @@ pub struct RepoSnapshotsIngestInput {
     pub r#ref: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoSnapshotsIngestInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoSnapshotsIngestInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoSnapshotsIngestInput {
@@ -37007,7 +37007,7 @@ pub struct RepoWorkOpenInput {
     pub r#ref: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoWorkOpenInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoWorkOpenInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoWorkOpenInput {
@@ -37029,7 +37029,7 @@ pub struct RepoSymbolsDeclareInput {
     pub ttl_seconds: u64,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoSymbolsDeclareInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoSymbolsDeclareInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoSymbolsDeclareInput {
@@ -37068,7 +37068,7 @@ pub struct RepoSymbolsRenewInput {
     pub declaration: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoSymbolsRenewInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoSymbolsRenewInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoSymbolsRenewInput {
@@ -37088,7 +37088,7 @@ pub struct RepoSymbolsReleaseInput {
     pub declaration: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoSymbolsReleaseInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoSymbolsReleaseInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoSymbolsReleaseInput {
@@ -37129,7 +37129,7 @@ pub struct RepoProposalSubmitInput {
     pub declaration: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoProposalSubmitInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoProposalSubmitInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoProposalSubmitInput {
@@ -37182,7 +37182,7 @@ pub struct RepoMergeQueueEnqueueInput {
     pub declaration: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoMergeQueueEnqueueInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoMergeQueueEnqueueInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoMergeQueueEnqueueInput {
@@ -37208,7 +37208,7 @@ pub struct RepoCheckoutBindInput {
     pub endpoint: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoCheckoutBindInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoCheckoutBindInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoCheckoutBindInput {
@@ -37259,7 +37259,7 @@ pub struct RepoExportInput {
     pub expected_old_oid: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `RepoExportInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoExportInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestRepoExportInput {
@@ -37294,7 +37294,7 @@ pub struct RepoExportOutput {
     pub wire_rejected: bool,
 }
 
-/// `oneiron::task_verb::sdk_agent_grant::BaseAgentPrincipal`.
+/// `oneiron::verbs::agent_grant::BaseAgentPrincipal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BaseAgentPrincipal {
@@ -37304,7 +37304,7 @@ pub struct BaseAgentPrincipal {
     pub id: String,
 }
 
-/// `oneiron::task_verb::sdk_agent_grant::BaseAgentList`.
+/// `oneiron::verbs::agent_grant::BaseAgentList`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BaseAgentList {
@@ -37312,7 +37312,7 @@ pub struct BaseAgentList {
     pub agents: Vec<BaseAgentPrincipal>,
 }
 
-/// `oneiron::task_verb::sdk_standing::StandingBlockConfigureRequest`.
+/// `oneiron::verbs::standing::StandingBlockConfigureRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct StandingBlockConfigureRequest {
@@ -37326,7 +37326,7 @@ pub struct StandingBlockConfigureRequest {
     pub token_floor: u64,
 }
 
-/// `oneiron::task_verb::sdk_standing::StandingBlockRequest`.
+/// `oneiron::verbs::standing::StandingBlockRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct StandingBlockRequest {
@@ -37336,7 +37336,7 @@ pub struct StandingBlockRequest {
     pub world_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_standing::StandingBlocksRequest`.
+/// `oneiron::verbs::standing::StandingBlocksRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct StandingBlocksRequest {
@@ -37344,7 +37344,7 @@ pub struct StandingBlocksRequest {
     pub agent_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowSaveRequest`.
+/// `oneiron::verbs::workflows::WorkflowSaveRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowSaveRequest {
@@ -37356,7 +37356,7 @@ pub struct WorkflowSaveRequest {
     pub steps: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowView`.
+/// `oneiron::verbs::workflows::WorkflowView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WorkflowView {
     #[serde(rename = "workflow_ref")]
@@ -37375,7 +37375,7 @@ pub struct WorkflowView {
     pub forked_from: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowRequest`.
+/// `oneiron::verbs::workflows::WorkflowRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowRequest {
@@ -37383,7 +37383,7 @@ pub struct WorkflowRequest {
     pub workflow_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowUpdateRequest`.
+/// `oneiron::verbs::workflows::WorkflowUpdateRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowUpdateRequest {
@@ -37448,7 +37448,7 @@ pub struct ContextSpec {
     pub annotation: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowDispatchRequest`.
+/// `oneiron::verbs::workflows::WorkflowDispatchRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowDispatchRequest {
@@ -37468,7 +37468,7 @@ pub struct WorkflowDispatchRequest {
     pub task_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowStepCapture`.
+/// `oneiron::verbs::workflows::WorkflowStepCapture`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WorkflowStepCapture {
     #[serde(rename = "requested_agent_ref")]
@@ -37479,7 +37479,7 @@ pub struct WorkflowStepCapture {
     pub definition: AgentDefinitionSpec,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowStepRun`.
+/// `oneiron::verbs::workflows::WorkflowStepRun`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WorkflowStepRun {
     #[serde(rename = "ordinal")]
@@ -37494,7 +37494,7 @@ pub struct WorkflowStepRun {
     pub result_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowRunView`.
+/// `oneiron::verbs::workflows::WorkflowRunView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WorkflowRunView {
     #[serde(rename = "workflow_ref")]
@@ -37513,7 +37513,7 @@ pub struct WorkflowRunView {
     pub task_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowPersonDispatchRequest`.
+/// `oneiron::verbs::workflows::WorkflowPersonDispatchRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowPersonDispatchRequest {
@@ -37539,7 +37539,7 @@ pub struct WorkflowPersonDispatchRequest {
     pub shown_at_ms: u64,
 }
 
-/// `oneiron::task_verb::sdk_workflows::WorkflowRunRequest`.
+/// `oneiron::verbs::workflows::WorkflowRunRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowRunRequest {
@@ -38620,7 +38620,7 @@ pub enum WorkCompanionPolicy {
     Require,
 }
 
-/// `oneiron::task_verb::sdk_workspace::WorkspacePresetRequest`.
+/// `oneiron::verbs::workspace::WorkspacePresetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspacePresetRequest {
@@ -38634,7 +38634,7 @@ pub struct WorkspacePresetRequest {
     pub work_companion: Option<WorkCompanionPolicy>,
 }
 
-/// `oneiron::task_verb::sdk_workspace::WorkspacePresetReceipt`.
+/// `oneiron::verbs::workspace::WorkspacePresetReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WorkspacePresetReceipt {
     #[serde(rename = "workspace_ref")]
@@ -38643,7 +38643,7 @@ pub struct WorkspacePresetReceipt {
     pub work_companion: WorkCompanionPolicy,
 }
 
-/// `oneiron::task_verb::sdk_workspace::WorkspaceCompanionInput`.
+/// `oneiron::verbs::workspace::WorkspaceCompanionInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -38674,7 +38674,7 @@ pub enum WorkspaceCompanionInput {
     },
 }
 
-/// `oneiron::task_verb::sdk_workspace::WorkspaceMemberOnboardRequest`.
+/// `oneiron::verbs::workspace::WorkspaceMemberOnboardRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceMemberOnboardRequest {
@@ -38733,7 +38733,7 @@ pub struct MemberOnboardingOutcome {
     pub completed_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_workspace::WorkspaceRosterRequest`.
+/// `oneiron::verbs::workspace::WorkspaceRosterRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRosterRequest {
@@ -39096,7 +39096,7 @@ pub struct SlideReviewOutcome {
     pub refused: Vec<SlideUnitRefused>,
 }
 
-/// `oneiron::task_verb::sdk_act_answer::ActAnswer` with `T` = `SlideReviewOutcome`.
+/// `oneiron::verbs::act_answer::ActAnswer` with `T` = `SlideReviewOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ActAnswerSlideReviewOutcome {
@@ -39226,7 +39226,7 @@ pub struct ArtifactAskOutcome {
     pub refused: Vec<UnitRefusal>,
 }
 
-/// `oneiron::task_verb::sdk_act_answer::ActAnswer` with `T` = `ArtifactAskOutcome`.
+/// `oneiron::verbs::act_answer::ActAnswer` with `T` = `ArtifactAskOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ActAnswerArtifactAskOutcome {
@@ -41145,7 +41145,7 @@ pub struct UndoneKeep {
     pub reattached: u64,
 }
 
-/// `oneiron::task_verb::sdk::TaskCanAskRequest`.
+/// `oneiron::verbs::TaskCanAskRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCanAskRequest {
@@ -41257,7 +41257,7 @@ pub struct TaskAskPersonEvidence {
     pub source: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk::TaskAskShort`.
+/// `oneiron::verbs::TaskAskShort`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskShort {
@@ -41271,7 +41271,7 @@ pub struct TaskAskShort {
     pub default: Option<TaskAskDefault>,
 }
 
-/// `oneiron::task_verb::sdk::TaskAskRequest`.
+/// `oneiron::verbs::TaskAskRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum TaskAskRequest {
@@ -41320,7 +41320,7 @@ pub struct TaskAskReceipt {
     pub launch: Option<TaskAskLaunchHold>,
 }
 
-/// `oneiron::task_verb::sdk::TaskWaitRequest`.
+/// `oneiron::verbs::TaskWaitRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWaitRequest {
@@ -41734,7 +41734,7 @@ pub enum TaskAskWait {
     WorldPrivacyReady(WorldPrivacyWaitResult),
 }
 
-/// `oneiron::task_verb::sdk::TaskAnswerRequest`.
+/// `oneiron::verbs::TaskAnswerRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAnswerRequest {
@@ -41806,7 +41806,7 @@ pub struct ProjectRoom {
     pub origin: Option<RoomOriginCard>,
 }
 
-/// `oneiron::task_verb::sdk::RoomEntry`.
+/// `oneiron::verbs::RoomEntry`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RoomEntry {
     #[serde(rename = "id")]
@@ -42000,7 +42000,7 @@ pub struct ParticipantsPage {
     pub next_after: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk::RoomRefRequest`.
+/// `oneiron::verbs::RoomRefRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RoomRefRequest {
@@ -42008,7 +42008,7 @@ pub struct RoomRefRequest {
     pub room_ref: String,
 }
 
-/// `oneiron::task_verb::sdk::RoomRequest`.
+/// `oneiron::verbs::RoomRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RoomRequest {
@@ -42033,7 +42033,7 @@ pub struct RoomThreadPage {
     pub next_after: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk::RoomTurnRequest`.
+/// `oneiron::verbs::RoomTurnRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RoomTurnRequest {
@@ -42224,7 +42224,7 @@ pub struct ReplyStripsPage {
     pub next_after: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk::RoomClaimRequest`.
+/// `oneiron::verbs::RoomClaimRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RoomClaimRequest {
@@ -42493,7 +42493,7 @@ pub struct ProjectProposalCard {
     pub starting_skill_refs: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk::ProjectConversationRequest`.
+/// `oneiron::verbs::ProjectConversationRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConversationRequest {
@@ -42535,7 +42535,7 @@ pub struct ProjectCardRecord {
     pub history: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk::ProjectCardRequest`.
+/// `oneiron::verbs::ProjectCardRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectCardRequest {
@@ -42543,7 +42543,7 @@ pub struct ProjectCardRequest {
     pub card_id: String,
 }
 
-/// `oneiron::task_verb::sdk::ProjectCardDismissal`.
+/// `oneiron::verbs::ProjectCardDismissal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectCardDismissal {
@@ -43182,7 +43182,7 @@ pub struct OffersPage {
     pub next_after: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk::ProjectGoalDismissRequest`.
+/// `oneiron::verbs::ProjectGoalDismissRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGoalDismissRequest {
@@ -43194,14 +43194,14 @@ pub struct ProjectGoalDismissRequest {
     pub question_digest: String,
 }
 
-/// `oneiron::task_verb::sdk::ProjectGoalDismissReceipt`.
+/// `oneiron::verbs::ProjectGoalDismissReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProjectGoalDismissReceipt {
     #[serde(rename = "dismissed")]
     pub dismissed: bool,
 }
 
-/// `oneiron::task_verb::sdk::ProjectTradeoffRouteRequest`.
+/// `oneiron::verbs::ProjectTradeoffRouteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectTradeoffRouteRequest {
@@ -43284,7 +43284,7 @@ pub struct MessageReactionReceipt {
     pub event: String,
 }
 
-/// `oneiron::task_verb::sdk::RoomHostRequest`.
+/// `oneiron::verbs::RoomHostRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RoomHostRequest {
@@ -43455,7 +43455,7 @@ pub struct RoomSharingView {
     pub clamps: Vec<RoomSharingClamp>,
 }
 
-/// `oneiron::task_verb::sdk::CompanionSharingRequest`.
+/// `oneiron::verbs::CompanionSharingRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CompanionSharingRequest {
@@ -43498,7 +43498,7 @@ pub struct CompanionSharingView {
     pub effective: Scope,
 }
 
-/// `oneiron::task_verb::sdk::CompanionSharingSetRequest`.
+/// `oneiron::verbs::CompanionSharingSetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CompanionSharingSetRequest {
@@ -43512,7 +43512,7 @@ pub struct CompanionSharingSetRequest {
     pub expected_delta: String,
 }
 
-/// `oneiron::task_verb::sdk::WorkspaceRefRequest`.
+/// `oneiron::verbs::WorkspaceRefRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRefRequest {
@@ -43520,7 +43520,7 @@ pub struct WorkspaceRefRequest {
     pub workspace_ref: String,
 }
 
-/// `oneiron::task_verb::sdk::WorkCompanionSetRequest`.
+/// `oneiron::verbs::WorkCompanionSetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WorkCompanionSetRequest {
@@ -43600,7 +43600,7 @@ pub struct CallableCardView {
     pub returns: crate::WireJson,
 }
 
-/// `oneiron::task_verb::sdk_skill_execution::SkillPackReceiptRequest`.
+/// `oneiron::verbs::skill_execution::SkillPackReceiptRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillPackReceiptRequest {
@@ -43608,7 +43608,7 @@ pub struct SkillPackReceiptRequest {
     pub attempt_receipt: String,
 }
 
-/// `oneiron::task_verb::sdk_skill_execution::SkillPackReceipt`.
+/// `oneiron::verbs::skill_execution::SkillPackReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillPackReceipt {
     #[serde(rename = "receipt")]
@@ -43619,7 +43619,7 @@ pub struct SkillPackReceipt {
     pub attribution: PackAttributionFields,
 }
 
-/// `oneiron::task_verb::sdk_skill_execution::SkillPackOutcomeRequest`.
+/// `oneiron::verbs::skill_execution::SkillPackOutcomeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillPackOutcomeRequest {
@@ -43641,7 +43641,7 @@ pub struct SkillPackOutcomeRequest {
     pub goal_revision: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skill_execution::SkillPackOutcomeProjection`.
+/// `oneiron::verbs::skill_execution::SkillPackOutcomeProjection`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillPackOutcomeProjection {
     #[serde(rename = "receipt")]
@@ -43650,7 +43650,7 @@ pub struct SkillPackOutcomeProjection {
     pub persisted: bool,
 }
 
-/// `oneiron::task_verb::sdk_skill_execution::SkillPackCreditRequest`.
+/// `oneiron::verbs::skill_execution::SkillPackCreditRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SkillPackCreditRequest {
@@ -44358,7 +44358,7 @@ pub struct ModelRoleInvocation {
     pub output: ModelRoleOutput,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalReplacement`.
+/// `oneiron::verbs::skill_attribution::ProposalReplacement`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReplacement {
@@ -44368,7 +44368,7 @@ pub struct ProposalReplacement {
     pub after: String,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalAmendmentCause`.
+/// `oneiron::verbs::skill_attribution::ProposalAmendmentCause`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ProposalAmendmentCause {
     #[serde(rename = "proposal_wrong")]
@@ -44379,7 +44379,7 @@ pub enum ProposalAmendmentCause {
     DeciderPreference,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AttributionLabel`.
+/// `oneiron::verbs::skill_attribution::AttributionLabel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AttributionLabel {
     #[serde(rename = "skill_defect")]
@@ -44396,7 +44396,7 @@ pub enum AttributionLabel {
     Unclear,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalHunkVerdict`.
+/// `oneiron::verbs::skill_attribution::ProposalHunkVerdict`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalHunkVerdict {
@@ -44412,7 +44412,7 @@ pub struct ProposalHunkVerdict {
     pub note: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalShareClaim`.
+/// `oneiron::verbs::skill_attribution::ProposalShareClaim`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalShareClaim {
@@ -44422,7 +44422,7 @@ pub struct ProposalShareClaim {
     pub share: f64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalDeltaSettleRequest`.
+/// `oneiron::verbs::skill_attribution::ProposalDeltaSettleRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalDeltaSettleRequest {
@@ -44474,7 +44474,7 @@ pub struct ProposalDeltaSettleRequest {
     pub shares: Option<Vec<ProposalShareClaim>>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::OpsSummaryView`.
+/// `oneiron::verbs::skill_attribution::OpsSummaryView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OpsSummaryView {
     #[serde(rename = "ins")]
@@ -44489,7 +44489,7 @@ pub struct OpsSummaryView {
     pub approx: bool,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AmendmentDeltaView`.
+/// `oneiron::verbs::skill_attribution::AmendmentDeltaView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AmendmentDeltaView {
     #[serde(rename = "proposed_ref")]
@@ -44506,7 +44506,7 @@ pub struct AmendmentDeltaView {
     pub engine_ver: String,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::SettledHunkView`.
+/// `oneiron::verbs::skill_attribution::SettledHunkView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SettledHunkView {
     #[serde(rename = "before")]
@@ -44521,7 +44521,7 @@ pub struct SettledHunkView {
     pub trust: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AmendmentShareView`.
+/// `oneiron::verbs::skill_attribution::AmendmentShareView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AmendmentShareView {
     #[serde(rename = "class")]
@@ -44532,7 +44532,7 @@ pub struct AmendmentShareView {
     pub subject: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AmendmentJudgmentView`.
+/// `oneiron::verbs::skill_attribution::AmendmentJudgmentView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AmendmentJudgmentView {
     #[serde(rename = "receipt_id")]
@@ -44549,7 +44549,7 @@ pub struct AmendmentJudgmentView {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalDeltaSettlement`.
+/// `oneiron::verbs::skill_attribution::ProposalDeltaSettlement`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProposalDeltaSettlement {
     #[serde(rename = "receipt_id")]
@@ -44574,7 +44574,7 @@ pub struct ProposalDeltaSettlement {
     pub lessons: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalDeltaReadRequest`.
+/// `oneiron::verbs::skill_attribution::ProposalDeltaReadRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalDeltaReadRequest {
@@ -44588,7 +44588,7 @@ pub struct ProposalDeltaReadRequest {
     pub artifact_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalOpSpanView`.
+/// `oneiron::verbs::skill_attribution::ProposalOpSpanView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProposalOpSpanView {
     #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
@@ -44605,7 +44605,7 @@ pub struct ProposalOpSpanView {
     pub timestamp: i64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalArtifactView`.
+/// `oneiron::verbs::skill_attribution::ProposalArtifactView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProposalArtifactView {
     #[serde(rename = "artifact_ref")]
@@ -44624,7 +44624,7 @@ pub struct ProposalArtifactView {
     pub spans: Vec<ProposalOpSpanView>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AmendmentEvidenceView`.
+/// `oneiron::verbs::skill_attribution::AmendmentEvidenceView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AmendmentEvidenceView {
     #[serde(rename = "receipt_id")]
@@ -44659,7 +44659,7 @@ pub struct AmendmentEvidenceView {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::PreferenceProposalView`.
+/// `oneiron::verbs::skill_attribution::PreferenceProposalView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PreferenceProposalView {
     #[serde(rename = "receipt_id")]
@@ -44674,7 +44674,7 @@ pub struct PreferenceProposalView {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::UnclearNoteView`.
+/// `oneiron::verbs::skill_attribution::UnclearNoteView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct UnclearNoteView {
     #[serde(rename = "reason")]
@@ -44689,7 +44689,7 @@ pub struct UnclearNoteView {
     pub note: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::UnclearAttributionView`.
+/// `oneiron::verbs::skill_attribution::UnclearAttributionView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct UnclearAttributionView {
     #[serde(rename = "lane")]
@@ -44704,7 +44704,7 @@ pub struct UnclearAttributionView {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::ProposalDeltaRead`.
+/// `oneiron::verbs::skill_attribution::ProposalDeltaRead`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProposalDeltaRead {
     #[serde(rename = "receipt_id")]
@@ -44723,7 +44723,7 @@ pub struct ProposalDeltaRead {
     pub unclear: Vec<UnclearAttributionView>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::FollowedStateInput`.
+/// `oneiron::verbs::skill_attribution::FollowedStateInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -44743,7 +44743,7 @@ pub enum FollowedStateInput {
     },
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AttributionEvidenceRequest`.
+/// `oneiron::verbs::skill_attribution::AttributionEvidenceRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AttributionEvidenceRequest {
@@ -44777,14 +44777,14 @@ pub struct AttributionEvidenceRequest {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AttributionEvidenceReceipt`.
+/// `oneiron::verbs::skill_attribution::AttributionEvidenceReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttributionEvidenceReceipt {
     #[serde(rename = "sequence")]
     pub sequence: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AttributionProjectRequest`.
+/// `oneiron::verbs::skill_attribution::AttributionProjectRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AttributionProjectRequest {
@@ -44796,7 +44796,7 @@ pub struct AttributionProjectRequest {
     pub since_cursor: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AttemptJudgmentView`.
+/// `oneiron::verbs::skill_attribution::AttemptJudgmentView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttemptJudgmentView {
     #[serde(rename = "sequence")]
@@ -44811,7 +44811,7 @@ pub struct AttemptJudgmentView {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::PositiveProposalView`.
+/// `oneiron::verbs::skill_attribution::PositiveProposalView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PositiveProposalView {
     #[serde(rename = "evidence_sequence")]
@@ -44830,7 +44830,7 @@ pub struct PositiveProposalView {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::SkillEditProposalView`.
+/// `oneiron::verbs::skill_attribution::SkillEditProposalView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillEditProposalView {
     #[serde(rename = "judgment_sequence")]
@@ -44843,7 +44843,7 @@ pub struct SkillEditProposalView {
     pub at: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AttributionProjection`.
+/// `oneiron::verbs::skill_attribution::AttributionProjection`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttributionProjection {
     #[serde(rename = "cursor")]
@@ -44856,7 +44856,7 @@ pub struct AttributionProjection {
     pub pending_edit_proposals: Vec<SkillEditProposalView>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AttributionJudgmentsView`.
+/// `oneiron::verbs::skill_attribution::AttributionJudgmentsView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttributionJudgmentsView {
     #[serde(rename = "cursor")]
@@ -44869,7 +44869,7 @@ pub struct AttributionJudgmentsView {
     pub unclear: Vec<UnclearAttributionView>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::AttributionProposalsView`.
+/// `oneiron::verbs::skill_attribution::AttributionProposalsView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AttributionProposalsView {
     #[serde(rename = "edit_proposals")]
@@ -44880,7 +44880,7 @@ pub struct AttributionProposalsView {
     pub positive_proposals: Vec<PositiveProposalView>,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::PositiveRetireRequest`.
+/// `oneiron::verbs::skill_attribution::PositiveRetireRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PositiveRetireRequest {
@@ -44888,7 +44888,7 @@ pub struct PositiveRetireRequest {
     pub evidence_sequence: u64,
 }
 
-/// `oneiron::task_verb::sdk_skill_attribution::PositiveRetireReceipt`.
+/// `oneiron::verbs::skill_attribution::PositiveRetireReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PositiveRetireReceipt {
     #[serde(rename = "retired")]
@@ -45440,7 +45440,7 @@ pub struct ModelStreamTerminalRequest {
     pub stream_key: String,
 }
 
-/// `oneiron::task_verb::sdk_reply::AiReplyReader`.
+/// `oneiron::verbs::reply::AiReplyReader`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiReplyReader {
@@ -45502,7 +45502,7 @@ pub struct ContextPackBudgetControls {
     pub retrieval: Option<ContextPackRetrievalBudgetControls>,
 }
 
-/// `oneiron::task_verb::sdk_reply::AiReplyCompanion`.
+/// `oneiron::verbs::reply::AiReplyCompanion`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiReplyCompanion {
@@ -45526,7 +45526,7 @@ pub struct AiReplyCompanion {
     pub expression: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_reply::AiReplyStanding`.
+/// `oneiron::verbs::reply::AiReplyStanding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiReplyStanding {
@@ -45542,7 +45542,7 @@ pub struct AiReplyStanding {
     pub block_tokens: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_reply::AiReplyRequest`.
+/// `oneiron::verbs::reply::AiReplyRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiReplyRequest {
@@ -45582,7 +45582,7 @@ pub struct AiReplyRequest {
     pub reasoning_effort: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_reply::AiReplyL2Base`.
+/// `oneiron::verbs::reply::AiReplyL2Base`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiReplyL2Base {
@@ -45592,7 +45592,7 @@ pub struct AiReplyL2Base {
     pub body: String,
 }
 
-/// `oneiron::task_verb::sdk_reply::AiReply`.
+/// `oneiron::verbs::reply::AiReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiReply {
@@ -45663,7 +45663,7 @@ pub struct ContextEmitReceipt {
     pub context: ContextReceiptFields,
 }
 
-/// `oneiron::task_verb::sdk_asr::AsrOpenRequest`.
+/// `oneiron::verbs::asr::AsrOpenRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AsrOpenRequest {
@@ -45691,7 +45691,7 @@ pub struct AsrOpenRequest {
     pub deadline_ms: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_asr::AsrSession`.
+/// `oneiron::verbs::asr::AsrSession`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AsrSession {
     #[serde(rename = "handle")]
@@ -45714,7 +45714,7 @@ pub struct AsrSession {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::task_verb::sdk_asr::AsrHypothesisRequest`.
+/// `oneiron::verbs::asr::AsrHypothesisRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AsrHypothesisRequest {
@@ -45736,7 +45736,7 @@ pub struct AsrHypothesisRequest {
     pub query_vector: Option<Vec<f64>>,
 }
 
-/// `oneiron::task_verb::sdk_asr::AsrFireDecision`.
+/// `oneiron::verbs::asr::AsrFireDecision`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AsrFireDecision {
     #[serde(rename = "fired")]
@@ -45751,7 +45751,7 @@ pub enum AsrFireDecision {
     SkippedCapExhausted,
 }
 
-/// `oneiron::task_verb::sdk_asr::AsrHypothesisReceipt`.
+/// `oneiron::verbs::asr::AsrHypothesisReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AsrHypothesisReceipt {
     #[serde(rename = "receipt_ref")]
@@ -45780,7 +45780,7 @@ pub struct AsrHypothesisReceipt {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::task_verb::sdk_asr::AsrFinalDecision`.
+/// `oneiron::verbs::asr::AsrFinalDecision`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AsrFinalDecision {
     #[serde(rename = "promoted")]
@@ -45789,7 +45789,7 @@ pub enum AsrFinalDecision {
     Finalized,
 }
 
-/// `oneiron::task_verb::sdk_asr::AsrFinalReceipt`.
+/// `oneiron::verbs::asr::AsrFinalReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AsrFinalReceipt {
     #[serde(rename = "receipt_ref")]
@@ -45826,7 +45826,7 @@ pub struct AsrFinalReceipt {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::task_verb::sdk_asr::AsrCloseRequest`.
+/// `oneiron::verbs::asr::AsrCloseRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AsrCloseRequest {
@@ -45834,14 +45834,14 @@ pub struct AsrCloseRequest {
     pub handle: String,
 }
 
-/// `oneiron::task_verb::sdk_asr::AsrClosed`.
+/// `oneiron::verbs::asr::AsrClosed`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AsrClosed {
     #[serde(rename = "handle")]
     pub handle: String,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceStartRequest`.
+/// `oneiron::verbs::live_voice::LiveVoiceStartRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveVoiceStartRequest {
@@ -45859,7 +45859,7 @@ pub struct LiveVoiceStartRequest {
     pub roster_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceSession`.
+/// `oneiron::verbs::live_voice::LiveVoiceSession`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LiveVoiceSession {
     #[serde(rename = "session_ref")]
@@ -45870,7 +45870,7 @@ pub struct LiveVoiceSession {
     pub channels: u16,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceAudioRequest`.
+/// `oneiron::verbs::live_voice::LiveVoiceAudioRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveVoiceAudioRequest {
@@ -45890,7 +45890,7 @@ pub struct LiveVoiceAudioRequest {
     pub end_utterance: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceProcessed`.
+/// `oneiron::verbs::live_voice::LiveVoiceProcessed`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LiveVoiceProcessed {
     #[serde(rename = "session_ref")]
@@ -45901,7 +45901,7 @@ pub struct LiveVoiceProcessed {
     pub ended: bool,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceEventsRequest`.
+/// `oneiron::verbs::live_voice::LiveVoiceEventsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveVoiceEventsRequest {
@@ -45913,7 +45913,7 @@ pub struct LiveVoiceEventsRequest {
     pub limit: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceStopReason`.
+/// `oneiron::verbs::live_voice::LiveVoiceStopReason`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum LiveVoiceStopReason {
     #[serde(rename = "user_barge_in")]
@@ -45928,7 +45928,7 @@ pub enum LiveVoiceStopReason {
     SessionEnd,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceEventKind`.
+/// `oneiron::verbs::live_voice::LiveVoiceEventKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 pub enum LiveVoiceEventKind {
@@ -46000,7 +46000,7 @@ pub enum LiveVoiceEventKind {
     SessionEnded,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceEvent`.
+/// `oneiron::verbs::live_voice::LiveVoiceEvent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LiveVoiceEvent {
     #[serde(rename = "sequence")]
@@ -46021,7 +46021,7 @@ pub struct LiveVoiceEvent {
     pub event: LiveVoiceEventKind,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceEvents`.
+/// `oneiron::verbs::live_voice::LiveVoiceEvents`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LiveVoiceEvents {
     #[serde(rename = "session_ref")]
@@ -46034,7 +46034,7 @@ pub struct LiveVoiceEvents {
     pub events: Vec<LiveVoiceEvent>,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceAckKind`.
+/// `oneiron::verbs::live_voice::LiveVoiceAckKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum LiveVoiceAckKind {
     #[serde(rename = "drained")]
@@ -46043,7 +46043,7 @@ pub enum LiveVoiceAckKind {
     Stopped,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceAckRequest`.
+/// `oneiron::verbs::live_voice::LiveVoiceAckRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveVoiceAckRequest {
@@ -46057,7 +46057,7 @@ pub struct LiveVoiceAckRequest {
     pub kind: LiveVoiceAckKind,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceUsageRequest`.
+/// `oneiron::verbs::live_voice::LiveVoiceUsageRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveVoiceUsageRequest {
@@ -46067,7 +46067,7 @@ pub struct LiveVoiceUsageRequest {
     pub generation: u64,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceUsage`.
+/// `oneiron::verbs::live_voice::LiveVoiceUsage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LiveVoiceUsage {
     #[serde(rename = "session_ref")]
@@ -46109,7 +46109,7 @@ pub struct ConnectorCallRequest {
     pub mutation: Option<MutationIntent>,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceToolRequest`.
+/// `oneiron::verbs::live_voice::LiveVoiceToolRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveVoiceToolRequest {
@@ -46119,7 +46119,7 @@ pub struct LiveVoiceToolRequest {
     pub call: ConnectorCallRequest,
 }
 
-/// `oneiron::task_verb::sdk_connector_call::ConnectorToolResult`.
+/// `oneiron::verbs::connector_call::ConnectorToolResult`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorToolResult {
     #[serde(rename = "source")]
@@ -46151,7 +46151,7 @@ pub struct ConnectorQuestion {
     pub requested_schema: crate::WireJson,
 }
 
-/// `oneiron::task_verb::sdk_connector_call::ConnectorCallReply`.
+/// `oneiron::verbs::connector_call::ConnectorCallReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "outcome")]
 pub enum ConnectorCallReply {
@@ -46216,7 +46216,7 @@ pub enum ConnectorCallReply {
     },
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceToolReply`.
+/// `oneiron::verbs::live_voice::LiveVoiceToolReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LiveVoiceToolReply {
     #[serde(rename = "processed")]
@@ -46225,7 +46225,7 @@ pub struct LiveVoiceToolReply {
     pub reply: ConnectorCallReply,
 }
 
-/// `oneiron::task_verb::sdk_live_voice::LiveVoiceSessionRequest`.
+/// `oneiron::verbs::live_voice::LiveVoiceSessionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveVoiceSessionRequest {
@@ -46233,7 +46233,7 @@ pub struct LiveVoiceSessionRequest {
     pub session_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatRequestTarget`.
+/// `oneiron::verbs::anonymous_chat::AnonymousChatRequestTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AnonymousChatRequestTarget {
     #[serde(rename = "house_mind")]
@@ -46242,7 +46242,7 @@ pub enum AnonymousChatRequestTarget {
     PlainModel,
 }
 
-/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatRequest`.
+/// `oneiron::verbs::anonymous_chat::AnonymousChatRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AnonymousChatRequest {
@@ -46254,7 +46254,7 @@ pub struct AnonymousChatRequest {
     pub model: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatSkippedCheckView`.
+/// `oneiron::verbs::anonymous_chat::AnonymousChatSkippedCheckView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AnonymousChatSkippedCheckView {
     #[serde(rename = "input")]
@@ -46263,7 +46263,7 @@ pub struct AnonymousChatSkippedCheckView {
     pub reason: PolicySkipReason,
 }
 
-/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatBlockReasonView`.
+/// `oneiron::verbs::anonymous_chat::AnonymousChatBlockReasonView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AnonymousChatBlockReasonView {
     #[serde(rename = "policy")]
@@ -46272,7 +46272,7 @@ pub enum AnonymousChatBlockReasonView {
     HumanReviewUnavailable,
 }
 
-/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatResponse`.
+/// `oneiron::verbs::anonymous_chat::AnonymousChatResponse`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "type")]
 pub enum AnonymousChatResponse {
@@ -46954,7 +46954,7 @@ pub struct ModelBindingAccept {
     pub teacher_approval: Option<TeacherProbeApproval>,
 }
 
-/// `oneiron::task_verb::sdk_host::AiOptionsRequest`.
+/// `oneiron::verbs::host::AiOptionsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiOptionsRequest {
@@ -46964,7 +46964,7 @@ pub struct AiOptionsRequest {
     pub inputs: Option<Vec<String>>,
 }
 
-/// `oneiron::task_verb::sdk_host::AiOptions`.
+/// `oneiron::verbs::host::AiOptions`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AiOptions {
     #[serde(rename = "options")]
@@ -46977,7 +46977,7 @@ pub struct AiOptions {
     pub media_units_left: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_host::AiPart`.
+/// `oneiron::verbs::host::AiPart`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -47017,7 +47017,7 @@ pub enum AiPart {
     },
 }
 
-/// `oneiron::task_verb::sdk_host::AiVoice`.
+/// `oneiron::verbs::host::AiVoice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -47040,7 +47040,7 @@ pub enum AiVoice {
     },
 }
 
-/// `oneiron::task_verb::sdk_host::AiCallRequest`.
+/// `oneiron::verbs::host::AiCallRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiCallRequest {
@@ -47097,7 +47097,7 @@ pub struct MediaUsage {
     pub raw_provider: Option<crate::WireJson>,
 }
 
-/// `oneiron::task_verb::sdk_host::AiAnswer`.
+/// `oneiron::verbs::host::AiAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AiAnswer {
     #[serde(rename = "model")]
@@ -47126,7 +47126,7 @@ pub enum VoiceRefOrigin {
     Generated,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceBankClipInput`.
+/// `oneiron::verbs::voice_bank::VoiceBankClipInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceBankClipInput {
@@ -47140,7 +47140,7 @@ pub struct VoiceBankClipInput {
     pub transcript: String,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceBankPackPutRequest`.
+/// `oneiron::verbs::voice_bank::VoiceBankPackPutRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceBankPackPutRequest {
@@ -47154,7 +47154,7 @@ pub struct VoiceBankPackPutRequest {
     pub clips: Vec<VoiceBankClipInput>,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceBankPackReceipt`.
+/// `oneiron::verbs::voice_bank::VoiceBankPackReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceBankPackReceipt {
@@ -47208,7 +47208,7 @@ pub enum VoiceConsentState {
     Withdrawn,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceRenderConsentRequest`.
+/// `oneiron::verbs::voice_bank::VoiceRenderConsentRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceRenderConsentRequest {
@@ -47232,7 +47232,7 @@ pub struct VoiceRenderConsentRequest {
     pub state: VoiceConsentState,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceVendorDeleteStatus`.
+/// `oneiron::verbs::voice_bank::VoiceVendorDeleteStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum VoiceVendorDeleteStatus {
     #[serde(rename = "deleted")]
@@ -47245,7 +47245,7 @@ pub enum VoiceVendorDeleteStatus {
     Absent,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceVendorEviction`.
+/// `oneiron::verbs::voice_bank::VoiceVendorEviction`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceVendorEviction {
@@ -47257,7 +47257,7 @@ pub struct VoiceVendorEviction {
     pub vendor: VoiceVendorDeleteStatus,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceRenderConsentReceipt`.
+/// `oneiron::verbs::voice_bank::VoiceRenderConsentReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceRenderConsentReceipt {
@@ -47279,7 +47279,7 @@ pub struct VoiceRenderConsentReceipt {
     pub evicted: Vec<VoiceVendorEviction>,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceTargetProvisionRequest`.
+/// `oneiron::verbs::voice_bank::VoiceTargetProvisionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceTargetProvisionRequest {
@@ -47297,7 +47297,7 @@ pub struct VoiceTargetProvisionRequest {
     pub language: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceTargetReceipt`.
+/// `oneiron::verbs::voice_bank::VoiceTargetReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceTargetReceipt {
@@ -47313,7 +47313,7 @@ pub struct VoiceTargetReceipt {
     pub revision: String,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceTargetEvictRequest`.
+/// `oneiron::verbs::voice_bank::VoiceTargetEvictRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceTargetEvictRequest {
@@ -47323,7 +47323,7 @@ pub struct VoiceTargetEvictRequest {
     pub target: String,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceTargetEvictReceipt`.
+/// `oneiron::verbs::voice_bank::VoiceTargetEvictReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceTargetEvictReceipt {
@@ -47337,7 +47337,7 @@ pub struct VoiceTargetEvictReceipt {
     pub vendor: VoiceVendorDeleteStatus,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceBankInspectRequest`.
+/// `oneiron::verbs::voice_bank::VoiceBankInspectRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceBankInspectRequest {
@@ -47471,7 +47471,7 @@ pub struct VoiceBankInspection {
     pub target: VoiceTargetInspection,
 }
 
-/// `oneiron::task_verb::sdk_voice_bank::VoiceRenderLineageRequest`.
+/// `oneiron::verbs::voice_bank::VoiceRenderLineageRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceRenderLineageRequest {
@@ -47518,7 +47518,7 @@ pub enum AiOperation {
     Embed,
 }
 
-/// `oneiron::task_verb::sdk_host::AiVideoTicket`.
+/// `oneiron::verbs::host::AiVideoTicket`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AiVideoTicket {
     #[serde(rename = "job")]
@@ -47529,7 +47529,7 @@ pub struct AiVideoTicket {
     pub operation: AiOperation,
 }
 
-/// `oneiron::task_verb::sdk_host::AiVideoJobRequest`.
+/// `oneiron::verbs::host::AiVideoJobRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiVideoJobRequest {
@@ -47537,7 +47537,7 @@ pub struct AiVideoJobRequest {
     pub job: String,
 }
 
-/// `oneiron::task_verb::sdk_host::AiVideoJob`.
+/// `oneiron::verbs::host::AiVideoJob`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum AiVideoJob {
@@ -47560,14 +47560,14 @@ pub enum AiVideoJob {
     },
 }
 
-/// `oneiron::task_verb::sdk_host::AiVideoCancelled`.
+/// `oneiron::verbs::host::AiVideoCancelled`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AiVideoCancelled {
     #[serde(rename = "job")]
     pub job: String,
 }
 
-/// `oneiron::task_verb::sdk_host::AiVerdictReversibility`.
+/// `oneiron::verbs::host::AiVerdictReversibility`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AiVerdictReversibility {
     #[serde(rename = "reversible_read")]
@@ -47576,7 +47576,7 @@ pub enum AiVerdictReversibility {
     OutboundEffect,
 }
 
-/// `oneiron::task_verb::sdk_host::AiVerdictRequest`.
+/// `oneiron::verbs::host::AiVerdictRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AiVerdictRequest {
@@ -47642,7 +47642,7 @@ pub enum RoutineOutcome {
     },
 }
 
-/// `oneiron::task_verb::sdk_host::AiVerdict`.
+/// `oneiron::verbs::host::AiVerdict`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AiVerdict {
     #[serde(rename = "answer")]
@@ -48448,7 +48448,7 @@ pub struct DecisionAskClimbRequest {
     pub seq: u64,
 }
 
-/// `oneiron::task_verb::sdk_connector::ConnectorListRequest`.
+/// `oneiron::verbs::connector::ConnectorListRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorListRequest {
@@ -48456,7 +48456,7 @@ pub struct ConnectorListRequest {
     pub query: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_connector::ConnectorEntry`.
+/// `oneiron::verbs::connector::ConnectorEntry`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorEntry {
     #[serde(rename = "name")]
@@ -48473,7 +48473,7 @@ pub struct ConnectorEntry {
     pub registered_at: u64,
 }
 
-/// `oneiron::task_verb::sdk_connector::ConnectorNameRequest`.
+/// `oneiron::verbs::connector::ConnectorNameRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorNameRequest {
@@ -48481,7 +48481,7 @@ pub struct ConnectorNameRequest {
     pub name: String,
 }
 
-/// `oneiron::task_verb::sdk_connector::ConnectorView`.
+/// `oneiron::verbs::connector::ConnectorView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorView {
     #[serde(rename = "key_ref")]
@@ -48510,7 +48510,7 @@ pub struct ConnectorView {
     pub budgeted_as_sends: bool,
 }
 
-/// `oneiron::task_verb::sdk_act_answer::ActAnswer` with `T` = `ConnectorCallReply`.
+/// `oneiron::verbs::act_answer::ActAnswer` with `T` = `ConnectorCallReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ActAnswerConnectorCallReply {
@@ -48518,7 +48518,7 @@ pub enum ActAnswerConnectorCallReply {
     Done(ConnectorCallReply),
 }
 
-/// `oneiron::task_verb::sdk_connector_call::ConnectorSchemaRequest`.
+/// `oneiron::verbs::connector_call::ConnectorSchemaRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorSchemaRequest {
@@ -48528,7 +48528,7 @@ pub struct ConnectorSchemaRequest {
     pub tool: String,
 }
 
-/// `oneiron::task_verb::sdk_connector_call::ConnectorSchemaReply`.
+/// `oneiron::verbs::connector_call::ConnectorSchemaReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorSchemaReply {
     #[serde(rename = "source")]
@@ -48551,7 +48551,7 @@ pub struct ConnectorSchemaReply {
     pub reasons: Option<Vec<String>>,
 }
 
-/// `oneiron::task_verb::sdk_connector_call::ConnectorCallStatusRequest`.
+/// `oneiron::verbs::connector_call::ConnectorCallStatusRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorCallStatusRequest {
@@ -48559,7 +48559,7 @@ pub struct ConnectorCallStatusRequest {
     pub call_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_connector_call::ConnectorCallStatus`.
+/// `oneiron::verbs::connector_call::ConnectorCallStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum ConnectorCallStatus {
@@ -48769,7 +48769,7 @@ pub struct BookingAvailabilityInput {
     pub session_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingAvailabilityRequest`.
+/// `oneiron::verbs::calendar::BookingAvailabilityRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "op")]
 #[serde(deny_unknown_fields)]
@@ -48920,7 +48920,7 @@ pub enum BookingBookInput {
     Confirm(BookingConfirmInput),
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingBookRequest`.
+/// `oneiron::verbs::calendar::BookingBookRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "op")]
 #[serde(deny_unknown_fields)]
@@ -48948,7 +48948,7 @@ pub struct BookingRescheduleInput {
     pub idempotency_key: String,
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingRescheduleRequest`.
+/// `oneiron::verbs::calendar::BookingRescheduleRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "op")]
 #[serde(deny_unknown_fields)]
@@ -48972,7 +48972,7 @@ pub struct BookingCancelInput {
     pub idempotency_key: String,
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingCancelRequest`.
+/// `oneiron::verbs::calendar::BookingCancelRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "op")]
 #[serde(deny_unknown_fields)]
@@ -48986,7 +48986,7 @@ pub enum BookingCancelRequest {
     },
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingConstraintTurnWindow`.
+/// `oneiron::verbs::calendar::BookingConstraintTurnWindow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BookingConstraintTurnWindow {
@@ -48996,7 +48996,7 @@ pub struct BookingConstraintTurnWindow {
     pub end: u64,
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingConstraintTurnInput`.
+/// `oneiron::verbs::calendar::BookingConstraintTurnInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BookingConstraintTurnInput {
@@ -49012,7 +49012,7 @@ pub struct BookingConstraintTurnInput {
     pub session_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingConstraintTurnRequest`.
+/// `oneiron::verbs::calendar::BookingConstraintTurnRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BookingConstraintTurnRequest {
@@ -49039,7 +49039,7 @@ pub struct GeneratedUiCard {
     pub state: std::collections::HashMap<String, SelfUiStateValue>,
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingConstraintHoldContext`.
+/// `oneiron::verbs::calendar::BookingConstraintHoldContext`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct BookingConstraintHoldContext {
     #[serde(rename = "event_type")]
@@ -49065,7 +49065,7 @@ pub struct ConstraintContinuation {
     pub session_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingConstraintTurnResponse`.
+/// `oneiron::verbs::calendar::BookingConstraintTurnResponse`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "outcome")]
 pub enum BookingConstraintTurnResponse {
@@ -49090,7 +49090,7 @@ pub enum BookingConstraintTurnResponse {
     },
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingPageTokenRequest`.
+/// `oneiron::verbs::calendar::BookingPageTokenRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BookingPageTokenRequest {
@@ -49098,7 +49098,7 @@ pub struct BookingPageTokenRequest {
     pub page_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_calendar::BookingPageTokenResponse`.
+/// `oneiron::verbs::calendar::BookingPageTokenResponse`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct BookingPageTokenResponse {
     #[serde(rename = "page_token")]
@@ -49688,7 +49688,7 @@ pub struct ScopedReadResultCalendarEventViewList {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::task_verb::sdk_calendar::CalendarFreebusyRequest`.
+/// `oneiron::verbs::calendar::CalendarFreebusyRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarFreebusyRequest {
@@ -58441,7 +58441,7 @@ pub struct AuthorBriefRequest {
     pub citations: Vec<BriefClaimCitation>,
 }
 
-/// `oneiron::task_verb::sdk_share::BriefCitationFollowRequest`.
+/// `oneiron::verbs::share::BriefCitationFollowRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BriefCitationFollowRequest {
@@ -58462,7 +58462,7 @@ pub struct ScopedReadResultOptionalSharedBriefCitation {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::task_verb::sdk_memory::AuthorTakeTarget`.
+/// `oneiron::verbs::memory::AuthorTakeTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AuthorTakeTarget {
     #[serde(rename = "subject")]
@@ -58471,7 +58471,7 @@ pub enum AuthorTakeTarget {
     Claim(String),
 }
 
-/// `oneiron::task_verb::sdk_memory::AuthorTakeRequest`.
+/// `oneiron::verbs::memory::AuthorTakeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorTakeRequest {
@@ -58481,7 +58481,7 @@ pub struct AuthorTakeRequest {
     pub markdown: String,
 }
 
-/// `oneiron::task_verb::sdk_memory::CreateNoteFromEntityRequest`.
+/// `oneiron::verbs::memory::CreateNoteFromEntityRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CreateNoteFromEntityRequest {
@@ -58776,7 +58776,7 @@ pub struct ScopedReadResultOptionalNoteVersionTree {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeRequest`.
+/// `oneiron::verbs::note_history::NoteHistoryPurgeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct NoteHistoryPurgeRequest {
@@ -58784,7 +58784,7 @@ pub struct NoteHistoryPurgeRequest {
     pub note_ref: String,
 }
 
-/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeReceipt`.
+/// `oneiron::verbs::note_history::NoteHistoryPurgeReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct NoteHistoryPurgeReceipt {
@@ -58806,7 +58806,7 @@ pub struct NoteHistoryPurgeReceipt {
     pub live_text_hash: Vec<u8>,
 }
 
-/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeOutcome`.
+/// `oneiron::verbs::note_history::NoteHistoryPurgeOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
 pub enum NoteHistoryPurgeOutcome {
@@ -58824,7 +58824,7 @@ pub enum NoteHistoryPurgeOutcome {
     },
 }
 
-/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeExecuteRequest`.
+/// `oneiron::verbs::note_history::NoteHistoryPurgeExecuteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct NoteHistoryPurgeExecuteRequest {
@@ -58865,7 +58865,7 @@ pub struct NoteEditorClosed {
     pub closed: bool,
 }
 
-/// `oneiron::task_verb::sdk_memory::EditNoteRequest`.
+/// `oneiron::verbs::memory::EditNoteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EditNoteRequest {
@@ -59734,7 +59734,7 @@ pub struct RevertRunOutcome {
     pub not_undone: Vec<RunNotUndone>,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityEvidence`.
+/// `oneiron::verbs::identity_topology::IdentityEvidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityEvidence {
@@ -59744,14 +59744,14 @@ pub struct IdentityEvidence {
     pub rationale: String,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentitySurvivorshipPlan`.
+/// `oneiron::verbs::identity_topology::IdentitySurvivorshipPlan`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum IdentitySurvivorshipPlan {
     #[serde(rename = "read_through")]
     ReadThrough,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityMergeRequest`.
+/// `oneiron::verbs::identity_topology::IdentityMergeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityMergeRequest {
@@ -59765,7 +59765,7 @@ pub struct IdentityMergeRequest {
     pub survivorship_plan: IdentitySurvivorshipPlan,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityReassignmentItem`.
+/// `oneiron::verbs::identity_topology::IdentityReassignmentItem`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -59786,7 +59786,7 @@ pub enum IdentityReassignmentItem {
     },
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityReassignmentTarget`.
+/// `oneiron::verbs::identity_topology::IdentityReassignmentTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -59805,7 +59805,7 @@ pub enum IdentityReassignmentTarget {
     Residue,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityReassignment`.
+/// `oneiron::verbs::identity_topology::IdentityReassignment`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityReassignment {
@@ -59815,7 +59815,7 @@ pub struct IdentityReassignment {
     pub target: IdentityReassignmentTarget,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityProposalOutcome`.
+/// `oneiron::verbs::identity_topology::IdentityProposalOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum IdentityProposalOutcome {
     #[serde(rename = "approved_untouched")]
@@ -59826,7 +59826,7 @@ pub enum IdentityProposalOutcome {
     Rejected,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityAmendment`.
+/// `oneiron::verbs::identity_topology::IdentityAmendment`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "op")]
 #[serde(deny_unknown_fields)]
@@ -59851,7 +59851,7 @@ pub enum IdentityAmendment {
     },
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityEventAction`.
+/// `oneiron::verbs::identity_topology::IdentityEventAction`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "op")]
 pub enum IdentityEventAction {
@@ -59928,7 +59928,7 @@ pub enum IdentityEventAction {
     },
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityTopologyReceipt`.
+/// `oneiron::verbs::identity_topology::IdentityTopologyReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct IdentityTopologyReceipt {
     #[serde(rename = "event")]
@@ -59953,7 +59953,7 @@ pub struct IdentityTopologyReceipt {
     pub seen: String,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityLifecycle`.
+/// `oneiron::verbs::identity_topology::IdentityLifecycle`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum IdentityLifecycle {
     #[serde(rename = "active")]
@@ -59964,7 +59964,7 @@ pub enum IdentityLifecycle {
     Split,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityTransition`.
+/// `oneiron::verbs::identity_topology::IdentityTransition`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct IdentityTransition {
     #[serde(rename = "entity")]
@@ -59973,7 +59973,7 @@ pub struct IdentityTransition {
     pub state: IdentityLifecycle,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityTopologyResult`.
+/// `oneiron::verbs::identity_topology::IdentityTopologyResult`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "outcome")]
 pub enum IdentityTopologyResult {
@@ -59993,7 +59993,7 @@ pub enum IdentityTopologyResult {
     Noop,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentitySplitRequest`.
+/// `oneiron::verbs::identity_topology::IdentitySplitRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentitySplitRequest {
@@ -60007,7 +60007,7 @@ pub struct IdentitySplitRequest {
     pub evidence: IdentityEvidence,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityFacetSpec`.
+/// `oneiron::verbs::identity_topology::IdentityFacetSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityFacetSpec {
@@ -60015,7 +60015,7 @@ pub struct IdentityFacetSpec {
     pub label: String,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityFacetRequest`.
+/// `oneiron::verbs::identity_topology::IdentityFacetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityFacetRequest {
@@ -60029,7 +60029,7 @@ pub struct IdentityFacetRequest {
     pub evidence: IdentityEvidence,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityAssertDistinctRequest`.
+/// `oneiron::verbs::identity_topology::IdentityAssertDistinctRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityAssertDistinctRequest {
@@ -60041,7 +60041,7 @@ pub struct IdentityAssertDistinctRequest {
     pub reason: String,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityProposedOp`.
+/// `oneiron::verbs::identity_topology::IdentityProposedOp`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "op", content = "spec")]
 #[serde(deny_unknown_fields)]
@@ -60052,7 +60052,7 @@ pub enum IdentityProposedOp {
     Split(IdentitySplitRequest),
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityProposeRequest`.
+/// `oneiron::verbs::identity_topology::IdentityProposeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityProposeRequest {
@@ -60060,7 +60060,7 @@ pub struct IdentityProposeRequest {
     pub operation: IdentityProposedOp,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityUndoRequest`.
+/// `oneiron::verbs::identity_topology::IdentityUndoRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityUndoRequest {
@@ -60070,7 +60070,7 @@ pub struct IdentityUndoRequest {
     pub seen: String,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityEntityRequest`.
+/// `oneiron::verbs::identity_topology::IdentityEntityRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityEntityRequest {
@@ -60078,7 +60078,7 @@ pub struct IdentityEntityRequest {
     pub entity: String,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityResolution`.
+/// `oneiron::verbs::identity_topology::IdentityResolution`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct IdentityResolution {
     #[serde(rename = "entity")]
@@ -60101,7 +60101,7 @@ pub struct IdentityResolution {
     pub remaining_claims: Vec<String>,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityEventRequest`.
+/// `oneiron::verbs::identity_topology::IdentityEventRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityEventRequest {
@@ -60109,7 +60109,7 @@ pub struct IdentityEventRequest {
     pub event: String,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityProposalRuling`.
+/// `oneiron::verbs::identity_topology::IdentityProposalRuling`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "ruling")]
 #[serde(deny_unknown_fields)]
@@ -60125,7 +60125,7 @@ pub enum IdentityProposalRuling {
     Reject,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityProposalResolveRequest`.
+/// `oneiron::verbs::identity_topology::IdentityProposalResolveRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityProposalResolveRequest {
@@ -60137,7 +60137,7 @@ pub struct IdentityProposalResolveRequest {
     pub decision: IdentityProposalRuling,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityProposalResolutionResult`.
+/// `oneiron::verbs::identity_topology::IdentityProposalResolutionResult`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct IdentityProposalResolutionResult {
     #[serde(rename = "receipt")]
@@ -60146,7 +60146,7 @@ pub struct IdentityProposalResolutionResult {
     pub applied: Option<IdentityTopologyReceipt>,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityPairRequest`.
+/// `oneiron::verbs::identity_topology::IdentityPairRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityPairRequest {
@@ -60156,7 +60156,7 @@ pub struct IdentityPairRequest {
     pub b: String,
 }
 
-/// `oneiron::task_verb::sdk_identity_topology::IdentityPairProposals`.
+/// `oneiron::verbs::identity_topology::IdentityPairProposals`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct IdentityPairProposals {
     #[serde(rename = "a")]
@@ -60177,7 +60177,7 @@ pub struct OpenInput {
     pub url: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `OpenInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `OpenInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestOpenInput {
@@ -60889,7 +60889,7 @@ pub struct ObserveInput {
     pub cursor: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ObserveInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `ObserveInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestObserveInput {
@@ -60911,7 +60911,7 @@ pub struct FindInput {
     pub cursor: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `FindInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `FindInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestFindInput {
@@ -60957,7 +60957,7 @@ pub struct ClickInput {
     pub base: Option<ObservationBase>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ClickInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `ClickInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestClickInput {
@@ -60981,7 +60981,7 @@ pub struct PointInput {
     pub base: Option<ObservationBase>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `PointInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `PointInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestPointInput {
@@ -61007,7 +61007,7 @@ pub struct TypeInput {
     pub base: Option<ObservationBase>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `TypeInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `TypeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestTypeInput {
@@ -61029,7 +61029,7 @@ pub struct SelectInput {
     pub base: Option<ObservationBase>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SelectInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `SelectInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestSelectInput {
@@ -61059,7 +61059,7 @@ pub struct WaitForInput {
     pub cursor: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `WaitForInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `WaitForInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestWaitForInput {
@@ -61105,7 +61105,7 @@ pub struct BrowserAnswerWaitForOutput {
     pub flattened: WaitForOutput,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ExpectInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `ExpectInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestExpectInput {
@@ -61174,7 +61174,7 @@ pub struct ScreenshotInput {
     pub since_capture: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ScreenshotInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `ScreenshotInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestScreenshotInput {
@@ -61234,7 +61234,7 @@ pub struct ViewInput {
     pub image: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ViewInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `ViewInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestViewInput {
@@ -61290,7 +61290,7 @@ pub struct CropInput {
     pub height: u32,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `CropInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `CropInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestCropInput {
@@ -61318,7 +61318,7 @@ pub struct ZoomInput {
     pub scale: Option<f64>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ZoomInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `ZoomInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestZoomInput {
@@ -61522,7 +61522,7 @@ pub struct BatchInput {
     pub no_model: Option<bool>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `BatchInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `BatchInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestBatchInput {
@@ -61656,7 +61656,7 @@ pub struct LibraryFindInput {
     pub type_ref: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryFindInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `LibraryFindInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestLibraryFindInput {
@@ -61718,7 +61718,7 @@ pub struct ProposeInput {
     pub seed: Option<WorkflowSeed>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ProposeInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `ProposeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestProposeInput {
@@ -61874,7 +61874,7 @@ pub struct LibraryRetireInput {
     pub reason: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryRetireInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `LibraryRetireInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestLibraryRetireInput {
@@ -61912,7 +61912,7 @@ pub struct LibraryRetiredInput {
     pub site: Option<String>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryRetiredInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `LibraryRetiredInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestLibraryRetiredInput {
@@ -61978,7 +61978,7 @@ pub struct LibraryRunInput {
     pub mode: Option<LibraryRunMode>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryRunInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `LibraryRunInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestLibraryRunInput {
@@ -62032,7 +62032,7 @@ pub struct HandoverInput {
     pub reason: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `HandoverInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `HandoverInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestHandoverInput {
@@ -62074,7 +62074,7 @@ pub struct SwitchEngineInput {
     pub reason: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SwitchEngineInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `SwitchEngineInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestSwitchEngineInput {
@@ -62122,7 +62122,7 @@ pub struct MemorySupersedeInput {
     pub now: u64,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `MemorySupersedeInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `MemorySupersedeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestMemorySupersedeInput {
@@ -62273,7 +62273,7 @@ pub struct TaskRefuseInput {
     pub at: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `TaskRefuseInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `TaskRefuseInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestTaskRefuseInput {
@@ -62330,7 +62330,7 @@ pub struct ReportBlockedInput {
     pub detail: String,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ReportBlockedInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `ReportBlockedInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestReportBlockedInput {
@@ -62497,7 +62497,7 @@ pub struct AgentSpawnInput {
     pub comm: Option<CommReach>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `AgentSpawnInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `AgentSpawnInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestAgentSpawnInput {
@@ -62620,7 +62620,7 @@ pub struct LeaderSplitInput {
     pub slice: Option<ScopeScope>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LeaderSplitInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `LeaderSplitInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestLeaderSplitInput {
@@ -62655,7 +62655,7 @@ pub struct SkillCallInput {
     pub args: crate::WireJson,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SkillCallInput`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `SkillCallInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestSkillCallInput {
@@ -62665,7 +62665,7 @@ pub struct LiveRunRequestSkillCallInput {
     pub spec: SkillCallInput,
 }
 
-/// `oneiron::task_verb::sdk::BoardRefreshRequest`.
+/// `oneiron::verbs::BoardRefreshRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BoardRefreshRequest {
@@ -62677,7 +62677,7 @@ pub struct BoardRefreshRequest {
     pub frame_epoch: Option<u64>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `BoardRefreshRequest`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `BoardRefreshRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestBoardRefreshRequest {
@@ -62715,7 +62715,7 @@ pub struct BoardStreamFrame {
     pub kind: FrameKind,
 }
 
-/// `oneiron::task_verb::sdk::BoardFrameReply`.
+/// `oneiron::verbs::BoardFrameReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BoardFrameReply {
@@ -62744,7 +62744,7 @@ pub enum SubscriptionScope {
     DiaryReviews,
 }
 
-/// `oneiron::task_verb::sdk::BoardSubscriptionRequest`.
+/// `oneiron::verbs::BoardSubscriptionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BoardSubscriptionRequest {
@@ -62752,7 +62752,7 @@ pub struct BoardSubscriptionRequest {
     pub scopes: Vec<SubscriptionScope>,
 }
 
-/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `BoardSubscriptionRequest`.
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `BoardSubscriptionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LiveRunRequestBoardSubscriptionRequest {
@@ -62762,7 +62762,7 @@ pub struct LiveRunRequestBoardSubscriptionRequest {
     pub spec: BoardSubscriptionRequest,
 }
 
-/// `oneiron::task_verb::sdk::BoardSubscriptionReply`.
+/// `oneiron::verbs::BoardSubscriptionReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BoardSubscriptionReply {

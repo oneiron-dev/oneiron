@@ -6,7 +6,7 @@
 //! Owner, a time or an approval count.
 use serde::{Deserialize, Serialize};
 
-use super::sdk_shared::SharedVaultRequest;
+use super::shared::SharedVaultRequest;
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{SharedActPoliciesView, SharedActPolicy, SharedActPolicyChange};
