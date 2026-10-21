@@ -19,17 +19,16 @@ mod heads;
 mod window;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Component, Path};
 use std::sync::Mutex;
 
-use candle_core::{DType, Device, Module};
-use candle_nn::{Linear, VarBuilder, linear};
+use candle_core::{Device, Module};
+use candle_nn::{Linear, linear};
 use oneiron::ModelId;
 use oneiron::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokenizers::Tokenizer;
 
+use super::bundle::{CharacterConfig, Manifest, character_vocab, validate_labels};
 use super::endpoint::{CONTRACT_VERSION, ModelCard, Returns};
 use crate::config::{EmbedderDevice, OneironerConfig};
 use backbone::{Backbone, Config};
@@ -38,100 +37,6 @@ use window::{
     CharacterFeatures, Characters, DecodeLayers, Named, ONEIRONER_DECODE_REVISION, Window,
     conversation_tokenizer, decode, decode_ner,
 };
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Artifact {
-    file: String,
-    sha256: String,
-}
-
-impl Artifact {
-    fn read(&self, dir: &Path) -> anyhow::Result<Vec<u8>> {
-        anyhow::ensure!(
-            !self.file.is_empty()
-                && Path::new(&self.file)
-                    .components()
-                    .all(|component| matches!(component, Component::Normal(_))),
-            "oneironer artifact file must be relative to its model directory"
-        );
-        let bytes = std::fs::read(dir.join(&self.file))?;
-        anyhow::ensure!(
-            format!("{:x}", Sha256::digest(&bytes)) == self.sha256,
-            "oneironer artifact SHA-256 mismatch"
-        );
-        Ok(bytes)
-    }
-
-    fn weights(&self, dir: &Path, device: &Device) -> anyhow::Result<VarBuilder<'static>> {
-        Ok(VarBuilder::from_buffered_safetensors(
-            self.read(dir)?,
-            DType::F32,
-            device,
-        )?)
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MentionHead {
-    weights: Artifact,
-    trunk_sha16: String,
-    labels: Vec<String>,
-    o_bias: f32,
-    /// Labels that are not overt mentions (for example predicate anchors).
-    ignored_labels: BTreeSet<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CorefHead {
-    weights: Artifact,
-    trunk_sha16: String,
-    repr_dim: usize,
-    tau: f32,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct VadHead {
-    weights: Artifact,
-    trunk_sha16: String,
-    hidden_size: usize,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CharacterHead {
-    /// The checkpoint's own training config.json, copied verbatim.
-    config: Artifact,
-    /// Must be this build's `ONEIRONER_DECODE_REVISION`, so a bundle never
-    /// runs a decode other than the one it names.
-    decode_revision: String,
-}
-
-/// The keys a checkpoint's training config holds for its character head.
-/// The file's other keys are training settings and go unread.
-#[derive(Deserialize)]
-struct CharacterConfig {
-    char_head: bool,
-    char_dim: u32,
-    char_vocab: BTreeMap<String, u32>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Manifest {
-    format_version: u32,
-    trunk: Artifact,
-    config: Artifact,
-    tokenizer: Artifact,
-    ner_labels: Vec<String>,
-    mentions: Option<MentionHead>,
-    coref: Option<CorefHead>,
-    vad: Option<VadHead>,
-    characters: Option<CharacterHead>,
-}
 
 struct Network {
     backbone: Backbone,
@@ -506,50 +411,4 @@ impl LocalTagger {
         }
         Ok(output)
     }
-}
-
-/// The character vocabulary as the head reads it, and the embedding rows it
-/// fills: ids run from 2 with no gap, 0 being padding and 1 an unknown
-/// character, as the model project's loader requires.
-fn character_vocab(vocab: BTreeMap<String, u32>) -> anyhow::Result<(HashMap<char, u32>, usize)> {
-    let mut ids = BTreeSet::new();
-    let mut table = HashMap::with_capacity(vocab.len());
-    for (key, id) in vocab {
-        let mut scalars = key.chars();
-        let (Some(character), None) = (scalars.next(), scalars.next()) else {
-            anyhow::bail!("oneironer character vocabulary keys must be single characters");
-        };
-        ids.insert(id);
-        table.insert(character, id);
-    }
-    let rows = table.len() + 2;
-    anyhow::ensure!(
-        ids.len() == table.len()
-            && ids.first() == Some(&2)
-            && ids.last().map(|&last| last as usize + 1) == Some(rows),
-        "oneironer character vocabulary ids must run from 2 with no gap"
-    );
-    Ok((table, rows))
-}
-
-fn validate_labels(labels: &[String]) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        labels.first().map(String::as_str) == Some("O"),
-        "local extraction BIO table must start with O"
-    );
-    let mut seen = BTreeSet::new();
-    for label in labels {
-        anyhow::ensure!(seen.insert(label), "duplicate extraction BIO label");
-        if label == "O" {
-            continue;
-        }
-        let Some((prefix, kind)) = label.split_once('-') else {
-            anyhow::bail!("invalid extraction BIO label");
-        };
-        anyhow::ensure!(
-            matches!(prefix, "B" | "I") && !kind.is_empty() && kind.len() <= 64,
-            "invalid extraction BIO label"
-        );
-    }
-    Ok(())
 }

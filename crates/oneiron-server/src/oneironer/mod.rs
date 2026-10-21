@@ -30,6 +30,7 @@ use dispatcher::{Completion, Dispatcher, WorkerSpec};
 
 pub(crate) use dispatcher::DispatchClaim;
 
+mod bundle;
 mod dispatcher;
 pub(crate) mod endpoint;
 pub(crate) mod engines;

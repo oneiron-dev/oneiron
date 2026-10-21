@@ -1,0 +1,117 @@
+//! The manifest's common rows: the trunk, its config and tokenizer, the
+//! label table and the optional heads.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use serde::Deserialize;
+
+use super::Artifact;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MentionHead {
+    pub(crate) weights: Artifact,
+    pub(crate) trunk_sha16: String,
+    pub(crate) labels: Vec<String>,
+    pub(crate) o_bias: f32,
+    /// Labels that are not overt mentions (for example predicate anchors).
+    pub(crate) ignored_labels: BTreeSet<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CorefHead {
+    pub(crate) weights: Artifact,
+    pub(crate) trunk_sha16: String,
+    pub(crate) repr_dim: usize,
+    pub(crate) tau: f32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct VadHead {
+    pub(crate) weights: Artifact,
+    pub(crate) trunk_sha16: String,
+    pub(crate) hidden_size: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CharacterHead {
+    /// The checkpoint's own training config.json, copied verbatim.
+    pub(crate) config: Artifact,
+    /// Must be this build's `ONEIRONER_DECODE_REVISION`, so a bundle never
+    /// runs a decode other than the one it names.
+    pub(crate) decode_revision: String,
+}
+
+/// The keys a checkpoint's training config holds for its character head.
+/// The file's other keys are training settings and go unread.
+#[derive(Deserialize)]
+pub(crate) struct CharacterConfig {
+    pub(crate) char_head: bool,
+    pub(crate) char_dim: u32,
+    pub(crate) char_vocab: BTreeMap<String, u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Manifest {
+    pub(crate) format_version: u32,
+    pub(crate) trunk: Artifact,
+    pub(crate) config: Artifact,
+    pub(crate) tokenizer: Artifact,
+    pub(crate) ner_labels: Vec<String>,
+    pub(crate) mentions: Option<MentionHead>,
+    pub(crate) coref: Option<CorefHead>,
+    pub(crate) vad: Option<VadHead>,
+    pub(crate) characters: Option<CharacterHead>,
+}
+
+/// The character vocabulary as the head reads it, and the embedding rows it
+/// fills: ids run from 2 with no gap, 0 being padding and 1 an unknown
+/// character, as the model project's loader requires.
+pub(crate) fn character_vocab(
+    vocab: BTreeMap<String, u32>,
+) -> anyhow::Result<(HashMap<char, u32>, usize)> {
+    let mut ids = BTreeSet::new();
+    let mut table = HashMap::with_capacity(vocab.len());
+    for (key, id) in vocab {
+        let mut scalars = key.chars();
+        let (Some(character), None) = (scalars.next(), scalars.next()) else {
+            anyhow::bail!("oneironer character vocabulary keys must be single characters");
+        };
+        ids.insert(id);
+        table.insert(character, id);
+    }
+    let rows = table.len() + 2;
+    anyhow::ensure!(
+        ids.len() == table.len()
+            && ids.first() == Some(&2)
+            && ids.last().map(|&last| last as usize + 1) == Some(rows),
+        "oneironer character vocabulary ids must run from 2 with no gap"
+    );
+    Ok((table, rows))
+}
+
+pub(crate) fn validate_labels(labels: &[String]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        labels.first().map(String::as_str) == Some("O"),
+        "local extraction BIO table must start with O"
+    );
+    let mut seen = BTreeSet::new();
+    for label in labels {
+        anyhow::ensure!(seen.insert(label), "duplicate extraction BIO label");
+        if label == "O" {
+            continue;
+        }
+        let Some((prefix, kind)) = label.split_once('-') else {
+            anyhow::bail!("invalid extraction BIO label");
+        };
+        anyhow::ensure!(
+            matches!(prefix, "B" | "I") && !kind.is_empty() && kind.len() <= 64,
+            "invalid extraction BIO label"
+        );
+    }
+    Ok(())
+}
