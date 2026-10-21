@@ -40,6 +40,14 @@ pub(super) fn validate_repo_provenance_request(
     vault: &Vault,
     request: &RepoMutationRequest,
 ) -> Result<()> {
+    // A received bundle proves its retained source, never an optional
+    // model provenance map, and never falls through when it names none.
+    if matches!(
+        request.operation,
+        RepoMutationOperation::ReceivedFiles { .. }
+    ) {
+        return super::received_file::require_received_files_source(vault, request);
+    }
     let Some(claim_id) = request.provenance_claim_id else {
         return Ok(());
     };
@@ -59,6 +67,12 @@ pub(super) fn validate_repo_provenance_request_in_txn(
     txn: &heed::RoTxn<'_>,
     request: &RepoMutationRequest,
 ) -> Result<()> {
+    if matches!(
+        request.operation,
+        RepoMutationOperation::ReceivedFiles { .. }
+    ) {
+        return super::received_file::require_received_files_source_in_txn(vault, txn, request);
+    }
     let Some(id) = request.provenance_claim_id else {
         return Ok(());
     };
