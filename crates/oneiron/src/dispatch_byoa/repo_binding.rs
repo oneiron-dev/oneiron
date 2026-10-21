@@ -3,12 +3,13 @@
 //!
 //! - **Dispatch** pins, in the dispatch writer and before the payload is
 //!   encoded, the stored checkout the connector names: its id, epoch and
-//!   holder, its repo with the pin, and its TASK ([`ByoaRepoBinding`]). The
-//!   lease must be live at the vault's time, and for the TASK the dispatch
-//!   names. The same writer reserves that epoch for the attempt the queue
-//!   returns, so two live tries never share one writable checkout epoch,
-//!   the same agent's included. A dedupe hit compares the stored binding
-//!   and never rebinds it.
+//!   holder, its repo with the pin, and its TASK ([`ByoaRepoBinding`]), when
+//!   the lease is live at the vault's time and for the TASK the dispatch
+//!   names; otherwise the attempt enqueues unbound and execute's unbound
+//!   check judges it (FIX 7197). The same writer reserves a pinned epoch
+//!   for the attempt the queue returns, so two live tries never share one
+//!   writable checkout epoch, the same agent's included. A dedupe hit
+//!   compares the stored binding and never rebinds it.
 //! - **Execute** checks, in a short writer before staging or spawning,
 //!   the acquired attempt, the stored binding, the TASK's standing and the
 //!   lease at the vault's time, and saves the generation that runs. No
@@ -106,11 +107,14 @@ fn checkout_error(error: CheckoutError) -> super::error::ByoaError {
 
 /// Pins the stored checkout a CLI `connector` names, in the dispatch writer
 /// `txn`, for the TASK `task_ref` names when it names one. `None` for an
-/// endpoint or MCP connector.
+/// endpoint or MCP connector, and for a checkout that is missing, not live
+/// at the vault's time, or claimed for another TASK: that attempt enqueues
+/// unbound and execute's unbound check judges it, as before the binding, so
+/// a checkout made live between enqueue and execute still runs (FIX 7197).
 ///
 /// # Errors
-/// [`ERR_EXECUTION_CHECKOUT`] for a checkout that is missing, not live at
-/// the vault's time, or claimed for another TASK; a store failure.
+/// A store failure; [`ERR_EXECUTION_CHECKOUT`] for a checkout row that does
+/// not read.
 pub(super) fn pin_checkout_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
@@ -121,7 +125,7 @@ pub(super) fn pin_checkout_in_txn(
         return Ok(None);
     };
     let now = vault.instant_in_txn(txn)?.secs();
-    let lease = load_act_in_txn(vault, txn, spec.checkout_id)
+    let Some(lease) = load_act_in_txn(vault, txn, spec.checkout_id)
         .map_err(checkout_error)?
         .filter(|lease| live(lease, now))
         .filter(|lease| {
@@ -129,7 +133,9 @@ pub(super) fn pin_checkout_in_txn(
                 .as_deref()
                 .is_none_or(|task| task == lease.task_ref.to_hex())
         })
-        .ok_or_else(|| invalid(ERR_EXECUTION_CHECKOUT))?;
+    else {
+        return Ok(None);
+    };
     Ok(Some(ByoaRepoBinding {
         checkout: *lease.checkout_id.as_bytes(),
         epoch: lease.epoch,

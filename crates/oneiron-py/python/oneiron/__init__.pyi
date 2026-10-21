@@ -2410,6 +2410,14 @@ class Oneiron:
             """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
         def recover(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
+        def init(self, spec: Facade.MergeQueueInitializeRequest) -> Facade.MergeQueueCheckWorkView:
+            """Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue."""
+        def check(self, spec: Facade.MergeQueueCheckRequest) -> Facade.MergeQueueCheckWorkView:
+            """Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller."""
+        def diagnose(self, spec: Facade.MergeQueueDiagnoseRequest) -> Facade.MergeQueueCheckWorkView:
+            """Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only."""
+        def check_status(self, spec: Facade.MergeQueueCheckStatusRequest) -> Facade.MergeQueueCheckWorkView:
+            """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
     class _VaultResultsVerbs:
         def status(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
             """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""

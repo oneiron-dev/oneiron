@@ -18,6 +18,7 @@ mod line;
 mod linear;
 mod lookup;
 pub mod merge;
+pub mod merge_queue;
 pub mod models;
 pub mod native_mail;
 pub mod oneironer;
@@ -57,6 +58,7 @@ pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
     resolve_serve_config_with_sources,
 };
+pub use merge_queue::{CheckerBackend, CheckerNetwork, MergeQueueCheckerConfig};
 pub use models::ModelsConfig;
 pub use native_mail::NativeMailConfig;
 pub use oneironer::{

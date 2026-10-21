@@ -139,6 +139,9 @@ pub struct SyncServerConfig {
     pub linear: Option<LinearConfig>,
     /// Who authenticates the requests this server takes.
     pub ingress: IngressAuth,
+    /// `[merge_queue]`: the queue checker's executor (FIX 6868). `None` is
+    /// isolated and unconfigured.
+    pub merge_queue: Option<super::MergeQueueCheckerConfig>,
 }
 
 /// Who authenticates the requests a server takes, as its serve entry
@@ -194,6 +197,7 @@ impl Default for SyncServerConfig {
             line: LineConfig::default(),
             linear: None,
             ingress: IngressAuth::Configured,
+            merge_queue: None,
         }
     }
 }
@@ -277,6 +281,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("line", &self.line)
             .field("linear", &self.linear)
             .field("ingress", &self.ingress)
+            .field("merge_queue", &self.merge_queue)
             .finish()
     }
 }
@@ -370,6 +375,8 @@ pub struct ServeConfig {
     /// The `[desktop]` section, absent until the config file names it.
     /// Absent means code runs have no desktop.
     pub desktop: Option<super::DesktopConfig>,
+    /// The `[merge_queue]` section: the queue checker's executor.
+    pub merge_queue: Option<super::MergeQueueCheckerConfig>,
     /// The `[gpu]` section: the batch lane's rented pods, absent until the
     /// config file names it. Absent means every batch runs where its slot's
     /// provider runs.
@@ -498,6 +505,7 @@ impl Default for ServeConfig {
             models: None,
             browser: None,
             desktop: None,
+            merge_queue: None,
             gpu: None,
             native_mail: None,
             device_sync: None,
@@ -589,6 +597,7 @@ impl fmt::Debug for ServeConfig {
             .field("models", &self.models)
             .field("browser", &self.browser)
             .field("desktop", &self.desktop)
+            .field("merge_queue", &self.merge_queue)
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
             .field("device_sync", &self.device_sync)
@@ -668,6 +677,7 @@ impl ServeConfig {
             // A plain serve's own auth config; a managed vault declares its
             // supervisor's.
             ingress: IngressAuth::Configured,
+            merge_queue: self.merge_queue.clone(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(

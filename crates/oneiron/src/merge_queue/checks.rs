@@ -1,4 +1,5 @@
 //! Out-of-order check completion, all-path agreement and red-batch diagnosis.
+use super::check_inputs::QueueCheckReceipt;
 use super::{BatchState, CheckInvocation, CheckPhase, CheckReport, MergeQueue, Quarantine};
 use crate::{
     contract_oracle::{ContractOracle, ContractVerdict, invalid},
@@ -22,35 +23,12 @@ impl MergeQueue<'_> {
         F: FnMut(&CheckInvocation) -> Result<CheckReport>,
     {
         let batch = self.batch(id)?;
-        let mut path = batch
-            .paths
-            .iter()
-            .find(|path| path.mask == mask)
-            .ok_or_else(|| invalid("speculative path not staged"))?
-            .clone();
-        let prior = match phase {
-            CheckPhase::Fast => path.verdict.as_ref(),
-            CheckPhase::Slow => {
-                if mask != self.landed_path(&batch)?.mask || batch.state != BatchState::HeadAdvanced
-                {
-                    return Err(invalid("slow check must name the landed full batch"));
-                }
-                batch.slow_verdict.as_ref()
-            }
-        };
+        let (path, prior) = self.check_path(&batch, mask, phase)?;
         let oracle = ContractOracle::new(self.vault);
         if let Some(id) = prior {
             return oracle
-                .verdict(id)?
+                .verdict(&id)?
                 .ok_or(Error::CorruptedIndex("merge verdict is missing"));
-        }
-        if phase == CheckPhase::Fast
-            && !matches!(batch.state, BatchState::Staged | BatchState::Ready)
-        {
-            return Err(invalid("batch is not accepting fast checks"));
-        }
-        if phase == CheckPhase::Slow {
-            path = self.landed_check_path(&batch, &path)?;
         }
         self.verify_worktree(&path)?;
         let baseline = oracle
@@ -79,39 +57,22 @@ impl MergeQueue<'_> {
         let _guard = lock_repository(self.repo.common_dir())?;
         let queue = self.queue()?;
         let mut current = self.batch(id)?;
-        let slot = match phase {
-            CheckPhase::Fast => {
-                if !matches!(current.state, BatchState::Staged | BatchState::Ready) {
-                    return Err(Error::ConcurrentWrite("batch changed during fast check"));
-                }
-                &mut current.paths[(mask - 1) as usize].verdict
-            }
-            CheckPhase::Slow => {
-                if current.state != BatchState::HeadAdvanced
-                    || current.landed_head.as_deref() != Some(path.commit.as_str())
-                {
-                    return Err(Error::ConcurrentWrite("batch changed during slow check"));
-                }
-                &mut current.slow_verdict
-            }
-        };
-        if let Some(prior) = slot {
-            if prior != &verdict.id {
-                return Err(Error::ConcurrentWrite(
-                    "check already settled with another result",
-                ));
-            }
-        } else {
-            *slot = Some(verdict.id.clone());
-        }
-        if phase == CheckPhase::Fast && self.all_paths_green(&current)? {
-            current.state = BatchState::Ready;
-        }
+        self.settle_slot(&mut current, mask, phase, &path.commit, &verdict.id, None)?;
         self.save(&queue, &[&current])?;
         Ok(verdict)
     }
 
     pub(super) fn all_paths_green(&self, batch: &super::MergeBatch) -> Result<bool> {
+        self.all_paths_green_with(batch, None)
+    }
+
+    /// [`Self::all_paths_green`], with `pending` a bound receipt whose
+    /// verdict is not stored with its work yet (FIX 6868).
+    pub(super) fn all_paths_green_with(
+        &self,
+        batch: &super::MergeBatch,
+        pending: Option<&QueueCheckReceipt>,
+    ) -> Result<bool> {
         if batch.paths.len() != (1 << batch.proposals.len()) - 1 {
             return Ok(false);
         }
@@ -123,8 +84,15 @@ impl MergeQueue<'_> {
             let verdict = oracle
                 .verdict(id)?
                 .ok_or(Error::CorruptedIndex("merge verdict is missing"))?;
-            let expected = format!("{}:{}:Fast:{}", batch.id, path.mask, path.tree);
-            if verdict.baseline_id != batch.baseline_id || verdict.candidate != expected {
+            if !self.require_check_binding(
+                batch,
+                path.mask,
+                &path.tree,
+                &path.commit,
+                CheckPhase::Fast,
+                &verdict,
+                pending,
+            )? {
                 return Err(Error::CorruptedIndex("merge verdict scope differs"));
             }
             if !verdict.passes() {

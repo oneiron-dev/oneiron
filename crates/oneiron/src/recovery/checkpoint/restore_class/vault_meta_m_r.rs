@@ -11,6 +11,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN, CONTENT),
     (&t::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS, CONTENT),
     (&t::MERGE_QUEUE_BATCH, CONTENT),
+    // A restore never revives a revoked approval: the live one stands.
+    (&t::MERGE_QUEUE_CHECK_CONFIG, LIVE),
+    (&t::MERGE_QUEUE_CHECK_WORK, CONTENT),
     (&t::MERGE_QUEUE_STATE, CONTENT),
     (&t::MESSAGE_STREAM_ACTIVE, CONTENT),
     (&t::MESSAGE_STREAM_POLICY, LIVE),

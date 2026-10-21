@@ -20,7 +20,7 @@ fn owner_proof(
     super::owner_binding::facade_owner(server, auth, verb)
 }
 
-async fn as_owner<T: Send + 'static>(
+pub(super) async fn as_owner<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     verb: &'static str,

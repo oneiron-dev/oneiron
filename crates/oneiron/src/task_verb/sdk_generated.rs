@@ -3553,6 +3553,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.merge_queue.init",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueInitializeRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.check",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueCheckRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.diagnose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueDiagnoseRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.check_status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactExportRequest,
@@ -14042,6 +14066,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.merge_queue.init" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.check" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.diagnose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.check_status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19506,6 +19558,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::merge_queue_doors::MergeQueueRepoRequest =
                 decode(value.clone())?;
         }
+        "vault.code.merge_queue.init" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueInitializeRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.check" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueCheckRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.diagnose" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueDiagnoseRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.check_status" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
         }
@@ -22516,6 +22584,18 @@ pub fn invoke(
         }
         "vault.code.merge_queue.recover" => {
             encode(vault_code_merge_queue_recover(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.init" => {
+            encode(vault_code_merge_queue_init(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.check" => {
+            encode(vault_code_merge_queue_check(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.diagnose" => {
+            encode(vault_code_merge_queue_diagnose(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.check_status" => {
+            encode(vault_code_merge_queue_check_status(memory, decode(value)?)?)
         }
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
@@ -28912,6 +28992,42 @@ pub fn vault_code_merge_queue_recover(
 ) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueuePointersView> {
     memory.merge_queue_recover_as(
         &memory.embedded_owner("vault.code.merge_queue.recover")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_init(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueInitializeRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueCheckWorkView> {
+    memory.merge_queue_init_as(
+        &memory.embedded_owner("vault.code.merge_queue.init")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_check(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueCheckRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueCheckWorkView> {
+    memory.merge_queue_check_as(
+        &memory.embedded_owner("vault.code.merge_queue.check")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_diagnose(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueDiagnoseRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueCheckWorkView> {
+    memory.merge_queue_diagnose_as(
+        &memory.embedded_owner("vault.code.merge_queue.diagnose")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_check_status(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueCheckStatusRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueCheckWorkView> {
+    memory.merge_queue_check_status_as(
+        &memory.embedded_owner("vault.code.merge_queue.check_status")?,
         input,
     )
 }

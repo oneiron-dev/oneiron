@@ -105,6 +105,7 @@ mod lens_selection_doors;
 mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
+mod merge_queue_checker_doors;
 mod merge_queue_doors;
 mod mesh_doors;
 mod model_catalog_doors;

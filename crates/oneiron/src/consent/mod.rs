@@ -140,6 +140,7 @@ pub use crate::outbound::{outbound_approve_once_digest, outbound_step_approve_on
 pub use crate::outbound_consent::scoped_mcp_approve_once_digest;
 
 pub(crate) use self::bound::bound_exceeded;
+pub(crate) use self::doors::QueuedCheckApproval;
 pub(crate) use self::doors::{
     OwnerAuthoredWrite, approve_once_authorization_in_txn, approve_once_decision_in_txn,
     person_is_live_in_txn, revoke_standing_grant_in_txn, spend_approve_once_in_txn,

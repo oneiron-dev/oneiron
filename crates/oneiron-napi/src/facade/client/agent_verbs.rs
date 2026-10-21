@@ -5619,6 +5619,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_merge_queue_init(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.init", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_check(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.check", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_diagnose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.diagnose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_check_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.check_status", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_artifacts_export(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {

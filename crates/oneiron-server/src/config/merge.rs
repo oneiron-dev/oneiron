@@ -369,6 +369,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "models" => struct_fields::<ModelsFile>(),
         "browser" => struct_fields::<super::BrowserConfig>(),
         "desktop" => struct_fields::<super::DesktopConfig>(),
+        "merge_queue" => struct_fields::<super::MergeQueueCheckerConfig>(),
         "gpu" => struct_fields::<crate::runtime::GpuPoolConfig>(),
         "native_mail" => struct_fields::<super::NativeMailConfig>(),
         "device_sync" => struct_fields::<super::DeviceSyncConfig>(),
@@ -458,6 +459,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     }
     if let Some(desktop) = &config.desktop {
         desktop.validate()?;
+    }
+    if let Some(merge_queue) = &config.merge_queue {
+        merge_queue.validate()?;
     }
     if let Some(gpu) = &config.gpu {
         gpu.validate()?;
@@ -689,6 +693,7 @@ struct FileServeConfig {
     models: Option<ModelsFile>,
     browser: Option<super::BrowserConfig>,
     desktop: Option<super::DesktopConfig>,
+    merge_queue: Option<super::MergeQueueCheckerConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
     native_mail: Option<super::NativeMailConfig>,
     device_sync: Option<super::DeviceSyncConfig>,
@@ -757,6 +762,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             models: None,
             browser: value.browser,
             desktop: value.desktop,
+            merge_queue: value.merge_queue,
             gpu: value.gpu,
             native_mail: value.native_mail,
             device_sync: value.device_sync,
@@ -833,6 +839,8 @@ struct PartialServeConfig {
     browser: Option<super::BrowserConfig>,
     /// `[desktop]` is file-only, as `[browser]` is.
     desktop: Option<super::DesktopConfig>,
+    /// `[merge_queue]` is file-only, as `[browser]` is.
+    merge_queue: Option<super::MergeQueueCheckerConfig>,
     /// `[gpu]` is file-only, as `[browser]` is.
     gpu: Option<crate::runtime::GpuPoolConfig>,
     /// `[native_mail]` is file-only, as `[browser]` is.
@@ -931,6 +939,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("models", &self.models)
             .field("browser", &self.browser)
             .field("desktop", &self.desktop)
+            .field("merge_queue", &self.merge_queue)
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
             .field("device_sync", &self.device_sync)
@@ -1130,6 +1139,9 @@ impl PartialServeConfig {
         if let Some(value) = self.desktop {
             resolved.desktop = Some(value);
         }
+        if let Some(value) = self.merge_queue {
+            resolved.merge_queue = Some(value);
+        }
         if let Some(value) = self.line {
             resolved.line = value;
         }
@@ -1248,6 +1260,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             models: None,
             browser: None,
             desktop: None,
+            merge_queue: None,
             gpu: None,
             native_mail: None,
             device_sync: None,
