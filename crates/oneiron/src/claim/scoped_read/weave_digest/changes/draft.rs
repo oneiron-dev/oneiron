@@ -117,7 +117,10 @@ impl Vault {
     /// owner evaluated. A failure is logged and skipped.
     pub(super) fn queue_coach_weave_digest_settings(&self, now: u64) {
         if let Err(error) = self.try_queue_coach_weave_digest_settings(now) {
-            tracing::warn!(?error, "the Coach's digest settings job was not queued");
+            tracing::warn!(
+                error_kind = ?error.kind(),
+                "the Coach's digest settings job was not queued"
+            );
         }
     }
 
@@ -230,7 +233,7 @@ impl Vault {
                 Ok(true) => self.store.notify_proactivity_changes(),
                 Ok(false) => {}
                 Err(error) => tracing::warn!(
-                    ?error,
+                    error_kind = ?error.kind(),
                     owner = %owner.to_hex(),
                     "the Coach skipped an owner's digest settings"
                 ),

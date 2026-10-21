@@ -158,8 +158,9 @@ pub(super) fn close_conflicts_naming(
     for marker in open.into_iter().filter(|marker| !resolved.contains(marker)) {
         // A marker this close cannot land stays open, and in the owner's
         // view; the correction itself has landed.
-        // Logged by a closed name: a refusal's text can quote the vault.
-        let reason = match conflict_close_candidate(
+        // Logged by a closed name and its error's kind, never its text: a
+        // refusal's text can quote the vault (FIX 7368).
+        let refused = match conflict_close_candidate(
             vault,
             run,
             marker,
@@ -168,13 +169,13 @@ pub(super) fn close_conflicts_naming(
         ) {
             Ok(close) => match promote_one(vault, run, close, None, Some(fence), None) {
                 Ok(ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed) => None,
-                Ok(other) => Some(other.as_str()),
-                Err(_) => Some("promotion_refused"),
+                Ok(other) => Some((other.as_str(), None)),
+                Err(rejection) => Some(("promotion_refused", rejection.kind)),
             },
-            Err(_) => Some("no_close_candidate"),
+            Err(error) => Some(("no_close_candidate", Some(error.kind()))),
         };
-        if let Some(reason) = reason {
-            tracing::warn!(reason, marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
+        if let Some((reason, kind)) = refused {
+            tracing::warn!(reason, error_kind = ?kind, marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
         }
     }
     // The handoff's later writes do not stand on it.

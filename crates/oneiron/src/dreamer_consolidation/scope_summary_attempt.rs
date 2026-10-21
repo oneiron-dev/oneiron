@@ -19,8 +19,8 @@ use crate::error::{Error, Result};
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    ModelId, ModelTierRef, ResponseFormat, ScopeResource, StepOutcome, TierPrecedence,
-    call_as_step,
+    LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource, StepOutcome, TierPrecedence,
+    call_as_step_checked,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
@@ -226,7 +226,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             now_ms: ctx.now_ms,
         };
         let mut charges = StepChargeTally::default();
-        let response = match call_as_step(&step_ctx, self.backend, self.guard, request).await {
+        // The reply answers to the summary contract inside the step (FIX
+        // 7272): the schema's door first, then the parse the landing uses.
+        let response = match call_as_step_checked(
+            &step_ctx,
+            self.backend,
+            self.guard,
+            request,
+            &check_summary_reply,
+        )
+        .await
+        {
             Ok(StepOutcome::Finished { response, .. }) => {
                 charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
                 response
@@ -254,13 +264,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 });
             }
             Err(DurableStepError::Engine(error)) => return Err(error),
-            // A reply the schema door refused was never memoized: it is asked
-            // again after its retry delay (FIX 7272, Engine 10-21).
+            // A reply the schema door or the summary check refused was paid
+            // and never memoized: it is asked again after its retry delay
+            // (FIX 7272, Engine 10-21).
             Err(other @ DurableStepError::SpentSchemaValidation { .. }) => {
-                return Ok(DreamerAttemptExecution::Park {
-                    reason: other.to_string(),
-                    cause: DreamerParkCause::Retry,
-                });
+                if let DurableStepError::SpentSchemaValidation { usage, .. } = &other {
+                    charges.record_usage(usage);
+                }
+                return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
             }
             Err(other) => {
                 return Ok(DreamerAttemptExecution::Park {
@@ -272,23 +283,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         if ctx.deadline.expired() {
             return Ok(charges.checkpoint());
         }
-        let body: String = response
-            .message
-            .content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        let output: SummaryOutput = match serde_json::from_str(body.trim()) {
+        // The step's check already admitted this reply; a memo stored before
+        // the check existed still answers to the same parse here.
+        let output = match summary_output(&response) {
             Ok(output) => output,
-            Err(_) => return Ok(charges.park("the model wrote an invalid summary/keep result")),
+            Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
         };
         let body = output.text.trim();
-        if body.is_empty() {
-            return Ok(charges.park("the model wrote an empty summary"));
-        }
         let composed = ComposedSummary {
             text: body,
             keep: &output.keep,
@@ -338,6 +339,33 @@ fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecut
 struct SummaryOutput {
     text: String,
     keep: String,
+}
+
+/// The reply's summary, or the static reason it is none: its text parts
+/// parse as [`SummaryOutput`] and the summary text is not blank. The step's
+/// check and the landing both read the reply through this one parse.
+fn summary_output(response: &LlmResponse) -> std::result::Result<SummaryOutput, &'static str> {
+    let body: String = response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let output: SummaryOutput = serde_json::from_str(body.trim())
+        .map_err(|_| "the model wrote an invalid summary/keep result")?;
+    if output.text.trim().is_empty() {
+        return Err("the model wrote an empty summary");
+    }
+    Ok(output)
+}
+
+/// The summary step's reply check: a reply [`summary_output`] refuses is
+/// refused inside the step, paid and never memoized.
+fn check_summary_reply(response: &LlmResponse) -> std::result::Result<(), String> {
+    summary_output(response).map(drop).map_err(str::to_owned)
 }
 
 /// All evidence and authority-dependent text pins, collected in one snapshot.
