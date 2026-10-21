@@ -1,0 +1,418 @@
+# The Oneiron guest image family: the ONE release list (OS-IMAGE = A).
+#
+# [inputs] are frozen: every byte a build reads is named here by digest, by
+# commit, or by path + sha256 at inputs.engine.commit. [variants.*.outputs]
+# are built: a field stays absent until a build measured it, never a zero or
+# a placeholder hash. Budgets are proposed engineering targets, not checks.
+# packages.toml holds the requested packages and overlays; packages.lock.toml
+# the resolved closure. `build.py validate` checks the three agree.
+#
+# A pin here is identity, not approval: no signature exists yet (a later
+# pack signs), and a built-candidate is not a boot proof.
+schema = 1
+
+[family]
+name = "oneiron-guest"
+state = "unreleased"
+signature = "none yet: signing is a later pack; no key exists"
+
+[arch."linux/amd64"]
+mkosi_architecture = "x86-64"
+debian_architecture = "amd64"
+rust_target = "x86_64-unknown-linux-gnu"
+# building -> built-candidate -> boot-proved -> qualified. aarch64 would be its own release.
+qualification = "building"
+
+# -- frozen inputs --------------------------------------------------------------
+
+[inputs.base]
+# The base every existing guest Dockerfile names; here it is the bootstrap
+# tree the tools tree is built from (its amd64 rootfs layer, fetched over
+# the registry API and checked), never the identity of the finished builder.
+image = "docker.io/library/debian"
+suite_tag = "trixie-slim"
+index_digest = "sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f"
+platform = "linux/amd64"
+manifest_digest = "sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483"
+config_digest = "sha256:567e3c17b188e21cd42aa5e1c55e16d8270f880ed8ea321dbd40f993467efc4c"
+layer_digest = "sha256:ecc510c1e359bdc007b39802570bb7e4dec7d6ebccf357c3201a74299113e05e"
+layer_bytes = 29843350
+layer_diff_id = "sha256:15f1c8eb1ab18eae260c7fb6296434cbe1ff0e1e30fd814ae92a80dd54005e62"
+created = "2026-10-05T00:00:00Z"
+artifacts_commit = "a3751996111ce2c1c904050c84440184535e23b1"
+debuerreotype_epoch = 1791158400
+registry = "https://registry-1.docker.io"
+repository = "library/debian"
+token_url = "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/debian:pull"
+
+[inputs.debian]
+suite = "trixie"
+# Derived, not chosen: the base's debuerreotype epoch 1791158400
+# (docker-debian-artifacts at inputs.base.artifacts_commit,
+# trixie/slim/rootfs.debuerreotype-epoch; the layer config's history says
+# `debian.sh --arch 'amd64' out/ 'trixie' '@1791158400'`) is
+# 2026-10-05T00:00:00Z, so packages come from the same instant as the base.
+snapshot = "20261005T000000Z"
+keyring = "/usr/share/keyrings/debian-archive-keyring.gpg"
+# apt verifies each source's InRelease signature with the keyring above;
+# plain http is the transport, the signature is the integrity.
+signature_check = true
+# Only these snapshot sources skip Valid-Until: a frozen Release's date has passed.
+check_valid_until = false
+lock = "packages.lock.toml"
+
+[[inputs.debian.sources]]
+name = "main"
+uri = "http://snapshot.debian.org/archive/debian/20261005T000000Z"
+suite = "trixie"
+components = ["main"]
+
+[[inputs.debian.sources]]
+name = "updates"
+uri = "http://snapshot.debian.org/archive/debian/20261005T000000Z"
+suite = "trixie-updates"
+components = ["main"]
+
+[[inputs.debian.sources]]
+name = "security"
+uri = "http://snapshot.debian.org/archive/debian-security/20261005T000000Z"
+suite = "trixie-security"
+components = ["main"]
+
+[inputs.mkosi]
+version = "27.1"
+tag = "v27.1"
+commit = "ecf7f5702bb2052b7a69cab3fe7d37bc3b9ad77b"
+archive_url = "https://codeload.github.com/systemd/mkosi/tar.gz/ecf7f5702bb2052b7a69cab3fe7d37bc3b9ad77b"
+archive_sha256 = "3d38e848f9b1108ec76d873f2c378dfc7d4b536ad89deffe8c97504f7a8dff43"
+
+[inputs.rust]
+# rust-toolchain.toml says channel "1.96", profile minimal (+ rustfmt, clippy).
+# The channel manifest resolves that alias to one exact release:
+toolchain_file = "rust-toolchain.toml"
+toolchain_file_sha256 = "3435b160321202a0f3ed5eb2e77ac3a39b8a47a68e69c937744f753e1b347592"
+channel = "1.96"
+version = "1.96.1"
+rustc_version = "rustc 1.96.1 (31fca3adb 2026-06-26)"
+cargo_version = "cargo 0.97.2 (356927216 2026-06-26)"
+channel_manifest_url = "https://static.rust-lang.org/dist/channel-rust-1.96.toml"
+channel_manifest_sha256 = "87eb76c53073e72b766083bed5530820694253b832a762d8385bda5759f03975"
+channel_date = "2026-06-30"
+# The builder uses the minimal profile's Linux components; the checker's
+# runtime toolchain adds rustfmt and clippy (the toolchain file's components).
+builder_components = ["rustc", "cargo", "rust-std"]
+
+[inputs.rust.components.rustc]
+url = "https://static.rust-lang.org/dist/2026-06-30/rustc-1.96.1-x86_64-unknown-linux-gnu.tar.xz"
+sha256 = "3545a0efad2355ecb0a3b9ac02efee96e27f1f9d24b7ce2fc3f279b2efb0d923"
+
+[inputs.rust.components.cargo]
+url = "https://static.rust-lang.org/dist/2026-06-30/cargo-1.96.1-x86_64-unknown-linux-gnu.tar.xz"
+sha256 = "ecc53a3c49fab5ab8c9301b3bbc8fb1dff9be6c65287add3f57a0fe8fddfea9e"
+
+[inputs.rust.components.rust-std]
+url = "https://static.rust-lang.org/dist/2026-06-30/rust-std-1.96.1-x86_64-unknown-linux-gnu.tar.xz"
+sha256 = "1bf4fde5048cca33e6ea00c7471281ed96d792f6923141e3db45072743a1afae"
+
+[inputs.rust.components.rustfmt]
+url = "https://static.rust-lang.org/dist/2026-06-30/rustfmt-1.96.1-x86_64-unknown-linux-gnu.tar.xz"
+sha256 = "dcee5627f709f387cdca416a1d2ae9e6c2581cd117cdb4fd097c56c196384662"
+
+[inputs.rust.components.clippy]
+url = "https://static.rust-lang.org/dist/2026-06-30/clippy-1.96.1-x86_64-unknown-linux-gnu.tar.xz"
+sha256 = "385644867534c30c490f4507d61485a799f81dfaec7e2a91290a41bf43d8286a"
+
+[inputs.engine]
+# The engine source every native binary is built from: a git archive of this
+# commit, not the builder's own checkout. A new release moves it.
+repository = "https://github.com/oneiron-dev/oneiron"
+commit = "95afa460192b5a4f8382edc9bf2903cdc5f8bee5"
+workspace_version = "0.1.0"
+msrv = "1.96"
+cargo_lock_sha256 = "7ad1dbfe0ae47bd95937d016e5ea4ae656b68b6da6bcbe4795306a98d0096909"
+# `cargo fetch --locked --target` fills the mirror's CARGO_HOME: the index for
+# the whole lock, crate files for this target.
+cargo_fetch_target = "x86_64-unknown-linux-gnu"
+
+[inputs.engine.git_dependencies]
+formualizer = { url = "https://github.com/oneiron-dev/formualizer", rev = "7ada5f2f32781012ac2bd8a4be9c9ff0aed76fa5" }
+iroh = { url = "https://github.com/oneiron-dev/iroh", rev = "17c0612f80f78f5288e97b818b1360ae6ea0a51a" }
+sudachi = { url = "https://github.com/oneiron-dev/sudachi.rs", rev = "d8cba3609521805ebf35bfc2b71d8099a13befef" }
+
+# Existing repo files, by path + sha256 at inputs.engine.commit. The builder
+# refuses an engine tree where any differs. They stay authoritative: this
+# list reads them, it does not replace them.
+[inputs.files]
+cargo-toml = { path = "Cargo.toml", sha256 = "92b1e270675ea829a0842f16c29c2d8ca1fe67055b4620f6f1629cdf98d3ea2e" }
+cargo-config = { path = ".cargo/config.toml", sha256 = "48e5b82f8143ad2af1edcf9e2166be20a2d06e0d159c7faaa6e8e86fafa93236" }
+browser-dockerfile = { path = "crates/oneiron-container/guest/browser/Dockerfile", sha256 = "f82984bb21743cbfa5994098196597690a2b9f0ce084901cf802c2af1ac132a2" }
+browser-build-sh = { path = "crates/oneiron-container/guest/browser/build.sh", sha256 = "0ccb0aba0595e478815644ed711a823420c58f482e5c8a4ce3e97bd81baee498" }
+browser-entrypoint = { path = "crates/oneiron-container/guest/browser/entrypoint.sh", sha256 = "35f4ade2df8507d642558706952bc59ac59b2d771d96b3613b258b6fa5ad2cf8" }
+browser-readme = { path = "crates/oneiron-container/guest/browser/README.md", sha256 = "9295527aa0f013d5e3b03dca0f45462bd29485c30110e13977f11dc8d03e5575" }
+checker-dockerfile = { path = "crates/oneiron-container/guest/checker/Dockerfile", sha256 = "b46ee1024e1d661e5c1ee3a25c787f7563138a9a76df214bc703b68d760b489b" }
+checker-build-sh = { path = "crates/oneiron-container/guest/checker/build.sh", sha256 = "81184ad377b2b400976891e57775d425d2eb0c57990db1181f1235c115f864e6" }
+checker-helper = { path = "crates/oneiron-container/guest/checker/checker.py", sha256 = "75d94024ab2fa81ab4e4ab35a0b72d592a32aa91e5284caa6c44178ced7c3014" }
+checker-readme = { path = "crates/oneiron-container/guest/checker/README.md", sha256 = "97ca258b63ba97f7d21e17ede9191385c9c8a317f69b9ee87a9f5802de8deb42" }
+desktop-dockerfile = { path = "crates/oneiron-container/guest/desktop/Dockerfile", sha256 = "db9c2674545f40305abb2b8e4cd0f714b96d9cde474e90819f633ace7d6cc07e" }
+desktop-build-sh = { path = "crates/oneiron-container/guest/desktop/build.sh", sha256 = "dc0651893ad670ac363cb52f497e22ef6fac5762dfcc11dfd9a301321c2cdac4" }
+desktop-entrypoint = { path = "crates/oneiron-container/guest/desktop/entrypoint.sh", sha256 = "534e0751858a1701d6b60b4f465d1899cfe70788e8b7c65e3bbfad4495dd5039" }
+desktop-readme = { path = "crates/oneiron-container/guest/desktop/README.md", sha256 = "30fd9818fd093e171172dc3eb0a908fb3c76a950b17ac308faa18b60b9c5e425" }
+code-dockerfile = { path = "crates/oneiron-container/guest/code/Dockerfile", sha256 = "c98798e49201e3044ec23ff12ed6ed68d83df4fbe36f8f438537e8868efdec83" }
+vault-rootfs-builder = { path = "deploy/firecracker/build.py", sha256 = "c6120b43f0dc5e7795b969b44c37dc3c44d0080471c584c0cf90f9b2fb089938" }
+vault-init = { path = "deploy/firecracker/oneiron-vault-init", sha256 = "22e59a166e3bd4b2d688dff364614cc71d5d5cd791581ac69c467b000ec1587d" }
+microvm-builder = { path = "scripts/microvm/build.py", sha256 = "fe10bc1a84d3f8f1781a7fe8677eea12a720c693a42344e9fc09e8caa2a61b88" }
+kernel-config-vault = { path = "deploy/firecracker/kernel.config", sha256 = "d650338f8d63e749edeb57e51a2e6787f9a192d1b2b34de7cdb60059b19d4736" }
+kernel-config-foreign = { path = "scripts/microvm/kernel.config", sha256 = "22fff5e5342213a83cdfa56b15d3490034b376750ccf0137759b5f85b9d0edd0" }
+wit-code-run = { path = "crates/oneiron/wit/code-run.wit", sha256 = "5d315687fdde4be0b324314a39cb86e0cde93631b705db60b96c71e224973c83" }
+quickjs-manifest = { path = "components/code-run-quickjs/artifacts/manifest.json", sha256 = "2187868d90e6d622748a3cf49e1722be2c4c406c37def8a64078c916dea7511a" }
+tsc-rs-manifest = { path = "components/tsc-rs/artifacts/manifest.json", sha256 = "8455cb0a3d8d2ac11a190755a18681dbee76e3edba06edefb7f7961c9b8d1c93" }
+guest-protocol-src = { path = "crates/oneiron-guest/src/protocol.rs", sha256 = "db68fde6af99a65c8136164c34ff23f209e9d495b5cda79363924fd42bbeabff" }
+guest-native-src = { path = "crates/oneiron-guest/src/native.rs", sha256 = "267df7a31b227dc2288868f520d9151c97fa6c71eee612bcc21cec2686c84f25" }
+guest-boot-src = { path = "crates/oneiron-guest/src/boot.rs", sha256 = "0d1efa3fa0d5ceffd934dcc16f4ae86a94d7528bdc0bc2f08dccbc8b73f7f8e4" }
+fence-wire-src = { path = "crates/oneiron-container/src/wire.rs", sha256 = "9b7d829ce1e1338306cefb4540d5b3d2226c79c0bef5b52dea9d36d69722cac6" }
+fence-supervisor-src = { path = "crates/oneiron-container/src/supervisor.rs", sha256 = "273ff9edc3930cdae5db8145ffd76f63fc237b125e71635cdc00f820be40f9f1" }
+relay-protocol-src = { path = "crates/oneiron-container/src/relay_protocol.rs", sha256 = "fca73ec57d98149ca6a20056c74e3cab0823103575f4b98eb9c0e2d309e021e7" }
+
+# Contract revisions exactly as the engine commit defines them. Where no
+# version constant exists the entry says so and the source file above, plus
+# the built binary's hash in the receipt, is the identity.
+[inputs.contracts.code_guest_protocol]
+version = 1
+defined_at = "crates/oneiron-guest/src/protocol.rs:104-116 (inline Hello { version: 1 })"
+note = "no GUEST_PROTOCOL_VERSION constant"
+source = "guest-protocol-src"
+
+[inputs.contracts.wit]
+world = "oneiron:code-run/guest@1.0.0"
+source = "wit-code-run"
+
+[inputs.contracts.native_session]
+note = "no version constant: the Start JSON carries no version field"
+source = "guest-native-src"
+
+[inputs.contracts.checker_helper]
+header_version = 1
+defined_at = "crates/oneiron-container/guest/checker/checker.py:213"
+source = "checker-helper"
+
+[inputs.contracts.fence]
+landlock_abi_floor = 3
+defined_at = "crates/oneiron-container/src/supervisor.rs:671"
+note = "no release version constant: the generation is a per-session UUIDv7"
+sources = ["fence-wire-src", "fence-supervisor-src"]
+
+[inputs.contracts.relay]
+note = "no relay wire version constant"
+source = "relay-protocol-src"
+
+[inputs.contracts.vault]
+contract_version = 3
+vm_provision_revision = 1
+vm_outbox_wire_revision = 2
+vm_restore_wire_revision = 1
+vm_anchor_wire_revision = 1
+vm_anchor_proxy_revision = 1
+vm_network_revision = 1
+vm_managed_profile_revision = 1
+defined_in = "crates/oneiron-vault-contract/src/lib/{version,vm_provision,vm_outbox,vm_restore,vm_anchor,vm}.rs"
+
+[inputs.contracts.storage]
+abi_version = 23
+schema_version = 1
+defined_at = "crates/oneiron/src/store/open_gates/open_version_keys.rs:125-131"
+
+# Payloads from outside Debian and the engine.
+[inputs.payloads.lightpanda]
+kind = "file"
+version = "1.0.0"
+source_commit = "588f6223b9cae8a2406aeef035ed9363a3e404fd"
+url = "https://github.com/lightpanda-io/browser/releases/download/1.0.0/lightpanda-x86_64-linux"
+sha256 = "aa5a4b8ed53d1e38b3c73f5b2647d0a84a82e6744557f45f9a9c85858aa031c3"
+pinned_in = "browser-dockerfile"
+
+[inputs.payloads.cua-driver]
+kind = "source-build"
+release = "0.36.0"
+repository = "https://github.com/trycua/cua"
+rev = "6d6c734c127025fb39ad5d585a10382808b39dc1"
+workdir = "libs/cua-driver/rust"
+package = "cua-driver"
+note = "a source pin: no published binary hash exists; the build hashes its own output"
+pinned_in = "desktop-build-sh"
+
+[inputs.payloads.checker-rust]
+kind = "rust-toolchain"
+components = ["rustc", "cargo", "rust-std", "rustfmt", "clippy"]
+note = "replaces rustup-init 1.29.1 (checker-dockerfile) with the pinned components themselves"
+
+[inputs.payloads.bun]
+# FIX 8254: the generic agent's JavaScript runtime. The variant builds in phase 3.
+kind = "archive"
+version = "bun-v1.4.3"
+release_commit = "c6da4a4d3010e5553438c60f6bd76d981976867c"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.3/bun-linux-x64.zip"
+sha256 = "3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18"
+checksums_url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.3/SHASUMS256.txt"
+member = "bun-linux-x64/bun"
+
+[inputs.payloads.tsrs-wasm]
+# FIX 8254: oxc-project/tsrs v0.18.0 (commit below), TypeScript 7.1.0-dev.20260929.
+kind = "npm"
+package = "@tsrs/wasm"
+version = "0.18.0-ts7.1.0-dev.20260929"
+upstream_commit = "5f92808bc92bb97b06212153ab73d28d551c0b9b"
+url = "https://registry.npmjs.org/@tsrs/wasm/-/wasm-0.18.0-ts7.1.0-dev.20260929.tgz"
+integrity = "sha512-1Wv0GU3OIsY1x37cUykxrDLTeCWb81lWS/BCuw2ZfYcB6E7cno3mgfZvOA/3uV1hKs6fBN94LEntmMjULNaRTw=="
+
+[inputs.payloads.tsrs]
+kind = "npm"
+package = "tsrs"
+version = "0.18.0-ts7.1.0-dev.20260929"
+upstream_commit = "5f92808bc92bb97b06212153ab73d28d551c0b9b"
+url = "https://registry.npmjs.org/tsrs/-/tsrs-0.18.0-ts7.1.0-dev.20260929.tgz"
+integrity = "sha512-9T0b4Uam/yMFIK16GUx0fUrJqYZnJ/gvSmV9JB8NTyDePvwCI45WFWxyEV/UMV3KfdNRJG/PBsm3fSIB9WmWsA=="
+
+[inputs.payloads.tsrs-linux-x64-gnu]
+kind = "npm"
+package = "@tsrs/linux-x64-gnu"
+version = "0.18.0-ts7.1.0-dev.20260929"
+upstream_commit = "5f92808bc92bb97b06212153ab73d28d551c0b9b"
+url = "https://registry.npmjs.org/@tsrs/linux-x64-gnu/-/linux-x64-gnu-0.18.0-ts7.1.0-dev.20260929.tgz"
+integrity = "sha512-EdBwBgNICGu1r1h23ixdcKwsMo6E9ll7ZsY3mNERNYqE1Pwdtcat99d5E7zB1J+oy/Xk6YqiizaB6nolIjpDTw=="
+
+[inputs.kernel]
+# The kernel stays a separate artifact: no rootfs here holds one. No kernel
+# source release is pinned in the repo (the builders take an operator-supplied
+# archive); these are the existing config fragments.
+vault_config = "kernel-config-vault"
+foreign_config = "kernel-config-foreign"
+
+[inputs.build]
+# SOURCE_DATE_EPOCH = the snapshot instant (inputs.debian.snapshot).
+source_date_epoch = 1791158400
+# uuid5(NAMESPACE_URL, "https://github.com/oneiron-dev/oneiron/crates/oneiron-container/images");
+# each rootfs UUID and ext4 hash seed is uuid5(seed, "<variant>/x86_64").
+seed = "555c8527-4949-5907-a2d5-2fbf63c244e2"
+
+[limits]
+# The engine's foreign/native Firecracker verifier: the rootfs file length,
+# sparse capacity included (crates/oneiron/src/code_sandbox/firecracker/config.rs:22-26,
+# inline, no named constant). The builder refuses a rootfs above it; it does not move it.
+firecracker_rootfs_max_bytes = 4294967296
+firecracker_kernel_max_bytes = 67108864
+
+# -- variants -------------------------------------------------------------------
+# outputs."linux/amd64".state: unbuilt | built-candidate | boot-proved | released.
+
+[variants.base]
+role = "common base + guest plumbing (oneiron-guest, oneiron-fence, the guest account); the code/minimal guest"
+trust_domain = "foreign-code"
+recipe = "packages.toml [base]"
+replaces_recipe = "code-dockerfile"
+
+[variants.base.budget]
+status = "proposed"
+payload_max_bytes = 268435456
+payload_note = "kernel reported separately"
+cold_boot = "guest hello <= 1 s"
+ram = "measure agent/VMM overhead separately"
+
+[variants.base.outputs."linux/amd64"]
+state = "unbuilt"
+
+[variants.vault]
+role = "engine plus the vault guest launcher and vsock bridge; no browser, SDK toolchain or foreign workload"
+trust_domain = "vault"
+recipe = "packages.toml [variants.vault]"
+existing_recipe = ["vault-rootfs-builder", "vault-init"]
+phase = 2
+adoption = "built now, adopted later: no deployment switch"
+
+[variants.vault.budget]
+status = "proposed"
+payload_max_bytes = 536870912
+cold_boot = "health <= 1 s; an actual vault read still meets its existing gates"
+ram = "256-512 MiB experiment range; hosted sizing unchanged"
+
+[variants.vault.outputs."linux/amd64"]
+state = "unbuilt"
+
+[variants.browser]
+role = "guest agent, fence, stdio relay and both browser engines (Lightpanda, Chromium)"
+trust_domain = "browser"
+recipe = "packages.toml [variants.browser]"
+existing_recipe = ["browser-dockerfile", "browser-build-sh", "browser-entrypoint"]
+phase = 1
+
+[variants.browser.budget]
+status = "proposed"
+payload_max_bytes = 2147483648
+cold_boot = "CDP usable <= 2 s"
+ram = "2 GiB runtime default retained (crates/oneiron-server/src/config/browser.rs:63-65)"
+
+[variants.browser.outputs."linux/amd64"]
+state = "unbuilt"
+
+[variants.desktop-cua]
+role = "guest contract plus the pinned CUA driver, virtual display, session and accessibility buses, window manager, small app set"
+trust_domain = "desktop"
+recipe = "packages.toml [variants.desktop-cua]"
+existing_recipe = ["desktop-dockerfile", "desktop-build-sh", "desktop-entrypoint"]
+phase = 2
+
+[variants.desktop-cua.budget]
+status = "proposed"
+payload_max_bytes = 3221225472
+cold_boot = "MCP and display usable <= 3 s"
+ram = "3 GiB runtime default retained (crates/oneiron-server/src/config/desktop.rs:33-35)"
+
+[variants.desktop-cua.outputs."linux/amd64"]
+state = "unbuilt"
+
+[variants.checker]
+role = "trusted helper, exact toolchain, native build closure and a lockfile-keyed offline dependency store"
+trust_domain = "checker"
+recipe = "packages.toml [variants.checker]"
+existing_recipe = ["checker-dockerfile", "checker-build-sh", "checker-helper"]
+overlay_owner = "L11-A (guest/checker): its rows are consumed as named hunks"
+phase = 1
+
+[variants.checker.budget]
+status = "proposed"
+payload_min_bytes = 2147483648
+payload_max_bytes = 8589934592
+payload_note = "provisional; the first build sets the real budget. Above 4 GiB it cannot take the Firecracker path unchanged (limits)"
+cold_boot = "helper ready <= 2 s; compilation timed separately"
+ram = "32 GiB memory / 16 GiB scratch retained (crates/oneiron-server/src/config/merge_queue.rs:23-36)"
+
+[variants.checker.outputs."linux/amd64"]
+state = "unbuilt"
+
+[variants.generic-agent]
+role = "shell, CA roots, guest agent and a small pinned Python/JavaScript starter runtime with TypeScript tooling"
+trust_domain = "generic-agent"
+recipe = "packages.toml [variants.generic-agent]"
+phase = 3
+# FIX 8254: Bun plus tsrs, pinned now; the merged tsc-rs package replaces tsrs
+# once it ships. The row names tsrs as Cloudflare's; the published npm packages
+# and release resolve to oxc-project/tsrs. Nothing here builds TypeScript
+# code-mode programs (a separate owner card).
+typescript_tooling = ["bun", "tsrs-wasm", "tsrs", "tsrs-linux-x64-gnu"]
+
+[variants.generic-agent.budget]
+status = "proposed"
+payload_max_bytes = 1073741824
+cold_boot = "exec usable <= 1 s"
+ram = "explicit 512 MiB - 2 GiB sizes"
+
+[variants.generic-agent.outputs."linux/amd64"]
+state = "unbuilt"
+
+# -- the builder ----------------------------------------------------------------
+
+[builder]
+route = "pinned base rootfs layer -> bootstrap tree -> mkosi builds the tools tree (ToolsTree=bootstrap) -> every image builds with ToolsTree=tools; all of it unprivileged in a single-uid user namespace, the build phase with no network"
+identity = "the tools tree's content hash (tools_tree_sha256), never the Debian base digest"
+
+[builder.outputs."linux/amd64"]
+state = "unbuilt"
