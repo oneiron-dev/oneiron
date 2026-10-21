@@ -1,7 +1,7 @@
 //! Persisted-head convergence through the existing promotion, claim Gate,
 //! semantic-edge and provenance doors. A head is never re-authored to attach
 //! evidence: its value, approval, source and original attribution stay intact.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 use super::{corrections, resolved_outputs};
@@ -28,6 +28,9 @@ pub fn promote_scoped_consolidation(
     // the write landed or met again with the evidence its candidate cited.
     let mut answers = write.answers;
     let mut stood: BTreeMap<EntityId, Vec<EntityId>> = BTreeMap::new();
+    // Each head and candidate this write met but held, pended or rejected
+    // (FIX 7380): an answer that needs one of them stays open.
+    let mut unmet: BTreeSet<EntityId> = BTreeSet::new();
     for (index, (head, candidate, evidence)) in write.attachments.into_iter().enumerate() {
         // This attempt's own output, met again by a replay after it landed (a
         // kill before the attempt completed): it already carries these words.
@@ -87,6 +90,8 @@ pub fn promote_scoped_consolidation(
             &candidate,
             &evidence.cited_messages(),
         )? {
+            // The declined candidate itself stands nowhere in this write.
+            unmet.insert(id);
             outcome.held.push(declined);
             continue;
         }
@@ -157,10 +162,14 @@ pub fn promote_scoped_consolidation(
             }
         }
     }
-    // Once every output an answer needs stands, its marker closes.
+    // Once one output an answer needs stood here, none of the rest was held,
+    // pended or rejected here, and every one stands, its marker closes.
+    unmet.extend(outcome.held.iter().copied());
+    unmet.extend(outcome.pended.iter().copied());
+    unmet.extend(outcome.rejected.iter().map(|(id, _)| *id));
     answers.sort();
     answers.dedup();
-    resolved_outputs::close_resolved_outputs(vault, run, &write.fence, &answers, &stood);
+    resolved_outputs::close_resolved_outputs(vault, run, &write.fence, &answers, &stood, &unmet);
     Ok(outcome)
 }
 
