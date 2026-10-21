@@ -3531,6 +3531,9 @@ class Oneiron:
         def export(self, spec):
             """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
             return json.loads(_translate(lambda: self._client.vault_code_export(json.dumps(spec))))
+        def import_(self, spec):
+            """Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_import(json.dumps(spec))))
         @property
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs":
             return Oneiron._VaultCodeOriginVerbs(self._client)

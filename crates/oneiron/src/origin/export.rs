@@ -4,7 +4,6 @@ use super::residence::OriginAuthorityLease;
 use super::tree::OriginTreeFile;
 use crate::Vault;
 use crate::claim::ClaimLifecycleStatus;
-use crate::code_revision::CodeTreeInventory;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -124,30 +123,29 @@ impl Vault {
         }
         let files = match &revision.tested_queue {
             // A tested queue revision renders its complete tree, documents
-            // and untouched blobs, in its own object store (G2 PR3).
-            Some(tested) => {
-                if tested.store != repo.identity().as_hex()
-                    || CodeTreeInventory::digest(&revision)? != tested.inventory_digest
-                {
-                    return Err(Error::InvariantViolation(
-                        "engine commit belongs to another object store or inventory",
-                    ));
-                }
-                CodeTreeInventory::render(self, git, repo, &revision)?
+            // and untouched blobs, in its own object store (G2 PR3), through
+            // the one materializer that rechecks its import's custody (G4).
+            Some(_) => {
+                crate::code_revision::materialize_code_revision_tree(self, git, repo, &revision)?
             }
             None => self.document_files(repo, &revision, metadata)?,
         };
-        let parents = revision
-            .parent_revision_id
-            .map(|id| {
-                self.exported_engine_commit(repo, id)?
-                    .ok_or(Error::InvariantViolation(
-                        "export the engine parent before its child",
-                    ))
-            })
-            .transpose()?
-            .into_iter()
-            .collect();
+        // An import-bound tested revision keeps its original ancestry (CALL
+        // G, G4 PR1); every other revision its immediate exported parent.
+        let parents = match self.resolve_import_export_parents(git, repo, &revision)? {
+            Some(parents) => parents,
+            None => revision
+                .parent_revision_id
+                .map(|id| {
+                    self.exported_engine_commit(repo, id)?
+                        .ok_or(Error::InvariantViolation(
+                            "export the engine parent before its child",
+                        ))
+                })
+                .transpose()?
+                .into_iter()
+                .collect(),
+        };
         let tree = write_tree_files(git, repo, &files, revision.finalized_at)?;
         if let Some(tested) = &revision.tested_queue
             && tree.as_str() != tested.tree
@@ -264,7 +262,7 @@ impl Vault {
                             .file_modes
                             .get(&frontier.document_id)
                             .copied()
-                            .unwrap_or(0o100644),
+                            .unwrap_or(crate::codebase::DEFAULT_CODE_FILE_MODE),
                         content,
                     },
                 )
