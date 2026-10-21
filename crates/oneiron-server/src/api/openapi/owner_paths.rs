@@ -774,6 +774,30 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/feedback/triage/binding",
+        summary: "The skill the Coach's feedback triage runs (OF-420): `skill` (32 hex, null until the owner binds one), the `revision` a change names as `seen` (0 while never set) and `set_at`. With no skill bound every triage run fails and its status holds `skill_unbound`.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "put",
+        path: "/feedback/triage/binding",
+        summary: "Binds the SKILL the feedback triage runs (`skill`, 32 hex; null unbinds) at the `seen` revision the owner read; a binding that moved since is refused and nothing changes. Answers the binding.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/feedback/triage/run",
+        summary: "Queues the Coach's feedback sweep now (`{}`), joining one already queued: each open-inbox note not yet handed off gets its own triage job on the bound skill, whose findings land Proposed in the run tray. Answers `{attempt}`; the sweep completing is not each job finishing.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/feedback/triage/status",
+        summary: "One feedback sweep's status (`attempt`, 32 hex): its state and last error, the binding, each source's continuation, each revision it handed off or queued again with its job's state and committed result refs, and the holds (`skill_unbound`, each revision still unacknowledged). Not found when the queue holds no such attempt.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/free-time/cycles",
         summary: "One page of an agent's free-time cycles, newest first (agent: 32 hex; cursor: the next a previous page answered; limit), each with its state, period and floor from its item receipts, and the cursor of the next page.",
         row: Some("vault.free_time.cycles"),
