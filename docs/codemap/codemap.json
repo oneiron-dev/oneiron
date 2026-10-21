@@ -72086,6 +72086,36 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/cua/drift.rs",
+     "purpose": "Serial frozen-library matrix",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/drift_engine.rs",
+     "purpose": "Engine/fixture boundary for the S5 protocol",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/drift_plan.rs",
+     "purpose": "Frozen S5 selection, arguments, deadlines and published serial order",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/cua/fixture.rs",
      "purpose": "PRIVATE S1 lifecycle",
      "surface": {
@@ -72113,7 +72143,17 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/programs.rs",
+     "purpose": "References to publicly admitted engine records, never another program store",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/provider_gate.rs",
@@ -72126,10 +72166,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/cua/repair.rs",
+     "purpose": "One assisted recovery, one proposal, two independent strict confirmations",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/cua/report.rs",
      "purpose": "Assigned denominators, separate safety axes and descriptive medians only",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -72143,7 +72193,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/run.rs",
@@ -72153,7 +72203,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/served.rs",
@@ -73054,9 +73104,9 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "cua": {
-     "files": 12,
+     "files": 17,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "Synthetic browser bench: engine outcomes are not oracle passes"
     },
@@ -73154,7 +73204,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 135,
+   "source_files": 140,
    "test_files": 18
   },
   "oneiron-broker": {
