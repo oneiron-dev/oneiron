@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1163 code-mode rows (1123 host rows, 40 run rows), 3876 declarations.
-// Replies: 1043 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1167 code-mode rows (1127 host rows, 40 run rows), 3885 declarations.
+// Replies: 1047 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2283,6 +2283,15 @@ declare namespace Sdk {
   type MergeQueueRequeueView = { source_batch_ref: string; batch?: MergeQueueBatchView | null };
   type MergeQueueRepoRequest = { repo: EntityId };
   type MergeQueuePointersView = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[] };
+  type MergeQueueInitializeRequest = { repo: EntityId; baseline_commit: string; contract_baseline_ref?: string | null };
+  type MergeQueueCheckWorkKind = "init" | "check" | "diagnose";
+  type MergeQueueCheckState = "queued" | "running" | "needs_configuration" | "held" | "passed" | "failed" | "settled";
+  type QueueCheckHoldReason = "interrupted" | "executor_unavailable" | "missing_offline_input" | "unstable_inputs" | "authority" | "tree_unavailable" | "refused";
+  type MergeQueueCheckWorkView = { repo: EntityId; work_ref: string; kind: MergeQueueCheckWorkKind; status: MergeQueueCheckState; configuration_keys: string[]; reason?: string | null; hold?: QueueCheckHoldReason | null; generation: number; baseline_commit?: string | null; plan_digest?: string | null; receipt_refs: string[]; verdict_refs: string[]; pointers?: MergeQueuePointersView | null; quarantine?: Quarantine | null };
+  type QueueCheckPhase = "fast" | "slow";
+  type MergeQueueCheckRequest = { repo: EntityId; batch_ref: string; mask: number; phase: QueueCheckPhase; force_refresh?: boolean };
+  type MergeQueueDiagnoseRequest = { repo: EntityId; batch_ref: string };
+  type MergeQueueCheckStatusRequest = { repo: EntityId; work_ref: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type AgentSkillInput = { skill_id: string; min_version?: string | null };
@@ -4887,8 +4896,16 @@ declare const vault: Sdk.VaultHost & {
     /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
     export(input: Sdk.CodeExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
     merge_queue: {
+      /** Queue one fast or slow check on exact pinned inputs. Owner only. Excess checks wait; no pass, argv or output is accepted from the caller. */
+      check(input: Sdk.MergeQueueCheckRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
+      /** Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only. */
+      check_status(input: Sdk.MergeQueueCheckStatusRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
+      /** Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only. */
+      diagnose(input: Sdk.MergeQueueDiagnoseRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
       /** Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
       enqueue(input: Sdk.MergeQueueEnqueueRequest): Promise<Sdk.MergeQueueBatchView | StoredResult>;
+      /** Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue. */
+      init(input: Sdk.MergeQueueInitializeRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
       /** Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing. */
       land_reviewed(input: Sdk.MergeQueueBatchRequest): Promise<Sdk.MergeQueueBatchView | StoredResult>;
       /** Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt. */

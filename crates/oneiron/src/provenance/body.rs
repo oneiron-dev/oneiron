@@ -324,13 +324,19 @@ pub(crate) fn queue_pruned_file_in_txn(
 
 /// A digest whose last holder just went: a file queues for the collector,
 /// and an erase of an earlier holder that waited on this release retires
-/// its instance now (KS-2A); a delete or a collection keeps the key.
+/// its instance now (KS-2A); a delete or a collection keeps the key. A raw
+/// output that holds the body on its own keeps it, file and row, unless
+/// that erase lifted its hold (FIX 5399b).
 fn release_if_unheld(store: &impl ManifestDbs, txn: &mut RwTxn<'_>, held: &BodyRef) -> Result<()> {
     if digest_is_held_in_txn(store, txn, &held.blake3)? {
         return Ok(());
     }
     #[cfg(unix)]
     crate::store::release_body_in_txn(store, txn, &held.blake3)?;
+    #[cfg(unix)]
+    if crate::code_run::code_run_body_held_in_txn(store, txn, &held.blake3)? {
+        return Ok(());
+    }
     if held.location == BodyLocation::File {
         let at = crate::ports::recorded_at_in_txn(store, txn)?;
         BODY_RELEASED.put(store, txn, &held.blake3, &at)?;

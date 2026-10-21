@@ -88,7 +88,9 @@ impl SessionBinding<'_> {
         complete: bool,
         owner: EntityId,
     ) -> Result<CodeRunRawOutput> {
-        let finished = finish_output(path, sink, complete, self.session.limit_watch())?;
+        let finished = finish_output(path, sink, complete, self.session.limit_watch(), |digest| {
+            self.session.pin_result_body(digest)
+        })?;
         self.mark_secret(&finished.output, owner, finished.secret)?;
         self.put_output_row(&finished, &finished.output)?;
         Ok(finished.output)
@@ -126,7 +128,13 @@ impl SessionBinding<'_> {
     ) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
+        let finished = finish_output(
+            output.path.clone(),
+            sink,
+            true,
+            self.session.limit_watch(),
+            |digest| self.session.pin_result_body(digest),
+        )?;
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
@@ -142,7 +150,8 @@ impl SessionBinding<'_> {
     /// a key row whose file no row names. A vault instance's row pins the
     /// custody binding in that transaction. A key row the route's scope
     /// holds for the digest already stays, its file serving the body, and
-    /// the body's row is written all the same.
+    /// the body's row is written all the same. No descriptor holds a routed
+    /// body, so its row holds it on its own (FIX 5399b).
     pub(super) fn put_output_row(
         &self,
         finished: &super::super::records::FinishedOutput,
@@ -168,7 +177,7 @@ impl SessionBinding<'_> {
                             BODY_KEYS.put(&write, txn, key.digest(), key.row())?;
                         }
                     }
-                    RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body)
+                    RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body.holding(true))
                 })
         })
     }

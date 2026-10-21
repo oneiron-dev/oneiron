@@ -88,7 +88,9 @@ impl Vault {
             }
             let mut sink = BodySink::new(self.store.body_dir()?, bound, Some(mint));
             admitted.feed(&mut sink)?;
-            let finished = finish_output(path, sink, complete, self.limit_watch())?;
+            let finished = finish_output(path, sink, complete, self.limit_watch(), |digest| {
+                self.pin_result_body(digest)
+            })?;
             self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, Some(owner))?;
             wtxn.commit()?;
             return Ok(ReplyBody::Published(finished.output));

@@ -14374,7 +14374,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 8,
       "struct": 2
      }
@@ -14396,7 +14396,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 29,
       "fn": 3
      }
     },
@@ -17410,7 +17410,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 26,
       "struct": 2
      }
@@ -17433,6 +17433,16 @@
      "purpose": "A person's own slip bound to their proof (FIX 4707): the HTTP door of a world's settings holders, who need…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/queue_check.rs",
+     "purpose": "The owner's queued check approval (FIX 6868, L02 authority seam): the durable record that the owner approved…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -17528,7 +17538,7 @@
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 3,
       "re-export": 14
      }
@@ -19106,7 +19116,7 @@
      "path": "src/contract_oracle/graph.rs",
      "purpose": "Workspace dependency closure from resolved `cargo metadata --format-version 1` JSON",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -22830,6 +22840,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CoachHealAuthor",
       "HealDecisions",
       "HealRoute",
       "IssuesRun"
@@ -22841,7 +22852,8 @@
       "crate-vis": 5,
       "enum": 1,
       "fn": 3,
-      "struct": 2
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -23807,7 +23819,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 17,
       "struct": 1
      }
@@ -37198,10 +37210,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/merge_queue_doors/checker.rs",
+     "purpose": "The owner's checker doors (FIX 6868): request checked initialization, a bound fast or slow check and a bound…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MergeQueueCheckRequest",
+      "MergeQueueCheckState",
+      "MergeQueueCheckStatusRequest",
+      "MergeQueueCheckWorkKind",
+      "MergeQueueCheckWorkView",
+      "MergeQueueDiagnoseRequest",
+      "MergeQueueInitializeRequest",
+      "QueueCheckPhase"
+     ],
+     "path": "src/memory/merge_queue_doors/checker_types.rs",
+     "purpose": "The checker doors' wire types (FIX 6868)",
+     "surface": {
+      "enum": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/merge_queue_doors/mod.rs",
      "purpose": "Typed speculative merge queue doors (DOOR-132): enqueue stored repository proposals as one batch, stage it…",
      "surface": {
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -38949,14 +38991,107 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/check_execute.rs",
+     "purpose": "One check execution body for both check paths (FIX 6868): the low-level callback `check` and the bound…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QueueCheckEnvironment",
+      "QueueCheckExecution",
+      "QueueCheckFile",
+      "QueueCheckHold",
+      "QueueCheckHoldReason",
+      "QueueCheckHost",
+      "QueueCheckInputs",
+      "QueueCheckInvocation",
+      "QueueCheckLimits",
+      "QueueCheckNeed",
+      "QueueCheckReceipt",
+      "QueueCheckRun",
+      "QueueCheckTarget",
+      "QueueCheckTreeSource",
+      "QueueCommandReceipt"
+     ],
+     "path": "src/merge_queue/check_inputs.rs",
+     "purpose": "The exact inputs one queue check runs on, their one digest, the receipt a run leaves and the host seam that…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 9,
+      "struct": 10,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/check_requests.rs",
+     "purpose": "The owner's checker requests and the bound diagnosis (FIX 6868)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QueueCheckConfiguration",
+      "QueueCheckInitStage",
+      "QueueCheckLease",
+      "QueueCheckRequest",
+      "QueueCheckStatus",
+      "QueueCheckWork"
+     ],
+     "path": "src/merge_queue/check_store.rs",
+     "purpose": "The checker's companion rows and their attempt lifecycle (FIX 6868)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 13,
+      "enum": 3,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/check_tree.rs",
+     "purpose": "A pinned Git tree as a queue check's input (FIX 6868): read from the object store through the shipped…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/merge_queue/checks.rs",
      "purpose": "Out-of-order check completion, all-path agreement and red-batch diagnosis",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/initialize.rs",
+     "purpose": "Checked queue initialization on an owner-approved baseline (FIX 6868)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -38990,8 +39125,23 @@
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
       "fn": 1,
-      "re-export": 3,
+      "re-export": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FrozenCheckPlan",
+      "RepoCheckPlan"
+     ],
+     "path": "src/merge_queue/plan.rs",
+     "purpose": "The repository check plan a checked queue freezes from its approved baseline (FIX 6868)",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -39039,7 +39189,7 @@
      "path": "src/merge_queue/storage.rs",
      "purpose": "Repo-scoped queue/batch rows; every transition is under the repo single writer",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -49534,6 +49684,35 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HealContextPolicy",
+      "HealContextSeed",
+      "HealEvidenceContext",
+      "HealLink",
+      "HealUnavailable"
+     ],
+     "path": "src/self_heal/heal_context.rs",
+     "purpose": "What a heal reads about a failure's recorded cause (OF-418 L2, L10; ARCH-0066 §4, §6)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/heal_context/records.rs",
+     "purpose": "How a heal's context renders what it read (OF-418 L2, L10): the source order of a walk's links, a code run's…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "HealerDeployment",
       "HealerProposalRecord",
       "HealerRegistration",
@@ -49576,9 +49755,9 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 8,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -49707,6 +49886,7 @@
      "path": "src/self_heal/session_text.rs",
      "purpose": "What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 2
@@ -53607,6 +53787,16 @@
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
       "crate-vis": 35
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_store/finish_pinned.rs",
+     "purpose": "A body finished under its reader's pin (FIX 5399b)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -59811,7 +60001,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1142
+      "fn": 1146
      }
     },
     {
@@ -66987,7 +67177,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67484,14 +67674,14 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 234,
+     "files": 236,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 10,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67820,7 +68010,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 37,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67939,7 +68129,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 124,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68165,7 +68355,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4292,
+   "source_files": 4305,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77971,7 +78161,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1113
+      "fn": 1117
      }
     },
     {
@@ -79186,7 +79376,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1114
+      "fn": 1118
      }
     },
     {
@@ -81077,7 +81267,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/skill_author.rs",
@@ -81950,6 +82140,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/context_board/egress.rs",
+     "purpose": "Where a chat call's context board may go (FIX 7257), for a live turn and a queued Continue or Retry alike…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/context_board/explain.rs",
      "purpose": "Explain receipts (OF-278): GET /v1/core/explain/memory/{entity} answers why a memory appeared in the…",
      "surface": {
@@ -81983,7 +82183,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -83209,7 +83409,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 184
+      "crate-vis": 185
      }
     },
     {
@@ -83326,10 +83526,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/merge_queue_checker_doors.rs",
+     "purpose": "Credential-bound host projections of the owner's merge queue checker doors (FIX 6868)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/merge_queue_doors.rs",
      "purpose": "Credential-bound host projections of the typed speculative merge queue doors (DOOR-132)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -86931,6 +87141,7 @@
       "DistillArgs",
       "ExportArgs",
       "FetchArgs",
+      "FetchPlatforms",
       "OneironerCommand",
       "PublishArgs",
       "QualifyArgs",
@@ -86941,7 +87152,7 @@
      "path": "src/commands/oneironer.rs",
      "purpose": "`oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 \"one base, two…",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "fn": 1,
       "struct": 5
      }
@@ -87428,13 +87639,30 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CheckerBackend",
+      "CheckerNetwork",
+      "MergeQueueCheckerConfig"
+     ],
+     "path": "src/config/merge_queue.rs",
+     "purpose": "`[merge_queue]`: the executor the queue checker runs a repository's frozen check plan in (FIX 6868)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 3,
-      "mod": 14,
-      "re-export": 25
+      "mod": 15,
+      "re-export": 26
      }
     },
     {
@@ -90461,7 +90689,7 @@
      "path": "src/models/cooldown.rs",
      "purpose": "Offers a provider refused for a quota or a limit (OF-305)",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -90614,7 +90842,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 12,
       "struct": 1
      }
@@ -90972,6 +91200,56 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/archive.rs",
+     "purpose": "The strict reader of a platform row's archive (FIX 6755, contract rev 3 A1), written here with no tar…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/archive/ustar.rs",
+     "purpose": "The ustar stream itself: each header checked as it is read, every byte hashed on its way through, the entry…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/manifest.rs",
+     "purpose": "The manifest's common rows: the trunk, its config and tokenizer, the label table and the optional heads",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/mod.rs",
+     "purpose": "The Oneironer bundle as every runtime reads it (FIX 6755): one manifest schema, one identity and one archive…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/platform.rs",
+     "purpose": "The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -91048,7 +91326,7 @@
      "path": "src/oneironer/engines/rows.rs",
      "purpose": "This machine's measured engine rows: where they live, how they are read and written, and what keys them",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -91058,7 +91336,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -91098,7 +91376,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -91108,7 +91386,27 @@
      "path": "src/oneironer/release.rs",
      "purpose": "The shipped Oneironer releases, and the fetch that places one on this machine (FIX 6828)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/release/catalogue.rs",
+     "purpose": "The shipped release catalogue (FIX 6755)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/release/platforms.rs",
+     "purpose": "The platform half of a fetch (FIX 6755): which archives a fetch places, their extraction in staging, and the…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -92054,6 +92352,36 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/merge_queue_checker.rs",
+     "purpose": "The standalone merge queue checker drain (FIX 6868)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/merge_queue_checker/executor.rs",
+     "purpose": "The queue checker's executors (FIX 6868): the isolated session by default, the host child only on…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/merge_queue_checker/tree.rs",
+     "purpose": "The trusted check helper's framed protocol, and the pinned tree it carries in (FIX 6868)",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/message_stream.rs",
      "purpose": "Host-owned stream timer and local presence relay",
      "surface": {
@@ -92278,7 +92606,7 @@
      "path": "src/server/tagging.rs",
      "purpose": "The tagging worker: the one thing that drives the engine's tagging reconciler",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -92288,7 +92616,7 @@
      "path": "src/server/tagging/coordinator.rs",
      "purpose": "The tagging coordinator (FIX 6755): one loop per vault that keeps live and bulk markers in flight through…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -93173,7 +93501,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 491,
+     "files": 493,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93250,7 +93578,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93495,7 +93823,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 19,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93551,7 +93879,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 50,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93623,7 +93951,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1002,
+   "source_files": 1015,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95729,7 +96057,14 @@
       "MergeEvidenceView",
       "MergeQueueBatchRequest",
       "MergeQueueBatchView",
+      "MergeQueueCheckRequest",
+      "MergeQueueCheckState",
+      "MergeQueueCheckStatusRequest",
+      "MergeQueueCheckWorkKind",
+      "MergeQueueCheckWorkView",
+      "MergeQueueDiagnoseRequest",
       "MergeQueueEnqueueRequest",
+      "MergeQueueInitializeRequest",
       "MergeQueueObservation",
       "MergeQueueObserveRequest",
       "MergeQueuePathView",
@@ -96391,6 +96726,8 @@
       "QuestionRefreshRequest",
       "QuestionScheduleHead",
       "QuestionScheduleRequest",
+      "QueueCheckHoldReason",
+      "QueueCheckPhase",
       "QueueTaskBrief",
       "QuickFilterAtom",
       "QuoteAnchor",
@@ -97629,8 +97966,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 918,
-      "struct": 2887
+      "enum": 922,
+      "struct": 2892
      }
     },
     {
