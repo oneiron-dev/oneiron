@@ -32,12 +32,18 @@ use crate::{EntityId, Vault};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod arc_children;
+mod arc_chunks;
 mod arc_claims;
 mod arc_compose;
 mod arc_evidence;
+mod arc_output;
+mod arc_reduce;
+mod arc_review;
 mod arc_turns;
 mod chunks;
 mod output;
+mod window;
 
 pub(crate) use arc_evidence::arc_evidence_in_txn;
 
@@ -190,7 +196,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         // is unknown, is the one call below, byte for byte.
         if labels.is_some()
             && let Some(window) = self.session_window(ctx.vault)
-            && chunks::framed_tokens(instruction, &summary_input(&plan, &evidence.text)?, &schema)?
+            && window::framed_tokens(instruction, &summary_input(&plan, &evidence.text)?, &schema)?
                 > window
         {
             return self
@@ -331,6 +337,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             messages: evidence.messages.clone(),
             memo,
             line_sources,
+            arc_work: None,
         };
         match ctx
             .vault

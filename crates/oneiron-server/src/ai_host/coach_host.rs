@@ -19,7 +19,15 @@
 //! round for each due campaign, told by the replay judge whether its goal is
 //! verified met (`coach.research_select`, FIX 1331, [`research_oracle`]); the
 //! research job, queued each round while a campaign has host work, advances
-//! its autoresearch continuations (FIX 886). An owner-authorized training run
+//! its autoresearch continuations (FIX 886). The feedback sweep, on the
+//! nightly wake or the owner's run-now, hands each new revision of the open
+//! inbox and of each bound GitHub repository to its own triage job, which
+//! runs the owner's bound triage skill on the Coach's seat and files its
+//! findings Proposed (`coach.feedback_sweep`, `coach.feedback_triage`, OF-420
+//! T1, [`super::feedback_triage`]). The publisher delivery carries each
+//! report's content-free issue signature to the publisher the owner bound to
+//! this server's configured destination (`coach.feedback_delivery`, FIX 739,
+//! [`super::feedback_report_delivery`]). An owner-authorized training run
 //! trains on its own thread, then scores ([`super::training_pack`]).
 use std::collections::BTreeMap;
 use std::sync::Arc;

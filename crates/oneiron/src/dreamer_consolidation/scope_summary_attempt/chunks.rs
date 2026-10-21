@@ -13,7 +13,9 @@
 //! it: the one park on size names a window that holds no character.
 
 use super::output::{self, PageRef};
+use super::window::{escaped_cost, framed_tokens, message_ranges, tile};
 use super::{ScopeSummaryEvidence, ScopeSummaryExecutor, compose_again};
+use crate::EntityId;
 use crate::dreamer_consolidation::residency::{residency_deferral, waits_on_residency};
 use crate::dreamer_consolidation::step_charge::StepChargeTally;
 use crate::dreamer_consolidation::support::invalid_consolidation;
@@ -25,44 +27,12 @@ use crate::llm::{
     DurableStepContext, DurableStepError, LlmResponse, StepOutcome, call_as_step_checked,
 };
 use crate::scope_summary::{ComposedSummary, ScopeSummaryPlan, SummaryLineSpan};
-use crate::{EntityId, Vault};
 use std::collections::BTreeMap;
 
 /// The identity a paged sitting's composition is known by.
 const PAGES_DOMAIN: &str = "oneiron:session-summary-pages:v1";
 
 impl<E> ScopeSummaryExecutor<'_, E> {
-    /// The tokens one call's input may fill on the model: the host's count,
-    /// else the vault's own row for the model, its context less the output
-    /// it reserves where that is below it, as the host counts. `None` when
-    /// neither is known: a zero context, or a row that did not read.
-    pub(super) fn session_window(&self, vault: &Vault) -> Option<u64> {
-        if let Some(window) = self.window_tokens.filter(|window| *window > 0) {
-            return Some(window);
-        }
-        let row = match vault.model_registry_row(&self.model) {
-            Ok(row) => row?,
-            Err(error) => {
-                tracing::warn!(
-                    model = %self.model,
-                    %error,
-                    "a session summary's model row did not read; its window is unknown"
-                );
-                return None;
-            }
-        };
-        let context = row.catalog.context_window_tokens;
-        if context == 0 {
-            return None;
-        }
-        let output = row
-            .catalog
-            .max_output_tokens
-            .filter(|output| *output < context)
-            .unwrap_or(0);
-        Some(context - output)
-    }
-
     /// Composes a sitting too big for one call on `window` (FIX 7509 P7b):
     /// the standing composition under the paged identity first, then every
     /// page in order from the first, each a durable step a resume replays
@@ -238,6 +208,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             messages: evidence.messages.clone(),
             memo,
             line_sources: Some(composition.line_sources),
+            arc_work: None,
         };
         // The landing fence reads the whole evidence again, every page's
         // sources with it.
@@ -255,21 +226,6 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
         }
     }
-}
-
-/// The tokens a call costs as framed: its instruction, its input as sent
-/// and its output contract, each counted as a resident's window counts.
-pub(super) fn framed_tokens(
-    instruction: &str,
-    user: &str,
-    schema: &serde_json::Value,
-) -> Result<u64> {
-    let schema = serde_json::to_string(schema)
-        .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
-    Ok([instruction, user, schema.as_str()]
-        .into_iter()
-        .map(tokens)
-        .sum())
 }
 
 /// The input one page's call reads: the declaration's purpose and `keep`,
@@ -377,38 +333,27 @@ fn parts(
     } else {
         message_ranges(text, words)?
     };
-    let mut parts = Vec::new();
-    let mut next = 0;
-    while let Some(&(start, _)) = messages.get(next) {
-        let part_label = format!("{label}.p{}", parts.len() + 1);
-        let run = longest_fit(messages.len() - next, |run| {
-            fits(&part_label, &words[start..messages[next + run - 1].1], room)
-        })?;
-        if run > 0 {
-            let end = messages[next + run - 1].1;
-            parts.push(part(part_label, turn, text, inline, words, (start, end))?);
-            next += run;
-            continue;
-        }
-        // One MESSAGE alone fits no empty page: it is cut at characters.
-        let (mut at, end) = messages[next];
-        while at < end {
-            let part_label = format!("{label}.p{}", parts.len() + 1);
-            let bytes = longest_fit(end - at, |bytes| {
-                let cut = words.floor_char_boundary(at + bytes);
-                // A prefix short of one character holds none, so fits.
-                Ok(cut == at || fits(&part_label, &words[at..cut], room)?)
-            })?;
-            let cut = words.floor_char_boundary(at + bytes);
-            if cut == at {
-                return Ok(None);
-            }
-            parts.push(part(part_label, turn, text, inline, words, (at, cut))?);
-            at = cut;
-        }
-        next += 1;
-    }
-    Ok((!parts.is_empty()).then_some(parts))
+    let Some(ranges) = tile(words, &messages, |index, slice| {
+        fits(&format!("{label}.p{}", index + 1), slice, room)
+    })?
+    else {
+        return Ok(None);
+    };
+    ranges
+        .into_iter()
+        .enumerate()
+        .map(|(index, range)| {
+            part(
+                format!("{label}.p{}", index + 1),
+                turn,
+                text,
+                inline,
+                words,
+                range,
+            )
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
 }
 
 /// One part of `turn` showing `range` of its text under `label`, with the
@@ -449,64 +394,6 @@ fn part(
     })
 }
 
-/// Each MESSAGE of a projected TURN that holds words, as its byte range in
-/// the TURN's text, in projection order: from each MESSAGE's whole span and
-/// the `"\n"` that joins one MESSAGE to the next. An empty MESSAGE holds
-/// none.
-fn message_ranges(text: &TurnText, words: &str) -> Result<Vec<(usize, usize)>> {
-    let lengths: BTreeMap<EntityId, usize> = text
-        .spans(None)?
-        .into_iter()
-        .map(|span| (span.message, span.end - span.start))
-        .collect();
-    let mut ranges = Vec::new();
-    let mut offset = 0_usize;
-    for (index, message) in text.projection().into_iter().enumerate() {
-        if index != 0 {
-            offset += 1;
-        }
-        let len = lengths.get(&message).copied().unwrap_or(0);
-        if len != 0 {
-            ranges.push((offset, offset + len));
-        }
-        offset += len;
-    }
-    if offset != words.len() {
-        return Err(invalid_consolidation(
-            "a projected turn's messages do not tile its text",
-        ));
-    }
-    Ok(ranges)
-}
-
-/// The largest `n` in `1..=max` that `fits`, or 0 when 1 does not: doubling
-/// from 1 to the first `n` that does not fit, then halving the gap below it.
-fn longest_fit(max: usize, mut fits: impl FnMut(usize) -> Result<bool>) -> Result<usize> {
-    let (mut good, mut bad) = (0, max.saturating_add(1));
-    let mut probe = 1;
-    while probe < bad {
-        if fits(probe)? {
-            good = probe;
-            probe = if probe == max {
-                bad
-            } else {
-                probe.saturating_mul(2).min(max)
-            };
-        } else {
-            bad = probe;
-        }
-    }
-    while bad - good > 1 {
-        let mid = good + (bad - good) / 2;
-        if fits(mid)? {
-            good = mid;
-        } else {
-            bad = mid;
-        }
-    }
-    Ok(good)
-}
-
 /// Whether `slice`, shown under `label`, fits `room` tokens.
 fn fits(label: &str, slice: &str, room: u64) -> Result<bool> {
     Ok(escaped_cost(&render(label, slice))? <= room)
@@ -516,21 +403,4 @@ fn fits(label: &str, slice: &str, room: u64) -> Result<bool> {
 /// TURN, `[label] words` and a newline.
 fn render(label: &str, words: &str) -> String {
     format!("[{label}] {words}\n")
-}
-
-/// The tokens `rendered` costs where a page carries it, inside its JSON
-/// `records` string: counted over its escaping, without the quotes.
-fn escaped_cost(rendered: &str) -> Result<u64> {
-    let escaped = serde_json::to_string(rendered)
-        .map_err(|_| invalid_consolidation("summary input encoding"))?;
-    let inner = escaped
-        .strip_prefix('"')
-        .and_then(|inner| inner.strip_suffix('"'))
-        .unwrap_or(&escaped);
-    Ok(tokens(inner))
-}
-
-/// The tokens `text` counts, as a resident's window counts them.
-fn tokens(text: &str) -> u64 {
-    crate::count_context_pack_tokens(text) as u64
 }

@@ -8,7 +8,7 @@
 
 use super::super::call_labels::LabelKind;
 use super::super::residency::waits_on_residency;
-use super::super::turn_text::{collect_in, dreamer_read, snapshot};
+use super::super::turn_text::{TurnText, collect_in, dreamer_read, snapshot};
 use super::ScopeSummaryEvidence;
 use super::arc_evidence::ArcView;
 use crate::error::{Error, Result};
@@ -17,10 +17,30 @@ use crate::{EntityId, Vault};
 
 /// What opening a reply's turns came to.
 pub(super) enum Opened {
-    /// Each turn's words under its label, in the order named.
-    Text(String),
+    /// Each turn as opened, in the order named.
+    Turns(Vec<OpenedTurn>),
     /// A turn that did not open, by its full id: the Arc stays owed.
     Unavailable(EntityId),
+}
+
+/// One turn as opened (FIX 7509 PR3, typed): its id, its label in the
+/// call, and its words with every MESSAGE they were read from, as pinned.
+pub(super) struct OpenedTurn {
+    pub(super) turn: EntityId,
+    label: String,
+    text: TurnText,
+}
+
+/// The opened turns' words as one call shows them, each under its label,
+/// in the order named.
+pub(super) fn opened_text(turns: &[OpenedTurn]) -> String {
+    let mut text = String::new();
+    for turn in turns {
+        if let Some(words) = turn.text.text() {
+            text.push_str(&format!("[{}] {words}\n", turn.label));
+        }
+    }
+    text
 }
 
 /// Opens `named`, each a TURN `view` labelled, as `evidence` pinned it. A
@@ -36,7 +56,7 @@ pub(super) fn open_turns(
     let read = dreamer_read(vault)?;
     let txn = snapshot(vault)?;
     let rows = read.get_entities_parts_in_txn(&txn, named)?;
-    let mut text = String::new();
+    let mut turns = Vec::with_capacity(named.len());
     for (turn, row) in named.iter().zip(rows) {
         let Some((ENTITY_TYPE_TURN, _, body)) = row else {
             return Ok(Opened::Unavailable(*turn));
@@ -60,9 +80,11 @@ pub(super) fn open_turns(
         let Some(label) = view.labels.label(LabelKind::Turn, *turn) else {
             return Ok(Opened::Unavailable(*turn));
         };
-        if let Some(words) = opened.text() {
-            text.push_str(&format!("[{label}] {words}\n"));
-        }
+        turns.push(OpenedTurn {
+            turn: *turn,
+            label: label.to_string(),
+            text: opened,
+        });
     }
-    Ok(Opened::Text(text))
+    Ok(Opened::Turns(turns))
 }

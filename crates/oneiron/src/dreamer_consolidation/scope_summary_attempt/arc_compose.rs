@@ -10,19 +10,18 @@
 //! again while a reply names turns not yet open: each round opens more, so
 //! the rounds end. Only a reply asking for none lands.
 //!
-//! Rule 5 until exhaustive Arc splitting (PR3): an input that fits one call
-//! on its model's window is composed; a larger one stays owed as
-//! `arc_needs_split`, never written smaller. A sitting's owed summary or a
-//! TURN that does not open leaves it owed too, each typed on its row.
+//! Rule 5 (PR3): an input that fits one call on its model's window, or
+//! whose window is unknown, is this one call; a larger one composes in
+//! parts ([`super::arc_children`]), never written smaller. A sitting's owed
+//! summary or a TURN that does not open leaves it owed, typed on its row.
 
-use super::super::call_labels::{CallLabelMap, LabelKind};
 use super::super::residency::{residency_deferral, waits_on_residency};
 use super::super::step_charge::StepChargeTally;
 use super::super::support::invalid_consolidation;
 use super::arc_evidence::ArcView;
-use super::arc_turns::{Opened, open_turns};
-use super::chunks::framed_tokens;
-use super::output::reply_text;
+use super::arc_output::{ArcReply, arc_output, arc_schema};
+use super::arc_turns::{Opened, open_turns, opened_text};
+use super::window::framed_tokens;
 use super::{ScopeSummaryEvidence, ScopeSummaryExecutor, compose_again};
 use crate::EntityId;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
@@ -31,10 +30,7 @@ use crate::error::{Error, Result};
 use crate::llm::{
     DurableStepContext, DurableStepError, LlmResponse, StepOutcome, call_as_step_checked,
 };
-use crate::scope_summary::{
-    ArcPendingCause, ComposedSummary, ScopeSummaryPlan, SummaryLineSources,
-};
-use serde::Deserialize;
+use crate::scope_summary::{ArcPendingCause, ComposedSummary, ScopeSummaryPlan};
 use std::collections::BTreeSet;
 
 /// The identity an Arc's composition is known by.
@@ -93,6 +89,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             }
             Err(error) => return Err(error),
         }
+        // An Arc already composing in parts goes on where it stopped.
+        if let Some(window) = self.session_window(ctx.vault)
+            && self.arc_work_open(ctx, plan, evidence, instruction, window)?
+        {
+            return self
+                .compose_arc_work(attempt, ctx, plan, evidence, instruction, (window, none))
+                .await;
+        }
         let step_ctx = DurableStepContext {
             vault: ctx.vault,
             attempt_id,
@@ -105,15 +109,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let covers: BTreeSet<EntityId> = evidence.covers.iter().copied().collect();
         let mut charges = StepChargeTally::default();
         let mut opened = view.opened.clone();
-        let mut opened_text = String::new();
+        let mut words = String::new();
         let lines = loop {
-            let user = arc_input(plan, view, &opened_text)?;
-            if let Some(window) = self.session_window(ctx.vault) {
-                let tokens = framed_tokens(instruction, &user, &schema)?;
-                if tokens > window {
-                    let cause = ArcPendingCause::NeedsSplit { tokens, window };
-                    return owe(ctx, plan, cause, &charges);
-                }
+            let user = arc_input(plan, view, &words)?;
+            if let Some(window) = self.session_window(ctx.vault)
+                && framed_tokens(instruction, &user, &schema)? > window
+            {
+                return self
+                    .compose_arc_work(attempt, ctx, plan, evidence, instruction, (window, charges))
+                    .await;
             }
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());
@@ -176,8 +180,8 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
             };
             match open_turns(ctx.vault, evidence, view, &ask) {
-                Ok(Opened::Text(text)) => {
-                    opened_text.push_str(&text);
+                Ok(Opened::Turns(turns)) => {
+                    words.push_str(&opened_text(&turns));
                     opened.extend(ask);
                 }
                 Ok(Opened::Unavailable(turn)) => {
@@ -206,6 +210,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             messages: evidence.messages.clone(),
             memo,
             line_sources: Some(lines.line_sources),
+            arc_work: None,
         };
         // The landing fence reads every sitting's summary, TURN, MESSAGE and
         // claim pin again, with the source set and policy.
@@ -227,7 +232,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
 
 /// The Arc stays owed for `cause`, on its row, retried at the next
 /// backstop: its attempt ends having written nothing.
-fn owe(
+pub(super) fn owe(
     ctx: &WakeAttemptContext<'_>,
     plan: &ScopeSummaryPlan,
     cause: ArcPendingCause,
@@ -253,137 +258,4 @@ fn arc_input(plan: &ScopeSummaryPlan, view: &ArcView, opened: &str) -> Result<St
         "opened": opened,
     }))
     .map_err(|_| invalid_consolidation("summary input encoding"))
-}
-
-/// The typed output contract of an Arc's call.
-fn arc_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object", "additionalProperties": false,
-        "required": ["lines", "keep", "open_turns"],
-        "properties": {
-            "lines": {"type": "array", "items": {
-                "type": "object", "additionalProperties": false,
-                "required": ["text", "turn_refs"],
-                "properties": {
-                    "text": {"type": "string"},
-                    "turn_refs": {"type": "array", "items": {"type": "string"}}
-                }
-            }},
-            "keep": {"type": "string"},
-            "open_turns": {"type": "array", "items": {"type": "string"}}
-        }
-    })
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ArcWire {
-    lines: Vec<ArcWireLine>,
-    keep: String,
-    open_turns: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ArcWireLine {
-    text: String,
-    turn_refs: Vec<String>,
-}
-
-/// An Arc's lines as composed: its text, rendered once from its lines, and
-/// each line's range in that text with the TURNs it came from.
-struct ArcLines {
-    text: String,
-    keep: String,
-    line_sources: Vec<SummaryLineSources>,
-}
-
-/// What a checked reply asks.
-enum ArcReply {
-    /// Open these turns first, each one the call showed by label and not
-    /// yet open; write nothing.
-    Open(Vec<EntityId>),
-    Lines(ArcLines),
-}
-
-/// The reply, or the static reason it is none. Each turn it names to open
-/// is a `T` label its call showed; naming only turns already open asks for
-/// none. Otherwise each line is one line of words that are not blank,
-/// citing at least one TURN, each once, by a `T` label of a TURN whose
-/// words the Arc covers; the lines join with a newline, each range counted
-/// in Unicode scalars. The step's check and the landing read the reply
-/// through this one parse.
-fn arc_output(
-    response: &LlmResponse,
-    labels: &CallLabelMap,
-    opened: &BTreeSet<EntityId>,
-    covers: &BTreeSet<EntityId>,
-) -> std::result::Result<ArcReply, &'static str> {
-    let reply: ArcWire = serde_json::from_str(reply_text(response).trim())
-        .map_err(|_| "the model wrote an invalid arc summary result")?;
-    let mut ask = Vec::new();
-    for label in &reply.open_turns {
-        let turn = labels
-            .resolve_as(LabelKind::Turn, label)
-            .ok_or("an arc reply opens a turn its call did not show")?;
-        if !opened.contains(&turn) && !ask.contains(&turn) {
-            ask.push(turn);
-        }
-    }
-    if !ask.is_empty() {
-        return Ok(ArcReply::Open(ask));
-    }
-    let mut text = String::new();
-    let mut scalars = 0_usize;
-    let mut line_sources = Vec::with_capacity(reply.lines.len());
-    for line in &reply.lines {
-        let words = line.text.trim();
-        if words.is_empty() {
-            return Err("the model wrote a blank arc line");
-        }
-        if words.chars().any(|c| {
-            matches!(
-                c,
-                '\n' | '\r' | '\u{0b}' | '\u{0c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
-            )
-        }) {
-            return Err("the model wrote an arc line that breaks");
-        }
-        if line.turn_refs.is_empty() {
-            return Err("an arc line cites no turn");
-        }
-        let mut seen = BTreeSet::new();
-        let mut turn_refs = Vec::with_capacity(line.turn_refs.len());
-        for label in &line.turn_refs {
-            let turn = labels
-                .resolve_as(LabelKind::Turn, label)
-                .filter(|turn| covers.contains(turn))
-                .ok_or("an arc line cites a turn its call did not show")?;
-            if !seen.insert(turn) {
-                return Err("an arc line cites a turn twice");
-            }
-            turn_refs.push(turn.to_hex());
-        }
-        if !text.is_empty() {
-            text.push('\n');
-            scalars += 1;
-        }
-        let output_start = scalars;
-        text.push_str(words);
-        scalars += words.chars().count();
-        line_sources.push(SummaryLineSources {
-            output_start,
-            output_end: scalars,
-            turn_refs,
-            source_spans: Vec::new(),
-        });
-    }
-    if text.is_empty() {
-        return Err("the model wrote an empty arc");
-    }
-    Ok(ArcReply::Lines(ArcLines {
-        text,
-        keep: reply.keep,
-        line_sources,
-    }))
 }

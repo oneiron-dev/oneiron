@@ -34,6 +34,9 @@ side_tables! {
     /// Birth-position scope stamp (kind, birth facet, worlds/facets/bands/audience/sensitivity) for
     /// one stored record, used by scoped read/export/delete. Key: id16.
     SCOPE_RECORD: VaultMeta b"scope:record:v2:" LegacyJson;
+    /// One row of an Arc's durable work generation (FIX 7509 PR3): its manifest, a part's progress or
+    /// its assembly, as refs, pins, ranges and step refs only. Key: string (work id hex + typed suffix).
+    SCOPE_SUMMARY_ARC_WORK: VaultMeta b"scope_summary:arc_work:v1:" Named;
     /// Active scope-summary projection and its last observed input hash. Key: hash32.
     SCOPE_SUMMARY_PROJECTION: VaultMeta b"scope_summary:projection:v1:" Named;
     /// Owner-approved summary-purpose descriptor. Key: string (descriptor id).

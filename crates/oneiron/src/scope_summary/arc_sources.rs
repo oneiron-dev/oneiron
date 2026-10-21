@@ -12,6 +12,7 @@
 //! summary is still owed keeps the Arc owed, never smaller.
 
 use super::codec::invalid;
+use super::derivation::SummaryLineSpan;
 use super::doors::{ScopeSources, scope_sources_in_txn};
 use super::purpose::SummaryPurpose;
 use super::request::{ScopeSummaryPlan, ScopeSummaryRequest, ScopeSummaryTarget};
@@ -57,6 +58,14 @@ pub(crate) struct LowerSummary {
 /// One line of a sitting's summary that cites the Arc's TURNs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LowerLine {
+    /// The line's place among its summary's lines as generated, from 0
+    /// (FIX 7509 PR3), and its range in that text, in Unicode scalars.
+    pub(crate) index: usize,
+    pub(crate) output_start: usize,
+    pub(crate) output_end: usize,
+    /// The slices of TURNs the line came from, as its summary recorded
+    /// them; carried unchanged, never rebuilt from its words.
+    pub(crate) source_spans: Vec<SummaryLineSpan>,
     /// The line's words as generated.
     pub(crate) words: String,
     /// The Arc's TURNs the line cites, in citation order.
@@ -223,7 +232,7 @@ fn lower_in_txn(
         .chain(std::iter::once(generated.len()))
         .collect();
     let mut lines = Vec::new();
-    for line in line_sources {
+    for (index, line) in line_sources.into_iter().enumerate() {
         let words = bounds
             .get(line.output_start)
             .zip(bounds.get(line.output_end))
@@ -243,6 +252,10 @@ fn lower_in_txn(
             continue;
         }
         lines.push(LowerLine {
+            index,
+            output_start: line.output_start,
+            output_end: line.output_end,
+            source_spans: line.source_spans,
             words: words.to_owned(),
             whole: !rewritten && turns.len() == cites.len(),
             turns,
@@ -257,8 +270,9 @@ fn lower_in_txn(
 }
 
 /// The source set's id: each lower summary in order, whether its words are
-/// still its lines, and each of its lines with its words and refs; then each
-/// owed sitting. The same sources are the same id.
+/// still its lines, and each of its lines with its place, range, slices,
+/// words and refs; then each owed sitting. The same sources are the same
+/// id.
 fn source_set_id(lower: &[LowerSummary], owed: &[EntityId]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(SOURCE_SET_DOMAIN);
@@ -271,6 +285,17 @@ fn source_set_id(lower: &[LowerSummary], owed: &[EntityId]) -> [u8; 32] {
         part(summary.session.as_bytes());
         part(&[u8::from(summary.rewritten)]);
         for line in &summary.lines {
+            part(&(line.index as u64).to_be_bytes());
+            part(&(line.output_start as u64).to_be_bytes());
+            part(&(line.output_end as u64).to_be_bytes());
+            for span in &line.source_spans {
+                part(span.turn.as_bytes());
+                part(span.message.as_deref().unwrap_or_default().as_bytes());
+                part(&[u8::from(span.message.is_some())]);
+                part(&(span.start as u64).to_be_bytes());
+                part(&(span.end as u64).to_be_bytes());
+            }
+            part(b"words");
             part(line.words.as_bytes());
             part(&[u8::from(line.whole)]);
             for turn in &line.turns {

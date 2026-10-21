@@ -39,6 +39,10 @@ pub struct WakeRecipePolicy {
     /// before it is written again ahead of its backstop (FIX 7509 P8). Zero
     /// writes on any changed source set; an unchanged set never writes.
     pub arc_min_new_statements: u32,
+    /// The new part, review and rewrite model calls one Arc composed in
+    /// parts makes in one wake before it checkpoints the rest (FIX 7509
+    /// PR3): a pace, never a bound on the Arc. Above zero.
+    pub arc_child_calls_per_wake: u32,
     /// What the expensive path is asked of an unflagged window.
     pub audit_window_instruction: String,
 }
@@ -49,6 +53,7 @@ impl WakeRecipePolicy {
             || self.nightly_spans == 0
             || self.nightly_children == 0
             || self.rung_retry_secs == 0
+            || self.arc_child_calls_per_wake == 0
             || self.audit_percent > 100
             || self.novelty_instruction.trim().is_empty()
             || self.typing_instruction.trim().is_empty()
