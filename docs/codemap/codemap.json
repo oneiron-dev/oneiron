@@ -11608,6 +11608,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckoutAttemptBinding"
+     ],
+     "path": "src/checkout/lease/attempt_binding.rs",
+     "purpose": "One attempt's custody of a checkout epoch (FIX 6867, G1 PR3b; ASK 2)",
+     "surface": {
+      "crate-vis": 10,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -11638,8 +11651,8 @@
      "path": "src/checkout/lease/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
-      "re-export": 3
+      "crate-vis": 5,
+      "re-export": 4
      }
     },
     {
@@ -13597,7 +13610,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/repo.rs",
-     "purpose": "`self.code.*` (FIX 6867, L11 G1 PR2a, PR2b): a leased agent run's repo rows",
+     "purpose": "`self.code.*` (FIX 6867, L11 G1 PR2a, PR2b, PR3b): a leased agent run's repo rows",
      "surface": {
       "crate-vis": 1,
       "fn": 1
@@ -13935,7 +13948,7 @@
       "RepoRunCall"
      ],
      "path": "src/code_run/repo_calls.rs",
-     "purpose": "The run repo rows as typed calls (FIX 6867, L11 G1 PR2a, PR2b): one variant a row, carrying that row's…",
+     "purpose": "The run repo rows as typed calls (FIX 6867, L11 G1 PR2a, PR2b, PR3b): one variant a row, carrying that row's…",
      "surface": {
       "crate-vis": 4,
       "enum": 1,
@@ -20959,7 +20972,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
       "mod": 1,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -21015,6 +21028,19 @@
       "fn": 5,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ByoaRepoBinding"
+     ],
+     "path": "src/dispatch_byoa/repo_binding.rs",
+     "purpose": "A BYOA CLI attempt's checkout custody (FIX 6867, G1 PR3b; ASK 2 approved; CALL \"FIX 6867 stale capture\")",
+     "surface": {
+      "crate-vis": 7,
+      "struct": 1
      }
     },
     {
@@ -27503,6 +27529,16 @@
      "notable": [],
      "path": "src/federation/git_push/admission.rs",
      "purpose": "The one receive-pack decision (FIX 6867, G1-PUSH): who may push into a served repository, read in the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/git_push/anchor.rs",
+     "purpose": "The owner's served-repo anchor (FIX 6867, G1 PR3b; `vault.repo.anchor.bind`)",
      "surface": {
       "crate-vis": 2
      }
@@ -37584,6 +37620,33 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoCheckoutBindInput",
+      "RepoCheckoutBindOutput",
+      "RepoExportInput",
+      "RepoExportOutput"
+     ],
+     "path": "src/memory/repo_doors/custody.rs",
+     "purpose": "`self.code.checkout.bind` and `self.code.export` (FIX 6867, G1 PR3b): a leased run binds its own checkout…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/repo_doors/host.rs",
+     "purpose": "The run binding of a public `vault.repo.*` call (FIX 6867, G1 PR3b): an external agent's credential-bound…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -37594,7 +37657,7 @@
      "purpose": "The run repo doors (FIX 6867, L11 G1 PR2a): a leased agent run's own reads of the repos its owner's Grant…",
      "surface": {
       "crate-vis": 11,
-      "re-export": 2,
+      "re-export": 5,
       "struct": 2
      }
     },
@@ -37624,6 +37687,19 @@
      "surface": {
       "crate-vis": 1,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerProposalReviewPolicy"
+     ],
+     "path": "src/memory/repo_doors/review_policy.rs",
+     "purpose": "The stock review policy a host binds for runs' proposals (FIX 6867, G1 PR3b; closes FIX 7062)",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -46874,7 +46950,7 @@
      "path": "src/repo_mutation/proposal/run.rs",
      "purpose": "A leased run's proposal (FIX 6867, G1 PR2b): the one checked proposer on the immutable base its work is…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -59428,7 +59504,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1125
+      "fn": 1141
      }
     },
     {
@@ -59439,13 +59515,15 @@
       "GitPushGrantMintOutput",
       "GitPushGrantRevokeInput",
       "GitPushGrantRevokeOutput",
-      "GitPushGrantView"
+      "GitPushGrantView",
+      "RepoAnchorBindInput",
+      "RepoAnchorBindOutput"
      ],
      "path": "src/task_verb/sdk_git_push_grant.rs",
      "purpose": "The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`…",
      "surface": {
-      "fn": 2,
-      "struct": 5
+      "fn": 3,
+      "struct": 7
      }
     },
     {
@@ -66436,7 +66514,7 @@
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
     },
     "checkout": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -66709,7 +66787,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66863,7 +66941,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67087,7 +67165,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 231,
+     "files": 234,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67768,7 +67846,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4259,
+   "source_files": 4265,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77574,7 +77652,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1096
+      "fn": 1112
      }
     },
     {
@@ -78789,7 +78867,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1097
+      "fn": 1113
      }
     },
     {
@@ -82732,7 +82810,7 @@
      "path": "src/api/facade/git_push_doors.rs",
      "purpose": "The host doors of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -82812,7 +82890,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 183
+      "crate-vis": 184
      }
     },
     {
@@ -83133,6 +83211,16 @@
      "purpose": "The generated context-bearing reply door, under the existing owner's inference authority",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/repo_doors.rs",
+     "purpose": "The public `vault.repo.*` run doors (FIX 6867, G1 PR3b): an external agent's own attached live run reads and…",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -92676,7 +92764,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 490,
+     "files": 491,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93126,7 +93214,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 992,
+   "source_files": 993,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95133,6 +95221,21 @@
       "LiveRunRequestOpenInput",
       "LiveRunRequestPointInput",
       "LiveRunRequestProposeInput",
+      "LiveRunRequestRepoCheckoutBindInput",
+      "LiveRunRequestRepoExportInput",
+      "LiveRunRequestRepoMergeQueueEnqueueInput",
+      "LiveRunRequestRepoMergeQueueObserveInput",
+      "LiveRunRequestRepoProposalSubmitInput",
+      "LiveRunRequestRepoSnapshotsGetInput",
+      "LiveRunRequestRepoSnapshotsIngestInput",
+      "LiveRunRequestRepoSnapshotsReadInput",
+      "LiveRunRequestRepoSymbolsDeclareInput",
+      "LiveRunRequestRepoSymbolsDefinitionsInput",
+      "LiveRunRequestRepoSymbolsReleaseInput",
+      "LiveRunRequestRepoSymbolsRenewInput",
+      "LiveRunRequestRepoViewsGetInput",
+      "LiveRunRequestRepoViewsReadInput",
+      "LiveRunRequestRepoWorkOpenInput",
       "LiveRunRequestReportBlockedInput",
       "LiveRunRequestScreenshotInput",
       "LiveRunRequestSecretGrantMintRequest",
@@ -95931,9 +96034,39 @@
       "ReplyStripsPage",
       "ReplyStripsRequest",
       "RepoAccessBounds",
+      "RepoAnchorBindInput",
+      "RepoAnchorBindOutput",
+      "RepoCheckoutBindInput",
+      "RepoCheckoutBindOutput",
+      "RepoExportInput",
+      "RepoExportOutput",
+      "RepoMergeQueueEnqueueInput",
+      "RepoMergeQueueObserveInput",
+      "RepoMergeQueueObserveOutput",
       "RepoProposalDecision",
       "RepoProposalSettlement",
       "RepoProposalStatus",
+      "RepoProposalSubmitInput",
+      "RepoProposalSubmitOutput",
+      "RepoQueueEntryView",
+      "RepoSnapshotView",
+      "RepoSnapshotsGetInput",
+      "RepoSnapshotsIngestInput",
+      "RepoSnapshotsReadInput",
+      "RepoSnapshotsReadOutput",
+      "RepoSymbolDeclarationView",
+      "RepoSymbolsDeclareInput",
+      "RepoSymbolsDefinitionsInput",
+      "RepoSymbolsDefinitionsOutput",
+      "RepoSymbolsReleaseInput",
+      "RepoSymbolsReleaseOutput",
+      "RepoSymbolsRenewInput",
+      "RepoViewsGetInput",
+      "RepoViewsReadInput",
+      "RepoViewsReadOutput",
+      "RepoWorkFile",
+      "RepoWorkOpenInput",
+      "RepoWorkView",
       "ReportBlockedInput",
       "ReportBlockedOutput",
       "ReportDisclosure",
@@ -97079,7 +97212,7 @@
      "purpose": "—",
      "surface": {
       "enum": 916,
-      "struct": 2835
+      "struct": 2880
      }
     },
     {
