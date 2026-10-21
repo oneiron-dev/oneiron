@@ -3,6 +3,10 @@
 //! File-only, like `[models]`. Absent means no run has a browser, and every
 //! browser verb answers `browser_unbound`. Each bound below is a manifest
 //! row for one guest; none of them counts or refuses a program's calls.
+//!
+//! On a managed node the same guest also renders the web fetch's headless
+//! rung, one guest per render (FIX 7122); absent, that node's fetch keeps
+//! its readability rung only.
 
 use oneiron_browser::{BrowserEngine, BrowserGuest, GuestLimits, ImageRef};
 use serde::Deserialize;
