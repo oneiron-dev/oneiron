@@ -11,6 +11,7 @@ mod authority;
 mod connector_call;
 mod connector_call_asks;
 mod connector_call_code;
+mod connector_call_output;
 mod connector_call_pending;
 mod connector_call_resume;
 mod connector_elicitation_asks;

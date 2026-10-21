@@ -6,7 +6,8 @@ use super::*;
 /// Hands one live exchange to a worker thread, which owns it from here, and
 /// keeps its questions for the caller. The call reached the connector, so
 /// the send is acknowledged either way; a worker that could not start drops
-/// the questions.
+/// the questions. `kept` is the value the send presented, which the worker
+/// clears what the connector says next of (FIX 7646).
 pub(super) fn hand_over(
     declared: &Declared<'_>,
     registered: Registered,
@@ -14,6 +15,7 @@ pub(super) fn hand_over(
     continuation: Continuation,
     live: &mut Option<LiveSession>,
     body: Vec<u8>,
+    kept: Option<KeptSentValue>,
 ) -> Sent {
     let Some(session) = live.take() else {
         declared.registry.finish(&registered.handle);
@@ -32,6 +34,7 @@ pub(super) fn hand_over(
         handle: registered.handle,
         deadline: registered.deadline,
         generation: 0,
+        kept,
     };
     let started = std::thread::Builder::new()
         .name("connector-elicitation".to_owned())
@@ -198,6 +201,9 @@ pub(super) struct Worker {
     handle: String,
     deadline: Instant,
     generation: u64,
+    /// The value the send presented, kept as the session keeps its header:
+    /// each later question and the terminal reply are cleared of it.
+    kept: Option<KeptSentValue>,
 }
 
 impl Worker {
@@ -211,7 +217,11 @@ impl Worker {
                 break;
             };
             match self.answer(&command.responses) {
-                Next::Asked(questions) => {
+                Next::Asked(mut questions) => {
+                    // Cleared before the registry or the caller sees them.
+                    if let Some(kept) = &self.kept {
+                        clear_questions(&mut questions, &kept.sent());
+                    }
                     self.generation += 1;
                     let advanced = self.registry.upgrade().and_then(|registry| {
                         registry.advance(&self.handle, self.generation, &questions)
@@ -230,7 +240,10 @@ impl Worker {
                         expires_at_ms,
                     });
                 }
-                Next::Over(event) => {
+                Next::Over(mut event) => {
+                    if let Some(kept) = &self.kept {
+                        clear_event(&mut event, &kept.sent());
+                    }
                     let _ = command.reply.send(event);
                     break;
                 }

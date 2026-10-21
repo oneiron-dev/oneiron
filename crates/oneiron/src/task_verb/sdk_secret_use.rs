@@ -173,7 +173,10 @@ pub fn use_secret_for_connector_call<H: ConnectorCallHost>(
                     &mut *host,
                     target.custody,
                 ) {
-                    Ok(outcome) => {
+                    // Its host cleared the reply inside the send's door
+                    // (FIX 7647).
+                    Ok((outcome, sent)) => {
+                        target.note_sent(sent);
                         connector_consumed(&ConnectorCallReply::project(&name, &tool, outcome))
                     }
                     Err(error) => SecretUseConsumed::failed(error.to_string()),
@@ -256,7 +259,8 @@ pub fn use_secret_grant_for_connector_call<H: ConnectorCallHost>(
                     used.custody,
                     *presented,
                 ) {
-                    Ok(outcome) => {
+                    Ok((outcome, sent)) => {
+                        used.note_sent(sent);
                         connector_consumed(&ConnectorCallReply::project(&name, &tool, outcome))
                     }
                     Err(error) => SecretUseConsumed::failed(error.to_string()),

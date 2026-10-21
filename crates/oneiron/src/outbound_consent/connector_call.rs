@@ -32,7 +32,10 @@
 //! rechecks the record's binding at each send, and a delivered reply is
 //! cleared of the value before it goes anywhere. A call under a secret grant
 //! (FIX 4313) keeps the grant beside the record, and the host redeems it again
-//! at every send.
+//! at every send. Whatever selected it, a handle, a grant or the route's own
+//! secret, each send's actual presentation is the host's to clear its reply
+//! of, inside the door, with the bytes it sent
+//! ([`ConnectorCallHost::clears_at_door`], FIX 7646, FIX 7647).
 //!
 //! A connector may answer a call with questions instead of a result (its
 //! mid-call elicitation). The request reached it, so the send is delivered:
@@ -61,6 +64,7 @@ use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentLedgerError, IntentState, OutboundSendOutcome,
     OutboundToolDescriptor,
 };
+use crate::secret_custody::SentPresentation;
 use crate::secret_lease::SecretGrantRef;
 use crate::side_table::{self, Named, SideTable};
 
@@ -264,6 +268,24 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// resolved it (FIX 5455): an empty list when it presented none, `None`
     /// when this host cannot say, which leaves the call's rows unknown.
     fn take_sent_custody(&mut self) -> Option<Vec<EntityId>> {
+        None
+    }
+
+    /// Whether every send clears its reply, its questions and its raw copy
+    /// of the custody value it presented, whatever selected it (a record, a
+    /// grant or the route's own secret), INSIDE the door's callback with the
+    /// bytes that door released (FIX 7646, FIX 7647), before any of it
+    /// leaves. A host that does not has a named record's reply cleared by a
+    /// reread instead, as before.
+    fn clears_at_door(&self) -> bool {
+        false
+    }
+
+    /// Takes the custody presentation the last `send` made, as its door
+    /// released it: the record, the generation sent and its reply's release
+    /// policy (FIX 7646). `None` when it presented none, or this host cannot
+    /// say. Ids and generation only, never a value.
+    fn take_sent_presentation(&mut self) -> Option<SentPresentation> {
         None
     }
 }
@@ -544,7 +566,8 @@ impl Vault {
     /// row keeps the record, so a resume presents the same one; the
     /// credential door rechecks its binding at each send, and a delivered
     /// reply comes back cleared of the value. The caller checked the binding
-    /// before, and wrote the use's record.
+    /// before, and wrote the use's record. Beside the outcome, the custody
+    /// presentation the call's send made, if it sent (FIX 7647).
     pub(crate) fn call_connector_with_secret<H: ConnectorCallHost>(
         &self,
         memory: &Memory<'_>,
@@ -552,9 +575,11 @@ impl Vault {
         invocation: Option<ConnectorCallInvocation>,
         host: &mut H,
         credential: EntityId,
-    ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
-        self.start_connector_call(memory, request, invocation, Some(credential), None, host)
-            .map(|(outcome, _)| outcome)
+    ) -> Result<(ConnectorCallOutcome, Option<SentPresentation>), IntentLedgerError> {
+        drop(host.take_sent_presentation());
+        let (outcome, _) =
+            self.start_connector_call(memory, request, invocation, Some(credential), None, host)?;
+        Ok((outcome, host.take_sent_presentation()))
     }
 
     /// [`Self::call_connector_with_secret`] under the secret grant `grant`
@@ -569,10 +594,12 @@ impl Vault {
         host: &mut H,
         credential: EntityId,
         grant: SecretGrantRef,
-    ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
+    ) -> Result<(ConnectorCallOutcome, Option<SentPresentation>), IntentLedgerError> {
         let (credential, grant) = (Some(credential), Some(grant));
-        self.start_connector_call(memory, request, invocation, credential, grant, host)
-            .map(|(outcome, _)| outcome)
+        drop(host.take_sent_presentation());
+        let (outcome, _) =
+            self.start_connector_call(memory, request, invocation, credential, grant, host)?;
+        Ok((outcome, host.take_sent_presentation()))
     }
 
     /// The body of every call: `credential` is the record a `self.use` call
@@ -828,21 +855,7 @@ impl Vault {
             None => pending.source_rows = None,
         }
         let rows = pending.source_rows.clone();
-        // A reply to a send that carried a record's value comes back cleared
-        // of it, or not at all.
-        let step = match (pending.credential, step) {
-            (
-                Some(custody),
-                Step::Delivered {
-                    intent,
-                    result: Some(result),
-                },
-            ) => Step::Delivered {
-                intent,
-                result: self.cleared_connector_reply(&custody, &pending.name, result),
-            },
-            (_, step) => step,
-        };
+        let step = self.connector_reply_cleared(host.clears_at_door(), &pending, step);
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
             let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
             self.with_write_txn(|txn| PENDING_CALLS.put(&self.store, txn, &call_ref, pending))?;
@@ -938,27 +951,6 @@ impl Vault {
             },
         };
         Ok((outcome, rows))
-    }
-
-    /// `result`, a reply to a send that presented the value of the custody
-    /// record `custody`, with each copy of the value replaced by the
-    /// record's handle text; `None` (withheld) when the value could not be
-    /// read again to find it.
-    fn cleared_connector_reply(
-        &self,
-        custody: &EntityId,
-        name: &str,
-        mut result: UntrustedToolResult,
-    ) -> Option<UntrustedToolResult> {
-        let route = self.route_connector_call(name).ok().flatten()?;
-        let effector = connector_call_effector(&route);
-        let mut fields: Vec<&mut Value> = std::iter::once(&mut result.content)
-            .chain(result.structured_content.as_mut())
-            .chain(result.rpc_error.as_mut())
-            .collect();
-        self.clear_secret_record_from(custody, &effector, &mut fields)
-            .ok()?;
-        Some(result)
     }
 
     /// One pass: route, grant, governing key, approved schema, prepare,
