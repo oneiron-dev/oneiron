@@ -9,7 +9,7 @@
 //! the checker's own rows and are joined, never copied.
 use serde::{Deserialize, Serialize};
 
-use super::CheckPhase;
+use super::{CheckPhase, QueueExportHold, QueueRevisionLink, QueueSealTarget};
 use crate::EntityId;
 use crate::repo_mutation::RepoForkHash;
 
@@ -61,6 +61,8 @@ pub enum QueueWork {
     LandReviewed { batch: String, order: u64 },
     /// Keep a handed-off batch's conflict, TASK and successor links.
     HandoffOverlap { batch: String, order: u64 },
+    /// Seal a green tree's tested revision, earlier green first (G2 PR3).
+    SealTested { target: QueueSealTarget, order: u64 },
 }
 
 impl QueueWork {
@@ -73,6 +75,7 @@ impl QueueWork {
         match self {
             Self::Recover => (0, 0),
             Self::SettleSlow { red: true, .. } => (1, 0),
+            Self::SealTested { order, .. } => (1, order.saturating_add(1)),
             Self::SettleSlow { order, .. }
             | Self::RepairPath {
                 phase: CheckPhase::Slow,
@@ -149,6 +152,9 @@ pub enum QueueDriveHoldReason {
     HeldCheck,
     /// The checker needs host configuration first.
     NeedsConfiguration,
+    /// The green tree's tested-revision seal holds; the batch's
+    /// `seal_hold` names why (G2 PR3).
+    HeldSeal,
 }
 
 /// A typed hold and its reason.
@@ -219,6 +225,8 @@ pub struct QueueBatchDrive {
     pub survivor_of: Option<String>,
     /// The last typed hold; an unchanged one is not written again.
     pub hold: Option<QueueDriveHold>,
+    /// Its tested-revision seal once green: pending, then sealed (G2 PR3).
+    pub tested: Option<QueueRevisionLink>,
 }
 
 /// Two accepted same-base proposals that replace one path: proven from the
@@ -264,6 +272,7 @@ pub enum QueueDriveStatus {
     HeldRecovery,
     HeldCheck,
     NeedsConfiguration,
+    HeldSeal,
     /// The drive record could not be read; the batch is unchanged.
     Unavailable,
     /// Green, rolled back, cancelled or its survivors decided.
@@ -286,6 +295,7 @@ impl From<QueueDriveHoldReason> for QueueDriveStatus {
             QueueDriveHoldReason::HeldRecovery => Self::HeldRecovery,
             QueueDriveHoldReason::HeldCheck => Self::HeldCheck,
             QueueDriveHoldReason::NeedsConfiguration => Self::NeedsConfiguration,
+            QueueDriveHoldReason::HeldSeal => Self::HeldSeal,
         }
     }
 }
@@ -318,4 +328,8 @@ pub struct QueueDriveView {
     pub conflicts: Vec<QueueConflictView>,
     /// The survivors' batch of a quarantined batch.
     pub survivor_batch: Option<String>,
+    /// The tested revision this green batch sealed (G2 PR3).
+    pub tested_revision: Option<String>,
+    /// Why its seal holds, and how out (CALLS D and E).
+    pub seal_hold: Option<QueueExportHold>,
 }

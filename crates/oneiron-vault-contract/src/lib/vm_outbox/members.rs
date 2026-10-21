@@ -26,6 +26,9 @@ const CUSTODY_READY: &str = "READY";
 const CUSTODY_ANSWERS: [&str; 2] = ["ack.json", "pending.json"];
 /// A sealed backup's suffix (`owner::backup`).
 const BACKUP_SUFFIX: &str = ".oneiron-backup";
+/// The suffix of a sealed backup's checkpoint fact beside it,
+/// `<artifact>.cpfact` (`owner::backup::checkpoint_fact`, FIX 7327).
+const CHECKPOINT_FACT_SUFFIX: &str = ".cpfact";
 
 /// How the carrier treats one member.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,13 +91,7 @@ pub fn vm_outbox_member(kind: VmOutboxKind, member: &str) -> Option<VmOutboxMemb
                 ..VmOutboxMember::in_set(VmOutboxSide::Host, "recipients".to_owned(), 0, 0)
             })
         }
-        (VmOutboxKind::Backup, [name]) => {
-            let stem = name.strip_suffix(BACKUP_SUFFIX)?;
-            stem.contains('-').then(|| VmOutboxMember {
-                peer_retires: false,
-                ..VmOutboxMember::single(VmOutboxSide::Guest, member)
-            })
-        }
+        (VmOutboxKind::Backup, [name]) => backup(name),
         (VmOutboxKind::BackupStageAck, [_label, ack]) => {
             let digest = ack.strip_prefix("stage-ack-")?.strip_suffix(".json")?;
             (backup_stage_ack_file_name(digest).as_deref() == Some(*ack))
@@ -117,6 +114,28 @@ fn plain_parts(member: &str) -> Option<Vec<&str>> {
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
     };
     (parts.len() <= MAX_PARTS && parts.iter().all(plain)).then_some(parts)
+}
+
+/// A sealed backup, `<label>-<...>.oneiron-backup`, and its checkpoint fact,
+/// `<that name>.cpfact`, in one set the artifact names: the fact put before
+/// the artifact and retired after it, as the engine writes and prunes them.
+/// Only the engine's prune retires either. An artifact with no fact (one
+/// taken before facts, or whose fact did not land) is a set of one.
+fn backup(name: &str) -> Option<VmOutboxMember> {
+    let (artifact, put_rank, remove_rank) = match name.strip_suffix(CHECKPOINT_FACT_SUFFIX) {
+        Some(artifact) => (artifact, 0, 1),
+        None => (name, 1, 0),
+    };
+    let stem = artifact.strip_suffix(BACKUP_SUFFIX)?;
+    stem.contains('-').then(|| VmOutboxMember {
+        peer_retires: false,
+        ..VmOutboxMember::in_set(
+            VmOutboxSide::Guest,
+            artifact.to_owned(),
+            put_rank,
+            remove_rank,
+        )
+    })
 }
 
 fn escrow(name: &str, member: &str) -> Option<VmOutboxMember> {

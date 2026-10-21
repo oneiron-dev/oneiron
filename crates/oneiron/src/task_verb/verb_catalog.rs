@@ -653,6 +653,7 @@ pub enum AgentVerb {
     VaultCodeMergeQueueCheck,
     VaultCodeMergeQueueDiagnose,
     VaultCodeMergeQueueCheckStatus,
+    VaultCodeMergeQueueExportGreen,
     VaultArtifactsExport,
     VaultAgentsCreate,
     VaultAgentsGet,
@@ -1793,6 +1794,7 @@ impl AgentVerb {
         Self::VaultCodeMergeQueueCheck,
         Self::VaultCodeMergeQueueDiagnose,
         Self::VaultCodeMergeQueueCheckStatus,
+        Self::VaultCodeMergeQueueExportGreen,
         Self::VaultArtifactsExport,
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
@@ -2954,6 +2956,7 @@ impl AgentVerb {
             Self::VaultCodeMergeQueueCheck => "vault.code.merge_queue.check",
             Self::VaultCodeMergeQueueDiagnose => "vault.code.merge_queue.diagnose",
             Self::VaultCodeMergeQueueCheckStatus => "vault.code.merge_queue.check_status",
+            Self::VaultCodeMergeQueueExportGreen => "vault.code.merge_queue.export_green",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
@@ -4106,6 +4109,7 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueCheck
                 | Self::VaultCodeMergeQueueDiagnose
                 | Self::VaultCodeMergeQueueCheckStatus
+                | Self::VaultCodeMergeQueueExportGreen
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -5274,6 +5278,7 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueCheck
                 | Self::VaultCodeMergeQueueDiagnose
                 | Self::VaultCodeMergeQueueCheckStatus
+                | Self::VaultCodeMergeQueueExportGreen
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -6552,6 +6557,7 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueCheck
                 | Self::VaultCodeMergeQueueDiagnose
                 | Self::VaultCodeMergeQueueCheckStatus
+                | Self::VaultCodeMergeQueueExportGreen
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -7386,6 +7392,7 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueInit
                 | Self::VaultCodeMergeQueueCheck
                 | Self::VaultCodeMergeQueueDiagnose
+                | Self::VaultCodeMergeQueueExportGreen
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
                 | Self::VaultAgentsDreamingSet
@@ -8360,6 +8367,7 @@ impl AgentVerb {
             Self::VaultCodeMergeQueueCheck => &["spec"],
             Self::VaultCodeMergeQueueDiagnose => &["spec"],
             Self::VaultCodeMergeQueueCheckStatus => &["spec"],
+            Self::VaultCodeMergeQueueExportGreen => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -9501,6 +9509,7 @@ impl AgentVerb {
             Self::VaultCodeMergeQueueCheck => &["spec"],
             Self::VaultCodeMergeQueueDiagnose => &["spec"],
             Self::VaultCodeMergeQueueCheckStatus => &["spec"],
+            Self::VaultCodeMergeQueueExportGreen => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -11908,6 +11917,9 @@ impl AgentVerb {
             }
             Self::VaultCodeMergeQueueCheckStatus => {
                 "Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."
+            }
+            Self::VaultCodeMergeQueueExportGreen => {
+                "Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."

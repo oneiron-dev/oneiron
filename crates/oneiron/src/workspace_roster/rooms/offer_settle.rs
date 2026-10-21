@@ -64,7 +64,7 @@ pub enum OfferAnswer {
 pub struct OfferAnswerRequest {
     pub offer_id: String,
     pub action: OfferAnswer,
-    /// The answerer's idempotency key, 1..=128 printable bytes.
+    /// The answerer's idempotency key: one or more printable bytes.
     pub intent_key: String,
 }
 
@@ -483,7 +483,7 @@ impl Memory<'_> {
         }
         if !super::offers::valid_intent_key(&request.intent_key) {
             return Err(MemoryError::bad_request(
-                "an answer's intent_key is 1..=128 printable bytes",
+                "an answer's intent_key is one or more printable bytes",
             ));
         }
         let vault = self.vault();

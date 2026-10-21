@@ -111,6 +111,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // progress; the effects they join keep their own (LIVE) classes.
     (&t::DREAMER_TURN_PROGRAM_RUN, CONTENT),
     (&t::DREAMER_TURN_PROGRAM_STEP, CONTENT),
+    // FIX 7188: an owner Stop's owed abandon works on the outbound ledger,
+    // which stands as the live vault holds it; so does what it still owes.
+    (&t::DREAMER_TURN_PROGRAM_STOP_OWED, LIVE),
     (&t::DREAMER_TURN_PROGRAM_WAKE, CONTENT),
     (&t::DREAMER_WAKE_RECIPE_INPUT, CONTENT),
     (&t::DREAMER_WAKE_STATE, CONTENT),

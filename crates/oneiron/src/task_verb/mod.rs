@@ -203,6 +203,34 @@ pub fn task_confession_objectives(
         .filter(|objectives| !objectives.is_empty()))
 }
 
+/// What one TASK's own row says of how it stands for the work that waits on it (OF-418 L4):
+/// how it settled, if it did, and its STUCK report (OF-220), while it is blocked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskImpactFacts {
+    /// How the TASK settled; `None` while it is unfinished.
+    pub(crate) terminal: Option<TaskTerminalDisposition>,
+    /// When its executor reported STUCK and what it waits on, while it is blocked.
+    pub(crate) stuck: Option<(u64, Vec<crate::EntityId>)>,
+}
+
+/// [`TaskImpactFacts`] of `task` at `txn`'s revision, from the one body every task door
+/// decodes. `None` when the row is no typed TASK.
+pub(crate) fn task_impact_facts_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: crate::EntityId,
+) -> crate::Result<Option<TaskImpactFacts>> {
+    let Some(body) = wire_decode::task_verb_body_in(vault, txn, task)? else {
+        return Ok(None);
+    };
+    let terminal = body.terminal().map(|record| record.disposition);
+    let stuck = match body.state {
+        Some(TaskExecutionState::Blocked { since, on }) => Some((since, on)),
+        _ => None,
+    };
+    Ok(Some(TaskImpactFacts { terminal, stuck }))
+}
+
 /// A terminal typed TASK cannot be newly bound to a room thread.
 pub(crate) fn thread_task_is_open_in(
     vault: &crate::Vault,
