@@ -64,6 +64,28 @@ pub(super) fn holders_for_change_in_txn(
     )
 }
 
+/// Whether `actor` holds the vault-scope policy power over `target` now, in
+/// `txn` (FIX 8177): a live Owner, or an Admin or Delegate whose live
+/// membership scope covers the vault and whose Owner-minted `policy.change`
+/// grant names `target` exactly ([`authority::holders_for_in_txn`]). A role
+/// label alone never holds it.
+pub(crate) fn holds_vault_policy_power_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    target: &str,
+    now: u64,
+) -> Result<bool> {
+    Ok(authority::holders_for_in_txn(
+        vault,
+        txn,
+        now,
+        &crate::gate::PolicyRowScope::Vault,
+        target,
+    )?
+    .contains(&actor))
+}
+
 fn propose_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

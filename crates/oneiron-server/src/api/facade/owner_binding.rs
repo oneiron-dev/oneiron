@@ -161,3 +161,44 @@ pub(crate) fn act_surface(auth: &CoreAuth) -> ActSurface {
         oneiron::authority::PeerMachine::Unknown => ActSurface::ThisInstall,
     }
 }
+
+/// The admission `door_admits` runs for a host-door row that left the
+/// owner-only list for a caller's own act, before the row's hooks; `None`
+/// for any other row. Each admits the owner as before, then the caller its
+/// door acts as, and keeps the owner refusal for anyone else.
+pub(super) fn caller_bound_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> Option<MemoryResult<()>> {
+    Some(match verb {
+        // A person's own trusted-contact acts (FIX 8169): the live person
+        // whose own slip the engine door revalidates.
+        "vault.trusted_contacts.name"
+        | "vault.trusted_contacts.dial.set"
+        | "vault.trusted_contacts.concern.asks"
+        | "vault.trusted_contacts.concern.authorize"
+        | "vault.trusted_contacts.concern.propose" => {
+            super::trusted_contact_doors::own_person(server, auth, verb).map(drop)
+        }
+        // The responsible role's own tradeoff asks (FIX 8178): the person or
+        // agent the credential binds, as REST admits them.
+        "vault.skills.optimize.tradeoff_asks" | "vault.skills.optimize.tradeoff_asks.pick" => {
+            super::goal_optimize_doors::picker(server, auth, verb).map(drop)
+        }
+        // A fork as the caller itself (FIX 8167): a person or agent on its
+        // own slip, whose write Grant the fork's writer checks.
+        "vault.skills.fork" => super::skill_doors::forker(server, auth, verb).map(drop),
+        // A policy put by a person holding the policy power (FIX 8177),
+        // which the manifest writer checks.
+        "vault.gate.policy.put" => {
+            super::gate_policy_doors::policy_putter(server, auth, verb).map(drop)
+        }
+        // A publish or repoint as the caller on its own slip (FIX 8161),
+        // which the outbound Gate judges.
+        "vault.artifacts.publish" | "vault.artifacts.repoint" => {
+            super::artifact_hosting_doors::publisher(server, auth, verb).map(drop)
+        }
+        _ => return None,
+    })
+}

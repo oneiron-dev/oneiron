@@ -102,3 +102,40 @@ pub(super) fn unknown_act_answer(
     })?;
     Ok((ran, Some(Vec::new())))
 }
+
+/// The acts whose known rows reach the release only since FIX 8171 (their
+/// producers listed none before, so they answered as [`unknown_act_answer`]).
+const KNOWN_ROW_ACTS: &[&str] = &["vault.coach.training_offers.pilots.prepare"];
+
+/// [`unknown_act_answer`], then, for one of [`KNOWN_ROW_ACTS`] whose rows
+/// are known (FIX 8171, F1): an act that ran, off this device, whose answer
+/// its rows' release would hold answers only that it ran, as it did while
+/// its rows were unknown, never a withheld error after its commit. Any
+/// other answer is returned as [`unknown_act_answer`] returns it.
+pub(super) fn held_act_answer(
+    server: &std::sync::Arc<crate::server::SyncServer>,
+    tool: &str,
+    actor: &McpCallContext,
+    output: Value,
+    served: McpServed,
+) -> Result<(Value, Option<Vec<EntityId>>), McpGatewayError> {
+    let (output, rows) = unknown_act_answer(tool, actor, output, served)?;
+    let held = match rows.as_deref() {
+        Some(known) if KNOWN_ROW_ACTS.contains(&tool) && actor.destination().is_off_device() => {
+            super::device_release::mcp_release_result(server, actor, known, false, output.clone())
+                .is_err()
+        }
+        _ => false,
+    };
+    if !held {
+        return Ok((output, rows));
+    }
+    let ran = serde_json::to_value(ActAnswer::<Value>::details_on_device()).map_err(|_| {
+        McpGatewayError::new(
+            -32603,
+            "engine_error",
+            "typed agent result cannot be encoded",
+        )
+    })?;
+    Ok((ran, Some(Vec::new())))
+}

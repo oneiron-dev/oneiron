@@ -168,7 +168,7 @@ async fn residence_open(
         &opened,
         oneiron::WriteActor::new(actor, class),
         auth.verified_slip(),
-        auth.locality(),
+        &auth.destination(),
         input.reason.as_deref(),
         &input.spans,
     )?;

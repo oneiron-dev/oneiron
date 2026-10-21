@@ -5600,7 +5600,7 @@ declare const vault: Sdk.VaultHost & {
       get(input: Sdk.PolicyManifestRead): Promise<Sdk.PolicyManifestsView | StoredResult>;
       /** Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert. */
       propose(input: Sdk.PolicyManifestPropose): Promise<Sdk.PolicyManifestReceipt | StoredResult>;
-      /** The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
+      /** The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
       put(input: Sdk.PolicyManifestPut): Promise<Sdk.PolicyManifestReceipt | StoredResult>;
     };
   };
@@ -5927,7 +5927,7 @@ declare const vault: Sdk.VaultHost & {
       confirm_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
       /** A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits. */
       decline_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
-      /** A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in. */
+      /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
       export(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomExport | StoredResult>;
       /** A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential. */
       save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
@@ -6652,7 +6652,7 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
     convert(input: Sdk.SkillConvertRequest): Promise<Sdk.SkillConvertReceipt | StoredResult>;
-    /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+    /** The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
     fork(input: Sdk.SkillLibraryForkRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
     /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
     get(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
@@ -6813,9 +6813,9 @@ declare const vault: Sdk.VaultHost & {
   };
   trusted_contacts: {
     concern: {
-      /** The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
+      /** A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
       asks(input: Sdk.TrustedContactAsksRequest): Promise<Sdk.TrustedContactAsk[] | StoredResult>;
-      /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
+      /** A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
       authorize(input: Sdk.TrustedContactAuthorizeRequest): Promise<Sdk.TrustedContactAuthorization | StoredResult>;
       /** The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice. */
       deliver(input: Sdk.TrustedContactDeliverRequest): Promise<Sdk.TrustedContactDeliveryReceipt | null | StoredResult>;
@@ -6825,12 +6825,12 @@ declare const vault: Sdk.VaultHost & {
     /** The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this. */
     consent(input: Sdk.TrustedContactConsentRequest): Promise<Sdk.TrustedContact | StoredResult>;
     dial: {
-      /** The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
+      /** A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
       set(input: Sdk.TrustedContactDialRequest): Promise<Sdk.TrustedContact | StoredResult>;
     };
     /** A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential. */
     list(input: Sdk.TrustedContactsRequest): Promise<Sdk.TrustedContact[] | StoredResult>;
-    /** The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
+    /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
     name(input: Sdk.TrustedContactNameRequest): Promise<Sdk.TrustedContact | StoredResult>;
     /** Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close. */
     revoke(input: Sdk.TrustedContactRevokeRequest): Promise<Sdk.TrustedContact | StoredResult>;

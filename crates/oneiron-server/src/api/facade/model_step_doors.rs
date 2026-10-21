@@ -1,4 +1,5 @@
 //! Owner-proof model steps; HTTP, SDK and MCP reach the same typed door.
+//! A saved terminal answers before fresh provider admission (FIX 8180).
 use std::sync::Arc;
 
 use oneiron::llm::model_step::{
@@ -34,6 +35,19 @@ async fn submit(
     input: &mut ModelStepSubmit,
 ) -> MemoryResult<ModelStepReceipt> {
     let owner = owner_proof(auth, server, "ai.steps.submit")?;
+    // A saved terminal answers before any fresh provider admission (FIX
+    // 8180): completed work needs no model, route or meter. Anything else,
+    // and any failed lookup, takes the admission below exactly as before.
+    let saved = {
+        let (server, owner, probe) = (Arc::clone(server), owner.clone(), input.clone());
+        tokio::task::spawn_blocking(move || {
+            model_step::saved_terminal_as_owner(server.vault(), &owner, &probe)
+        })
+        .await
+    };
+    if let Ok(Ok(Some(receipt))) = saved {
+        return Ok(receipt);
+    }
     // Identical owner, inference policy, route-selector refusal, configured
     // model binding, and physical-call meter as the raw inference sibling.
     let (ladder, run) =

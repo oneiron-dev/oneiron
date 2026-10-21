@@ -1,9 +1,9 @@
 //! Typed reads of a residence open, using the named connection's own vault.
 
 use crate::authority::VerifiedSlip;
-use crate::claim::CallerLocality;
 use crate::memory::MemoryResult;
 use crate::note::{NoteReadSpan, NoteReadView};
+use crate::settings::ReadDestination;
 use crate::sync::{OpenedItem, TransportError};
 use crate::{EntityId, WriteActor};
 
@@ -20,13 +20,13 @@ impl super::SyncConnection {
     }
 
     /// Projects only the item the owner's residence door already opened.
-    /// The canonical read keeps the caller's proof and locality.
+    /// The canonical read keeps the caller's proof and proved destination.
     pub fn opened_note_view(
         &self,
         opened: &OpenedItem,
         actor: WriteActor,
         proof: Option<&VerifiedSlip>,
-        locality: CallerLocality,
+        destination: &ReadDestination,
         reason: Option<&str>,
         spans: &[NoteReadSpan],
     ) -> MemoryResult<Option<NoteReadView>> {
@@ -35,7 +35,7 @@ impl super::SyncConnection {
             opened,
             actor,
             proof,
-            locality,
+            destination,
             reason,
             spans,
         )

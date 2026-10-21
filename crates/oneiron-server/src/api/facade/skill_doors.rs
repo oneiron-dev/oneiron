@@ -13,7 +13,7 @@ use oneiron::{
 };
 use serde::Deserialize;
 
-use super::host_doors::{Listed, owner_proof, refused};
+use super::host_doors::{Listed, credential_listing, owner_proof, refused};
 use super::hub_doors::owner_call;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -66,17 +66,57 @@ pub(crate) async fn vault_skills_archive(
     .await
 }
 
+/// A person or agent forking as itself (FIX 8167): its actor and own slip.
+type Forker = (
+    (oneiron::EntityId, oneiron::EdgeActorClass),
+    oneiron::authority::VerifiedSlip,
+);
+
+/// Who forks a skill: the owner under its proof, as before (`None`), or a
+/// person or agent on a verified slip of its own, as itself (`Some`, FIX
+/// 8167), whose read of the source and live write Grant the fork's own
+/// writer checks. Anyone else keeps the owner refusal it had.
+pub(super) fn forker(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> oneiron::memory::MemoryResult<Option<Forker>> {
+    use oneiron::EdgeActorClass::{Agent, Human};
+    match owner_proof(auth, server, verb) {
+        Ok(_) => Ok(None),
+        Err(refusal) => match (auth.verified_slip(), super::facade_actor(server, auth)) {
+            (Some(slip), Ok(caller @ (_, Human | Agent))) => Ok(Some((caller, slip.clone()))),
+            _ => Err(refusal),
+        },
+    }
+}
+
 pub(crate) async fn vault_skills_fork(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SkillLibraryForkRequest,
 ) -> Listed<SkillLibraryView> {
-    owner_call(server, auth, "vault.skills.fork", move |server, owner| {
-        let view = sdk::skill_library_fork_as_owner(server.vault(), owner, &input)?;
-        let rows = view.rows();
-        Ok((view, rows))
+    const VERB: &str = "vault.skills.fork";
+    let (caller, slip) = match forker(server, auth, VERB) {
+        Ok(Some(forker)) => forker,
+        Ok(None) => {
+            return owner_call(server, auth, VERB, move |server, owner| {
+                let view = sdk::skill_library_fork_as_owner(server.vault(), owner, &input)?;
+                let rows = view.rows();
+                Ok((view, rows))
+            })
+            .await;
+        }
+        Err(refusal) => return refused(refusal),
+    };
+    let (answer, mut rows) = credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        sdk::skill_library_fork_by_caller(&memory, &slip, &input)
     })
-    .await
+    .await;
+    if let Ok(view) = &answer {
+        rows.extend(view.rows());
+    }
+    (answer, rows)
 }
 
 pub(crate) async fn vault_skills_optimize_start(

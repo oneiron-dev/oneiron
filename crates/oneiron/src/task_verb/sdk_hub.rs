@@ -376,6 +376,15 @@ pub fn hub_skill_receipts_as_owner(
     _owner: &AuthenticatedOwner,
     input: &HubSkillRequest,
 ) -> MemoryResult<HubSkillReceipts> {
+    hub_skill_receipts(vault, input)
+}
+
+/// [`hub_skill_receipts_as_owner`]'s read, which asks no proof of its own:
+/// for a library view whose door admitted its reader (FIX 8167).
+pub(crate) fn hub_skill_receipts(
+    vault: &Vault,
+    input: &HubSkillRequest,
+) -> MemoryResult<HubSkillReceipts> {
     let sources = vault.skill_hub_sources(&input.entity)?;
     let mut imports = Vec::new();
     for source in &sources {

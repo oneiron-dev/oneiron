@@ -344,6 +344,25 @@ pub fn skill_optimize_tradeoff_asks_as_owner(
         .collect()
 }
 
+/// [`skill_optimize_tradeoff_asks_as_owner`] for any person or agent (FIX
+/// 8178): the asks that have climbed to a responsible role `actor` holds,
+/// as `GET /v1/core/skills/tradeoff-asks` lists them. The reached-role check
+/// is the authorization.
+pub fn skill_optimize_tradeoff_asks_for(
+    vault: &Vault,
+    actor: &EntityId,
+) -> MemoryResult<Vec<SkillOptimizeTradeoffAskView>> {
+    optimize::skill_tradeoff_asks_for(vault, actor)?
+        .into_iter()
+        .map(|ask| {
+            Ok(SkillOptimizeTradeoffAskView {
+                question_digest: ask.question.digest()?,
+                ask,
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillOptimizeTradeoffPickRequest {
@@ -367,4 +386,38 @@ pub fn skill_optimize_tradeoff_pick_as_owner(
         vault.now_recorded_at(),
     )?;
     result(vault, owner, input.proposal)
+}
+
+/// [`skill_optimize_tradeoff_pick_as_owner`] for a person or agent holding
+/// the role the ask reached (FIX 8178), settled as `by` exactly as
+/// `POST /v1/core/skills/tradeoff-asks/pick` settles it. It answers what the
+/// pick settled: its verdict, proposal and skill. The owner's whole result
+/// read (lifecycles, governance, every verdict) stays the owner's.
+pub fn skill_optimize_tradeoff_pick_by(
+    vault: &Vault,
+    by: &crate::WriteActor,
+    input: &SkillOptimizeTradeoffPickRequest,
+) -> MemoryResult<SkillOptimizeResultView> {
+    let verdict = optimize::settle_skill_tradeoff_ask_as(
+        vault,
+        by,
+        &input.proposal,
+        &input.question_digest,
+        input.choice,
+        vault.now_recorded_at(),
+    )?;
+    let view = super::sdk_skills::verdict_view(verdict);
+    Ok(SkillOptimizeResultView {
+        job_ref: None,
+        state: None,
+        kind: None,
+        last_error: None,
+        skill: Some(view.skill),
+        proposal: Some(view.proposal),
+        proposal_lifecycle: None,
+        incumbent_lifecycle: None,
+        governance: None,
+        verdict: Some(view.clone()),
+        verdicts: vec![view],
+    })
 }
