@@ -72813,6 +72813,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/cua/browser_setup.rs",
+     "purpose": "Fresh-vault browser setup through the same owner doors as acceptance",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/cua/check.rs",
      "purpose": "One deterministic host-private checker",
      "surface": {
@@ -72830,7 +72840,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/drift.rs",
@@ -72846,7 +72856,7 @@
      "path": "src/cua/drift_engine.rs",
      "purpose": "Engine/fixture boundary for the S5 protocol",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -72950,7 +72960,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/run.rs",
@@ -72960,13 +72970,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/served.rs",
      "purpose": "Shipped binary lifecycle and official MCP stdio",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -73861,7 +73871,7 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "cua": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -73961,7 +73971,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 141,
+   "source_files": 142,
    "test_files": 18
   },
   "oneiron-broker": {
