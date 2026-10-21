@@ -2249,14 +2249,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "AttemptReadSet"
+      "AttemptReadSet",
+      "ReadSetProducer"
      ],
      "path": "src/attempt_queue/read_set.rs",
      "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 1,
-      "struct": 1
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {

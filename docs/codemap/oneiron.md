@@ -185,7 +185,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/mod.rs` | src | s | 8 re-export · 16 crate-vis | — | Generic LMDB-backed background attempt queue |
 | `src/attempt_queue/observe.rs` | src | s | 1 fn · 2 crate-vis | — | Post-commit invalidations for local run-tree observers |
 | `src/attempt_queue/ports.rs` | src | s | — | — | JobQueue adapter over the existing lease state machine |
-| `src/attempt_queue/read_set.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | AttemptReadSet | FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the… |
+| `src/attempt_queue/read_set.rs` | src | s | 2 struct · 4 fn · 1 const · 1 crate-vis | AttemptReadSet, ReadSetProducer | FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the… |
 | `src/attempt_queue/result.rs` | src | s | 2 fn · 3 crate-vis | — | Transaction-composable result attachment and abandonment |
 | `src/attempt_queue/settlement.rs` | src | s | 2 fn · 2 crate-vis | — | Transaction-composable completion and failure with terminal pack receipts |
 | `src/attempt_queue/telemetry.rs` | src | s | 1 struct · 5 crate-vis | AttemptQueueCleanupMetricsSnapshot | Per-vault cleanup counters, cleanup span emission, and the shared invalid-transition error constructor |
