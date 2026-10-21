@@ -18610,7 +18610,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BoardStreamRegistry",
@@ -18620,7 +18620,7 @@
      "purpose": "The board stream registry: connections, subscriptions and event routing",
      "surface": {
       "crate-vis": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -18633,7 +18633,7 @@
      "path": "src/context_board/stream/review.rs",
      "purpose": "The diary-review producer: a pending diary-read review wakes the reviewed agent's STREAM connections (FIX…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4,
       "struct": 1
      }
