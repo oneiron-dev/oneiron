@@ -7101,7 +7101,7 @@ export type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: numbe
 /** `oneiron::dreamer_wake::sieve_doors::SievePolicySetRequest` */
 export type SievePolicySetRequest = { policy: SievePolicy }
 /** `oneiron::dreamer_wake::recipes::WakeRecipePolicy` */
-export type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; audit_window_instruction: string }
+export type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string }
 /** `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest` */
 export type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy }
 /** `oneiron::dreamer_wake::sieve_doors::SieveLeaseRequest` */
