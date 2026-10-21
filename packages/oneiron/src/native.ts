@@ -636,6 +636,9 @@ vaultResultsSlice(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
 vaultCodeImport(input: unknown): unknown
+vaultCodeReposGet(input: unknown): unknown
+vaultCodeForksGet(input: unknown): unknown
+vaultCodeIngressGet(input: unknown): unknown
 vaultCodeOriginRegister(input: unknown): unknown
 vaultCodeOriginMirrorGet(input: unknown): unknown
 vaultCodeOriginMirrorSet(input: unknown): unknown
@@ -682,6 +685,7 @@ vaultCodeMergeQueueInit(input: unknown): unknown
 vaultCodeMergeQueueCheck(input: unknown): unknown
 vaultCodeMergeQueueDiagnose(input: unknown): unknown
 vaultCodeMergeQueueCheckStatus(input: unknown): unknown
+vaultCodeChecksGet(input: unknown): unknown
 vaultCodeMergeQueueExportGreen(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown

@@ -1,4 +1,5 @@
 //! Crash-idempotent push-to-document lowering under the origin single-writer lock.
+use super::document_candidate_types::{ReceivedRefIngress, ReceivedRefSource};
 use super::smart_http::{ReceivePackAttribution, RefUpdate};
 use crate::code_document::{CodeEditReceipt, CodeFileEdit, CodeFileIngress};
 use crate::codebase::entity_id_from_hash_material;
@@ -13,7 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// One push operation, including non-text blobs and mode-only changes.
 /// Git objects remain pinned by the hash-keyed origin change claim.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ReceivedFileOperation {
     pub operation_id: String,
     /// The pusher's hex id, or [`ERASED_CALL_IDENTITY`] once that actor was
@@ -28,15 +31,26 @@ pub struct ReceivedFileOperation {
     pub new_mode: Option<u32>,
     pub document_edit: bool,
 }
-/// Crash-idempotent receipt of the file operations one push landed against one ref, keyed by
+/// Crash-idempotent receipt of one push's ref: its validated source, first receipt time, the
+/// file operations it landed and the candidate matching attached (G4 PR2), keyed by
 /// provenance then blake3(ref_name). Key: id16 ":" hash32 — the ':' is a literal byte, not a
 /// NUL, exactly the shape this row has always spelled.
-const CODE_OPERATIONS: SideTable<ProvenanceRefKey, Vec<ReceivedFileOperation>, LegacyCompact> =
+pub(super) const CODE_OPERATIONS: SideTable<ProvenanceRefKey, ReceivedRefIngress, LegacyCompact> =
     SideTable::new(&side_table::ORIGIN_CODE_OPERATIONS);
 
-struct ProvenanceRefKey {
-    provenance: EntityId,
-    ref_name_hash: [u8; 32],
+pub(super) struct ProvenanceRefKey {
+    pub(super) provenance: EntityId,
+    pub(super) ref_name_hash: [u8; 32],
+}
+
+impl ProvenanceRefKey {
+    /// The row key of `ref_name` under the push `provenance`.
+    pub(super) fn of(provenance: EntityId, ref_name: &str) -> Self {
+        Self {
+            provenance,
+            ref_name_hash: *blake3::hash(ref_name.as_bytes()).as_bytes(),
+        }
+    }
 }
 
 impl SideKey for ProvenanceRefKey {
@@ -143,6 +157,7 @@ impl Vault {
                             operation,
                             session: document,
                             edit: CodeFileEdit::between(&path, before, after),
+                            metadata_edit: None,
                             actor: WriteActor::new(attribution.actor_id, EdgeActorClass::System),
                             expected_text: before.to_owned(),
                         });
@@ -167,27 +182,47 @@ impl Vault {
                 });
             }
         }
-        CODE_OPERATIONS.encode_value(&operations)?;
-        let receipt_key = ProvenanceRefKey {
-            provenance: attribution.provenance_claim_id,
-            ref_name_hash: *blake3::hash(update.name.as_bytes()).as_bytes(),
+        // The exact validated update, kept even when it changed no file.
+        let source = ReceivedRefSource {
+            object_store: repo.identity().as_hex(),
+            ref_name: update.name.clone(),
+            old_oid: update.old_oid.as_ref().map(|oid| oid.as_str().to_owned()),
+            new_oid: update.new_oid.as_ref().map(|oid| oid.as_str().to_owned()),
         };
+        let fresh = ReceivedRefIngress {
+            source,
+            received_at: now,
+            operations,
+            candidate: None,
+        };
+        CODE_OPERATIONS.encode_value(&fresh)?;
+        let receipt_key = ProvenanceRefKey::of(attribution.provenance_claim_id, &update.name);
         self.with_write_txn_grouped(|txn| {
-            if let Some(old) = CODE_OPERATIONS.get(&self.store, txn, &receipt_key)?
-                && old != operations
-            {
-                // An erase since the landing left the same operations naming
-                // no one: they landed, and their documents' receipts refuse
-                // a second ingress, so nothing runs again.
-                if landed_erased(&old, &operations) {
-                    return Ok(());
+            let held = CODE_OPERATIONS.get(&self.store, txn, &receipt_key)?;
+            if let Some(old) = &held {
+                if old.source != fresh.source {
+                    return Err(Error::ConcurrentWrite("push source receipt changed"));
                 }
-                return Err(Error::ConcurrentWrite("push operation receipt changed"));
+                if old.operations != fresh.operations {
+                    // An erase since the landing left the same operations
+                    // naming no one: they landed, and their documents'
+                    // receipts refuse a second ingress, so nothing runs again.
+                    if landed_erased(&old.operations, &fresh.operations) {
+                        return Ok(());
+                    }
+                    return Err(Error::ConcurrentWrite("push operation receipt changed"));
+                }
             }
             // A conflicting aggregate must refuse before any document effect.
             // Both receipt layers commit together or the entire ref aborts.
             self.apply_code_file_ingress_exact_in_txn(txn, &mut ingress)?;
-            CODE_OPERATIONS.put(&self.store, txn, &receipt_key, &operations)?;
+            // A replay keeps the first receipt time and any attached candidate.
+            CODE_OPERATIONS.put(
+                &self.store,
+                txn,
+                &receipt_key,
+                held.as_ref().unwrap_or(&fresh),
+            )?;
             Ok(())
         })
     }
@@ -197,8 +232,8 @@ impl Vault {
     ) -> Result<Vec<ReceivedFileOperation>> {
         let txn = self.store.env.read_txn()?;
         let mut operations = Vec::new();
-        for (_, rows) in CODE_OPERATIONS.scan_from(&self.store, &txn, provenance.as_bytes())? {
-            operations.extend(rows);
+        for (_, row) in CODE_OPERATIONS.scan_from(&self.store, &txn, provenance.as_bytes())? {
+            operations.extend(row.operations);
         }
         operations.sort_by(|a, b| (&a.ref_name, &a.path).cmp(&(&b.ref_name, &b.path)));
         Ok(operations)
@@ -246,20 +281,21 @@ pub(crate) fn erase_code_operations_actor_in_txn(
     }
     let hex = actor.to_hex();
     let mut rows = Vec::new();
-    for (key, mut operations) in CODE_OPERATIONS.scan(&vault.store, wtxn)? {
+    for (key, mut row) in CODE_OPERATIONS.scan(&vault.store, wtxn)? {
         let mut named = false;
-        for operation in &mut operations {
+        for operation in &mut row.operations {
             if operation.actor_id == hex {
                 operation.actor_id = ERASED_CALL_IDENTITY.to_owned();
                 named = true;
             }
         }
+        // The source and its candidate links stay; only actors are forgotten.
         if named {
-            rows.push((key, operations));
+            rows.push((key, row));
         }
     }
-    for (key, operations) in rows {
-        CODE_OPERATIONS.put(&vault.store, wtxn, &key, &operations)?;
+    for (key, row) in rows {
+        CODE_OPERATIONS.put(&vault.store, wtxn, &key, &row)?;
     }
     Ok(())
 }

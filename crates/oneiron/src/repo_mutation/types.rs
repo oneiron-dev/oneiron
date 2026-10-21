@@ -6,13 +6,14 @@ use crate::error::{CodeError, Error, Result};
 
 pub type RepoForkHash = [u8; 32];
 
-pub const REPO_MUTATION_ALLOWED_OPERATION_KINDS: [&str; 6] = [
+pub const REPO_MUTATION_ALLOWED_OPERATION_KINDS: [&str; 7] = [
     "commit_file",
     "create_worktree",
     "record_conflict",
     "remove_worktree",
     "recover_snapshot",
     "resolve_conflict_file",
+    "received_files",
 ];
 pub const REPO_MUTATION_FORBIDDEN_GIT_COMMANDS: [&str; 3] =
     ["git clean", "git reset --hard", "git checkout -- ."];
@@ -79,6 +80,14 @@ pub enum RepoMutationOperation {
         content: Vec<u8>,
         message: String,
     },
+    /// Every file of one accepted pushed ref update, landed as ONE reviewed
+    /// commit (G4 PR2). Its bytes and modes resolve from the stored bundle
+    /// the candidate names, never from this request.
+    ReceivedFiles {
+        candidate: EntityId,
+        source_operations: Vec<EntityId>,
+        message: String,
+    },
 }
 
 impl RepoMutationOperation {
@@ -91,6 +100,7 @@ impl RepoMutationOperation {
             Self::RemoveWorktree { .. } => "remove_worktree",
             Self::RecoverSnapshot { .. } => "recover_snapshot",
             Self::ResolveConflictFile { .. } => "resolve_conflict_file",
+            Self::ReceivedFiles { .. } => "received_files",
         }
     }
 }
