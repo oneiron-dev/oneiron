@@ -2555,6 +2555,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityWorkPolicy",
+      "AuthorityWorkWaitExpired"
+     ],
+     "path": "src/authority/admission.rs",
+     "purpose": "Measured admission for authority work (Phase2 A: FIX 7906, 7909, 7911, 7912, 7921, 7922, 7930)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -3552,8 +3568,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 33,
-      "re-export": 59
+      "crate-vis": 34,
+      "re-export": 60
      }
     },
     {
@@ -32438,7 +32454,7 @@
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -51127,7 +51143,7 @@
      "path": "src/secret_custody/transition.rs",
      "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -51149,6 +51165,16 @@
      "purpose": "The bytes of a custody transition: its strict codec, the transcript its signature covers, and the value…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/transition/pieces.rs",
+     "purpose": "A custody transition in pieces (CALLS `Phase2 custody pieces request bound`, Engine 10-22 02:2x; FIX 7906…",
+     "surface": {
+      "crate-vis": 23
      }
     },
     {
@@ -66225,7 +66251,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 16,
+      "fn": 17,
       "struct": 4,
       "trait": 2
      }
@@ -69157,7 +69183,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 191,
+     "files": 192,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70235,7 +70261,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70615,7 +70641,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4491,
+   "source_files": 4493,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70712,7 +70738,7 @@
      "path": "src/authority/checkpoint_policy.rs",
      "purpose": "The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 2,
       "fn": 5,
       "struct": 2
@@ -70918,7 +70944,7 @@
      "path": "src/authority/machine_profile.rs",
      "purpose": "The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 5,
       "enum": 3,
       "fn": 8,
@@ -71040,7 +71066,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CustodyChange",
@@ -71053,7 +71079,7 @@
       "const": 2,
       "crate-vis": 3,
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -71218,7 +71244,7 @@
      "path": "src/authority/world_privacy.rs",
      "purpose": "A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may…",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 2,
       "enum": 4,
       "fn": 3,
@@ -90276,7 +90302,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LimitsConfig"
@@ -96965,7 +96991,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 52,
+   "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1058,
    "test_files": 182
