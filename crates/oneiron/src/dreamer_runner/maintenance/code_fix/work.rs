@@ -1,24 +1,27 @@
 //! A code fix's work rows (OF-380): each failure's row and its key, the
 //! `coach.code_fix` run a filed heal wakes, the verdicts a run keeps in the
-//! write that queues its records, and what a run reads of the failure.
+//! write that queues its records, what a run reads of the failure, and the
+//! invented example drafted again until it copies none of it.
+
+use std::collections::BTreeSet;
 
 use rmpv::Value;
 use serde_json::json;
 
 use super::super::coach::COACH_CODE_FIX_FACET;
-use super::super::coach_heal::{HealRoute, case_reports};
+use super::super::coach_heal::HealRoute;
+use super::instruction::{CoachReplay, CoachScrubber};
 use super::{
-    BLOCKED_WORK_DOMAIN, CandidateRun, CodeFixSettled, CodeFixWork, PublisherCandidate,
+    BLOCKED_WORK_DOMAIN, CandidateRun, CodeFixJob, CodeFixSettled, CodeFixWork, PublisherCandidate,
     PublisherCandidateKind, SealedRun, WORK,
 };
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{COACH_HEAL_ATTEMPT_KIND, DreamerAttemptPayload, DreamerRunnerStore};
-use crate::failure_ladder::{BlockedReportRef, HealerCase, healer_case_in_txn};
+use crate::failure_ladder::{HealerCase, healer_case_in_txn};
 use crate::failure_signals::{
-    CodeFixSource, CodeFixVerdict, CodeFixWithheld, FailureSource, Sealing, failed_case_in,
-    queue_sealed_in_txn,
+    CodeFixSource, CodeFixSourceSnapshot, CodeFixVerdict, CodeFixWithheld, FailureClassV1,
+    FailureSource, InventedExampleDraft, Sealing, failed_case_in, queue_sealed_in_txn,
 };
-use crate::limit_ask::EngineLimit;
 use crate::skill_optimize::union_source_rows;
 use crate::{EntityId, Result, Vault};
 
@@ -188,39 +191,87 @@ pub(super) fn not_run(
         .collect()
 }
 
-/// The failure's evidence for its questions (the case's own and each report
-/// it still reads), and its reports as those questions read them: every one,
-/// each whole, measured.
-pub(super) fn failure_context(
-    vault: &Vault,
-    case: Option<&HealerCase>,
-    reports: &[BlockedReportRef],
-) -> Result<(Vec<EntityId>, Vec<serde_json::Value>)> {
-    let reports = case_reports(vault, reports)?;
-    let mut evidence: Vec<EntityId> = case
-        .and_then(|case| EntityId::from_hex(&case.evidence_ref).ok())
-        .into_iter()
-        .chain(reports.iter().map(|(receipt, _)| *receipt))
-        .collect();
-    evidence.sort();
-    evidence.dedup();
-    let longest = reports
-        .iter()
-        .map(|(_, report)| report.untrusted_detail.len())
-        .max()
-        .unwrap_or(0);
-    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, reports.len() as u64);
-    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
-    let reports = reports
-        .iter()
-        .map(|(_, report)| {
-            json!({
-                "category": report.category.as_str(),
-                "untrusted_detail": report.untrusted_detail,
-            })
-        })
-        .collect();
-    Ok((evidence, reports))
+/// The job the Coach drafts and replays for: the failure as `snapshot` read
+/// it once (OF-380 L1), its reports and the rows its draft is assembled from.
+pub(super) fn snapshot_job(
+    snapshot: &CodeFixSourceSnapshot,
+    origin: &CodeFixSource,
+    route: HealRoute,
+    failure_class: FailureClassV1,
+    proposal: EntityId,
+) -> CodeFixJob {
+    let case = snapshot.case.as_ref();
+    CodeFixJob {
+        origin: origin.clone(),
+        route,
+        failure_class,
+        source_rows: draft_rows(case, &snapshot.failure, &snapshot.evidence, proposal),
+        source: snapshot.failure.clone(),
+        reports: snapshot.reports.clone(),
+    }
+}
+
+/// The invented example through its export door (OF-380 L1). A draft that
+/// copies a span of the real failure is drafted again in the same pass, by
+/// the same drafter, its brief's reports ending on one `must_not_copy` entry
+/// that names every span a draft before it copied, each as the draft spelled
+/// it. A redraft that copies a span already named made no progress and ends
+/// it; the real failure's text is finite, so it ends. So does a drafter that
+/// drafts nothing or a redraft out of shape: the example is then withheld as
+/// a copy, as it was before. The rounds are counted in tracing only.
+pub(super) fn redraft_invented_example(
+    replay: &CoachReplay<'_>,
+    scrubber: &CoachScrubber<'_>,
+    mut draft: InventedExampleDraft,
+) -> Result<Sealing> {
+    let (vault, job, snapshot) = (replay.vault, replay.job, replay.snapshot);
+    let seal = |draft: InventedExampleDraft| {
+        vault.seal_invented_example(&job.origin, draft, replay, scrubber, Some(snapshot))
+    };
+    let copied = |sealing: &Sealing| {
+        matches!(
+            sealing.0,
+            CodeFixVerdict::Withheld {
+                reason: CodeFixWithheld::VerbatimSpan
+            }
+        )
+    };
+    let mut sealing = seal(draft.clone())?;
+    let mut named: BTreeSet<String> = BTreeSet::new();
+    let mut rounds: u64 = 0;
+    while copied(&sealing) {
+        let spans = snapshot.copied_spans(&draft);
+        if spans.is_empty() || spans.iter().any(|span| named.contains(span)) {
+            tracing::debug!(rounds, "no redraft of the invented example made progress");
+            return Ok(sealing);
+        }
+        named.extend(spans);
+        rounds += 1;
+        let mut brief = job.clone();
+        brief.reports.push(json!({ "must_not_copy": named }));
+        let Some(next) = replay.host.draft(&brief)? else {
+            tracing::debug!(rounds, "the Coach drafted no redraft");
+            return Ok(sealing);
+        };
+        let redraft = InventedExampleDraft {
+            failure_class: draft.failure_class,
+            note: next.note,
+            conversation: next.conversation,
+        };
+        let next = seal(redraft.clone())?;
+        if matches!(
+            next.0,
+            CodeFixVerdict::Withheld {
+                reason: CodeFixWithheld::Malformed
+            }
+        ) {
+            tracing::debug!(rounds, "a redraft was out of shape");
+            return Ok(sealing);
+        }
+        (draft, sealing) = (redraft, next);
+    }
+    tracing::debug!(rounds, "the invented example's redrafts are done");
+    Ok(sealing)
 }
 
 /// The rows a job's draft is assembled from (FIX 6997): the failure's texts,

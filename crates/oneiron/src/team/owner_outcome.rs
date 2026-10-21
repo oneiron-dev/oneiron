@@ -24,7 +24,9 @@ use crate::learning::Anchor;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionRecord;
 
-use super::receipt::{TeamOutcome, TeamReceipt, settle_team_outcome_in_txn, team_receipt_in_txn};
+use super::receipt::{
+    TeamOutcome, TeamReceipt, settle_team_outcome_sourced_in_txn, team_receipt_in_txn,
+};
 use super::run_binding::team_run_binding_in_txn;
 
 /// Deliverable reviews bound to a team. Key: id16 (the reviewed claim).
@@ -192,6 +194,17 @@ pub(crate) fn settle_team_owner_verdict_in_txn(
     match &receipt.outcome {
         Some(existing) if *existing == outcome => Ok(Some(receipt)),
         Some(_) => Ok(None),
-        None => settle_team_outcome_in_txn(vault, txn, &binding.team_ref, &outcome).map(Some),
+        // The verdict settles on the reviewed claim, whose body the caller
+        // read and the fingerprint above checks: the one entity row the
+        // outcome was read from. The decision's word, the anchor, its time
+        // and its receipt id are recorded values (FIX 7103).
+        None => settle_team_outcome_sourced_in_txn(
+            vault,
+            txn,
+            &binding.team_ref,
+            &outcome,
+            Some(vec![binding.claim]),
+        )
+        .map(Some),
     }
 }

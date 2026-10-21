@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1113 facade rows, 3822 declarations.
-Inputs: 1048 of 1113 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1000 of 1113 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1117 facade rows, 3832 declarations.
+Inputs: 1052 of 1117 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1004 of 1117 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -3799,10 +3799,28 @@ class WeaveItemViewAgentHealth(TypedDict):
     item: Literal["agent_health"]
     card_ref: str
     card: AgentHealthCard
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth
+class WeaveItemViewSieveAudit(TypedDict):
+    item: Literal["sieve_audit"]
+    attempt_ref: str
+    span_ref: str
+    turn_ref: str
+    source_ref: str
+    expected_kind: str
+    actual_kind: str
+    expected_entity_ref: NotRequired[str | None]
+    actual_entity_ref: NotRequired[str | None]
+    novel: bool
+    confidence: int
+    agrees: bool
+    audited_at: int
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit
+class WeaveSieveScoreView(TypedDict):
+    sampled: int
+    agreeing: int
 class WeaveSectionView(TypedDict):
     kind: WeaveSectionKind
     items: list[WeaveItemView]
+    sieve_score: NotRequired[WeaveSieveScoreView | None]
 class WeaveReportView(TypedDict):
     sections: list[WeaveSectionView]
     narrowing: ScopedReadReceipt
@@ -10930,6 +10948,41 @@ class MergeQueuePointersView(TypedDict):
     head_commit: str
     green_commit: str
     pending_slow_batch_refs: list[str]
+class MergeQueueInitializeRequest(TypedDict):
+    repo: EntityId
+    baseline_commit: str
+    contract_baseline_ref: NotRequired[str | None]
+MergeQueueCheckWorkKind = Literal["init", "check", "diagnose"]
+MergeQueueCheckState = Literal["queued", "running", "needs_configuration", "held", "passed", "failed", "settled"]
+QueueCheckHoldReason = Literal["interrupted", "executor_unavailable", "missing_offline_input", "unstable_inputs", "authority", "tree_unavailable", "refused"]
+class MergeQueueCheckWorkView(TypedDict):
+    repo: EntityId
+    work_ref: str
+    kind: MergeQueueCheckWorkKind
+    status: MergeQueueCheckState
+    configuration_keys: list[str]
+    reason: NotRequired[str | None]
+    hold: NotRequired[QueueCheckHoldReason | None]
+    generation: int
+    baseline_commit: NotRequired[str | None]
+    plan_digest: NotRequired[str | None]
+    receipt_refs: list[str]
+    verdict_refs: list[str]
+    pointers: NotRequired[MergeQueuePointersView | None]
+    quarantine: NotRequired[Quarantine | None]
+QueueCheckPhase = Literal["fast", "slow"]
+class MergeQueueCheckRequest(TypedDict):
+    repo: EntityId
+    batch_ref: str
+    mask: int
+    phase: QueueCheckPhase
+    force_refresh: NotRequired[bool]
+class MergeQueueDiagnoseRequest(TypedDict):
+    repo: EntityId
+    batch_ref: str
+class MergeQueueCheckStatusRequest(TypedDict):
+    repo: EntityId
+    work_ref: str
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
