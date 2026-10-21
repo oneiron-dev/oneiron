@@ -2,7 +2,11 @@
 //! each `[self_heal.detectors.<family>]` the owner wrote, it reads every
 //! retrieval run, cuts them into windows and asks the detector's question of
 //! each window not graded yet: each completed window of time for `t2` and
-//! `t3`, each conversation gone quiet for `session`. A raised window is a
+//! `t3`, each conversation gone quiet for `session`. A long window is asked
+//! in parts and graded whole: a `t2` streak runs on across parts, a `t3` or
+//! `session` window raises when any part raised, and the window is marked
+//! graded once every part is asked (OF-418 L6). Questions start at the host's
+//! first staffed decision rung (OF-418 L9). A raised window is a
 //! proposed diagnostic; nothing is repaired here. A `t2` detector whose
 //! family's `t3` findings the owner has labeled asks with those findings.
 //! Once a `t3` detector's reviewed findings mint a T2, the pass registers it
@@ -19,12 +23,13 @@ use std::time::Duration;
 
 use oneiron::EntityId;
 use oneiron::limit_ask::EngineLimit;
+use oneiron::llm::decision::DecisionDial;
 use oneiron::self_heal::detector_pass::{
     centroid_window_key, detector_window_key, minted_window_key,
 };
 use oneiron::self_heal::distillation::{MintedExample, MintedT2};
 use oneiron::self_heal::tiered::{
-    DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedDiagnostic,
+    DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedDiagnostic, WindowGrade,
 };
 use oneiron::self_heal::{CentroidCorpus, SessionText};
 use oneiron::store::RetrievalRunRecord;
@@ -34,12 +39,15 @@ use crate::decision_host::DecisionHost;
 use crate::server::SyncServer;
 
 const TICK: Duration = Duration::from_secs(300);
-/// Windows one pass grades at most, across every detector.
+/// Window parts one pass asks, across every detector, before it starts no
+/// further window: a window begun is asked to its last part, and the next
+/// pass takes the rest.
 const ROUND: usize = 8;
 /// One question's budget.
 const DECIDE_BUDGET: Duration = Duration::from_secs(20);
-/// Runs one graded window holds at most: the engine's bound. A longer window
-/// is graded in parts of this many runs ([`parts`]).
+/// Runs one part of a window holds at most: each part's questions read its
+/// own runs' facts. The window's streak, sufficiency and verdict stay the
+/// whole window's ([`judge`]).
 const WINDOW_RUNS: usize = 64;
 
 struct Detector {
@@ -190,14 +198,14 @@ fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
     for detector in &pass {
         let seed = detector.seed();
         for window in windows(&runs, seed, now) {
-            if graded == ROUND {
+            if graded >= ROUND {
                 return Ok(());
             }
             let key = detector.key(&window);
             if vault.detector_window_graded(&key)? {
                 continue;
             }
-            graded += 1;
+            graded += window.len().div_ceil(WINDOW_RUNS);
             let window: Vec<RetrievalRunRecord> = window.into_iter().cloned().collect();
             match judge(vault, host, principal, detector, &window) {
                 Ok(raised) => {
@@ -296,66 +304,79 @@ fn registered<'a>(vault: &oneiron::Vault, seed: &'a Detector, now: u64) -> Optio
     }
 }
 
-/// Grades one window. A T2 with a reviewed corpus tries T2a first, and a
-/// match is its proposal; otherwise the detector asks its model question
-/// over the whole state its runs, reviewed examples and session text make.
+/// Grades one whole window. A T2 with a reviewed corpus tries T2a over every
+/// run first, and a match is its proposal; otherwise the detector asks its
+/// model question part by part, each part of at most [`WINDOW_RUNS`] runs
+/// over the state its runs make, with the reviewed examples and the
+/// session's text whole beside them, and the window has one verdict once
+/// every part is asked (OF-418 L6). Each question starts at the host's first
+/// staffed rung, up to the detector's ceiling and in its band (OF-418 L9).
 fn judge(
     vault: &oneiron::Vault,
     host: &DecisionHost,
     principal: EntityId,
     detector: &Graded<'_>,
-    runs: &[RetrievalRunRecord],
+    window: &[RetrievalRunRecord],
 ) -> oneiron::Result<Option<ProposedDiagnostic>> {
     let seed = detector.seed();
     let reviewed = detector.reviewed();
     if let Some(reviewed) = reviewed
-        && let Some(found) = vault.classify_centroid_window(&seed.policy, &reviewed.corpus, runs)?
+        && let Some(found) =
+            vault.classify_centroid_window(&seed.policy, &reviewed.corpus, window)?
     {
         return Ok(Some(found));
     }
     let session = match seed.tier {
-        DetectorTier::Session => Some(vault.session_judge_context(principal, runs)?),
+        DetectorTier::Session => Some(vault.session_judge_context(principal, window)?),
         DetectorTier::T2 | DetectorTier::T3 => None,
     };
     let examples = reviewed.map(|reviewed| &reviewed.examples);
-    let state = state_of(vault, runs, examples, session.as_ref())?;
-    let decisions = DetectorDecisions {
-        ladder: host.ladder().ladder(),
-        principal,
-        dial: DETECTOR_DIAL,
-        bands: host.bands(),
-        state: &state,
-        budget: DECIDE_BUDGET,
+    let dial = DecisionDial {
+        first: host.dial(DETECTOR_DIAL.ceiling).first,
+        ..DETECTOR_DIAL
     };
-    grade(vault, detector, &decisions, runs)
+    let mut grade = open_grade(vault, detector, window)?;
+    for part in window.chunks(WINDOW_RUNS) {
+        let state = state_of(vault, part, examples, session.as_ref())?;
+        let decisions = DetectorDecisions {
+            ladder: host.ladder().ladder(),
+            principal,
+            dial,
+            bands: host.bands(),
+            state: &state,
+            budget: DECIDE_BUDGET,
+        };
+        vault.grade_window_part(&mut grade, &decisions, part.len())?;
+    }
+    vault.finish_window_grade(grade)
 }
 
-fn grade(
+/// Opens a window for the detector's model question, validated whole. A
+/// minted T2, and a configured `t2` its family's reviewed findings mint, ask
+/// with their reviewed examples.
+fn open_grade<'w>(
     vault: &oneiron::Vault,
-    detector: &Graded<'_>,
-    decisions: &DetectorDecisions<'_>,
-    runs: &[RetrievalRunRecord],
-) -> oneiron::Result<Option<ProposedDiagnostic>> {
+    detector: &'w Graded<'_>,
+    window: &'w [RetrievalRunRecord],
+) -> oneiron::Result<WindowGrade<'w>> {
     let (seed, reviewed) = match detector {
-        Graded::Configured { seed, reviewed } => (seed, reviewed),
+        Graded::Configured { seed, reviewed } => (*seed, reviewed.as_ref()),
         Graded::Minted { reviewed, .. } => {
-            return vault.classify_minted_t2(&reviewed.minted, decisions, runs);
+            return vault.open_minted_window_grade(&reviewed.minted, window);
         }
     };
-    match seed.tier {
-        DetectorTier::T3 => vault.judge_retrieval_trace(&seed.policy, decisions, runs),
-        DetectorTier::Session => vault.judge_session_quality(&seed.policy, decisions, runs),
-        DetectorTier::T2 => match reviewed {
-            Some(reviewed) => vault.classify_minted_t2(&reviewed.minted, decisions, runs),
-            None => vault.classify_prompt(&seed.policy, decisions, runs),
-        },
+    match (seed.tier, reviewed) {
+        (DetectorTier::T2, Some(reviewed)) => {
+            vault.open_minted_window_grade(&reviewed.minted, window)
+        }
+        (tier, _) => vault.open_window_grade(&seed.policy, tier.proposed(), window),
     }
 }
 
 /// The windows one detector grades, each oldest first: the runs of each
 /// completed window of time for `t2` and `t3`, and the runs of each
 /// conversation quiet for a window for `session`. A window with too few runs
-/// is left out; one past the engine's bound is graded in parts.
+/// is left out; every other one is graded whole, in parts ([`judge`]).
 fn windows<'a>(
     runs: &'a [RetrievalRunRecord],
     detector: &Detector,
@@ -386,20 +407,7 @@ fn windows<'a>(
             };
             done && window.len() >= detector.policy.consecutive
         })
-        .flat_map(|(_, window)| parts(&window))
-        .collect()
-}
-
-/// A window in parts of at most [`WINDOW_RUNS`] runs, oldest first, the last
-/// part its newest runs. Every run is graded, each part under its own key,
-/// so a part not graded this pass waits for the next; a part may share runs
-/// with the one before it.
-fn parts<'a>(window: &[&'a RetrievalRunRecord]) -> Vec<Vec<&'a RetrievalRunRecord>> {
-    let last = window.len().saturating_sub(WINDOW_RUNS);
-    (0..=last)
-        .step_by(WINDOW_RUNS)
-        .chain((!last.is_multiple_of(WINDOW_RUNS)).then_some(last))
-        .map(|start| window[start..window.len().min(start + WINDOW_RUNS)].to_vec())
+        .map(|(_, window)| window)
         .collect()
 }
 

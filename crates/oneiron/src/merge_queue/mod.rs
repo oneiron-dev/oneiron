@@ -5,6 +5,7 @@
 //! queue verifies the durable mutation receipt and the complete landed tree.
 mod checks;
 mod landing;
+mod mirror_green;
 mod reviewed;
 mod run;
 mod staging;

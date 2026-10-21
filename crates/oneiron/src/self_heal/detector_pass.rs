@@ -8,6 +8,7 @@ use super::{
     CentroidCorpus, DiagnosticEvent, DiagnosticSourceKind, ENTITY_TYPE_DIAGNOSTIC,
     decode_diagnostic_event_body, validate_token,
 };
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::RetrievalRunRecord;
 use crate::{EntityId, Result, Vault};
@@ -16,11 +17,11 @@ use crate::{EntityId, Result, Vault};
 const GRADED: SideTable<[u8; 32], u64, Raw> =
     SideTable::new(&side_table::SELF_HEAL_DETECTOR_WINDOW);
 
-/// Diagnostic bodies, and timeline rows, one findings read scans at most.
-const FINDINGS_BODIES: usize = 4_096;
-const FINDINGS_SCAN: usize = 16_384;
-/// Most findings one read returns.
-pub const MAX_T3_FINDINGS: usize = 256;
+/// Diagnostic ids one page of a findings read reads; the read pages on to
+/// the last diagnostic (OF-418 L5).
+const FINDINGS_PAGE: usize = 256;
+/// Findings one read returns when its caller names no count: every one.
+pub const MAX_T3_FINDINGS: usize = usize::MAX;
 
 /// One raised T3 finding, newest first, with the owner's label.
 #[derive(Clone, Debug)]
@@ -112,41 +113,58 @@ impl Vault {
         self.with_write_txn_grouped(|txn| GRADED.put(&self.store, txn, key, &at))
     }
 
-    /// Up to `limit` raised `t3.<family>` findings, newest first, each with
-    /// the owner's label: the list the owner labels from.
+    /// The newest `limit` raised `t3.<family>` findings, each with the
+    /// owner's label: the list the owner labels from. Every diagnostic is
+    /// read, a page at a time to the last, so an old finding is never out of
+    /// reach; [`MAX_T3_FINDINGS`] returns them all, newest first.
     ///
     /// # Errors
     ///
     /// A family that is not a token, or storage errors.
     pub fn t3_findings(&self, family: &str, limit: usize) -> Result<Vec<T3Finding>> {
         validate_token(family, "detector family is not a token")?;
-        let limit = limit.clamp(1, MAX_T3_FINDINGS);
         let detector = format!("t3.{family}");
         let mut findings = Vec::new();
-        for (event_id, learned_at, body) in self.latest_entity_bodies_by_type(
-            ENTITY_TYPE_DIAGNOSTIC,
-            FINDINGS_BODIES,
-            FINDINGS_SCAN,
-        )? {
-            let Ok(event) = decode_diagnostic_event_body(&body) else {
-                continue;
-            };
-            if event.source != DiagnosticSourceKind::RetrievalTelemetry
-                || event.detector_id != detector
-            {
-                continue;
+        let mut after = None;
+        loop {
+            let page =
+                self.entities_by_type_page(ENTITY_TYPE_DIAGNOSTIC, after.as_ref(), FINDINGS_PAGE)?;
+            for event_id in &page {
+                let Some(raw) = self.get_raw(event_id)? else {
+                    continue;
+                };
+                let Some(header) = EntityMetadataHeader::parse(&raw) else {
+                    continue;
+                };
+                if header.entity_type != ENTITY_TYPE_DIAGNOSTIC
+                    || raw.len() <= ENTITY_METADATA_HEADER_LEN
+                {
+                    continue;
+                }
+                let Ok(event) = decode_diagnostic_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+                else {
+                    continue;
+                };
+                if event.source != DiagnosticSourceKind::RetrievalTelemetry
+                    || event.detector_id != detector
+                {
+                    continue;
+                }
+                let label = self.t3_label(family, event_id)?;
+                findings.push(T3Finding {
+                    event_id: *event_id,
+                    learned_at: header.learned_at,
+                    event,
+                    label,
+                });
             }
-            let label = self.t3_label(family, &event_id)?;
-            findings.push(T3Finding {
-                event_id,
-                learned_at,
-                event,
-                label,
-            });
-            if findings.len() == limit {
+            if page.len() < FINDINGS_PAGE {
                 break;
             }
+            after = page.last().copied();
         }
+        findings.sort_by_key(|finding| std::cmp::Reverse((finding.learned_at, finding.event_id)));
+        findings.truncate(limit.max(1));
         Ok(findings)
     }
 }

@@ -127,9 +127,10 @@ impl WeaveLinkCorrectionView {
     }
 }
 
-/// `vault.weave.item.wrong`'s input: one claim, project or budget row, as
-/// the reader's report serves it (`item` is its `item` tag). A budget names
-/// the project it shows under; no other item does.
+/// `vault.weave.item.wrong`'s input: one claim, project, budget or sieve
+/// audit row, as the reader's report serves it (`item` is its `item` tag; an
+/// audit's `item_ref` is its `attempt_ref`). A budget names the project it
+/// shows under; no other item does.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WeaveWrongItemRequest {
@@ -146,6 +147,7 @@ impl WeaveWrongItemRequest {
             WeaveItemTarget::Claim(id) => ("claim", id, None),
             WeaveItemTarget::Project(id) => ("project", id, None),
             WeaveItemTarget::Budget { project, budget } => ("budget", budget, Some(project)),
+            WeaveItemTarget::SieveAudit { attempt } => ("sieve_audit", attempt, None),
         };
         Self {
             item: item.to_owned(),
@@ -167,14 +169,15 @@ impl WeaveWrongItemRequest {
                 project: entity(project)?,
                 budget: id,
             }),
+            ("sieve_audit", None) => Ok(WeaveItemTarget::SieveAudit { attempt: id }),
             ("budget", None) => Err(MemoryError::bad_request(
                 "a weave budget item names its project_ref",
             )),
-            ("claim" | "project", Some(_)) => Err(MemoryError::bad_request(
+            ("claim" | "project" | "sieve_audit", Some(_)) => Err(MemoryError::bad_request(
                 "only a weave budget item names a project_ref",
             )),
             _ => Err(MemoryError::bad_request(
-                "a wrong weave item is a claim, project or budget",
+                "a wrong weave item is a claim, project, budget or sieve audit",
             )),
         }
     }
@@ -238,12 +241,44 @@ pub enum WeaveItemView {
         card_ref: String,
         card: crate::dreamer_runner::maintenance::agent_health::AgentHealthCard,
     },
+    /// One sampled sieve audit (OF-499): the attempt that wrote it, the
+    /// span's turn and source, the rule's kind and entity beside the
+    /// expensive path's, and whether they agree. Its wrong control sends
+    /// `attempt_ref` as a `sieve_audit` item's `item_ref`.
+    SieveAudit {
+        attempt_ref: String,
+        span_ref: String,
+        turn_ref: String,
+        source_ref: String,
+        expected_kind: String,
+        actual_kind: String,
+        expected_entity_ref: Option<String>,
+        actual_entity_ref: Option<String>,
+        novel: bool,
+        confidence: u8,
+        agrees: bool,
+        audited_at: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WeaveSectionView {
     pub kind: WeaveSectionKind,
     pub items: Vec<WeaveItemView>,
+    /// A SieveScore section's score, derived from its audit items; absent
+    /// on every other section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sieve_score: Option<WeaveSieveScoreView>,
+}
+
+/// A SieveScore section's score (OF-499): of the sampled sieve audits the
+/// section shows, how many agree with the expensive path. It is counted
+/// from those items, never kept apart. `sampled: 0` is no samples: no
+/// score, never a success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WeaveSieveScoreView {
+    pub sampled: u64,
+    pub agreeing: u64,
 }
 
 /// A live weave report, with its narrowing receipt.
@@ -605,9 +640,9 @@ impl Memory<'_> {
     }
 
     /// `vault.weave.item.wrong`: the one-tap wrong control on a claim,
-    /// project or budget row the bound human sees in its own lens, filed as
-    /// a link's is: under `proof`, from the owner lens when `owner` is
-    /// given; an agent files nothing.
+    /// project, budget or sieve audit row the bound human sees in its own
+    /// lens, filed as a link's is: under `proof`, from the owner lens when
+    /// `owner` is given; an agent files nothing.
     pub fn weave_wrong_item(
         &self,
         owner: Option<&AuthenticatedOwner>,
@@ -617,8 +652,11 @@ impl Memory<'_> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let target = request.target()?;
-        // The label is filed on the row the reader's own report shows.
-        self.produced_from([target.id()]);
+        // The label is filed on the row the reader's own report shows. An
+        // audit is a side-table row; its records passed that report's floor.
+        if !matches!(target, WeaveItemTarget::SieveAudit { .. }) {
+            self.produced_from([target.id()]);
+        }
         let filed = read.report_wrong_item(proof, reader, target)?;
         Ok(WeaveItemCorrectionView::from_correction(&filed))
     }
@@ -672,6 +710,7 @@ impl Memory<'_> {
             .map(|section| {
                 Ok(WeaveSectionView {
                     kind: section.kind,
+                    sieve_score: super::weave_report::sieve_score::sieve_score_view(section),
                     items: section
                         .items
                         .iter()
@@ -713,6 +752,11 @@ impl Memory<'_> {
                                     card_ref: card.card_ref(),
                                     card: card.clone(),
                                 },
+                                WeaveItem::SieveAudit { attempt, audit } => {
+                                    super::weave_report::sieve_score::sieve_audit_view(
+                                        *attempt, audit,
+                                    )
+                                }
                             })
                         })
                         .collect::<MemoryResult<Vec<_>>>()?,
