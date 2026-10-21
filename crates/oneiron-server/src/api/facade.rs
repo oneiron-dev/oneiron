@@ -85,6 +85,7 @@ mod fold_doors;
 mod foreign_code_doors;
 pub(super) mod free_time_doors;
 mod gate_policy_doors;
+mod git_push_doors;
 mod goal_optimize_doors;
 mod graduation_doors;
 mod graph_ask_doors;

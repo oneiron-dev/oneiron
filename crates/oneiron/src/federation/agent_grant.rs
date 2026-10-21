@@ -59,6 +59,8 @@ const NO_VERB_LIST: &str =
     "an agent grant names its verbs: authority_scope.verbs must be a nonempty explicit set";
 const NOT_AN_AGENT: &str = "an agent grant names a live agent principal of this vault: an agent definition or a base agent";
 const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than now";
+const RESERVED_GIT_PUSH: &str =
+    "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
 
 /// One owner's agent grant as its live row holds it.
 #[derive(Debug, Clone)]
@@ -125,6 +127,12 @@ impl Vault {
             if !matches!(&authority_scope.verbs, ScopeAxis::Some(verbs) if !verbs.is_empty()) {
                 return Err(Error::InvalidConfig(NO_VERB_LIST.into()));
             }
+            if authority_scope
+                .verbs
+                .contains(&super::GIT_PUSH_VERB.to_owned())
+            {
+                return Err(Error::InvalidConfig(RESERVED_GIT_PUSH.into()));
+            }
             if !self.is_agent_principal_in_txn(txn, agent)? {
                 return Err(Error::InvalidConfig(NOT_AN_AGENT.into()));
             }
@@ -151,6 +159,8 @@ impl Vault {
                 guest: None,
                 owner_agent: true,
                 repo_bounds,
+                kind: super::FederationGrantKind::Access,
+                git_push_bounds: None,
             };
             // Encoding validates: nothing is signed for a grant that cannot stand.
             let data = encode_federation_grant_body(&grant)?;
@@ -165,6 +175,8 @@ impl Vault {
                     scope: grant.authority_scope.clone(),
                     expires_at,
                     repo_bounds: grant.repo_bounds.clone(),
+                    grant_kind: super::FederationGrantKind::Access,
+                    git_push_bounds: None,
                 },
             )?;
             self.apply_agent_grant_op_in_txn(

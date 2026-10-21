@@ -1052,6 +1052,7 @@ impl Vault {
         // An owner's agent grant (FIX 5628) is reviewed here too, with the
         // agent grant revoke door as its one-tap revoke.
         rows.extend(self.agent_grant_registry_rows_in_txn(&rtxn, query.include_revoked)?);
+        rows.extend(self.git_push_registry_rows_in_txn(&rtxn, query.include_revoked)?);
         drop(rtxn);
         rows.sort_by(|left, right| {
             right

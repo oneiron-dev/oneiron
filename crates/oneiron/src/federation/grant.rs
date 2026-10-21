@@ -14,7 +14,10 @@ use super::codec::invalid_grant;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+mod git_push;
 mod repo_bounds;
+
+pub(crate) use git_push::git_push_scope;
 
 /// Current FederationGrant body schema version.
 ///
@@ -36,8 +39,8 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 /// the owner's own grant to a named agent (FIX 5628), a Delegate whose
 /// `expires_at` is optional; it is absent on every other body. `repo_bounds`
 /// rides only such an agent grant, when the owner gave it repo bounds (FIX
-/// 6867).
-pub const FEDERATION_GRANT_BODY_KEYS: [&str; 11] = [
+/// 6867); `grant_kind` and `git_push_bounds` a GitPush grant (G1-PUSH).
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 13] = [
     "schema_version",
     "scope",
     "member_ref",
@@ -49,6 +52,8 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 11] = [
     "guest",
     "owner_agent",
     "repo_bounds",
+    "grant_kind",
+    "git_push_bounds",
 ];
 
 /// Count of unconditionally required keys at the head of
@@ -378,6 +383,10 @@ pub struct FederationGrant {
     /// besides its Scope (FIX 6867); absent on every other grant and on an
     /// agent grant without them.
     pub repo_bounds: Option<crate::federation::RepoAccessBounds>,
+    /// `Access` (its role and Scope) or `GitPush` (raw git push alone).
+    pub kind: crate::federation::FederationGrantKind,
+    /// The repos a GitPush grant names; absent on an Access grant.
+    pub git_push_bounds: Option<crate::federation::GitPushBounds>,
 }
 
 impl FederationGrant {
@@ -412,6 +421,8 @@ impl FederationGrant {
             guest: None,
             owner_agent: false,
             repo_bounds: None,
+            kind: crate::federation::FederationGrantKind::Access,
+            git_push_bounds: None,
         }
     }
 
@@ -438,6 +449,8 @@ impl FederationGrant {
             }),
             owner_agent: false,
             repo_bounds: None,
+            kind: crate::federation::FederationGrantKind::Access,
+            git_push_bounds: None,
         };
         grant.validate()?;
         Ok(grant)
@@ -487,6 +500,8 @@ impl FederationGrant {
             guest: None,
             owner_agent: false,
             repo_bounds: None,
+            kind: crate::federation::FederationGrantKind::Access,
+            git_push_bounds: None,
         })
     }
 
@@ -503,9 +518,10 @@ impl FederationGrant {
         }
         let expects_delegation = matches!(self.role, FederationGrantRole::Delegate);
         // A Connect guest grant may carry an expiry without a delegator, and
-        // an owner's agent grant (a Delegate) may stand until revoked.
-        let expiry_optional =
-            matches!(self.scope, FederationGrantScope::Connect { .. }) || self.owner_agent;
+        // an owner's agent or git_push grant (a Delegate) may stand until revoked.
+        let expiry_optional = matches!(self.scope, FederationGrantScope::Connect { .. })
+            || self.owner_agent
+            || !self.is_access();
         if (!expiry_optional && expects_delegation != self.expires_at.is_some())
             || expects_delegation != self.delegated_by.is_some()
             || (self.owner_agent && !expects_delegation)
@@ -516,6 +532,7 @@ impl FederationGrant {
             return Err(invalid_grant());
         }
         repo_bounds::validate(self)?;
+        git_push::validate(self)?;
         // Each purpose has its one role class: Ask and Connect are Guest, and
         // only Ask carries the fact payload; a shared vault is never Guest.
         match (self.scope, self.role.is_guest(), self.guest.as_ref()) {
@@ -540,7 +557,9 @@ impl FederationGrant {
     /// non-delegate role — confer regardless of age.
     #[must_use]
     pub fn confers_at(&self, now_secs: u64) -> bool {
-        if !self.authority_scope.verbs.contains(&"read".to_owned())
+        // A git_push grant confers no standing (G1-PUSH).
+        if !self.is_access()
+            || !self.authority_scope.verbs.contains(&"read".to_owned())
             || self.authority_scope.worlds.is_bottom()
             || self.authority_scope.bands.is_bottom()
             || self.authority_scope.audience.is_bottom()
@@ -623,6 +642,7 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
         entries.push((Value::from(KEY_OWNER_AGENT), Value::from(true)));
     }
     entries.extend(repo_bounds::body_entry(grant));
+    entries.extend(git_push::body_entries(grant));
 
     encode_msgpack_value(
         &Value::Map(entries),
@@ -693,6 +713,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         Some(_) => return Err(invalid_grant()),
     };
     let repo_bounds = repo_bounds::decode_body_entry(entries)?;
+    let (kind, git_push_bounds) = git_push::decode_body_entries(entries)?;
 
     let grant = FederationGrant {
         authority_scope: if legacy {
@@ -714,6 +735,8 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         guest,
         owner_agent,
         repo_bounds,
+        kind,
+        git_push_bounds,
     };
     // Role-conditional presence is enforced here: a five-key Delegate body and
     // a seven-key Owner body both die at `validate`, not at the key allowlist.

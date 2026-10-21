@@ -88,6 +88,8 @@ impl FederationGrant {
             guest: None,
             owner_agent: false,
             repo_bounds: None,
+            kind: super::FederationGrantKind::Access,
+            git_push_bounds: None,
         };
         grant.validate()?;
         Ok(grant)
