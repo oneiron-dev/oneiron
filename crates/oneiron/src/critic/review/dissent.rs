@@ -3,10 +3,11 @@
 use super::*;
 use crate::learning::{Anchor, LearningEvidence, Observation};
 use crate::llm::decision::questions::{
-    self, OutcomeBinding, QuestionActivation, QuestionDefinition, RefreshPolicy, StandingAnswer,
+    self, OutcomeBinding, QuestionActivation, QuestionDefinitionInput, RefreshPolicy,
+    StandingAnswer,
 };
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, ProviderPin,
+    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestionInput, ProviderPin,
 };
 use crate::note::TakeTarget;
 
@@ -76,10 +77,8 @@ pub fn preserve_review_dissent(
         let record = questions::create_question(
             vault,
             principal,
-            QuestionDefinition {
-                question: DecisionQuestion {
-                    id: EntityId::now(),
-                    version: 1,
+            QuestionDefinitionInput {
+                question: DecisionQuestionInput {
                     text: prediction.what.clone(),
                     class: DecisionClass::Judgment,
                     contract: AnswerContract::Noul,

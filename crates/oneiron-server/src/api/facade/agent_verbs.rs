@@ -932,6 +932,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.voices.targets.provision", post(facade_route))
         .route("/vault.voices.targets.evict", post(facade_route))
         .route("/vault.voices.inspect", post(facade_route))
+        .route("/vault.voices.lineage", post(facade_route))
         .route("/ai.transcribe", post(facade_route))
         .route("/ai.embed", post(facade_route))
         .route("/ai.video", post(facade_route))
