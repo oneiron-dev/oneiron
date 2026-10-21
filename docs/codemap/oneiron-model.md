@@ -25,7 +25,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/mod.rs` | src | s | 5 re-export | — | — |
 | `src/llm/budget/policy.rs` | src | s | 2 struct · 1 enum · 9 fn · 1 crate-vis | BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable | Resolved manifest policy table for one budget meter |
 | `src/llm/budget/settlement.rs` | src | s | 2 fn · 1 crate-vis | — | — |
-| `src/llm/budget/state.rs` | src | m | 25 crate-vis | — | Budget meter core: reserve planning and admission |
+| `src/llm/budget/state.rs` | src | m | 23 crate-vis | — | Budget meter core: reserve planning and admission |
 | `src/llm/budget/templates.rs` | src | s | 1 struct · 9 const | BudgetPromptTemplate | Budget ladder prompt templates and their registry |
 | `src/llm/budget/tests.rs` | test | s | — | — | — |
 | `src/llm/budget/tests/dispatch.rs` | test | s | — | — | — |
@@ -51,7 +51,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/protocol.rs` | src | m | 7 struct · 5 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest +4 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |
 | `src/llm/safeguard.rs` | src | s | 2 enum · 5 fn · 2 const | SafeguardModelBinding, SafeguardModelBindingError | Safeguard-classifier binding selector with parsing, display, serde, and tier/model projections |
-| `src/llm/scope.rs` | src | s | 1 struct · 1 enum · 3 fn | Scope, ScopeResource | Four-axis branch scope and exact readable/writable resource identities |
+| `src/llm/scope.rs` | src | s | 1 struct · 1 enum · 4 fn | Scope, ScopeResource | Four-axis branch scope and exact readable/writable resource identities |
 | `src/llm/streaming_tests.rs` | test | s | — | — | — |
 | `src/llm/subscribers.rs` | src | s | 4 struct · 6 fn | ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker | Pure clock-injected progress and voice stages |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-model` made `pub` so `oneiron` can reach them across the crate split |
