@@ -57830,19 +57830,84 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "TaggingBackoff",
-      "TaggingPass",
-      "TaggingReconciler"
-     ],
+     "notable": [],
      "path": "src/tagging/reconciler.rs",
-     "purpose": "The drain pass a host worker drives: claim ready markers, read each turn, call the tagger outside any write…",
+     "purpose": "The tagging reconciler (FIX 6755): the engine half of the drain",
      "surface": {
       "crate-vis": 1,
-      "fn": 11,
-      "struct": 3
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/call.rs",
+     "purpose": "The call (FIX 6755): a prepared marker's one tagger call, made on the caller's thread by the synchronous…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/claim.rs",
+     "purpose": "The claim (FIX 6755): a ready live marker before any bulk one, read outside the writer and leased under it…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparedTagging",
+      "TaggingBackoff",
+      "TaggingPass",
+      "TaggingPreparation",
+      "TaggingReconciler"
+     ],
+     "path": "src/tagging/reconciler/coordinator.rs",
+     "purpose": "The reconciler's state, built once per vault, its builders, the passes a host worker drives through it, and…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 15,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/history.rs",
+     "purpose": "The trace history's upkeep at the start of a pass: trimming to the per-turn bound in force, and expiry by age",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/recovery.rs",
+     "purpose": "Recovery: the start scan for leases a stopped worker left, the rehome of markers an earlier build left below…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/settle.rs",
+     "purpose": "Settlement (FIX 6755): a marker completed, skipped, failed or retried with its trace, each in one transaction",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -67893,7 +67958,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 15,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68082,9 +68147,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 185,
+   "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4285,
+   "source_files": 4291,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90871,13 +90936,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/dispatcher/capacity.rs",
+     "purpose": "Room in the dispatcher's pending caps, as owned claims (FIX 6755)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/dispatcher/mod.rs",
      "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -90987,7 +91062,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 24
      }
     },
     {
@@ -92166,6 +92241,16 @@
      "notable": [],
      "path": "src/server/tagging.rs",
      "purpose": "The tagging worker: the one thing that drives the engine's tagging reconciler",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/tagging/coordinator.rs",
+     "purpose": "The tagging coordinator (FIX 6755): one loop per vault that keeps live and bulk markers in flight through…",
      "surface": {
       "crate-vis": 3
      }
@@ -93374,7 +93459,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93430,7 +93515,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93502,7 +93587,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 998,
+   "source_files": 1000,
    "test_files": 182
   },
   "oneiron-spawn": {
