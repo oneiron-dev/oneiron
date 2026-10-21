@@ -177,6 +177,17 @@ pub(super) fn fold_entry_state(
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
+    // A frontier join stands for its parents' merge, signed by the key that
+    // signs the act it leads to (FIX 7908): only its signer's sequence moves.
+    if let AuthorityOp::FrontierJoin(join) = &entry.op {
+        let standing = (context.pin, context.machine_standing);
+        if let Err(issue) =
+            super::frontier_join::apply_frontier_join(&mut state, entry, join, hash, standing)
+        {
+            return EntryFold::Invalid(issue);
+        }
+        return EntryFold::Ready(state);
+    }
     // Signed by the carrier's install key, never a roster key: any live
     // linked machine carries the owner's authenticated say-so (mesh contract
     // §3), and FIX 2222 keeps the host root acting as nobody.
@@ -523,7 +534,8 @@ fn residence_result_stands(
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
 /// edit, a grant travel choice, a checkpoint policy choice, a home pick, a
 /// person's conversation training choice, or a machine revision. The roster rule reads each as a replica with no floor
-/// does; this install never counts what it grants.
+/// does; this install never counts what it grants. A frontier join, which
+/// grants nothing, lands so too, so such an act above it keeps its effect.
 pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -534,6 +546,7 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
             | AuthorityOp::ConversationTrainingSet(_)
             | AuthorityOp::ConversationTrainingVaultSet(_)
             | AuthorityOp::MachineProfile(_)
+            | AuthorityOp::FrontierJoin(_)
     )
 }
 
@@ -645,6 +658,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
-        | AuthorityOp::OwnerWorkCancel(_) => false,
+        | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::FrontierJoin(_) => false,
     }
 }

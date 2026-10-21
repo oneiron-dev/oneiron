@@ -31,6 +31,7 @@ mod desktop;
 mod driver;
 mod engine;
 mod fact;
+mod field;
 mod library;
 #[cfg(feature = "driver")]
 mod mcp;
@@ -54,6 +55,11 @@ pub use answer::{BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch, Win
 pub use desktop::{AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover};
 pub use engine::BrowserEngine;
 pub use fact::{ActionFact, ActionTarget, NoEffectReason, ViewportPoint};
+pub use field::{
+    FIELD_WRITER, FieldSpec, FieldTextReason, FieldWrite, FieldWriteError, FieldWriter,
+    FieldWritten, NoWriter, TextCheck, TextCheckReply, TextProvenance, TextReference, TextSource,
+    TextVerdict,
+};
 pub use library::{
     AdmissionRefusal, Admitted, FiledWorkflow, LibraryCard, LibraryFindInput, LibraryFindOutput,
     LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
@@ -242,6 +248,15 @@ pub struct EffectReceipt {
     /// On a `switch_engine` receipt: the switch's record (FIX 6680).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine_switch: Option<EngineSwitchRecord>,
+    /// Where the text a browser's type or Fill step typed came from (CUA
+    /// E6): `supplied` for a `type`, else the Fill's source. Absent on any
+    /// other effect, and on a desktop's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_source: Option<TextSource>,
+    /// The typed text's reference: a reference's id, a template's digest
+    /// (`blake3:` and hex), or the writer call's id; none for supplied text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_ref: Option<String>,
     /// How long the effect took, in milliseconds of the monotonic clock:
     /// from its verb's entry through its screenshot and this receipt,
     /// before the host keeps the screenshot.
@@ -926,6 +941,16 @@ pub enum BatchStep {
     /// A routine step: the host's decider picks the step's target, and the
     /// step acts on it.
     Decide(DecideStep),
+    /// Types a field's text, replacing what it held, resolved in order (CUA
+    /// E6): `supplied` text; else one of its references, several a routine
+    /// choice among their ids; else its template; else, with `generate`,
+    /// the host's writer, checked yes/no. The receipt names the text's
+    /// source and reference. A strict run's generation goes up unasked.
+    Fill {
+        #[serde(rename = "ref")]
+        target: String,
+        field: FieldSpec,
+    },
 }
 
 /// A routine step (the CUA-S1 pattern): a small decider takes the step's
@@ -1120,6 +1145,13 @@ pub struct RoutineReply {
 /// driver. A driver without one sends every routine step up.
 pub trait RoutineDecider: Send {
     fn decide(&mut self, ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError>;
+    /// A yes/no check of a Fill's written text (CUA E6): one question, its
+    /// state holding the text, answered once.
+    ///
+    /// # Errors
+    ///
+    /// The check could not be asked, or its answer not read.
+    fn check_text(&mut self, check: TextCheck<'_>) -> Result<TextCheckReply, BrowserError>;
 }
 
 /// No decider: a routine step cannot run, so it goes up.
@@ -1127,6 +1159,12 @@ pub struct NoDecider;
 
 impl RoutineDecider for NoDecider {
     fn decide(&mut self, _ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError> {
+        Err(BrowserError::Decider(
+            "this browser host has no routine decider".to_owned(),
+        ))
+    }
+
+    fn check_text(&mut self, _check: TextCheck<'_>) -> Result<TextCheckReply, BrowserError> {
         Err(BrowserError::Decider(
             "this browser host has no routine decider".to_owned(),
         ))
@@ -1203,6 +1241,10 @@ pub enum BrowserError {
     /// byte of it was sent or compared.
     #[error("the browser's host refused the secret: {0}")]
     SecretRefused(String),
+    /// CUA E6: a Fill step's text was not resolved, or the page did not
+    /// take it; its batch names the cause.
+    #[error("the fill step's text: {0}")]
+    FieldText(String),
 }
 
 /// One verb's observation as its answer pages it: `act`'s observation, as
@@ -1352,23 +1394,42 @@ pub trait BrowserDriver: Send {
         Err(BrowserError::Unsupported("switch_engine".to_owned()))
     }
 
+    /// Types a Fill step's resolved text as `type_text` types text, its
+    /// receipt naming where the text came from (`provenance`, CUA E6). A
+    /// driver whose receipts are stamped before they are kept overrides it;
+    /// this one stamps the answer's.
+    fn fill_text(
+        &mut self,
+        input: TypeInput,
+        provenance: TextProvenance,
+    ) -> Result<Observation, BrowserError> {
+        let mut observation = self.type_text(input)?;
+        if let Some(receipt) = &mut observation.receipt {
+            provenance.stamp(receipt);
+        }
+        Ok(observation)
+    }
+
     /// Runs one batched program for a subgoal; a routine step has no
-    /// decider here, so it goes up.
+    /// decider here, so it goes up, and a Fill has no writer.
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
-        self.batch_with(input, &mut NoDecider)
+        self.batch_with(input, &mut NoDecider, &NoWriter)
     }
 
     /// Runs one batched program for a subgoal, step by step through this
     /// driver's own verbs, so a host wrapper's door still gates each effect,
-    /// and its routine steps through `decider` under the subgoal's one clock.
-    /// The batch stops at the first refused, timed-out, unmet or sent-up
-    /// step, never for its count: it holds one or more steps. It goes up
-    /// too once [`NO_PROGRESS_STEPS`] steps in a row acted and left the page
-    /// as it was (CUA E3): after the last of them ran, never before.
+    /// and its routine steps through `decider` under the subgoal's one clock,
+    /// a Fill's generation through `writer`. The batch stops at the first
+    /// refused, timed-out, unmet or sent-up step, never for its count: it
+    /// holds one or more steps. It goes up too once [`NO_PROGRESS_STEPS`]
+    /// steps in a row acted and left the page as it was (CUA E3): after the
+    /// last of them ran, never before. A Fill whose template or options do
+    /// not hold stops it before any step runs (CUA E6).
     fn batch_with(
         &mut self,
         input: BatchInput,
         decider: &mut dyn RoutineDecider,
+        writer: &dyn FieldWriter,
     ) -> Result<BatchOutput, BrowserError> {
         let started = std::time::Instant::now();
         if input.steps.is_empty() {
@@ -1392,6 +1453,20 @@ pub trait BrowserDriver: Send {
             next: None,
             rebindings: Vec::new(),
         };
+        // Every Fill's template and options, checked before any step, so a
+        // bad one stops the batch at no decision's or model's cost (CUA E6
+        // `fill_precheck`, CALLS row).
+        let unfit = input
+            .steps
+            .iter()
+            .enumerate()
+            .find_map(|(index, step)| match step {
+                BatchStep::Fill { field, .. } => field.prepare().err().map(|stop| (index, stop)),
+                _ => None,
+            });
+        if let Some((index, stop)) = unfit {
+            return Ok(stop::stopped(self, output, index, stop, base, started));
+        }
         let mut routine = Routine {
             decider,
             until_ms: input.until_ms,
@@ -1531,6 +1606,9 @@ pub trait BrowserDriver: Send {
                     .map(Some)
                     .map_err(Stop::from),
                 BatchStep::Decide(step) => routine.step(self, step).map(Some),
+                BatchStep::Fill { target, field } => {
+                    field::fill(self, &mut routine, writer, target, field).map(Some)
+                }
             };
             output.decisions.append(&mut routine.decisions);
             output.until_ms = routine.until_ms;
@@ -1560,37 +1638,7 @@ pub trait BrowserDriver: Send {
                     }
                 }
                 Err(stop) => {
-                    output.status = if matches!(
-                        stop.error,
-                        BrowserError::NeedsPress(_)
-                            | BrowserError::TakenOver(_)
-                            | BrowserError::BrowserTakenOver(_)
-                    ) {
-                        SubgoalStatus::NeedsYou
-                    } else {
-                        SubgoalStatus::NeedsAgent
-                    };
-                    output.failed_step = Some(index);
-                    let code = stop.code();
-                    // The page as it is at the stop, not as the last effect
-                    // left it: a read the guest refuses leaves none.
-                    let observation = self
-                        .observe(ObserveInput {
-                            base: base.clone(),
-                            ..ObserveInput::default()
-                        })
-                        .ok();
-                    output.error = Some(code.clone());
-                    output.stop_cause = Some(stop.cause.clone());
-                    output.failed_receipt = Some(FailedStepReceipt {
-                        step: Some(index),
-                        stop_cause: stop.cause,
-                        missed: stop.missed,
-                        observation,
-                        error: Some(code),
-                    });
-                    output.elapsed_ms = elapsed_ms(started);
-                    return Ok(output);
+                    return Ok(stop::stopped(self, output, index, stop, base, started));
                 }
             }
         }
@@ -1759,7 +1807,8 @@ impl Routine<'_> {
                 }
                 None => None,
             };
-            let reply = self.ask(&step.question, &candidates, shot.as_ref(), &page)?;
+            let labels: Vec<String> = candidates.iter().map(|(label, _)| label.clone()).collect();
+            let reply = self.ask(&step.question, &labels, shot.as_ref(), look_state(&page))?;
             match reply.answer {
                 RoutineAnswer::Act { candidate } if !locate => {
                     self.misses = 0;
@@ -1855,29 +1904,26 @@ impl Routine<'_> {
         Err(Stop::new(asked_up(AskUpReason::Looks), error))
     }
 
-    /// One look's ask (Rule 5): the step's candidates in row order, in
-    /// pages of at most [`ROUTINE_MAX_CANDIDATES`], or none for a locate
-    /// step. Many candidates are never refused, cut or sampled: NONE on a
-    /// page with more after it asks the next page, and any other answer, or
-    /// NONE on the last page, is the look's. Each page is its own decision,
-    /// asked under the look's misses, and the state names the page.
+    /// One look's ask (Rule 5): the step's candidates, by their labels in
+    /// row order, in pages of at most [`ROUTINE_MAX_CANDIDATES`], or none
+    /// for a locate step. Many candidates are never refused, cut or
+    /// sampled: NONE on a page with more after it asks the next page, and
+    /// any other answer, or NONE on the last page, is the look's. Each page
+    /// is its own decision, asked under the look's misses, and `state`, the
+    /// page the look read, names the page of candidates too.
     fn ask(
         &mut self,
         question: &str,
-        candidates: &[(String, Row)],
+        candidates: &[String],
         shot: Option<&(String, Vec<u8>)>,
-        page: &Observation,
+        mut state: serde_json::Value,
     ) -> Result<RoutineReply, BrowserError> {
-        let offered: Vec<&[(String, Row)]> = if candidates.is_empty() {
+        let offered: Vec<&[String]> = if candidates.is_empty() {
             vec![candidates]
         } else {
             candidates.chunks(ROUTINE_MAX_CANDIDATES).collect()
         };
         let pages = offered.len();
-        let mut state = serde_json::json!({"url": page.url, "title": page.title});
-        if let Some(partial) = &page.partial {
-            state["partial"] = serde_json::json!(partial);
-        }
         for (index, offered) in offered.into_iter().enumerate() {
             if pages > 1 {
                 state["candidates"] = serde_json::json!({
@@ -1888,7 +1934,7 @@ impl Routine<'_> {
             }
             let mut reply = self.decider.decide(RoutineAsk {
                 question,
-                options: offered.iter().map(|(label, _)| label.clone()).collect(),
+                options: offered.to_vec(),
                 image: shot.map(|(image, png)| (image.as_str(), png.as_slice())),
                 state: state.clone(),
                 misses: self.misses,
@@ -1903,6 +1949,15 @@ impl Routine<'_> {
         }
         Err(BrowserError::Decider("the look asked no page".to_owned()))
     }
+}
+
+/// What a look's ask reads of `page`: its URL and title, and its cut.
+fn look_state(page: &Observation) -> serde_json::Value {
+    let mut state = serde_json::json!({"url": page.url, "title": page.title});
+    if let Some(partial) = &page.partial {
+        state["partial"] = serde_json::json!(partial);
+    }
+    state
 }
 
 /// A routine step's ask-up, for `reason`.
@@ -1959,6 +2014,7 @@ impl BrowserError {
             Self::MemoryFloor => "browser_memory_floor",
             Self::DestinationRefused(_) => "browser_destination_refused",
             Self::SecretRefused(_) => "browser_secret_refused",
+            Self::FieldText(_) => "browser_field_text",
         }
     }
 }

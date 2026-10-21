@@ -199,10 +199,10 @@ pub(crate) async fn execute_mcp_generated_verb(
                 })?;
                 (output, source, carrier, epoch.or(task_epoch))
             };
-            // An act whose rows are unknown answers off this device only that
-            // it ran (FIX 5988); a read releases as before.
+            // An act whose rows are unknown (FIX 5988), or held (FIX 8171), answers
+            // off this device only that it ran; a read releases as before.
             let (output, rows) =
-                super::served_rows::unknown_act_answer(args.tool.name, actor, output, served)?;
+                super::served_rows::held_act_answer(server, args.tool.name, actor, output, served)?;
             let snapshot = McpPageSnapshot {
                 output: output.clone(),
                 source,
@@ -329,7 +329,7 @@ pub(crate) fn mcp_scoped_read<'a>(
         .credential_read_key(proof)
         .map_err(|error| mcp_engine_error("credential read key failed", error))?
         .ok_or_else(refused)?;
-    Ok(vault.scoped_read(key.at(actor.locality())))
+    Ok(vault.scoped_read(key.for_destination(&actor.destination())))
 }
 
 pub(crate) fn mcp_actor_result(actor: &McpResolvedActor) -> Value {
