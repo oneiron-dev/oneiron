@@ -15,7 +15,7 @@
 //! refuses its bindings, and applies with its value once the floor admits
 //! it (CALLS CUSTODY_CARRIER_PENDING_FLOOR, FIX 5336).
 
-use super::{CustodyApplied, CustodyTransition, WipedRecord};
+use super::{CustodyApplied, CustodyTransition};
 use crate::Vault;
 use crate::authority::{AuthorityFold, CustodyChange, OwnerWorkBody};
 use crate::entity_id::EntityId;
@@ -134,25 +134,31 @@ pub(super) fn rebind_held_in_txn(
     if !rebind_current(fold, transition, this) || taken_in_txn(vault, wtxn, transition)? {
         return Ok(CustodyApplied::Stale);
     }
-    let Some(held) = super::super::read_secret_custody_in_txn(&vault.store, wtxn, &transition.id)?
+    // The value stays as stored, never opened: a rebind needs no custody
+    // key (KS-6).
+    let Some(mut held) =
+        super::super::read_stored_custody_in_txn(&vault.store, wtxn, &transition.id)?
     else {
         return Ok(CustodyApplied::Stale);
     };
-    let mut held = WipedRecord(held);
-    let applied = if held.0.bindings == carried.bindings {
+    let applied = if held.record.bindings == carried.bindings {
         CustodyApplied::Stale
     } else {
-        held.0.bindings.clone_from(&carried.bindings);
+        held.record.bindings.clone_from(&carried.bindings);
         match CUSTODY_REBIND_PENDING_FLOOR {
             CustodyRebindPendingFloor::ApplyWhenFloorAdmits => {
-                if super::super::refuse_bindings_wider_than_live_floor(&vault.store, wtxn, &held.0)
-                    .is_err()
+                if super::super::refuse_bindings_wider_than_live_floor(
+                    &vault.store,
+                    wtxn,
+                    &held.record,
+                )
+                .is_err()
                 {
                     return Ok(CustodyApplied::Kept);
                 }
             }
         }
-        super::super::put_secret_custody_in_txn(vault, wtxn, &transition.id, &held.0, at)?;
+        super::super::put_stored_custody_in_txn(vault, wtxn, &transition.id, &held, at)?;
         CustodyApplied::Written
     };
     TAKEN.put(
@@ -186,12 +192,7 @@ fn pending_carrier_in_txn(
     {
         return Ok(false);
     }
-    let held = super::super::read_secret_custody_in_txn(&vault.store, txn, &transition.id)?.map(
-        |mut held| {
-            zeroize::Zeroize::zeroize(&mut held.value_bytes);
-            held
-        },
-    );
+    let held = super::super::read_secret_custody_meta_in_txn(&vault.store, txn, &transition.id)?;
     if held.is_some_and(|held| {
         !super::custody_portable(&held)
             || held.status == crate::secret_custody::SecretCustodyStatus::Revoked

@@ -650,13 +650,14 @@ pub(crate) fn apply_custody_transition_in_txn(
         return Ok(CustodyApplied::Unadmitted);
     }
     let mut record = transition.record()?;
-    let held = super::read_secret_custody_in_txn(&vault.store, wtxn, &transition.id)?.map(|held| {
-        (
-            custody_portable(&held),
-            held.status,
-            held.rotation_generation,
-        )
-    });
+    let held =
+        super::read_secret_custody_meta_in_txn(&vault.store, wtxn, &transition.id)?.map(|held| {
+            (
+                custody_portable(&held),
+                held.status,
+                held.rotation_generation,
+            )
+        });
     if let Some((portable, status, generation)) = held {
         if !portable || status == SecretCustodyStatus::Revoked {
             return Ok(CustodyApplied::Kept);

@@ -297,6 +297,12 @@ impl Store {
                         secret: custody.read(id)?,
                         id: id.clone(),
                     }),
+                    // KS-6: a credential key kept off this member keeps its
+                    // retirement fact off too; an owner-only compartment
+                    // seals to the root alone.
+                    EntryState::Retired
+                        if crate::store::credential_kind(id.kind())
+                            && recipients.keeps_local(id) => {}
                     EntryState::Retired => retired.push(id.clone()),
                     EntryState::Missing => {}
                 }

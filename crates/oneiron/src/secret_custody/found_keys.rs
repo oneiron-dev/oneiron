@@ -34,7 +34,6 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::doors::read_secret_custody_in_txn;
 use super::reveal::names_no_actor;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -344,7 +343,9 @@ impl KeptValues {
             };
             let mut values = Vec::new();
             for key in found.keys.iter().filter(|key| key.ruled_no_secret()) {
-                if let Some(mut rec) = read_secret_custody_in_txn(store, txn, &key.custody)? {
+                if let Some(mut rec) =
+                    super::storage_seal::read_opened_or_warn_in_txn(store, txn, &key.custody)?
+                {
                     values.push(Zeroizing::new(std::mem::take(&mut rec.value_bytes)));
                 }
             }

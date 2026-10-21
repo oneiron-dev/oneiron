@@ -144,6 +144,18 @@ impl Vault {
             );
             Default::default()
         });
+        // KS-6: the credentials whose keys may ride a head; a lookup that
+        // faults keeps every credential's in this machine's custody, where
+        // they all stay today.
+        let credentials_eligible = crate::secret_custody::credentials_eligible_for_heads(self)
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a custody head's credential eligibility could not be read; every \
+                     credential's keys stay local"
+                );
+                Default::default()
+            });
         let data_key = self
             .unlock_vault_key()
             .and_then(|()| self.vault_subkey(CUSTODY_HEAD_WRAP_CONTEXT))
@@ -157,6 +169,7 @@ impl Vault {
             root,
             data_key,
             pad_worlds_kept_local,
+            credentials_eligible,
         })
     }
 

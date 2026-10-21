@@ -163,8 +163,10 @@ impl SecretCustodyStatus {
 
 /// Entity body for `ENTITY_TYPE_SECRET_CUSTODY`: the secret value's home.
 ///
-/// `value_bytes` is plaintext under the vault DEK plane and NEVER leaves this
-/// body into claims / CRDT / export / receipts / logs. `Debug` redacts it.
+/// In memory, `value_bytes` is the opened value, which NEVER leaves this
+/// record into claims / CRDT / export / receipts / logs. `Debug` redacts it.
+/// At rest (schema 2, KS-6) the value is sealed under its generation's
+/// erasable custody key (`storage_seal`); this record is the opened form.
 /// `policy_floor_snapshot` records the floor at register time for audit;
 /// `manifest_ref` + `declared_paths` are copied from the manifest entry so
 /// downstream consumers (SECRET-03, snapshot exclusion) have a vault-side
@@ -313,8 +315,10 @@ pub const SECRET_CUSTODY_BODY_KEYS: [&str; 13] = [
     "policy_floor_snapshot",
 ];
 
-/// The body schema version stamped at encode time.
-pub const SECRET_CUSTODY_SCHEMA_VERSION: u16 = 1;
+/// The body schema version stamped at encode time. 2: the value rests
+/// sealed under its generation's custody key (KS-6, CALLS `KS-6 credential
+/// schema 2`); no reader of 1 remains.
+pub const SECRET_CUSTODY_SCHEMA_VERSION: u16 = 2;
 
 /// The `vault_meta` name-index key prefix mapping a live secret name to its
 /// `EntityId` (`"vault_meta: name -> EntityId"`).

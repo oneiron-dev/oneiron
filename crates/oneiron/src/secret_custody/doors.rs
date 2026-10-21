@@ -12,7 +12,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
-use super::codec::{decode_secret_custody_body, encode_secret_custody_body, invalid_body};
+use super::codec::invalid_body;
 use super::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
     SECRET_NAME_MAX_BYTES, SecretBinding, SecretCustodyFloor, SecretCustodyMetadata,
@@ -80,26 +80,19 @@ pub(crate) fn resolve_secret_ref_in_txn(
         .map(|entry| entry.id))
 }
 
-/// Reads and decodes a custody record under either a read or write txn.
-/// `pub(crate)` for SECRET-02's lease doors (ONE-1920): they resolve the
-/// record inside their own write txn to drive admission and read
-/// `declared_paths` — value reads still route ONLY through the bound door
-/// [`Vault::get_secret_value_in_txn`].
+/// Reads a custody record under either a read or write txn, its value
+/// opened from current custody (KS-6): the caller holds a writer, or took
+/// the custody read guard before its snapshot. Strict: a key that does not
+/// open is an error. A read that needs no value takes
+/// [`super::read_secret_custody_meta_in_txn`], which never touches custody.
+/// `pub(crate)` for SECRET-02's lease doors (ONE-1920) — value reads still
+/// route ONLY through the bound door [`Vault::get_secret_value_in_txn`].
 pub(crate) fn read_secret_custody_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyRecord>> {
-    let Some(raw) = store.port_entity_raw_wiped(txn, id)? else {
-        return Ok(None);
-    };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Err(Error::CorruptedIndex("secret custody entity header"));
-    };
-    if header.entity_type != ENTITY_TYPE_SECRET_CUSTODY {
-        return Err(Error::CorruptedIndex("secret custody entity type"));
-    }
-    decode_secret_custody_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    super::storage_seal::read_opened_in_txn(store, txn, id)
 }
 
 // ---------------------------------------------------------------------------
@@ -234,10 +227,14 @@ pub(crate) fn decode_secret_custody_admission_body(bytes: &[u8]) -> Result<Secre
     let ValueRef::Map(entries) = value else {
         return Err(invalid_body("secret custody body must be a map"));
     };
-    // Present and byte-shaped, never copied: the value stays a borrow of
-    // the store page and dies with the decoded tree.
-    match required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[4]) {
-        Some(ValueRef::Binary(_)) | Some(ValueRef::String(_)) => {}
+    // Present and byte-shaped, never copied: the value, sealed at rest or a
+    // restored image's carrier (KS-6), stays a borrow of the store page.
+    match (
+        required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[4]),
+        required_value_ref(&entries, super::codec::SECRET_CUSTODY_SEALED_VALUE_KEY),
+    ) {
+        (Some(ValueRef::Binary(_) | ValueRef::String(_)), None)
+        | (None, Some(ValueRef::Binary(_))) => {}
         _ => return Err(invalid_body("value_bytes")),
     }
     let name = str_ref(
@@ -394,7 +391,8 @@ impl<'a> CustodyWrite<'a> {
     }
 }
 
-/// [`put_secret_custody_in_txn`] through `write`.
+/// [`put_secret_custody_in_txn`] through `write`: the value sealed under its
+/// generation's custody key first, minted in this writer (KS-6).
 fn put_custody_body_in_txn(
     write: &CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
@@ -402,7 +400,20 @@ fn put_custody_body_in_txn(
     rec: &SecretCustodyRecord,
     occurred_at: u64,
 ) -> Result<()> {
-    let data = encode_secret_custody_body(rec)?;
+    let data = super::storage_seal::sealed_body_in_txn(write.store, wtxn, id, rec)?;
+    apply_custody_body_in_txn(write, wtxn, id, rec, data, occurred_at)
+}
+
+/// Puts stored body `data` of `rec` (its value sealed, or none) as record
+/// `id`, and keeps the name's high-water and the known-value index with it.
+pub(super) fn apply_custody_body_in_txn(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    rec: &SecretCustodyRecord,
+    data: Vec<u8>,
+    occurred_at: u64,
+) -> Result<()> {
     apply_ops(
         write.store,
         write.config,
@@ -509,7 +520,10 @@ impl Vault {
     /// callers get: it has no value field.
     pub fn get_secret_metadata(&self, id: &EntityId) -> Result<Option<SecretCustodyMetadata>> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(read_secret_custody_in_txn(&self.store, &rtxn, id)?.map(|rec| rec.metadata()))
+        Ok(
+            super::read_secret_custody_meta_in_txn(&self.store, &rtxn, id)?
+                .map(|rec| rec.metadata()),
+        )
     }
 
     /// Door/lease paths only (SECRET-02). Reads the raw value bytes for a
