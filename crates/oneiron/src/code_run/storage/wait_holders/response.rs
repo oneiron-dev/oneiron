@@ -15,7 +15,7 @@
 
 use super::super::response_owners::response_owner_in_txn;
 use super::super::wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG, WaitDelivery};
-use super::{CALLER_GENERATION, HOLDERS, WaitHolder};
+use super::{HOLDERS, WaitHolder};
 use crate::side_table::{ErasedForm, SideKey, SideTableDbs};
 use crate::{EntityId, Result};
 
@@ -80,8 +80,9 @@ pub(crate) fn wait_delivery_owners(
 }
 
 /// Who holds the settled row `key`'s reply (a full `vault_meta` key): each
-/// membership of its wait that keeps it, by its run (or its connector
-/// caller) and the actor it names. An erased membership holds nothing.
+/// membership of its wait that keeps it, once, by the actor it names (its
+/// run's when it names none; a connector caller's is the caller). An erased
+/// membership holds nothing.
 ///
 /// # Errors
 ///
@@ -97,16 +98,11 @@ pub(crate) fn wait_settled_owners(
     let mut owners = Vec::new();
     for row in HOLDERS.iter_raw_from(dbs, txn, wait.as_bytes())? {
         let (key, bytes) = row?;
-        let Ok(WaitHolder::Kept { actor }) = HOLDERS.decode_value(&bytes) else {
-            continue;
-        };
-        if let Some((_, holder, generation)) =
-            <(EntityId, EntityId, u64) as SideKey>::decode_key(&key)
-            && generation != CALLER_GENERATION
+        if let Ok(WaitHolder::Kept { actor }) = HOLDERS.decode_value(&bytes)
+            && let Some((_, holder, _)) = <(EntityId, EntityId, u64) as SideKey>::decode_key(&key)
         {
-            owners.push(holder);
+            owners.push(actor.unwrap_or(holder));
         }
-        owners.extend(actor);
     }
     owners.sort_unstable();
     owners.dedup();
