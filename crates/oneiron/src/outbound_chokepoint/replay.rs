@@ -165,9 +165,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
         // retry's Gate.
         RecoveryGovernance::Allow | RecoveryGovernance::AlwaysAsk => {}
         RecoveryGovernance::NeverAllow => {
-            let reason = IntentEscalationReason::ConnectorSlateNeverAllow;
-            let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
-            return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
+            return super::connector_slate::never_allow(vault, &record, now_ms, replayed);
         }
         RecoveryGovernance::Block(reason) => {
             let mut result = effect_result(&record, None, replayed, None);

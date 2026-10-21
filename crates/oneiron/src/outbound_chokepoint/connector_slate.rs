@@ -32,6 +32,13 @@ use crate::outbound_intent_ledger::{
     keep_press_after_admission, pinned_retry_approval, read_intent_record_in_txn,
 };
 
+/// CALLS `SLATE-990-neverallow-terminal`: a Pending call whose tool the
+/// owner set to `never allow` stops for good, abandoned with
+/// [`IntentEscalationReason::ConnectorSlateNeverAllow`] and keeping what it
+/// knew of its delivery, so no later sweep sends it and re-enabling the tool
+/// needs a new request. `false` holds it Pending instead, sending nothing.
+pub(super) const NEVER_ALLOW_STOPS_PENDING: bool = true;
+
 /// What the writer found for an `always ask` call.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Release {
@@ -56,15 +63,6 @@ pub(super) fn send_boundary(
     now_ms: u64,
     replayed: bool,
 ) -> Result<Option<OutboundEffectResult>, IntentLedgerError> {
-    let stop = |reason| -> Result<_, IntentLedgerError> {
-        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
-        Ok(Some(effect_result(
-            &abandoned,
-            None,
-            replayed,
-            Some(reason),
-        )))
-    };
     match recovery_governance(vault, record)? {
         RecoveryGovernance::Allow => Ok(None),
         RecoveryGovernance::Block(reason) => {
@@ -72,12 +70,43 @@ pub(super) fn send_boundary(
             held.gate_receipt_reasons.push(reason.to_owned());
             Ok(Some(held))
         }
-        RecoveryGovernance::Revoke => stop(IntentEscalationReason::ConnectorRevoked),
-        RecoveryGovernance::NeverAllow => stop(IntentEscalationReason::ConnectorSlateNeverAllow),
+        RecoveryGovernance::Revoke => {
+            let reason = IntentEscalationReason::ConnectorRevoked;
+            let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+            Ok(Some(effect_result(
+                &abandoned,
+                None,
+                replayed,
+                Some(reason),
+            )))
+        }
+        RecoveryGovernance::NeverAllow => never_allow(vault, record, now_ms, replayed).map(Some),
         // The Gate admitted this pass only on the press it spent.
         RecoveryGovernance::AlwaysAsk if pass_proof.is_some() => Ok(None),
         RecoveryGovernance::AlwaysAsk => always_ask(vault, record, replayed),
     }
+}
+
+/// `record`'s pass under its tool's `never allow`: stopped for good, or held
+/// ([`NEVER_ALLOW_STOPS_PENDING`]). Nothing is sent.
+///
+/// # Errors
+/// Storage errors.
+pub(super) fn never_allow(
+    vault: &Vault,
+    record: &IntentLedgerRecord,
+    now_ms: u64,
+    replayed: bool,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    if !NEVER_ALLOW_STOPS_PENDING {
+        let mut held = effect_result(record, None, replayed, None);
+        held.gate_receipt_reasons
+            .push("connector_key_slate_never_allow".to_owned());
+        return Ok(held);
+    }
+    let reason = IntentEscalationReason::ConnectorSlateNeverAllow;
+    let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+    Ok(effect_result(&abandoned, None, replayed, Some(reason)))
 }
 
 /// An `always ask` row with no press of this pass: its kept press, else an
