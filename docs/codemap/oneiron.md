@@ -4741,7 +4741,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/ask_world_hold.rs` | src | s | 3 crate-vis | — | The ask path's world-setting refusals, named (FIX 7463a) |
 | `src/task_verb/attendee_answer.rs` | src | s | 4 crate-vis | — | The owner-proof rule for an attendee ask's answer (OF-365, ILDF2 P4) |
 | `src/task_verb/board_task.rs` | src | s | 2 crate-vis | — | One committed TASK as the board STREAM publisher reads it |
-| `src/task_verb/brief.rs` | src | m | 14 struct · 2 enum · 4 fn · 12 crate-vis | BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion, DoneMeans +8 | The queue task brief (OF-220): the typed why-carrier one TASK holds |
+| `src/task_verb/brief.rs` | src | m | 15 struct · 2 enum · 5 fn · 13 crate-vis | BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion, DoneMeans +9 | The queue task brief (OF-220): the typed why-carrier one TASK holds |
+| `src/task_verb/browser_workflow.rs` | src | m | 2 struct · 3 enum · 12 fn · 3 crate-vis | TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowPin, TaskWorkflowReport, TaskWorkflowUnavailable | A TASK's bound library program, pinned per try (CUA E4; DESIGN-2 §2, owner C1 = A) |
 | `src/task_verb/catalog_fragment_revision.rs` | src | s | 1 const | — | — |
 | `src/task_verb/checkout_facts.rs` | src | s | 9 crate-vis | — | Checkout ACTs and their synced TASK FACTs share the credential's transaction |
 | `src/task_verb/code_consent_word.rs` | src | s | 5 crate-vis | — | The person's word a code consent answer stands on (DOOR-079 1a) |
@@ -4773,18 +4774,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/highway_block.rs` | src | m | 7 crate-vis | — | Exits from Blocked an owner can drive (OF-220) |
 | `src/task_verb/highway_post.rs` | src | L | 9 crate-vis | — | The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved… |
 | `src/task_verb/highway_report.rs` | src | XL | 14 crate-vis | — | The highway's Report arm (OF-220): progress, blocked, done, failed and release against a fenced handle, the… |
-| `src/task_verb/highway_runner.rs` | src | m | 18 crate-vis | — | Engine runners on the task highway (OF-220) |
+| `src/task_verb/highway_runner.rs` | src | m | 19 crate-vis | — | Engine runners on the task highway (OF-220) |
 | `src/task_verb/highway_runner/workflow_try.rs` | src | m | 11 crate-vis | — | A saved workflow's wrapper as the try that realizes a TASK (FIX 4391) |
 | `src/task_verb/highway_runner/workflow_try/binder.rs` | src | m | 13 crate-vis | — | Who binds a saved workflow's run to a TASK, as the door that took the request proved them (FIX 5316): the… |
 | `src/task_verb/highway_runner/workflow_try/recorded_right.rs` | src | s | 6 crate-vis | — | A binder's settlement on the right its bind recorded (FIX 5349) |
 | `src/task_verb/highway_runner/workflow_try/settle.rs` | src | s | 1 crate-vis | — | An ended run's TASK settlement, split from its parent |
 | `src/task_verb/highway_status.rs` | src | s | 1 crate-vis | — | The highway's Status arm (OF-220): any handle's status, and a poll |
-| `src/task_verb/highway_types.rs` | src | m | 10 struct · 6 enum · 1 fn · 11 crate-vis | AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle, TaskLifecycleRecord +8 | The task highway's typed calls, durable handles, outcomes and status view (OF-220) |
+| `src/task_verb/highway_types.rs` | src | m | 11 struct · 8 enum · 2 fn · 11 crate-vis | AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle, TaskLifecycleRecord +11 | The task highway's typed calls, durable handles, outcomes and status view (OF-220) |
 | `src/task_verb/lifecycle_facade.rs` | src | m | 7 fn · 5 crate-vis | — | — |
 | `src/task_verb/lifecycle_receipt.rs` | src | m | 12 crate-vis | — | The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked… |
 | `src/task_verb/linear_store.rs` | src | m | 1 struct · 5 fn · 10 crate-vis | VaultLinearTaskStore | Vault storage for the tracker mirror: replicated fields, local OCC and CAS links |
 | `src/task_verb/mirror_edit.rs` | src | s | 2 crate-vis | — | The owner's public title edit on `tasks.update` (OF-427 C8), and the Owner standing the mirror's mapping… |
-| `src/task_verb/mod.rs` | src | m | 1 fn · 5 mod · 27 re-export · 43 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
+| `src/task_verb/mod.rs` | src | m | 1 fn · 5 mod · 28 re-export · 44 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
 | `src/task_verb/owner_index.rs` | src | s | 3 fn · 2 crate-vis | — | Shared derived tasks-by-owner index for inbox and saved plan queries |
 | `src/task_verb/policy_change_followup.rs` | src | m | 2 crate-vis | — | Atomic, idempotent human TASK notification for one landed policy change |
 | `src/task_verb/presence_diagnostics.rs` | src | s | 3 crate-vis | — | Typed per-row presence read failures for the bounded TASKS projection |
@@ -4808,7 +4809,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/run_control.rs` | src | m | 2 struct · 2 enum · 4 fn | RunControl, RunControlEffect, RunControlReceipt, RunControlRequest | Pause and resume of one run branch (DOOR-100, FIX 4501, Engine 10-20 on the C002 pattern)… |
 | `src/task_verb/run_doors.rs` | src | m | 11 struct · 3 enum · 3 fn · 2 crate-vis | CancelForceReceipt, CancelForceRequest, ConsultDisposition, ConsultInspection, ConsultLandKind, ConsultLandReply, ConsultLandRequest, ConsultLandSpend +6 | The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)… |
 | `src/task_verb/run_verb_catalog.rs` | src | s | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/task_verb/runner_done.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | RunnerDoneAnswer, RunnerDoneQuestion | A runner's "Done means met?", answered before it settles (OF-533) |
+| `src/task_verb/runner_done.rs` | src | m | 2 struct · 3 fn · 2 crate-vis | RunnerDoneAnswer, RunnerDoneQuestion | A runner's "Done means met?", answered before it settles (OF-533) |
 | `src/task_verb/scheduling.rs` | src | s | 4 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
 | `src/task_verb/sdk.rs` | src | L | 39 struct · 1 enum · 10 fn · 76 re-export | BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest, BoardWakeReply, BoardWakeRequest, CompanionSharingRequest, CompanionSharingSetRequest +32 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/task_verb/sdk_act_answer.rs` | src | s | 1 struct · 1 enum · 1 fn | ActAnswer, DetailsOnDevice | What an act answers its caller (FIX 3414) |
