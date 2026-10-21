@@ -3,11 +3,14 @@
 //! the claims the listing shows about its subject. Its call shows every
 //! question, subject and claim by a call-local label (FIX 7506 P2), field by
 //! field, never by rewriting inside a value; its decisions keep the
-//! canonical options.
+//! canonical options. A candidate that restates a listed claim unchanged
+//! reinforces it and is never asked whether it corrects it (FIX 8295).
 
 use super::super::decisions::{id_options, named_id};
 use super::*;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
+use crate::dreamer_consolidation::evidence::EvidenceLocator;
+use crate::dreamer_consolidation::value_projection::rmpv_to_json;
 use crate::llm::decision::AnswerContract;
 use crate::llm::decision::catalogue::CORRECTION;
 
@@ -35,6 +38,7 @@ impl ConsolidationExecutor<'_> {
         for (position, candidate) in parsed.iter().enumerate() {
             let shown: Vec<_> = pins
                 .correctable(candidate.subject, candidate.scope)
+                .filter(|(claim, ..)| !reinforces(candidate, resources, *claim))
                 .collect();
             let ids: Vec<EntityId> = shown.iter().map(|(claim, ..)| *claim).collect();
             for (group, (options, wire_options)) in
@@ -111,6 +115,23 @@ impl ConsolidationExecutor<'_> {
                 .collect(),
         ))
     }
+}
+
+/// Whether `candidate` restates listed `claim` unchanged: it cites the claim
+/// and carries the claim's own predicate and value (its subject is the
+/// claim's, as the listing shows it about that subject). It reinforces the
+/// claim, so that pair is never asked and corrects none.
+fn reinforces(
+    candidate: &ParsedCandidate<'_>,
+    resources: &BranchResources<'_>,
+    claim: EntityId,
+) -> bool {
+    candidate.locators.iter().any(
+        |locator| matches!(locator, EvidenceLocator::Claim { claim_id, .. } if *claim_id == claim),
+    ) && resources.prior(claim).is_ok_and(|prior| {
+        candidate.predicate.as_deref() == Some(prior.body.predicate.as_str())
+            && rmpv_to_json(&prior.body.value) == candidate.value
+    })
 }
 
 /// What the correction pack decided for one parsed candidate: the listed
