@@ -286,6 +286,12 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.guest_runtime_fact.is_some(),
         ArgvUse::Read,
     ),
+    // The private origins the operator lets a hosted fetch reach (FIX 7657).
+    (
+        "hosted-private-origin",
+        |args| !args.hosted_private_origins.is_empty(),
+        ArgvUse::Read,
+    ),
     // The bind: the supervisor's socket, never a host:port.
     (
         "host",
