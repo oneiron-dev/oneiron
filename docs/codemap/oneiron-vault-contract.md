@@ -51,7 +51,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/tests.rs` | test | m | — | — | Wire-compat and validation test suite |
 | `src/lib/vault_uids.rs` | src | s | 1 struct · 1 enum · 4 fn · 5 const | VaultUidRow, VaultUidsError | The host's vault UID allocation table: one row per managed vault, binding its dedicated non-root UID to its… |
 | `src/lib/version.rs` | src | s | 1 fn · 2 const · 1 crate-vis | — | Wire version constants, SLIM gating and the revisions of the additive extensions a v3 vault reports on `Ping` |
-| `src/lib/vm.rs` | src | s | 2 enum · 4 fn · 18 const | VmGuestFrame, VmHostFrame | The vault-VM wire: vsock ports and boot-channel frames |
+| `src/lib/vm.rs` | src | s | 2 enum · 4 fn · 21 const · 1 re-export | VmGuestFrame, VmHostFrame | The vault-VM wire: vsock ports and boot-channel frames |
+| `src/lib/vm/network.rs` | src | s | 2 struct · 3 fn | VmGuestNetworkConfig, VmTapAttachment | A vault VM's guest network (FIX 6808): the one NIC a supervisor may attach to a vault VM for its outbound… |
 | `src/lib/vm_anchor.rs` | src | s | 2 struct · 4 enum · 8 fn · 6 const | VmAnchorHeader, VmAnchorProxyHello, VmAnchorProxyRefusal, VmAnchorProxyReply, VmAnchorRefusal, VmAnchorReply | A vault VM's custody anchor channels (FIX 6517): the owner credential a custody anchor door admits, carried… |
 | `src/lib/vm_outbox.rs` | src | m | 2 struct · 7 enum · 12 fn · 5 const · 2 re-export | VmOutboxAck, VmOutboxDeferral, VmOutboxDescriptor, VmOutboxFrame, VmOutboxKind, VmOutboxOperation, VmOutboxOutcome, VmOutboxRefusal +1 | A vault VM's outbox carrier (FIX 5235, FIX 5467): one persistent, bidirectional stream on vsock port… |
 | `src/lib/vm_outbox/members.rs` | src | s | 1 struct · 1 fn | VmOutboxMember | Each outbox kind's member names, as the carrier takes them: the owning protocol's own file names, relative… |
