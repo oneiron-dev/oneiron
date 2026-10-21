@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1167 code-mode rows (1127 host rows, 40 run rows), 3885 declarations.
+// Census: 1167 code-mode rows (1127 host rows, 40 run rows), 3888 declarations.
 // Replies: 1047 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -2279,7 +2279,10 @@ declare namespace Sdk {
   type CommandOutput = { status: number; stdout: number[]; stderr: number[] };
   type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } };
   type ContractVerdict = { schema_version: number; id: string; baseline_id: string; candidate: string; tests_passed: boolean; diffs: ContractDiff[] };
-  type MergeQueueObservation = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[]; batches: MergeQueueBatchView[]; verdicts: ContractVerdict[] };
+  type QueueDriveStatus = "unenrolled" | "driving" | "waiting_check" | "waiting_symbols" | "waiting_review" | "waiting_admission" | "held_needs_new_base" | "held_diverged" | "held_binding" | "held_materialization" | "held_overlap" | "held_task_authority" | "held_recovery" | "held_check" | "needs_configuration" | "unavailable" | "done";
+  type QueueConflictView = { source_proposals: string[]; conflict: string; task?: string | null; resolution_batch?: string | null };
+  type QueueDriveView = { batch_ref: string; status: QueueDriveStatus; reason?: string | null; check_work_refs: string[]; receipt_refs: string[]; conflicts: QueueConflictView[]; survivor_batch?: string | null };
+  type MergeQueueObservation = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[]; batches: MergeQueueBatchView[]; verdicts: ContractVerdict[]; drive: QueueDriveView[] };
   type MergeQueueRequeueView = { source_batch_ref: string; batch?: MergeQueueBatchView | null };
   type MergeQueueRepoRequest = { repo: EntityId };
   type MergeQueuePointersView = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[] };
@@ -3434,7 +3437,7 @@ declare namespace Sdk {
   type BlobContent = { content_base64: string };
   type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
   type ConsolidationStatusRequest = { job_ref: string };
-  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "cancelled" | "signal" | "other";
+  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "retry" | "cancelled" | "signal" | "other";
   type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number; parked?: DreamerParkedAttemptView | null };
   type ConsolidationWakeStatusRequest = { job_ref?: string | null; wake_ref?: string | null; limit?: number | null; cursor?: string | null };

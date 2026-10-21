@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::{ArtifactKind, CheckpointKey, CheckpointSigner, CustodyRecovery, CustodyStatus};
+use super::super::{
+    ArtifactKind, CheckpointKey, CheckpointSigner, CustodyRecovery, CustodyStatus, PadRestoreNote,
+};
 use crate::VaultConfig;
 use crate::world_keys::EscrowRetirement;
 
@@ -146,6 +148,10 @@ pub struct CustodyAdmissionFacts {
     pub publication: Option<CustodyStatus>,
     pub custody_note: Option<String>,
     pub training_note: Option<String>,
+    /// The world key pads the restore did not land at rest, as its report
+    /// names them (KS-5): erased since the image, withheld by their world's
+    /// sealed copies setting, or pending.
+    pub pad_notes: Vec<PadRestoreNote>,
 }
 
 /// A fresh recipient the restored key was wrapped to.

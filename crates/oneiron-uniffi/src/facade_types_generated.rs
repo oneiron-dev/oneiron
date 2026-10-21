@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1117 facade rows, 3814 generated types.
+// UniFFI census: 1117 facade rows, 3817 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1069.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -34123,6 +34123,85 @@ pub struct ContractVerdict {
     pub diffs: Vec<ContractDiff>,
 }
 
+/// `oneiron::merge_queue::driver_types::QueueDriveStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueDriveStatus {
+    #[serde(rename = "unenrolled")]
+    Unenrolled,
+    #[serde(rename = "driving")]
+    Driving,
+    #[serde(rename = "waiting_check")]
+    WaitingCheck,
+    #[serde(rename = "waiting_symbols")]
+    WaitingSymbols,
+    #[serde(rename = "waiting_review")]
+    WaitingReview,
+    #[serde(rename = "waiting_admission")]
+    WaitingAdmission,
+    #[serde(rename = "held_needs_new_base")]
+    HeldNeedsNewBase,
+    #[serde(rename = "held_diverged")]
+    HeldDiverged,
+    #[serde(rename = "held_binding")]
+    HeldBinding,
+    #[serde(rename = "held_materialization")]
+    HeldMaterialization,
+    #[serde(rename = "held_overlap")]
+    HeldOverlap,
+    #[serde(rename = "held_task_authority")]
+    HeldTaskAuthority,
+    #[serde(rename = "held_recovery")]
+    HeldRecovery,
+    #[serde(rename = "held_check")]
+    HeldCheck,
+    #[serde(rename = "needs_configuration")]
+    NeedsConfiguration,
+    #[serde(rename = "unavailable")]
+    Unavailable,
+    #[serde(rename = "done")]
+    Done,
+}
+
+/// `oneiron::merge_queue::driver_types::QueueConflictView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueConflictView {
+    #[serde(rename = "source_proposals")]
+    pub source_proposals: Vec<String>,
+    #[serde(rename = "conflict")]
+    pub conflict: String,
+    #[serde(rename = "task", default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(
+        rename = "resolution_batch",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resolution_batch: Option<String>,
+}
+
+/// `oneiron::merge_queue::driver_types::QueueDriveView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueDriveView {
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+    #[serde(rename = "status")]
+    pub status: QueueDriveStatus,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "check_work_refs")]
+    pub check_work_refs: Vec<String>,
+    #[serde(rename = "receipt_refs")]
+    pub receipt_refs: Vec<String>,
+    #[serde(rename = "conflicts")]
+    pub conflicts: Vec<QueueConflictView>,
+    #[serde(
+        rename = "survivor_batch",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub survivor_batch: Option<String>,
+}
+
 /// `oneiron::memory::merge_queue_doors::types::MergeQueueObservation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MergeQueueObservation {
@@ -34138,6 +34217,8 @@ pub struct MergeQueueObservation {
     pub batches: Vec<MergeQueueBatchView>,
     #[serde(rename = "verdicts")]
     pub verdicts: Vec<ContractVerdict>,
+    #[serde(rename = "drive")]
+    pub drive: Vec<QueueDriveView>,
 }
 
 /// `oneiron::memory::merge_queue_doors::types::MergeQueueRequeueView`.
@@ -53312,6 +53393,8 @@ pub enum DreamerParkCauseView {
     ExecutorError,
     #[serde(rename = "checkpoint")]
     Checkpoint,
+    #[serde(rename = "retry")]
+    Retry,
     #[serde(rename = "cancelled")]
     Cancelled,
     #[serde(rename = "signal")]

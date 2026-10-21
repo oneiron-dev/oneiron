@@ -199,11 +199,13 @@ impl ConsolidationExecutor<'_> {
                     charges.record_usage(&usage);
                     return Ok(charges.checkpoint());
                 }
-                // A refused reading asks again at the next pass (FIX 7218).
+                // A refused reading asks again after its retry delay (FIX
+                // 7218, Engine 10-21).
                 Err(DurableStepError::SpentSchemaValidation { usage, .. }) => {
                     charges.record_usage(&usage);
-                    return Ok(charges
-                        .park_for("sieve reading schema refused", DreamerParkCause::Checkpoint));
+                    return Ok(
+                        charges.park_for("sieve reading schema refused", DreamerParkCause::Retry)
+                    );
                 }
                 Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
                 Err(error) => {

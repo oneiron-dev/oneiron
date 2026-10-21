@@ -40,7 +40,7 @@ pub const QUEUE_CHECK_ATTEMPT_KIND: &str = "merge_queue.check";
 pub const DEFAULT_QUEUE_CHECK_CONCURRENCY: u32 = 1;
 
 /// The checked configuration of one object store. Key: hex(repo identity).
-const CHECK_CONFIGS: SideTable<String, QueueCheckConfiguration, Named> =
+pub(super) const CHECK_CONFIGS: SideTable<String, QueueCheckConfiguration, Named> =
     SideTable::new(&side_table::MERGE_QUEUE_CHECK_CONFIG);
 
 /// Checker work rows. Key: hex(repo identity) ":" hex64(request digest).
@@ -79,6 +79,9 @@ pub struct QueueCheckConfiguration {
     /// The work key of the init request.
     pub init_work: String,
     pub stage: QueueCheckInitStage,
+    /// The attached branch checked initialization proved, which enrolls
+    /// this queue for automatic driving (G2 PR2); `None` drives nothing.
+    pub driver_target: Option<super::QueueDriverTarget>,
 }
 
 /// What a work row asks for.
@@ -229,6 +232,9 @@ pub(super) enum ConfigWrite {
     None,
     /// The existing configuration, its approval renewed.
     Renew,
+    /// The existing configuration and its stored approval, unrenewed: the
+    /// automatic driver's request, which no live owner makes (G2 PR2).
+    Keep,
     /// A new configuration, approved now.
     Create(Box<QueueCheckConfigDraft>),
 }
@@ -312,6 +318,12 @@ impl MergeQueue<'_> {
                 work.plan_digest = Some(existing.plan.digest.clone());
                 CHECK_CONFIGS.put(store, &mut txn, &existing.store, &existing)?;
             }
+            ConfigWrite::Keep => {
+                let existing = CHECK_CONFIGS
+                    .get(store, &txn, &work.store)?
+                    .ok_or_else(|| invalid("merge queue has no checked configuration"))?;
+                work.plan_digest = Some(existing.plan.digest.clone());
+            }
             ConfigWrite::Create(draft) => {
                 let draft = *draft;
                 let created = QueueCheckConfiguration {
@@ -326,6 +338,7 @@ impl MergeQueue<'_> {
                     contract_baseline_ref: draft.contract_baseline_ref,
                     init_work: key.clone(),
                     stage: QueueCheckInitStage::Requested,
+                    driver_target: None,
                 };
                 work.plan_digest = Some(created.plan.digest.clone());
                 check_row_size(&CHECK_CONFIGS.encode_value(&created)?)?;
@@ -356,6 +369,7 @@ impl MergeQueue<'_> {
         }
         put_work(store, &mut txn, &work)?;
         txn.commit()?;
+        store.notify_attempt_observers();
         Ok(work)
     }
 
@@ -629,6 +643,7 @@ impl Vault {
         }
         put_work(store, &mut txn, &current)?;
         txn.commit()?;
+        store.notify_attempt_observers();
         Ok(current)
     }
 }

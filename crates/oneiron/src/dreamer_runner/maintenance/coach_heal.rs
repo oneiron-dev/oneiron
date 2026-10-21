@@ -14,13 +14,18 @@
 //! case's and report's route question, and the draft of its skill repair,
 //! also read what the engine recorded about its cause (OF-418 L10): the
 //! failing attempt's whole ancestry with its events, receipts, requests and
-//! the text they read, as untrusted data beside the case or report.
+//! the text they read, as untrusted data beside the case or report. The Issues
+//! job also reads the issues positive model findings file (OF-418 L3), each
+//! diagnosed in `coach_diagnostic`.
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
 use serde_json::json;
 
 use super::coach::COACH_ISSUES_FACET;
+use super::coach_diagnostic::{
+    COACH_DIAGNOSTIC_PROPOSAL_PREDICATE, ProducerFixDraft, ProducerTarget,
+};
 use super::coach_repair::{SkillRepairDraft, land_skill_repair_in_txn};
 use super::proposals;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
@@ -38,6 +43,7 @@ use crate::llm::decision::{
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::self_heal::blocked_reports::{self, BlockedIssue};
+use crate::self_heal::issue_work::{self, IssueCursor, PendingIssue};
 use crate::self_heal::{DiagnosticEventClass, HealContextSeed, HealEvidenceContext};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::{
@@ -55,8 +61,8 @@ const ISSUES_BATCH: usize = 32;
 /// A report that landed while an Issues run held its lease (FIX 1554): the
 /// lease generation it landed under. Key: the run's attempt.
 const REDRIVE: SideTable<AttemptId, u32, Named> = SideTable::new(&side_table::COACH_ISSUES_REDRIVE);
-/// Failed decisions on one report before it goes to a person.
-const ISSUE_RETRIES: u8 = 3;
+/// Failed decisions on one report or model issue before it goes to a person.
+pub(super) const ISSUE_RETRIES: u8 = 3;
 
 /// What the Coach proposes the agent needs (ARCH-0066 #healer). The Coach
 /// fixes the agent, never the task.
@@ -110,7 +116,7 @@ pub struct HealDecisions<'a> {
 
 impl HealDecisions<'_> {
     /// `Ok(None)`: the ladder answered off the contract.
-    fn route(
+    pub(super) fn route(
         &self,
         about: &[u8],
         evidence: &[EntityId],
@@ -175,14 +181,30 @@ pub trait CoachHealAuthor {
         brief: &SkillOptimizeBrief,
         cause: &HealEvidenceContext,
     ) -> Result<SkillEditDraft>;
+
+    /// Drafts a fix of the policy manifest or config a model finding's
+    /// recorded links bound as its producer (OF-418 L3): a delta against
+    /// `target`'s exact base revision, reading `cause` as data. The engine
+    /// bound the target; the draft is filed for the owner and never applied.
+    ///
+    /// # Errors
+    ///
+    /// Implementation-defined, as for [`Self::draft_skill`]: the issue then
+    /// files with its fix skipped.
+    fn draft_producer_fix(
+        &self,
+        target: &ProducerTarget,
+        cause: &HealEvidenceContext,
+    ) -> Result<ProducerFixDraft>;
 }
 
 /// What one Issues run did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IssuesRun {
-    /// Reports filed as proposed heals.
+    /// Reports and model issues filed as proposed heals.
     pub proposed: usize,
-    /// Reports whose decision failed; they wait for the next run.
+    /// Reports and model issues whose decision failed; they wait for the next
+    /// run.
     pub deferred: usize,
 }
 
@@ -232,7 +254,8 @@ impl DreamerRunnerStore<'_> {
     /// (FIX 1554): when a report landed while the attempt held its lease and
     /// reports still wait, one Issues run is queued, the settled attempt its
     /// parent (FIX 6937), lineage only. The mark goes either way. An attempt
-    /// with no mark, as every other attempt is, queues nothing.
+    /// with no mark, as every other attempt is, queues nothing. A waiting
+    /// model issue keeps the successor as a waiting report does (OF-418 L3).
     pub(crate) fn redrive_coach_issues_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -251,7 +274,7 @@ impl DreamerRunnerStore<'_> {
             return Ok(());
         }
         REDRIVE.delete(&vault.store, txn, &settled.id)?;
-        if !blocked_reports::any_pending_in_txn(vault, &*txn)? {
+        if !issue_work::any_pending_in_txn(vault, &*txn)? {
             return Ok(());
         }
         // No run: a run's skill-edit cycle cap would bind the successor's
@@ -410,6 +433,8 @@ impl Vault {
     /// before the heal's write (FIX 2497). A report whose decision failed
     /// waits for the next run, and its third failure goes to a person. A
     /// report whose receipt is gone leaves nothing to diagnose and drops.
+    /// After the reports it reads each waiting model issue the same way, a
+    /// page at a time to the last (OF-418 L3).
     pub fn run_coach_issues(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -429,18 +454,26 @@ impl Vault {
             now,
         };
         let mut run = IssuesRun::default();
-        // FIX 1554: the batch is a page, and the run reads on to the end.
-        let mut after = None;
+        // FIX 1554: the batch is a page, and the run reads on to the end, of
+        // the reports and then of the model issues (OF-418 L3).
+        let mut cursor = IssueCursor::START;
         let mut read = 0usize;
         loop {
-            let page = blocked_reports::pending_blocked_issues(self, after, ISSUES_BATCH)?;
-            let Some((last, _)) = page.last() else {
+            let page = issue_work::pending_issues(self, &mut cursor, ISSUES_BATCH)?;
+            if page.is_empty() {
                 break;
-            };
-            after = Some(*last);
+            }
             read += page.len();
-            for (receipt, issue) in page {
-                match self.coach_issue(&pass, receipt, &issue)? {
+            for pending in page {
+                let outcome = match pending {
+                    PendingIssue::BlockedReport { receipt, issue } => {
+                        self.coach_issue(&pass, receipt, &issue)?
+                    }
+                    PendingIssue::ModelDiagnostic { issue_id, issue } => {
+                        self.coach_diagnostic_issue(&pass, issue_id, &issue)?
+                    }
+                };
+                match outcome {
                     IssueOutcome::Filed => run.proposed += 1,
                     IssueOutcome::Deferred => run.deferred += 1,
                     IssueOutcome::Nothing => {}
@@ -558,19 +591,20 @@ impl Vault {
     }
 }
 
-/// One Issues run's own inputs, which each report it reads is filed under.
-struct IssuesPass<'a, 'd> {
+/// One Issues run's own inputs, which each report or model issue it reads is
+/// filed under.
+pub(super) struct IssuesPass<'a, 'd> {
     /// The leased `coach.issues` attempt.
-    attempt: AttemptId,
-    decisions: &'a HealDecisions<'d>,
-    author: &'a dyn CoachHealAuthor,
-    subject: EntityId,
-    envelope: &'a crate::WriteEnvelope,
-    now: u64,
+    pub(super) attempt: AttemptId,
+    pub(super) decisions: &'a HealDecisions<'d>,
+    pub(super) author: &'a dyn CoachHealAuthor,
+    pub(super) subject: EntityId,
+    pub(super) envelope: &'a crate::WriteEnvelope,
+    pub(super) now: u64,
 }
 
-/// What an Issues run did with one report.
-enum IssueOutcome {
+/// What an Issues run did with one report or model issue.
+pub(super) enum IssueOutcome {
     /// Filed as a proposed heal.
     Filed,
     /// Its decision failed; it waits for the next run.
@@ -653,9 +687,9 @@ const fn ladder_class_name(class: FailureClass) -> &'static str {
 
 /// Counts an owner's answer to one of the Coach's proposals as the review of
 /// its heal (ARCH-0066 #oversight), in the transaction that answers it. A
-/// claim that is no Coach proposal, or whose case or report the Coach filed
-/// under another proposal, counts nothing. Either answer reached a person, so
-/// both count as escalated.
+/// claim that is no Coach proposal, or whose case, report or model issue the
+/// Coach filed under another proposal, counts nothing. Either answer reached
+/// a person, so both count as escalated.
 pub(crate) fn record_owner_review_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -667,6 +701,17 @@ pub(crate) fn record_owner_review_in_txn(
     let field = match body.predicate.as_str() {
         COACH_HEAL_PROPOSAL_PREDICATE => "case",
         COACH_ISSUE_PROPOSAL_PREDICATE => "receipt",
+        // OF-418 L3: a model issue's answer is read from its closed gate row.
+        COACH_DIAGNOSTIC_PROPOSAL_PREDICATE => {
+            return issue_work::record_issue_owner_review_in_txn(
+                vault,
+                txn,
+                claim,
+                body,
+                proposed_at,
+                now,
+            );
+        }
         _ => return Ok(()),
     };
     let Some(key) = body

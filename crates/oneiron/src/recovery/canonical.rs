@@ -648,6 +648,9 @@ pub(crate) fn capture_canonical_window_within(
         peer_origins: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
+        // A pad row goes by its bare reference, its pad in current custody
+        // (KS-5, FIX 5686 part 2).
+        let blob = crate::world_keys::image_pad_projection(&vault.store, &blob).unwrap_or(blob);
         snapshot.entity_blobs.push(CanonicalEntity {
             id: parse_id(&key)?,
             blob,
