@@ -2,8 +2,10 @@
 //! of it beyond its role and name (FIX 6851): where a link goes, a
 //! heading's level, and the datetimes the element carries. An absent field
 //! is no such datum; one the read could not give is named in `unavailable`,
-//! never left silently absent.
+//! never left silently absent. A secret's row carries the handle its value
+//! became (FIX 8028), never the value.
 
+use crate::RowSecret;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +46,12 @@ pub struct Row {
     /// a field named here is unknown, not absent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unavailable: Vec<RowFieldGap>,
+    /// The secret the row's value is (FIX 8028): its kind and the run-bound
+    /// handle it became where it was found, or why it has none. `value`
+    /// then shows the handle, a card's last four digits with it, never the
+    /// secret; a type or expect names the handle as its `secret`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<RowSecret>,
 }
 
 /// A row field its read could not fill, and why.

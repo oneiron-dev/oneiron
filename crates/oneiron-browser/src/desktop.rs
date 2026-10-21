@@ -54,6 +54,15 @@
 //! takes no screenshot; the person sees the whole display and drives it
 //! through the same driver. Handing it back ends the takeover with its
 //! record, which is its receipt.
+//!
+//! A window's secret fields (FIX 8028, OF-560), classified as a page's are
+//! (`secret_fields`), become run-bound handles in place through the host's
+//! secret custody: the row shows the handle, its name stays empty as
+//! before, and a name or value that echoes the secret shows the handle
+//! too. A type or expect may name a handle; its bytes come from the
+//! custody at the send or the comparison, and the line-break check of a
+//! typed secret reads the bytes. A settle poll's read, which only a hash
+//! reads, masks the same fields and holds nothing.
 
 use crate::capture::{self, Capture, Captures};
 use crate::driver::pages::{
@@ -63,6 +72,10 @@ use crate::driver::pages::{
 use crate::driver::{crop_region, encode_png, png_dimensions};
 use crate::mcp::{Mcp, ToolError, ToolReply};
 use crate::observation::match_target;
+use crate::secret::{Entry, Secrets, entry};
+use crate::secret_fields::{
+    FieldFacts, SECRET_MARK, classify, masked, secret_display_policy, secret_echo_policy,
+};
 use crate::session::{effect_class, press_for, receipt_class};
 use crate::stop::elapsed_ms;
 use crate::{
@@ -70,9 +83,10 @@ use crate::{
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HandoverInput,
     HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, Observation, ObservationPage,
     ObserveInput, OpenInput, PartialTree, PointInput, PressMode, ReceiptEvidenceSink,
-    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, ScrollInput,
-    SelectInput, SendPolicy, TakeoverRecord, TypeInput, ViewInput, WaitForInput, WaitForOutput,
-    WindowInput, WindowSwitch, WindowSwitchCause, WindowsInput, WindowsOutput, ZoomInput,
+    RoutineDecider, Row, RowSecret, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
+    ScrollInput, SecretCustody, SecretKind, SecretNote, SelectInput, SendPolicy, TakeoverRecord,
+    TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput, WindowSwitch,
+    WindowSwitchCause, WindowsInput, WindowsOutput, ZoomInput,
 };
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
 use serde::{Deserialize, Serialize};
@@ -187,26 +201,6 @@ const SCOPES: &[&str] = &[
     "layered pane",
 ];
 
-/// The roles of rows that hold typed text, any of which may be secret.
-const TEXT_ROLES: &[&str] = &["textbox", "searchbox", "combobox", "spinbutton"];
-/// What a toolkit shows in place of a concealed field's text.
-const MASK_GLYPHS: &[char] = &['•', '●', '∙', '*'];
-
-/// Words that mark a text field secret beside a password role.
-const SECRET_PHRASES: &[&[&str]] = &[
-    &["password"],
-    &["passcode"],
-    &["passphrase"],
-    &["pin"],
-    &["card", "number"],
-    &["cvv"],
-    &["cvc"],
-    &["security", "code"],
-    &["one", "time"],
-    &["otp"],
-    &["verification", "code"],
-];
-
 /// How the host starts desktop guests. Its bounds are the host's manifest rows.
 #[derive(Clone, Debug)]
 pub struct DesktopGuest {
@@ -246,6 +240,14 @@ pub struct DesktopSession {
     returned: Option<TakeoverRecord>,
     /// The move to another window since the agent's last answer.
     switched: Option<WindowSwitch>,
+    /// The host's secret custody (FIX 8028); empty until the host gives it.
+    secrets: Secrets,
+    /// The fields a type entered a secret into, by locator, with its kind:
+    /// each reads as that secret from then on.
+    typed: HashMap<String, SecretKind>,
+    /// A settle poll's read is under way: its secrets are masked, never
+    /// held.
+    polling: bool,
 }
 
 /// Who has a desktop session (CUA-001): its agent, its agent waiting on the
@@ -371,12 +373,15 @@ impl Rect {
 }
 
 /// A row, the driver's token for its element as last read, and where the
-/// element is on screen.
+/// element is on screen; and, where the row shows a secret in place, what
+/// the window holds there, for the read's own checks and hash only.
 #[derive(Clone)]
 struct Line {
     row: Row,
     token: Option<String>,
     frame: Option<Rect>,
+    masked: bool,
+    original: Option<String>,
 }
 
 impl Line {
@@ -384,6 +389,16 @@ impl Line {
     fn covers(&self, x: f64, y: f64) -> bool {
         self.frame.is_some_and(|frame| frame.contains(x, y))
     }
+}
+
+/// One type's field, as read: the read, the answer's base, the field's
+/// element token and ref, and whether its text is replaced.
+struct Typing<'a> {
+    read: &'a Snapshot,
+    base: &'a Base,
+    token: &'a str,
+    target: &'a str,
+    clear: bool,
 }
 
 /// Where a secret field is: on screen, and in the read's screenshot.
@@ -514,7 +529,17 @@ impl DesktopSession {
             takeover: Takeover::Agent,
             returned: None,
             switched: None,
+            secrets: Secrets::default(),
+            typed: HashMap::new(),
+            polling: false,
         })
+    }
+
+    /// Gives the session the host's secret custody (FIX 8028): the secrets
+    /// its reads find from now on become handles bound to its run, and a
+    /// type or expect may name them.
+    pub fn set_secret_custody(&mut self, custody: Arc<dyn SecretCustody>) {
+        self.secrets.install(custody);
     }
 
     /// Gives the session's batches the host's routine decider.
@@ -949,7 +974,14 @@ impl DesktopSession {
             .get("elements")
             .and_then(Value::as_array)
             .map_or(&[][..], Vec::as_slice);
-        let (lines, secrets) = lines(elements);
+        let app = text_of(state, "app_name");
+        let origin = url_of(&app, key);
+        let view = SecretView {
+            secrets: (!self.polling).then_some(&self.secrets),
+            typed: &self.typed,
+            origin: &origin,
+        };
+        let (lines, secrets) = lines(elements, &view);
         let shot = if shot {
             let png = reply.images.into_iter().next().ok_or_else(|| {
                 BrowserError::Protocol("get_window_state sent no screenshot".to_owned())
@@ -966,7 +998,7 @@ impl DesktopSession {
         };
         Ok(Snapshot {
             key,
-            app: text_of(state, "app_name"),
+            app,
             title: text_of(state, "window_title"),
             bounds: state
                 .get("window_bounds")
@@ -981,7 +1013,10 @@ impl DesktopSession {
     }
 
     fn fingerprint(&mut self) -> Result<blake3::Hash, BrowserError> {
-        print_of(&self.snapshot(false)?)
+        self.polling = true;
+        let read = self.snapshot(false);
+        self.polling = false;
+        print_of(&read?)
     }
 
     /// Waits for the window to settle after an action that began at `start`.
@@ -1265,6 +1300,46 @@ impl DesktopSession {
         })
     }
 
+    /// Types `text` into the field `typing` names, under the press its
+    /// line breaks take (a Return sends): the class and press it ran under,
+    /// and the settled window.
+    fn enter(
+        &mut self,
+        typing: &Typing<'_>,
+        row: &Row,
+        text: &str,
+    ) -> Result<(Option<&'static str>, PressMode, Observation), BrowserError> {
+        // A line break can press Return, and a Return sends.
+        let class = text
+            .contains(|c: char| c == '\n' || c == '\r')
+            .then_some(EFFECT_SEND);
+        let press = self.press(class, row)?;
+        let (pid, token) = (typing.read.key.pid, typing.token);
+        let observation = self.act(typing.read, typing.base, |session| {
+            let refused = |error: ToolError| refusal(error, Some(typing.target));
+            if typing.clear {
+                for (key, modifiers) in [("a", vec!["ctrl"]), ("backspace", Vec::new())] {
+                    session
+                        .input(
+                            "press_key",
+                            json!({"pid": pid, "element_token": token, "key": key, "modifiers": modifiers}),
+                        )
+                        .map_err(refused)?;
+                }
+            }
+            if !text.is_empty() {
+                session
+                    .input(
+                        "type_text",
+                        json!({"pid": pid, "element_token": token, "text": text}),
+                    )
+                    .map_err(refused)?;
+            }
+            Ok(())
+        })?;
+        Ok((class, press, observation))
+    }
+
     /// The element token of the row `target` names, as read now.
     fn token(snapshot: &Snapshot, target: &str) -> Result<(Line, String), BrowserError> {
         let line = snapshot.line(target)?;
@@ -1287,14 +1362,26 @@ fn front(listed: &[Listed], among: impl Fn(&Listed) -> bool) -> Option<WindowKey
         .map(|(_, window)| window.key)
 }
 
-/// What a read of a window shows, as one hash: a settled window reads the same.
+/// What a read of a window shows, as one hash: a settled window reads the
+/// same. A row showing a secret in place hashes what the window holds
+/// there, never its handle, so a poll's read (which holds no secret) and
+/// a held read of the same window hash alike.
 fn print_of(snapshot: &Snapshot) -> Result<blake3::Hash, BrowserError> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(snapshot.key.name().as_bytes());
     for line in &snapshot.lines {
-        let row =
-            serde_json::to_vec(&line.row).map_err(|e| BrowserError::Protocol(e.to_string()))?;
-        hasher.update(&row);
+        let encode =
+            |row: &Row| serde_json::to_vec(row).map_err(|e| BrowserError::Protocol(e.to_string()));
+        if line.masked {
+            let mut row = line.row.clone();
+            row.name.clear();
+            row.value = None;
+            row.secret = None;
+            hasher.update(&encode(&row)?);
+            hasher.update(line.original.as_deref().unwrap_or("").as_bytes());
+        } else {
+            hasher.update(&encode(&line.row)?);
+        }
     }
     Ok(hasher.finalize())
 }
@@ -1380,6 +1467,7 @@ fn key_row(key: &str) -> Row {
         level: None,
         datetimes: Vec::new(),
         unavailable: Vec::new(),
+        secret: None,
     }
 }
 
@@ -1414,53 +1502,132 @@ fn clip(text: &str) -> String {
     }
 }
 
-/// Whether an element is a secret field: a password role, or a text field
-/// whose label or description names a secret, or whose text or label shows
-/// only mask glyphs (a toolkit concealing what was typed).
-fn secret_field(element: &Value, raw_role: &str, role: &str) -> bool {
-    if raw_role.contains("password") {
-        return true;
-    }
-    if !TEXT_ROLES.contains(&role) {
-        return false;
-    }
-    let text = |name: &str| element.get(name).and_then(Value::as_str).unwrap_or("");
-    let (label, description, value) = (text("label"), text("description"), text("value"));
-    [label, description].iter().any(|words| {
-        SECRET_PHRASES
-            .iter()
-            .any(|phrase| has_phrase(words, phrase))
-    }) || [label, value].iter().any(|shown| masked(shown))
+/// What a window read holds its secrets through (FIX 8028): the session's
+/// custody, none for a settle poll's read, which only a hash reads; the
+/// fields a type entered a secret into, by locator; and the window's
+/// place, as a secret found there names where it was found.
+struct SecretView<'a> {
+    secrets: Option<&'a Secrets>,
+    typed: &'a HashMap<String, SecretKind>,
+    origin: &'a str,
 }
 
-/// Whether `text` is nothing but mask glyphs, as a concealed field shows it.
-fn masked(text: &str) -> bool {
-    let mut glyphs = text.chars().filter(|c| !c.is_whitespace()).peekable();
-    glyphs.peek().is_some() && glyphs.all(|c| MASK_GLYPHS.contains(&c))
+impl SecretView<'_> {
+    /// What a secret field of `kind` holding `value` shows in its value's
+    /// place, and its secret: a concealed or empty field holds nothing, a
+    /// poll's read holds nothing, and every other value becomes a handle
+    /// through the session's custody, one ask per value a read shows
+    /// (`taken`).
+    fn hold<'v>(
+        &self,
+        taken: &mut HashMap<(SecretKind, &'v str), Result<String, SecretNote>>,
+        kind: SecretKind,
+        value: &'v str,
+    ) -> (Option<String>, RowSecret) {
+        let unheld = |note| RowSecret {
+            kind,
+            handle: None,
+            note,
+        };
+        if value.trim().is_empty() {
+            return (None, unheld(None));
+        }
+        if masked(value) {
+            return (
+                Some(SECRET_MARK.to_owned()),
+                unheld(Some(SecretNote::Concealed)),
+            );
+        }
+        let Some(secrets) = self.secrets else {
+            return (Some(SECRET_MARK.to_owned()), unheld(None));
+        };
+        let held = taken
+            .entry((kind, value))
+            .or_insert_with(|| secrets.acquire(kind, value, self.origin))
+            .clone();
+        let (handle, note) = match held {
+            Ok(handle) => (Some(handle), None),
+            Err(note) => (None, Some(note)),
+        };
+        let shown = secret_display_policy(kind, value, handle.as_deref());
+        (Some(shown), RowSecret { kind, handle, note })
+    }
 }
 
-/// Whether `name` holds the words of `phrase` in a row, ignoring case.
-fn has_phrase(name: &str, phrase: &[&str]) -> bool {
-    let words: Vec<String> = name
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
-        .collect();
-    words
-        .windows(phrase.len())
-        .any(|w| w.iter().zip(phrase).all(|(a, b)| a == b))
+/// An element's text field `name`, as the driver names it.
+fn text_field<'e>(element: &'e Value, name: &str) -> &'e str {
+    element.get(name).and_then(Value::as_str).unwrap_or("")
+}
+
+/// The secret kind of an element, as the classifier reads it: a password
+/// role is the tree's concealed field; a desktop names no input type or
+/// autocomplete token.
+fn secret_kind(element: &Value, raw_role: &str, role: &str) -> Option<SecretKind> {
+    classify(&FieldFacts {
+        role,
+        protected: raw_role.contains("password"),
+        input_type: None,
+        autocomplete: None,
+        label: text_field(element, "label"),
+        description: text_field(element, "description"),
+        value: text_field(element, "value"),
+    })
+}
+
+/// An element's role as the driver names it, and as its row names it.
+fn roles_of(element: &Value) -> (String, String) {
+    let raw = element
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    let role = ROLES
+        .iter()
+        .find(|(from, _)| *from == raw)
+        .map_or_else(|| raw.clone(), |(_, to)| (*to).to_owned());
+    (raw, role)
 }
 
 /// Reads a window's elements (in tree order, each with its depth) into
 /// rows: every element the driver can act on, and every named one a
-/// program reads outside a control. Also where its secret fields are.
-fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
+/// program reads outside a control. Also where its secret fields are, and
+/// the rows that show a secret in place. The window's secret fields are
+/// classified first and held through `view`, so no row, locator or name
+/// is built from a secret (FIX 8028).
+fn lines(elements: &[Value], view: &SecretView<'_>) -> (Vec<Line>, Vec<Secret>) {
+    let mut taken = HashMap::new();
+    // Each element's secret, as the classifier reads it, and what each
+    // secret shows in its place wherever a name or value echoes it.
+    let mut kinds = Vec::with_capacity(elements.len());
+    let mut echoes: Vec<(String, String)> = Vec::new();
+    for element in elements {
+        let (raw, role) = roles_of(element);
+        let kind = secret_kind(element, &raw, &role);
+        if let Some(kind) = kind {
+            let value = text_field(element, "value");
+            if let (Some(shown), _) = view.hold(&mut taken, kind, value)
+                && !masked(value)
+            {
+                echoes.push((value.trim().to_owned(), shown));
+            }
+        }
+        kinds.push(kind);
+    }
+    let shown: Vec<(&str, &str)> = echoes
+        .iter()
+        .map(|(secret, shown)| (secret.as_str(), shown.as_str()))
+        .collect();
+    let marks: Vec<(&str, &str)> = echoes
+        .iter()
+        .map(|(secret, _)| (secret.as_str(), SECRET_MARK))
+        .collect();
     let mut scope: Vec<(u64, String)> = Vec::new();
     let mut controls: Vec<u64> = Vec::new();
     let mut seen: HashMap<String, u32> = HashMap::new();
     let mut out = Vec::new();
     let mut secrets = Vec::new();
-    for element in elements {
+    for (element, kind) in elements.iter().zip(kinds) {
         let depth = element.get("depth").and_then(Value::as_u64).unwrap_or(0);
         while scope.last().is_some_and(|(at, _)| *at >= depth) {
             scope.pop();
@@ -1468,22 +1635,18 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
         while controls.last().is_some_and(|at| *at >= depth) {
             controls.pop();
         }
-        let raw = element
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_lowercase();
-        let role = ROLES
-            .iter()
-            .find(|(from, _)| *from == raw)
-            .map_or_else(|| raw.clone(), |(_, to)| (*to).to_owned());
-        let label = element
-            .get("label")
-            .and_then(Value::as_str)
-            .map(clip)
-            .unwrap_or_default();
-        let secret = secret_field(element, &raw, &role);
+        let (_, role) = roles_of(element);
+        let raw_label = text_field(element, "label");
+        // A label that echoes a secret shows it as its handle, and its
+        // locator and scope key hold `[secret]` there.
+        let (label, label_key, echoed) = match secret_echo_policy(raw_label, &shown) {
+            Some(shown_label) => {
+                let key = secret_echo_policy(raw_label, &marks).unwrap_or_default();
+                (clip(&shown_label), clip(&key), true)
+            }
+            None => (clip(raw_label), clip(raw_label), false),
+        };
+        let secret = kind.is_some();
         if secret {
             secrets.push(Secret {
                 screen: frame_of(element, "frame"),
@@ -1493,7 +1656,11 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
         // A secret field's own text can stand in for a missing name (the
         // driver names an unnamed field by its text): it never leaves the
         // session.
-        let name = if secret { String::new() } else { label };
+        let (name, name_key) = if secret {
+            (String::new(), String::new())
+        } else {
+            (label, label_key)
+        };
         let token = element
             .get("element_token")
             .and_then(Value::as_str)
@@ -1505,7 +1672,7 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
                 .map(|(_, named)| named.as_str())
                 .collect::<Vec<_>>()
                 .join(" > ");
-            key.push_str(&format!(" > {role} \"{name}\""));
+            key.push_str(&format!(" > {role} \"{name_key}\""));
             // Identical twins are told apart by their order among themselves.
             let twin = seen.entry(key.clone()).or_insert(0);
             *twin += 1;
@@ -1513,6 +1680,11 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
                 key.push_str(&format!(" ~{twin}"));
             }
             let hash = blake3::hash(key.as_bytes()).to_hex();
+            // A desktop row's ref is its locator: the window has no live
+            // handles.
+            let locator = format!("d{}", &hash[..12]);
+            // A field a type entered a secret into reads as that secret.
+            let kind = kind.or_else(|| view.typed.get(&locator).copied());
             let mut states = Vec::new();
             if element.get("enabled").and_then(Value::as_bool) == Some(false) {
                 states.push("disabled".to_owned());
@@ -1520,21 +1692,27 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
             if element.get("selected").and_then(Value::as_bool) == Some(true) {
                 states.push("selected".to_owned());
             }
-            if secret {
+            if kind.is_some() {
                 states.push("secret".to_owned());
             }
-            let value = if secret {
-                None
-            } else {
-                element
-                    .get("value")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.is_empty())
-                    .map(clip)
+            let raw_value = Some(text_field(element, "value")).filter(|value| !value.is_empty());
+            let (value, row_secret, value_echoed) = match kind {
+                Some(kind) => {
+                    let (shown, held) = view.hold(&mut taken, kind, text_field(element, "value"));
+                    (shown, Some(held), false)
+                }
+                None => match raw_value.and_then(|raw| secret_echo_policy(raw, &shown)) {
+                    Some(echo) => (Some(clip(&echo)), None, true),
+                    None => (raw_value.map(clip), None, false),
+                },
             };
-            // A desktop row's ref is its locator: the window has no live
-            // handles.
-            let locator = format!("d{}", &hash[..12]);
+            let row_masked = row_secret.is_some() || echoed || value_echoed;
+            if row_masked && !secret {
+                secrets.push(Secret {
+                    screen: frame_of(element, "frame"),
+                    shot: frame_of(element, "screenshot_frame"),
+                });
+            }
             out.push(Line {
                 row: Row {
                     target: locator.clone(),
@@ -1548,16 +1726,19 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
                     level: None,
                     datetimes: Vec::new(),
                     unavailable: Vec::new(),
+                    secret: row_secret,
                 },
                 frame: frame_of(element, "frame"),
                 token,
+                masked: row_masked,
+                original: row_masked.then(|| raw_value.map(str::to_owned)).flatten(),
             });
             if out.last().is_some_and(|line: &Line| line.token.is_some()) {
                 controls.push(depth);
             }
         }
         if SCOPES.contains(&role.as_str()) && !name.is_empty() {
-            scope.push((depth, format!("{role} \"{name}\"")));
+            scope.push((depth, format!("{role} \"{name_key}\"")));
         }
     }
     (out, secrets)
@@ -1867,39 +2048,38 @@ impl BrowserDriver for DesktopSession {
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        let entry = entry(input.text.as_deref(), input.secret.as_deref())?;
         self.live()?;
         let snapshot = self.reach(&input.target)?;
         let (line, token) = Self::token(&snapshot, &input.target)?;
-        // A line break can press Return, and a Return sends.
-        let class = input
-            .text
-            .contains(|c: char| c == '\n' || c == '\r')
-            .then_some(EFFECT_SEND);
-        let press = self.press(class, &line.row)?;
-        let pid = snapshot.key.pid;
         let base = Base::of(input.base);
-        let mut observation = self.act(&snapshot, &base, |session| {
-            let refused = |error: ToolError| refusal(error, Some(input.target.as_str()));
-            if input.clear {
-                for (key, modifiers) in [("a", vec!["ctrl"]), ("backspace", Vec::new())] {
-                    session
-                        .input(
-                            "press_key",
-                            json!({"pid": pid, "element_token": token, "key": key, "modifiers": modifiers}),
-                        )
-                        .map_err(refused)?;
-                }
+        let typing = Typing {
+            read: &snapshot,
+            base: &base,
+            token: &token,
+            target: &input.target,
+            clear: input.clear,
+        };
+        let (class, press, mut observation) = match entry {
+            Entry::Text(text) => self.enter(&typing, &line.row, text)?,
+            // The secret's bytes come from the custody at the send itself,
+            // and its line-break check reads them there; the field reads
+            // as that secret from then on.
+            Entry::Secret(handle) => {
+                let kind = self.secrets.kind_of(handle);
+                let kind = kind.unwrap_or(SecretKind::Password);
+                self.typed.insert(line.row.locator.clone(), kind);
+                let secrets = self.secrets.clone();
+                let mut entered = None;
+                secrets.with_value(handle, &mut |text: &str| {
+                    entered = Some(self.enter(&typing, &line.row, text)?);
+                    Ok(())
+                })?;
+                entered.ok_or_else(|| {
+                    BrowserError::SecretRefused(format!("{handle} lent no bytes to the type"))
+                })?
             }
-            if !input.text.is_empty() {
-                session
-                    .input(
-                        "type_text",
-                        json!({"pid": pid, "element_token": token, "text": input.text}),
-                    )
-                    .map_err(refused)?;
-            }
-            Ok(())
-        })?;
+        };
         self.receipt(
             "type",
             Some(&line.row),
@@ -2000,6 +2180,11 @@ impl BrowserDriver for DesktopSession {
     /// Checks a row: one not found walks on past a cut first, and only a
     /// read that reached the tree's end shows it absent.
     fn expect(&mut self, input: ExpectInput) -> Result<ExpectOutput, BrowserError> {
+        if input.value.is_some() && input.secret.is_some() {
+            return Err(BrowserError::Input(
+                "an expect names a value or a secret, never both".to_owned(),
+            ));
+        }
         self.live()?;
         let query = input.query();
         // A desktop row's ref is its locator: a target matches it either way.
@@ -2010,21 +2195,29 @@ impl BrowserDriver for DesktopSession {
         let first = self.snapshot(false)?;
         let snapshot = self.search(first, None, named)?;
         let partial = snapshot.partial;
-        let rows: Vec<Row> = snapshot.lines.into_iter().map(|line| line.row).collect();
-        let row = match &input.target {
-            Some(target) => match_target(target, &rows, "", None).map(|(at, _)| rows[at].clone()),
-            None => rows.into_iter().find(|row| query.matches(row)),
+        let (rows, originals): (Vec<Row>, Vec<Option<String>>) = snapshot
+            .lines
+            .into_iter()
+            .map(|line| (line.row, line.original))
+            .unzip();
+        let at = match &input.target {
+            Some(target) => match_target(target, &rows, "", None).map(|(at, _)| at),
+            None => rows.iter().position(|row| query.matches(row)),
         };
-        let met = match (&row, input.absent) {
+        // A secret is compared with what the window holds, never its handle.
+        let met = match (at, input.absent) {
             // Rule 5: no row seen in a read still cut is neither present
             // nor absent, so the check is unmet either way.
             (None, absent) => absent && partial.is_none(),
             (Some(_), true) => false,
-            (Some(row), false) => input
-                .value
-                .as_ref()
-                .is_none_or(|want| row.value.as_ref() == Some(want)),
+            (Some(at), false) => self.secrets.holds(
+                rows[at].value.as_deref(),
+                originals[at].as_deref(),
+                input.value.as_deref(),
+                input.secret.as_deref(),
+            )?,
         };
+        let row = at.map(|at| rows[at].clone());
         Ok(ExpectOutput {
             met,
             row,
