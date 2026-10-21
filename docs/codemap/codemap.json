@@ -19881,7 +19881,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -20021,7 +20021,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/scopes.rs",
-     "purpose": "Exact, capped scope resolution over a single transaction snapshot",
+     "purpose": "Exact scope resolution over a single transaction snapshot: every record the scope holds, however many…",
      "surface": {
       "crate-vis": 1,
       "fn": 1
@@ -60442,7 +60442,6 @@
      "path": "src/task_authority/binding_generation.rs",
      "purpose": "The binding generation a consult party held when its consult was minted",
      "surface": {
-      "const": 1,
       "crate-vis": 6,
       "fn": 1,
       "struct": 1,
