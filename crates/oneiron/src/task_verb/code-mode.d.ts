@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3981 declarations.
+// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3984 declarations.
 // Replies: 1059 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -127,7 +127,11 @@ declare namespace Sdk {
   type HealthCauseSource = { source: EntityId; receipt: string; skill?: EntityId | null; label: string; share: number; judge_revision?: string | null; displaced_by?: string | null };
   type HealthOtherSession = { attempt: EntityId; generation: number; at: number };
   type HealthSilenceActivity = { own_call_at?: number | null; own_step_at?: number | null; actor_only_at?: number | null; other_session?: HealthOtherSession | null };
-  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null };
+  type ConcernMoveBasis = { digest: string };
+  type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable";
+  type ConcernMoveLink = { kind: "note"; room: string; turn?: string | null; messages: string[] } | { kind: "steer"; task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState; run_differs_from_card_attempt: boolean };
+  type ConcernMoveReceipt = { actor: EntityId; actor_class: string; at: number; key: string; payload: string; observed?: ConcernMoveBasis | null; current: ConcernMoveBasis; evidence_changed: boolean; task?: EntityId | null; subject: EntityId; attempt?: EntityId | null; link: ConcernMoveLink };
+  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null; moves_taken: ConcernMoveReceipt[] };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
   type RunTreeFailure = { reason: string };
@@ -139,13 +143,13 @@ declare namespace Sdk {
   type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string };
   type AgentHealthLoadedSkill = { skill: string; name: string; version: string; active: boolean; instructions: string };
   type AgentHealthPromptInject = { approval: string; successor: string; ask: string; by: EntityId; at: number; edited: boolean };
-  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; skills?: AgentHealthLoadedSkill[]; prompt_inject?: AgentHealthPromptInject | null };
+  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; skills?: AgentHealthLoadedSkill[]; prompt_inject?: AgentHealthPromptInject | null; basis: ConcernMoveBasis };
   type ConcernOutcome = "confirmed" | "dismissed" | "unresolved";
   type ConcernOutcomeRequest = { card: string; outcome: ConcernOutcome };
   type ConcernCardSummary = { card: string; agent: string; signal: string; tone: string; outcome: string; evidence: number };
-  type ConcernMove = "ask_coach";
-  type ConcernMoveRequest = { card: string; move: ConcernMove };
-  type ConcernMoveOutcome = { card: string; ask: AgentHealthCoachAsk };
+  type ConcernMove = "ask_coach" | { note: { key: string; text: string; from_project?: string | null; to_project?: string | null } } | { steer: { key: string; instruction: string } };
+  type ConcernMoveRequest = { card: string; move: ConcernMove; basis?: ConcernMoveBasis | null };
+  type ConcernMoveOutcome = { kind: "ask_coach"; card: string; ask: AgentHealthCoachAsk } | { kind: "applied"; card: string; receipt: ConcernMoveReceipt };
   type DiagnosticsListRequest = { event_class?: string | null; actor_ref?: string | null; evidence_ref?: string | null; limit: number };
   type ReadScope = { entity_types?: number[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean };
   type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
@@ -254,7 +258,6 @@ declare namespace Sdk {
   type ClaimApprovalStatus = "auto" | "proposed" | "approved" | "rejected";
   type TaskCancelReceipt = { approval: ClaimApprovalStatus; effected: boolean; proposal_ref?: EntityId | null; gate_decision_ref?: string | null; status?: RunTreeStatus | null; cancel_requested: boolean; forced: boolean };
   type SteerRequest = { task_ref: string; instruction: string; key: string };
-  type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable";
   type SteerReceipt = { task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState };
   type AttemptHandle = { task_ref: EntityId; attempt_ref: string; attempt_count: number; node_ref?: EntityId | null };
   type TaskHandle = { kind: "proposed"; proposal_ref: EntityId } | { kind: "task"; task_ref: EntityId } | (AttemptHandle & { kind: "attempt" }) | { kind: "ask"; group_ref: EntityId };
