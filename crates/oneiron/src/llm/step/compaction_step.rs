@@ -27,9 +27,9 @@
 use rmpv::Value;
 
 use super::super::{LlmRequest, LlmResponse};
+use super::response_pins::{StepResponseRef, register_step_response_pin_in_txn};
 use super::step_claim::{
-    EncodedStepClaim, StepResponseRef, call_purpose_str, encode_step_claim_value,
-    request_params_hash,
+    EncodedStepClaim, call_purpose_str, encode_step_claim_value, request_params_hash,
 };
 use super::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE,
@@ -290,6 +290,10 @@ impl StepFiling<'_> {
                 batch = batch.edge(&claim_id, EdgeKind::DerivedFrom, source, 1.0);
             }
             batch.apply(wtxn)?;
+            // The claim holds the exact version its answer lives in (FIX 6225).
+            if let Some(pin) = &response_ref {
+                register_step_response_pin_in_txn(&vault.store, wtxn, &claim_id, pin)?;
+            }
             filed.push(call.filed(claim_id));
         }
         Ok(filed)

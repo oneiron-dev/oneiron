@@ -1,6 +1,8 @@
-//! Blob artifact delete path: version-chain, head, and asset-ref cleanup.
+//! Blob artifact delete path: version-chain, head, and asset-ref cleanup,
+//! and the release of one response version its last step claim let go of
+//! (FIX 6225).
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -9,7 +11,10 @@ use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::Store;
 
 use super::holders::artifact_hashes;
-use super::references::{fence_released_asset, forget_claimed_hashes, held_by_live_artifact};
+use super::references::{
+    claimed_hash_rows_exist, fence_released_asset, forget_claimed_hashes,
+    forget_released_pair_in_txn, held_by_live_artifact, retained_claim_names,
+};
 use super::store_keys::{ASSET_REF, BLOB_ARTIFACT_CONTENT_HASH_LEN};
 use super::versions::{HEAD, VERSIONS, blob_artifact_asset_entity_id};
 
@@ -128,5 +133,137 @@ pub(super) fn release_bytes_of_deleted_artifact(
     if cleanup.had_vector {
         crate::hnsw::increment_vector_version(store, wtxn)?;
     }
+    Ok(())
+}
+
+/// Releases exactly version `version` of `artifact`, holding `content_hash`,
+/// once the last step claim pinning it as its response let go of it (FIX
+/// 6225). Only that version goes: its record, its born-from rows and its
+/// generated `blob.version` claim, a ledger event and no holder of the bytes
+/// it records. HEAD falls back to the greatest version that stays; HIGHWATER
+/// stays, so its number is never issued again. Its hash's reference rows go
+/// when no version that stays and no retained claim of the artifact names
+/// it, and its bytes then by the delete rule above; an artifact left with no
+/// version, claimed hash or retained claim goes whole. Every other version
+/// and holder stays as it is. A version not recorded under that hash is a
+/// no-op, never another version in its place; one whose artifact, claim or
+/// ASSET a legal hold covers stays, so the release is never a refusal.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn release_response_version_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+) -> Result<()> {
+    let Some(record) = VERSIONS.get(store, wtxn, &(*artifact, version))? else {
+        return Ok(());
+    };
+    if record.version != version || record.content_hash != *content_hash {
+        return Ok(());
+    }
+    let asset = blob_artifact_asset_entity_id(content_hash)?;
+    for id in [artifact, &record.claim_id, &asset] {
+        if crate::store::legal_hold::held_in_txn(store, wtxn, id.as_bytes())? {
+            return Ok(());
+        }
+    }
+    let mut cleanup = BlobArtifactLifecycleCleanup::default();
+    super::born_from::unindex_version_in_txn(store, wtxn, artifact, &record)?;
+    VERSIONS.delete(store, wtxn, &(*artifact, version))?;
+    if HEAD
+        .get(store, wtxn, artifact)?
+        .is_some_and(|head| head.version == version)
+    {
+        crate::ingest::invalidate_blob_fingerprint(store, wtxn, artifact)?;
+        let survivor = VERSIONS
+            .iter_rev_from(store, wtxn, artifact.as_bytes())?
+            .next()
+            .transpose()?;
+        match survivor {
+            Some((_, head)) => HEAD.put(store, wtxn, artifact, &head)?,
+            None => {
+                HEAD.delete(store, wtxn, artifact)?;
+            }
+        }
+    }
+    tear_in_txn(store, wtxn, &record.claim_id, &mut cleanup)?;
+    if !chain_holds(store, wtxn, artifact, content_hash)? {
+        ASSET_REF.delete(store, wtxn, &(*content_hash, *artifact))?;
+        if forget_released_pair_in_txn(store, wtxn, artifact, content_hash)? {
+            release_unheld_bytes(store, wtxn, content_hash, artifact, &mut cleanup)?;
+        }
+    }
+    let emptied = VERSIONS
+        .iter_from(store, wtxn, artifact.as_bytes())?
+        .next()
+        .transpose()?
+        .is_none()
+        && !claimed_hash_rows_exist(store, wtxn, artifact)?
+        && !retained_claim_names(store, wtxn, artifact, None)?;
+    if emptied {
+        tear_in_txn(store, wtxn, artifact, &mut cleanup)?;
+    }
+    if cleanup.had_graph_mutation {
+        ppr::increment_graph_version(store, wtxn)?;
+    }
+    if cleanup.had_vector {
+        crate::hnsw::increment_vector_version(store, wtxn)?;
+    }
+    Ok(())
+}
+
+/// Whether version `version` of `artifact` is recorded here holding
+/// `content_hash`: the exact version a step claim's response pin names
+/// stands (FIX 6225).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn response_version_stands_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+) -> Result<bool> {
+    Ok(VERSIONS
+        .get(store, txn, &(*artifact, version))?
+        .is_some_and(|record| record.version == version && record.content_hash == *content_hash))
+}
+
+/// Whether a version of `artifact`'s chain still holds `content_hash`.
+fn chain_holds(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+) -> Result<bool> {
+    for row in VERSIONS.iter_from(store, txn, artifact.as_bytes())? {
+        if row?.1.content_hash == *content_hash {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Tears `id`, a released version's ledger claim or an emptied artifact,
+/// with its machine history, as a local delete does, folding its graph and
+/// vector accounting into `cleanup`.
+fn tear_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    cleanup: &mut BlobArtifactLifecycleCleanup,
+) -> Result<()> {
+    let (_existed, had_vector, had_graph_mutation, neighbors) =
+        crate::batch::deindex_entity_with_machine_history(store, wtxn, id)?;
+    ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
+    cleanup.had_vector |= had_vector;
+    cleanup.had_graph_mutation |= had_graph_mutation;
+    cleanup.neighbors.extend(neighbors);
     Ok(())
 }

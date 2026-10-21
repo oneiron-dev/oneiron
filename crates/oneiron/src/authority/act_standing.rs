@@ -369,6 +369,18 @@ fn parent_state(
     merged
 }
 
+/// The fold state at each of `heads`, from the capture the causal points
+/// read: where a frontier join finds its admission tip (FIX 7908). `None`
+/// where history the fold needs is not held here.
+pub(super) fn head_states_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    heads: &BTreeSet<AuthorityEntryHash>,
+) -> Result<Option<BTreeMap<AuthorityEntryHash, Option<FoldState>>>> {
+    let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
+    Ok(capture_in_txn(store, txn, heads, pin.as_ref())?.map(|(image, _)| image.per_parent))
+}
+
 /// The stored log's fold keeping the state at each of `heads`, with no clock,
 /// and each row's parents: past the adopted image where this vault does not
 /// hold its covered history, else the held log whole. `None` where history
