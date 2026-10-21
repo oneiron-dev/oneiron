@@ -2825,7 +2825,9 @@ takes none until the next start.
 
 `runtime = "auto"`, the default, serves the Candle baseline; a platform
 runtime this machine installs may join it only once its answers clear the
-bundle's reference here, and this build registers none yet.
+bundle's reference here. On an Apple silicon Mac that is the bundle's
+managed MLX worker, run beside Candle as
+[oneironer-workers.md](oneironer-workers.md) describes.
 `runtime = "candle"` or a named device pins the slot to Candle, and no
 receipt names `auto`. Each call's window is counted once as it is queued,
 and a worker runs only calls whose window fits the window it is qualified

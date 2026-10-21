@@ -457,15 +457,20 @@ impl Vault {
         self.capture_tier1_point_producer(&ids)?;
         Ok(ids)
     }
+    /// Reads the window `query` selects by its time, kinds and filters to
+    /// completion and projects it whole. Its row limit is not a cut: a
+    /// detector's result is never a partial window.
     pub fn run_receipt_tripwires(
         &self,
         scope: &str,
         query: ReceiptQuery,
         end: u64,
     ) -> Result<Vec<EntityId>> {
-        let capacity = query.limit;
-        let receipts = self.receipts(query)?;
-        self.project_receipt_tripwires_with_capacity(scope, &receipts, end, Some(capacity))
+        let receipts = self.receipts(ReceiptQuery {
+            limit: usize::MAX,
+            ..query
+        })?;
+        self.project_receipt_tripwires(scope, &receipts, end)
     }
     /// Projects a scoped receipt slice whole; also used by receipt adapters.
     pub fn project_receipt_tripwires(
@@ -474,25 +479,9 @@ impl Vault {
         receipts: &[ReceiptRecord],
         end: u64,
     ) -> Result<Vec<EntityId>> {
-        self.project_receipt_tripwires_with_capacity(scope, receipts, end, None)
-    }
-    fn project_receipt_tripwires_with_capacity(
-        &self,
-        scope: &str,
-        receipts: &[ReceiptRecord],
-        end: u64,
-        capacity: Option<usize>,
-    ) -> Result<Vec<EntityId>> {
         let Some(bounds) = self.tripwire_bounds()? else {
             return Ok(vec![]);
         };
-        if capacity
-            .is_some_and(|limit| (limit as u64) < bounds.consent_depth.max(bounds.actor_writes))
-        {
-            return Err(crate::Error::InvalidConfig(
-                "receipt query cannot reach the configured tripwire bounds".into(),
-            ));
-        }
         // Every receipt is projected: past `limits.detector_receipt_rows` the
         // window asks and reads on.
         let _ = self.measure_limit(EngineLimit::DetectorReceiptRows, receipts.len() as u64);

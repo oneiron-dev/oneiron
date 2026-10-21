@@ -23565,6 +23565,7 @@
      "kind": "src",
      "notable": [
       "StewardshipDraftOutcome",
+      "StewardshipDraftPage",
       "StewardshipDraftRequest",
       "StewardshipDraftRoute",
       "StewardshipRule",
@@ -23577,7 +23578,7 @@
       "crate-vis": 4,
       "enum": 1,
       "fn": 6,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -63252,7 +63253,7 @@
      "purpose": "Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs",
      "surface": {
       "const": 13,
-      "crate-vis": 17,
+      "crate-vis": 16,
       "enum": 3,
       "fn": 7,
       "struct": 7
@@ -63276,7 +63277,7 @@
      "path": "src/vault_cleanup/mod.rs",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "mod": 1,
       "re-export": 4
      }
@@ -63373,9 +63374,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/vault_cleanup/scan.rs",
-     "purpose": "Bounded rotating scans",
+     "purpose": "Whole-index scans",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 3
      }
     },
     {
@@ -91833,13 +91834,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/bundle/platform.rs",
      "purpose": "The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 16
      }
     },
     {
@@ -91863,13 +91864,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/dispatcher/lifecycle.rs",
+     "purpose": "The life of a supervised worker (FIX 6755 slice 3, Engine call 3): a platform runtime's managed process…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/dispatcher/mod.rs",
      "purpose": "The slot's one dispatcher (FIX 6755): every extraction call the slot takes goes through it to a ready…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
      }
     },
     {
@@ -91889,7 +91900,7 @@
      "path": "src/oneironer/dispatcher/worker.rs",
      "purpose": "One worker: a model loaded on one engine, or the one opaque endpoint, on its own thread",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -91906,10 +91917,30 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/oneironer/engines/admission.rs",
+     "purpose": "The background admission of a slot's platform runtimes (FIX 6755 slice 3, Engine calls 3-5): on a Mac, the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/oneironer/engines/calibration.rs",
      "purpose": "The bundle's reference cases, the bar an engine's answers must clear, the measurement of one engine against…",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/engines/candidate.rs",
+     "purpose": "A platform runtime's candidate on this machine (FIX 6755 slice 3): the bundle's `mlx-worker` row, found…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -91919,7 +91950,7 @@
      "path": "src/oneironer/engines/mod.rs",
      "purpose": "The slot's engines, and which one serves on this machine (ARCH-0036, \"Several engines, one default per…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -91929,7 +91960,7 @@
      "path": "src/oneironer/engines/rows.rs",
      "purpose": "This machine's measured engine rows: where they live, how they are read and written, and what keys them",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -91939,7 +91970,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -91969,7 +92000,7 @@
      "path": "src/oneironer/local/window/mod.rs",
      "purpose": "One causal window with byte-accurate message coordinates",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -91979,7 +92010,57 @@
      "path": "src/oneironer/local/window/ner.rs",
      "purpose": "The full decode of a bundle with a character head (`oneironer-decode-v1`): BIO, the DATE snap, character…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/local/window/platform.rs",
+     "purpose": "The window as a platform worker tags it (FIX 6755 slice 3): the text it is sent, the current turn's byte…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/mlx/frame.rs",
+     "purpose": "The MLX worker's frame codec (FIX 6755 slice 3, contract rev 3 A2): a 4-byte big-endian length, then that…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/mlx/mod.rs",
+     "purpose": "The server-owned managed MLX worker (FIX 6755 slice 3, contract rev 3 A1-A4): a bundle's `mlx-worker`…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/mlx/process.rs",
+     "purpose": "The MLX worker's process (FIX 6755 slice 3, contract rev 3 A1, A3b): one child and the threads that own its…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/mlx/protocol.rs",
+     "purpose": "The MLX worker's wire, protocol `oneironer-worker-v2` (FIX 6755 slice 3, contract rev 3 A2-A3, Engine call…",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -94446,7 +94527,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 28,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94574,7 +94655,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1020,
+   "source_files": 1028,
    "test_files": 182
   },
   "oneiron-spawn": {
