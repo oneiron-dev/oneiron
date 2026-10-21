@@ -60,6 +60,10 @@ pub struct SyncClient {
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
     pub(crate) lfs_download: Option<crate::sync::chunks::ChunkDownload>,
+    /// Downloads waiting behind the active one, oldest first (FIX 8864).
+    pub(super) lfs_waiting: std::collections::VecDeque<super::lfs::PendingLfsDownload>,
+    /// The id the last download asked for took; ids only rise.
+    pub(super) lfs_last_id: u64,
     pub(crate) last_lfs_download: Option<crate::origin::lfs::LfsPutOutcome>,
     /// When each owed artifact publication, by digest, may be sent again on
     /// this connection. Cleared at every connect.
@@ -177,6 +181,8 @@ impl SyncClient {
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,
             lfs_download: None,
+            lfs_waiting: std::collections::VecDeque::new(),
+            lfs_last_id: 0,
             last_lfs_download: None,
             artifact_publication_resend: HashMap::new(),
             home_peer: crate::authority::PeerMachine::Unknown,
