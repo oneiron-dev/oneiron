@@ -53,50 +53,58 @@ impl Vault {
     ) -> Result<VadAnnotation> {
         annotation.vad.validate()?;
         let claim_id = vad_annotation_claim_id(expected_type, id)?;
-        let body = vad_annotation_claim_body(id, &annotation)?;
-        let source = body.source.unwrap_or(ClaimSource::Inferred);
-        let candidate =
-            ClaimCandidate::new(body.predicate, body.subject, body.value, body.confidence)
-                .with_validity(body.valid_from, body.valid_to);
-        let envelope = WriteEnvelope::new(
-            actor,
-            source,
-            WriteProvenance::new(Value::Map(vec![
-                (Value::from("surface"), Value::from("core")),
-                (Value::from("route"), Value::from("turns.annotate")),
-            ]))?,
-            ClaimApprovalStatus::Auto,
-        );
+        let annotated = *id;
         let occurred = TimeRange {
             start: annotation.annotated_at,
             end: annotation.annotated_at,
         };
-        let annotated = *id;
-        self.put_claim_candidate_with_landing_and_after_apply(
-            &claim_id,
-            candidate,
-            &envelope,
-            occurred,
-            annotation.annotated_at,
-            |txn| {
-                let raw = self
-                    .store
-                    .port_entity_record(txn, &annotated)?
-                    .map(|row| row.encode())
-                    .ok_or(Error::EntityNotFound)?;
-                let header = EntityMetadataHeader::parse(&raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?;
-                if header.entity_type != expected_type {
-                    return Err(Error::InvalidEntityType(header.entity_type));
-                }
-                annotation_slot_free_in(self, txn, &claim_id, &annotated)
-            },
-            |vault, wtxn, _| {
-                let key = vad_annotation_meta_key(expected_type, &annotated);
-                VAD_ANNOTATION_META.delete(&vault.store, wtxn, &key)?;
-                Ok(())
-            },
-        )?;
+        let write = |approval: ClaimApprovalStatus| -> Result<()> {
+            let body = vad_annotation_claim_body(&annotated, &annotation)?;
+            let source = body.source.unwrap_or(ClaimSource::Inferred);
+            let candidate =
+                ClaimCandidate::new(body.predicate, body.subject, body.value, body.confidence)
+                    .with_validity(body.valid_from, body.valid_to);
+            let envelope = WriteEnvelope::new(
+                actor,
+                source,
+                WriteProvenance::new(Value::Map(vec![
+                    (Value::from("surface"), Value::from("core")),
+                    (Value::from("route"), Value::from("turns.annotate")),
+                ]))?,
+                approval,
+            );
+            self.put_claim_candidate_with_landing_and_after_apply(
+                &claim_id,
+                candidate,
+                &envelope,
+                occurred,
+                annotation.annotated_at,
+                |txn| {
+                    let raw = self
+                        .store
+                        .port_entity_record(txn, &annotated)?
+                        .map(|row| row.encode())
+                        .ok_or(Error::EntityNotFound)?;
+                    let header = EntityMetadataHeader::parse(&raw)
+                        .ok_or(Error::CorruptedIndex("entity header"))?;
+                    if header.entity_type != expected_type {
+                        return Err(Error::InvalidEntityType(header.entity_type));
+                    }
+                    annotation_slot_free_in(self, txn, &claim_id, &annotated)
+                },
+                |vault, wtxn, _| {
+                    let key = vad_annotation_meta_key(expected_type, &annotated);
+                    VAD_ANNOTATION_META.delete(&vault.store, wtxn, &key)?;
+                    Ok(())
+                },
+            )
+        };
+        // As the Memory claim door does: a Gate verdict that pends the Auto
+        // request lands the annotation parked for review, never refused.
+        match write(ClaimApprovalStatus::Auto) {
+            Err(error) if gate_rejection_pends(&error) => write(ClaimApprovalStatus::Proposed)?,
+            written => written?,
+        }
         Ok(annotation)
     }
 }
@@ -133,4 +141,14 @@ fn annotation_slot_free_in(
         ));
     }
     Ok(())
+}
+
+/// Whether `error` is a Gate write rejection whose outcome is Pending.
+fn gate_rejection_pends(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Gate(crate::error::GateError::GateWriteRejected { outcome, .. })
+            if crate::error::GateDenialOutcome::parse(outcome)
+                == Some(crate::error::GateDenialOutcome::Pending)
+    )
 }
