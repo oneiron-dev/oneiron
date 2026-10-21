@@ -32852,19 +32852,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HumanTaskFollowupDriver",
-      "OpenHumanAsk",
-      "OpenHumanAskKind",
-      "OpenHumanAsks"
+      "HumanTaskFollowupDriver"
      ],
      "path": "src/human_task/followup.rs",
      "purpose": "Native-human routing, follow-up cursor lifecycle and the wake driver",
      "surface": {
-      "const": 1,
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 8,
-      "struct": 3
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -32886,7 +32881,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -32910,6 +32905,25 @@
       "fn": 1,
       "struct": 5,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OpenAskFollowup",
+      "OpenHumanAsk",
+      "OpenHumanAskKind",
+      "OpenHumanAsks",
+      "UncoveredHumanAskFamily"
+     ],
+     "path": "src/human_task/open_asks.rs",
+     "purpose": "The asks still open with one person (FIX 5908), read from the TASKs themselves",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -61324,7 +61338,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -61542,6 +61556,16 @@
       "enum": 2,
       "fn": 5,
       "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/brief_history.rs",
+     "purpose": "A TASK's earlier briefs (FIX 8077)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -61899,7 +61923,7 @@
      "purpose": "The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and…",
      "surface": {
       "crate-vis": 16,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -61929,7 +61953,17 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_redo.rs",
+     "purpose": "A TASK's redo (FIX 3153): a new TASK posted from an earlier one's content, through the post the highway…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -62017,6 +62051,7 @@
       "TaskOutcome",
       "TaskPhase",
       "TaskPost",
+      "TaskRedo",
       "TaskReport",
       "TaskReportBody",
       "TaskStatusQuery",
@@ -62032,7 +62067,7 @@
       "crate-vis": 11,
       "enum": 8,
       "fn": 3,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -62087,7 +62122,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 47,
       "fn": 1,
       "mod": 6,
       "re-export": 28
@@ -62972,7 +63007,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1161
+      "fn": 1162
      }
     },
     {
@@ -70672,7 +70707,7 @@
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due"
     },
     "human_task": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -71337,7 +71372,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 208,
+     "files": 210,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71507,7 +71542,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4561,
+   "source_files": 4564,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81892,7 +81927,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1132
+      "fn": 1133
      }
     },
     {
@@ -83153,7 +83188,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1133
+      "fn": 1134
      }
     },
     {
@@ -102133,6 +102168,7 @@
       "TaskLifecycleRecord",
       "TaskOutcome",
       "TaskPhase",
+      "TaskRedo",
       "TaskRefuseDomain",
       "TaskRefuseInput",
       "TaskRefuseOutput",
@@ -102459,7 +102495,7 @@
      "purpose": "—",
      "surface": {
       "enum": 955,
-      "struct": 2977
+      "struct": 2978
      }
     },
     {

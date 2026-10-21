@@ -167,11 +167,13 @@ pub enum EngineScan {
     /// One TASK's inbound `ScopedTo` edges its authority fold reads, facts
     /// or not.
     TaskAuthorityFactEdges,
+    /// Every TASK row one person's open-ask read walks, for one person.
+    OpenAskTaskRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 52] = [
+    pub const ALL: [Self; 53] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -224,6 +226,7 @@ impl EngineScan {
         Self::RoomRosterMembers,
         Self::DagWalkRecords,
         Self::TaskAuthorityFactEdges,
+        Self::OpenAskTaskRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -290,6 +293,7 @@ impl EngineScan {
             Self::RoomRosterMembers => "room_roster_members",
             Self::DagWalkRecords => "dag_walk_records",
             Self::TaskAuthorityFactEdges => "task_authority_fact_edges",
+            Self::OpenAskTaskRows => "open_ask_task_rows",
         }
     }
 
@@ -360,6 +364,7 @@ impl EngineScan {
             Self::RoomRosterMembers => 77,
             Self::DagWalkRecords => 78,
             Self::TaskAuthorityFactEdges => 79,
+            Self::OpenAskTaskRows => 80,
         }]
     }
 }

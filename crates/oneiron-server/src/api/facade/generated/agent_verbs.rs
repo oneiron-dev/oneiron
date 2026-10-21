@@ -83,6 +83,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.fanout.ack", post(facade_route))
         .route("/tasks.update", post(facade_route))
         .route("/tasks.accept", post(facade_route))
+        .route("/tasks.redo", post(facade_route))
         .route("/vault.commit_message", post(facade_route))
         .route("/vault.begin_message_stream", post(facade_route))
         .route("/vault.append_to_stream", post(facade_route))
