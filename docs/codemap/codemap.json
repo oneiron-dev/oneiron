@@ -72010,7 +72010,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/provider_gate.rs",
@@ -72040,7 +72040,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/run.rs",
@@ -72050,7 +72050,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cua/served.rs",
@@ -72953,7 +72953,7 @@
     "cua": {
      "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Synthetic browser bench: engine outcomes are not oracle passes"
     },
