@@ -87141,6 +87141,7 @@
       "DistillArgs",
       "ExportArgs",
       "FetchArgs",
+      "FetchPlatforms",
       "OneironerCommand",
       "PublishArgs",
       "QualifyArgs",
@@ -87151,7 +87152,7 @@
      "path": "src/commands/oneironer.rs",
      "purpose": "`oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 \"one base, two…",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "fn": 1,
       "struct": 5
      }
@@ -87646,6 +87647,7 @@
      "path": "src/config/merge_queue.rs",
      "purpose": "`[merge_queue]`: the executor the queue checker runs a repository's frozen check plan in (FIX 6868)",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
       "enum": 2,
       "fn": 4,
@@ -91199,6 +91201,56 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/archive.rs",
+     "purpose": "The strict reader of a platform row's archive (FIX 6755, contract rev 3 A1), written here with no tar…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/archive/ustar.rs",
+     "purpose": "The ustar stream itself: each header checked as it is read, every byte hashed on its way through, the entry…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/manifest.rs",
+     "purpose": "The manifest's common rows: the trunk, its config and tokenizer, the label table and the optional heads",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/mod.rs",
+     "purpose": "The Oneironer bundle as every runtime reads it (FIX 6755): one manifest schema, one identity and one archive…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/bundle/platform.rs",
+     "purpose": "The manifest's runtime rows (contract rev 3, B1-B2): the Core ML model and the MLX worker, one archive each",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -91275,7 +91327,7 @@
      "path": "src/oneironer/engines/rows.rs",
      "purpose": "This machine's measured engine rows: where they live, how they are read and written, and what keys them",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -91285,7 +91337,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -91325,7 +91377,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -91335,7 +91387,27 @@
      "path": "src/oneironer/release.rs",
      "purpose": "The shipped Oneironer releases, and the fetch that places one on this machine (FIX 6828)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/release/catalogue.rs",
+     "purpose": "The shipped release catalogue (FIX 6755)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/release/platforms.rs",
+     "purpose": "The platform half of a fetch (FIX 6755): which archives a fetch places, their extraction in staging, and the…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -93752,7 +93824,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 19,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93880,7 +93952,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1008,
+   "source_files": 1015,
    "test_files": 182
   },
   "oneiron-spawn": {

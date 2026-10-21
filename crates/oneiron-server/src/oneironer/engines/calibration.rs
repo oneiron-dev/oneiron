@@ -5,7 +5,9 @@
 //! Each case is timed after an idle, as a chat spaces its turns: a device
 //! whose clocks fall between turns pays for waking on every one, which cases
 //! run back to back would hide. A live call keeps exact span parity: the bar
-//! moves scores only.
+//! moves scores only. An engine is held to the cases whose live window fits
+//! its row's max window, and only those are warmed on and timed (FIX 6755);
+//! a longer case is skipped, never failed, and that is the only skip.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -44,11 +46,25 @@ pub(crate) struct Bar {
 }
 
 /// `parity.json`: the bar, and inputs with the reference runtime's answers.
+/// `reference` and `checked` are the publisher's notes on how the answers
+/// were made and what it measured: parsed, dropped and never compared.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ParityFile {
     bar: Bar,
     cases: Vec<Case>,
+    #[serde(default)]
+    #[expect(
+        dead_code,
+        reason = "informational: parsed, then dropped, never compared"
+    )]
+    reference: Option<serde_json::Value>,
+    #[serde(default)]
+    #[expect(
+        dead_code,
+        reason = "informational: parsed, then dropped, never compared"
+    )]
+    checked: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -266,15 +282,17 @@ pub(super) struct Measured {
     pub(super) tagger: Option<LocalTagger>,
 }
 
-/// Loads the bundle on one engine and times the reference cases on it, each
-/// after [`CALIBRATION_IDLE`].
+/// Loads the bundle on one engine and times the reference cases its row
+/// holds, each after [`CALIBRATION_IDLE`]. A case is held when its live
+/// window, tokens with specials, fits the key's max window; a longer one is
+/// skipped. A case whose window cannot be built fails the measurement, and
+/// a row that holds no case is never kept and never clears.
 pub(super) fn measure(
     config: &OneironerConfig,
     engine: Engine,
     key: &RowKey,
     reference: &Reference,
 ) -> Measured {
-    let mut row = Row::unmeasured(key, reference.cases.len());
     let unkept = |row: Row| Measured {
         row,
         keep: false,
@@ -283,21 +301,38 @@ pub(super) fn measure(
     let tagger = match LocalTagger::load(&engine.configured(config)) {
         Ok(tagger) => tagger,
         Err(error) => {
+            let row = Row::unmeasured(key, 0, 0);
             tracing::warn!(engine = %row.engine, %error, "oneironer engine could not load the bundle");
             return unkept(row);
         }
     };
-    // One warm-up call, untimed: the first forward pays for kernels and
-    // caches no later call does.
-    if let Some((input, _)) = reference.cases.first()
-        && tagger.infer(input).is_err()
-    {
+    let mut held = Vec::with_capacity(reference.cases.len());
+    for (input, expected) in &reference.cases {
+        match tagger.window_tokens(input) {
+            Ok(tokens) if tokens <= key.max_window_tokens() => held.push((input, expected)),
+            // Longer than the row's window: skipped, the only skip.
+            Ok(_) => {}
+            Err(_) => {
+                let row = Row::unmeasured(key, 0, 0);
+                tracing::warn!(engine = %row.engine, "oneironer engine could not window a reference case");
+                return unkept(row);
+            }
+        }
+    }
+    let mut row = Row::unmeasured(key, held.len(), reference.cases.len() - held.len());
+    // One warm-up call, untimed, on a held case: the first forward pays for
+    // kernels and caches no later call does.
+    let Some(&(first, _)) = held.first() else {
+        tracing::warn!(engine = %row.engine, "no oneironer reference case fits the engine's window");
+        return unkept(row);
+    };
+    if tagger.infer(first).is_err() {
         tracing::warn!(engine = %row.engine, "oneironer engine failed a reference case");
         return unkept(row);
     }
     let mut clear = true;
-    let mut samples = Vec::with_capacity(reference.cases.len());
-    for (input, expected) in &reference.cases {
+    let mut samples = Vec::with_capacity(held.len());
+    for (input, expected) in held {
         std::thread::sleep(CALIBRATION_IDLE);
         let started = Instant::now();
         let answer = tagger.infer(input);
