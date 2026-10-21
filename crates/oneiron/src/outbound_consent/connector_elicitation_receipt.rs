@@ -5,8 +5,8 @@
 //! Each answer, and each round the host ends unanswered, leaves one gate
 //! ledger record: the original call's principal, grant, governing key and
 //! parent intent, the round, each question's disposition (accept, decline,
-//! cancel, expired), the digest of the exact responses and how their POST
-//! went. Ids, digests and dispositions only: never an answer, a question or
+//! cancel; a round never lapses, FIX 3837), the digest of the exact
+//! responses and how their POST went. Ids, digests and dispositions only: never an answer, a question or
 //! the round's handle. It decides nothing: it is written after the send
 //! decision was made and the bytes went (or did not), and a receipt that
 //! cannot be written is logged by its caller, never a refusal.
@@ -40,8 +40,6 @@ pub enum ElicitationDisposition {
     Accept,
     Decline,
     Cancel,
-    /// The round lapsed unanswered; the host ended it.
-    Expired,
 }
 
 impl ElicitationDisposition {
@@ -50,7 +48,6 @@ impl ElicitationDisposition {
             Self::Accept => "accept",
             Self::Decline => "decline",
             Self::Cancel => "cancel",
-            Self::Expired => "expired",
         }
     }
 }
