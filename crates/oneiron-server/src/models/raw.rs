@@ -14,6 +14,7 @@ use oneiron::{
 };
 
 use super::{ModelRouter, OfferLadder, ServedOffer};
+use crate::mcp::PlannedModel;
 
 /// The run every raw call is admitted under, one run per call so that a
 /// long-lived server keeps no per-call state.
@@ -124,6 +125,9 @@ pub(crate) struct InjectedRuns {
     raw: RawInference,
     backend: Arc<dyn SingleRouteBackend>,
     receipts: Arc<dyn RunReceiptSink>,
+    /// The planned child these calls run for (FIX 2310), when a host bound
+    /// one: a call another model answers is marked on its receipts.
+    planned: Option<PlannedModel>,
 }
 
 impl InjectedRuns {
@@ -150,7 +154,17 @@ impl InjectedRuns {
             },
             backend,
             receipts,
+            planned: None,
         }
+    }
+
+    /// These calls run for `planned`, a planned child no seat binds (FIX
+    /// 2310). The host lists no model, so none is pinned (Engine C1): each
+    /// call runs as it would, and one its pick did not answer is marked.
+    #[must_use]
+    pub(crate) fn with_plan(mut self, planned: PlannedModel) -> Self {
+        self.planned = Some(planned);
+        self
     }
 }
 
@@ -165,7 +179,12 @@ impl LlmBackend for InjectedRuns {
                 .raw
                 .call(&request, Arc::clone(&self.receipts))
                 .ok_or(FatalLlmError::InvalidRequest)?;
-            ladder.generate(&run, request, None).await
+            let Some(planned) = &self.planned else {
+                return ladder.generate(&run, request, None).await;
+            };
+            let (response, ran) = ladder.generate_served(&run, request, None).await?;
+            planned.answered(&run, ran);
+            Ok(response)
         })
     }
 

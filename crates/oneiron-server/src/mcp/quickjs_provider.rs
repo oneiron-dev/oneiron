@@ -1,6 +1,8 @@
 //! Production MCP provider over the hash-pinned engine QuickJS component.
 
-use super::{McpCodeModeProvider, ReaderMeter, RunCompactionSeat};
+use super::{
+    McpCodeModeProvider, PlannedMeter, PlannedModel, PlannedRoute, ReaderMeter, RunCompactionSeat,
+};
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::code_run::{CodeRunDeterminism, CompactionHostBinding, GatedActorWrite};
 use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
@@ -12,7 +14,9 @@ use oneiron::engine_executor::{
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{PayerPerson, RunReceiptSink};
 use oneiron::llm::seat::SeatDecisions;
-use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, Vault};
+use oneiron::{
+    BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, ModelId, ModelLocality, Vault,
+};
 use oneiron_code_check::ShadowCheck;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -90,6 +94,16 @@ pub struct McpQuickJsProvider {
     /// The input window of the model reader children and summaries run
     /// on, in tokens, when the host knows it.
     reader_window_tokens: Option<u64>,
+    /// Where this provider's backend serves a planned child's pick, when it
+    /// can route it exactly (FIX 2310); none lists no model, so no child is
+    /// pinned.
+    planned_route: Option<PlannedRoute>,
+    /// Builds a planned child's backend on its own meter, bound to its plan;
+    /// none runs the child on the backend it takes today.
+    planned_meter: Option<PlannedMeter>,
+    /// Builds each pinned child's compaction seat, its live admission bound
+    /// to the pick as its calls are (Engine C5); none takes `compaction`.
+    pinned_compaction: Option<RunCompactionSeat>,
 }
 
 /// A reader child's backend over the host-injected model: its calls are
@@ -107,6 +121,24 @@ fn injected_meter(
             payer,
         )) as Arc<dyn LlmBackend>
     })
+}
+
+/// A planned child's backend over the host-injected model (FIX 2310): its
+/// calls run as [`injected_meter`]'s do, each answered by the model it
+/// names, and one that is not the child's pick is marked on `receipts`. The
+/// host lists no model, so no child is pinned (Engine C1).
+fn injected_planned(
+    backend: Arc<dyn SingleRouteBackend>,
+    receipts: Arc<dyn RunReceiptSink>,
+) -> PlannedMeter {
+    Arc::new(
+        move |meter: BudgetGuard, payer: Option<PayerPerson>, planned: &PlannedModel| {
+            Arc::new(
+                InjectedRuns::funded(Arc::clone(&backend), meter, Arc::clone(&receipts), payer)
+                    .with_plan(planned.clone()),
+            ) as Arc<dyn LlmBackend>
+        },
+    )
 }
 
 impl McpQuickJsProvider {
@@ -128,6 +160,10 @@ impl McpQuickJsProvider {
         );
         let mut provider = Self::gated(runtime, Arc::new(models), lease, config)?;
         provider.reader_meter = Some(injected_meter(
+            Arc::clone(&backend),
+            Arc::new(LoggedReceipts),
+        ));
+        provider.planned_meter = Some(injected_planned(
             Arc::clone(&backend),
             Arc::new(LoggedReceipts),
         ));
@@ -161,6 +197,9 @@ impl McpQuickJsProvider {
             host_meter: None,
             reader_template: Mutex::new(None),
             reader_window_tokens: None,
+            planned_route: None,
+            planned_meter: None,
+            pinned_compaction: None,
         })
     }
 
@@ -168,6 +207,7 @@ impl McpQuickJsProvider {
     pub(crate) fn with_run_receipts(mut self, receipts: Arc<dyn RunReceiptSink>) -> Self {
         if let Some((backend, meter)) = &self.injected {
             self.reader_meter = Some(injected_meter(Arc::clone(backend), Arc::clone(&receipts)));
+            self.planned_meter = Some(injected_planned(Arc::clone(backend), Arc::clone(&receipts)));
             self.backend = Arc::new(InjectedRuns::new(
                 Arc::clone(backend),
                 meter.clone(),
@@ -182,6 +222,24 @@ impl McpQuickJsProvider {
     #[must_use]
     pub(crate) fn with_reader_meter(mut self, meter: ReaderMeter) -> Self {
         self.reader_meter = Some(meter);
+        self
+    }
+
+    /// A planned child no seat binds (FIX 2310) is pinned to its pick where
+    /// `route` serves it exactly, and runs on the backend `meter` builds on
+    /// its own guard, bound to its plan.
+    #[must_use]
+    pub(crate) fn with_planned_models(mut self, route: PlannedRoute, meter: PlannedMeter) -> Self {
+        self.planned_route = Some(route);
+        self.planned_meter = Some(meter);
+        self
+    }
+
+    /// A pinned child's window compacts on a seat `seat` builds, whose live
+    /// admission keeps the child's pick (Engine C5).
+    #[must_use]
+    pub(crate) fn with_pinned_compaction(mut self, seat: RunCompactionSeat) -> Self {
+        self.pinned_compaction = Some(seat);
         self
     }
 
@@ -341,6 +399,33 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn host_meter(&self) -> Option<BudgetGuard> {
         self.host_meter.clone()
+    }
+    fn planned_route(&self, vault: &Vault, pick: &ModelId) -> Option<ModelLocality> {
+        self.planned_route
+            .as_ref()
+            .and_then(|route| route(vault, pick))
+    }
+    fn planned_backend(
+        &self,
+        meter: BudgetGuard,
+        payer: Option<PayerPerson>,
+        planned: &PlannedModel,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        self.planned_meter
+            .as_ref()
+            .map(|build| build(meter, payer, planned))
+    }
+    fn planned_compaction(
+        &self,
+        host: CompactionHostBinding,
+        credential: &str,
+        spend: Option<&SpendScopeId>,
+        planned: &PlannedModel,
+    ) -> Option<RunCompaction> {
+        match &self.pinned_compaction {
+            Some(seat) if planned.exact => Some(seat(host, credential, spend)),
+            _ => self.compaction(host, credential, spend),
+        }
     }
     fn reader_window_tokens(&self) -> Option<u64> {
         self.reader_window_tokens
