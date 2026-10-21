@@ -9,6 +9,7 @@ use crate::dreamer_runner::{
 };
 use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
@@ -535,15 +536,39 @@ impl Vault {
 /// the caller's snapshot (OF-499: a weave report's SieveScore rows). The
 /// whole table, with no caller limit (rule 5); [`Vault::sieve_audits`] keeps
 /// its own. A row that does not decode stays in its place as its error, for
-/// the caller to withhold; it never stops the read of the rest.
+/// the caller to withhold; it never stops the read of the rest. Every row
+/// walked counts against the scan's threshold row, unsampled and undecodable
+/// ones included (FIX 7225); a count that cannot start is logged and the
+/// walk serves as before, unchecked.
 pub(crate) fn sieve_audits_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<Result<(AttemptId, SieveAudit)>>> {
-    Ok(AUDIT
+    let scan = EngineScan::SieveAuditRows;
+    let mut count = match ScanCount::start(&vault.store, txn, scan, &[]) {
+        Ok(count) => Some(count),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                scan = scan.code(),
+                "a scan's count did not start; it reads on unchecked"
+            );
+            None
+        }
+    };
+    let audits: Vec<_> = AUDIT
         .iter_from(&vault.store, txn, &[])?
+        .inspect(|_| {
+            if let Some(count) = count.as_mut() {
+                count.row();
+            }
+        })
         .filter(|row| !matches!(row, Ok((_, audit)) if !audit.sampled))
-        .collect())
+        .collect();
+    if let Some(count) = count {
+        count.finish(vault);
+    }
+    Ok(audits)
 }
 
 /// One attempt's audit as written, in the caller's snapshot.
