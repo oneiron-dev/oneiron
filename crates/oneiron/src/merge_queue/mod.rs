@@ -6,6 +6,7 @@
 mod checks;
 mod landing;
 mod reviewed;
+mod run;
 mod staging;
 mod storage;
 #[cfg(test)]
@@ -19,6 +20,7 @@ use crate::{
     git_wire::{GitWire, GitWireRepo},
 };
 pub use reviewed::ReviewedProposalLanding;
+pub use run::{RepoQueueOrder, RepoQueuePredecessor};
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,
     MergeLanding, MergeProposal, MergeQueuePointers, Quarantine, SpeculativePath, TestedBatch,

@@ -1,6 +1,6 @@
 //! Repo-scoped queue/batch rows; every transition is under the repo single writer.
 use super::types::QueueRecord;
-use super::{BatchState, MergeBatch, MergeQueue, MergeQueuePointers};
+use super::{BatchState, MergeBatch, MergeQueue, MergeQueuePointers, RepoQueueOrder};
 use crate::{
     contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
     error::{Error, Result},
@@ -126,6 +126,47 @@ impl MergeQueue<'_> {
         txn.commit()?;
         Ok(())
     }
+    /// [`Self::save`] of one new batch whose writer's first act is `admit`
+    /// (FIX 6867): it answers the run order the batch keeps, stamped with
+    /// the queue sequence that accepted it, or a refusal, which writes
+    /// nothing. A run's admission is judged in this writer, not before it.
+    pub(super) fn save_checked<R>(
+        &self,
+        state: &QueueRecord,
+        batch: &mut MergeBatch,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<Option<RepoQueueOrder>, R>>,
+    ) -> Result<std::result::Result<(), R>> {
+        check_row_size(&QUEUE_STATE.encode_value(state)?)?;
+        let mut txn = self.vault.store.env.write_txn()?;
+        batch.run_order = match admit(&txn)? {
+            Ok(order) => order.map(|order| RepoQueueOrder {
+                sequence: state.sequence,
+                ..order
+            }),
+            Err(refused) => return Ok(Err(refused)),
+        };
+        check_row_size(&BATCHES.encode_value(batch)?)?;
+        QUEUE_STATE.put(&self.vault.store, &mut txn, &self.queue_key(), state)?;
+        BATCHES.put(
+            &self.vault.store,
+            &mut txn,
+            &self.batch_key(&batch.id),
+            batch,
+        )?;
+        txn.commit()?;
+        Ok(Ok(()))
+    }
+
+    /// Every batch of this repo's queue, read in `txn`, in key order.
+    pub(super) fn repo_batches_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<MergeBatch>> {
+        let prefix = format!("{}:", self.repo.identity().as_hex());
+        Ok(BATCHES
+            .scan_from(&self.vault.store, txn, prefix.as_bytes())?
+            .into_iter()
+            .map(|(_, batch)| batch)
+            .collect())
+    }
+
     fn read<T>(&self, table: SideTable<String, T, Named>, key: String) -> Result<Option<T>>
     where
         T: serde::Serialize + serde::de::DeserializeOwned,

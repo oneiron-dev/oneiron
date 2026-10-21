@@ -159,7 +159,7 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoViewsGetInput,
     ) -> MemoryResult<RepoRunAnswer<RepoViewsGetOutput>> {
-        let own = self.repo_own_work(binding, input.work, None)?;
+        let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
         let bounds = &own.admitted.membership.bounds;
         let mut output = work_view(&own.receipt, &own.stamp);
         output
@@ -179,7 +179,12 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoViewsReadInput,
     ) -> MemoryResult<RepoRunAnswer<RepoViewsReadOutput>> {
-        let own = self.repo_own_work(binding, input.work, Some(input.path.as_str()))?;
+        let own = self.repo_own_work(
+            binding,
+            input.work,
+            [input.path.as_str()],
+            RepoAccessIntent::Read,
+        )?;
         let Some(expected) = own.receipt.files.get(&input.path) else {
             return Err(MemoryError::not_found(
                 "the path is not a file of this work",
@@ -202,25 +207,31 @@ impl Memory<'_> {
     }
 
     /// `self.code.merge_queue.observe` for a run: the queue its own work is
-    /// pinned under, its head and green, and whether green moved past the
-    /// work's pin.
+    /// pinned under, its head and green, whether green moved past the work's
+    /// pin, and the entries accepted from this work with what each waits
+    /// behind now.
     pub fn repo_merge_queue_observe_for_run(
         &self,
         binding: &RepoRunBinding,
         input: RepoMergeQueueObserveInput,
     ) -> MemoryResult<RepoRunAnswer<RepoMergeQueueObserveOutput>> {
-        let own = self.repo_own_work(binding, input.work, None)?;
+        let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
         let queue = resolve_repo_queue_target(
             self.vault,
             &own.admitted.membership.repo_ref,
             &own.stamp.git_ref,
         )?
         .map_err(refusal_error)?;
+        let (entries, blockers) =
+            self.repo_queue_entries(binding, &own.admitted.membership.repo_ref, input.work)?;
+        let mut rows = vec![own.stamp.repo];
+        rows.extend(blockers);
         Ok(RepoRunAnswer {
-            rows: vec![own.stamp.repo],
+            rows,
             output: RepoMergeQueueObserveOutput {
                 work: input.work,
                 repo: own.stamp.repo,
+                entries,
                 green_moved: queue.green != own.stamp.base_green,
                 git_ref: own.stamp.git_ref,
                 base_green: own.stamp.base_green,
@@ -230,18 +241,19 @@ impl Memory<'_> {
         })
     }
 
-    /// The run's own work `work`, admitted for a read of `path` (or of its
+    /// The run's own work `work`, admitted for `intent` on `paths` (none: its
     /// ref alone), with the run's lane reading its repo.
-    fn repo_own_work(
+    pub(super) fn repo_own_work<S: AsRef<str>>(
         &self,
         binding: &RepoRunBinding,
         work: EntityId,
-        path: Option<&str>,
+        paths: impl IntoIterator<Item = S>,
+        intent: RepoAccessIntent,
     ) -> MemoryResult<RepoOwnWork> {
         let own = {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             self.vault
-                .admitted_repo_work_in_txn(&txn, binding, work, path)?
+                .admitted_repo_work_in_txn(&txn, binding, work, paths, intent)?
                 .map_err(refusal_error)?
         };
         self.repo_lane_reads(binding, &[own.stamp.repo])?;

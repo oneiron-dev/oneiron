@@ -699,6 +699,7 @@ fn require_document_base(
     let repo = RepoRef::parse(&row.repo)?;
     let scope = super::oplog::repo_mutation_repo_key(&repo);
     let session = vault.open_code_document(&scope, &row.path, old, row.session)?;
+    let class = row.document_class()?;
     match vault.code_file_edit_receipt(row.id)? {
         None if session.text() != old => Err(Error::ConcurrentWrite(
             "document changed since stack review",
@@ -707,12 +708,10 @@ fn require_document_base(
             if receipt.document_id != session.document_id()
                 || receipt.session_id != row.session
                 || receipt.actor
-                    != row.actor.id().map(|actor| {
-                        crate::write_envelope::WriteActor::new(
-                            actor,
-                            crate::edge::EdgeActorClass::Agent,
-                        )
-                    })
+                    != row
+                        .actor
+                        .id()
+                        .map(|actor| crate::write_envelope::WriteActor::new(actor, class))
                 || receipt.provenance != row.op_provenance
                 || receipt.edit
                     != crate::code_document::CodeFileEdit::between(&row.path, old, new) =>

@@ -71,6 +71,9 @@ pub struct MergeBatch {
     pub slow_verdict: Option<String>,
     pub quarantine: Option<Quarantine>,
     pub selected_tests: AffectedTests,
+    /// A leased run's accepted entry and the declarations it waits behind
+    /// (FIX 6867); `None` for an owner or trusted batch, which waits on none.
+    pub run_order: Option<super::RepoQueueOrder>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeQueuePointers {

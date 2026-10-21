@@ -139,6 +139,11 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::Team
             | SelfEffect::RepoSnapshotsIngest
             | SelfEffect::RepoWorkOpen
+            | SelfEffect::RepoSymbolsDeclare
+            | SelfEffect::RepoSymbolsRenew
+            | SelfEffect::RepoSymbolsRelease
+            | SelfEffect::RepoProposalSubmit
+            | SelfEffect::RepoMergeQueueEnqueue
                 if self.external_effect_seen.get() =>
             {
                 SourceLineage::of(self.source()).with(ClaimSource::ToolOutput)
@@ -376,7 +381,12 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::RepoViewsRead
         | SelfEffect::RepoMergeQueueObserve
         | SelfEffect::RepoSnapshotsIngest
-        | SelfEffect::RepoWorkOpen => false,
+        | SelfEffect::RepoWorkOpen
+        | SelfEffect::RepoSymbolsDeclare
+        | SelfEffect::RepoSymbolsRenew
+        | SelfEffect::RepoSymbolsRelease
+        | SelfEffect::RepoProposalSubmit
+        | SelfEffect::RepoMergeQueueEnqueue => false,
     }
 }
 

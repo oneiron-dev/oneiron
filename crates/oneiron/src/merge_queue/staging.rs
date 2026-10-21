@@ -1,5 +1,5 @@
 //! Bounded speculation, materialization and cleanup through the shared repo writer.
-use super::{BatchState, MergeBatch, MergeProposal, MergeQueue, SpeculativePath};
+use super::{BatchState, MergeBatch, MergeProposal, MergeQueue, RepoQueueOrder, SpeculativePath};
 use crate::{
     contract_oracle::{invalid, safe_path},
     error::{CodeError, Error, Result},
@@ -12,6 +12,19 @@ use std::path::{Path, PathBuf};
 impl MergeQueue<'_> {
     /// Admit reviewed proposals from the last green tree, without applying them.
     pub fn enqueue(&self, proposals: Vec<MergeProposal>) -> Result<MergeBatch> {
+        let formed =
+            self.enqueue_checked::<std::convert::Infallible>(proposals, |_| Ok(Ok(None)))?;
+        Ok(formed.unwrap_or_else(|never| match never {}))
+    }
+
+    /// The one batch formation. `admit` is the batch writer's first act: it
+    /// answers the run order the batch keeps (FIX 6867), none for an owner
+    /// or trusted batch, or a refusal, which writes nothing.
+    pub(super) fn enqueue_checked<R>(
+        &self,
+        proposals: Vec<MergeProposal>,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<Option<RepoQueueOrder>, R>>,
+    ) -> Result<std::result::Result<MergeBatch, R>> {
         let _guard = lock_repository(self.repo.common_dir())?;
         let mut queue = self.queue()?;
         self.require_current(&queue)?;
@@ -36,7 +49,7 @@ impl MergeQueue<'_> {
             .iter()
             .flat_map(|p| p.files.iter().map(|f| f.path.as_str()));
         let selected_tests = queue.graph.affected_tests(changed)?;
-        let batch = MergeBatch {
+        let mut batch = MergeBatch {
             schema_version: 1,
             id,
             expected_head: queue.pointers.head.clone(),
@@ -50,9 +63,12 @@ impl MergeQueue<'_> {
             slow_verdict: None,
             quarantine: None,
             selected_tests,
+            run_order: None,
         };
-        self.save(&queue, &[&batch])?;
-        Ok(batch)
+        if let Err(refused) = self.save_checked(&queue, &mut batch, admit)? {
+            return Ok(Err(refused));
+        }
+        Ok(Ok(batch))
     }
 
     /// Stage every inclusion/exclusion path. Staging may be resumed after a crash;
@@ -63,6 +79,11 @@ impl MergeQueue<'_> {
         self.require_current(&queue)?;
         let mut batch = self.batch(id)?;
         if batch.state != BatchState::Queued {
+            return Ok(batch);
+        }
+        // A run's entry waits Queued behind its live predecessors, never
+        // refused; an owner or trusted batch waits on none (FIX 6867).
+        if !self.run_batch_ready(&batch)? {
             return Ok(batch);
         }
         if batch.expected_head != queue.pointers.head {

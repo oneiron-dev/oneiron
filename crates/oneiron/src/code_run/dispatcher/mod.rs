@@ -11,6 +11,7 @@ mod memory_verbs;
 mod program_step;
 mod reader_spawn;
 mod repo;
+mod repo_sources;
 mod session_verbs;
 mod summarize;
 mod team_submit;
@@ -143,6 +144,11 @@ pub struct HostSelfDispatcher<'a> {
     /// only [`Self::for_turn_program`] sets it, from the program's own
     /// leased try. No guest call reaches it.
     program: Option<program_step::ProgramBinding>,
+    /// The host's review policy for the run's repo proposals (FIX 6867):
+    /// only [`Self::with_repo_review_policy`] binds it. No guest call
+    /// reaches it.
+    pub(super) repo_review_policy:
+        Option<std::sync::Arc<dyn crate::memory::repo_doors::RepoReviewPolicy>>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -269,6 +275,7 @@ impl<'a> HostSelfDispatcher<'a> {
             run_request: RefCell::new(None),
             fold_log: fold_verbs::FoldLog::Site,
             program: None,
+            repo_review_policy: None,
         })
     }
 

@@ -1,4 +1,5 @@
-//! `self.code.*` (FIX 6867, L11 G1 PR2a): a leased agent run's repo rows.
+//! `self.code.*` (FIX 6867, L11 G1 PR2a, PR2b): a leased agent run's repo
+//! rows.
 //!
 //! A call runs only on canonical storage, at an engine executor's call site,
 //! from a run that holds its live lease on an agent try realizing a TASK,
@@ -9,13 +10,21 @@
 //! owner's Grant in each snapshot they read and each writer they commit
 //! in. No owner proof is read and no owner door is called.
 //!
-//! A write row (the import, the open) meets the per-operation gate first,
-//! under the run's own envelope naming the row and its bridge position. A
-//! refusal answers the typed repo code; any other door error answers its
-//! code as a failure the script reads. Neither halts the run.
+//! A write row (the import, the open, the symbol declarations, the proposal,
+//! the queue entry) meets the per-operation gate first, under the run's own
+//! envelope naming the row and its bridge position, at the repo and ref of
+//! the work it names. A refusal or a typed hold answers its repo code; any
+//! other door error answers its code as a failure the script reads. Neither
+//! halts the run. A proposal's catalog is the host's review policy
+//! ([`HostSelfDispatcher::with_repo_review_policy`]), and its session and
+//! provenance are minted by the host (`repo_sources`).
+
+use std::cell::RefCell;
+use std::sync::Arc;
 
 use rmpv::Value;
 
+use super::repo_sources::RepoChange;
 use super::{ExecutorCallSite, HostSelfDispatcher, check_write_gate_against_vault};
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::RepoRunCall;
@@ -27,7 +36,7 @@ use crate::code_run::types::{
 use crate::error::{ArtifactError, Error, Result};
 use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
 use crate::memory::repo_doors::{
-    NO_PATHS, RepoRunAnswer, RepoRunBinding, is_repo_refusal_code, repo_target,
+    NO_PATHS, RepoReviewPolicy, RepoRunAnswer, RepoRunBinding, is_repo_refusal_code, repo_target,
 };
 use crate::memory::{MemoryError, MemoryResult};
 use crate::{ClaimSubject, EntityId, Vault};
@@ -91,7 +100,60 @@ impl HostSelfDispatcher<'_> {
             RepoRunCall::WorkOpen(input) => {
                 answered(effect, memory.repo_work_open_for_run(&binding, input))
             }
+            RepoRunCall::SymbolsDeclare(input) => {
+                answered(effect, memory.repo_symbols_declare_for_run(&binding, input))
+            }
+            RepoRunCall::SymbolsRenew(input) => {
+                answered(effect, memory.repo_symbols_renew_for_run(&binding, input))
+            }
+            RepoRunCall::SymbolsRelease(input) => {
+                answered(effect, memory.repo_symbols_release_for_run(&binding, input))
+            }
+            RepoRunCall::ProposalSubmit(input) => {
+                let change = RepoChange {
+                    path: input.path.clone(),
+                    content_hash: *blake3::hash(&input.content).as_bytes(),
+                };
+                // A store or gate failure while the host mints the
+                // proposal's attribution ends the call as any memory
+                // write's does; it is not a door answer.
+                let failed = RefCell::new(None);
+                let answer = memory.repo_proposal_submit_for_run(
+                    &binding,
+                    input,
+                    self.repo_review_policy.as_deref(),
+                    |stamp| match self.repo_run_sources(vault, stamp, &change) {
+                        Ok(sources) => sources,
+                        Err(error) => {
+                            *failed.borrow_mut() = Some(error);
+                            Err(MemoryError::new(
+                                crate::memory::MEMORY_CODE_INTERNAL,
+                                "the proposal's attribution was not minted",
+                                &[],
+                            ))
+                        }
+                    },
+                );
+                if let Some(error) = failed.into_inner() {
+                    return Err(error);
+                }
+                answered(effect, answer)
+            }
+            RepoRunCall::MergeQueueEnqueue(input) => answered(
+                effect,
+                memory.repo_merge_queue_enqueue_for_run(&binding, input),
+            ),
         }
+    }
+
+    /// Binds the host's review policy for this run's repo proposals (FIX
+    /// 6867): the lens catalog the owner approved per PROJECT repo. Unbound,
+    /// a run's proposal answers `repo_review_policy_required` and its work
+    /// is kept. No guest call reaches it.
+    #[must_use]
+    pub fn with_repo_review_policy(mut self, policy: Arc<dyn RepoReviewPolicy>) -> Self {
+        self.repo_review_policy = Some(policy);
+        self
     }
 
     /// The host binding of this run's call, read live: the run's own leased
@@ -149,15 +211,31 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<std::result::Result<(), RepoAccessRefusal>> {
         let effect = call.effect();
         let (repo, git_ref) = match call {
-            RepoRunCall::SnapshotsIngest(input) => (input.repo, input.git_ref.as_str()),
-            RepoRunCall::WorkOpen(input) => (input.repo, input.git_ref.as_str()),
+            RepoRunCall::SnapshotsIngest(input) => (input.repo, input.git_ref.clone()),
+            RepoRunCall::WorkOpen(input) => (input.repo, input.git_ref.clone()),
+            // A row on the run's own work is gated at that work's repo and
+            // ref; a work that is not this run's is refused before any
+            // decision is recorded.
             _ => {
-                return Err(Error::InvariantViolation(
-                    "a run repo read has no write gate",
-                ));
+                let Some(work) = call.work() else {
+                    return Err(Error::InvariantViolation(
+                        "a run repo read has no write gate",
+                    ));
+                };
+                let txn = vault.store.env.read_txn()?;
+                match vault.admitted_repo_work_in_txn(
+                    &txn,
+                    binding,
+                    work,
+                    NO_PATHS,
+                    RepoAccessIntent::Read,
+                )? {
+                    Ok(own) => (own.stamp.repo, own.stamp.git_ref),
+                    Err(refused) => return Ok(Err(refused)),
+                }
             }
         };
-        let target = repo_target(repo, git_ref, NO_PATHS);
+        let target = repo_target(repo, &git_ref, NO_PATHS);
         let admitted = {
             let txn = vault.store.env.read_txn()?;
             vault.admit_repo_run_in_txn(&txn, binding, &target, RepoAccessIntent::Read)?
@@ -177,7 +255,7 @@ impl HostSelfDispatcher<'_> {
         let body = self.operation_gate_body(
             effect,
             ClaimSubject::Entity(repo),
-            Value::Map(vec![(Value::from("ref"), Value::from(git_ref))]),
+            Value::Map(vec![(Value::from("ref"), Value::from(git_ref.as_str()))]),
             &envelope,
         )?;
         let id = repo_operation_gate_id(effect, site)?;

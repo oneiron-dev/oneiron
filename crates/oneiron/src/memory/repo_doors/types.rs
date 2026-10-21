@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::memory::codebase_doors::{CodeSnapshotDefinition, CodeSnapshotFile};
+use crate::merge_queue::BatchState;
+use crate::repo_mutation::proposal::RepoProposalStatus;
 
 /// `self.code.snapshots.get`: the manifest of one snapshot of the admitted
 /// repo, at the commit its full ref names now.
@@ -91,6 +93,70 @@ pub struct RepoWorkOpenInput {
     pub repo: EntityId,
     #[serde(rename = "ref")]
     pub git_ref: String,
+}
+
+/// `self.code.symbols.declare` (FIX 6867, G1 PR2b): declares current
+/// symbols of the run's own work's repo, on paths the Grant edits, for the
+/// run's TASK, under a fresh declaration id. An overlap waits; it is never
+/// refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoSymbolsDeclareInput {
+    pub work: EntityId,
+    /// Current CODE_SYMBOL ids of the repo's stored symbol manifest.
+    pub symbols: Vec<EntityId>,
+    /// The hold's lifetime in seconds: required, positive and a safe JS
+    /// integer. There is no default.
+    pub ttl_seconds: u64,
+}
+
+/// `self.code.symbols.renew`: extends the run's own declaration by its
+/// declared lifetime, keeping its id and whether it is held.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoSymbolsRenewInput {
+    pub work: EntityId,
+    /// The declaration id `self.code.symbols.declare` returned.
+    pub declaration: EntityId,
+}
+
+/// `self.code.symbols.release`: removes the run's own declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoSymbolsReleaseInput {
+    pub work: EntityId,
+    pub declaration: EntityId,
+}
+
+/// `self.code.proposal_submit`: one whole-file change against the run's own
+/// work, kept as an immutable Proposed proposal at the work's pinned base.
+/// Nothing lands, is approved or is queued here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoProposalSubmitInput {
+    pub work: EntityId,
+    /// The normalized repo-relative path of the one file; an editable glob
+    /// must match it.
+    pub path: String,
+    /// The new file bytes.
+    pub content: Vec<u8>,
+    pub message: String,
+    /// The run's current declaration, when it names one. Its TASK's current
+    /// declaration is bound either way; naming another is a stale lease.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<EntityId>,
+}
+
+/// `self.code.merge_queue.enqueue`: queues the run's own stored proposals
+/// of one work as one batch, under the declaration they were made under.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoMergeQueueEnqueueInput {
+    pub work: EntityId,
+    /// The proposal ids `self.code.proposal_submit` returned, in order.
+    pub proposals: Vec<EntityId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<EntityId>,
 }
 
 /// One snapshot of the admitted repo, filtered to the paths the run reads.
@@ -196,6 +262,83 @@ pub struct RepoMergeQueueObserveOutput {
     pub green_commit: String,
     /// Whether the queue's green has moved past the work's pin.
     pub green_moved: bool,
+    /// The queue entries accepted from this work, with what each waits
+    /// behind now (FIX 6867, G1 PR2b). No other run's entry is shown.
+    pub entries: Vec<RepoQueueEntryView>,
+}
+
+/// One of the run's own queue entries: a batch of its exact proposals.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoQueueEntryView {
+    /// The batch id, 64 lower-hex characters.
+    pub batch: String,
+    pub work: EntityId,
+    pub proposals: Vec<EntityId>,
+    /// The run's declaration it was accepted under, if any.
+    pub declaration: Option<EntityId>,
+    pub state: BatchState,
+    pub base_green: String,
+    pub expected_head: String,
+    pub landed_head: Option<String>,
+    /// The TASKs whose live declarations it waits behind now; empty once it
+    /// may stage. Order only, never a refusal.
+    pub blockers: Vec<EntityId>,
+}
+
+/// `self.code.merge_queue.enqueue`'s answer: the accepted entry.
+pub type RepoMergeQueueEnqueueOutput = RepoQueueEntryView;
+
+/// A run's symbol declaration, as the engine holds it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoSymbolDeclarationView {
+    pub work: EntityId,
+    /// The declaration id the run names it by: fresh at each declaration,
+    /// kept by a renewal.
+    pub declaration: EntityId,
+    pub task: EntityId,
+    pub symbols: Vec<EntityId>,
+    /// Engine host time plus the declared lifetime, in Unix seconds.
+    pub expires_at: u64,
+    /// False while it waits behind an overlapping live declaration.
+    pub held: bool,
+    /// The TASKs whose live overlapping declarations it waits behind; empty
+    /// when held, and on a renewal.
+    pub blockers: Vec<EntityId>,
+}
+
+/// `self.code.symbols.declare`'s answer.
+pub type RepoSymbolsDeclareOutput = RepoSymbolDeclarationView;
+
+/// `self.code.symbols.renew`'s answer.
+pub type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
+
+/// `self.code.symbols.release`'s answer: the declaration it removed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoSymbolsReleaseOutput {
+    pub work: EntityId,
+    pub declaration: EntityId,
+    pub task: EntityId,
+}
+
+/// `self.code.proposal_submit`'s answer: the immutable proposal, as stored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoProposalSubmitOutput {
+    /// The engine-minted proposal id.
+    pub proposal: EntityId,
+    pub work: EntityId,
+    pub path: String,
+    /// The green commit the proposal is pinned at, 40 lower-hex characters.
+    pub base_green: String,
+    /// The retained pre-action base hash, 64 lower-hex characters.
+    pub base_snapshot: String,
+    /// The actor's session and the gated `repo.provenance` claim the host
+    /// minted for it: attribution, not authority.
+    pub session: EntityId,
+    pub provenance_claim: EntityId,
+    /// The run's declaration bound with it, if it had one.
+    pub declaration: Option<EntityId>,
+    /// `Proposed` at submission.
+    pub status: RepoProposalStatus,
 }
 
 /// The run a work belongs to, bound in the receipt's first write (PREMISE
@@ -220,4 +363,8 @@ pub struct RepoRunStamp {
     pub base_snapshot: [u8; 32],
     /// The work id: the view id the stamp was bound with.
     pub work: EntityId,
+    /// The run's symbol declaration a proposal was made under (FIX 6867,
+    /// G1 PR2b): `None` on a work's own stamp and on a proposal made with
+    /// none.
+    pub symbol_fence: Option<EntityId>,
 }

@@ -277,6 +277,13 @@ pub enum SelfEffect {
     RepoMergeQueueObserve,
     RepoSnapshotsIngest,
     RepoWorkOpen,
+    /// The run repo write rows of PR2b (FIX 6867): its symbol declaration,
+    /// renewal and release, its proposal and its queue entry.
+    RepoSymbolsDeclare,
+    RepoSymbolsRenew,
+    RepoSymbolsRelease,
+    RepoProposalSubmit,
+    RepoMergeQueueEnqueue,
 }
 
 impl SelfEffect {
@@ -328,6 +335,11 @@ impl SelfEffect {
             Self::RepoMergeQueueObserve => "self.code.merge_queue.observe",
             Self::RepoSnapshotsIngest => "self.code.snapshots.ingest",
             Self::RepoWorkOpen => "self.code.work.open",
+            Self::RepoSymbolsDeclare => "self.code.symbols.declare",
+            Self::RepoSymbolsRenew => "self.code.symbols.renew",
+            Self::RepoSymbolsRelease => "self.code.symbols.release",
+            Self::RepoProposalSubmit => "self.code.proposal_submit",
+            Self::RepoMergeQueueEnqueue => "self.code.merge_queue.enqueue",
         }
     }
 
@@ -378,7 +390,12 @@ impl SelfEffect {
             | Self::RepoViewsRead
             | Self::RepoMergeQueueObserve
             | Self::RepoSnapshotsIngest
-            | Self::RepoWorkOpen => None,
+            | Self::RepoWorkOpen
+            | Self::RepoSymbolsDeclare
+            | Self::RepoSymbolsRenew
+            | Self::RepoSymbolsRelease
+            | Self::RepoProposalSubmit
+            | Self::RepoMergeQueueEnqueue => None,
         }
     }
 

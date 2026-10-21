@@ -262,8 +262,12 @@ pub(crate) use policy_change_followup::{
     enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
 };
 
-pub use symbol_lease::{SymbolLease, SymbolLeaseOutcome};
+pub use symbol_lease::{SymbolLease, SymbolLeaseFence, SymbolLeaseOutcome, SymbolLeaseRun};
 pub(crate) use symbol_lease::{acquire_symbols, symbols_ready};
+pub(crate) use symbol_lease::{
+    declaration_holds_in_txn, declare_symbols_for_run_in_txn, release_symbols_for_run_in_txn,
+    renew_symbols_for_run_in_txn, run_declaration_in_txn, symbol_blockers_in_txn,
+};
 
 #[cfg(test)]
 pub(crate) use scheduling::terminal_success_from_body;

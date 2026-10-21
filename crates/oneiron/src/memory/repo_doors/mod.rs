@@ -10,12 +10,19 @@
 //! puts a row. Reads go through the read lane the run's door admitted the
 //! call with. A refusal is the typed [`RepoAccessRefusal`] code; a work id
 //! that is not this run's reads as no membership, and one whose run holds
-//! another lease now as a stale lease.
+//! another lease now as a stale lease. PR2b adds the run's symbol
+//! declarations, its proposals and its queue entries (`symbols`,
+//! `proposals`), fenced by its declaration in each writer.
 
+mod proposals;
 mod reads;
+mod symbols;
 mod types;
 mod work;
 
+pub use proposals::{
+    REPO_PROVENANCE_REQUIRED, REPO_REVIEW_POLICY_REQUIRED, RepoReviewPolicy, RepoRunSources,
+};
 pub use types::*;
 
 use crate::attempt_queue::AttemptId;
@@ -113,6 +120,7 @@ impl RepoRunAdmitted {
             base_green: base_green.to_owned(),
             base_snapshot,
             work,
+            symbol_fence: None,
         }
     }
 }
@@ -180,7 +188,8 @@ pub(crate) fn refusal_error(refusal: RepoAccessRefusal) -> MemoryError {
     MemoryError::new(refusal.public_code(), refusal.message(), &[])
 }
 
-/// Whether `code` is one of the typed repo refusals.
+/// Whether `code` is one of the typed repo refusals, or one of a run
+/// proposal's two typed holds.
 pub(crate) fn is_repo_refusal_code(code: &str) -> bool {
     [
         RepoAccessRefusal::NoMembership,
@@ -191,6 +200,7 @@ pub(crate) fn is_repo_refusal_code(code: &str) -> bool {
     ]
     .iter()
     .any(|refusal| refusal.public_code() == code)
+        || [REPO_REVIEW_POLICY_REQUIRED, REPO_PROVENANCE_REQUIRED].contains(&code)
 }
 
 /// A ref-level act's paths: none.
@@ -225,6 +235,30 @@ impl Memory<'_> {
         self.vault
             .admit_repo_run_in_txn(&txn, binding, target, intent)?
             .map_err(refusal_error)
+    }
+
+    /// The ones of `ids` the run's read lane reads, bodies included, in one
+    /// snapshot, in order: what a blocker list shows the run.
+    fn repo_lane_readable(
+        &self,
+        binding: &RepoRunBinding,
+        ids: Vec<EntityId>,
+    ) -> MemoryResult<Vec<EntityId>> {
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+        let points: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+        let checked = self
+            .vault
+            .scoped_read(binding.reader.clone())
+            .with_claim_status(ClaimReadStatus::Recorded)
+            .read(&points, None)?;
+        Ok(ids
+            .into_iter()
+            .zip(&checked.value)
+            .filter(|(_, row)| row.as_ref().is_some_and(|row| row.body.is_some()))
+            .map(|(id, _)| id)
+            .collect())
     }
 
     /// Whether the run's read lane reads every one of `refs`, bodies

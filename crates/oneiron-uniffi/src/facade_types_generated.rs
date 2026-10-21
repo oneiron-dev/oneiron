@@ -38355,6 +38355,16 @@ pub enum SelfEffect {
     RepoSnapshotsIngest,
     #[serde(rename = "RepoWorkOpen")]
     RepoWorkOpen,
+    #[serde(rename = "RepoSymbolsDeclare")]
+    RepoSymbolsDeclare,
+    #[serde(rename = "RepoSymbolsRenew")]
+    RepoSymbolsRenew,
+    #[serde(rename = "RepoSymbolsRelease")]
+    RepoSymbolsRelease,
+    #[serde(rename = "RepoProposalSubmit")]
+    RepoProposalSubmit,
+    #[serde(rename = "RepoMergeQueueEnqueue")]
+    RepoMergeQueueEnqueue,
 }
 
 /// `oneiron::code_run::types::SelfDurableWaitReason`.
