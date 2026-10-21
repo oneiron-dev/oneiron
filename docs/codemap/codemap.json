@@ -1243,13 +1243,16 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SourcedTypeTree"
+     ],
      "path": "src/agent_dispatch/task_type_tree.rs",
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 4
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -61475,10 +61478,11 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 9,
-      "struct": 5
+      "fn": 11,
+      "struct": 5,
+      "type": 1
      }
     },
     {
@@ -61512,8 +61516,9 @@
      "purpose": "OF-540: what the host saw a team start do, and the team a run works in",
      "surface": {
       "crate-vis": 1,
-      "fn": 7,
-      "struct": 1
+      "fn": 9,
+      "struct": 1,
+      "type": 1
      }
     },
     {
@@ -87003,13 +87008,13 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -87021,6 +87026,16 @@
      "purpose": "`oneiron restore` where no vault is yet: the restore on a clean host, its key unlocked the way the owner…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/vault_key/host_unlock.rs",
+     "purpose": "What unlocks a backup's vault key, or a sealed vault's pages, on this host: the unlock the owner names, its…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -93228,7 +93243,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -93606,9 +93621,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 53,
+   "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1001,
+   "source_files": 1002,
    "test_files": 182
   },
   "oneiron-spawn": {
