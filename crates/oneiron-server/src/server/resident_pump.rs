@@ -49,7 +49,7 @@ use oneiron::agent_dispatch::{
     agent_dispatch_actor,
 };
 use oneiron::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, ReadSetProducer, SetAttemptResult,
 };
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
@@ -768,6 +768,15 @@ fn run_bound(
         // thread the entry ran its calls on.
         finalize_step_captures(vault);
         let outcome = outcome?;
+        // The rows its tool answers were served from, each time the run
+        // stops (FIX 7017). Capture only: a set not recorded stays unknown,
+        // and the run goes on.
+        let rows = outcome.replay_record.agent_verb_rows();
+        let id = status.attempt.id;
+        if let Err(error) = vault.record_attempt_sources(id, ReadSetProducer::TOOL_ANSWERS, rows) {
+            tracing::warn!(kind = ?error.kind(), "a resident run's tool answer rows were not recorded");
+            let _ = vault.record_attempt_sources(id, ReadSetProducer::TOOL_ANSWERS, None);
+        }
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
             EngineExecutorStatus::WindowFull { .. }
