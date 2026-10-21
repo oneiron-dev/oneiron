@@ -1141,6 +1141,10 @@ export class Oneiron {
         /** The owner stops one connector event subscription; the agent's key for the channel stays. */
         revoke: (input: Facade.ChannelSubscriptionRevokeRequest): Facade.ChannelSubscriptionRevoked => this.#call(() => this.#client.vaultConnectorsSubscriptionsRevoke(input) as Facade.ChannelSubscriptionRevoked),
       },
+      calls: {
+        /** The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent. */
+        approve_once: (input: Facade.ConnectorCallApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConnectorsCallsApproveOnce(input) as Facade.ConsentActReceipt),
+      },
     },
     authority: {
       /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */

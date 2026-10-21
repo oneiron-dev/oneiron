@@ -609,6 +609,7 @@ fn mcp_agent_verb_input(
         "vault.policy.outbound.decide" => a.spec.clone().ok_or_else(invalid),
         "vault.policy.relay.decide" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.approve_once" => a.spec.clone().ok_or_else(invalid),
+        "vault.connectors.calls.approve_once" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.deny" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.create_standing_grant" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.registry" => a.spec.clone().ok_or_else(invalid),
@@ -2856,6 +2857,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consent.approve_once" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.connectors.calls.approve_once" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consent.deny" => {
@@ -11957,6 +11961,23 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_consent_approve_once(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.connectors.calls.approve_once" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.connectors.calls.approve_once", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ConnectorCallApproveOnceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_connectors_calls_approve_once(
+                    server, auth, input,
+                )
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;

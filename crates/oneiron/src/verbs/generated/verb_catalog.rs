@@ -475,6 +475,7 @@ pub enum AgentVerb {
     VaultPolicyOutboundDecide,
     VaultPolicyRelayDecide,
     VaultConsentApproveOnce,
+    VaultConnectorsCallsApproveOnce,
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentRegistry,
@@ -1636,6 +1637,7 @@ impl AgentVerb {
         Self::VaultPolicyOutboundDecide,
         Self::VaultPolicyRelayDecide,
         Self::VaultConsentApproveOnce,
+        Self::VaultConnectorsCallsApproveOnce,
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentRegistry,
@@ -2812,6 +2814,7 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultConsentApproveOnce => "vault.consent.approve_once",
+            Self::VaultConnectorsCallsApproveOnce => "vault.connectors.calls.approve_once",
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
@@ -3991,6 +3994,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
@@ -5178,6 +5182,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
@@ -6493,6 +6498,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
@@ -7411,6 +7417,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRevoke
@@ -8321,6 +8328,7 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
@@ -9483,6 +9491,7 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
@@ -11559,6 +11568,9 @@ impl AgentVerb {
             }
             Self::VaultConsentApproveOnce => {
                 "The owner approves exactly one engine-emitted effect digest; no standing grant is created."
+            }
+            Self::VaultConnectorsCallsApproveOnce => {
+                "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."
             }
             Self::VaultConsentDeny => {
                 "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."

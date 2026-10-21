@@ -2529,6 +2529,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.connectors.calls.approve_once",
+                crate::code_run::vault_read::request_schema::<ConnectorCallApproveOnceRequest>(),
+            ),
+            (
                 "vault.consent.deny",
                 crate::code_run::vault_read::request_schema::<
                     crate::consent::lifecycle::DenyConsentRequest,
@@ -6873,6 +6877,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.policy.owner.configure",
     "vault.policy.owner.row.change",
     "vault.consent.approve_once",
+    "vault.connectors.calls.approve_once",
     "vault.consent.deny",
     "vault.consent.create_standing_grant",
     "vault.consent.registry",
@@ -8306,6 +8311,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::policy_model::PolicyRowReceipt>()
         }
         "vault.consent.approve_once" => crate::code_run::vault_read::request_schema::<
+            crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.connectors.calls.approve_once" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
         "vault.consent.deny" => crate::code_run::vault_read::request_schema::<
@@ -13004,6 +13012,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.approve_once" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.calls.approve_once" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19231,6 +19246,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consent.approve_once" => {
             let _input: crate::consent::lifecycle::ApproveOnceRequest = decode(value.clone())?;
         }
+        "vault.connectors.calls.approve_once" => {
+            let _input: ConnectorCallApproveOnceRequest = decode(value.clone())?;
+        }
         "vault.consent.deny" => {
             let _input: crate::consent::lifecycle::DenyConsentRequest = decode(value.clone())?;
         }
@@ -22610,6 +22628,9 @@ pub fn invoke(
         }
         "vault.policy.relay.decide" => encode(vault_policy_relay_decide(memory, decode(value)?)?),
         "vault.consent.approve_once" => encode(vault_consent_approve_once(memory, decode(value)?)?),
+        "vault.connectors.calls.approve_once" => {
+            encode(vault_connectors_calls_approve_once(memory, decode(value)?)?)
+        }
         "vault.consent.deny" => encode(vault_consent_deny(memory, decode(value)?)?),
         "vault.consent.create_standing_grant" => {
             encode(vault_consent_create_standing_grant(memory, decode(value)?)?)
@@ -27982,6 +28003,16 @@ pub fn vault_consent_approve_once(
     crate::consent::lifecycle::approve_once(
         memory.vault(),
         &memory.embedded_owner("vault.consent.approve_once")?,
+        input,
+    )
+}
+pub fn vault_connectors_calls_approve_once(
+    memory: &Memory<'_>,
+    input: ConnectorCallApproveOnceRequest,
+) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    crate::task_verb::sdk::approve_connector_call_once(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.calls.approve_once")?,
         input,
     )
 }

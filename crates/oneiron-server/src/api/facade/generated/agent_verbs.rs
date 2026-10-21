@@ -521,6 +521,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.policy.outbound.decide", post(facade_route))
         .route("/vault.policy.relay.decide", post(facade_route))
         .route("/vault.consent.approve_once", post(facade_route))
+        .route("/vault.connectors.calls.approve_once", post(facade_route))
         .route("/vault.consent.deny", post(facade_route))
         .route("/vault.consent.create_standing_grant", post(facade_route))
         .route("/vault.consent.registry", post(facade_route))

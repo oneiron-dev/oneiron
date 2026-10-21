@@ -2103,6 +2103,9 @@ class Oneiron:
         @property
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs":
             return Oneiron._VaultConnectorsSubscriptionsVerbs(self._client)
+        @property
+        def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs":
+            return Oneiron._VaultConnectorsCallsVerbs(self._client)
     class _VaultConnectorsProxyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2124,6 +2127,12 @@ class Oneiron:
         def revoke(self, spec):
             """The owner stops one connector event subscription; the agent's key for the channel stays."""
             return json.loads(_translate(lambda: self._client.vault_connectors_subscriptions_revoke(json.dumps(spec))))
+    class _VaultConnectorsCallsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def approve_once(self, spec):
+            """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_calls_approve_once(json.dumps(spec))))
     class _VaultAuthorityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -14933,6 +14933,41 @@ async fn vault_consent_approve_once(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_connectors_calls_approve_once(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.calls.approve_once")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.calls.approve_once", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.connectors.calls.approve_once", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_connectors_calls_approve_once(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_consent_deny(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -36316,6 +36351,9 @@ pub(crate) async fn call_verb(
         "vault.policy.outbound.decide" => vault_policy_outbound_decide(server, call, input).await,
         "vault.policy.relay.decide" => vault_policy_relay_decide(server, call, input).await,
         "vault.consent.approve_once" => vault_consent_approve_once(server, call, input).await,
+        "vault.connectors.calls.approve_once" => {
+            vault_connectors_calls_approve_once(server, call, input).await
+        }
         "vault.consent.deny" => vault_consent_deny(server, call, input).await,
         "vault.consent.create_standing_grant" => {
             vault_consent_create_standing_grant(server, call, input).await

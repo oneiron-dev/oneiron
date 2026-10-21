@@ -4105,6 +4105,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_connectors_calls_approve_once(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.calls.approve_once", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consent_deny(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consent.deny", js_json(input))

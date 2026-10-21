@@ -2356,6 +2356,11 @@ export_facade! {
     let output = client.vault_consent_approve_once(&input)?;
     crate::codec::lift_record("vault.consent.approve_once", &output)
 };
+"vault.connectors.calls.approve_once" => fn vault_connectors_calls_approve_once(&self, input: ConnectorCallApproveOnceRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorCallApproveOnceRequest = crate::codec::lower_record("vault.connectors.calls.approve_once", input)?;
+    let output = client.vault_connectors_calls_approve_once(&input)?;
+    crate::codec::lift_record("vault.connectors.calls.approve_once", &output)
+};
 "vault.consent.deny" => fn vault_consent_deny(&self, input: DenyConsentRequest) -> ConsentActReceipt = |client| {
     let input: oneiron::consent::lifecycle::DenyConsentRequest = crate::codec::lower_record("vault.consent.deny", input)?;
     let output = client.vault_consent_deny(&input)?;

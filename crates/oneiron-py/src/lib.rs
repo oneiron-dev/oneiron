@@ -4529,6 +4529,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_connectors_calls_approve_once(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.calls.approve_once")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.calls.approve_once", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consent_deny(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.consent.deny")?;
         let output = py

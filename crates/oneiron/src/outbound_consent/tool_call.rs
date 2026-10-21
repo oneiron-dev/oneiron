@@ -113,6 +113,17 @@ impl PreparedToolCall {
     pub fn into_frozen_payload(self) -> FrozenMcpPayload {
         self.payload
     }
+    /// The prepared request an admitted ledger row froze, read back from its
+    /// exact bytes (FIX 990): decoding is canonical, so the payload is those
+    /// bytes unchanged. It only recomposes the row's own approve-once target
+    /// and ask; it is never sent or admitted again.
+    pub(super) fn from_frozen(bytes: &[u8]) -> Result<Self> {
+        let frozen = FrozenToolCall::decode(bytes)?;
+        Ok(Self {
+            payload: FrozenMcpPayload::new(bytes.to_vec()),
+            frozen,
+        })
+    }
     #[cfg(test)]
     pub(crate) fn freeze_event_baseline(&self) -> usize {
         self.payload.freeze_event_baseline()
@@ -148,6 +159,22 @@ impl PreparedToolCall {
             sender,
         )
     }
+}
+
+/// What preparing one connector tool call came to under its tool's current
+/// capability setting (DEC-0006, FIX 990), read in the snapshot that read its
+/// key and approved schema. Preparing never sends and never spends a press.
+pub enum ConnectorToolCallPreparation {
+    /// `auto` or `always allow`: the call meets the Gate's per-call verdict.
+    Ready(PreparedToolCall),
+    /// `always ask`: the exact call the Gate admits only on the owner's press
+    /// for it. Its admission selects and spends an available press, or holds
+    /// the call naming its approve-once digest.
+    ConsentRequired { candidate: PreparedToolCall },
+    /// `never allow`: the tool is not callable; no usable call was minted.
+    Denied {
+        reason: super::ScopedMcpEscalationReason,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -421,6 +448,9 @@ impl crate::Vault {
     /// Prepare against the current approved schema. An unqualified key or a
     /// descriptor not identical to the approved resolved schema cannot mint
     /// a manifest-bound call. Gate admission rechecks this binding in-txn.
+    /// The tool's capability setting is read with the key (FIX 990): `never
+    /// allow` mints nothing, and `always ask` marks the call as one only the
+    /// owner's press on it admits.
     pub fn prepare_connector_tool_call(
         &self,
         key_ref: &crate::EntityId,
@@ -428,10 +458,25 @@ impl crate::Vault {
         descriptor: ToolCallDescriptor<'_>,
         arguments: &Value,
         mutation: MutationIntent,
-    ) -> Result<PreparedToolCall> {
-        let key = self
-            .get_connector_key(key_ref)?
-            .ok_or(crate::Error::EntityNotFound)?;
+    ) -> Result<ConnectorToolCallPreparation> {
+        use crate::connector_key::SlateDisposition;
+        let (key, setting) = {
+            let txn = self.store.env.read_txn()?;
+            let key = crate::connector_key::read_key_for_pack_in_txn(self, &txn, key_ref)?
+                .ok_or(crate::Error::EntityNotFound)?;
+            let setting = crate::connector_key::connector_tool_setting_in_txn(
+                &self.store,
+                &txn,
+                &key,
+                &call.tool,
+            )?;
+            (key, setting)
+        };
+        if setting == SlateDisposition::NeverAllow {
+            return Ok(ConnectorToolCallPreparation::Denied {
+                reason: super::ScopedMcpEscalationReason::ConnectorSlateNeverAllow,
+            });
+        }
         let manifest = key.retained_manifest.as_ref().ok_or_else(invalid_schema)?;
         if key.status != crate::connector_key::ConnectorKeyStatus::Active
             || key.tool_requires_confirmation(&call.tool)
@@ -447,7 +492,15 @@ impl crate::Vault {
             manifest_hash: manifest.hash()?,
             protocol_revision: key.protocol_revision.ok_or_else(invalid_schema)?,
         };
-        prepare_tool_call(call, descriptor, arguments, mutation)?.with_manifest_binding(binding)
+        let prepared = prepare_tool_call(call, descriptor, arguments, mutation)?
+            .with_manifest_binding(binding)?;
+        Ok(if setting == SlateDisposition::AlwaysAsk {
+            ConnectorToolCallPreparation::ConsentRequired {
+                candidate: prepared,
+            }
+        } else {
+            ConnectorToolCallPreparation::Ready(prepared)
+        })
     }
 }
 
