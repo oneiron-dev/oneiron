@@ -20,6 +20,7 @@ pub(super) mod cache_warmth;
 mod live_fork;
 mod shadow_capture;
 mod step_attempt;
+mod worker_lease;
 
 use futures_util::StreamExt;
 use oneiron::llm::SpentKind;
@@ -517,6 +518,11 @@ impl OfferLadder {
         if let Some(reason) = self.kept_on_device(index, call.request) {
             self.hold(call, index, walk, reason);
             return true;
+        }
+        // A managed worker's own supervisor says when it serves (FIX 8315):
+        // its calls wait for it, never pass it for a rest or a probation.
+        if self.managed_worker(index).is_some() {
+            return false;
         }
         let rung = &self.rungs[index];
         if let Some(rest) = self.rests.resting(&rung.offer.binding, &rung.wire_model) {
@@ -1192,6 +1198,14 @@ impl OfferLadder {
         walk: &mut Walk,
     ) -> LlmResult<Sent> {
         let rung = &self.rungs[index];
+        // Held through the call's settlement or cancellation (FIX 8315).
+        let _lease = match self.hold_worker(index).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.failed(index, error, false, walk)?;
+                return Ok(Sent::Failed);
+            }
+        };
         let (bound, permit) = self.admit(call.run, rung, call.request, call.selector, false)?;
         if !may_send() {
             // Unsent: only the gate starts a lease, so this pays nothing.
@@ -1206,7 +1220,7 @@ impl OfferLadder {
             self.hold(call, index, walk, reason);
             return Ok(Sent::Held);
         }
-        let Some(_probe) = self.probe(index, walk) else {
+        let Some(_probe) = self.probe_unless_managed(index, walk) else {
             settle_failed(permit);
             return Ok(Sent::Held);
         };
@@ -1354,6 +1368,14 @@ impl OfferLadder {
         if media.row.admit_media(&bound).is_err() {
             return Ok(None);
         }
+        // Held through the answer, or a job's submission (FIX 8315).
+        let _lease = match self.hold_worker(index).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.failed(index, error, false, walk)?;
+                return Ok(None);
+            }
+        };
         let selector = Some(call.selector.unwrap_or(self.name.as_str()));
         let permit = call
             .run
@@ -1363,7 +1385,7 @@ impl OfferLadder {
             self.hold(call, index, walk, reason);
             return Ok(None);
         }
-        let Some(probe) = self.probe(index, walk) else {
+        let Some(probe) = self.probe_unless_managed(index, walk) else {
             settle_failed(permit);
             return Ok(None);
         };
@@ -1377,7 +1399,7 @@ impl OfferLadder {
                 Ok(provider_job) => Ok(Some(MediaAnswer::Job(HeldJob {
                     gate,
                     permit: Some(permit),
-                    probe: Some(probe),
+                    probe,
                     receipt: self.receipt.then(|| self.served(index, walk)),
                     provider_job,
                     model: rung.model.clone(),
@@ -1695,8 +1717,22 @@ impl OfferLadder {
         events: &Sender<LlmResult<LlmStreamEvent>>,
     ) -> Flow {
         let rung = &self.rungs[index];
+        // A managed worker's lease, held as long as the probe (FIX 8315).
+        let _lease = match self.hold_worker(index).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                settle_failed(permit);
+                return match self.failed(index, error, false, walk) {
+                    Ok(()) => Flow::On,
+                    Err(error) => {
+                        let _ = events.send(Err(error)).await;
+                        Flow::Ended
+                    }
+                };
+            }
+        };
         // Held until the stream ends, however it ends.
-        let Some(_probe) = self.probe(index, walk) else {
+        let Some(_probe) = self.probe_unless_managed(index, walk) else {
             settle_failed(permit);
             return Flow::On;
         };

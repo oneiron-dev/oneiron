@@ -10,6 +10,13 @@
 # oneiron-llama/<epoch>/<digest> --path <dir> --ui`, so every answer names the
 # launch that gave it. If that fails for any reason, llama-server starts as
 # it would without it: no alias, no manifest, and a warning on stderr.
+#
+# The weights, at the commits the model artifact catalog pins
+# (crates/oneiron-server/src/model_artifacts/catalog.rs):
+#   target unsloth/Qwen3.8-27B-GGUF@4ca720788d1e01f1bff70c033e0d0028fd02e502
+#          Qwen3.8-27B-UD-Q4_K_M.gguf
+#   draft  unsloth/Qwen3.5-0.8B-GGUF@6ab461498e2023f6e3c1baea90a8f0fe38ab64d0
+#          Qwen3.5-0.8B-Q8_0.gguf
 set -euo pipefail
 
 : "${ONEIRON_HOUSE_LLAMA_SERVER:=/opt/oneiron-house/llama.cpp/build/bin/llama-server}"

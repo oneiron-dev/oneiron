@@ -427,6 +427,9 @@ pub(crate) async fn start_desktop_workers(
     // device of that home. A startup error below drops `ai`, which tells its
     // workers to stop.
     let device = crate::device_sync::dials_home(config, sync_server.vault());
+    // Plain and embedded serve launch `[models.workers]`' managed workers; a
+    // managed per-vault process never reaches here (FIX 8315).
+    crate::models::permit_worker_launch();
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
     let sync_server = Arc::new(sync_server);

@@ -27,15 +27,18 @@ The rulings this setup carries:
 ## Weights
 
 Put each under `/var/lib/oneiron-house/models/` (or set the paths in
-`house.env.example`), and pin the revision you verified:
+`house.env.example`), at the commit the engine's model artifact catalog pins
+(`crates/oneiron-server/src/model_artifacts/catalog.rs`, which also pins every
+file's size and SHA-256). A branch or tag moves; these commits do not:
 
-- EXL3 target: `turboderp/Qwen3.8-27B-exl3`, the 4.0 bpw branch, as
-  `qwen3.8-27b-exl3-4bpw/` (it ships `chat_template.jinja`, which the server
-  renders).
-- DFlash2 draft: `Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, as
-  `qwen3.8-27b-dflash2-exl3-5bpw/`.
-- llama.cpp target: `Qwen3.8-27B-UD-Q4_K_M.gguf`.
-- llama.cpp draft: `Qwen3.5-0.8B-Q8_0.gguf`.
+| Weights | Repository at commit | Catalog id | Installed as |
+|---|---|---|---|
+| EXL3 target (the `4.00bpw` branch's commit; it ships `chat_template.jinja`, which the server renders) | `turboderp/Qwen3.8-27B-exl3@113cf7ab958054860e43fb7f3063b1af19171095` | `qwen3.8-27b-exl3-4bpw` | `qwen3.8-27b-exl3-4bpw/` |
+| DFlash2 draft | `Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw@4f0436269bca761b071f05319e8e04a87cc633f9` | `qwen3.8-27b-dflash2-exl3-5bpw` | `qwen3.8-27b-dflash2-exl3-5bpw/` |
+| llama.cpp target | `unsloth/Qwen3.8-27B-GGUF@4ca720788d1e01f1bff70c033e0d0028fd02e502`, `Qwen3.8-27B-UD-Q4_K_M.gguf` | `qwen3.8-27b-ud-q4km-gguf` | `Qwen3.8-27B-UD-Q4_K_M.gguf` |
+| llama.cpp draft | `unsloth/Qwen3.5-0.8B-GGUF@6ab461498e2023f6e3c1baea90a8f0fe38ab64d0`, `Qwen3.5-0.8B-Q8_0.gguf` | `qwen3.5-0.8b-q8-gguf` | `Qwen3.5-0.8B-Q8_0.gguf` |
+
+A managed worker (below) installs these itself, by catalog id.
 
 Then write the EXL3 target's weights manifest beside it, once per deployed
 snapshot (see "Launch identity"):
@@ -50,6 +53,11 @@ The repository holds no real weights hashes: the operator, or the
 Orchestrator when it deploys, writes this manifest from the installed bytes.
 
 ## Install
+
+These steps run the two servers under systemd, as operator-owned endpoints:
+the engine probes and calls them and never starts or stops them (an
+`external` worker, or no worker row at all). To have the engine run them
+instead, see "Managed workers".
 
 ```sh
 sudo useradd --system --home /var/lib/oneiron-house oneiron-house
@@ -69,6 +77,75 @@ Both units are templates: they expect the repo at `/opt/oneiron`. Each server
 listens on loopback only and loads its weights before it answers; a request
 never downloads or starts a model. Then merge `models.toml` into
 `oneiron.toml`, and `GET /v1/ai/status` lists both rungs of each seat.
+
+## Managed workers
+
+A `[models.workers.<id>]` row in `oneiron.toml` puts one of these servers
+under the engine's own supervisor (FIX 8315). The row binds the worker to a
+provider and wire model by name, `model = "<provider>:<wire model>"`, as a
+rung names it; nothing is inferred from a loopback URL. A provider with no
+row is called as it always was. A new row is `managed` unless it says
+`mode = "external"`, which is the operator's endpoint: probed, never
+started, stopped or restarted.
+
+For a managed row the supervisor, before each launch:
+
+- installs the weights by catalog id (`weights`, `draft`) through the model
+  artifact store, or verifies `weights_dir`/`draft_dir` file by file without
+  the network;
+- writes the worker code it carries (`exl3_server.py` with the modules it
+  imports, and `llama_identity.py`) under its runtime root, in a directory
+  named by their digest;
+- EXL3: builds the worker's Python environment from
+  `requirements-exl3.lock` (`python -m venv`, then `pip install
+  --require-hashes --no-deps`) with `python` (Python 3.12 for this lock), in
+  a directory named by the lock and interpreter, and checks the installed
+  packages at every install;
+- llama.cpp: checks `server` against `server_sha256` (the binary
+  `build-llama.sh` built), then runs `llama_identity.py prepare` and checks
+  its manifest names the pinned GGUF and binary;
+- writes a private launch manifest binding all of that to a fresh nonce, and
+  starts the server in its own process group on its provider's loopback
+  address, with a cleared environment.
+
+It counts the worker ready only when one actual one-token answer names this
+launch: the EXL3 server echoes the launch manifest's digest
+(`usage.launch_manifest`) beside its epoch, the llama.cpp server answers
+under this launch's alias, and the model, build and template digests match
+the verified bytes. Until then a call to that rung waits; a worker parked by
+a contradiction or a permanent install failure fails its calls as an
+unreachable server does, and the ladder goes on as it always has. A crash
+relaunches after 5, 10, 20, 40, then every 60 seconds; a stop drains every
+call first. Idle stop is off unless `idle_stop_secs` sets it.
+
+```toml
+[models.workers.house-exl3]
+model = "exl3:qwen3.8-27b"
+kind = "exl3"
+weights = "qwen3.8-27b-exl3-4bpw"
+draft = "qwen3.8-27b-dflash2-exl3-5bpw"
+python = "/usr/bin/python3.12"
+device = "0"
+args = ["--draft-tokens", "7", "--context", "32768", "--max-in-flight", "4"]
+
+[models.workers.house-llama]
+model = "llama:qwen3.8-27b"
+kind = "llama_cpp"
+weights = "qwen3.8-27b-ud-q4km-gguf"
+draft = "qwen3.5-0.8b-q8-gguf"
+server = "/opt/oneiron-house/llama.cpp/build/bin/llama-server"
+server_sha256 = "<the SHA-256 build-llama.sh recorded>"
+device = "1"
+args = ["--spec-type", "draft-simple", "--spec-draft-n-max", "8",
+        "--ctx-size", "65536", "--parallel", "2",
+        "--n-gpu-layers", "999", "--gpu-layers-draft", "999",
+        "--flash-attn", "on", "--jinja", "--reasoning-format", "deepseek"]
+```
+
+Only plain and embedded `serve` launch managed workers; a managed per-vault
+process shows its rows unchecked and calls its providers as before. Never
+run a managed row and its systemd unit at once: one supervisor owns a
+worker.
 
 ## Launch identity
 
@@ -335,9 +412,10 @@ streamed, of three real turns each:
 The operator runs it once per offer, with a new evidence path each time:
 
 ```sh
-# llama.cpp: save the template the running server renders
+# llama.cpp: save the template the running server renders for the probe's
+# tool requests: its tool-use template when /props lists one, else its default
 curl -s http://127.0.0.1:18134/props \
-  | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["chat_template"])' \
+  | python3 -c 'import json, sys; p = json.load(sys.stdin); sys.stdout.write(p.get("chat_template_tool_use") or p["chat_template"])' \
   > /tmp/llama-template.jinja
 python3 /opt/oneiron/deploy/house-model/probe_reasoning_history.py \
   --base-url http://127.0.0.1:18134 --backend llama \
@@ -364,6 +442,17 @@ A llama launch advertises and answers under its launch alias instead
 stands for the wire id. One run must see one alias: a second one means the
 server restarted mid-run, and the run fails. The evidence keeps the raw ids
 (`advertised_model_ids`, `served_model_ids`, `llama_alias`).
+
+On llama the run is then bound to the launch that answered it (FIX 8417):
+the one alias its replies named leads to that launch's manifest, fetched
+from the same origin, which must hash to the alias's digest and name schema
+1, the llama_cpp backend, the alias's epoch and `--wire-id`. `--template`
+must be the template that launch selected for the run's requests, which all
+offer a tool: the manifest's `templates.tool_use` entry when it lists one,
+else `templates.default`, matched by that entry's own SHA-256. The selection
+counts as known only when the manifest names the GGUF's own templates and
+`/props` shows the same ones; otherwise the evidence says `unverified` and
+the run is no pass. The evidence keeps it all under `launch_binding`.
 
 `--offer`, `--server-revision`, `--weights-revision` and `--booking-ref` are
 the operator's own labels, kept as given. Pair the JSON with the booking's log

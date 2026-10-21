@@ -1,7 +1,7 @@
 //! What the model runtime built, for the owner-facing status route.
 use oneiron::ModelId;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::{BrokerIsolation, SpentKind};
+use oneiron::llm::{BrokerIsolation, SpentKind, WorkerStatus};
 use serde::Serialize;
 
 use crate::config::models::{ModelRef, ProviderConfig, ProviderKind, role_key};
@@ -18,6 +18,11 @@ pub struct ModelsStatus {
     /// discovered none.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub discovered: Vec<DiscoveredStatus>,
+    /// One row per configured model worker (`[models.workers]`): its
+    /// readiness, and what it last reported. Apart from the providers' and
+    /// seats' availability; none when no worker is configured.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workers: Vec<WorkerStatus>,
 }
 
 /// One model the mesh discovered: the node that offers it and its offer's

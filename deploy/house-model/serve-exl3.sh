@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # The house model's generation server: Qwen3.8-27B EXL3 4 bpw with the DFlash2
 # draft at depth 7 (owner ruling 2026-10-16), on one GPU. See README.md.
+#
+# The weights, at the commits the model artifact catalog pins
+# (crates/oneiron-server/src/model_artifacts/catalog.rs):
+#   target turboderp/Qwen3.8-27B-exl3@113cf7ab958054860e43fb7f3063b1af19171095
+#          (the 4.00bpw branch's commit)
+#   draft  Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw@4f0436269bca761b071f05319e8e04a87cc633f9
 set -euo pipefail
 
 : "${ONEIRON_HOUSE_EXL3_TARGET:=/var/lib/oneiron-house/models/qwen3.8-27b-exl3-4bpw}"

@@ -56,7 +56,13 @@ pub use supervisor::{
     ShutdownHandle, SkillOptimizerLoan, WakePassFuture, WakeSupervisor, WakeSupervisorConfig,
     WakeSupervisorReport, WaveReadyDispatcher,
 };
-pub use supervisor::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
+pub use supervisor::{
+    DEFAULT_WORKER_IDLE_STOP, DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot,
+    InferenceWorker, LaunchFailure, LauncherFuture, ResidentReport, ResidentSource, RunningWorker,
+    WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS, WORKER_LIVENESS_POLL, WORKER_STOP_GRACE,
+    WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy, WorkerProbe,
+    WorkerProbeFuture, WorkerSpec, WorkerUnavailable,
+};
 pub use tick::{
     ArmedLane, AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource,
     HintPusher, HintSignal, HybridTick, IdleSample, NowMillis, PushTick, Tick, TickPushError,

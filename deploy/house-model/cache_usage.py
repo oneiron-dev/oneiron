@@ -50,6 +50,9 @@ from pathlib import Path
 
 # The usage key the engine reads the receipts under (`INFERENCE_CALLS_KEY`).
 INFERENCE_CALLS_KEY = "inference_calls"
+# The usage key a supervised launch's answers echo its launch manifest's
+# digest under (the worker probe's `LAUNCH_MANIFEST_KEY`).
+LAUNCH_MANIFEST_KEY = "launch_manifest"
 # The target directory's files the tokenizer is built from, with the model
 # config that names its special tokens; the digest covers each one present,
 # by name. Without `tokenizer.json` there is no tokenizer digest.
@@ -108,15 +111,27 @@ class BackendIdentity:
     """What answers every request of this server's life: built once, beside
     the Generator, whose incarnation `epoch` names. `model_digest` is the
     verified weights manifest's digest, or None. Each digest that cannot be
-    taken is left out."""
+    taken is left out.
+
+    `launch` is the supervisor's launch manifest, as `(digest, runtime)`,
+    when one was given (FIX 8315): the runtime is then the build the
+    supervisor verified before the launch, the build evidence is verified
+    artifacts, and every receipt echoes the manifest's digest. Without one,
+    the runtime is the installed versions as reported."""
 
     def __init__(self, target_dir, template_source, cache_settings, server_settings,
-                 model_digest=None):
+                 model_digest=None, launch=None):
         self.epoch = uuid.uuid4().hex
         self.model = model_digest
         self.template = sha256_hex(template_source.encode("utf-8"))
         self.tokenizer = tokenizer_digest(target_dir)
-        self.runtime = runtime_digest()
+        if launch is None:
+            self.launch_manifest = None
+            self.runtime = runtime_digest()
+            self.build_evidence = "reported_version"
+        else:
+            self.launch_manifest, self.runtime = launch
+            self.build_evidence = "verified_artifacts"
         self.cache_mode = settings_digest(cache_settings)
         self.server_settings = server_settings
 
@@ -189,17 +204,20 @@ def job_pass(phase, thinking, final):
     return {key: value for key, value in entry.items() if value is not None}
 
 
-def add_evidence(usage, prompt_tokens, passes, identity, worker_wait_s=None, engine_wait_s=None):
+def add_evidence(usage, prompt_tokens, passes, identity, worker_wait_s=None, engine_wait_s=None,
+                 build_evidence="reported_version", launch_manifest=None):
     """Writes the request's receipt into `usage`, and the standard cached count
     when its first pass ran over its own prompt with counts that agree.
     `worker_wait_s` and `engine_wait_s` are the scheduler's own waits, in
-    seconds; one it did not measure is None and left out."""
+    seconds; one it did not measure is None and left out. `launch_manifest`,
+    the digest of the supervisor's launch manifest, is echoed under
+    `LAUNCH_MANIFEST_KEY` when the server was given one."""
     first = passes[0] if passes else None
     if (first is not None and first["phase"] in ("prompt", "reasoning")
             and first.get("input_tokens") == prompt_tokens and first["outcome"] != "unknown"):
         usage["prompt_tokens_details"] = {"cached_tokens": first["cache_read_tokens"]}
     receipt = {
-        "worker": {"kind": "exl3", "identity": identity, "build_evidence": "reported_version"},
+        "worker": {"kind": "exl3", "identity": identity, "build_evidence": build_evidence},
         "logical_prompt_tokens": prompt_tokens,
         "passes": passes,
     }
@@ -209,3 +227,5 @@ def add_evidence(usage, prompt_tokens, passes, identity, worker_wait_s=None, eng
     if queue_wait:
         receipt["queue_wait"] = queue_wait
     usage[INFERENCE_CALLS_KEY] = [receipt]
+    if launch_manifest is not None:
+        usage[LAUNCH_MANIFEST_KEY] = launch_manifest
