@@ -17,6 +17,10 @@
 //! join has one naming why. Its texts live only in the rows it fills; the
 //! read is dropped once they are, and nothing of it is logged.
 //!
+//! The same read gives the secret classifier (FIX 8028) each field's input
+//! type and autocomplete tokens, joined the same way, before any row is
+//! built (`driver::secrets`).
+//!
 //! The read binds every node it returns to Chromium's frontend, so a page
 //! that changes sends DOM events (attribute, child and text changes) until
 //! the capture's after-sample reads the document again, which drops those
@@ -66,6 +70,10 @@ struct DomNode {
     aria_level: Option<u32>,
     /// Its h1 to h6 tag's level.
     tag_level: Option<u32>,
+    /// An input's `type` attribute, as written.
+    input_type: Option<String>,
+    /// Its `autocomplete` attribute's tokens, as written.
+    autocomplete: Option<String>,
 }
 
 /// A document's base, for the hrefs it holds.
@@ -237,7 +245,10 @@ impl DomNode {
             datetime: None,
             aria_level: None,
             tag_level: None,
+            input_type: None,
+            autocomplete: None,
         };
+        let input = node.get("localName").and_then(Value::as_str) == Some("input");
         let mut xlink = None;
         for pair in list(node, "attributes").chunks(2) {
             let [name, value] = pair else {
@@ -254,6 +265,10 @@ impl DomNode {
                 read.datetime = Some(value.to_owned());
             } else if name.eq_ignore_ascii_case("aria-level") {
                 read.aria_level = value.trim().parse().ok().filter(|level| *level > 0);
+            } else if input && name.eq_ignore_ascii_case("type") {
+                read.input_type = Some(value.to_owned());
+            } else if name.eq_ignore_ascii_case("autocomplete") {
+                read.autocomplete = Some(value.to_owned());
             }
         }
         // An SVG link may name its destination the older way.
@@ -268,6 +283,23 @@ impl DomNode {
             _ => None,
         };
         read
+    }
+}
+
+impl DomRead {
+    /// The input type and autocomplete tokens of the element `line` joins
+    /// by its own backend node: none where the read failed or joins none.
+    pub(super) fn field_attributes(&self, line: &Line) -> (Option<&str>, Option<&str>) {
+        let Self::Read(dom) = self else {
+            return (None, None);
+        };
+        match dom.join(line) {
+            Ok(at) => {
+                let node = &dom.nodes[at];
+                (node.input_type.as_deref(), node.autocomplete.as_deref())
+            }
+            Err(_) => (None, None),
+        }
     }
 }
 

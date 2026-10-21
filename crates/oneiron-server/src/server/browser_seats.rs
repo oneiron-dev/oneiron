@@ -14,6 +14,7 @@ mod handles;
 
 use std::sync::Arc;
 
+use oneiron::secret_custody::RunSecretSeat;
 use oneiron::{EntityId, Vault};
 use oneiron_browser::{AbandonedTakeover, BrowserError, BrowserSession, Takeover};
 
@@ -32,6 +33,7 @@ impl SeatGuest for BrowserSession {
     const GUEST: &'static str = "browser";
     const NOUN: &'static str = "run browser";
     const TAKE_ROUTE: &'static str = "/v1/owner/browsers/take";
+    const SECRETS: RunSecretSeat = RunSecretSeat::Browser;
 
     fn seats(server: &SyncServer) -> &Arc<RunSeats<Self>> {
         &server.browser_seats

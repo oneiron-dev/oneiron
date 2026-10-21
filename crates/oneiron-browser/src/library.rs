@@ -21,7 +21,9 @@
 //! (`supersedes`), which retires it in the same write.
 //!
 //! A program's `{{name}}` slots take the run's arguments as data, in the
-//! batch's own fields; nothing is spliced into code.
+//! batch's own fields; nothing is spliced into code. A secret takes a typed
+//! slot (FIX 8028, `secret_slots`): neither the program nor its proof holds
+//! a secret, or the handle a run found it as.
 //!
 //! A program names elements by locator only, never by a live handle (a
 //! handle names one node of one session's page). A proposal's handles the
@@ -30,6 +32,7 @@
 
 mod admission;
 mod live_run;
+mod secret_slots;
 
 pub use admission::{
     AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal,
@@ -40,6 +43,7 @@ pub(crate) use live_run::run;
 pub use live_run::{
     FiledWorkflow, LibraryRunMode, RunOutcome, default_mode, effective_mode, model_free,
 };
+pub use secret_slots::SecretParam;
 
 #[cfg(feature = "driver")]
 use crate::CheckReceipt;
@@ -61,6 +65,10 @@ pub struct WorkflowProgram {
     pub subgoal: String,
     /// The names the steps' and checks' `{{name}}` slots take.
     pub params: Vec<String>,
+    /// Those of `params` that take a secret, each with its kind: a step's
+    /// or a check's `secret: "{{name}}"`, filled with a handle the run holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_params: Vec<SecretParam>,
     /// The batch. Its first step opens the page that names its site.
     pub steps: Vec<BatchStep>,
     /// What the page shows when the program worked: every check must hold.
@@ -106,6 +114,10 @@ pub enum WorkflowCheck {
     Solved,
     /// The no-model replay did not finish, or did not meet it.
     Replay,
+    /// The no-model replay missed while a one-time-code slot gave it the
+    /// code the solved run entered, which that run may have spent (FIX
+    /// 8028): held out with a fresh code's handle, it may pass.
+    SecretReplay,
     /// The `replay_args` given hold nothing out.
     HeldOut,
     /// No fresh guest ran the replay.
@@ -143,10 +155,10 @@ pub struct ProposeOutput {
 /// The two checks' evidence, kept with an admitted program.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkflowProof {
-    /// The arguments the solved run used.
+    /// The arguments the solved run used, its secret slots' left out.
     pub args: BTreeMap<String, String>,
-    /// The values held out from `args` that the replay used; empty when it
-    /// replayed with `args`.
+    /// The values held out from `args` that the replay used, its secret
+    /// slots' left out; empty when it replayed with `args`.
     pub replay_args: BTreeMap<String, String>,
     /// Whether the replay ran with values held out from the solved run's.
     pub held_out: bool,
@@ -155,7 +167,8 @@ pub struct WorkflowProof {
     /// The page the solved run ended on, which met the postcondition.
     pub solved_url: String,
     pub solved_title: String,
-    /// The no-model replay's effect receipts and routine decisions.
+    /// The no-model replay's effect receipts and routine decisions, each
+    /// handle a row showed there kept as `[secret]`.
     pub replay_receipts: Vec<EffectReceipt>,
     pub replay_decisions: Vec<serde_json::Value>,
     /// The page the replay ended on, which met the postcondition again.
@@ -194,6 +207,9 @@ pub struct LibraryCard {
     /// `node_id@tree_version`: the form `find`'s `type_ref` takes.
     pub type_ref: String,
     pub params: Vec<String>,
+    /// Those of `params` that take a secret: a run names a handle it holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_params: Vec<SecretParam>,
     pub runs: u32,
     pub failures: u32,
     /// The newest outcomes of its lineage: its own, and those of the
@@ -228,6 +244,7 @@ pub struct LibraryFindOutput {
 #[serde(deny_unknown_fields)]
 pub struct LibraryRunInput {
     pub workflow: String,
+    /// A secret slot's names a handle this run holds, or is its own text.
     #[serde(default)]
     pub args: BTreeMap<String, String>,
     /// The observation the run's last observation edits, as `observe`'s
@@ -399,6 +416,9 @@ impl WorkflowProgram {
                 "a program names distinct parameters, each a-z, 0-9 and _ from a letter",
             );
         }
+        if !secret_slots::distinct(self) {
+            return invalid("a program's secret slots are distinct parameters of its own");
+        }
         if self.steps.is_empty() {
             return invalid("a program holds one or more steps");
         }
@@ -431,7 +451,8 @@ impl WorkflowProgram {
     }
 
     /// The steps and checks with every slot filled from `args`, which name
-    /// exactly the program's parameters.
+    /// exactly the program's parameters; a secret slot's handle stays a
+    /// secret, any other value of it is plain text (`secret_slot_arg_policy`).
     pub fn fill(
         &self,
         args: &BTreeMap<String, String>,
@@ -450,10 +471,10 @@ impl WorkflowProgram {
         let decoded = |error: serde_json::Error| {
             BrowserError::Input(format!("a filled slot breaks the program: {error}"))
         };
-        Ok((
-            serde_json::from_value(steps).map_err(decoded)?,
-            serde_json::from_value(checks).map_err(decoded)?,
-        ))
+        let mut steps: Vec<BatchStep> = serde_json::from_value(steps).map_err(decoded)?;
+        let mut checks: Vec<ExpectInput> = serde_json::from_value(checks).map_err(decoded)?;
+        secret_slots::bind(&mut steps, &mut checks);
+        Ok((steps, checks))
     }
 }
 
@@ -612,36 +633,44 @@ fn refused(check: WorkflowCheck, refusal: Option<AdmissionRefusal>) -> ProposeOu
 
 #[cfg(feature = "driver")]
 /// A proposal's first check, on the proposing session's own page: the live
-/// handles it names put back to their locators, its shape and its held-out
-/// values checked, then the solved page read against the postcondition
-/// filled from `args`. A refusal is the proposal's answer.
+/// handles it names put back to their locators, its secrets put in slots,
+/// its shape and its held-out values checked, then the solved page read
+/// against the postcondition filled from `args`. A refusal is the
+/// proposal's answer.
 pub(crate) fn check_solved<D: BrowserDriver + ?Sized>(
     driver: &mut D,
     input: ProposeInput,
 ) -> Result<Result<Solved, ProposeOutput>, BrowserError> {
     let (mut steps, mut postcondition) = (input.steps, input.postcondition);
+    let (mut args, mut replay_args) = (input.args, input.replay_args);
+    // What the steps' targets held, read before handles go back to locators.
+    let targets = secret_slots::Targets::read(&*driver, &steps, &postcondition);
     by_locator(&*driver, &mut steps, &mut postcondition);
-    let program = WorkflowProgram {
+    // The independent check: the host reads the solved run's page itself.
+    let solved = driver.observe(hidden_look())?;
+    let mut program = WorkflowProgram {
         subgoal: input.subgoal,
         params: input.params,
+        secret_params: Vec::new(),
         steps,
         postcondition,
     };
+    targets.slot(
+        &*driver,
+        &solved.rows,
+        &mut program,
+        &mut args,
+        &mut replay_args,
+    )?;
     let site = program.site()?;
-    let (_, solved_checks) = program.fill(&input.args)?;
-    let held_out = match validate_replay_args(&program, &input.args, &input.replay_args) {
+    let (_, solved_checks) = program.fill(&args)?;
+    let held_out = match validate_replay_args(&program, &args, &replay_args) {
         Ok(held_out) => held_out,
         Err(refusal) => return Ok(Err(refused(WorkflowCheck::HeldOut, Some(refusal)))),
     };
     // The replay fills its steps and its checks from its own values.
-    let values = if held_out {
-        &input.replay_args
-    } else {
-        &input.args
-    };
+    let values = if held_out { &replay_args } else { &args };
     let (steps, checks) = program.fill(values)?;
-    // The independent check: the host reads the solved run's page itself.
-    let solved = driver.observe(hidden_look())?;
     let missed = unmet(driver, &solved_checks)?;
     if !missed.is_empty() {
         return Ok(Err(ProposeOutput {
@@ -654,8 +683,8 @@ pub(crate) fn check_solved<D: BrowserDriver + ?Sized>(
         program,
         steps,
         checks,
-        args: input.args,
-        replay_args: input.replay_args,
+        args,
+        replay_args,
         held_out,
         seed: input.seed,
         supersedes: input.supersedes,
@@ -718,23 +747,26 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
         Vec::new()
     };
     if replay.status != SubgoalStatus::Done || !missed.is_empty() {
+        let (check, refusal) = secret_slots::replay_check(&program, &args, &replay_args, held_out);
         return Ok(ProposeOutput {
             unmet: missed,
             replay: Some(replay),
             replay_guest: Some(guest),
-            ..refused(WorkflowCheck::Replay, None)
+            ..refused(check, refusal)
         });
     }
     let replayed = fresh.observe(hidden_look())?;
+    let (replay_receipts, replay_decisions) =
+        secret_slots::unbound(replay.receipts.clone(), replay.decisions.clone());
     let proof = WorkflowProof {
-        args,
-        replay_args,
+        args: secret_slots::public(&program, args),
+        replay_args: secret_slots::public(&program, replay_args),
         held_out,
         seed,
         solved_url,
         solved_title,
-        replay_receipts: replay.receipts.clone(),
-        replay_decisions: replay.decisions.clone(),
+        replay_receipts,
+        replay_decisions,
         replay_url: replayed.url,
         replay_guest: guest,
     };

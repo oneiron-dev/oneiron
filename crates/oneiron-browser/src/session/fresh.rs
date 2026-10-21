@@ -11,6 +11,10 @@
 //! with no model and its checks are read on its page, and then it goes. Its
 //! replay is answered whole: no cursor pages a guest that is gone.
 //!
+//! The fresh guest holds the run's secret custody (FIX 8028): the host's
+//! own, where its start gave it one, else the proposing session's, with the
+//! kinds of the handles its reads took.
+//!
 //! The run's press policy goes with the replay and comes back spent: one
 //! budget, never copied and never refilled. No fresh guest is the
 //! proposal's refusal, at the stage it failed; the replay never falls back
@@ -125,6 +129,8 @@ impl BrowserSession {
         let requests = self.custody.handler().cloned();
         let carried = match factory.start(self.engine(), requests) {
             Ok(fresh) => {
+                // The replay is the same run: its secrets are the run's.
+                fresh.secrets.adopt(&self.secrets);
                 let mut charge = factory.state_charge();
                 let guest = fresh_guest_state_policy(self, &fresh, charge.as_mut());
                 guest.map(|guest| (fresh, guest))

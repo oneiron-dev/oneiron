@@ -90,6 +90,10 @@ pub enum AdmissionRefusal {
         workflow: String,
         why: SupersedeRefusal,
     },
+    /// The replay missed while `slots`, one-time-code slots, gave it the
+    /// code the solved run entered, which that run may have spent (FIX
+    /// 8028): `replay_args` naming a fresh code's handle hold it out.
+    SecretReplay { slots: Vec<String> },
 }
 
 /// What the library did with a program both checks passed.

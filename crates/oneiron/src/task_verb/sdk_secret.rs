@@ -469,6 +469,9 @@ impl Memory<'_> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let origin = task_create_origin_in_txn(self, &txn, self.task_host())?;
         drop(txn);
+        // The leased try is the run a run-bound secret's record names
+        // (FIX 8028).
+        let attempt = origin.as_ref().and_then(|origin| origin.parent_attempt());
         // The provider is the host's: the one its ladder served this
         // program's turn from, never a field the agent sends.
         Ok(RevealAsker::new(
@@ -477,7 +480,8 @@ impl Memory<'_> {
             origin.and_then(|origin| origin.run_id()),
         )
         .with_provider(self.model_provider())
-        .with_reader(self.read_key()?))
+        .with_reader(self.read_key()?)
+        .with_attempt(attempt))
     }
 }
 

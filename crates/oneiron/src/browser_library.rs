@@ -219,6 +219,7 @@ impl WorkflowRecord {
             subgoal: self.program.subgoal.clone(),
             type_ref: TaskTypeRef::from(&self.type_ref).wire_form(),
             params: self.program.params.clone(),
+            secret_params: self.program.secret_params.clone(),
             runs: self.runs,
             failures: self.failures,
             recent: recent_counts(&self.recent),
