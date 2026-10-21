@@ -1,7 +1,7 @@
 //! Write-once executor identity for a skill-bearing attempt's terminal receipt.
 
-use super::validate::{validate_lease_owner, validate_transition_lease};
-use super::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, decode_record};
+use super::validate::{validate_lease_owner, validate_planned_binding, validate_transition_lease};
+use super::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, PlannedBinding, decode_record};
 use crate::error::{Error, Result};
 use crate::llm::manifest::ModelRole;
 
@@ -163,35 +163,78 @@ impl AttemptQueue<'_> {
         attempt_count: u32,
         model: &str,
     ) -> Result<AttemptRecord> {
-        if model.len() > 256
-            || model.chars().any(char::is_control)
-            || !model
-                .rsplit_once('@')
-                .is_some_and(|(id, revision)| !id.is_empty() && !revision.is_empty())
-        {
+        self.stamp_model_in_txn(txn, id, lease_owner, attempt_count, model, None)
+    }
+
+    /// Freezes a seatless planned child's binding (FIX 7720) in one write
+    /// with the executor model it runs, under `leased`'s live lease, before
+    /// any pack load stamps that model. Write-once: a row that already holds
+    /// a binding answers as it stands, the first binding kept, so the caller
+    /// runs what the row holds; a model already stamped otherwise cannot be
+    /// rebound.
+    pub fn bind_planned_executor(
+        &self,
+        leased: &AttemptRecord,
+        model: &str,
+        binding: &PlannedBinding,
+    ) -> Result<AttemptRecord> {
+        let lease_owner = leased.lease_owner.as_deref().ok_or(Error::InvalidConfig(
+            "executor model requires a live lease".to_owned(),
+        ))?;
+        let mut txn = self.store.env.write_txn()?;
+        let record = self.stamp_model_in_txn(
+            &mut txn,
+            leased.id,
+            lease_owner,
+            leased.attempt_count,
+            model,
+            Some(binding),
+        )?;
+        txn.commit()?;
+        Ok(record)
+    }
+
+    /// The write-once, lease-fenced executor model stamp, and with
+    /// `binding` the planned binding written beside it in the same write.
+    /// A settled row (the same model stamped, or with `binding` a binding
+    /// already held) answers as it stands, fenced while its lease is live.
+    fn stamp_model_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        lease_owner: &str,
+        attempt_count: u32,
+        model: &str,
+        binding: Option<&PlannedBinding>,
+    ) -> Result<AttemptRecord> {
+        if !valid_executor_id(model) {
             return Err(Error::InvalidConfig(
                 "invalid attempt executor model".to_owned(),
             ));
         }
+        let action = match binding {
+            Some(_) => "bind_planned_executor",
+            None => "set_executor_model",
+        };
         let raw = self
             .store
             .attempt_records
             .get(txn, id.as_bytes())?
             .ok_or(Error::InvalidConfig("unknown attempt".to_owned()))?;
         let mut record = decode_record(&raw, id)?;
-        if record.executor_model.as_deref() == Some(model) {
+        let stamped = record.executor_model.as_deref() == Some(model);
+        let settled = match binding {
+            Some(_) => record.planned_binding.is_some(),
+            None => stamped,
+        };
+        if settled {
             if matches!(record.state, AttemptState::Leased | AttemptState::Landing) {
                 validate_lease_owner(lease_owner)?;
-                validate_transition_lease(
-                    &record,
-                    lease_owner,
-                    attempt_count,
-                    "set_executor_model",
-                )?;
+                validate_transition_lease(&record, lease_owner, attempt_count, action)?;
             }
             return Ok(record);
         }
-        if record.executor_model.is_some() {
+        if !stamped && record.executor_model.is_some() {
             return Err(Error::InvalidConfig(
                 "executor model cannot be rebound".to_owned(),
             ));
@@ -202,8 +245,12 @@ impl AttemptQueue<'_> {
             ));
         }
         validate_lease_owner(lease_owner)?;
-        validate_transition_lease(&record, lease_owner, attempt_count, "set_executor_model")?;
+        validate_transition_lease(&record, lease_owner, attempt_count, action)?;
         record.executor_model = Some(model.to_owned());
+        if let Some(binding) = binding {
+            record.planned_binding = Some(binding.clone());
+        }
+        validate_planned_binding(&record)?;
         let encoded = self.encode_in_txn(txn, &mut record)?;
         self.store
             .attempt_records

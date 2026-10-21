@@ -1,3 +1,7 @@
+//! Extraction-quality evaluation facade.
+//! Entry: evaluate_of360_extraction.
+//! QA records are owned by qa; schemas by types.
+
 use std::collections::{HashMap, HashSet};
 
 mod qa;

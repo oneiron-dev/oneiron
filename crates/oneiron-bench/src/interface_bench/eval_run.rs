@@ -2,9 +2,9 @@
 
 use super::cli_and_pinned_config::PinnedAttestation;
 use super::config_types::{
-    ArmContext, ArmId, BenchTask, CAMPAIGN_ID, FixtureClaim, FixtureVault, GoldLabel,
-    MemoProbeReport, PER_TASK_TOKEN_CEILING, RunSettings, SMOKE_TOKEN_CEILING, SmokeReport,
-    SmokeRunRow, TOOL_CALL_CAP, TaskBundle, TaskClass,
+    ArmContext, ArmId, BenchTask, CAMPAIGN_ID, FixtureVault, MemoProbeReport,
+    PER_TASK_TOKEN_CEILING, RunSettings, SMOKE_TOKEN_CEILING, SmokeReport, SmokeRunRow,
+    TOOL_CALL_CAP, TaskBundle, TaskClass,
 };
 use super::reports_and_fixture_helpers::{
     aggregate_rows, full_run_report, token_burn_extrapolation, unix_now,
@@ -14,7 +14,6 @@ use super::wire_and_scoring::{
     call_openrouter, chat_message, eval_memo_key, judge_browse_answer, judge_cache_key,
     openrouter_request_body, pinned_transmit_attestation, request_hash, request_nonce, score_task,
 };
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -79,13 +78,14 @@ pub(super) fn validate_loaded_row(
 }
 
 fn enforce_row_budget(row: &SmokeRunRow) -> Result<(), String> {
-    if row.tokens_total > PER_TASK_TOKEN_CEILING {
+    let charged = row_charge(row);
+    if charged > u64::from(PER_TASK_TOKEN_CEILING) {
         return Err(format!(
             "row task={} arm={} rep={} used {} tokens, above per-task ceiling {PER_TASK_TOKEN_CEILING}",
             row.task_id,
             row.arm.as_str(),
             row.rep_index,
-            row.tokens_total
+            charged
         ));
     }
     Ok(())
@@ -95,8 +95,8 @@ fn enforce_budget(rows: &[SmokeRunRow], run_ceiling: u32) -> Result<(), String> 
     for row in rows {
         enforce_row_budget(row)?;
     }
-    let tokens_total = rows.iter().map(|row| row.tokens_total).sum::<u32>();
-    if tokens_total > run_ceiling {
+    let tokens_total = rows.iter().map(row_charge).sum::<u64>();
+    if tokens_total > u64::from(run_ceiling) {
         return Err(format!(
             "run used {tokens_total} tokens, above run ceiling {run_ceiling}"
         ));
@@ -105,7 +105,15 @@ fn enforce_budget(rows: &[SmokeRunRow], run_ceiling: u32) -> Result<(), String> 
 }
 
 pub(super) fn run_smoke(out_dir: &Path, settings: &RunSettings) -> Result<PathBuf, String> {
-    let api_key = openrouter_api_key("smoke")?;
+    let mut settings = settings.clone();
+    settings.campaign_budget = oneiron::BudgetGuard::new(
+        CAMPAIGN_ID,
+        u64::from(SMOKE_TOKEN_CEILING),
+        oneiron::BudgetExhaustionPolicy::Suspend,
+    );
+    settings.accounted_rows = Default::default();
+    let settings = &settings;
+    let api_key = openrouter_api_key();
     write_taskgen_outputs(out_dir, settings)?;
     let bundle = build_task_bundle();
     let rows = run_eval_rows(
@@ -136,7 +144,7 @@ pub(super) fn run_smoke(out_dir: &Path, settings: &RunSettings) -> Result<PathBu
 }
 
 pub(super) fn run_memo_probe(out_dir: &Path, settings: &RunSettings) -> Result<PathBuf, String> {
-    let api_key = openrouter_api_key("memo probe")?;
+    let api_key = openrouter_api_key();
     write_taskgen_outputs(out_dir, settings)?;
     let bundle = build_task_bundle();
     let task = bundle
@@ -175,7 +183,7 @@ pub(super) fn run_memo_probe(out_dir: &Path, settings: &RunSettings) -> Result<P
     };
     let report_path = out_dir.join("memo_probe_report.json");
     write_json_atomic(&report_path, &report)?;
-    if !passed {
+    if !passed && report.reps.iter().all(|row| row.status == "completed") {
         return Err(format!(
             "memo probe failed; report written to {}",
             report_path.display()
@@ -186,7 +194,7 @@ pub(super) fn run_memo_probe(out_dir: &Path, settings: &RunSettings) -> Result<P
 
 pub(super) fn run_full(out_dir: &Path, settings: &RunSettings) -> Result<PathBuf, String> {
     run_memo_probe(out_dir, settings)?;
-    let api_key = openrouter_api_key("full run")?;
+    let api_key = openrouter_api_key();
     write_taskgen_outputs(out_dir, settings)?;
     let bundle = build_task_bundle();
     let reps = (0..settings.full_reps).collect::<Vec<_>>();
@@ -214,11 +222,39 @@ pub(super) fn run_full(out_dir: &Path, settings: &RunSettings) -> Result<PathBuf
     Ok(report_path)
 }
 
-fn openrouter_api_key(run_label: &str) -> Result<String, String> {
-    std::env::var("OPENROUTER_API_KEY")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("OPENROUTER_API_KEY is not present; {run_label} not run"))
+fn openrouter_api_key() -> String {
+    std::env::var("OPENROUTER_API_KEY").unwrap_or_default()
+}
+
+fn row_charge(row: &SmokeRunRow) -> u64 {
+    row.answer_cost
+        .iter()
+        .chain(&row.judge_overhead)
+        .map(|c| c.charged_tokens)
+        .sum()
+}
+
+fn account_existing(row: &SmokeRunRow, settings: &RunSettings) -> Result<(), String> {
+    let mut accounted = settings
+        .accounted_rows
+        .lock()
+        .map_err(|_| "campaign row accounting lock")?;
+    if !accounted.contains(&row.memo_key) {
+        let charge = row_charge(row);
+        if charge > 0 {
+            let lease = settings
+                .campaign_budget
+                .admit_reserve(1)
+                .map_err(|_| "campaign resume admission failed")?
+                .lease;
+            settings
+                .campaign_budget
+                .settle_usage(&lease, charge)
+                .map_err(|_| "campaign resume settlement failed")?;
+        }
+        accounted.insert(row.memo_key.clone());
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -234,6 +270,14 @@ fn run_eval_rows(
 ) -> Result<Vec<SmokeRunRow>, String> {
     let row_dir = out_dir.join(row_dir_name);
     fs::create_dir_all(&row_dir).map_err(|error| format!("create row dir: {error}"))?;
+    // Restore every retained paid row before any new admission, including rows
+    // outside the selected task slice. Repeated probe/full passes do not double charge.
+    for entry in fs::read_dir(&row_dir).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            account_existing(&read_json::<SmokeRunRow>(&path)?, settings)?;
+        }
+    }
     let mut rows = Vec::with_capacity(tasks.len() * arms.len() * reps.len());
     for task in tasks {
         for arm in arms {
@@ -263,22 +307,33 @@ pub(super) fn run_or_load_eval_row(
     fixture: &FixtureVault,
     settings: &RunSettings,
 ) -> Result<SmokeRunRow, String> {
-    let context = arm_context(arm, task, fixture)?;
-    if context.tool_calls > TOOL_CALL_CAP {
+    let (context, unavailable_reason) = match arm_context(arm, task, fixture) {
+        Ok(context) => (Some(context), None),
+        Err(reason) => (None, Some(reason)),
+    };
+    if context
+        .as_ref()
+        .is_some_and(|context| context.tool_calls > TOOL_CALL_CAP)
+    {
         return Err(format!(
             "task={} arm={} rep={} would use {} tool calls, above cap {TOOL_CALL_CAP}",
             task.task_id,
             arm.as_str(),
             rep_index,
-            context.tool_calls
+            context.as_ref().map_or(0, |c| c.tool_calls)
         ));
     }
-    let messages = vec![
-        chat_message("system", shared_system_prompt(arm)),
-        chat_message("user", eval_user_prompt(task, &context)),
-    ];
+    let messages = context.as_ref().map_or_else(Vec::new, |context| {
+        vec![
+            chat_message("system", shared_system_prompt(arm)),
+            chat_message("user", eval_user_prompt(task, context)),
+        ]
+    });
     let request_nonce = request_nonce(task, arm, rep_index);
-    let request = openrouter_request_body(&messages, 900, &request_nonce, settings);
+    let mut request = openrouter_request_body(&messages, 900, &request_nonce, settings);
+    if let Some(reason) = &unavailable_reason {
+        request["interface_unavailable_reason"] = serde_json::json!(reason);
+    }
     // Resolved from the body that will actually be transmitted: an uncovered
     // wire id refuses here, before any row is read, written, or reused.
     let pinned = pinned_transmit_attestation(settings, &request)?;
@@ -307,29 +362,12 @@ pub(super) fn run_or_load_eval_row(
                 pinned: pinned.as_ref(),
             },
         )?;
+        account_existing(&row, settings)?;
         return Ok(row);
     }
 
     let started = Instant::now();
-    let response = call_openrouter(api_key, &messages, 900, &request_nonce, settings)?;
-    let candidate_wall_clock_s = started.elapsed().as_secs_f64();
-    let (base_accuracy, base_detail) = score_task(task, &response.content);
-    let (accuracy, detail, judge_tokens, judge_generation_id) =
-        if task.class == TaskClass::BrowseThenAnswer {
-            judge_browse_answer(
-                api_key,
-                task,
-                fixture,
-                &response.content,
-                base_accuracy,
-                base_detail,
-                rep_index,
-                settings,
-            )?
-        } else {
-            (base_accuracy, base_detail, 0, None)
-        };
-    let row = SmokeRunRow {
+    let mut row = SmokeRunRow {
         task_id: task.task_id.clone(),
         class: task.class,
         arm,
@@ -338,16 +376,81 @@ pub(super) fn run_or_load_eval_row(
         request_hash,
         request_nonce,
         pinned,
-        generation_id: response.generation_id,
-        judge_generation_id,
-        accuracy,
-        tokens_total: response.tokens_total.saturating_add(judge_tokens),
-        tool_calls: context.tool_calls,
-        wall_clock_s: candidate_wall_clock_s,
-        answer: response.content,
-        score_detail: detail,
+        generation_id: None,
+        judge_generation_id: None,
+        judge_relationship: None,
+        status: "unavailable".into(),
+        reason: unavailable_reason,
+        accuracy: None,
+        tokens_total: None,
+        answer_cost: None,
+        judge_overhead: None,
+        rate_limit_wait_s: 0.0,
+        tool_calls: context.as_ref().map_or(0, |c| c.tool_calls),
+        wall_clock_s: 0.0,
+        answer: String::new(),
+        score_detail: serde_json::Value::Null,
     };
-    enforce_row_budget(&row)?;
+    if context.is_some() {
+        let result = (|| -> Result<(), String> {
+            let response = call_openrouter(api_key, &messages, 900, &row.request_nonce, settings)?;
+            row.wall_clock_s = started.elapsed().as_secs_f64();
+            row.tokens_total = response.accounting.provider_tokens;
+            row.rate_limit_wait_s += response.accounting.rate_limit_wait_s;
+            row.generation_id = response.generation_id.clone();
+            row.answer_cost = Some(response.accounting.clone());
+            row.answer = response.content;
+            if let Some(cause) = response.accounting.failure_cause {
+                return Err(cause);
+            }
+            let (base_accuracy, base_detail) = score_task(task, &row.answer);
+            let (accuracy, detail, judge) = if task.class == TaskClass::BrowseThenAnswer {
+                judge_browse_answer(
+                    api_key,
+                    task,
+                    fixture,
+                    &row.answer,
+                    base_accuracy,
+                    base_detail,
+                    rep_index,
+                    settings,
+                )?
+            } else {
+                (base_accuracy, base_detail, None)
+            };
+            if let Some(judge) = judge {
+                row.judge_generation_id = judge.generation_id;
+                // The current binding sends answer and judge to the identical resolved pin.
+                row.judge_relationship = Some("self_judged".into());
+                row.rate_limit_wait_s += judge.accounting.rate_limit_wait_s;
+                let failure = judge.accounting.failure_cause.clone();
+                row.judge_overhead = Some(judge.accounting);
+                if let Some(cause) = failure {
+                    return Err(format!("judge_{cause}"));
+                }
+            }
+            row.accuracy = Some(accuracy);
+            row.score_detail = detail;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                row.status = "completed".into();
+                row.reason = None;
+            }
+            Err(cause) => {
+                row.status = "failed".into();
+                row.reason = Some(cause);
+            }
+        }
+    }
+    // The ledger already charged new calls. Mark the stored row so a later
+    // probe/full pass in this process restores it at most once.
+    settings
+        .accounted_rows
+        .lock()
+        .map_err(|_| "campaign row accounting lock")?
+        .insert(row.memo_key.clone());
     write_json_atomic(&row_path, &row)?;
     Ok(row)
 }
@@ -378,125 +481,11 @@ pub(super) fn eval_user_prompt(task: &BenchTask, context: &ArmContext) -> String
 
 pub(super) fn arm_context(
     arm: ArmId,
-    task: &BenchTask,
-    fixture: &FixtureVault,
+    _task: &BenchTask,
+    _fixture: &FixtureVault,
 ) -> Result<ArmContext, String> {
-    match arm {
-        ArmId::Sdk => sdk_context(task, fixture),
-        ArmId::Fs => fs_context(task, fixture, false),
-        ArmId::Hybrid => fs_context(task, fixture, true),
-    }
-}
-
-pub(super) fn sdk_context(task: &BenchTask, fixture: &FixtureVault) -> Result<ArmContext, String> {
-    let claims = context_claims(task, fixture)?;
-    let mut transcript = String::new();
-    transcript.push_str("search(query, k) -> ranked claim ids\n");
-    for claim in &claims {
-        transcript.push_str(&format!(
-            "{} score=1.0 topic={} person={} source={}\n",
-            claim.claim_id, claim.topic_id, claim.person, claim.source_ref
-        ));
-    }
-    let get_claims = if task.class == TaskClass::RetrievalQa {
-        Vec::new()
-    } else {
-        claims
-    };
-    if !get_claims.is_empty() {
-        transcript.push_str("\nget(claim_id) samples:\n");
-        for claim in &get_claims {
-            transcript.push_str(&format!("{}: {}\n", claim.claim_id, claim.text));
-            transcript.push_str(&format!(
-                "  provenance: source_ref={} learned_at_epoch_s={} changed_after={} source_kind={}\n",
-                claim.source_ref,
-                claim.learned_at_epoch_s,
-                claim.provenance.changed_after,
-                claim.provenance.source_kind
-            ));
-        }
-    }
-    Ok(ArmContext {
-        tool_calls: 1 + get_claims.len() as u32,
-        transcript,
-    })
-}
-
-pub(super) fn fs_context(
-    task: &BenchTask,
-    fixture: &FixtureVault,
-    hybrid: bool,
-) -> Result<ArmContext, String> {
-    let claims = context_claims(task, fixture)?;
-    let mut transcript = String::new();
-    if hybrid {
-        transcript.push_str("$ cat '/q/");
-        transcript.push_str(&task.prompt.replace('\'', ""));
-        transcript.push_str("'\n");
-    } else {
-        transcript.push_str("$ grep -r '<task terms>' /claims/\n");
-    }
-    for claim in &claims {
-        transcript.push_str(&format!("/claims/{}.txt\n", claim.claim_id));
-    }
-    transcript.push_str("\n$ cat <ranked claim files>\n");
-    for claim in &claims {
-        transcript.push_str(&format!(
-            "== /claims/{}.txt ==\nid: {}\ntopic: {}\nsource: {}\nlearned_at_epoch_s: {}\nchanged_after: {}\nsource_kind: {}\nrelations: owner_of={}, employed_by={}\ntext: {}\n",
-            claim.claim_id,
-            claim.claim_id,
-            claim.topic,
-            claim.source_ref,
-            claim.learned_at_epoch_s,
-            claim.provenance.changed_after,
-            claim.provenance.source_kind,
-            claim.owned_object_id,
-            claim.organization_id,
-            claim.text
-        ));
-    }
-    Ok(ArmContext {
-        tool_calls: transcript_tool_calls(&transcript),
-        transcript,
-    })
-}
-
-pub(super) fn transcript_tool_calls(transcript: &str) -> u32 {
-    transcript
-        .lines()
-        .filter(|line| line.starts_with("$ "))
-        .count()
-        .try_into()
-        .unwrap_or(u32::MAX)
-}
-
-pub(super) fn context_claims<'a>(
-    task: &BenchTask,
-    fixture: &'a FixtureVault,
-) -> Result<Vec<&'a FixtureClaim>, String> {
-    let ids = match &task.gold {
-        GoldLabel::RetrievalQa { relevant_claim_ids } => {
-            relevant_claim_ids.iter().collect::<Vec<_>>()
-        }
-        GoldLabel::MultiHop { supporting_ids, .. }
-        | GoldLabel::Provenance { supporting_ids, .. } => {
-            supporting_ids.iter().take(8).collect::<Vec<_>>()
-        }
-        GoldLabel::BrowseThenAnswer {
-            required_claim_ids, ..
-        } => required_claim_ids.iter().collect::<Vec<_>>(),
-    };
-    let by_id = fixture
-        .claims
-        .iter()
-        .map(|claim| (claim.claim_id.as_str(), claim))
-        .collect::<BTreeMap<_, _>>();
-    ids.into_iter()
-        .map(|id| {
-            by_id
-                .get(id.as_str())
-                .copied()
-                .ok_or_else(|| format!("missing fixture claim `{id}`"))
-        })
-        .collect()
+    Err(format!(
+        "{}: real interface execution over a shared seeded vault is not implemented; gold-selected evidence and synthetic transcripts are disabled",
+        arm.as_str()
+    ))
 }

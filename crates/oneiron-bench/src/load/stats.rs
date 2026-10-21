@@ -23,6 +23,8 @@ pub(super) struct Summary {
     pub(super) failures: BTreeMap<String, usize>,
     pub(super) seconds: f64,
     pub(super) per_second: f64,
+    pub(super) latency_status: String,
+    pub(super) latency_reason: Option<String>,
     pub(super) p50_ms: Option<f64>,
     pub(super) p95_ms: Option<f64>,
     pub(super) p99_ms: Option<f64>,
@@ -41,6 +43,18 @@ fn rank(sorted: &[f64], pct: usize) -> Option<f64> {
 }
 
 impl Summary {
+    pub(super) fn below_corpus_floor(mut self, documents: usize) -> Self {
+        if documents < 1_000 {
+            self.latency_status = "not_measured".into();
+            self.latency_reason = Some("corpus_below_1000_documents".into());
+            self.p50_ms = None;
+            self.p95_ms = None;
+            self.p99_ms = None;
+            self.max_ms = None;
+            self.mean_ms = None;
+        }
+        self
+    }
     pub(super) fn of(samples: &[Sample], seconds: f64) -> Self {
         let mut ok = samples
             .iter()
@@ -63,6 +77,8 @@ impl Summary {
             } else {
                 0.0
             },
+            latency_status: "measured".into(),
+            latency_reason: None,
             p50_ms: rank(&ok, 50),
             p95_ms: rank(&ok, 95),
             p99_ms: rank(&ok, 99),

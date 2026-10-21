@@ -375,16 +375,18 @@ fn with_evaluator<T>(
             owner,
         )
     };
-    let backend = AdmittedBackend {
-        inner: RunBackend::new(
-            ladder,
-            server
-                .ai
-                .undeclared_run(run_id.clone(), line(run_id.clone())?),
-        ),
-        vault,
-        model: model.clone(),
-        locality,
+    let judge_run = server
+        .ai
+        .undeclared_run(run_id.clone(), line(run_id.clone())?);
+    // Each judge call on the run is sourced from the rows its own request
+    // is read from (FIX 7001), never from another candidate's.
+    let backend_for = |rows: Option<Vec<EntityId>>| {
+        Box::new(AdmittedBackend {
+            inner: RunBackend::new(Arc::clone(&ladder), judge_run.sourced(rows)),
+            vault,
+            model: model.clone(),
+            locality,
+        }) as Box<dyn LlmBackend + '_>
     };
     // The binding's lease is a carrier only: every send is admitted on the
     // run's own permits, and the carrier is released unspent.
@@ -409,7 +411,7 @@ fn with_evaluator<T>(
         owner_grants: &reach,
         owner_read: read,
         judge: Some(SavedQueryJudgeBinding {
-            backend: &backend,
+            backend_for: &backend_for,
             lease: &lease,
             envelope: &envelope,
             decisions: &decisions,
