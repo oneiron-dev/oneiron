@@ -21,9 +21,7 @@ use super::admission::{PACK_CANDIDATE, pack_permissions};
 use super::setup::{PackSetup, PackSetupConnection, PackSetupSecret};
 use super::{PackInstallReceipt, PackInstallStatus, PackPermissions, PackSource, invalid};
 use crate::consent::AuthenticatedOwner;
-use crate::secret_custody::{
-    SecretCustodyStatus, read_secret_custody_in_txn, resolve_secret_ref_in_txn,
-};
+use crate::secret_custody::{SecretCustodyStatus, resolve_secret_ref_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault, error::Result};
@@ -645,9 +643,11 @@ pub(crate) fn live_custody_in_txn(
     let Some(id) = resolve_secret_ref_in_txn(store, txn, name)? else {
         return Ok(None);
     };
-    Ok(read_secret_custody_in_txn(store, txn, &id)?
-        .filter(|record| record.status == SecretCustodyStatus::Active)
-        .map(|record| (id, record.rotation_generation)))
+    Ok(
+        crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, &id)?
+            .filter(|record| record.status == SecretCustodyStatus::Active)
+            .map(|record| (id, record.rotation_generation)),
+    )
 }
 
 fn declared_secret<'a>(

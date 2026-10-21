@@ -500,9 +500,10 @@ fn validate_grant_in_txn(
         .ok_or_else(|| invalid("script grant has no credential handle"))?;
     let custody = crate::secret_custody::resolve_secret_ref_in_txn(&vault.store, txn, &secret_ref)?
         .ok_or_else(|| invalid("script grant custody absent"))?;
-    let metadata = crate::secret_custody::read_secret_custody_in_txn(&vault.store, txn, &custody)?
-        .ok_or_else(|| invalid("script grant custody unavailable"))?
-        .metadata();
+    let metadata =
+        crate::secret_custody::read_secret_custody_meta_in_txn(&vault.store, txn, &custody)?
+            .ok_or_else(|| invalid("script grant custody unavailable"))?
+            .metadata();
     if metadata.status != crate::secret_custody::SecretCustodyStatus::Active
         || !metadata.bindings.iter().any(|binding| {
             binding.effector == format!("connector:{}", grant.requested) && binding.grants_read()

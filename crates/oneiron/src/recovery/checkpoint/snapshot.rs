@@ -184,6 +184,14 @@ impl Vault {
                 let value = if let Some(stripped) = stripped {
                     stripped
                 } else if entry.name == "entities"
+                    && let Some(carrier) =
+                        crate::secret_custody::image_credential_carrier(&self.store, key, value)
+                {
+                    // A credential row rides with its value opened under
+                    // this guard, as on main, until KS-6 part 2 strips it
+                    // (CALLS `KS-6 image form`).
+                    carrier
+                } else if entry.name == "entities"
                     && let Some(reference) =
                         crate::world_keys::image_pad_projection(&self.store, value)
                 {

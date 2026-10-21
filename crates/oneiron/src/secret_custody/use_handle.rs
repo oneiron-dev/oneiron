@@ -422,9 +422,15 @@ impl Vault {
             }
             Ok(())
         });
-        if cleared.is_err() {
+        if let Err(error) = cleared {
             result = None;
-            failure = Some("the result was withheld: it could not be cleared of the value".into());
+            // KS-6: a key that does not open says so, typed, with its way out.
+            failure = Some(match error {
+                Error::Secret(SecretError::CredentialLeafUnreadable { .. }) => {
+                    format!("the result was withheld: {error}")
+                }
+                _ => "the result was withheld: it could not be cleared of the value".into(),
+            });
             send = SecretUseSend::Withheld;
         }
         let receipt = used.record(self, SecretUseDecision::Used, send)?;

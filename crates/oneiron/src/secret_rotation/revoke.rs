@@ -10,8 +10,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{
-    SecretCustodyRecord, SecretCustodyStatus, drop_revoked_copies_in_txn,
-    put_secret_custody_in_txn, read_secret_custody_in_txn, resolve_secret_ref_in_txn,
+    SecretCustodyRecord, SecretCustodyStatus, StoredValue, drop_revoked_copies_in_txn,
+    put_stored_custody_in_txn, read_stored_custody_in_txn, resolve_secret_ref_in_txn,
 };
 use crate::secret_lease::{
     SecretLeaseStatus, teardown_local_registration_in_txn, write_secret_lease_in_txn,
@@ -65,14 +65,18 @@ fn erases(cause: RevokeCause) -> bool {
 /// value bytes a revoke erases (CALLS CUSTODY_REVOKE_ERASE, FIX 5272): a
 /// record revoked before the erase keeps them until the next revoke or
 /// settle of it. A record whose found key the owner ruled no secret keeps
-/// its bytes, as the ruling's revoke did.
+/// its bytes, as the ruling's revoke did. The value at rest is read as
+/// stored, sealed or carried, never opened (KS-6): `record` may come
+/// value-free.
 pub(crate) fn holds_erasable_value_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     record: &SecretCustodyRecord,
 ) -> Result<bool> {
-    if record.status != SecretCustodyStatus::Revoked || record.value_bytes.is_empty() {
+    if record.status != SecretCustodyStatus::Revoked
+        || !crate::secret_custody::stored_value_held_in_txn(store, txn, id)?
+    {
         return Ok(false);
     }
     Ok(!crate::secret_custody::ruled_no_secret_in_txn(
@@ -97,18 +101,24 @@ pub(crate) fn revoke_custody_in_txn(
     cause: RevokeCause,
     at: u64,
 ) -> Result<SecretCustodyRecord> {
-    let mut rec = read_secret_custody_in_txn(&vault.store, wtxn, id)?
+    // The value stays as stored, never opened (KS-6): a revoke needs no
+    // custody key, so it lands whatever custody holds.
+    let mut stored = read_stored_custody_in_txn(&vault.store, wtxn, id)?
         .ok_or(Error::CorruptedIndex("secret custody record for live name"))?;
-    let residual = erases(cause) && holds_erasable_value_in_txn(&vault.store, wtxn, id, &rec)?;
-    if rec.status != SecretCustodyStatus::Revoked || residual {
-        rec.status = SecretCustodyStatus::Revoked;
+    let residual =
+        erases(cause) && holds_erasable_value_in_txn(&vault.store, wtxn, id, &stored.record)?;
+    if stored.record.status != SecretCustodyStatus::Revoked || residual {
+        stored.record.status = SecretCustodyStatus::Revoked;
         if erases(cause) {
-            // Wiped, then emptied: the body keeps an empty value the codec
-            // takes.
-            rec.value_bytes.zeroize();
+            // Emptied: the body keeps an empty value under no key.
+            stored.value = StoredValue::Sealed {
+                generation: stored.record.rotation_generation,
+                bytes: Vec::new(),
+            };
         }
-        put_secret_custody_in_txn(vault, wtxn, id, &rec, at)?;
+        put_stored_custody_in_txn(vault, wtxn, id, &stored, at)?;
     }
+    let mut rec = stored.record;
     rec.value_bytes.zeroize();
     drop_revoked_copies_in_txn(vault, wtxn, id)?;
 

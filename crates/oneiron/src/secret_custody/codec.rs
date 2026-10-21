@@ -9,8 +9,8 @@ use crate::error::{Error, Result};
 
 use super::floor::{as_u64, required_value};
 use super::types::{
-    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SecretBinding, SecretCustodyFloor,
-    SecretCustodyRecord, SecretCustodyStatus, TierBand,
+    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_STORED_SCHEMA_VERSION,
+    SecretBinding, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 use crate::error::SecretError;
 
@@ -199,12 +199,47 @@ fn binding_from_value(value: &Value) -> Result<SecretBinding> {
     })
 }
 
-/// Encodes a custody record into its MessagePack key-map body.
+/// What a custody body holds in its value slot (KS-6): the plaintext value
+/// under `value_bytes` (the owner archive's, a protected input's and a
+/// transition's body DTO, and a checkpoint image's carrier form, stamped
+/// with the record's own schema version as before), or the value sealed
+/// under its credential custody key under `sealed_value` (the stored form,
+/// stamped [`SECRET_CUSTODY_STORED_SCHEMA_VERSION`], CALLS `KS-6 credential
+/// schema 2`).
+pub(super) enum BodyValue {
+    Plain(Vec<u8>),
+    Sealed(Vec<u8>),
+}
+
+/// The stored body's value key: the value sealed under its custody key.
+pub(super) const SECRET_CUSTODY_SEALED_VALUE_KEY: &str = "sealed_value";
+
+/// Encodes a custody record into its MessagePack key-map body, the value in
+/// the clear: the plaintext DTO, never the stored form.
 pub fn encode_secret_custody_body(rec: &SecretCustodyRecord) -> Result<Vec<u8>> {
+    encode_custody_map(rec, BodyValue::Plain(rec.value_bytes.clone()))
+}
+
+/// Encodes `rec`'s fields with `value` in its value slot, stamped as that
+/// form is: the DTO with the record's version, the stored form with the
+/// stored one.
+pub(super) fn encode_custody_map(rec: &SecretCustodyRecord, value: BodyValue) -> Result<Vec<u8>> {
+    let (schema_version, value_key, value) = match value {
+        BodyValue::Plain(bytes) => (
+            rec.schema_version,
+            SECRET_CUSTODY_BODY_KEYS[4],
+            Value::Binary(bytes),
+        ),
+        BodyValue::Sealed(bytes) => (
+            SECRET_CUSTODY_STORED_SCHEMA_VERSION,
+            SECRET_CUSTODY_SEALED_VALUE_KEY,
+            Value::Binary(bytes),
+        ),
+    };
     let map = Value::Map(vec![
         (
             Value::from(SECRET_CUSTODY_BODY_KEYS[0]),
-            Value::from(u64::from(rec.schema_version)),
+            Value::from(u64::from(schema_version)),
         ),
         (
             Value::from(SECRET_CUSTODY_BODY_KEYS[1]),
@@ -218,10 +253,7 @@ pub fn encode_secret_custody_body(rec: &SecretCustodyRecord) -> Result<Vec<u8>> 
             Value::from(SECRET_CUSTODY_BODY_KEYS[3]),
             Value::from(rec.device_only),
         ),
-        (
-            Value::from(SECRET_CUSTODY_BODY_KEYS[4]),
-            Value::Binary(rec.value_bytes.clone()),
-        ),
+        (Value::from(value_key), value),
         (
             Value::from(SECRET_CUSTODY_BODY_KEYS[5]),
             Value::from(rec.status.as_str()),
@@ -273,8 +305,22 @@ pub fn encode_secret_custody_body(rec: &SecretCustodyRecord) -> Result<Vec<u8>> 
 /// are required except `rotated_at` (nil-or-int): `bindings`, `manifest_ref`,
 /// and `declared_paths` may be EMPTY (an empty array or string is still a
 /// present, well-formed key) but must not be MISSING — a record is complete
-/// on write. A missing required key is a body-schema reject.
+/// on write. A missing required key is a body-schema reject. The plaintext
+/// DTO only: a stored body, whose value is sealed, is refused here and
+/// opens through the custody doors (KS-6).
 pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
+    let (mut record, value) = decode_custody_map(bytes)?;
+    let BodyValue::Plain(value) = value else {
+        return Err(invalid_body("value_bytes"));
+    };
+    record.value_bytes = value;
+    Ok(record)
+}
+
+/// Decodes a custody body's fields, its value slot apart: the record comes
+/// back with no value bytes and the schema version the body is stamped
+/// with. Exactly one of `value_bytes` and `sealed_value` is present.
+pub(super) fn decode_custody_map(bytes: &[u8]) -> Result<(SecretCustodyRecord, BodyValue)> {
     use std::io::Cursor;
 
     let mut cursor = Cursor::new(bytes);
@@ -302,9 +348,15 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
     let device_only = required_value(&entries, SECRET_CUSTODY_BODY_KEYS[3])
         .and_then(Value::as_bool)
         .ok_or(invalid_body("device_only"))?;
-    let value_bytes = match required_value(&entries, SECRET_CUSTODY_BODY_KEYS[4]) {
-        Some(Value::Binary(b)) => b.clone(),
-        Some(Value::String(s)) => s.as_str().unwrap_or_default().as_bytes().to_vec(),
+    let value = match (
+        required_value(&entries, SECRET_CUSTODY_BODY_KEYS[4]),
+        required_value(&entries, SECRET_CUSTODY_SEALED_VALUE_KEY),
+    ) {
+        (Some(Value::Binary(b)), None) => BodyValue::Plain(b.clone()),
+        (Some(Value::String(s)), None) => {
+            BodyValue::Plain(s.as_str().unwrap_or_default().as_bytes().to_vec())
+        }
+        (None, Some(Value::Binary(b))) => BodyValue::Sealed(b.clone()),
         _ => return Err(invalid_body("value_bytes")),
     };
     let status = required_value(&entries, SECRET_CUSTODY_BODY_KEYS[5])
@@ -360,12 +412,12 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
         None => return Err(invalid_body("policy_floor_snapshot")),
     };
 
-    Ok(SecretCustodyRecord {
+    let record = SecretCustodyRecord {
         schema_version,
         name,
         class,
         device_only,
-        value_bytes,
+        value_bytes: Vec::new(),
         status,
         registered_at,
         rotated_at,
@@ -374,7 +426,8 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
         manifest_ref,
         declared_paths,
         policy_floor_snapshot,
-    })
+    };
+    Ok((record, value))
 }
 
 /// The label a register's framed protected input opens with: the record's

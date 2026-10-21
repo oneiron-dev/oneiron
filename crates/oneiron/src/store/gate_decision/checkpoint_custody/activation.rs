@@ -162,6 +162,17 @@ impl Store {
         require_known_history(&mut kept, custody.plan_mut())?;
         let prune = ArchivePrune::of(&rows, kept, &retired)?;
         let erased_pads = crate::world_keys::plan_archived_pads(self, custody.plan_mut())?;
+        // Its credential values' keys (KS-6 part 1) fork with the rest; a
+        // fault planning them is warned and leaves the activation as before.
+        if let Err(error) =
+            crate::secret_custody::plan_archived_credentials(self, custody.plan_mut())
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "an archived vault's credential keys were not planned; its credential rows stay \
+                 sealed"
+            );
+        }
         // The environment's path is the canonical root it was opened at.
         let root = self.env.path().to_path_buf();
         refuse_custody_beside(&root)?;

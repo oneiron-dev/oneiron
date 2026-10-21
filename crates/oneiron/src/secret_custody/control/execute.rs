@@ -29,6 +29,7 @@ use super::super::doors::{
     put_secret_custody_in_txn, read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_secret_in_txn, resolve_secret_ref_in_txn,
 };
+use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
 use super::super::types::{SecretBinding, SecretCustodyRecord, SecretCustodyStatus};
 use super::input::{
@@ -461,7 +462,7 @@ impl Vault {
         if value.is_empty() {
             return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
         }
-        let Some(record) = read_secret_custody_in_txn(&self.store, txn, &id)? else {
+        let Some(record) = read_secret_custody_meta_in_txn(&self.store, txn, &id)? else {
             return Ok(None);
         };
         let record = Held(record);

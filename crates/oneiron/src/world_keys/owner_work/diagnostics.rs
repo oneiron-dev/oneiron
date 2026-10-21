@@ -393,7 +393,9 @@ pub struct OwnerWorkDiagnostics {
     /// The request's signed entry, in hex.
     pub request: String,
     pub kind: OwnerWorkKind,
-    pub executor: EntityId,
+    /// The install that is to do it; `None` for the owner's kit push (FIX
+    /// 6053), which no machine executes.
+    pub executor: Option<EntityId>,
     #[serde(flatten)]
     pub observation: ExecutorObservation,
 }
@@ -425,7 +427,9 @@ impl Vault {
             let me = crate::identity::read_machine_id_in_txn(self, &txn)?;
             (asked, me, fold.owner_work_result(&request).is_some())
         };
-        let observation = if me != Some(asked.executor) {
+        // A kit custody request (FIX 6053) names no machine as executor.
+        let executor = asked.executor_machine();
+        let observation = if executor.is_none() || me != executor {
             ExecutorObservation::Unavailable
         } else if answered {
             ExecutorObservation::Answered
@@ -454,7 +458,7 @@ impl Vault {
         Ok(Some(OwnerWorkDiagnostics {
             request: hex(&request),
             kind: asked.kind(),
-            executor: asked.executor,
+            executor,
             observation,
         }))
     }

@@ -89,6 +89,13 @@ impl CompartmentScope {
             | CustodyKind::WorldPad
             | CustodyKind::CheckpointPayload
             | CustodyKind::TrainingLink => Self::HostReadable,
+            // A credential's value and its carriers' keys (KS-6, CALLS
+            // `KS-6 entry eligibility`): only the owner's kit opens them; a
+            // head carries one only where [`CustodyRecipients::keeps_local`]
+            // lets it.
+            CustodyKind::CredentialValue
+            | CustodyKind::CustodyTransition
+            | CustodyKind::CustodyRequestInput => Self::OwnerOnly,
         }
     }
 
@@ -122,12 +129,28 @@ pub(crate) struct CustodyRecipients {
     /// settings keep their pads off where the head goes (KS-5 pad head
     /// eligibility). They stay in this machine's custody.
     pub(crate) pad_worlds_kept_local: BTreeSet<[u8; 16]>,
+    /// The credentials (16-byte custody record ids) whose value and carrier
+    /// keys may ride the head (KS-6): portable ones the owner may recover
+    /// with his kit. Every other credential's stay in this machine's
+    /// custody, as do all of them while no root is pinned.
+    pub(crate) credentials_eligible: BTreeSet<[u8; 16]>,
 }
 
 impl CustodyRecipients {
     /// Whether the head leaves the live entry `id` out: a world pad of a
-    /// world [`Self::pad_worlds_kept_local`] names.
+    /// world [`Self::pad_worlds_kept_local`] names, or a credential's value
+    /// or carrier key unless a root is pinned and the credential is one
+    /// [`Self::credentials_eligible`] names (KS-6).
     pub(crate) fn keeps_local(&self, id: &CustodyId) -> bool {
+        if crate::store::credential_kind(id.kind()) {
+            return self.root.is_none()
+                || !id
+                    .subject()
+                    .item()
+                    .get(..16)
+                    .and_then(|credential| <[u8; 16]>::try_from(credential).ok())
+                    .is_some_and(|credential| self.credentials_eligible.contains(&credential));
+        }
         id.kind() == CustodyKind::WorldPad
             && id
                 .subject()

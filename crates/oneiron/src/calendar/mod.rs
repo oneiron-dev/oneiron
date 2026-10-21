@@ -137,6 +137,14 @@ pub enum CalendarError {
         /// What failed, naming custody refs only.
         reason: String,
     },
+    /// The feed's credential is sealed under a custody key that does not
+    /// open (KS-6): custody's typed `credential_leaf_unreadable`, kept with
+    /// its handle and its way out (retry, or re-enter or reissue it).
+    #[error("ICS feed credential custody failure: {leaf}")]
+    IcsCredentialLeafUnreadable {
+        /// Custody's answer: the handle and the way out, never a byte.
+        leaf: String,
+    },
     /// The adapter's own state or the store underneath it failed.
     #[error("ICS ingest failure: {reason}")]
     IcsIngest {

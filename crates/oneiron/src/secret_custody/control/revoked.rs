@@ -2,11 +2,8 @@
 //! records it with no byte, and every replica that folds it holds the id as
 //! terminal and settles it here, as the parent module's docs say.
 
-use zeroize::Zeroize;
-
-use super::super::doors::{
-    read_secret_custody_admission_in_txn, read_secret_custody_in_txn, resolve_secret_ref_in_txn,
-};
+use super::super::doors::{read_secret_custody_admission_in_txn, resolve_secret_ref_in_txn};
+use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{
     Enactment, custody_portable, drop_sealed_carrier_in_txn, holds_sealed_carrier_in_txn,
     write_custody_transition_in_txn,
@@ -48,8 +45,7 @@ impl Vault {
     ) -> Result<SecretCustodyWork> {
         let missing = || Error::CorruptedIndex("secret custody record for live name");
         let id = resolve_secret_ref_in_txn(&self.store, txn, secret_ref)?.ok_or_else(missing)?;
-        let mut record = read_secret_custody_in_txn(&self.store, txn, &id)?.ok_or_else(missing)?;
-        record.value_bytes.zeroize();
+        let record = read_secret_custody_meta_in_txn(&self.store, txn, &id)?.ok_or_else(missing)?;
         if !custody_portable(&record) {
             return Ok(SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal));
         }
@@ -91,6 +87,7 @@ impl Vault {
             input: None,
             holder: None,
             recipients: Vec::new(),
+            authority: crate::authority::CustodyRequestAuthority::Install,
         };
         let receipt = self.record_owner_work_for_in_txn(txn, actor, surface, id, seen, work)?;
         let (Some(request), Some(executor)) = (receipt.request_entry(), receipt.executor) else {
@@ -162,12 +159,10 @@ fn revoke_due_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Res
     if held.status != SecretCustodyStatus::Revoked {
         return Ok(true);
     }
-    let Some(mut record) = read_secret_custody_in_txn(store, txn, id)? else {
+    let Some(record) = read_secret_custody_meta_in_txn(store, txn, id)? else {
         return Ok(false);
     };
-    let due = holds_erasable_value_in_txn(store, txn, id, &record);
-    record.value_bytes.zeroize();
-    due
+    holds_erasable_value_in_txn(store, txn, id, &record)
 }
 
 /// Revokes record `id`, an id an admitted revoke names, here in `txn` with

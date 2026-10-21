@@ -15,9 +15,8 @@
 
 use zeroize::Zeroize;
 
-use super::super::doors::{
-    read_secret_custody_in_txn, register_generation_in_txn, resolve_secret_ref_in_txn,
-};
+use super::super::doors::{register_generation_in_txn, resolve_secret_ref_in_txn};
+use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{custody_portable, transition_named_in_txn};
 use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
 use super::input::attach_manifest;
@@ -153,9 +152,8 @@ impl Vault {
     fn known_custody_in_txn(&self, txn: &heed::RoTxn<'_>, name: &str) -> Result<Option<Known>> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         if let Some(id) = resolve_secret_ref_in_txn(&self.store, txn, name)?
-            && let Some(mut record) = read_secret_custody_in_txn(&self.store, txn, &id)?
+            && let Some(record) = read_secret_custody_meta_in_txn(&self.store, txn, &id)?
         {
-            record.value_bytes.zeroize();
             if record.status != SecretCustodyStatus::Revoked && !fold.custody_revoked(&id) {
                 return Ok(Some(Known {
                     id,

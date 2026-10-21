@@ -16,9 +16,8 @@
 //! it can carry at once.
 
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroize;
 
-use super::super::doors::read_secret_custody_in_txn;
+use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::custody_portable;
 use super::super::types::SecretCustodyStatus;
 use super::{CustodyKeptHere, SecretCustodyWork};
@@ -237,17 +236,12 @@ impl Vault {
             return Ok(false);
         };
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let record = read_secret_custody_in_txn(&self.store, txn, &id)?
-            .map(|mut record| {
-                record.value_bytes.zeroize();
-                record
-            })
-            .filter(|record| {
-                custody_portable(record)
-                    && record.status == SecretCustodyStatus::Revoked
-                    && record.rotation_generation == pending.generation
-                    && !fold.custody_revoked(&id)
-            });
+        let record = read_secret_custody_meta_in_txn(&self.store, txn, &id)?.filter(|record| {
+            custody_portable(record)
+                && record.status == SecretCustodyStatus::Revoked
+                && record.rotation_generation == pending.generation
+                && !fold.custody_revoked(&id)
+        });
         let live = crate::policy_model::is_live_vault_owner_in_txn(self, txn, &pending.owner)?;
         let (Some(record), true) = (record, live) else {
             PENDING.delete(&self.store, txn, &id)?;

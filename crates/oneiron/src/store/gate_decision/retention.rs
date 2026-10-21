@@ -136,13 +136,15 @@ pub(super) fn checkpoint_retirements(
 ) -> Result<Vec<(RetirementIntent, bool)>> {
     let mut retirements = Vec::new();
     for intent in retirements_in_rows(rows)? {
-        // A body instance, a holder's known-value history (KS-3) and a world
-        // pad (KS-5) retire for an erase only, which no hold defers (KS-2A):
-        // the restore treats it as done.
+        // A body instance, a holder's known-value history (KS-3), a world
+        // pad (KS-5) and a credential's value or carrier key (KS-6) retire
+        // for an erase only, which no hold defers (KS-2A): the restore
+        // treats it as done.
         if matches!(
             intent.subject.kind(),
             CustodyKind::BodyInstance | CustodyKind::KnownValueEntry | CustodyKind::WorldPad
-        ) {
+        ) || crate::store::credential_kind(intent.subject.kind())
+        {
             retirements.push((intent, true));
             continue;
         }

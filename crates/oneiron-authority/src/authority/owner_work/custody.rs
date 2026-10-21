@@ -7,6 +7,12 @@
 //! permits to hold its bytes: ids, digests and a generation only. No name,
 //! value, manifest or effector text enters the main log. A revoke needs no
 //! byte: it names no input, holder or recipient.
+//!
+//! Its `authority` says whose say-so carries it (FIX 6053): an install's,
+//! whose key signs it as its carrier, or the owner's recovery kit, the one
+//! push an install with no machine profile makes (CALLS CUSTODY_KIT_PUSH):
+//! the anchor of the root the vault pins signs it, and no machine carries
+//! or executes it.
 
 use rmpv::Value;
 
@@ -15,13 +21,14 @@ use crate::error::Result;
 
 use super::*;
 
-const CUSTODY_WORK_KEYS: [&str; 6] = [
+const CUSTODY_WORK_KEYS: [&str; 7] = [
     OP_KEY_KIND,
     "change",
     "generation",
     "input",
     "holder",
     "recipients",
+    "authority",
 ];
 const PERMIT_KEYS: [&str; 3] = ["machine", "profile", "encryption_key"];
 
@@ -90,6 +97,35 @@ impl CustodyChange {
     }
 }
 
+/// Whose say-so a custody request stands on (FIX 6053, CALLS `KS-6 kit
+/// request authority`).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum CustodyRequestAuthority {
+    /// An install's: its carrier's install key signs it, its executor does
+    /// the change, under the one carrier rule.
+    Install,
+    /// The owner's recovery kit's: the anchor of `root`, the root the vault
+    /// pins, signs it from an install with no machine profile. A rewrap
+    /// alone, with no input and no holder; no machine carries or executes
+    /// it: its carrier and executor fields name the secret itself, and every
+    /// reader takes this authority before either.
+    PinnedKit { root: RecoveryRootId },
+}
+
+impl CustodyRequestAuthority {
+    /// The root a kit request names; `None` for an install's.
+    #[must_use]
+    pub fn kit_root(self) -> Option<RecoveryRootId> {
+        match self {
+            Self::Install => None,
+            Self::PinnedKit { root } => Some(root),
+        }
+    }
+}
+
 /// One install the owner permits to hold a custody change's bytes, bound to
 /// the exact profile entry and encryption key he saw.
 #[derive(
@@ -114,21 +150,34 @@ pub(super) fn validate_custody(
     input: Option<[u8; 32]>,
     holder: Option<EntityId>,
     recipients: &[CustodyRecipientPermit],
+    authority: CustodyRequestAuthority,
 ) -> Result<()> {
-    let shaped = match change {
-        CustodyChange::Revoke => {
-            input.is_none()
-                && holder.is_none()
-                && recipients.is_empty()
-                && request.executor == request.carrier
-        }
-        CustodyChange::Register | CustodyChange::Rotate | CustodyChange::Rewrap => {
-            (input.is_some() || change == CustodyChange::Rewrap)
-                && holder == Some(request.executor)
-                && (1..=CUSTODY_RECIPIENTS_MAX).contains(&recipients.len())
-                && recipients
-                    .windows(2)
-                    .all(|pair| pair[0].machine < pair[1].machine)
+    let permitted = (1..=CUSTODY_RECIPIENTS_MAX).contains(&recipients.len())
+        && recipients
+            .windows(2)
+            .all(|pair| pair[0].machine < pair[1].machine);
+    // A kit request: a rewrap with no input and no holder, to its permits;
+    // no machine carries or executes it (FIX 6053).
+    let shaped = if authority.kit_root().is_some() {
+        change == CustodyChange::Rewrap
+            && input.is_none()
+            && holder.is_none()
+            && permitted
+            && request.carrier == request.act.target
+            && request.executor == request.act.target
+    } else {
+        match change {
+            CustodyChange::Revoke => {
+                input.is_none()
+                    && holder.is_none()
+                    && recipients.is_empty()
+                    && request.executor == request.carrier
+            }
+            CustodyChange::Register | CustodyChange::Rotate | CustodyChange::Rewrap => {
+                (input.is_some() || change == CustodyChange::Rewrap)
+                    && holder == Some(request.executor)
+                    && permitted
+            }
         }
     };
     let zero = input.is_some_and(|input| input == [0; 32])
@@ -141,15 +190,18 @@ pub(super) fn validate_custody(
     Ok(())
 }
 
-/// Canonical field order: kind, change, generation, input, holder, then
-/// recipients, each field the change does not state nil (recipients empty);
-/// a permit map is machine, profile, then encryption key.
+/// Canonical field order: kind, change, generation, input, holder,
+/// recipients, then authority, each field the change does not state nil
+/// (recipients empty); a permit map is machine, profile, then encryption
+/// key; the authority is nil for an install's, the pinned root's id for the
+/// kit's.
 pub(super) fn custody_work_value(
     change: CustodyChange,
     generation: u32,
     input: Option<[u8; 32]>,
     holder: Option<EntityId>,
     recipients: &[CustodyRecipientPermit],
+    authority: CustodyRequestAuthority,
 ) -> Value {
     let recipients = match CUSTODY_SHARED_BODY {
         CustodyBodyShape::CloneNotCopy => recipients.iter().map(permit_value).collect(),
@@ -167,6 +219,12 @@ pub(super) fn custody_work_value(
             holder.map_or(Value::Nil, |holder| Value::from(holder.to_hex())),
         ),
         (Value::from("recipients"), Value::Array(recipients)),
+        (
+            Value::from("authority"),
+            authority
+                .kit_root()
+                .map_or(Value::Nil, |root| binary_value(root.0)),
+        ),
     ])
 }
 
@@ -214,6 +272,12 @@ pub(super) fn decode_custody_work(work: &[(Value, Value)]) -> Result<OwnerWorkBo
             value => Some(decode_canonical_id(value)?),
         },
         recipients,
+        authority: match required(work, "authority")? {
+            Value::Nil => CustodyRequestAuthority::Install,
+            value => CustodyRequestAuthority::PinnedKit {
+                root: RecoveryRootId(decode_hash(value)?),
+            },
+        },
     })
 }
 
