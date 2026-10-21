@@ -191,9 +191,13 @@ impl MergeQueue<'_> {
         config.stage = QueueCheckInitStage::Checked {
             baseline_id: baseline_id.clone(),
         };
+        // The baseline's seal is pending before the queue initializes; it
+        // seals once the initialized attachment reconciles (G2 PR3).
+        let baseline_seal = self.baseline_seal_link(&config)?;
         let update = WorkUpdate {
             receipts,
             config: Some(&config),
+            baseline_seal: Some(baseline_seal),
             ..WorkUpdate::default()
         };
         let work = self.vault.finish_queue_check(work, update)?;
