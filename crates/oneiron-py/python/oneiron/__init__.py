@@ -5493,7 +5493,7 @@ class Oneiron:
             """Zooms into a rectangle of a held image."""
             return json.loads(_translate(lambda: self._client.self_browser_zoom(json.dumps(spec))))
         def batch(self, spec):
-            """Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page."""
+            """Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a failed_receipt."""
             return json.loads(_translate(lambda: self._client.self_browser_batch(json.dumps(spec))))
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs":
@@ -5520,7 +5520,7 @@ class Oneiron:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
             return json.loads(_translate(lambda: self._client.self_browser_library_retired(json.dumps(spec))))
         def run(self, spec):
-            """Runs a replay library program live in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; 3 strict misses retire it drift."""
+            """Runs a replay library program in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; no_progress hands up; 3 strict misses retire it drift."""
             return json.loads(_translate(lambda: self._client.self_browser_library_run(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:

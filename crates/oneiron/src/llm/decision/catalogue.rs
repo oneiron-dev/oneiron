@@ -366,6 +366,40 @@ pub const PAYER_NEEDED: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Is one sieve span's mention new information worth retaining (OF-498a)? Asked by an owed
+/// sieve rung beside [`SIEVE_KIND`], [`SIEVE_ENTITY`] and [`SIEVE_CONFIDENCE`], in one pack.
+/// Keyed by the rung.
+pub const SIEVE_NOVELTY: QuestionFamily = QuestionFamily {
+    name: "dreamer.sieve.novelty",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Which kind one sieve span is: one of the sieve's span kinds (a date or a name). Keyed by
+/// the rung.
+pub const SIEVE_KIND: QuestionFamily = QuestionFamily {
+    name: "dreamer.sieve.kind",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Which supplied entity candidate, if any, one sieve span names. The options are none and
+/// the candidates, every candidate in some group under the option limit. Keyed by the rung
+/// and the option group.
+pub const SIEVE_ENTITY: QuestionFamily = QuestionFamily {
+    name: "dreamer.sieve.entity",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How sure one sieve reading is, as an integer percent from 0 to 100: the confidence its
+/// band and interest score read. Keyed by the rung.
+pub const SIEVE_CONFIDENCE: QuestionFamily = QuestionFamily {
+    name: "dreamer.sieve.confidence",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -405,4 +439,8 @@ pub const FAMILIES: &[QuestionFamily] = &[
     COACH_HEAL_ROUTE,
     CODE_FIX_JUDGMENT,
     PAYER_NEEDED,
+    SIEVE_NOVELTY,
+    SIEVE_KIND,
+    SIEVE_ENTITY,
+    SIEVE_CONFIDENCE,
 ];

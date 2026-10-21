@@ -13972,7 +13972,7 @@
     },
     {
       "name": "self.browser.batch",
-      "description": "Runs one batched browser program for a subgoal, type and expect taking a secret by handle, stopping at the first failing step with a stop_cause and a failed_receipt (missed checks, the page); elapsed_ms times it, duration_ms each effect.",
+      "description": "Runs one batched browser program for a subgoal, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a stop_cause and failed_receipt; elapsed_ms times it.",
       "input": "crate::task_verb::sdk::BrowserBatchInput",
       "output": "crate::task_verb::sdk::BrowserBatchOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.batch(input)?)",
@@ -13982,7 +13982,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>",
-        "description": "Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page.",
+        "description": "Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a failed_receipt.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -14057,7 +14057,7 @@
     },
     {
       "name": "self.browser.library.run",
-      "description": "Runs a replay library program live, strict (rules only; a step needing a model asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; a miss returns a failed_receipt; 3 strict misses retire it drift.",
+      "description": "Runs a replay library program live, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; a miss or no_progress returns a failed_receipt; 3 strict misses retire it drift.",
       "input": "crate::task_verb::sdk::BrowserLibraryRunInput",
       "output": "crate::task_verb::sdk::BrowserLibraryRunOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_run(input)?)",
@@ -14067,7 +14067,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>",
-        "description": "Runs a replay library program live in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; 3 strict misses retire it drift.",
+        "description": "Runs a replay library program in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; no_progress hands up; 3 strict misses retire it drift.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -14284,7 +14284,7 @@
     },
     {
       "name": "self.desktop.batch",
-      "description": "Runs one batched program of one or more desktop steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, and a long one comes in pages, read on with observe and the batch's next cursor.",
+      "description": "Runs one batched program of desktop steps for a subgoal, stopping at the first failing step or after 3 acting steps leave the window unchanged; its last observation edits the caller's base, a long one paged, read on with observe and next.",
       "input": "oneiron_browser::BatchInput",
       "output": "oneiron_browser::DesktopAnswer<oneiron_browser::BatchOutput>",
       "call": "oneiron_browser::DesktopAnswer::of(driver.batch(input)?)",

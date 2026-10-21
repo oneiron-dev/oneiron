@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1131 facade rows, 3915 generated types.
+// UniFFI census: 1131 facade rows, 3917 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1083.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -1413,6 +1413,8 @@ pub enum AgentHealthCounter {
     FewRuns,
     #[serde(rename = "environment_cause")]
     EnvironmentCause,
+    #[serde(rename = "other_session_active")]
+    OtherSessionActive,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthMove`.
@@ -1673,6 +1675,48 @@ pub struct HealthCauseSource {
     pub displaced_by: Option<String>,
 }
 
+/// `oneiron::dreamer_runner::maintenance::agent_health::silence::HealthOtherSession`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HealthOtherSession {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::dreamer_runner::maintenance::agent_health::silence::HealthSilenceActivity`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HealthSilenceActivity {
+    #[serde(
+        rename = "own_call_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub own_call_at: Option<u64>,
+    #[serde(
+        rename = "own_step_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub own_step_at: Option<u64>,
+    #[serde(
+        rename = "actor_only_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub actor_only_at: Option<u64>,
+    #[serde(
+        rename = "other_session",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub other_session: Option<HealthOtherSession>,
+}
+
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCard`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -1753,6 +1797,8 @@ pub struct AgentHealthCard {
     pub review_outcomes: Vec<HealthReviewReceipt>,
     #[serde(rename = "causes")]
     pub causes: Vec<HealthCauseSource>,
+    #[serde(rename = "silence", default, skip_serializing_if = "Option::is_none")]
+    pub silence: Option<HealthSilenceActivity>,
 }
 
 /// `oneiron::run_tree::types::RunTreeStatus`.
@@ -44672,6 +44718,8 @@ pub enum LlmCapability {
     AssistantPrefill,
     #[serde(rename = "audio_input")]
     AudioInput,
+    #[serde(rename = "reasoning_content_history")]
+    ReasoningContentHistory,
 }
 
 /// `oneiron_model::llm::error::UnsupportedCapability`.
@@ -56079,6 +56127,8 @@ pub struct WakeRecipePolicy {
     pub narrative_instruction: String,
     #[serde(rename = "arc_min_new_statements")]
     pub arc_min_new_statements: u32,
+    #[serde(rename = "arc_child_calls_per_wake")]
+    pub arc_child_calls_per_wake: u32,
     #[serde(rename = "audit_window_instruction")]
     pub audit_window_instruction: String,
 }

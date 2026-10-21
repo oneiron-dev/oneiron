@@ -11,6 +11,7 @@ use std::time::Instant;
 use super::bounds::ScanBounds;
 use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam};
 use super::evidence::{RefUpdate, receive_pack_provenance_refused};
+use super::exchange_idle::Progress;
 use super::held::SpillFloor;
 use super::hooks::DoorHooksDir;
 use super::paths::{
@@ -122,12 +123,18 @@ pub(super) struct DoorWindowRequest {
 /// Fail-closed on every axis. A window that times out, a request that cannot be
 /// parsed, and a scan that cannot run all publish a refusal, so the hook exits
 /// non-zero and the objects never leave quarantine.
+///
+/// From the request's arrival to the verdict's publication the exchange's idle
+/// clock is held still (FIX 8034): no byte moves while the door scans, marks
+/// and records, and that work is the server's, not an idle client's. The hold
+/// ends however this returns or unwinds.
 pub(super) fn serve_door_window(
     vault: &Arc<Vault>,
     repo: &RepoRef,
     hooks: &DoorHooksDir,
     finished: &AtomicBool,
     deadline: Instant,
+    clock: &Progress,
     context: DoorWindowContext<'_>,
 ) -> Result<DoorWindowReport> {
     let request_path = hooks.request_path();
@@ -152,6 +159,7 @@ pub(super) fn serve_door_window(
         }
         std::thread::sleep(DOOR_WINDOW_POLL);
     }
+    let _still = clock.hold_still();
 
     // Everything past the request file is fail-closed and ANSWERED: a request
     // that cannot be parsed and an extraction that cannot be read whole are
