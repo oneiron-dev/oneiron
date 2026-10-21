@@ -1,3 +1,7 @@
+//! Held-out campaign decisions and comparison verdicts.
+//! Entry function: `compare_campaign`.
+//! Owns these definitions, re-exported by `crate::autoreason_campaign`.
+
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;

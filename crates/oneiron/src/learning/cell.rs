@@ -2,6 +2,9 @@
 //! the predicate and the applicable executor, task type, axis, consent scope
 //! and setting key. The judge is never part of the key, so a judge swap never
 //! forks a cell.
+//!
+//! This `TypeRef` keeps a string node id and a u32 tree version;
+//! `task_verb::brief::TypeRef` uses an `EntityId` and a u64.
 
 use serde::{Deserialize, Serialize};
 
