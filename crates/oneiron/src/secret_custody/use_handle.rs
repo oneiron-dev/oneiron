@@ -18,20 +18,23 @@
 //!
 //! The operation's result and its failure text are cleared of the value
 //! (each copy becomes the record's `[secret scN]` text) before they go
-//! anywhere, so no hook, receipt, record or reply holds it. Every use the
-//! handle resolves for writes one Gate record: the handle, the record's
-//! generation, the effector, the operation, the decision and the send status.
+//! anywhere, so no hook, receipt, record or reply holds it: inside the send's
+//! own door, with the bytes it released (`output`, FIX 7647). Every use the
+//! handle resolves for writes one Gate record: the handle, the generation its
+//! send released, the effector, the operation, the decision and the send
+//! status.
 //!
 //! Beside the table, a server sends [`SECRET_USE_CONNECTOR_CALL`]: one
 //! connector call with the handle's secret as its credential, in place of
 //! the route's own, for the effector `connector:<connector>` the route
 //! names. Its body is the same use (`Vault::use_secret_with`); the call's
 //! row keeps the record, so a held call that a resume sends presents the
-//! same one, and its reply is cleared of the value as this one is
-//! (`Vault::clear_secret_record_from`).
+//! same one, and its host clears its reply of the value inside each send's
+//! door (`ConnectorCallHost::clears_at_door`).
 
 mod bind;
 mod lease;
+mod output;
 
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
@@ -43,7 +46,7 @@ use super::reveal::parse_secret_handle;
 use super::types::{SecretBinding, SecretCustodyStatus};
 use crate::connector_key::{
     GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, PackConnectionCheck,
-    PackConnectionVerifier, ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
+    ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -54,6 +57,11 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use crate::vault::Vault;
 
 pub use self::bind::{SECRET_BIND_REASON, SecretBindRequest, SecretBound};
+pub use self::output::{
+    KeptSentValue, SECRET_USE_CLEAR_VALUE_SOURCE, SecretClearValueSource, SecretReleasePolicy,
+    SentPresentation, SentValue,
+};
+use self::output::{clear_text, handle_text};
 
 /// The owner door that adds a binding to a secret, named by every refusal of
 /// a handle that has none for the operation's effector.
@@ -132,8 +140,8 @@ impl fmt::Debug for SecretUseOperation {
 
 /// An operation's consumer: it presents the secret named by `target` through
 /// the credential door, for `target.effector` only, and answers with what
-/// came back or why it failed. Its answer is cleared of the value after it
-/// returns.
+/// came back or why it failed, cleared of the value inside that door; it
+/// notes what it sent on `target` ([`SecretUseTarget::note_sent`]).
 type SecretUseConsumer =
     fn(&Vault, &SecretUseTarget<'_>, &Value) -> std::result::Result<Value, String>;
 
@@ -153,6 +161,9 @@ pub(crate) struct SecretUseTarget<'a> {
     /// The redemption's refusal at that send, when it refused: nothing was
     /// sent, and the use answers with it.
     refusal: Mutex<Option<Error>>,
+    /// What the operation's send presented, its answer already cleared of
+    /// it inside the door (FIX 7647).
+    sent: Mutex<Option<SentPresentation>>,
 }
 
 impl SecretUseTarget<'_> {
@@ -160,10 +171,18 @@ impl SecretUseTarget<'_> {
     fn refuse(&self, refusal: Error) {
         *self.refusal.lock().unwrap_or_else(PoisonError::into_inner) = Some(refusal);
     }
+
+    /// Notes what the operation's send presented, as its door released it,
+    /// its answer and failure already cleared of that value inside the door.
+    pub(crate) fn note_sent(&self, sent: Option<SentPresentation>) {
+        if sent.is_some() {
+            *self.sent.lock().unwrap_or_else(PoisonError::into_inner) = sent;
+        }
+    }
 }
 
 /// What an operation's consumer came to: its answer, why it failed, and
-/// how its send went. Both are cleared of the value after it returns.
+/// how its send went. Both are cleared of the value inside the send's door.
 pub(crate) struct SecretUseConsumed {
     pub(crate) result: Option<Value>,
     pub(crate) failure: Option<String>,
@@ -371,8 +390,9 @@ impl Vault {
     /// a refused admission writes its refused record and returns the
     /// refusal; an admitted one runs `consume` on the record `used` names
     /// (its live name is `name`; `grant`, for a table operation under a
-    /// grant, is redeemed at its send), clears what came back of the value,
-    /// and writes the used record. A grant the send's redemption refused
+    /// grant, is redeemed at its send), which clears what came back of the
+    /// value inside the send's door, and writes the used record at the
+    /// generation that send released. A grant the send's redemption refused
     /// writes the refused record and answers with that refusal (FIX 4491).
     fn use_admitted(
         &self,
@@ -395,6 +415,7 @@ impl Vault {
             handle: &used.handle,
             grant,
             refusal: Mutex::new(None),
+            sent: Mutex::new(None),
         };
         let SecretUseConsumed {
             mut result,
@@ -410,29 +431,28 @@ impl Vault {
             used.record(self, SecretUseDecision::Refused, SecretUseSend::NotSent)?;
             return Err(refusal);
         }
-        // The value is read once more, through the same door, only to find
-        // it in what came back. If it cannot be, nothing comes back.
-        let text = handle_text(&used.handle);
-        let cleared = self.inject_secret_record_at_door(&id, effector, &mut |value: &[u8]| {
-            if let Some(result) = result.as_mut() {
-                clear_value(result, value, &text);
-            }
-            if let Some(failure) = failure.as_mut() {
-                clear_text(failure, value, &text);
-            }
-            Ok(())
-        });
-        if let Err(error) = cleared {
-            result = None;
-            // KS-6: a key that does not open says so, typed, with its way out.
-            failure = Some(match error {
-                Error::Secret(SecretError::CredentialLeafUnreadable { .. }) => {
-                    format!("the result was withheld: {error}")
-                }
-                _ => "the result was withheld: it could not be cleared of the value".into(),
-            });
+        let sent = target
+            .sent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        // A send that said what it presented cleared what came back inside
+        // its door, with the bytes it sent (FIX 7647). Otherwise nothing was
+        // sent, or nothing said what was: the value is read once more,
+        // through the same door, only to find it there; if it cannot be,
+        // nothing comes back.
+        if sent.is_none()
+            && !self.clear_use_by_reread(&id, effector, &used.handle, &mut result, &mut failure)
+        {
             send = SecretUseSend::Withheld;
         }
+        // The receipt names the generation the send released.
+        let used = Used {
+            generation: sent
+                .filter(|sent| sent.custody == id)
+                .map_or(used.generation, |sent| sent.generation),
+            ..used.clone()
+        };
         let receipt = used.record(self, SecretUseDecision::Used, send)?;
         Ok(SecretUseOutcome {
             receipt,
@@ -440,43 +460,10 @@ impl Vault {
             failure,
         })
     }
-
-    /// Each copy of the value of the custody record `id` in `fields`, in a
-    /// string or a key at any depth, replaced by the record's handle text.
-    /// The value is read once more through its door for `effector`, only to
-    /// find it there.
-    ///
-    /// # Errors
-    /// The door's refusal, when the value cannot be read: then `fields` may
-    /// still hold it, and the caller withholds them.
-    pub(crate) fn clear_secret_record_from(
-        &self,
-        id: &EntityId,
-        effector: &str,
-        fields: &mut [&mut Value],
-    ) -> Result<()> {
-        let short = {
-            let txn = self.store.env.read_txn()?;
-            crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &txn, id)?
-                .map(|(short, _)| short)
-        };
-        let text = short.map_or_else(|| "[secret]".to_owned(), |short| handle_text(&short));
-        self.inject_secret_record_at_door(id, effector, &mut |value: &[u8]| {
-            for field in fields.iter_mut() {
-                clear_value(&mut **field, value, &text);
-            }
-            Ok(())
-        })
-        .map(drop)
-    }
-}
-
-/// A handle as a text stands it in for a value: `[secret sc12]`.
-fn handle_text(handle: &str) -> String {
-    format!("[secret {handle}]")
 }
 
 /// One use as its Gate record keeps it.
+#[derive(Clone)]
 struct Used<'a> {
     user: SecretUser,
     handle: String,
@@ -590,44 +577,6 @@ pub(crate) fn handle_record_in_txn(
     }
 }
 
-/// Each copy of `value` in `json`, in a string or a key at any depth,
-/// replaced by `text`.
-fn clear_value(json: &mut Value, value: &[u8], text: &str) {
-    match json {
-        Value::String(string) => clear_text(string, value, text),
-        Value::Array(items) => items
-            .iter_mut()
-            .for_each(|item| clear_value(item, value, text)),
-        Value::Object(fields) => {
-            let taken = std::mem::take(fields);
-            for (mut key, mut field) in taken {
-                clear_text(&mut key, value, text);
-                clear_value(&mut field, value, text);
-                fields.insert(key, field);
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
-    }
-}
-
-/// Each copy of `value` in `string`, as held and with its surrounding
-/// whitespace trimmed (consumers trim before they present it), replaced by
-/// `text`.
-fn clear_text(string: &mut String, value: &[u8], text: &str) {
-    let Ok(value) = std::str::from_utf8(value) else {
-        return;
-    };
-    let trimmed = value.trim();
-    for form in [value, trimmed] {
-        if !form.is_empty() && string.contains(form) {
-            *string = string.replace(form, text);
-        }
-        if trimmed == value {
-            break;
-        }
-    }
-}
-
 /// A provider check: `check` on the secret, with the auth kind its pack
 /// declares. It takes no arguments. The reply's digest is not passed on: it
 /// is a digest of a reply that went out with the secret.
@@ -659,16 +608,25 @@ fn provider_check(
         secrets: &secrets,
         allowed_scopes: &[],
     };
+    // What comes back is cleared inside the send's own door, with the value
+    // that went (FIX 4491, FIX 7647).
+    let text = handle_text(target.handle);
+    let scrub = |string: &mut String, value: &[u8]| clear_text(string, value, &text);
     let evidence = match target.grant {
-        None => checks.verify(vault, &check)?,
+        None => {
+            let (answer, sent) = checks.verify_cleared(vault, &check, &scrub);
+            target.note_sent(sent);
+            answer?
+        }
         // Under a grant, the grant is redeemed at the send itself, at the
-        // generation it pins, and what comes back is cleared with the value
-        // that went (FIX 4491).
+        // generation it pins.
         Some((grant, granted)) => {
-            let text = handle_text(target.handle);
-            let scrub = |string: &mut String, value: &[u8]| clear_text(string, value, &text);
             match checks.verify_granted(vault, &check, &grant, granted, &scrub) {
-                Ok(answer) => answer?,
+                Ok((answer, generation)) => {
+                    let sent = |generation| SentPresentation::cleared(target.custody, generation);
+                    target.note_sent(generation.map(sent));
+                    answer?
+                }
                 Err(refusal) => {
                     let failure = refusal.to_string();
                     target.refuse(refusal);

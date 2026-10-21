@@ -21,9 +21,16 @@ pub struct WakeRecipePolicy {
     pub nightly_spans: u32,
     pub nightly_children: u32,
     pub rung_retry_secs: u64,
-    /// Independent probability of sampling each retained rule span, in percent.
+    /// Independent probability of sampling each retained rule span, and
+    /// each unflagged window, in percent.
     pub audit_percent: u8,
     pub audit_spans: u32,
+    /// Unflagged windows a weave audits on top of its `audit_spans`, in
+    /// percent of them, rounded up (OF-498f); 0 draws none.
+    pub audit_window_share: u8,
+    /// Bytes of one unflagged window: a longer run of unflagged words is
+    /// split into windows of at most this many, never cut short.
+    pub audit_window_bytes: u32,
     /// Instructions are vault configuration, not Rust prompt constants.
     pub novelty_instruction: String,
     pub typing_instruction: String,
@@ -32,6 +39,8 @@ pub struct WakeRecipePolicy {
     /// before it is written again ahead of its backstop (FIX 7509 P8). Zero
     /// writes on any changed source set; an unchanged set never writes.
     pub arc_min_new_statements: u32,
+    /// What the expensive path is asked of an unflagged window.
+    pub audit_window_instruction: String,
 }
 
 impl WakeRecipePolicy {
@@ -44,6 +53,9 @@ impl WakeRecipePolicy {
             || self.novelty_instruction.trim().is_empty()
             || self.typing_instruction.trim().is_empty()
             || self.narrative_instruction.trim().is_empty()
+            || (self.audit_window_share > 0
+                && (self.audit_window_bytes == 0
+                    || self.audit_window_instruction.trim().is_empty()))
         {
             return Err(Error::InvalidConfig("invalid Dreamer recipe policy".into()));
         }
@@ -114,6 +126,11 @@ pub(crate) fn weave_in_txn(
     let store = DreamerRunnerStore::new(vault);
     for span in sieve::audit_sample_in_txn(vault, txn, attempt.status.attempt.id, &policy)? {
         sieve::enqueue_rungs_in_txn(&store, txn, &attempt.status, &span, true, now)?;
+    }
+    // Unflagged windows go on top of the flagged sample (OF-498f).
+    for window in sieve::audit_window_sample_in_txn(vault, txn, attempt.status.attempt.id, &policy)?
+    {
+        sieve::enqueue_window_audit_in_txn(&store, txn, &attempt.status, &window, &policy, now)?;
     }
     Ok(())
 }
