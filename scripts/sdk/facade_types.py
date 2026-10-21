@@ -47,7 +47,7 @@ CRATES = {
 # Read up front; any other crate is read the first time a path names it.
 EAGER = ('oneiron', 'oneiron_contracts', 'oneiron_authority', 'oneiron_model', 'oneiron_retrieval')
 # A bare row type is named from the SDK module, as its generated fn names it.
-ROOT_CONTEXT = ('oneiron', 'crates/oneiron/src/task_verb/sdk.rs')
+ROOT_CONTEXT = ('oneiron', 'crates/oneiron/src/verbs/mod.rs')
 
 INT = ('prim', 'int')
 # An integer leaf also names its Rust width, which a typed binding (UniFFI)
@@ -517,8 +517,21 @@ class Index:
         target_crate, path = place
         return self.resolve_in(target_crate, tuple(path[:-1]), path[-1], depth + 1)
 
+    def module_place(self, crate, module, depth=0):
+        'A module path as its file sits, through a parent\'s `use <module> as <name>;` (FIX 8907: `task_verb::sdk` is `crate::verbs`).'
+        if (crate, module) in self.modules or not module or depth > 12: return crate, module
+        crate, parent = self.module_place(crate, module[:-1], depth + 1)
+        file = self.modules.get((crate, parent))
+        if file is not None:
+            names, _ = self.uses(crate, file)
+            if module[-1] in names:
+                place = self.absolute(names[module[-1]], crate, parent)
+                if place is not None: return self.module_place(place[0], tuple(place[1]), depth + 1)
+        return crate, parent + (module[-1],)
+
     def resolve_in(self, crate, module, name, depth):
         if depth > 12: return None
+        crate, module = self.module_place(crate, module)
         file = self.modules.get((crate, module))
         if file is not None:
             local = [item for item in self.items.get(name, ()) if item.crate == crate and item.file == file]
@@ -596,7 +609,7 @@ class Inventory:
         self.preferred = {}   # item key -> the name a codec module gives its mirror
         crate, file = ROOT_CONTEXT
         file = file[len(CRATES[crate]) + 1:]
-        self.root_context = (crate, file, tuple(file[:-3].split('/')))
+        self.root_context = (crate, file, Path(file).parent.parts)
         for row in rows:
             for text in (row['input'], row['output']):
                 self.root_ir(text)

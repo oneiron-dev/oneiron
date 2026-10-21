@@ -1,7 +1,9 @@
 //! Attempt-bound pack reads stamp their actual revision in the same transaction.
 
 use super::{SkillLifecycle, SkillRecord, SkillRole};
-use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind, ReadSetProducer,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_claim_body};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -185,6 +187,14 @@ impl Vault {
                 attempt,
                 ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
             )?;
+            let read =
+                self.pack_source_rows_in_txn(txn, &entity, &record, source_files.is_some())?;
+            self.record_attempt_sources_best_effort_in_txn(
+                txn,
+                attempt,
+                ReadSetProducer::SKILL_PACK,
+                Some(read),
+            );
             Ok((
                 LoadedSkillPack {
                     entity,
@@ -268,8 +278,34 @@ impl Vault {
                 at,
             );
             self.record_manifest_once_in_txn(txn, leased, lease_owner, executor, entry)?;
+            let packaged = loaded.source_files.is_some();
+            let read = self.pack_source_rows_in_txn(txn, skill, &loaded.record, packaged)?;
+            self.record_attempt_sources_best_effort_in_txn(
+                txn,
+                leased.id,
+                ReadSetProducer::SKILL_PACK,
+                Some(read),
+            );
             Ok(loaded)
         })
+    }
+
+    /// The rows a pack load read `entity`'s instructions from (FIX 7017):
+    /// its SKILL row, which holds its local package, and the replicated
+    /// carrier ASSET a `packaged` load absent locally was recovered from.
+    /// Capture only: the load door reports them on its attempt's read set.
+    fn pack_source_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        record: &SkillRecord,
+        packaged: bool,
+    ) -> Result<Vec<EntityId>> {
+        let mut rows = vec![*entity];
+        if packaged {
+            rows.extend(self.runtime_package_carrier_in_txn(txn, entity, record)?);
+        }
+        Ok(rows)
     }
 
     /// Records `entry` on the manifest of `leased`, in the caller's writer
@@ -466,6 +502,13 @@ impl Vault {
                     at,
                 ),
             )?;
+            // Capture only (FIX 7017): the CLAIM this load read.
+            self.record_attempt_sources_best_effort_in_txn(
+                txn,
+                attempt,
+                ReadSetProducer::ACTOR_CLAIM,
+                Some(vec![*claim]),
+            );
             Ok(body)
         })
     }
