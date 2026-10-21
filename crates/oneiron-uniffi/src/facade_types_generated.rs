@@ -52030,6 +52030,12 @@ pub struct XlsxTable {
     pub columns: Vec<String>,
     #[serde(rename = "worksheet")]
     pub worksheet: bool,
+    #[serde(
+        rename = "calculated",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub calculated: Option<Vec<Option<String>>>,
 }
 
 /// `oneiron_docedit::xlsx_body::XlsxSheetVisibility`.
