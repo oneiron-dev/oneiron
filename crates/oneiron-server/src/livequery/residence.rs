@@ -10,15 +10,16 @@ mod checkpoint_roots;
 mod custody;
 mod home_handoff;
 mod machine_history;
+mod pages;
 
 use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
-    INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, SealedBundleEntry, SealedBundleObject,
-    SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn, authority_append_for,
-    authority_checkpoint_part_for, authority_range_for, authority_tail_for, authority_wanted,
-    home_search_candidates, index_selection_revision, promotion_snapshot_with,
+    IndexPage, RESIDENCE_PAGE_REPLY_BYTES, ResidenceAdmission, SealedBundleEntry,
+    SealedBundleObject, SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn,
+    authority_append_for, authority_checkpoint_part_for, authority_range_for, authority_tail_for,
+    authority_wanted, home_search_candidates, index_selection_revision, promotion_snapshot_with,
     replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
     sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
     selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
@@ -113,6 +114,9 @@ struct SearchRequest {
     /// selector and caller check below stands.
     #[serde(default)]
     scope: Option<oneiron::sync::residence::ResolvedRecallSelection>,
+    /// A later page of a search served in pages (FIX 8865).
+    #[serde(default)]
+    page: Option<oneiron::sync::residence::ResidenceSearchCursor>,
 }
 
 impl SearchRequest {
@@ -140,11 +144,12 @@ impl SearchRequest {
             grant: selector.grant_id,
             connection: peer,
         };
-        oneiron::sync::residence::with_forwarded_search(
+        oneiron::sync::residence::with_forwarded_search_page(
             &self.query,
             self.limit,
             &selector_wire,
             self.scope.as_ref(),
+            self.page.as_ref(),
             |request| {
                 server
                     .vault
@@ -434,10 +439,9 @@ fn index(
         .map(EntityId::from_hex)
         .transpose()
         .map_err(|_| AppError::invalid_params())?;
-    if input.limit == 0
-        || input.limit > INDEX_PAGE_MAX
-        || input.after.is_some() != input.revision.is_some()
-    {
+    // A positive limit past the page slice is served one slice and a cursor,
+    // never refused for its count (FIX 8881).
+    if input.limit == 0 || input.after.is_some() != input.revision.is_some() {
         return Err(AppError::invalid_params());
     }
     let page_limit = input.limit.min(budgets.index_page_limit);
@@ -559,9 +563,11 @@ fn index(
             retained.pages as u64,
         );
     }
-    let mut items = Vec::with_capacity(page_limit);
+    let mut items = Vec::with_capacity(page_limit.min(retained.items.len()));
+    // The page is cut short only to fit one reply.
+    let mut reply_bytes = 0usize;
     let mut cursor = after;
-    loop {
+    'pages: loop {
         let candidates = window_index_page(
             &retained.items,
             IndexPage {
@@ -577,13 +583,22 @@ fn index(
             }
             let id = EntityId::from_hex(&entry.entity_id)
                 .map_err(|_| AppError::internal_server_error("index entry malformed"))?;
-            cursor = Some(id);
             if admission
                 .allows_item(id)
                 .map_err(|_| AppError::internal_server_error("index admission unavailable"))?
             {
+                let bytes = serde_json::to_vec(&entry)
+                    .map_err(|_| AppError::internal_server_error("index entry malformed"))?
+                    .len();
+                if !items.is_empty()
+                    && reply_bytes.saturating_add(bytes) > RESIDENCE_PAGE_REPLY_BYTES
+                {
+                    break 'pages;
+                }
+                reply_bytes = reply_bytes.saturating_add(bytes);
                 items.push(entry);
             }
+            cursor = Some(id);
             if items.len() == page_limit {
                 break;
             }
@@ -801,9 +816,12 @@ fn search(
     if input.query.trim().is_empty()
         || input.query.len() > budgets.search_query_max_bytes
         || input.limit == 0
-        || input.limit > budgets.search_limit
     {
         return Err(AppError::invalid_params());
+    }
+    // More hits than one page carries are served in pages (FIX 8865).
+    if input.limit > budgets.search_limit || input.page.is_some() {
+        return pages::search_pages(server, auth, peer, input, budgets);
     }
     let selector = bound_selector(server, auth, &input.selector)?;
     // A forwarded caller reads under its own credential, and the device's
@@ -840,8 +858,8 @@ fn search(
     let current_windows: std::collections::HashSet<_> =
         read_window_list(&server.root_doc).into_iter().collect();
     let mut selected_by_window = std::collections::HashMap::new();
-    let mut hits = Vec::with_capacity(input.limit);
-    let mut rows = Vec::with_capacity(input.limit);
+    let mut hits = Vec::new();
+    let mut rows = Vec::new();
     for (id, score, window) in candidates {
         if !current_windows.contains(&window) {
             continue;
