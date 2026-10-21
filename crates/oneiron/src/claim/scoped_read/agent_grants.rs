@@ -250,7 +250,7 @@ fn reader_grants_in(
 
 /// `filter` as a request: met with a floor, it narrows that floor to what
 /// `filter` reads, never past it.
-fn as_request(filter: &ResolvedRetrievalFilter) -> RetrievalFilter {
+pub(super) fn as_request(filter: &ResolvedRetrievalFilter) -> RetrievalFilter {
     RetrievalFilter {
         entity_types: filter.entity_types.clone(),
         max_sensitivity_band: Some(filter.max_sensitivity_band),

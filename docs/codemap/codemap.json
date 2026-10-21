@@ -2949,7 +2949,7 @@
      "path": "src/authority/first_seen_clock.rs",
      "purpose": "First-seen sidecar keys and the per-vault logical observation clock",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -3718,13 +3718,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/principal_standing.rs",
      "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 16
      }
     },
     {
@@ -12151,7 +12151,7 @@
      "path": "src/claim/scoped_read/agent_grants.rs",
      "purpose": "FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -12271,6 +12271,16 @@
      "purpose": "Actor and class checks for private NOTE bodies in scoped reads",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/owner_authority.rs",
+     "purpose": "FIX 7461: a question's own locally built reader also reads what its own live owner authority admits (owner…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -17626,7 +17636,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 26,
       "struct": 2
      }
@@ -21500,6 +21510,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/call_labels.rs",
+     "purpose": "Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/confession.rs",
      "purpose": "The confession ask and its parse (OF-544, ARCH-0079): after a DONE line, one fenced block naming each…",
      "surface": {
@@ -21567,13 +21587,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 9
      }
     },
     {
@@ -21581,9 +21601,29 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction/cited.rs",
-     "purpose": "The extraction step's citation check (FIX 7274): a TURN byte range that verification would refuse the whole…",
+     "purpose": "The extraction step's citation check (FIX 7274): a citation that verification would refuse the whole…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/extraction/quote_binding.rs",
+     "purpose": "Exact-quote evidence (FIX 7506, ARCH-0026 row 1)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/extraction/wire.rs",
+     "purpose": "The extraction reply's wire (FIX 7506, ARCH-0026 row 1): its contract's shape, and how a reply's call-local…",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -21613,7 +21653,17 @@
      "path": "src/dreamer_consolidation/extracted_people.rs",
      "purpose": "Explicit PERSON outputs from the production extraction response",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/extracted_people/bindings.rs",
+     "purpose": "The engine's person mint (FIX 7506, ARCH-0026 row 1): a reply declares a person it names as `new:P<n>`…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -21690,7 +21740,17 @@
      "path": "src/dreamer_consolidation/neighbourhood.rs",
      "purpose": "The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/neighbourhood/render.rs",
+     "purpose": "The listing as a call shows it (FIX 7506): each entity and claim by its call-local label, never its id",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -21737,6 +21797,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/note_review/candidates.rs",
+     "purpose": "One NOTE review reply's candidates (OF-073), read through the review call's own labels (FIX 7506): a subject…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/note_text.rs",
      "purpose": "The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one…",
      "surface": {
@@ -21764,7 +21834,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/parallel.rs",
@@ -21935,7 +22005,7 @@
      "path": "src/dreamer_consolidation/resources/pins.rs",
      "purpose": "What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -22092,8 +22162,18 @@
      "purpose": "The Dreamer writes a declared scope summary's body (ARCH-0006a)",
      "surface": {
       "crate-vis": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/scope_summary_attempt/chunks.rs",
+     "purpose": "A sitting too big for one call on its model (FIX 7509 P7b, Rule 5)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -22103,7 +22183,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt/output.rs",
      "purpose": "A sitting's summary reply (FIX 7509): lines, each citing the TURNs it came from by the labels the engine…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
@@ -25678,6 +25758,7 @@
      "purpose": "Publisher share dial: explicit, install-profile, and compiled-default resolution",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -25706,6 +25787,7 @@
      "path": "src/edit_distance/publisher/mod.rs",
      "purpose": "ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "re-export": 7,
       "type": 1
@@ -28029,7 +28111,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -28299,7 +28381,7 @@
      "path": "src/federation/membership_gate.rs",
      "purpose": "Transaction-bound shared-vault membership write authorization",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 1
      }
@@ -28319,7 +28401,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 33,
       "mod": 2,
       "re-export": 19
      }
@@ -28608,7 +28690,7 @@
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 11,
       "re-export": 2,
@@ -28626,7 +28708,7 @@
      "path": "src/federation/shared_creation.rs",
      "purpose": "Creation-time membership defaults, materialized once as explicit grant/policy rows",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -29107,8 +29189,85 @@
       "crate-vis": 3,
       "enum": 3,
       "fn": 3,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReportDeliveryHold",
+      "ReportDeliveryKey",
+      "ReportDeliveryOutcome",
+      "ReportDeliveryPass",
+      "ReportDeliveryRecord",
+      "ReportFrozenSend",
+      "ReportFrozenSignature",
+      "ReportPublisherEndpoint",
+      "ReportSignatureTransport",
+      "ReportSignatureTransportRequest"
+     ],
+     "path": "src/feedback/report/delivery.rs",
+     "purpose": "Publisher delivery of content-free issue signatures (OF-420, FIX 739), keyed by `issue_ref`",
+     "surface": {
+      "const": 4,
+      "enum": 2,
+      "fn": 3,
+      "re-export": 2,
+      "struct": 7,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReportPublisherMetadata"
+     ],
+     "path": "src/feedback/report/delivery/metadata.rs",
+     "purpose": "The historical ED-08 metadata a report's subject names (OF-420, FIX 739)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReportDeliveryRun",
+      "ReportDeliveryRunRequest",
+      "ReportDeliveryStatus",
+      "ReportDeliveryStatusRequest",
+      "ReportPublisherBinding",
+      "ReportPublisherBindingRequest"
+     ],
+     "path": "src/feedback/report/delivery/owner.rs",
+     "purpose": "The owner's publisher delivery doors: run the delivery now, read one issue's delivery, and bind or unbind a…",
+     "surface": {
+      "fn": 3,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/report/delivery/participation.rs",
+     "purpose": "Participation for issue signatures (OF-420, FIX 739)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/report/delivery/wire.rs",
+     "purpose": "The wire side of an issue signature (OF-420, FIX 739): the canonical `oneiron.issue_signature.v1` body built…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -29123,7 +29282,7 @@
      "path": "src/feedback/report/routing.rs",
      "purpose": "Maker routing and disclosure",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 4,
       "struct": 2
@@ -35068,7 +35227,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 13
      }
     },
@@ -35081,6 +35240,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/reader_authority.rs",
+     "purpose": "FIX 7461: a question's reader keeps its own live authority (owner principle 2)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -35201,7 +35370,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/windows.rs",
@@ -42762,8 +42931,8 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 12,
-      "re-export": 2
+      "crate-vis": 13,
+      "re-export": 3
      }
     },
     {
@@ -42788,6 +42957,19 @@
      "purpose": "Pending gate-outcome name and gate-vs-manifest policy-risk resolution",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PublisherSignatureAuthorization"
+     ],
+     "path": "src/outbound/dispatch_pipeline/publisher_signature.rs",
+     "purpose": "The typed authorization a content-free publisher issue signature carries into admission (OF-420, FIX 739)",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
      }
     },
     {
@@ -42927,7 +43109,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "re-export": 10
      }
@@ -44751,7 +44933,7 @@
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -49797,6 +49979,7 @@
       "ScopeSummaryMetadata",
       "SummaryDerivation",
       "SummaryLineSources",
+      "SummaryLineSpan",
       "SummarySourceVersion"
      ],
      "path": "src/scope_summary/derivation.rs",
@@ -49804,7 +49987,7 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -68475,7 +68658,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 82,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68755,7 +68938,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 86,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68902,7 +69085,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 36,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69098,7 +69281,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 116,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69168,7 +69351,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69798,9 +69981,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 183,
+   "over_bar": 182,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4424,
+   "source_files": 4439,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73742,7 +73925,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 54,
+      "const": 55,
       "crate-vis": 1
      }
     },
@@ -76924,7 +77107,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 13,
+      "fn": 14,
       "struct": 2,
       "trait": 1,
       "type": 1
@@ -82634,6 +82817,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/feedback_report_delivery.rs",
+     "purpose": "The Coach's publisher delivery on the host (OF-420, FIX 739; ARCH-0056 §9: \"reports are background\")",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/feedback_triage.rs",
      "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"GitHub issues still work",
      "surface": {
@@ -84386,7 +84579,7 @@
      "path": "src/api/facade/browser_doors.rs",
      "purpose": "Typed browser calls on the caller's own attached run and existing guest door",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -90293,7 +90486,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FeedbackDeliveryConfig",
@@ -91615,7 +91808,7 @@
      "path": "src/managed/vm_host/anchor.rs",
      "purpose": "The host's half of a vault VM's custody anchor channels (FIX 6517, [`oneiron_vault_contract::vm_anchor`])",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1
      }
@@ -95323,7 +95516,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95528,7 +95721,7 @@
     "feedback_delivery": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Deployment-selected feedback transport"
     },
@@ -95780,7 +95973,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1046,
+   "source_files": 1047,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -99429,6 +99622,7 @@
       "SummaryKeepRequest",
       "SummaryKeepResult",
       "SummaryLineSources",
+      "SummaryLineSpan",
       "SummaryMutationResult",
       "SummaryPatchRequest",
       "SummaryPath",
@@ -99848,7 +100042,7 @@
      "purpose": "—",
      "surface": {
       "enum": 930,
-      "struct": 2936
+      "struct": 2937
      }
     },
     {

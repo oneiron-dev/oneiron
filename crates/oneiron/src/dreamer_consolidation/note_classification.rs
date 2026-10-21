@@ -5,10 +5,12 @@
 //! model names for its topic (FIX 907). A missing or malformed NOTE field
 //! reads as absent: it never refuses a reply the extraction contract takes.
 
+use super::call_labels::{CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
-use super::executor::extraction::{ExtractionReply, contract_reply, reply_json};
+use super::executor::extraction::{ExtractedPerson, ExtractionReply, contract_reply, reply_json};
+use super::extracted_people::MintNamespace;
+use super::neighbourhood::Neighbourhood;
 use super::roles::RoleCall;
-use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{LlmRequest, LlmResponse};
 use crate::{EntityId, Result};
 
@@ -23,11 +25,13 @@ pub(super) enum PadAsk {
     Missed,
 }
 
-/// A NOTE review's reply: the extraction contract's candidates and the
-/// NOTE's own fields.
+/// A NOTE review's reply: the extraction contract's candidates and
+/// persons, and the NOTE's own fields.
 pub(super) struct NoteClassificationReply {
     /// The candidates, each the review's to write or skip.
     pub(super) candidates: Vec<serde_json::Value>,
+    /// The people the reply declares, each `new:P<n>` its own (FIX 7506).
+    pub(super) persons: Vec<ExtractedPerson>,
     /// How much the note itself matters to keep, when the model gave a
     /// number from 0 to 1.
     pub(super) importance: Option<f64>,
@@ -38,28 +42,37 @@ pub(super) struct NoteClassificationReply {
 
 impl ConsolidationExecutor<'_> {
     /// The extraction request over one NOTE (OF-073): the same prompt and
-    /// reply contract, with the NOTE's markdown as the only source. Its
-    /// byte ranges count over that markdown, so the review can check each
-    /// one against the exact text it read. It also asks the note's
-    /// importance and its topic.
+    /// reply contract, with the NOTE's markdown as the only source, after
+    /// the entities `listed` it names. The call names each by a label
+    /// (FIX 7506): the note is `N1`, each listed entity `P<n>`. A citation
+    /// quotes the note's words, and the review binds each quote to the exact
+    /// text it read. It also asks the note's importance and its topic.
     /// `sealed_pad` is a sealed scratchpad's review and how it asks for
-    /// the pad's `keep` lines (ARCH-0032 #scratchpad-marks).
+    /// the pad's `keep` lines (ARCH-0032 #scratchpad-marks). Returns the
+    /// request and the label map its reply is read through, bound into the
+    /// request's identity with the person-mint `namespace`.
     pub(super) fn note_request(
         call: &RoleCall<'_>,
         note: EntityId,
+        listed: &Neighbourhood,
         markdown: &str,
         sealed_pad: Option<PadAsk>,
         scope: &crate::llm::Scope,
-    ) -> Result<LlmRequest> {
-        let id = bytes_to_hex_lower(note.as_bytes());
+        namespace: &MintNamespace,
+    ) -> Result<(LlmRequest, CallLabelMap)> {
+        let mut labels = CallLabelMap::default();
+        // The review holds no prior head: its listing shows entities only.
+        let listing = listed.render(&mut labels, |_| false);
+        let id = labels.assign(LabelKind::Note, note);
         let mut rule = format!(
             "The source is one note, not a conversation. Cite it as \
-             {{\"source_id\": \"{id}\", \"byte_range\": [start, end]}}, a range of \
-             UTF-8 bytes of the note's markdown, which starts on the line after its \
-             header. Also give the object a key \"importance\": a number from 0 to 1 \
-             for how much the note itself matters to keep, and a key \"topic_key\": \
-             a short name for the one topic the note is about, worded so that notes \
-             on the same topic get the same name."
+             {{\"source\": \"{id}\", \"quote\": \"<a short run of words copied \
+             exactly from the note>\"}}: quote enough words that they occur only once \
+             in the note. A person the note names, added under \"persons\", has \
+             \"evidence_turn_refs\": [\"{id}\"]. Also give the object a key \
+             \"importance\": a number from 0 to 1 for how much the note itself matters \
+             to keep, and a key \"topic_key\": a short name for the one topic the note \
+             is about, worded so that notes on the same topic get the same name."
         );
         match sealed_pad {
             Some(PadAsk::First { keep }) => {
@@ -83,7 +96,14 @@ impl ConsolidationExecutor<'_> {
             ),
             None => {}
         }
-        Self::request_over(call, Some(rule), format!("note {id}\n{markdown}"), scope)
+        let mut request = Self::request_over(
+            call,
+            Some(rule),
+            format!("{listing}note {id}\n{markdown}"),
+            scope,
+        )?;
+        labels.bind_request(&mut request, Some(&namespace.identity()));
+        Ok((request, labels))
     }
 }
 
@@ -101,9 +121,13 @@ pub(super) fn note_classification_reply(response: &LlmResponse) -> Result<NoteCl
         .map(str::trim)
         .filter(|topic| !topic.is_empty())
         .map(str::to_owned);
-    let ExtractionReply { candidates, .. } = contract_reply(reply)?;
+    let ExtractionReply {
+        candidates,
+        persons,
+    } = contract_reply(reply)?;
     Ok(NoteClassificationReply {
         candidates,
+        persons,
         importance,
         topic_key,
     })

@@ -27,6 +27,13 @@ pub const CODE_SYMBOL_ENTITY: &[u8] = b"oneiron:code-symbol-entity:v1";
 /// empty when absent and `0x01` followed by its bytes when present.
 pub const DREAMER_CLAIM: &[u8] = b"oneiron:dreamer-claim-id:v1";
 
+/// A PERSON the Dreamer's extraction declares (`dreamer_consolidation`, FIX
+/// 7506). Parts: the extraction namespace attempt, then world, facet,
+/// relationship and the anchor's project (each empty when absent, `0x01` and
+/// its bytes when present), the normalized name, the anchor source, and the
+/// name's byte range in it (empty, or `0x01`, start and end as u64 big-endian).
+pub const DREAMER_PERSON: &[u8] = b"oneiron:dreamer-person:v1";
+
 /// A project's home room (`workspace_roster::project`). Parts: project.
 pub const PROJECT_HOME_ROOM: &[u8] = b"project.home_room.v1/";
 

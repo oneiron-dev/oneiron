@@ -337,7 +337,8 @@ pub(crate) use pinned_root::{
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
 pub(crate) use principal_standing::{
-    NoStanding, PACT_STANDING_LAPSED, principal_standing_in_txn, principal_standing_or_lapse_in_txn,
+    NoStanding, PACT_STANDING_LAPSED, StandingHome, principal_standing_in,
+    principal_standing_in_txn, principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
