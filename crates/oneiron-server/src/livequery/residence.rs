@@ -941,6 +941,7 @@ fn bundle_request(hex: Option<&str>) -> Result<Option<[u8; 32]>, AppError> {
 fn bundle_entry(entry: &SealedBundleEntry) -> Value {
     json!({
         "generation": sealed_generation_hex(&entry.generation),
+        "commitOrder": entry.commit_order,
         "bundleLength": entry.bundle_len,
         "bundleDigest": sealed_digest_hex(&entry.bundle_digest),
         "padsLength": entry.pads_len,
