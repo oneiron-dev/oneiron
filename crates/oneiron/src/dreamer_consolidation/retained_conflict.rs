@@ -48,6 +48,10 @@ pub struct RetainedAlternative {
     /// The landings reverted settlements of its conflict made of it, each
     /// retracted (FIX 5752): a Keep after them lands it at a fresh id.
     pub(super) landings: Vec<EntityId>,
+    /// The Keeps of it staged in their import's review that the owner
+    /// declined there (FIX 7072): a Keep after them stages it at a fresh id,
+    /// and the Dreamer's own ruling never offers it again.
+    pub(super) declined: Vec<EntityId>,
     /// The whole retained entry, read in full only when it is kept.
     entry: Value,
 }
@@ -262,6 +266,7 @@ fn summary(entry: &Value) -> Result<RetainedAlternative> {
         source: evidence.source_meet,
         attempt: AttemptId::from_bytes(bytes_at(entry, "attempt")?)?,
         landings: Vec::new(),
+        declined: Vec::new(),
         entry: entry.clone(),
     })
 }

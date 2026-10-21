@@ -14,7 +14,8 @@
 //! closes the channel. The VM listens for nothing before the restore is
 //! verified and kept and says ready only after the `verified` frame, as a
 //! node's engine does. A restore's boot never loads a RAM snapshot, and no
-//! snapshot is taken while it runs.
+//! snapshot is taken while it runs. The custody anchor's credential follows
+//! C, as on a node (FIX 6517, [`super::anchor`]).
 //!
 //! When W was lost and no generation of the vault serves, the supervisor,
 //! having confirmed every earlier one dead, asks the disk instead
@@ -139,7 +140,7 @@ pub async fn inspect_vault_vm(run: VaultVmInspect) -> anyhow::Result<()> {
 }
 
 /// Refuses two of `fds` that name one descriptor.
-fn distinct(fds: &[(&str, RawFd)]) -> anyhow::Result<()> {
+pub(super) fn distinct(fds: &[(&str, RawFd)]) -> anyhow::Result<()> {
     for (index, (flag, fd)) in fds.iter().enumerate() {
         if let Some((other, _)) = fds[index + 1..].iter().find(|(_, other)| other == fd) {
             anyhow::bail!("{flag} and {other} name one descriptor");
@@ -149,7 +150,7 @@ fn distinct(fds: &[(&str, RawFd)]) -> anyhow::Result<()> {
 }
 
 /// Refuses `fd` unless it is a pipe's read end (`write` false) or write end.
-fn proven(flag: &str, fd: RawFd, write: bool) -> anyhow::Result<()> {
+pub(super) fn proven(flag: &str, fd: RawFd, write: bool) -> anyhow::Result<()> {
     pipe_end(fd, write).map_err(|reason| anyhow::anyhow!("{flag} {fd} refused: {reason}"))
 }
 
@@ -216,8 +217,8 @@ impl VaultVm {
         } else {
             VmRestoreSourceDevice::Vdc
         });
-        let channel = match self.restore_boot(source_device, fscrypt_key, timeout).await {
-            Ok(channel) => channel,
+        let (channel, anchor) = match self.restore_boot(source_device, fscrypt_key, timeout).await {
+            Ok(channels) => channels,
             Err(error) => {
                 self.kill().await;
                 return Err(error);
@@ -226,7 +227,7 @@ impl VaultVm {
         let (reader, writer) = channel.into_split();
         let drain = tokio::spawn(drain(reader, result));
         let restored = self
-            .restore_stream(input, writer, io.credentials, timeout)
+            .restore_stream(input, writer, io.credentials, anchor, timeout)
             .await;
         if restored.is_err() {
             let _ = self.stop(STOP_GRACE).await;
@@ -235,19 +236,22 @@ impl VaultVm {
         restored
     }
 
+    /// The restore's boot, up to its engine: the restore channel, and the
+    /// custody anchor's exchange, its header sent.
     async fn restore_boot(
         &mut self,
         source_device: Option<VmRestoreSourceDevice>,
         fscrypt_key: &VmFscryptKey,
         timeout: Duration,
-    ) -> anyhow::Result<UnixStream> {
+    ) -> anyhow::Result<(UnixStream, UnixStream)> {
         self.boot_vmm(source_device.is_some()).await?;
         self.source_attached = source_device.is_some();
         let channel = self
             .answer_hello(&VmRestoreBoot::Restore { source_device }, timeout)
             .await?;
         self.provision(fscrypt_key, timeout).await?;
-        Ok(channel)
+        let anchor = self.send_anchor_header(timeout).await?;
+        Ok((channel, anchor))
     }
 
     async fn restore_stream(
@@ -255,6 +259,7 @@ impl VaultVm {
         input: pipe::Receiver,
         writer: OwnedWriteHalf,
         credentials: OwnedFd,
+        anchor: UnixStream,
         timeout: Duration,
     ) -> anyhow::Result<Credentials> {
         feed(input, writer).await?;
@@ -262,6 +267,8 @@ impl VaultVm {
         let credentials =
             tokio::task::spawn_blocking(move || read_managed_credentials(fd)).await??;
         let mut stream = self.send_credentials(&credentials, timeout).await?;
+        // R, then C, then the anchor's credential, as on a node.
+        self.deliver_anchor(anchor, timeout).await?;
         // No deadline: the restore runs until it is kept or fails, and a
         // guest that ends closes the connection.
         anyhow::ensure!(
