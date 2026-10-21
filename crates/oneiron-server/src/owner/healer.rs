@@ -93,13 +93,14 @@ pub(crate) struct HealResidueRead {
     pub(crate) unknown: Vec<HealUnknownRead>,
 }
 
-/// One Coach proposal waiting in the owner's tray.
+/// One Coach proposal waiting in the owner's tray. `decision` and `proposed_at` are null
+/// when its tray row is corrupt and names neither (FIX 7378).
 #[derive(Debug, Serialize)]
 pub(crate) struct HealProposalRead {
     pub(crate) claim: String,
-    pub(crate) decision: String,
+    pub(crate) decision: Option<String>,
     pub(crate) predicate: Option<String>,
-    pub(crate) proposed_at: u64,
+    pub(crate) proposed_at: Option<u64>,
 }
 
 /// The attempt a source names, as its row stands now.
@@ -160,7 +161,7 @@ fn residue_read(row: HealResidue) -> HealResidueRead {
             .into_iter()
             .map(|proposal| HealProposalRead {
                 claim: proposal.claim.to_hex(),
-                decision: bytes_hex(&proposal.decision),
+                decision: proposal.decision.map(|decision| bytes_hex(&decision)),
                 predicate: proposal.predicate,
                 proposed_at: proposal.proposed_at,
             })

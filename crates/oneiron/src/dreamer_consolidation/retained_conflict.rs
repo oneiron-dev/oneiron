@@ -20,6 +20,7 @@ use super::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
 use super::provenance::{
     KeptDecision, PromotionCandidate, decode_consolidation_evidence, decode_verified_citations,
 };
+use super::settle::keep_approval::KeepAs;
 use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimSource, ClaimSubject};
@@ -378,13 +379,14 @@ impl RetainedAlternative {
 /// as the Dreamer's claim from its round: a refusal is the settlement's, and
 /// its marker stays open. Words from an import are staged in that import's
 /// review instead, never landed (FIX 5754), linked by `link` to the conflict
-/// it was kept for (FIX 6152).
+/// it was kept for (FIX 6152). `keep_as` says how it lands (FIX 5753).
 pub(super) fn land_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     alternative: &RetainedAlternative,
     landing: EntityId,
     link: KeptConflictLink,
+    keep_as: KeepAs<'_>,
     now: u64,
 ) -> Result<KeptLanding> {
     let (proposal, evidence) = alternative.proposal_in_txn(vault, txn, landing, now)?;
@@ -398,6 +400,6 @@ pub(super) fn land_in_txn(
         now_ms: now,
     };
     crate::dreamer_promotion::land_kept_alternative_in_txn(
-        vault, txn, &run, proposal, &evidence, link,
+        vault, txn, &run, proposal, &evidence, link, keep_as,
     )
 }

@@ -32,6 +32,9 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 use serde_json::json;
 
+pub(crate) mod keep_approval;
+
+use self::keep_approval::KeepAs;
 use super::retained_conflict::RetainedAlternative;
 use super::retained_keep::{ConflictSettleOutcome, KeptAlternative, SettlementApplied, StagedKeep};
 use super::support::invalid_consolidation;
@@ -150,6 +153,10 @@ pub struct ConflictSettleReceipt {
     pub resolved: EntityId,
     pub superseded: Vec<EntityId>,
     pub receipt_ref: String,
+    /// The Gate receipt of the responder's approval of the retained
+    /// alternative its Keep landed, when the Gate held that landing for
+    /// review (FIX 5753); `None` on every other settlement.
+    pub approval_ref: Option<String>,
 }
 
 /// What reverting one settlement did (OF-023, owner ruling 10-18): the marker
@@ -432,6 +439,7 @@ pub(crate) fn open_conflict_in_txn(
 /// that would is refused, and the conflict stays for the owner. `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
+/// `keep_as` says how a kept retained alternative lands (FIX 5753).
 pub(crate) fn apply_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -440,6 +448,7 @@ pub(crate) fn apply_settlement_in_txn(
     envelope: &WriteEnvelope,
     close_as: Option<WriteActor>,
     person: bool,
+    keep_as: KeepAs<'_>,
     now: u64,
 ) -> Result<SettlementApplied> {
     let on_subject =
@@ -456,8 +465,14 @@ pub(crate) fn apply_settlement_in_txn(
             .iter()
             .find(|alternative| alternative.id == selected)
         {
-            match super::retained_keep::keep_in_txn(vault, txn, conflict.marker, alternative, now)?
-            {
+            match super::retained_keep::keep_in_txn(
+                vault,
+                txn,
+                conflict.marker,
+                alternative,
+                keep_as,
+                now,
+            )? {
                 KeptAlternative::Landed(landed) => {
                     winner = landed;
                     materialized = Some((selected, landed));

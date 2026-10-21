@@ -10,7 +10,10 @@
 //! turns the alternative's computed source into a stated one. Evidence that
 //! meets at `Imported` lands only through its import's review, never here:
 //! it is staged there instead, as a promotion of the same words is
-//! (`imported_keep.rs`, FIX 5754).
+//! (`imported_keep.rs`, FIX 5754). When the Gate holds the Auto landing on a
+//! typed reason the responder's Keep approves, the responder's door retries
+//! once: the same alternative is born Proposed here and approved by the
+//! responder in the same transaction (`settle/keep_approval.rs`, FIX 5753).
 
 use rmpv::Value;
 
@@ -21,6 +24,7 @@ use super::{
 };
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, claim_evidence_taint};
+use crate::dreamer_consolidation::KeepAs;
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -41,7 +45,8 @@ pub(crate) enum KeptLanding {
 /// already a record, its evidence is no longer admissible, or the Gate does
 /// not grant Auto. Evidence that meets at `Imported` is staged in its
 /// import's review instead, linked by `link` to the conflict it was kept for
-/// (FIX 6152).
+/// (FIX 6152). `keep_as` lands it Auto, noting a hold the responder may
+/// approve, or Proposed and approved by the responder (FIX 5753).
 pub(crate) fn land_kept_alternative_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -49,6 +54,7 @@ pub(crate) fn land_kept_alternative_in_txn(
     candidate: PromotionCandidate,
     verified: &VerifiedEvidenceSet,
     link: KeptConflictLink,
+    keep_as: KeepAs<'_>,
 ) -> Result<KeptLanding> {
     if run.run_id.trim().is_empty() {
         return Err(Error::InvalidClaimBody("promotion run id is blank"));
@@ -106,7 +112,7 @@ pub(crate) fn land_kept_alternative_in_txn(
             None,
             &candidate.decisions,
         )?)?,
-        ClaimApprovalStatus::Auto,
+        keep_as.requested(),
         lineage,
     );
     // Rule A: concluded from the evidence that survived admission and the
@@ -161,21 +167,24 @@ pub(crate) fn land_kept_alternative_in_txn(
             &hints,
         )
         .made_by(&candidate.claim_id, birth)
-        .apply_recording_gate_decisions(txn)?;
+        .apply_recording_gate_decisions(txn)
+        .inspect_err(|error| keep_as.note_refusal(error))?;
     crate::entity_doc::retain_promotion_evidence_in_txn(
         vault,
         txn,
         &candidate.claim_id,
         &public_refs,
     )?;
-    // Re-read inside the write: the alternative stands Auto, as written.
+    keep_as.approve_in_txn(vault, txn, candidate.claim_id, run.now_ms)?;
+    // Re-read inside the write: the alternative stands Auto, as written, or
+    // Approved by the responder.
     let landed =
         vault
             .get_claim_in_txn(txn, &candidate.claim_id)?
             .ok_or(Error::InvalidClaimBody(
                 "the kept alternative is missing inside its own write transaction",
             ))?;
-    if landed.approval != ClaimApprovalStatus::Auto
+    if landed.approval != keep_as.landed()
         || landed.predicate != probe.predicate
         || landed.source != Some(source)
         || claim_evidence_taint(&landed) != Some(source)
@@ -184,14 +193,17 @@ pub(crate) fn land_kept_alternative_in_txn(
             "the kept alternative was not granted Auto as written",
         ));
     }
-    crate::own_rate::count_in_txn(
-        &vault.store,
-        txn,
-        crate::own_rate::OwnRateKind::AutoWrite,
-        run.agent_actor.entity_ref(),
-        vault.store.clock.now_recorded_at(),
-        crate::own_rate::auto_write_rate(),
-    )?;
+    // A landing the responder approved is no Auto write of the Dreamer's.
+    if landed.approval == ClaimApprovalStatus::Auto {
+        crate::own_rate::count_in_txn(
+            &vault.store,
+            txn,
+            crate::own_rate::OwnRateKind::AutoWrite,
+            run.agent_actor.entity_ref(),
+            vault.store.clock.now_recorded_at(),
+            crate::own_rate::auto_write_rate(),
+        )?;
+    }
     verified.record_message_dependencies_in_txn(vault, txn, &candidate.claim_id)?;
     crate::dreamer_consolidation::strength::record_verified_in_txn(
         vault,

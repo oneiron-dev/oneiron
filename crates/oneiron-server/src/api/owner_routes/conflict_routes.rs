@@ -173,6 +173,11 @@ struct ConflictSettled {
     #[serde(skip_serializing_if = "Option::is_none")]
     pending_review: Option<PendingReviewView>,
     receipt_ref: String,
+    /// The responder's approval of the retained alternative the Keep
+    /// landed, when the Gate held that landing for review (FIX 5753);
+    /// absent on every other settlement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approval_ref: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -304,6 +309,7 @@ async fn settle(
                 superseded: receipt.superseded.iter().map(|id| id.to_hex()).collect(),
                 pending_review: None,
                 receipt_ref: receipt.receipt_ref,
+                approval_ref: receipt.approval_ref,
             },
             ConflictSettleOutcome::ImportReviewPending {
                 staged,
@@ -319,6 +325,7 @@ async fn settle(
                     review: staged.review,
                 }),
                 receipt_ref,
+                approval_ref: None,
             },
         })
     })
