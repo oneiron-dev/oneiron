@@ -1,5 +1,13 @@
 //! Node-local time-held symbol declarations and atomic queue ordering.
 
+mod run;
+
+pub use run::{SymbolLeaseFence, SymbolLeaseRun};
+pub(crate) use run::{
+    declaration_holds_in_txn, declare_symbols_for_run_in_txn, release_symbols_for_run_in_txn,
+    renew_symbols_for_run_in_txn, run_declaration_in_txn, symbol_blockers_in_txn,
+};
+
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
@@ -19,6 +27,13 @@ pub struct SymbolLease {
     pub expires_at: u64,
     pub held: bool,
     ttl_seconds: u64,
+    /// Minted fresh at each new declaration and each reacquisition, the same
+    /// holder's included, so a released, replaced or expired declaration
+    /// never answers to an old handle (FIX 6867). A renewal keeps it.
+    pub declaration_id: EntityId,
+    /// The leased run that declared it; `None` for a scheduler or owner
+    /// declaration.
+    pub run: Option<SymbolLeaseRun>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,9 +53,26 @@ impl SymbolLease {
                 .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?;
             self.expires_at = expires_at;
             self.held = true;
+            self.declaration_id = EntityId::now();
         }
         Ok(())
     }
+}
+
+/// A declaration's symbols and lifetime, as every declaring door checks them.
+fn validate_declaration(symbols: &BTreeSet<String>, ttl_seconds: u64) -> Result<()> {
+    if ttl_seconds == 0
+        || symbols.is_empty()
+        || symbols.len() > 4096
+        || symbols
+            .iter()
+            .any(|s| s.trim().is_empty() || s.len() > 1024)
+    {
+        return Err(Error::InvalidConfig(
+            "invalid symbol declaration".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn load(store: &Store, txn: &heed::RoTxn<'_>, task: EntityId) -> Result<Option<SymbolLease>> {
@@ -86,17 +118,7 @@ impl Vault {
         ttl_seconds: u64,
         now: u64,
     ) -> Result<SymbolLeaseOutcome> {
-        if ttl_seconds == 0
-            || symbols.is_empty()
-            || symbols.len() > 4096
-            || symbols
-                .iter()
-                .any(|s| s.trim().is_empty() || s.len() > 1024)
-        {
-            return Err(Error::InvalidConfig(
-                "invalid symbol declaration".to_owned(),
-            ));
-        }
+        validate_declaration(&symbols, ttl_seconds)?;
         self.with_write_txn_grouped(|txn| {
             if self.get_entity_type_in_txn(txn, &task)? != Some(crate::registry::ENTITY_TYPE_TASK)
                 || self.get_entity_type_in_txn(txn, &holder)?.is_none()
@@ -121,6 +143,8 @@ impl Vault {
                     .ok_or(Error::ArithmeticOverflow("symbol lease expiry"))?,
                 held: blockers.is_empty(),
                 ttl_seconds,
+                declaration_id: EntityId::now(),
+                run: None,
             };
             save(&self.store, txn, task, &lease)?;
             Ok(if blockers.is_empty() {

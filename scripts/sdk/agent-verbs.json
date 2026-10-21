@@ -9326,10 +9326,25 @@
     },
     {
       "name": "vault.code.origin.mirror.set",
-      "description": "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write.",
+      "description": "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write.",
       "input": "crate::memory::origin_doors::OriginMirrorSetRequest",
       "output": "crate::origin::mirror::OriginMirrorTarget",
       "call": "memory.origin_mirror_set_as(&memory.embedded_owner(\"vault.code.origin.mirror.set\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.strategy",
+      "description": "Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision.",
+      "input": "crate::memory::origin_doors::OriginMirrorStrategyRequest",
+      "output": "crate::origin::mirror::OriginMirrorTarget",
+      "call": "memory.origin_mirror_strategy_as(&memory.embedded_owner(\"vault.code.origin.mirror.strategy\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -9356,10 +9371,100 @@
     },
     {
       "name": "vault.code.origin.mirror.push",
-      "description": "Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them.",
+      "description": "Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs.",
       "input": "crate::memory::origin_doors::OriginRepoRequest",
       "output": "crate::origin::mirror::OriginMirrorRun",
       "call": "memory.origin_mirror_push_as(&memory.embedded_owner(\"vault.code.origin.mirror.push\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.publish.request",
+      "description": "Ask to publish one exact commit to one branch of a served origin's mirror, once: the request leases the push on the branch tip an authenticated read saw and records a full-ancestry review of what it would expose.",
+      "input": "crate::origin::publish::OriginPublishRequestInput",
+      "output": "crate::origin::publish::OriginPublishRequestView",
+      "call": "memory.origin_publish_request_as(&memory.origin_publish_proof(\"vault.code.origin.publish.request\"), input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.publish.review",
+      "description": "Read one page of an exact publish request's full-ancestry review: each commit the push would expose, with its parents, and every path, mode and object those commits introduce.",
+      "input": "crate::origin::publish::OriginPublishReviewRequest",
+      "output": "crate::origin::publish::OriginPublishReviewView",
+      "call": "memory.origin_publish_review_as(&memory.origin_publish_proof(\"vault.code.origin.publish.review\"), input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.publish.get",
+      "description": "Read one exact publish request: its tuple, review digest, state, acts and the typed refusal that ended it, if one did.",
+      "input": "crate::origin::publish::OriginPublishIdRequest",
+      "output": "crate::origin::publish::OriginPublishRequestView",
+      "call": "memory.origin_publish_get_as(&memory.origin_publish_proof(\"vault.code.origin.publish.get\"), input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.publish.approve",
+      "description": "Approve one pending exact publish request by naming its review digest, as the owner or under one Grant covering the branch and every reviewed path; no second approval is asked.",
+      "input": "crate::origin::publish::OriginPublishApproveRequest",
+      "output": "crate::origin::publish::OriginPublishRequestView",
+      "call": "memory.origin_publish_approve_as(&memory.origin_publish_proof(\"vault.code.origin.publish.approve\"), input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.publish.execute",
+      "description": "Push one approved exact publish request's commit to its branch once, leased on the recorded tip; an unproven outcome settles from the mirror and is never sent again.",
+      "input": "crate::origin::publish::OriginPublishIdRequest",
+      "output": "crate::origin::publish::OriginPublishRequestView",
+      "call": "memory.origin_publish_execute_as(&memory.origin_publish_proof(\"vault.code.origin.publish.execute\"), input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.publish.cancel",
+      "description": "Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is.",
+      "input": "crate::origin::publish::OriginPublishIdRequest",
+      "output": "crate::origin::publish::OriginPublishRequestView",
+      "call": "memory.origin_publish_cancel_as(&memory.origin_publish_proof(\"vault.code.origin.publish.cancel\"), input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -17744,6 +17849,46 @@
       "scope": "Write",
       "context": "run",
       "effect": "RepoWorkOpen"
+    },
+    {
+      "name": "self.code.symbols.declare",
+      "input": "crate::memory::repo_doors::RepoSymbolsDeclareInput",
+      "output": "crate::memory::repo_doors::RepoSymbolsDeclareOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoSymbolsDeclare"
+    },
+    {
+      "name": "self.code.symbols.renew",
+      "input": "crate::memory::repo_doors::RepoSymbolsRenewInput",
+      "output": "crate::memory::repo_doors::RepoSymbolsRenewOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoSymbolsRenew"
+    },
+    {
+      "name": "self.code.symbols.release",
+      "input": "crate::memory::repo_doors::RepoSymbolsReleaseInput",
+      "output": "crate::memory::repo_doors::RepoSymbolsReleaseOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoSymbolsRelease"
+    },
+    {
+      "name": "self.code.proposal_submit",
+      "input": "crate::memory::repo_doors::RepoProposalSubmitInput",
+      "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoProposalSubmit"
+    },
+    {
+      "name": "self.code.merge_queue.enqueue",
+      "input": "crate::memory::repo_doors::RepoMergeQueueEnqueueInput",
+      "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoMergeQueueEnqueue"
     },
     {
       "name": "self.leader.advice",

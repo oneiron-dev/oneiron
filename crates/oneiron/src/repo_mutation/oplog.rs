@@ -75,6 +75,9 @@ pub(super) struct StoredRepoMutationOplogEntry {
     pub(super) operation_subject: Option<String>,
     /// None when no actor was recorded, or once that actor was erased.
     pub(super) actor_id: Option<[u8; 16]>,
+    /// The host-stamped class byte beside the actor (FIX 6867); None for a
+    /// trusted or owner request. It names no actor of its own.
+    pub(super) actor_class: Option<u8>,
     pub(super) session_id: Option<[u8; 16]>,
     pub(super) started_at_ms: u64,
     pub(super) finished_at_ms: Option<u64>,
@@ -284,6 +287,7 @@ impl Vault {
             let request = RepoMutationRequest {
                 repo_ref: repo_ref.clone(),
                 actor_id: stale.actor_id,
+                actor_class: stale.actor_class,
                 session_id: stale.session_id,
                 provenance_claim_id: None,
                 op_provenance: crate::code_document::CodeOpProvenance::default(),
@@ -413,6 +417,14 @@ pub(super) fn public_oplog_entry(
                     "invalid repo mutation actor id",
                 ))
             })?,
+        actor_class: stored
+            .actor_class
+            .map(|class| {
+                crate::edge::EdgeActorClass::try_from_u8(class).ok_or(Error::Code(
+                    CodeError::InvalidRepoMutationRecord("invalid repo mutation actor class"),
+                ))
+            })
+            .transpose()?,
         session_id: stored
             .session_id
             .map(EntityId::from_bytes)

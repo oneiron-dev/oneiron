@@ -193,6 +193,11 @@ side_tables! {
     /// Prepared/Published/Failed/Conflicted lifecycle. Key: id16.
     ORIGIN_PUBLICATION_RECORD: VaultMeta b"origin:publication:v1:" Named
         => crate::origin::publication::erase_publication_actor_in_txn;
+    /// One exact publish request to a repository's mirror (FIX 6866): its tuple, state, acts and
+    /// refusal, and beside it the pages of its full-ancestry review. LIVE. Key: id16 (repo id) +
+    /// id16 (request id), then nothing for the request or u64be for one review page.
+    ORIGIN_PUBLISH_REQUEST: VaultMeta b"origin:publish_request:v1:" Named
+        => crate::origin::publish::erase_publish_request_actor_in_txn;
     /// Producer receipt pinning the exact encoded admission/outcome evidence claim body for one
     /// receive-pack operation. Key: id16.
     ORIGIN_RECEIVE_PACK_EVIDENCE: VaultMeta b"origin:receive_pack_evidence:v1:" Raw
