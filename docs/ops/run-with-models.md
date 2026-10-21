@@ -103,8 +103,11 @@ saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
 `dreamer_target`, `extraction_encoder` (a tagger, `kind = "oneironer"`), and the
 rest of the manifest list. `coach` is the Coach's own seat (agent-health asks,
 code-fix drafts, session-end distill); HIGH and MID leave it unset, and with no
-`[models.roles.coach]` the Coach rides `generative_reasoner`. The retrieval
-embedder stays in `[embedder]`, where
+`[models.roles.coach]` the Coach rides `generative_reasoner`. `browser_planner`
+is the mid planner code mode hands a stuck browser subgoal to (section 6,
+"Browser subgoals"); HIGH and MID leave it unset too, and with no
+`[models.roles.browser_planner]` those steps stay on `generative_reasoner`.
+The retrieval embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
@@ -707,7 +710,9 @@ manifest and route, and spends from `budget_units`: the tokens the reply
 reports, or one call's 8000-unit reservation when it reports none, plus one
 reservation for each rung that failed before it. A call that failed spends one
 reservation for each provider call it made: every rung of the seat, or the one
-model the vault's manifest pins. A run's clock and config are saved when it
+model the vault's manifest pins. A browser subgoal's step may run on
+`browser_planner` instead, on the same meter ("Browser subgoals", below).
+A run's clock and config are saved when it
 starts, so a run resumed after a restart keeps its clock and refuses another
 task. A vault with a model
 manifest needs a seat judge this server does not bind yet, so its runs are
@@ -1099,6 +1104,60 @@ tsc-rs cannot finish, a busy one included. A step's report names the checker
 whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
+
+### Browser subgoals (`[models.roles.browser_planner]`)
+
+A run that drives its browser can hand a stuck subgoal to a mid planner of
+its own (CUA E5). Bind the planner as its own role. No model is built in;
+any generating model this server serves can take it:
+
+```toml
+[models.roles.browser_planner]
+rungs = ["exl3:qwen3.8-27b"]   # or model = "<provider>:<model>", with an optional prompt
+```
+
+HIGH and MID never fill it. Without it, every step runs on
+`generative_reasoner` as above.
+
+The server reads each `self.browser.batch` and `self.browser.library.run` the
+run executes, as it executes it. The call's subgoal is the batch's `subgoal`
+label, or the library program's subgoal, exactly as written; unnamed batches
+in a row share one subgoal until it ends. A batch or library run that ends
+`NEEDS_AGENT` sends that subgoal's next step to `browser_planner`. The
+subgoal's second `NEEDS_AGENT` sends its steps to `generative_reasoner`,
+which keeps them until the subgoal ends: a `done`, or a batch of another
+subgoal. A library run counts once, never again for its own batch.
+`NEEDS_YOU` goes to a person and is no miss, and neither a proposal's
+admission replays nor an answer the run already holds counts. Every other
+step, the run's first steps and its discovery among them, stays on
+`generative_reasoner`: the planner takes only a subgoal the server saw miss.
+
+With no rung for `browser_planner`, or a vault model manifest with no
+`browser_planner` row, the step takes `generative_reasoner` at admission,
+before anything is sent; any other refusal stands. None of this refuses or
+caps a run: both roles spend from the run's own meter (`budget_units`, or the
+scope it spends under) and bill the same payer. A run born on a durable seat
+keeps that seat's model and effort; its planner steps are calls of
+`browser_planner` beside the seat, and when `generative_reasoner` takes the
+subgoal back its steps return to the seat. A planned child pinned to its pick
+keeps every step on that pick.
+
+Each `NEEDS_AGENT` reaches the next step's model call, whichever role takes
+it, as one host data message after the executor's own: the verb, the input
+the server admitted and the browser's whole answer (status, `failed_step`,
+`error`, `observation`, receipts, decisions, rebindings, and a library run's
+`unmet` indices beside its batch), uncut, until a call that carries it
+answers. The observation is the newest page the browser read, which may come
+before the failed step. The count lives in memory beside the run's browser:
+the run's later entries keep it, and it ends with that browser, when the run
+ends or its browser sits idle. A restart starts every subgoal fresh.
+
+Not yet: the browser does not report a failed check's observed result or a
+no-progress stop. When it does, the handoff carries that typed receipt, and
+a no-progress stop sends the step to `generative_reasoner` at once.
+
+`browser_planner` is not `[models.planner]` (next), which picks a leased
+agent's spawn shapes.
 
 ### Planned spawns (`[models.planner]`)
 
