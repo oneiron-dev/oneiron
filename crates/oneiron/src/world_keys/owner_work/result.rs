@@ -3,9 +3,9 @@
 
 use super::OwnerWorkReceipt;
 use crate::authority::{
-    AuthorityEntryHash, AuthorityKey, AuthorityOp, MAX_PARENTS, OwnerWorkOutcome, OwnerWorkResult,
-    authority_entry_hash, invalid_authority, next_sequence, owner_act_signer_admits,
-    sign_side_entry,
+    AuthorityEntryHash, AuthorityKey, AuthorityOp, FrontierSigner, MAX_PARENTS, OwnerWorkOutcome,
+    OwnerWorkResult, authority_entry_hash, invalid_authority, next_sequence,
+    owner_act_signer_admits, sign_side_entry,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -42,6 +42,11 @@ impl Vault {
         if !owner_act_signer_admits(fold.machine(executor), &fold.roster, &public_key) {
             return Err(no_executor_key());
         }
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Install(executor, &signing);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
         let parents = fold.owner_work_parents();
         if parents.len() > MAX_PARENTS {
             return Err(Error::InvalidConfig(format!(

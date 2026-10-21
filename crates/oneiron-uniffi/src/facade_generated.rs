@@ -3291,6 +3291,16 @@ export_facade! {
     let output = client.vault_code_checks_get(&input)?;
     crate::codec::lift_record("vault.code.checks.get", &output)
 };
+"vault.code.merge_queue.review_policy.get" => fn vault_code_merge_queue_review_policy_get(&self) -> QueueReviewPolicyView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.code.merge_queue.review_policy.get")?;
+    let output = client.vault_code_merge_queue_review_policy_get(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.review_policy.get", &output)
+};
+"vault.code.merge_queue.review_policy.set" => fn vault_code_merge_queue_review_policy_set(&self, input: QueueReviewPolicySetRequest) -> QueueReviewPolicyView = |client| {
+    let input: oneiron::memory::merge_queue_doors::QueueReviewPolicySetRequest = crate::codec::lower_record("vault.code.merge_queue.review_policy.set", input)?;
+    let output = client.vault_code_merge_queue_review_policy_set(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.review_policy.set", &output)
+};
 "vault.code.merge_queue.export_green" => fn vault_code_merge_queue_export_green(&self, input: MergeQueueGreenExportRequest) -> CodeExportResult = |client| {
     let input: oneiron::memory::merge_queue_doors::MergeQueueGreenExportRequest = crate::codec::lower_record("vault.code.merge_queue.export_green", input)?;
     let output = client.vault_code_merge_queue_export_green(&input)?;
