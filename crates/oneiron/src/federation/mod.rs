@@ -76,7 +76,10 @@ pub use shared_act::{
     shared_act_outcome_transcript,
 };
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
-pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
+pub use shared_creation::{
+    InitialSharedMember, SharedTrainingSetup, SharedTrainingSetupAnswer,
+    SharedTrainingSetupQuestion, SharedVaultCreation, SharedVaultPreset,
+};
 mod foreign_world;
 pub(crate) use foreign_world::PactDelivery;
 pub use foreign_world::pact_foreign_world;
