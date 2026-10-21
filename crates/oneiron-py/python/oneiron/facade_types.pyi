@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3898 declarations.
+Census: 1127 facade rows, 3900 declarations.
 Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -3774,6 +3774,21 @@ class WeaveSectionInput(TypedDict):
     edge_kinds: NotRequired[list[str]]
 class WeaveReportRequest(TypedDict):
     sections: list[WeaveSectionInput]
+class WeaveSieveDiscoveryView(TypedDict):
+    start: int
+    end: int
+    kind: str
+    confidence: int
+class WeaveSieveFindingView(TypedDict):
+    expectation: str
+    window_ref: str
+    turn_ref: str
+    source_ref: str
+    start: int
+    end: int
+    discovered: list[WeaveSieveDiscoveryView]
+    agrees: bool
+    audited_at: int
 class WeaveItemViewClaim(TypedDict):
     item: Literal["claim"]
     claim: ClaimView
@@ -3813,6 +3828,10 @@ class WeaveItemViewSieveAudit(TypedDict):
     confidence: int
     agrees: bool
     audited_at: int
+class WeaveItemViewSieveWindowAudit(TypedDict):
+    item: Literal["sieve_window_audit"]
+    attempt_ref: str
+    finding: WeaveSieveFindingView
 class WeaveItemViewLoopDecision(TypedDict):
     item: Literal["loop_decision"]
     decision_ref: str
@@ -3825,7 +3844,7 @@ class WeaveItemViewLoopDecision(TypedDict):
     claim_ref: NotRequired[str | None]
     actor_ref: NotRequired[str | None]
     evidence_refs: list[str]
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit | WeaveItemViewLoopDecision
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit | WeaveItemViewSieveWindowAudit | WeaveItemViewLoopDecision
 class WeaveSieveScoreView(TypedDict):
     sampled: int
     agreeing: int
@@ -18046,9 +18065,12 @@ class WakeRecipePolicy(TypedDict):
     rung_retry_secs: int
     audit_percent: int
     audit_spans: int
+    audit_window_share: int
+    audit_window_bytes: int
     novelty_instruction: str
     typing_instruction: str
     narrative_instruction: str
+    audit_window_instruction: str
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):

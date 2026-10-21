@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1127 facade rows, 3880 generated types.
+// UniFFI census: 1127 facade rows, 3882 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1079.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -11551,6 +11551,42 @@ pub struct WeaveReportRequest {
     pub sections: Vec<WeaveSectionInput>,
 }
 
+/// `oneiron::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveDiscoveryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WeaveSieveDiscoveryView {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "confidence")]
+    pub confidence: u8,
+}
+
+/// `oneiron::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveFindingView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WeaveSieveFindingView {
+    #[serde(rename = "expectation")]
+    pub expectation: String,
+    #[serde(rename = "window_ref")]
+    pub window_ref: String,
+    #[serde(rename = "turn_ref")]
+    pub turn_ref: String,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "discovered")]
+    pub discovered: Vec<WeaveSieveDiscoveryView>,
+    #[serde(rename = "agrees")]
+    pub agrees: bool,
+    #[serde(rename = "audited_at")]
+    pub audited_at: u64,
+}
+
 /// `oneiron::claim::scoped_read::weave_serve::WeaveItemView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "item")]
@@ -11633,6 +11669,13 @@ pub enum WeaveItemView {
         agrees: bool,
         #[serde(rename = "audited_at")]
         audited_at: u64,
+    },
+    #[serde(rename = "sieve_window_audit")]
+    SieveWindowAudit {
+        #[serde(rename = "attempt_ref")]
+        attempt_ref: String,
+        #[serde(rename = "finding")]
+        finding: WeaveSieveFindingView,
     },
     #[serde(rename = "loop_decision")]
     LoopDecision {
@@ -55401,12 +55444,18 @@ pub struct WakeRecipePolicy {
     pub audit_percent: u8,
     #[serde(rename = "audit_spans")]
     pub audit_spans: u32,
+    #[serde(rename = "audit_window_share")]
+    pub audit_window_share: u8,
+    #[serde(rename = "audit_window_bytes")]
+    pub audit_window_bytes: u32,
     #[serde(rename = "novelty_instruction")]
     pub novelty_instruction: String,
     #[serde(rename = "typing_instruction")]
     pub typing_instruction: String,
     #[serde(rename = "narrative_instruction")]
     pub narrative_instruction: String,
+    #[serde(rename = "audit_window_instruction")]
+    pub audit_window_instruction: String,
 }
 
 /// `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest`.
