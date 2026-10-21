@@ -566,8 +566,9 @@ side_tables! {
     /// A planned spawn under one asker's intent key (DOOR-111): the asker, the original ask and
     /// its digest, the custody phase and fence, the placed stamp and plan receipt or the kept
     /// refusal, and a launched team's frozen start and pack and its leader runs' exposures. An
-    /// actor's erase forgets the asker and keeps the row. Key: blake3 (32) of the framed asker,
-    /// parent and intent key.
+    /// actor's scrub forgets the asker and keeps the row; behind the hard-delete marker, an erase
+    /// of the asker or of the AGENT_DEF its plan seats leaves the row's erased form: its ids,
+    /// times and state, and no text. Key: blake3 (32) of the framed asker, parent and intent key.
     SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named
         => crate::agent_dispatch::AgentDispatcher::erase_planned_intent_actor_in_txn;
     /// Durable handle for one named (agent, world) companion standing-context block. Key: hex64

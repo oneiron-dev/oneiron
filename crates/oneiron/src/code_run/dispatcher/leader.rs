@@ -215,6 +215,13 @@ impl HostSelfDispatcher<'_> {
         let attempt_ref = match view.phase {
             SpawnPhase::Launched => view.root_attempt.ok_or_else(|| refused(SPAWN_UNQUEUED))?,
             SpawnPhase::Planned => return Err(refused(SPAWN_UNLAUNCHED)),
+            // The erase of the target its plan seats is the typed answer: no
+            // other key or launch is asked for (Engine 10-22).
+            SpawnPhase::Erased => {
+                return Ok(SelfDispatchOutcome::AgentSpawn(
+                    SelfAgentSpawnResult::TargetErased,
+                ));
+            }
             SpawnPhase::Refused => {
                 tracing::warn!(
                     agent = %self.actor.entity_ref().to_hex(),

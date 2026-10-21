@@ -123,6 +123,20 @@ pub enum SpawnPhase {
     Launched,
     /// Placement, the planner or the launch refused; the refusal is kept.
     Refused,
+    /// An erase of its asker or of the AGENT_DEF its plan seats took its
+    /// text: it keeps its receipt, its ids and times, and never launches.
+    Erased,
+}
+
+/// Whose erase left a planned spawn erased (Engine 10-22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SpawnErasure {
+    /// The asker's.
+    AskerErased,
+    /// The AGENT_DEF its plan seats: a launch on it records this and
+    /// launches nothing.
+    TargetErased,
 }
 
 /// What one planned intent holds for its owner: its key, its phase, the
@@ -152,6 +166,9 @@ pub struct PlannedIntentView {
     /// The team the launch bound; `None` for a solo and until launched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_ref: Option<String>,
+    /// Whose erase took the intent's text; `None` unless it is erased.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub erasure: Option<SpawnErasure>,
 }
 
 /// The exact pattern pack a team's start ran on, frozen with that start
@@ -253,7 +270,8 @@ impl FrozenPackFile {
 /// S4c-5): the team the launch bound, each member it queued in launch
 /// order, the start the pattern runner wrote and the exact pack that start
 /// ran on. The leader's run reads its pattern from this snapshot, never
-/// from the skill's current head.
+/// from the skill's current head. An erased intent's team keeps its ids and
+/// no start or pack (Engine 10-22).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedLeaderLaunch {
     /// The leader try the launch queued, which the team is bound under; a
@@ -261,8 +279,10 @@ pub struct PlannedLeaderLaunch {
     pub root: AttemptId,
     pub team_ref: String,
     pub members: Vec<AttemptId>,
-    pub start: PatternLaunchSpec,
-    pub pack: FrozenPatternPack,
+    /// `None` once an erase took the intent's text.
+    pub start: Option<PatternLaunchSpec>,
+    /// `None` once an erase took the intent's text.
+    pub pack: Option<FrozenPatternPack>,
     /// Where each of the leader's runs put the pack's SKILL.md in its task,
     /// by its executor run id; empty until one has. A continued run, whose
     /// task is its source run's fork, reuses its source's rather than append

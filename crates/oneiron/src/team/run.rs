@@ -391,12 +391,16 @@ pub(crate) fn record_led_team(
         type_ref: TypeRef::from(&lead_input.type_ref),
         pattern,
         pattern_skill: match &planned {
-            Some(launch) => frozen_pattern_skill(&lead.attempt, &launch.pack),
+            Some(launch) => launch
+                .pack
+                .as_ref()
+                .and_then(|pack| frozen_pattern_skill(&lead.attempt, pack)),
             None => loaded_pattern_skill(vault, &lead.attempt, pattern)?,
         },
         axis: planned
             .as_ref()
-            .map_or(input.axis, |launch| launch.start.axis),
+            .and_then(|launch| launch.start.as_ref())
+            .map_or(input.axis, |start| start.axis),
         models: models.into_iter().collect(),
         shape: TeamShape { width, roles },
         decided_by,

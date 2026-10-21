@@ -247,12 +247,14 @@ impl<'a> AttemptQueue<'a> {
         self.claim_matching_in_txn(wtxn, input, kind, cutoff)
     }
 
-    /// [`Self::claim_kind_storage_in_txn`] for an owner-retained kind, acting
-    /// only on the readiness entries `plan` names, which
-    /// [`Self::owner_retained_claim_plan_in_txn`] found outside the writer:
-    /// under the writer each is read again by its key and checked against
-    /// the rows as they are now, and nothing else of the index is read. An
-    /// entry gone or changed since is left for the next plan.
+    /// [`Self::claim_kind_storage_in_txn`] for an owner-retained kind,
+    /// claiming only a row `permits` admits, and acting only on the
+    /// readiness entries `plan` names, which
+    /// [`Self::owner_retained_matching_claim_plan_in_txn`] found outside the
+    /// writer under the same predicate: under the writer each is read again
+    /// by its key and checked against the rows as they are now, and nothing
+    /// else of the index is read. An entry gone or changed since is left for
+    /// the next plan, and a row `permits` passes over keeps its readiness.
     ///
     /// An owner-retained entry gets the generic claim's checks and repairs,
     /// and the claim reports whether it made any, so the caller can keep them
@@ -260,25 +262,6 @@ impl<'a> AttemptQueue<'a> {
     /// deleted alone: an owner-retained row's dedupe entries leave with it,
     /// and one left naming a missing row reads as no pending attempt and is
     /// replaced by the next enqueue, so no dedupe scan runs under the writer.
-    #[allow(
-        dead_code,
-        reason = "the class-free claim; tagging claims through the matching door (FIX 6755)"
-    )]
-    pub(crate) fn claim_owner_retained_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        kind: &str,
-        input: ClaimAttempt,
-        cutoff: u64,
-        plan: &OwnerRetainedPlan,
-    ) -> Result<(ClaimOutcome, bool)> {
-        self.claim_owner_retained_matching_in_txn(wtxn, kind, input, cutoff, plan, |_| Ok(true))
-    }
-
-    /// [`Self::claim_owner_retained_in_txn`], claiming only a row `permits`
-    /// admits; its plan comes from
-    /// [`Self::owner_retained_matching_claim_plan_in_txn`] under the same
-    /// predicate. A row it passes over keeps its readiness.
     pub(crate) fn claim_owner_retained_matching_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -339,10 +322,12 @@ impl<'a> AttemptQueue<'a> {
         Ok((ClaimOutcome::Empty, repaired))
     }
 
-    /// The readiness entries [`Self::claim_owner_retained_in_txn`] would act
-    /// on, read through `txn` without taking the writer: every entry it
-    /// would repair up to the first row it would claim, and that row's.
-    /// Empty when it would do nothing, so an idle claim needs no writer.
+    /// The readiness entries [`Self::claim_owner_retained_matching_in_txn`]
+    /// would act on under `permits`, read through `txn` without taking the
+    /// writer: every entry it would repair up to the first row it would
+    /// claim, and that row's. Empty when it would do nothing, so an idle
+    /// claim needs no writer. A row `permits` passes over is no candidate,
+    /// while every repair stays in the plan.
     ///
     /// Within one ready instant every other kind's entries sort before the
     /// owner-retained range, so one seek per instant passes over them without
@@ -350,23 +335,6 @@ impl<'a> AttemptQueue<'a> {
     /// never stops the walk. Those entries are left for their own kind's
     /// claim to repair. The seeks grow with the distinct instants other
     /// kinds' jobs wait at, which is why this walk only reads.
-    #[allow(
-        dead_code,
-        reason = "the class-free plan; tagging plans through the matching door (FIX 6755)"
-    )]
-    pub(crate) fn owner_retained_claim_plan_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        kind: &str,
-        input: &ClaimAttempt,
-        cutoff: u64,
-    ) -> Result<OwnerRetainedPlan> {
-        self.owner_retained_matching_claim_plan_in_txn(txn, kind, input, cutoff, |_| Ok(true))
-    }
-
-    /// [`Self::owner_retained_claim_plan_in_txn`] for a claim of only the
-    /// rows `permits` admits: a row it passes over is no candidate, while
-    /// every repair stays in the plan.
     pub(crate) fn owner_retained_matching_claim_plan_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -495,11 +463,11 @@ impl<'a> AttemptQueue<'a> {
     }
 
     /// Whether a ready owner-retained row lacks the ready entry its own state
-    /// names. [`Self::claim_owner_retained_in_txn`] trusts an entry's instant
-    /// to stop its seek, so a ready row indexed only under a later instant,
-    /// or not at all, is not reached; its owner's recovery puts the entry
-    /// back. A row of another kind, outside the range or not ready lacks
-    /// nothing.
+    /// names. [`Self::claim_owner_retained_matching_in_txn`] trusts an
+    /// entry's instant to stop its seek, so a ready row indexed only under a
+    /// later instant, or not at all, is not reached; its owner's recovery
+    /// puts the entry back. A row of another kind, outside the range or not
+    /// ready lacks nothing.
     pub(crate) fn owner_retained_ready_entry_missing(
         &self,
         txn: &heed::RoTxn<'_>,
