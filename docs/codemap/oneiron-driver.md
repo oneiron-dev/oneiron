@@ -23,7 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/loop.rs` | src | m | 2 struct · 6 fn · 2 crate-vis | WakeSupervisor, WakeSupervisorReport | Biased-select supervisor loop with panic containment and backoff |
 | `src/supervisor/loop_tests.rs` | test | L | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
 | `src/supervisor/mod.rs` | src | s | 6 re-export | — | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
-| `src/supervisor/pass.rs` | src | s | 4 crate-vis | — | Single wake-pass assembly and engine delegation |
+| `src/supervisor/pass.rs` | src | s | 5 crate-vis | — | Single wake-pass assembly and engine delegation |
 | `src/supervisor/program_factory.rs` | src | s | 1 struct · 1 fn | ProgramExecutorFactory | The turn program runtime around a host's executor factory (DOOR-141 PR2) |
 | `src/supervisor/shutdown.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ShutdownHandle | Cooperative shutdown handle and listener channels |
 | `src/supervisor/tests/attachment.rs` | test | s | — | — | The generic pass-attachment seam: asked after the pass meter, refusal is pre-admission, and a linked host… |
