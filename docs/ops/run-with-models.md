@@ -377,9 +377,11 @@ or an IP address of the vault's; the intake sees the connection, as any HTTPS
 server does. Every receipt is checked against the intake's receipt keys (the
 current one or the one before it) and kept in the vault: `uploading`, `accepted`
 (held whole in quarantine, not yet trainable), `eligible` or `refused` after the
-intake's own filter, `rejected`, `conflict` or `invalid_submission` (sent again
-later), `removal_pending`, then `removed`. The offer's files go once it reads
-`eligible`, `refused` or `removed`, or once the vault withholds or withdraws it;
+intake's own filter, `rejected`, `conflict` or `invalid_submission` (final: never
+sent again), `removal_pending`, then `removed`. A request re-cut after a timeout
+resumes from the cursor the intake answers. The offer's files go once it reads
+`eligible`, `refused`, `rejected`, `conflict`, `invalid_submission` or `removed`,
+or once the vault withholds or withdraws it;
 its code stays in the vault after them, and the vault's training key is
 destroyed only after every offer of an erase reads `removed`. Requests start at
 19 MiB; a `413` or a request that runs out of time (30 s, plus a second for each

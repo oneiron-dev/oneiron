@@ -28,7 +28,12 @@
 //!   within the intake's bounds. A piece whose files are missing or not what
 //!   its manifest says ships nothing and is read again every pass; that
 //!   rides its row for the owner's view until a window from it ships (FIX
-//!   6916, `Vault::anonymous_piece_files`).
+//!   6916, `Vault::anonymous_piece_files`). A piece the intake signed final
+//!   (`rejected`, `conflict` or `invalid_submission`) is never sent again
+//!   (FIX 7414, CALLS TL6_PIECE_FINAL): its row keeps the state for the
+//!   owner's receipts, and its files go. A head over the intake's cap
+//!   carries its filter's model as a digest and a short preview (FIX 7415,
+//!   `stream`).
 //! - Receipts: the codes whose next signed state is owed, each past the
 //!   revision applied; an entry with `more` is asked again on the next
 //!   receipts walk.
@@ -42,9 +47,14 @@
 //! `Vault::anonymous_refresh_required`, to be offered anew under a new C,
 //! and asks the descriptor again. A `413` tightens the bounds and the
 //! request goes again at once; a request whose time ran out halves the
-//! request and part bytes and goes again next pass (CALLS
-//! TL6_UPLOAD_TIMEOUT). Neither ever drops an item or a byte, and a request
-//! no bound cuts smaller waits the retry pace.
+//! request and part bytes and goes again next pass, from the cursor last
+//! signed (CALLS TL6_UPLOAD_TIMEOUT). The intake answers a window so re-cut
+//! over ranges it already took with its current signed cursor, never a
+//! conflict; that receipt moves the row's cursor as any other does, and the
+//! piece's next window goes from there (FIX 7413, CALLS TL6_RECUT_CURSOR).
+//! Neither a `413` nor a timeout ever drops an item or a byte, and a
+//! request no bound cuts smaller waits the retry pace. None of these, and
+//! no unsigned refusal, is final for a piece.
 //!
 //! Logs carry counts and status classes only: never C, a scope, a code, a
 //! body or a URL.

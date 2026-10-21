@@ -9,14 +9,19 @@
 //! recorded. An unsigned refusal changes nothing durable: it goes back to
 //! the caller to schedule.
 //!
-//! The state mapping: `uploading` keeps its cursor; `accepted` records that
-//! the intake holds the piece whole in quarantine, never eligibility or a V2
-//! `stored`; `rejected`, `conflict` and `invalid_submission` keep their
-//! reason and are sent again later; `eligible` and `refused` are the
-//! re-filter's answers; `removal_pending` waits; `removed` completes the
-//! remote removal; `unknown` says the intake holds nothing, so the upload
-//! resumes from its start, and never stands in for `removed`. When a
-//! `removed` makes the purge done (TL-5), the same writer stages the
+//! The state mapping: `uploading` keeps its cursor, the one the next window
+//! goes from. That includes the intake's answer to a window re-cut from a
+//! stale cursor over ranges it already took: its current signed cursor,
+//! never a conflict, stored here as any other (FIX 7413, CALLS
+//! TL6_RECUT_CURSOR). `accepted` records that the intake holds the piece
+//! whole in quarantine, never eligibility or a V2 `stored`; `rejected`,
+//! `conflict` and `invalid_submission` are final for the piece's C (FIX
+//! 7414, CALLS TL6_PIECE_FINAL): the row keeps the state and its reason for
+//! the owner's receipts, and the piece is never sent again; `eligible` and
+//! `refused` are the re-filter's answers; `removal_pending` waits; `removed`
+//! completes the remote removal; `unknown` says the intake holds nothing, so
+//! the upload resumes from its start, and never stands in for `removed`.
+//! When a `removed` makes the purge done (TL-5), the same writer stages the
 //! training link key's retirement, finished after it commits.
 
 use std::collections::{BTreeMap, BTreeSet};
