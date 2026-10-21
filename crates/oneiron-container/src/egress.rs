@@ -2,6 +2,7 @@
 
 use std::io;
 use std::net::{SocketAddr, TcpStream};
+use std::sync::atomic::AtomicBool;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpRequest {
@@ -24,6 +25,27 @@ pub struct HttpResponse {
 /// Address checks and policy receipts belong to that proxy, outside the fence.
 pub trait EgressRelay: Send + Sync + 'static {
     fn connect(&self, target: SocketAddr) -> io::Result<TcpStream>;
+    /// Connects a guest stream to `target` as [`EgressRelay::connect`]
+    /// does, and says whether a name gates its upload: `true` sends the
+    /// guest's opening bytes through [`EgressRelay::open_upload`] before any
+    /// of them reaches the remote (FIX 7652). The default gates nothing.
+    fn connect_stream(&self, target: SocketAddr) -> io::Result<(TcpStream, bool)> {
+        self.connect(target).map(|stream| (stream, false))
+    }
+    /// Reads a gated stream's opening bytes from `guest` while `alive`
+    /// holds, until the name they carry to `target` is judged, and answers
+    /// the bytes to send first; every later byte goes on unread. An error
+    /// refuses the stream: nothing the guest wrote reaches the remote. Read
+    /// after the guest was told its connect succeeded. The default reads
+    /// nothing.
+    fn open_upload(
+        &self,
+        _target: SocketAddr,
+        _guest: &mut dyn io::Read,
+        _alive: &AtomicBool,
+    ) -> io::Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
     fn authorize_datagram(&self, target: SocketAddr) -> io::Result<()>;
     fn record_session(&self, manifest: &crate::SessionManifest) -> io::Result<()>;
     fn record_abandoned(&self, manifest: &crate::SessionManifest) -> io::Result<()>;

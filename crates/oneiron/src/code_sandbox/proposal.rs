@@ -8,7 +8,9 @@ use crate::{ClaimApprovalStatus, ClaimCandidate, EntityId, Error, Result};
 use std::io::Read;
 
 mod body;
+mod spool;
 pub use body::{SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter};
+pub use spool::{ProposalSpoolClaim, ProposalSpoolFloor, SpoolAtFloor, SpoolFloorRefusal};
 
 /// Single write intent emitted by a propose-only guest.
 #[derive(Debug, Clone, PartialEq)]
