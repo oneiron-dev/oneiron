@@ -58,6 +58,9 @@ pub struct ConsolidationDecisions {
     pub sieve_entity_wording: String,
     /// How sure a sieve reading is, as an integer percent.
     pub sieve_confidence_wording: String,
+    /// Whether two claims different children of one night proposed state the
+    /// same thing (OF-498d): same_as, no_link or unresolved.
+    pub nightly_link_wording: String,
 }
 
 impl ConsolidationDecisions {
@@ -81,6 +84,7 @@ impl ConsolidationDecisions {
             sieve_kind_wording: wording.sieve_kind,
             sieve_entity_wording: wording.sieve_entity,
             sieve_confidence_wording: wording.sieve_confidence,
+            nightly_link_wording: wording.nightly_link,
         })
     }
 }
@@ -96,6 +100,7 @@ struct Wording {
     sieve_kind: String,
     sieve_entity: String,
     sieve_confidence: String,
+    nightly_link: String,
 }
 
 /// `ids` as a choice's option groups, each of at most [`IDS_PER_QUESTION`] ids, with

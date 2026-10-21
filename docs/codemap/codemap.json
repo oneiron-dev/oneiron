@@ -13529,6 +13529,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/activity.rs",
+     "purpose": "The runtime's own witness of what a leased attempt is doing in this vault now (OF-568 L5): whether a tool…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/agent_authoring.rs",
      "purpose": "Bounded guest definition request; actor, lease and approval stay host-owned",
      "surface": {
@@ -14138,7 +14148,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 7,
       "re-export": 23
      }
@@ -21983,10 +21993,30 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/nightly_links.rs",
+     "purpose": "Semantic links across one night's children, PROPOSALS ONLY (OF-498d)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/nightly_links/pairs.rs",
+     "purpose": "Which cross-child pairs a night's link continuations judge, how one call asks about them, and what each…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/nightly_merge.rs",
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 16
      }
     },
     {
@@ -21997,6 +22027,16 @@
      "purpose": "Which unlisted siblings a nightly merge fans in beside its listed children (FIX 7495, FIX 7524): a retry of…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/nightly_merge/write.rs",
+     "purpose": "The nightly writer (OF-498d): how the merge and each of its link continuations land",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -35613,7 +35653,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 44,
+      "const": 45,
       "fn": 1,
       "struct": 1
      }
@@ -36900,7 +36940,6 @@
      "path": "src/llm/seat/decisions.rs",
      "purpose": "The seat pick as typed decisions through the host's ladder, and the note seam beside it",
      "surface": {
-      "crate-vis": 1,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -69745,7 +69784,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 135,
+     "files": 136,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69983,7 +70022,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 116,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71028,7 +71067,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4522,
+   "source_files": 4526,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72367,7 +72406,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/drift.rs",
@@ -72387,7 +72426,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/drift_plan.rs",
@@ -72401,9 +72440,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/cua/fixture.rs",
-     "purpose": "PRIVATE S1 lifecycle",
+     "purpose": "PRIVATE S1 lifecycle and the frozen PUBLIC-only served forward",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -72437,13 +72476,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/provider_gate.rs",
      "purpose": "Pass-through only: exact wire identities and durable campaign cash reservations",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cua/readiness.rs",
+     "purpose": "FIX 8326 readiness through the shipped served engine, never a CDP sidecar",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -72477,23 +72526,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/run.rs",
      "purpose": "One assigned trial, one original deadline and no failure retries",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/cua/served.rs",
      "purpose": "Shipped binary lifecycle and official MCP stdio",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -73388,9 +73437,9 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "cua": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "Synthetic browser bench: engine outcomes are not oracle passes"
     },
@@ -73488,7 +73537,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 140,
+   "source_files": 141,
    "test_files": 18
   },
   "oneiron-broker": {
@@ -74158,7 +74207,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 40,
       "trait": 2
      }
@@ -74281,6 +74330,18 @@
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/progress.rs",
+     "purpose": "A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {
@@ -74569,6 +74630,13 @@
      "layout": "file",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…"
     },
+    "progress": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]…"
+    },
     "receipt_evidence": {
      "files": 1,
      "impl_vault": false,
@@ -74635,7 +74703,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 44,
+   "source_files": 45,
    "test_files": 0
   },
   "oneiron-code-check": {
