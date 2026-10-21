@@ -14374,7 +14374,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 8,
       "struct": 2
      }
@@ -14396,7 +14396,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 29,
       "fn": 3
      }
     },
@@ -53793,6 +53793,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/body_store/finish_pinned.rs",
+     "purpose": "A body finished under its reader's pin (FIX 5399b)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/body_store/spool.rs",
      "purpose": "A body sink that spools its body raw for admission (FIX 5718 part 3, Engine ruling 3): it measures and scans…",
      "surface": {
@@ -68119,7 +68129,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 124,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68345,7 +68355,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4304,
+   "source_files": 4305,
    "test_files": 902
   },
   "oneiron-android": {
