@@ -199,9 +199,11 @@ impl ConsolidationExecutor<'_> {
                     charges.record_usage(&usage);
                     return Ok(charges.checkpoint());
                 }
+                // A refused reading asks again at the next pass (FIX 7218).
                 Err(DurableStepError::SpentSchemaValidation { usage, .. }) => {
                     charges.record_usage(&usage);
-                    return Ok(charges.park("sieve reading schema refused"));
+                    return Ok(charges
+                        .park_for("sieve reading schema refused", DreamerParkCause::Checkpoint));
                 }
                 Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
                 Err(error) => {

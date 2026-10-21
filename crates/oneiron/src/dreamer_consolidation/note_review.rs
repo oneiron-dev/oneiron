@@ -256,12 +256,14 @@ impl ConsolidationExecutor<'_> {
                 charges.record_usage(&usage);
                 return Ok(Some(charges.checkpoint()));
             }
+            // A refused reply asks again at the next pass (FIX 7218): a
+            // private park would keep its row leased.
             Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
                 charges.record_usage(&usage);
-                return Ok(Some(charges.park(&format!(
-                    "note review reply refused: {}",
-                    errors.join("; ")
-                ))));
+                return Ok(Some(charges.park_for(
+                    &format!("note review reply refused: {}", errors.join("; ")),
+                    DreamerParkCause::Checkpoint,
+                )));
             }
             Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
                 return Ok(Some(charges.checkpoint()));
