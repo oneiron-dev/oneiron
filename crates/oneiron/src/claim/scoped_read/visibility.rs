@@ -36,6 +36,27 @@ impl<'v> ScopedRead<'v> {
         Ok(true)
     }
 
+    /// Which of `sets` resolve whole for this lane, one answer for each set:
+    /// each judged as [`Self::all_refs_readable`] judges its ids, every set
+    /// in one snapshot under one policy, so a listing that admits its rows
+    /// one by one admits them all at one instant (FIX 7645).
+    pub fn refs_readable_each(&self, sets: &[Vec<EntityId>]) -> Result<Vec<bool>> {
+        let rtxn = self.grant_read_txn()?;
+        let policy = self.live_policy_manifest_in(&rtxn)?;
+        let mut each = Vec::with_capacity(sets.len());
+        for ids in sets {
+            let mut readable = true;
+            for id in ids {
+                if !self.is_ref_readable_with_policy_in(&rtxn, &policy, id)? {
+                    readable = false;
+                    break;
+                }
+            }
+            each.push(readable);
+        }
+        Ok(each)
+    }
+
     /// [`Self::is_ref_readable`] in the caller's snapshot, under `policy`
     /// (`Self::live_policy_manifest_in`).
     pub(crate) fn is_ref_readable_with_policy_in(

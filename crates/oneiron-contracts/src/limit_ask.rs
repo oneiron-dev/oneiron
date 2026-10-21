@@ -501,6 +501,93 @@ fn container_memory_bytes() -> Option<u64> {
     .find_map(|path| std::fs::read_to_string(path).ok()?.trim().parse().ok())
 }
 
+/// The memory this process can take now without the machine paging, read
+/// live on every call and never cached (FIX 7649): a host admits work
+/// against it before the work allocates.
+///
+/// On Linux, the least of `/proc/meminfo`'s `MemAvailable` and what the
+/// container's limit leaves past its usage, found where
+/// [`machine_memory_bytes`] finds the limit: cgroup v2 `memory.max` less
+/// `memory.current`, else v1 `memory.limit_in_bytes` less
+/// `memory.usage_in_bytes`. An unlimited group (`max`) leaves `MemAvailable`
+/// alone. On macOS, the free, inactive and purgeable pages. `None` where it
+/// cannot be read, and on every other platform.
+pub fn available_memory_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let host = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|info| {
+                info.lines().find_map(|line| {
+                    line.strip_prefix("MemAvailable:")?
+                        .split_whitespace()
+                        .next()?
+                        .parse::<u64>()
+                        .ok()
+                })
+            })
+            .and_then(|kib| kib.checked_mul(1024));
+        let container = [
+            ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory.current"),
+            (
+                "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+                "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+            ),
+        ]
+        .iter()
+        .find_map(|(limit, usage)| {
+            let limit: u64 = std::fs::read_to_string(limit).ok()?.trim().parse().ok()?;
+            let usage: u64 = std::fs::read_to_string(usage).ok()?.trim().parse().ok()?;
+            Some(limit.saturating_sub(usage))
+        });
+        match (host, container) {
+            (Some(host), Some(container)) => Some(host.min(container)),
+            (host, container) => host.or(container),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // The host port is this task's for its life: taken once, so repeated
+        // readings add no reference to it.
+        static HOST: OnceLock<libc::mach_port_t> = OnceLock::new();
+        // SAFETY: `mach_host_self` takes no argument and answers the host
+        // port of this task.
+        #[allow(deprecated)]
+        let host = *HOST.get_or_init(|| unsafe { libc::mach_host_self() });
+        let mut stats = std::mem::MaybeUninit::<libc::vm_statistics64>::zeroed();
+        let mut count = libc::HOST_VM_INFO64_COUNT;
+        // SAFETY: `stats` holds `HOST_VM_INFO64_COUNT` integers, the count
+        // handed in; the call writes at most that many and the count it wrote
+        // back into `count`, both on this stack.
+        let answer = unsafe {
+            libc::host_statistics64(
+                host,
+                libc::HOST_VM_INFO64,
+                stats.as_mut_ptr().cast::<libc::integer_t>(),
+                &raw mut count,
+            )
+        };
+        if answer != libc::KERN_SUCCESS {
+            return None;
+        }
+        // SAFETY: the struct is plain integers, zeroed before the call, so
+        // every field the call did not write still holds a valid zero.
+        let stats = unsafe { stats.assume_init() };
+        // SAFETY: `sysconf` reads a system constant: it takes no pointer and
+        // has no precondition, and a negative answer is read as unknown.
+        let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let page_bytes = u64::try_from(page_bytes).ok().filter(|bytes| *bytes > 0)?;
+        u64::from(stats.free_count)
+            .checked_add(u64::from(stats.inactive_count))?
+            .checked_add(u64::from(stats.purgeable_count))?
+            .checked_mul(page_bytes)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
+}
+
 /// What each engine row is set to: its default, unless set.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EngineLimits {

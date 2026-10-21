@@ -10,7 +10,7 @@
 //! (FIX 5618) share this spool under their own admission and rows.
 use super::*;
 use crate::api::transfer::{self, BodyReader};
-use crate::machine::{DiskClaim, DiskFloor};
+use crate::machine::{DiskClaim, DiskFloor, MemoryLease, MemoryRefusal};
 use axum::body::Body;
 use axum::extract::FromRequestParts;
 use oneiron::blob_artifact::esign::{EsignCapability, EsignIngress, SigningAction};
@@ -19,6 +19,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// The header a public signing door reads its capability from. The
@@ -32,6 +33,11 @@ const SPOOL_PIECE: usize = 64 * 1024;
 /// Bytes a body of no declared length spools between looks at the disk
 /// floor; each look claims the stretch to the next one.
 const FLOOR_EVERY_BYTES: u64 = 8 * 1024 * 1024;
+
+/// How long a door's body waits in line for the machine memory reading it
+/// whole takes (FIX 7649): the body idle limit's default, so a request waits
+/// no longer for memory than its own body may stall.
+pub(super) const MEMORY_WAIT: Duration = Duration::from_secs(60);
 
 /// A signing link a public door admitted, and its capability for the act.
 pub(super) struct SigningIngress {
@@ -102,11 +108,40 @@ pub(super) async fn payload<T: DeserializeOwned + Send + 'static>(
     .ok_or_else(malformed)
 }
 
-/// A spooled body read whole, for a door whose consumer takes a slice.
-pub(super) fn whole_body(mut file: File, bytes: u64) -> Option<Vec<u8>> {
-    let mut whole = Vec::with_capacity(usize::try_from(bytes).unwrap_or(0));
-    file.read_to_end(&mut whole).ok()?;
-    Some(whole)
+/// Why a spooled body was not read whole into memory.
+pub(super) enum WholeBody {
+    /// Its bytes are past what its lease admitted or this machine can
+    /// address, or the allocator could not give them: the memory floor,
+    /// never the body's size.
+    Unallocated,
+    /// The spool could not be read back whole.
+    Unread,
+}
+
+/// A spooled body read whole, for a door whose consumer takes a slice. Its
+/// `bytes` are admitted first, in `lease` (FIX 7649), which the caller holds
+/// until whatever reads the body is done. The allocation is fallible too:
+/// the last guard behind that admission, never the admission itself.
+pub(super) fn whole_body(
+    file: File,
+    bytes: u64,
+    lease: &MemoryLease,
+) -> Result<Vec<u8>, WholeBody> {
+    if bytes > lease.bytes() {
+        return Err(WholeBody::Unallocated);
+    }
+    let size = usize::try_from(bytes).map_err(|_| WholeBody::Unallocated)?;
+    let mut whole = Vec::new();
+    whole
+        .try_reserve_exact(size)
+        .map_err(|_| WholeBody::Unallocated)?;
+    file.take(bytes)
+        .read_to_end(&mut whole)
+        .map_err(|_| WholeBody::Unread)?;
+    if whole.len() != size {
+        return Err(WholeBody::Unread);
+    }
+    Ok(whole)
 }
 
 /// How a body ended before its door read it.
@@ -281,6 +316,58 @@ fn disk_floor() -> Response {
     (
         StatusCode::INSUFFICIENT_STORAGE,
         Json(serde_json::json!({"error":{"code":"signing_disk_floor"}})),
+    )
+        .into_response()
+}
+
+/// What reading an admitted body whole takes does not fit this machine's
+/// memory (FIX 7649), as `refusal` found: `signing_memory_floor` when it
+/// cannot fit past the free-memory reserve even with nothing else leased,
+/// `signing_memory_waited_out` when room did not come within
+/// [`MEMORY_WAIT`]. The body's size alone is never refused.
+pub(super) fn memory_refused(refusal: MemoryRefusal) -> Response {
+    match refusal {
+        MemoryRefusal::Floor { needed, available } => {
+            tracing::warn!(
+                needed,
+                available,
+                "a signing body does not fit this machine's memory past its reserve"
+            );
+            memory_floor()
+        }
+        MemoryRefusal::WaitedOut { needed, waited } => {
+            tracing::warn!(
+                needed,
+                waited_ms = u64::try_from(waited.as_millis()).unwrap_or(u64::MAX),
+                "a signing body's wait for this machine's memory passed its deadline"
+            );
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error":{"code":"signing_memory_waited_out"}})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// A spooled body [`whole_body`] did not read: the memory floor when its
+/// bytes could not be allocated, else `signing_body_unread`.
+pub(super) fn whole_body_refused(refusal: WholeBody) -> Response {
+    match refusal {
+        WholeBody::Unallocated => {
+            tracing::warn!("a signing body admitted to memory could not be allocated");
+            memory_floor()
+        }
+        WholeBody::Unread => unread(),
+    }
+}
+
+/// This machine's memory cannot hold what reading an admitted body takes,
+/// past its free-memory reserve.
+fn memory_floor() -> Response {
+    (
+        StatusCode::INSUFFICIENT_STORAGE,
+        Json(serde_json::json!({"error":{"code":"signing_memory_floor"}})),
     )
         .into_response()
 }

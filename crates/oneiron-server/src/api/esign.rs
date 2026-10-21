@@ -14,6 +14,7 @@ pub(crate) mod notice_worker;
 mod presentation;
 #[cfg(unix)]
 pub(crate) mod seal_worker;
+use crate::machine::MemoryRefusal;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header, request::Parts};
@@ -23,6 +24,7 @@ use axum::{Json, Router};
 use ingress::SigningIngress;
 use oneiron::blob_artifact::esign::{EsignSigningImageView, SigningCaller};
 use std::sync::Arc;
+use std::time::Instant;
 /// The owner's field editor. Its shell mints an editor token into its page
 /// (FIX 5618, `editor_auth`). A computation POST carrying one is admitted
 /// from its head, waits for one of two slots and spools its raw body, which
@@ -239,9 +241,24 @@ async fn pdf(
         Err(_) => refused(),
     }
 }
+/// How a signature image upload ended on its spool's worker.
+enum ImageUpload {
+    Stored(String),
+    /// Its capability or turn, its format or visible pixels, or the
+    /// decoder's bounds refused it.
+    Refused,
+    /// The machine memory reading and decoding it takes was not admitted.
+    Memory(MemoryRefusal),
+    /// It was not read back whole.
+    Unread(ingress::WholeBody),
+}
+
 /// The signature image is the body itself, raw PNG or JPEG bytes: spooled
 /// whole, then decoded and stored on the same worker. Only its capability and
-/// turn, its format and visible pixels, and the decoder's bounds refuse it.
+/// turn, its format and visible pixels, and the decoder's bounds refuse it,
+/// besides this machine's memory: the peak its read, decode and re-encode
+/// hold is planned from its header and leased before the body is read into
+/// memory, and held until the upload returns (FIX 7649).
 async fn image(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
@@ -249,13 +266,30 @@ async fn image(
     body: Body,
 ) -> Response {
     let vault = Arc::clone(&server.vault);
+    let memory = server.memory.clone();
     let uploaded = ingress::spooled(&server, admitted, &headers, body, move |file, bytes| {
-        let image = ingress::whole_body(file, bytes)?;
-        vault.upload_esign_signature_image(&token, &image).ok()
+        let mut spool = std::io::BufReader::new(file);
+        let Ok(plan) = oneiron::blob_artifact::esign::plan_signature_image(&mut spool) else {
+            return ImageUpload::Unread(ingress::WholeBody::Unread);
+        };
+        // A peak past u64 fits no machine: the lease refuses it at its floor.
+        let peak = plan.peak_bytes(bytes).unwrap_or(u64::MAX);
+        let lease = match memory.lease(peak, Instant::now() + ingress::MEMORY_WAIT) {
+            Ok(lease) => lease,
+            Err(refusal) => return ImageUpload::Memory(refusal),
+        };
+        let image = match ingress::whole_body(spool.into_inner(), bytes, &lease) {
+            Ok(image) => image,
+            Err(unread) => return ImageUpload::Unread(unread),
+        };
+        match vault.upload_esign_signature_image(&token, &image) {
+            Ok(image_ref) => ImageUpload::Stored(image_ref),
+            Err(_) => ImageUpload::Refused,
+        }
     })
     .await;
     match uploaded {
-        Ok(Some(image_ref)) => (
+        Ok(ImageUpload::Stored(image_ref)) => (
             [
                 (header::CACHE_CONTROL, "no-store"),
                 (header::REFERRER_POLICY, "no-referrer"),
@@ -263,7 +297,9 @@ async fn image(
             Json(EsignSigningImageView { image_ref }),
         )
             .into_response(),
-        Ok(None) => refused(),
+        Ok(ImageUpload::Refused) => refused(),
+        Ok(ImageUpload::Memory(refusal)) => ingress::memory_refused(refusal),
+        Ok(ImageUpload::Unread(unread)) => ingress::whole_body_refused(unread),
         Err(response) => response,
     }
 }

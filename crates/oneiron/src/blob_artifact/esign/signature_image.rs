@@ -8,7 +8,11 @@ use super::{
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Result, TimeRange, Vault};
-use std::io::Cursor;
+use std::io::{BufRead, Cursor, Read, Seek, SeekFrom};
+
+/// The widest and the tallest a signature image decodes: past either axis its
+/// decode is refused before a raster is allocated.
+const DECODE_MAX_AXIS: u32 = 2048;
 
 /// Signature image ownership marker. Key: id16 (document) + string (recipient) + string (image
 /// hex) — recipient and image are concatenated with no separator between them, so the shape is
@@ -200,8 +204,8 @@ impl Vault {
         let reader = |max_alloc: u64| {
             let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
             let mut limits = image::Limits::default();
-            limits.max_image_width = Some(2048);
-            limits.max_image_height = Some(2048);
+            limits.max_image_width = Some(DECODE_MAX_AXIS);
+            limits.max_image_height = Some(DECODE_MAX_AXIS);
             limits.max_alloc = Some(max_alloc);
             reader.limits(limits);
             reader
@@ -254,5 +258,222 @@ impl Vault {
         }
         self.read_blob_artifact_version_in_txn(&txn, &EntityId::from_hex(image_ref)?, 1)?
             .ok_or_else(|| invalid("signature image is unavailable"))
+    }
+}
+
+/// Bytes of one decoded pixel at most: four 8-bit channels.
+const PIXEL_BYTES: u64 = 4;
+
+/// Bytes of one decoded pixel at most in a 16-bit PNG: four 16-bit channels.
+const WIDE_PIXEL_BYTES: u64 = 8;
+
+/// Bytes the JPEG decoder works in for each pixel beside its raster: a
+/// progressive image's coefficients, two bytes for each of up to four
+/// components.
+const JPEG_SCRATCH_PIXEL_BYTES: u64 = 8;
+
+/// Bytes of a canonical PNG past its stored rows: its signature, header and
+/// end chunks, the zlib header and checksum, and each data chunk's framing.
+const PNG_FRAMING_BYTES: u64 = 4096;
+
+/// What uploading one signature image holds in memory at its peak, planned
+/// from its header alone before its body is read into memory
+/// ([`plan_signature_image`], FIX 7649), so the host can admit that much of
+/// the machine's memory first. An upper bound, never a refusal size: the
+/// upload's own checks judge the image as they always have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SignatureImagePlan {
+    /// Pixels the decode can hold: its width by its height, each axis at
+    /// most [`DECODE_MAX_AXIS`], past which the decode is refused unallocated.
+    pixels: u64,
+    /// Rows of those pixels: each takes one filter byte in the PNG.
+    rows: u64,
+    /// Bytes of one decoded pixel at most.
+    pixel_bytes: u64,
+    /// Bytes per pixel the decoder works in beside its raster.
+    scratch_pixel_bytes: u64,
+    /// Whether the decoder copies the encoded image whole before it decodes
+    /// it, as the JPEG decoder does.
+    copies_input: bool,
+}
+
+impl SignatureImagePlan {
+    /// No raster: an upload that is no PNG or JPEG is refused before any
+    /// decode.
+    const UNDECODED: Self = Self {
+        pixels: 0,
+        rows: 0,
+        pixel_bytes: 0,
+        scratch_pixel_bytes: 0,
+        copies_input: false,
+    };
+
+    /// A decode of `width` by `height` pixels of `pixel_bytes` each, by the
+    /// JPEG decoder when `jpeg`.
+    fn decoded(width: u32, height: u32, pixel_bytes: u64, jpeg: bool) -> Self {
+        let width = u64::from(width.min(DECODE_MAX_AXIS));
+        let height = u64::from(height.min(DECODE_MAX_AXIS));
+        Self {
+            pixels: width * height,
+            rows: height,
+            pixel_bytes,
+            scratch_pixel_bytes: if jpeg { JPEG_SCRATCH_PIXEL_BYTES } else { 0 },
+            copies_input: jpeg,
+        }
+    }
+
+    /// The most any decode can hold, for a PNG or JPEG whose header cannot
+    /// be read: both axes at their bound, the widest pixel, and the JPEG
+    /// decoder's copy and scratch.
+    fn ceiling() -> Self {
+        Self::decoded(DECODE_MAX_AXIS, DECODE_MAX_AXIS, WIDE_PIXEL_BYTES, true)
+    }
+
+    /// Bytes uploading this image of `input` encoded bytes holds at its
+    /// peak, all summed though some are dropped before others are made: the
+    /// encoded body read whole; the decoder's own copy of it, for a JPEG; the
+    /// decoded raster and the decoder's scratch; the raster's RGBA copy, which
+    /// the visible-pixel check makes; and the canonical PNG's encoding, which
+    /// is a 16-bit raster's big-endian copy, then the zlib stream and the file
+    /// written, each a buffer that may grow to twice the rows' stored size.
+    /// `None` past `u64`.
+    #[must_use]
+    pub fn peak_bytes(&self, input: u64) -> Option<u64> {
+        let copy = if self.copies_input { input } else { 0 };
+        let read = input.checked_add(copy)?;
+        if self.pixels == 0 {
+            return Some(read);
+        }
+        let raster = self.pixels.checked_mul(self.pixel_bytes)?;
+        let scratch = self.pixels.checked_mul(self.scratch_pixel_bytes)?;
+        let rgba = self.pixels.checked_mul(PIXEL_BYTES)?;
+        let reordered = if self.pixel_bytes > PIXEL_BYTES {
+            raster
+        } else {
+            0
+        };
+        // Each row after its filter byte, stored past deflate's worst case:
+        // 5 bytes in a block of at least 16 KiB, well under one in 1,024.
+        let filtered = raster.checked_add(self.rows)?;
+        let stored = filtered
+            .checked_add(filtered / 1024)?
+            .checked_add(PNG_FRAMING_BYTES)?;
+        let encoding = reordered.checked_add(stored.checked_mul(4)?)?;
+        read.checked_add(raster)?
+            .checked_add(scratch)?
+            .checked_add(rgba)?
+            .checked_add(encoding)
+    }
+}
+
+/// Plans uploading the signature image `spool` holds, reading no more of it
+/// than its format and its frame header, then rewinds it (FIX 7649). A PNG
+/// or JPEG whose header cannot be read is planned at the most any decode can
+/// hold; an upload that is neither plans no raster, since the upload refuses
+/// it before decoding.
+///
+/// # Errors
+/// Reading or rewinding `spool` failed.
+pub fn plan_signature_image(spool: &mut (impl BufRead + Seek)) -> Result<SignatureImagePlan> {
+    spool.seek(SeekFrom::Start(0))?;
+    let mut start = Vec::with_capacity(16);
+    spool.by_ref().take(16).read_to_end(&mut start)?;
+    let plan = match image::guess_format(&start) {
+        Ok(image::ImageFormat::Png) => png_plan(spool)?,
+        Ok(image::ImageFormat::Jpeg) => jpeg_plan(spool)?,
+        _ => SignatureImagePlan::UNDECODED,
+    };
+    spool.seek(SeekFrom::Start(0))?;
+    Ok(plan)
+}
+
+/// A PNG's plan from its header chunk, which the format puts first: its
+/// width, its height and its bit depth.
+fn png_plan(spool: &mut (impl BufRead + Seek)) -> Result<SignatureImagePlan> {
+    spool.seek(SeekFrom::Start(0))?;
+    // The signature, then IHDR's length and type, width, height and depth.
+    let mut header = [0u8; 25];
+    if !read_whole(spool, &mut header)? || header[12..16] != *b"IHDR" {
+        return Ok(SignatureImagePlan::ceiling());
+    }
+    let width = u32::from_be_bytes([header[16], header[17], header[18], header[19]]);
+    let height = u32::from_be_bytes([header[20], header[21], header[22], header[23]]);
+    let pixel_bytes = if header[24] == 16 {
+        WIDE_PIXEL_BYTES
+    } else {
+        PIXEL_BYTES
+    };
+    Ok(SignatureImagePlan::decoded(
+        width,
+        height,
+        pixel_bytes,
+        false,
+    ))
+}
+
+/// A JPEG's plan from its frame header, found by stepping over the segments
+/// before it by their lengths, their bodies unread. One that ends, scans or
+/// names no size before a frame header is planned at the ceiling.
+fn jpeg_plan(spool: &mut (impl BufRead + Seek)) -> Result<SignatureImagePlan> {
+    // Past the start-of-image marker.
+    spool.seek(SeekFrom::Start(2))?;
+    let mut byte = [0u8; 1];
+    loop {
+        if !read_whole(spool, &mut byte)? || byte[0] != 0xFF {
+            return Ok(SignatureImagePlan::ceiling());
+        }
+        // A marker may follow any number of fill bytes.
+        let mut marker = 0xFF;
+        while marker == 0xFF {
+            if !read_whole(spool, &mut byte)? {
+                return Ok(SignatureImagePlan::ceiling());
+            }
+            marker = byte[0];
+        }
+        match marker {
+            // Markers with no segment after them.
+            0x01 | 0xD0..=0xD7 => {}
+            // Every frame header but DHT (C4), JPG (C8) and DAC (CC): its
+            // length, precision, height, width.
+            0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF => {
+                let mut frame = [0u8; 7];
+                if !read_whole(spool, &mut frame)? {
+                    return Ok(SignatureImagePlan::ceiling());
+                }
+                let height = u32::from(u16::from_be_bytes([frame[3], frame[4]]));
+                let width = u32::from(u16::from_be_bytes([frame[5], frame[6]]));
+                // A height of 0 is named later, past the first scan.
+                if width == 0 || height == 0 {
+                    return Ok(SignatureImagePlan::ceiling());
+                }
+                return Ok(SignatureImagePlan::decoded(
+                    width,
+                    height,
+                    PIXEL_BYTES,
+                    true,
+                ));
+            }
+            // A second image's start, the image's end or its first scan.
+            0xD8..=0xDA => return Ok(SignatureImagePlan::ceiling()),
+            _ => {
+                let mut length = [0u8; 2];
+                if !read_whole(spool, &mut length)? {
+                    return Ok(SignatureImagePlan::ceiling());
+                }
+                let Some(body) = u16::from_be_bytes(length).checked_sub(2) else {
+                    return Ok(SignatureImagePlan::ceiling());
+                };
+                spool.seek_relative(i64::from(body))?;
+            }
+        }
+    }
+}
+
+/// Fills `buf` from `spool`: `false` when the spool ends first.
+fn read_whole(spool: &mut impl Read, buf: &mut [u8]) -> Result<bool> {
+    match spool.read_exact(buf) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(error) => Err(error.into()),
     }
 }

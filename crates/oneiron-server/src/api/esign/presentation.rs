@@ -157,7 +157,8 @@ pub(super) async fn editor_script() -> Response {
 /// An admitted editor's PDF (FIX 5618) spools whole and is inspected on the
 /// worker that holds its slot; its size is the `[limits]
 /// esign_geometry_body_bytes` row, which asks the vault owner past it and
-/// never refuses the PDF.
+/// never refuses the PDF. The PDF's bytes are leased from this machine's
+/// memory before it is read into memory (FIX 7649).
 pub(super) async fn upload_geometry(
     State(server): State<Arc<SyncServer>>,
     ingress: EditorIngress,
@@ -165,6 +166,7 @@ pub(super) async fn upload_geometry(
 ) -> Response {
     // Each stream decodes within the vault's own row (FIX 6287).
     let stream_decode_bytes = server.vault.esign_stream_decode_bytes();
+    let memory = server.memory.clone();
     let slot = match ingress {
         EditorIngress::Anonymous => {
             let permit = request
@@ -195,8 +197,15 @@ pub(super) async fn upload_geometry(
         body,
         move |file, bytes| {
             let _slot = slot;
-            let Some(pdf) = super::ingress::whole_body(file, bytes) else {
-                return super::ingress::unread();
+            // The PDF read whole; its parse's own memory is not planned here.
+            let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
+            let lease = match memory.lease(bytes, deadline) {
+                Ok(lease) => lease,
+                Err(refusal) => return super::ingress::memory_refused(refusal),
+            };
+            let pdf = match super::ingress::whole_body(file, bytes, &lease) {
+                Ok(pdf) => pdf,
+                Err(unread) => return super::ingress::whole_body_refused(unread),
             };
             match render::inspect_pdf_pages_within(&pdf, stream_decode_bytes) {
                 Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
