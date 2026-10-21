@@ -13703,6 +13703,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/agent_verb/scoped_port.rs",
+     "purpose": "A scoped child's port calls (FIX 7507 PR2): the verbs its parent lent it, each run by the adapter its host…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/agent_verb/session_write.rs",
      "purpose": "The two writes a run bound to an off-record session stages in its room (DOOR-127; WILL L11-01, S01-2a)…",
      "surface": {
@@ -13850,8 +13860,8 @@
      "path": "src/code_run/dispatcher/reader_spawn.rs",
      "purpose": "Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn…",
      "surface": {
-      "crate-vis": 10,
-      "fn": 2
+      "crate-vis": 14,
+      "fn": 3
      }
     },
     {
@@ -14058,7 +14068,7 @@
      "surface": {
       "crate-vis": 23,
       "mod": 7,
-      "re-export": 21
+      "re-export": 23
      }
     },
     {
@@ -14125,6 +14135,16 @@
       "fn": 19,
       "struct": 21,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/reader_brief.rs",
+     "purpose": "The task text a reader child's run is given: a read child's names its one source; a scoped child's (FIX…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -14369,6 +14389,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ScopedChildCallContext",
+      "ScopedChildLoan",
+      "ScopedChildPorts",
+      "ScopedChildSpec",
+      "ScopedInputRead"
+     ],
+     "path": "src/code_run/scoped_child.rs",
+     "purpose": "Scoped children (FIX 7507 PR2): a separate code-mode agent a host queues on the reader-job machinery…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "fn": 8,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -14607,6 +14647,16 @@
       "enum": 1,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/reader_jobs/scoped.rs",
+     "purpose": "A host's scoped child (FIX 7507 PR2), queued on its parent's reader rows as every child of the parent is…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -68796,7 +68846,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 130,
+     "files": 134,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70079,7 +70129,7 @@
    },
    "over_bar": 182,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4447,
+   "source_files": 4451,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83011,7 +83061,7 @@
      "surface": {
       "crate-vis": 36,
       "fn": 22,
-      "mod": 1,
+      "mod": 2,
       "re-export": 1,
       "struct": 2
      }
@@ -83054,6 +83104,17 @@
      "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/scoped_child.rs",
+     "purpose": "Scoped children at the host (FIX 7507 PR2): the door a scoped child runs behind, the binding of its lent…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -95623,7 +95684,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 70,
+     "files": 71,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96080,7 +96141,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1048,
+   "source_files": 1049,
    "test_files": 182
   },
   "oneiron-spawn": {
