@@ -22,7 +22,7 @@ pub(crate) use eligibility::{
 };
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
-pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput};
+pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
 pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 pub use space::{

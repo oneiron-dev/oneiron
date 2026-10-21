@@ -404,6 +404,9 @@ side_tables! {
     /// Where the current reconciled embedding vector was filled (on-device/owner-server/third-party).
     /// Key: id16.
     EMBEDDING_LOCALITY: VaultMeta b"embedding/locality/" Raw;
+    /// The device family and runtime that computed each media vector in a declared space, outside
+    /// the space identity (ARCH-0036; FIX 7796). Key: space key16 + id16.
+    EMBEDDING_MEDIA_DEVICE: VaultMeta b"embedding/media_device/" Named;
     /// A document a declared space's model refused by its content, with the BLAKE3 of the bytes
     /// it refused; the media backfill skips it until they change (OF-370). Key: space key16 +
     /// id16.

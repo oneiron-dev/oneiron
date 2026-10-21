@@ -950,7 +950,18 @@ impl QueryEmbedder for HttpEmbedder {
 /// endpoint ran on and a runtime fit to store; otherwise the endpoint did not
 /// say.
 fn answer_mark(sent: Option<Box<RawValue>>) -> Option<EmbeddingProvenance> {
-    let mark: EmbeddingProvenance = serde_json::from_str(sent?.get()).ok()?;
+    checked_mark(serde_json::from_str(sent?.get()).ok()?)
+}
+
+/// [`answer_mark`] for a mark that reached the host as answer metadata, as a
+/// media embedder's does (FIX 7796): held to the same rule.
+pub(crate) fn reported_mark(sent: &serde_json::Value) -> Option<EmbeddingProvenance> {
+    checked_mark(serde::Deserialize::deserialize(sent).ok()?)
+}
+
+/// `mark`, when it names a device the endpoint ran on and a runtime fit to
+/// store.
+fn checked_mark(mark: EmbeddingProvenance) -> Option<EmbeddingProvenance> {
     let ran_on = matches!(
         mark.device,
         EmbeddingDevice::Cpu | EmbeddingDevice::Cuda | EmbeddingDevice::Metal
