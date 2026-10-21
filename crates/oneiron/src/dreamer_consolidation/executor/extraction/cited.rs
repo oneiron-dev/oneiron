@@ -1,7 +1,8 @@
 //! The extraction step's citation check (FIX 7274): a TURN byte range that
 //! verification would refuse the whole partition over (past its source's
 //! text, or splitting its UTF-8) refuses the reply at the checked step
-//! instead, so the reply is never memoized and the next pass asks again.
+//! instead, so the reply is never memoized and is asked again after its
+//! retry delay.
 
 use super::{build_resolved, check_extraction_reply, extraction_reply, parse_candidate};
 use crate::LlmResponse;

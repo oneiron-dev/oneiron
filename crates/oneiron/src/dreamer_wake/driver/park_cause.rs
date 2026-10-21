@@ -1,6 +1,7 @@
 //! What a non-deadline executor error parks as (FIX 7272). An error only an
 //! owner act clears keeps its private ExecutorError park and ends the pass,
-//! as before; any other parks as a Checkpoint the next pass resumes.
+//! as before; any other parks as a Retry a later pass resumes after its
+//! retry delay (Engine 10-21).
 
 use crate::dreamer_runner::DreamerParkCause;
 use crate::error::ErrorKind;
@@ -50,6 +51,6 @@ pub(super) const fn executor_error_park_cause(kind: ErrorKind) -> DreamerParkCau
     if waits_on_owner_act(kind) {
         DreamerParkCause::ExecutorError
     } else {
-        DreamerParkCause::Checkpoint
+        DreamerParkCause::Retry
     }
 }

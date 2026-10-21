@@ -273,7 +273,8 @@ impl<'a> DreamerWakeDriver<'a> {
         // (here, or by a peer through sync) resumes its parked attempt as
         // the same try, admissible in this very pass.
         crate::llm::resume_signalled_steps(self.vault, now.saturating_mul(1_000))?;
-        // An ended pass's Checkpoint parks resume as the same tries (DOOR-144).
+        // An ended pass's Checkpoint parks, and its Retry parks whose delay
+        // passed, resume as the same tries (DOOR-144).
         self.resume_checkpoints(input);
         crate::human_task::run_human_followups_on_wake(self.vault, now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
@@ -321,8 +322,8 @@ impl<'a> DreamerWakeDriver<'a> {
         let mut task_admission_refused = false;
         // The same for turn programs (DOOR-141 PR2).
         let mut program_admission_refused = false;
-        // The first executor error parked as a Checkpoint (FIX 7272): the
-        // pass goes on past it and returns it at its end.
+        // The first executor error parked as a Retry (FIX 7272): the pass
+        // goes on past it and returns it at its end.
         let mut held_error: Option<crate::Error> = None;
 
         loop {
@@ -744,10 +745,12 @@ impl<'a> DreamerWakeDriver<'a> {
                 ..
             }) = prepared_wake.preparation(attempt_id)
             {
+                // A refused preparation is prepared again after its retry
+                // delay (FIX 7272); none waits on an owner act.
                 stage = Some("prepared_refused");
                 Ok(DreamerAttemptExecution::Park {
                     reason: (*reason).to_owned(),
-                    cause: DreamerParkCause::Other,
+                    cause: DreamerParkCause::Retry,
                 })
             } else if matches!(
                 prepared_wake.preparation(attempt_id),
@@ -876,8 +879,9 @@ impl<'a> DreamerWakeDriver<'a> {
                         )? {
                             return Err(error);
                         }
-                        // FIX 7272: parked as a Checkpoint the next pass
-                        // resumes, so this pass goes on and fails at its end.
+                        // FIX 7272: parked as a Retry a later pass resumes
+                        // after its delay, so this pass goes on and fails at
+                        // its end.
                         report.parked += 1;
                         held_error.get_or_insert(error);
                         if cancel_requested {
@@ -1067,7 +1071,7 @@ impl<'a> DreamerWakeDriver<'a> {
             }
         }
 
-        // A pass that went on past a Checkpoint-parked executor error still
+        // A pass that went on past a Retry-parked executor error still
         // fails, on the first one (FIX 7272).
         held_error.map_or(Ok(report), Err)
     }

@@ -16,7 +16,8 @@ impl DreamerWakeDriver<'_> {
     /// `true` when the pass ends on `error` now, as before: an error only an
     /// owner act clears parks as ExecutorError, and an attempt the step
     /// layer already parked keeps its park. `false` when it parked as a
-    /// Checkpoint the next pass resumes, and the pass goes on.
+    /// Retry a later pass resumes after its retry delay, and the pass goes
+    /// on.
     pub(super) fn park_executor_error(
         &mut self,
         admitted: &DreamerAdmittedAttempt,
