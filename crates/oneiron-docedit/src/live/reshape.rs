@@ -18,12 +18,14 @@ mod dataset;
 mod families;
 mod layout;
 mod points;
+mod retained;
 mod series;
 mod table;
 mod workbook;
 
 pub(super) use chart::{chart, reseed};
-pub(super) use layout::plot_plan;
+pub(super) use families::same_settings;
+pub(super) use layout::{PlotTarget, plot_plan};
 pub(super) use table::table;
 
 use super::LiveError;
@@ -34,7 +36,7 @@ use crate::edit::xml::{self, P, R};
 use crate::native_patch::{Target, chart_data, number};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
-use axes::{axes, retyped_axis};
+use axes::retyped_axis;
 use families::{fresh_plot, kept_plot};
 use layout::number_cells;
 use points::{Points, carried, remap};
@@ -208,106 +210,6 @@ fn is_axis(node: &Node) -> bool {
     node.namespace == C && matches!(node.name.as_str(), "catAx" | "valAx" | "dateAx" | "serAx")
 }
 
-/// A kept series with its sequences replaced: `idx` and `order` as held,
-/// `tx` (inserted after `order` when it had none), the category (or x)
-/// slot before the value slot, and its data points' formatting and labels
-/// carried to their points' new places ([`Points`]), those of points gone
-/// dropped. Everything else keeps its bytes.
-fn kept_ser(
-    bytes: &[u8],
-    tree: &XmlTree,
-    ser: usize,
-    (idx, order): (u32, u32),
-    writer: &Writer,
-    [tx, cat, val]: [&str; 3],
-    points: &Points,
-) -> Result<Vec<u8>, LiveError> {
-    let mut out = xml::open_tag(bytes, &tree.nodes[ser]);
-    let (mut named, mut cat_done, mut data_done) = (false, false, false);
-    let mut points_done = false;
-    let push = |out: &mut Vec<u8>, text: &str| out.extend_from_slice(text.as_bytes());
-    for &child in &tree.nodes[ser].children {
-        let node = &tree.nodes[child];
-        if node.namespace != C {
-            out.extend_from_slice(piece(bytes, tree, child));
-            continue;
-        }
-        match node.name.as_str() {
-            "idx" => push(&mut out, &format!(r#"<{} val="{idx}"/>"#, writer.el("idx"))),
-            "order" => {
-                push(
-                    &mut out,
-                    &format!(r#"<{} val="{order}"/>"#, writer.el("order")),
-                );
-                if xml::child(tree, ser, C, "tx").is_none() {
-                    push(&mut out, tx);
-                    named = true;
-                }
-            }
-            "tx" if !named => {
-                push(&mut out, tx);
-                named = true;
-            }
-            "tx" => {}
-            "cat" | "xVal" => {
-                push(&mut out, cat);
-                cat_done = true;
-            }
-            "val" | "yVal" => {
-                if !cat_done {
-                    push(&mut out, cat);
-                    cat_done = true;
-                }
-                push(&mut out, val);
-                data_done = true;
-            }
-            "dPt" => {
-                if !points_done {
-                    out.extend(carried(
-                        bytes,
-                        tree,
-                        &tree.nodes[ser].children,
-                        "dPt",
-                        points,
-                    ));
-                    points_done = true;
-                }
-            }
-            "dLbls" if !node.empty => {
-                out.extend(xml::open_tag(bytes, node));
-                let mut labels_done = false;
-                for &label in &node.children {
-                    if !tree.nodes[label].is(C, "dLbl") {
-                        out.extend_from_slice(piece(bytes, tree, label));
-                    } else if !labels_done {
-                        out.extend(carried(bytes, tree, &node.children, "dLbl", points));
-                        labels_done = true;
-                    }
-                }
-                out.extend(close(node));
-            }
-            "shape" | "smooth" | "extLst" | "bubbleSize" | "bubble3D" if !data_done => {
-                if !cat_done {
-                    push(&mut out, cat);
-                    cat_done = true;
-                }
-                push(&mut out, val);
-                data_done = true;
-                out.extend_from_slice(piece(bytes, tree, child));
-            }
-            _ => out.extend_from_slice(piece(bytes, tree, child)),
-        }
-    }
-    if !data_done {
-        if !cat_done {
-            push(&mut out, cat);
-        }
-        push(&mut out, val);
-    }
-    out.extend(close(&tree.nodes[ser]));
-    Ok(out)
-}
-
 /// The same-length sequence writes that make a workbook chart read as
 /// `wanted` without a rewrite: each series' name, categories (or x values)
 /// and values that differ, for the checked chart writer. `None` when the
@@ -336,11 +238,16 @@ pub(super) fn plan(
     else {
         return None;
     };
+    // Plot settings, the 3D view and bubble sizes are written by the full
+    // rewrite.
     if family != want_family
+        || !same_settings(have, wanted)
         || held_series.len() != series.len()
         || held_series.iter().zip(series).any(|(was, now)| {
             was.family.unwrap_or(*family) != now.family.unwrap_or(*want_family)
                 || was.x.is_some() != now.x.is_some()
+                || was.bubble_size != now.bubble_size
+                || was.bubble_3d != now.bubble_3d
         })
     {
         return None;
@@ -414,8 +321,8 @@ pub(super) fn plan(
 /// `read` reads as `wanted`: the same family and series names, each series
 /// in the same plot family drawing the same categories (by label, level by
 /// level, whatever their identities and whichever set holds them), and the
-/// same values and x values (as numbers; a sequence ending in missing
-/// points reads as one without them).
+/// same values, x values and bubble sizes (as numbers; a sequence ending in
+/// missing points reads as one without them).
 pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
     let (
         NodePayload::Chart {
@@ -447,6 +354,11 @@ pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
                 && a.family.unwrap_or(*family) == b.family.unwrap_or(*want_family)
                 && padded(a.values.as_slice(), b.values.as_slice())
                 && match (&a.x, &b.x) {
+                    (Some(a), Some(b)) => padded(a.as_slice(), b.as_slice()),
+                    (None, None) => true,
+                    _ => false,
+                }
+                && match (&a.bubble_size, &b.bubble_size) {
                     (Some(a), Some(b)) => padded(a.as_slice(), b.as_slice()),
                     (None, None) => true,
                     _ => false,

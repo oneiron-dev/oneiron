@@ -568,12 +568,14 @@ fn same_payload(
                 categories,
                 series,
                 source,
+                ..
             }),
             Some(NodePayload::Chart {
                 family: read_family,
                 categories: read_categories,
                 series: read_series,
                 source: read_source,
+                ..
             }),
         ) => {
             // Each series draws the same categories by label, level by
@@ -632,6 +634,11 @@ fn same_series((a, b): (&crate::live::ChartSeries, &crate::live::ChartSeries)) -
         && match (&a.x, &b.x) {
             (None, None) => true,
             (Some(xa), Some(xb)) => points(xa, xb),
+            _ => false,
+        }
+        && match (&a.bubble_size, &b.bubble_size) {
+            (None, None) => true,
+            (Some(sa), Some(sb)) => points(sa, sb),
             _ => false,
         }
 }

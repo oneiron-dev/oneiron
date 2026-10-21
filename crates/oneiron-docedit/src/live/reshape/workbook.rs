@@ -5,7 +5,11 @@
 //! name and values in the first free cells beside its template's, the
 //! chart's categories shared. A cell that already reads as the live data
 //! is not written; a written cell keeps its format, and a new one takes
-//! its neighbour's. A literal or absent sequence stays literal. Other
+//! its neighbour's. A literal or absent sequence (a held series' name,
+//! values, x values or bubble sizes, or a new series' whose template's slot
+//! is literal) takes the first free cells beside the chart's, as
+//! PowerPoint's Edit Data gives it cells (FIX 6400); its points stay what
+//! they were, and every survivor keeps its references. Other
 //! sheets, formulas, formats, defined names and tables keep their bytes: a
 //! formula that may read a written cell keeps its expression and stale
 //! result, and the workbook asks the opening application to recalculate.
@@ -23,7 +27,7 @@ use crate::edit::xml::{self, R};
 use crate::live::LiveError;
 use crate::live::conversion::{Conversion, RebuildReason};
 use crate::live::held::{self, C};
-use crate::live::pptx::{ChartKind, ChartSource, NodePayload};
+use crate::live::pptx::{ChartSource, NodePayload};
 use crate::native_patch::{NativeRefusal, chart_data, number};
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
@@ -124,7 +128,7 @@ pub(super) fn in_place(
         .zip(&wanted.resolved)
         .map(|(line, kind)| Want {
             name: &line.name,
-            first: match (&line.x, *kind == ChartKind::Scatter, line.set) {
+            first: match (&line.x, kind.draws_x(), line.set) {
                 (Some(x), true, _) => Some(First {
                     levels: std::slice::from_ref(x),
                     numeric: true,
@@ -138,6 +142,7 @@ pub(super) fn in_place(
                 _ => None,
             },
             values: &line.values,
+            size: line.size.as_deref(),
         })
         .collect();
     let mut refs = vec![Refs::default(); wants.len()];
@@ -152,12 +157,13 @@ pub(super) fn in_place(
             placed.entry(set).or_insert(lines);
         }
     }
-    // Then a held series' categories it had no cells for, and each new
-    // series beside its template.
+    // Then a held series' categories it had no cells for, the cells of its
+    // literal or absent slots, and each new series beside its template.
+    let anchor = plan.anchor();
     for ((want, seat), refs) in wants.iter().zip(seats).zip(&mut refs) {
         let set = want.first.as_ref().and_then(|first| first.set);
         match (seat.cells, seat.template) {
-            (Some(_), _) => {
+            (Some(ser), _) => {
                 if refs.first.is_none()
                     && let (Some(first), Some(lines)) =
                         (&want.first, set.and_then(|set| placed.get(&set)))
@@ -165,11 +171,16 @@ pub(super) fn in_place(
                     plan.fill(lines, first)?;
                     refs.first = Line::around(lines).map(|line| line.formula());
                 }
+                let held = held_refs(tree, ser)?;
+                if let Some((set, lines)) = plan.gaps(&held, want, refs, anchor.as_ref())? {
+                    placed.entry(set).or_insert(lines);
+                }
             }
             (None, Some(template)) => {
                 let shared = set.and_then(|set| placed.get(&set)).cloned();
+                let held = held_refs(tree, template)?;
                 if let Some((set, lines)) =
-                    plan.added(&held_refs(tree, template)?, want, shared.as_deref(), refs)?
+                    plan.added(&held, want, shared.as_deref(), refs, anchor.as_ref())?
                 {
                     placed.entry(set).or_insert(lines);
                 }
@@ -238,12 +249,13 @@ impl Held {
 }
 
 /// A held series' references: its name, its categories or x values, its
-/// values; `None` for a literal or absent slot.
+/// values, its bubble sizes; `None` for a literal or absent slot.
 #[derive(Debug, Default)]
 struct HeldRefs {
     name: Option<Held>,
     first: Option<Held>,
     values: Option<Held>,
+    size: Option<Held>,
 }
 
 /// A held series' references, read without expanding any cache's points.
@@ -275,15 +287,17 @@ fn held_refs(tree: &XmlTree, ser: usize) -> Result<HeldRefs, RebuildReason> {
         name: slot(&["tx"])?,
         first: slot(&["cat", "xVal"])?,
         values: slot(&["val", "yVal"])?,
+        size: slot(&["bubbleSize"])?,
     })
 }
 
 /// What one live series writes: its name, its categories or x values when
-/// it draws them, and its values.
+/// it draws them, its values, and a bubble series' sizes.
 struct Want<'a> {
     name: &'a str,
     first: Option<First<'a>>,
     values: &'a [Cell],
+    size: Option<&'a [Cell]>,
 }
 
 /// A series' categories (one category set, `set`, level by level, leaf
@@ -383,6 +397,17 @@ impl<'b> Plan<'b> {
             planned: BTreeMap::new(),
             owners: BTreeMap::new(),
             names: BTreeSet::new(),
+        })
+    }
+
+    /// The first cell any reference of the chart names: where cells for a
+    /// slot with none start looking for room.
+    fn anchor(&self) -> Option<Line> {
+        let (sheet, col, row) = self.named.first()?;
+        Some(Line {
+            sheet: sheet.clone(),
+            first: (*col, *row),
+            last: (*col, *row),
         })
     }
 

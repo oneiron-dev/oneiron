@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1136 facade rows, 3952 generated types.
+// UniFFI census: 1136 facade rows, 3958 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1088.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -52722,6 +52722,16 @@ pub enum ChartKind {
     Doughnut,
     #[serde(rename = "radar")]
     Radar,
+    #[serde(rename = "bar_3d")]
+    Bar3D,
+    #[serde(rename = "line_3d")]
+    Line3D,
+    #[serde(rename = "pie_3d")]
+    Pie3D,
+    #[serde(rename = "area_3d")]
+    Area3D,
+    #[serde(rename = "bubble")]
+    Bubble,
 }
 
 /// `oneiron_docedit::live::pptx::chart::categories::ChartCategory`.
@@ -52765,6 +52775,14 @@ pub struct ChartSeries {
         skip_serializing_if = "Option::is_none"
     )]
     pub categories: Option<ChartCategories>,
+    #[serde(
+        rename = "bubble_size",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub bubble_size: Option<Vec<Option<f64>>>,
+    #[serde(rename = "bubble_3d", default, skip_serializing_if = "Option::is_none")]
+    pub bubble_3d: Option<bool>,
 }
 
 /// `oneiron_docedit::live::pptx::chart::ChartSource`.
@@ -52776,6 +52794,116 @@ pub enum ChartSource {
     Literal,
     #[serde(rename = "cached")]
     Cached,
+}
+
+/// `oneiron_docedit::live::pptx::chart::families::BarDirection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BarDirection {
+    #[serde(rename = "bar")]
+    Bar,
+    #[serde(rename = "col")]
+    Col,
+}
+
+/// `oneiron_docedit::live::pptx::chart::families::PlotGrouping`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum PlotGrouping {
+    #[serde(rename = "standard")]
+    Standard,
+    #[serde(rename = "clustered")]
+    Clustered,
+    #[serde(rename = "stacked")]
+    Stacked,
+    #[serde(rename = "percent_stacked")]
+    PercentStacked,
+}
+
+/// `oneiron_docedit::live::pptx::chart::families::BarShape`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BarShape {
+    #[serde(rename = "box")]
+    Box,
+    #[serde(rename = "cone")]
+    Cone,
+    #[serde(rename = "cone_to_max")]
+    ConeToMax,
+    #[serde(rename = "cylinder")]
+    Cylinder,
+    #[serde(rename = "pyramid")]
+    Pyramid,
+    #[serde(rename = "pyramid_to_max")]
+    PyramidToMax,
+}
+
+/// `oneiron_docedit::live::pptx::chart::families::SizeRepresents`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SizeRepresents {
+    #[serde(rename = "area")]
+    Area,
+    #[serde(rename = "width")]
+    Width,
+}
+
+/// `oneiron_docedit::live::pptx::chart::families::ChartPlot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChartPlot {
+    #[serde(rename = "family")]
+    pub family: ChartKind,
+    #[serde(rename = "nth", default, skip_serializing_if = "Option::is_none")]
+    pub nth: Option<u32>,
+    #[serde(rename = "bar_dir", default, skip_serializing_if = "Option::is_none")]
+    pub bar_dir: Option<BarDirection>,
+    #[serde(rename = "grouping", default, skip_serializing_if = "Option::is_none")]
+    pub grouping: Option<PlotGrouping>,
+    #[serde(rename = "shape", default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<BarShape>,
+    #[serde(rename = "gap_depth", default, skip_serializing_if = "Option::is_none")]
+    pub gap_depth: Option<u32>,
+    #[serde(rename = "bubble_3d", default, skip_serializing_if = "Option::is_none")]
+    pub bubble_3d: Option<bool>,
+    #[serde(
+        rename = "bubble_scale",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub bubble_scale: Option<u32>,
+    #[serde(
+        rename = "show_neg_bubbles",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub show_neg_bubbles: Option<bool>,
+    #[serde(
+        rename = "size_represents",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub size_represents: Option<SizeRepresents>,
+}
+
+/// `oneiron_docedit::live::pptx::chart::families::ChartView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChartView {
+    #[serde(rename = "rot_x", default, skip_serializing_if = "Option::is_none")]
+    pub rot_x: Option<i32>,
+    #[serde(rename = "h_percent", default, skip_serializing_if = "Option::is_none")]
+    pub h_percent: Option<u32>,
+    #[serde(rename = "rot_y", default, skip_serializing_if = "Option::is_none")]
+    pub rot_y: Option<u32>,
+    #[serde(
+        rename = "depth_percent",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub depth_percent: Option<u32>,
+    #[serde(rename = "r_ang_ax", default, skip_serializing_if = "Option::is_none")]
+    pub r_ang_ax: Option<bool>,
+    #[serde(
+        rename = "perspective",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub perspective: Option<u32>,
 }
 
 /// `oneiron_docedit::edit::structure::ConnectorPreset`.
@@ -52933,6 +53061,10 @@ pub enum NodePayload {
         series: Vec<ChartSeries>,
         #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
         source: Option<ChartSource>,
+        #[serde(rename = "plots", default, skip_serializing_if = "Option::is_none")]
+        plots: Option<Vec<ChartPlot>>,
+        #[serde(rename = "view", default, skip_serializing_if = "Option::is_none")]
+        view: Option<ChartView>,
     },
     #[serde(rename = "connector")]
     Connector {
@@ -53393,6 +53525,14 @@ pub enum ChartEdit {
             skip_serializing_if = "Option::is_none"
         )]
         categories: Option<ChartCategories>,
+        #[serde(
+            rename = "bubble_size",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        bubble_size: Option<Vec<Option<f64>>>,
+        #[serde(rename = "bubble_3d", default, skip_serializing_if = "Option::is_none")]
+        bubble_3d: Option<bool>,
     },
     #[serde(rename = "delete_series")]
     DeleteSeries {
@@ -53433,6 +53573,34 @@ pub enum ChartEdit {
         series: u64,
         #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
         x: Option<Vec<Option<f64>>>,
+    },
+    #[serde(rename = "set_series_bubble_size")]
+    SetSeriesBubbleSize {
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(
+            rename = "bubble_size",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        bubble_size: Option<Vec<Option<f64>>>,
+    },
+    #[serde(rename = "set_series_bubble_3d")]
+    SetSeriesBubble3D {
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(rename = "bubble_3d", default, skip_serializing_if = "Option::is_none")]
+        bubble_3d: Option<bool>,
+    },
+    #[serde(rename = "set_plot")]
+    SetPlot {
+        #[serde(rename = "plot")]
+        plot: ChartPlot,
+    },
+    #[serde(rename = "set_view")]
+    SetView {
+        #[serde(rename = "view", default, skip_serializing_if = "Option::is_none")]
+        view: Option<ChartView>,
     },
     #[serde(rename = "set_family")]
     SetFamily {
@@ -54225,6 +54393,10 @@ pub enum SeriesField {
     Family,
     #[serde(rename = "x")]
     X,
+    #[serde(rename = "bubble_size")]
+    BubbleSize,
+    #[serde(rename = "bubble_3d")]
+    Bubble3D,
     #[serde(rename = "categories")]
     Categories,
     #[serde(rename = "order")]
