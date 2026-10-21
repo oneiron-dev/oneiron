@@ -26,8 +26,16 @@ pub(super) fn unavailable() -> Value {
 fn walk(value: &Value, f: &mut impl FnMut(&Value)) {
     f(value);
     match value {
-        Value::Object(map) => for child in map.values() { walk(child, f) },
-        Value::Array(values) => for child in values { walk(child, f) },
+        Value::Object(map) => {
+            for child in map.values() {
+                walk(child, f)
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                walk(child, f)
+            }
+        }
         _ => {}
     }
 }
@@ -42,27 +50,50 @@ pub(super) fn observe(receipts: &[Value], engine: &str) -> (Value, Value, Option
         walk(receipt, &mut |node| {
             if let Some(map) = node.as_object() {
                 if let Some(name) = map.get("engine").and_then(Value::as_str) {
-                    if matches!(name, "chromium" | "lightpanda") { engines.insert(name.to_owned()); }
+                    if matches!(name, "chromium" | "lightpanda") {
+                        engines.insert(name.to_owned());
+                    }
                 }
-                if let Some(stop) = map.get("stop_cause").filter(|s| !s.is_null()) { stops.push(stop.clone()); }
-                if let Some(fact) = map.get("model_free").and_then(Value::as_bool) { executions.push(fact); }
+                if let Some(stop) = map.get("stop_cause").filter(|s| !s.is_null()) {
+                    stops.push(stop.clone());
+                }
+                if let Some(fact) = map.get("model_free").and_then(Value::as_bool) {
+                    executions.push(fact);
+                }
             }
         });
     }
-    if !executions.is_empty() { measures["execution_model_free"] = json!(executions.iter().all(|f| *f)); }
+    if !executions.is_empty() {
+        measures["execution_model_free"] = json!(executions.iter().all(|f| *f));
+    }
     measures["receipt_engines"] = json!(engines);
-    let stop = if engines.iter().any(|e| e != engine) { Some("browser_engine_mismatch".into()) }
-        else if engines.is_empty() { Some("browser_engine_unattested".into()) } else { None };
+    let stop = if engines.iter().any(|e| e != engine) {
+        Some("browser_engine_mismatch".into())
+    } else if engines.is_empty() {
+        Some("browser_engine_unattested".into())
+    } else {
+        None
+    };
     (measures, json!(stops), stop)
 }
 
-pub(super) fn first_useful(checker: &Value, fixture: &str, start_utc: f64, end_utc: f64, monotonic_seconds: f64, tolerance_ms: u64) -> Value {
-    if fixture == "F1" { return json!({"ms":null,"reason":"unavailable_static_profile_reads_not_logged"}) }
+pub(super) fn first_useful(
+    checker: &Value,
+    fixture: &str,
+    start_utc: f64,
+    end_utc: f64,
+    monotonic_seconds: f64,
+    tolerance_ms: u64,
+) -> Value {
+    if fixture == "F1" {
+        return json!({"ms":null,"reason":"unavailable_static_profile_reads_not_logged"});
+    }
     let Some(event) = checker["first_useful_utc_seconds"].as_f64() else {
         return json!({"ms":null,"reason":"no_qualifying_successful_effect"});
     };
-    let clock_difference_ms = ((end_utc-start_utc)-monotonic_seconds).abs()*1000.0;
-    let valid = clock_difference_ms <= tolerance_ms as f64 && event >= start_utc && event <= end_utc;
+    let clock_difference_ms = ((end_utc - start_utc) - monotonic_seconds).abs() * 1000.0;
+    let valid =
+        clock_difference_ms <= tolerance_ms as f64 && event >= start_utc && event <= end_utc;
     json!({"ms":if valid {Some((event-start_utc)*1000.0)} else {None},
         "basis":"host_utc_event_interval","event":checker["first_useful_event"],
         "clock_difference_ms":clock_difference_ms,"clock_tolerance_ms":tolerance_ms,
@@ -73,7 +104,11 @@ pub(super) fn observed_effects(receipts: &[Value]) -> usize {
     let mut effects = std::collections::BTreeSet::new();
     for receipt in receipts {
         walk(receipt, &mut |node| {
-            if node["seq"].is_u64() && node["duration_ms"].is_u64() && node["verb"].is_string() && node["press"].is_string() {
+            if node["seq"].is_u64()
+                && node["duration_ms"].is_u64()
+                && node["verb"].is_string()
+                && node["press"].is_string()
+            {
                 effects.insert(node.to_string());
             }
         });
