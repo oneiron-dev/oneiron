@@ -23,8 +23,8 @@ use axum::routing::post;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::task_verb::TrainingSwapAskView;
 use oneiron::training_pack::{
-    ExportCheck, HeldOutResult, RoleSwapReceipt, SwapChoice, TrainingAuthorization, TrainingHold,
-    TrainingState, ViewedSwap,
+    ExportCheck, HeldOutResult, QuestionTarget, RoleSwapReceipt, SwapChoice,
+    TrainingAuthorization, TrainingHold, TrainingState, ViewedSwap,
 };
 use serde::{Deserialize, Serialize};
 
@@ -55,7 +55,14 @@ struct ViewTrainingRun {
 #[derive(Debug, Serialize)]
 struct TrainingRunView {
     run: String,
-    role: ModelRole,
+    /// The role a role run trains for; absent on a question run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<ModelRole>,
+    /// The question a question run's head answers (FIX 7263); absent on a
+    /// role run. Its head binds no role, so it serves nothing here and
+    /// offers no swap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    question: Option<QuestionTargetView>,
     state: TrainingState,
     /// The run's spec hash (64 hex), which `swap` names back.
     spec: String,
@@ -76,6 +83,37 @@ struct TrainingRunView {
     authorization: Option<TrainingAuthorization>,
     /// Why the host cannot advance the run, while it waits on the host.
     hold: Option<TrainingHold>,
+}
+
+/// A question run's question: its pins and the new model, with the
+/// definition's digest (64 hex) in place of the definition.
+#[derive(Debug, Serialize)]
+struct QuestionTargetView {
+    question_id: String,
+    question_version: u32,
+    definition_blake3: String,
+    family: String,
+    corpus_revision: String,
+    feature_schema: String,
+    label_schema: String,
+    renderer: String,
+    output_model: String,
+}
+
+impl QuestionTargetView {
+    fn of(question: &QuestionTarget) -> Self {
+        Self {
+            question_id: question.question_id.clone(),
+            question_version: question.question_version,
+            definition_blake3: hex(question.definition_blake3),
+            family: question.family.clone(),
+            corpus_revision: question.corpus_revision.clone(),
+            feature_schema: question.feature_schema.clone(),
+            label_schema: question.label_schema.clone(),
+            renderer: question.renderer.clone(),
+            output_model: question.output_model.as_str().to_owned(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,13 +171,23 @@ async fn view(
             .map(|checkpoint| checkpoint.content_hash())
             .transpose()?
             .map(hex);
-        let serving = returned
-            .map(|checkpoint| trained_serving(&server, run.plan.role, checkpoint))
-            .transpose()?;
+        // A question head has no role to serve or ask about.
+        let role = run.plan.target.role_binding().map(|(role, _)| role);
+        let serving = match role {
+            Some(role) => returned
+                .map(|checkpoint| trained_serving(&server, role, checkpoint))
+                .transpose()?,
+            None => None,
+        };
+        let asks = match role {
+            Some(_) => oneiron::task_verb::training_swap_asks(vault, &id)?,
+            None => Vec::new(),
+        };
         let waits = run.awaits_host();
         Ok(TrainingRunView {
             run: id.to_hex(),
-            role: run.plan.role,
+            role,
+            question: run.plan.target.question().map(QuestionTargetView::of),
             state: run.state,
             spec: hex(run.spec_blake3),
             checkpoint,
@@ -147,7 +195,7 @@ async fn view(
             exact_hash_overlaps: run.corpus.exact_hash_overlaps,
             can_propose_swap: run.can_propose_swap(),
             swaps: vault.training_run_swap_receipts(&id)?,
-            asks: oneiron::task_verb::training_swap_asks(vault, &id)?,
+            asks,
             serving,
             hold: run.hold.filter(|_| waits),
             evaluation: run.evaluation,
