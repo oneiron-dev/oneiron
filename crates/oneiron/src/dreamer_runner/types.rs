@@ -724,19 +724,25 @@ impl DreamerParkCause {
         }
     }
 
-    /// The cause of a park a failed model call made.
+    /// The cause of a park a failed model call made (FIX 7382, Engine
+    /// 10-21): a provider outage when its provider is down; a private park
+    /// for a failure only an owner act clears (the wake driver's owner-act
+    /// check names them); and a Retry, resumed after its delay, for any other.
     #[must_use]
     pub fn of_llm(error: &crate::llm::LlmError) -> Self {
         if error.is_provider_unavailable() {
             Self::ProviderUnavailable
-        } else {
+        } else if crate::dreamer_wake::llm_waits_on_owner_act(error) {
             Self::Other
+        } else {
+            Self::Retry
         }
     }
 
-    /// The cause of a park a deterministic fallback's answer made: the
-    /// provider failure it stood in for, else other. A fallback for an
-    /// outage parks as one, so the offer's recovery resumes it.
+    /// The cause of a park a deterministic fallback's answer made: that of
+    /// the provider failure it stood in for ([`Self::of_llm`]), else other.
+    /// A fallback for an outage parks as one, so the offer's recovery
+    /// resumes it.
     #[must_use]
     pub fn of_response(response: &crate::llm::LlmResponse) -> Self {
         crate::llm::FallbackRegistry::source_of(response).map_or(Self::Other, |source| {
@@ -756,15 +762,7 @@ impl DreamerParkCause {
         match error {
             DurableStepError::Llm(source)
             | DurableStepError::ClassifiedLlm { source, .. }
-            | DurableStepError::SpentLlm { source, .. } => {
-                if source.is_provider_unavailable() {
-                    Self::ProviderUnavailable
-                } else if crate::dreamer_wake::llm_waits_on_owner_act(source) {
-                    Self::Other
-                } else {
-                    Self::Retry
-                }
-            }
+            | DurableStepError::SpentLlm { source, .. } => Self::of_llm(source),
             DurableStepError::Engine(engine) => {
                 if crate::dreamer_wake::waits_on_owner_act(engine.kind()) {
                     Self::Other

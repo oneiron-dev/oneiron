@@ -57,6 +57,27 @@ pub enum WorkState {
     Idle,
 }
 
+/// Why a served attempt ended without its work. Stable snake_case wire
+/// names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnservedReason {
+    /// The host lends this server's Dreamer no resident instruction, so a
+    /// resident's dreaming and its free time for its human end with no work
+    /// (Engine 10-21). The owner sets `[models.dreamer] resident_prompt`, or
+    /// `resident_prompt_file`, to serve them.
+    NoHostInstruction,
+}
+
+/// The last attempt a worker ended unserved, and why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct UnservedNote {
+    pub reason: UnservedReason,
+    /// The attempt's type constant (`dreamer.resident_dream`, say), never
+    /// world text.
+    pub attempt_kind: String,
+}
+
 /// One worker's state and tallies.
 #[derive(Clone, Debug, Serialize)]
 pub struct WorkStatus {
@@ -67,6 +88,12 @@ pub struct WorkStatus {
     pub started: u64,
     pub completed: u64,
     pub failed: u64,
+    /// Attempts that ended without their work because the host lends them
+    /// nothing to do it with: never counted completed. `last_unserved` says
+    /// why and what the owner does about it.
+    pub unserved: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_unserved: Option<UnservedNote>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
 }
@@ -79,6 +106,8 @@ impl WorkStatus {
             started: 0,
             completed: 0,
             failed: 0,
+            unserved: 0,
+            last_unserved: None,
             last_error: None,
         }
     }
