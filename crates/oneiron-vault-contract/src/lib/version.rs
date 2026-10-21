@@ -106,7 +106,25 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// with no `Ping` field: they ride v3 and idle reap schema 1 with no version
 /// move, a vault built before the floor answers without them, and no reader
 /// of an answer without them is kept, so a supervisor that reads them runs
-/// only with installed engines at or after the floor. Supervisor and vault
+/// only with installed engines at or after the floor. The vault VM's restore
+/// channel ([`vm_restore`](crate::vm_restore), FIX 6584: vsock port 1032, its
+/// control and stream records, `serve`'s `--vm-restore-revision`, `host vm`'s
+/// `--restore`, `--restore-input-fd`, `--restore-result-fd`,
+/// `--restore-marker-identity-fd` and `--restore-marker-result-fd`, and the
+/// VM profile's `restore_source_disk`) carries a build floor too, at the
+/// engine revision it merged in, proven by the image manifest's required
+/// `restore_wire_revision` 1, with no `Ping` field. Every cold boot of an
+/// image at or after the floor, an ordinary open's included, dials the
+/// channel before its provision connection, so a host and its image come from
+/// the same build: a supervisor checks the manifest's revision, its hashes
+/// and the merge floor before it prepares the VMM or hands over the fscrypt
+/// key or any credential, and boots no image before the floor. The channel's
+/// fields are all required, its two nullable keys (a restore's
+/// `source_device` and an observation's `marker`) present as `null`: the
+/// hello's `revision` and `vault`, the boot's `mode` and an inspection's
+/// `identity`, and the marker reply's `revision`, `vault`, `binding`,
+/// `identity` and `observation`, with its `state` and its `data_present` or
+/// `reason`. No reader of a record without them is kept. Supervisor and vault
 /// move to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
