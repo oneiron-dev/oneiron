@@ -42880,6 +42880,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/office_body/pptx/doc/chart/categories.rs",
+     "purpose": "A chart's category sets in the body's `charts` root (ARCH-0077 :597, \"Chart categories and series | Ordered…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/office_body/pptx/doc/node.rs",
      "purpose": "One tree node's meta map: its model identity, kind, name, binding, placeholder, preset, payload (a table's…",
      "surface": {
@@ -71742,7 +71752,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72395,7 +72405,7 @@
    },
    "over_bar": 171,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4639,
+   "source_files": 4640,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76942,7 +76952,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactError",
@@ -79046,7 +79056,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Conversion",
@@ -79067,6 +79077,16 @@
      "purpose": "Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office…",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/convert/chart.rs",
+     "purpose": "A chart payload settled into the form its export writes (OF-510): the plots Change Chart Type lays out…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -79132,13 +79152,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/held/chart.rs",
      "purpose": "A chart frame's data as the live model holds it: its chart part, its plots in document order, and each…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -79365,7 +79385,7 @@
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 7,
       "fn": 27,
       "re-export": 3,
@@ -79386,9 +79406,27 @@
      "path": "src/live/pptx/chart.rs",
      "purpose": "A live chart's model (ARCH-0077, \"One deck, one document\": \"Ordered category and series ids over one…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 2,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CategoryField",
+      "ChartCategories",
+      "ChartCategory"
+     ],
+     "path": "src/live/pptx/chart/categories.rs",
+     "purpose": "A chart's categories (ARCH-0077 :597, \"Chart categories and series | Ordered ids over one canonical dataset",
+     "surface": {
+      "crate-vis": 14,
+      "enum": 1,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -79397,9 +79435,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/live/pptx/chart_ops.rs",
-     "purpose": "Chart edits applied by series identity; a whole chart written over the chart a node holds lowered to the…",
+     "purpose": "Chart edits applied by series and category identity; a whole chart written over the chart a node holds…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/pptx/chart_ops/categories.rs",
+     "purpose": "Category edits applied by point identity, a whole set written over the one a chart or series holds lowered…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -79443,13 +79491,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/reshape.rs",
      "purpose": "Shape changes to a written table or chart at export (OF-510)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/chart.rs",
+     "purpose": "A written chart's rewrite over its retained part (OF-510, FIX 3492, FIX 3493): its plots, axes and series…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/dataset.rs",
+     "purpose": "A rewritten chart's rebuilt workbook (OF-510, FIX 3493, FIX 6714): the dataset its data sheet holds (each…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -79459,7 +79527,17 @@
      "path": "src/live/reshape/layout.rs",
      "purpose": "How a rewritten chart's live series take its held ones (OF-510, FIX 3492): the plots Change Chart Type lays…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/points.rs",
+     "purpose": "A rewritten chart's category points (OF-510, FIX 3493): a multi-level category slot written from its levels…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -79496,6 +79574,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/live/reshape/workbook/range.rs",
+     "purpose": "A chart reference's cells as the workbook edit reads them: a direct one-row or one-column range on one…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/live/svg_fallback.rs",
      "purpose": "A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster…",
      "surface": {
@@ -79513,9 +79601,29 @@
      "path": "src/native_patch/chart.rs",
      "purpose": "Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_patch/chart/cache.rs",
+     "purpose": "A series cache written in place (FIX 7987): only the points whose values the write changes, and the count…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_patch/chart/categories.rs",
+     "purpose": "Multi-level categories (`c:multiLvlStrRef`, FIX 3493): a hierarchy's cache read level by level, leaf first…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -79535,7 +79643,7 @@
      "path": "src/native_patch/mod.rs",
      "purpose": "Native tables and bounded classic charts (ARCH-0077 \"Creation operation\", \"Chart and table edits\")",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 1,
       "re-export": 1,
@@ -79567,7 +79675,17 @@
      "path": "src/native_patch/workbook.rs",
      "purpose": "The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_patch/workbook/cells.rs",
+     "purpose": "A worksheet's cells written in place (FIX 7987): a written cell keeps its own attributes and children (its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -79992,14 +80110,14 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 38,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The live deck body (ARCH-0077, \"Multiplayer: the target body shape\"; OF-510), built last in the deck chain"
     },
     "native_patch": {
-     "files": 5,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80055,9 +80173,9 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 10,
+   "over_bar": 9,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 115,
+   "source_files": 125,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -100333,6 +100451,7 @@
       "CaseDecision",
       "CatalogSeed",
       "CatastropheClass",
+      "CategoryField",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -100364,6 +100483,8 @@
       "ChannelSubscriptionRow",
       "ChannelSubscriptions",
       "ChannelSubscriptionsRequest",
+      "ChartCategories",
+      "ChartCategory",
       "ChartEdit",
       "ChartKind",
       "ChartSeries",
@@ -103819,8 +103940,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 958,
-      "struct": 2991
+      "enum": 959,
+      "struct": 2993
      }
     },
     {
