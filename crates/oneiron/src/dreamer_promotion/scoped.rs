@@ -23,6 +23,13 @@ pub fn promote_scoped_consolidation(
     if run.agent_actor != vault.dreamer_actor_for_attempt(run.attempt_id)? {
         return Err(Error::InvalidClaimBody("scoped promotion actor mismatch"));
     }
+    // One deadline for the whole sealed write (FIX 8701): every candidate's
+    // checker turn and consult spend the wake pass's, never a fresh one each.
+    let checker = checker.map(|checker| match write.checker_deadline {
+        Some(deadline) => checker.with_deadline(deadline),
+        None => checker.clone(),
+    });
+    let checker = checker.as_ref();
     let mut outcome = PromotionOutcome::default();
     // The open markers this write's outputs answer (FIX 7325), and each head
     // the write landed or met again with the evidence its candidate cited.
@@ -231,6 +238,10 @@ fn attach_evidence(
     // record the gated body names must resolve under it in the writer below
     // (OF-063, FIX 1218).
     let reader = fence.reader(vault)?;
+    // The checker's turn, waited for here, before the write opens (FIX 8751).
+    let checker = checker
+        .map(|checker| checker.admit_for_writes(&vault.store, run.agent_actor.entity_ref()))
+        .transpose()?;
     vault.with_write_txn_grouped(|txn| {
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
@@ -260,7 +271,7 @@ fn attach_evidence(
             crate::gate::ClaimGateWrite {
                 body: &gate_body,
                 envelope: Some(&envelope),
-                auto_checker: checker,
+                auto_checker: checker.as_ref(),
                 defer_metrics_until_commit: false,
                 transition: None,
                 owner_authored: None,

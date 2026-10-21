@@ -589,6 +589,9 @@ impl<'a> BranchResources<'a> {
         )
     }
 
+    /// A sealed write of `candidates` with no wake deadline; a wake pass
+    /// hands its own over through [`Self::accept_until`].
+    #[cfg(test)]
     pub(super) fn accept_verified(
         &self,
         scope: &Scope,
@@ -597,6 +600,22 @@ impl<'a> BranchResources<'a> {
     ) -> Result<()> {
         let write = self.prepare_write_verified(scope, candidates)?;
         sink.accept_scoped(write)
+    }
+
+    /// The verified `candidates` sealed into one write for `sink`, carrying
+    /// the wake pass's `deadline`, which its promotion's checker turns and
+    /// consults spend (FIX 8701).
+    pub(super) fn accept_until(
+        &self,
+        scope: &Scope,
+        sink: &mut dyn ConsolidationSink,
+        candidates: Vec<super::evidence::VerifiedCandidate>,
+        deadline: &crate::WakePassDeadline,
+    ) -> Result<()> {
+        let due = std::time::Instant::now()
+            + std::time::Duration::from_millis(deadline.remaining_ms());
+        let write = self.prepare_write_verified(scope, candidates)?;
+        sink.accept_scoped(write.with_checker_deadline(due))
     }
 
     #[cfg(test)]

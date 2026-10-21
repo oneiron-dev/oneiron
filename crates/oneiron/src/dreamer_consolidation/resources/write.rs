@@ -22,6 +22,10 @@ pub struct ScopedConsolidationWrite {
     /// The open markers this write's outputs answer, each output named by
     /// the head it stands at (FIX 7325).
     pub(crate) answers: Vec<ResolvedConflictOutput>,
+    /// When the wake pass that sealed this write stops: every checker turn
+    /// and consult its promotion makes spends it (FIX 8701). `None` outside a
+    /// wake pass, where a direct call's own bound applies.
+    pub(crate) checker_deadline: Option<std::time::Instant>,
     read_receipt: ScopedReadReceipt,
 }
 
@@ -36,6 +40,13 @@ impl ScopedConsolidationWrite {
     /// actor are counted here, never silently dropped.
     pub fn read_receipt(&self) -> &ScopedReadReceipt {
         &self.read_receipt
+    }
+
+    /// This write as a wake pass hands it over, its promotion's checker bound
+    /// to the pass's `deadline` (FIX 8701).
+    pub(crate) fn with_checker_deadline(mut self, deadline: std::time::Instant) -> Self {
+        self.checker_deadline = Some(deadline);
+        self
     }
 }
 
@@ -208,6 +219,7 @@ impl BranchResources<'_> {
             attachments,
             answers,
             fence: self.write_fence(),
+            checker_deadline: None,
             read_receipt: self.read_receipt()?,
         })
     }
