@@ -9,9 +9,7 @@ use crate::store::{
 };
 
 use super::super::notice::HOSTED_NOTICE_TEMPLATE_MAX_FIXED_LEN;
-use super::super::pattern::{
-    CompiledPatternRules, POLICY_PATTERN_RULES_MAX, compile_pattern_rules,
-};
+use super::super::pattern::{CompiledPatternRules, compile_pattern_rules};
 use super::super::planes::{
     HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, POLICY_HOSTED_CATEGORY_MAX_LEN,
     POLICY_HOSTED_ROWS_MAX,
@@ -396,13 +394,6 @@ impl EdgeServiceRegistry {
     #[must_use]
     pub fn hosted_legal_policy(&self, service_identity: &str) -> Option<&HostedLegalPolicy> {
         self.entry(service_identity)?.legal_policy.as_ref()
-    }
-
-    /// The most pattern rules one plane may hold. Exposed so a host can size
-    /// its own admin surface against the engine's bound rather than guessing.
-    #[must_use]
-    pub const fn max_pattern_rules() -> usize {
-        POLICY_PATTERN_RULES_MAX
     }
 
     pub(super) fn entry(&self, service_identity: &str) -> Option<&EdgeService> {

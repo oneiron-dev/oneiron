@@ -54,10 +54,9 @@ impl WeaveCorrectionPolicy {
                 "vault_max" if vault_max.is_none() => vault_max = Some(nonzero_u32(value)?),
                 "default" if default.is_none() => default = Some(nonzero_u32(value)?),
                 "holders" if holders.is_none() => {
+                    // Every holder is kept, however many (FIX 8773); each
+                    // still meets its id and duplicate checks.
                     let Value::Map(rows) = value else { return None };
-                    if rows.len() > 256 {
-                        return None;
-                    }
                     let mut parsed = BTreeMap::new();
                     for (holder, limit) in rows {
                         let holder = holder.as_str()?;

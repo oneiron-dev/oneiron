@@ -231,6 +231,12 @@ impl Vault {
     ) -> Result<()> {
         // Read on the calling thread: a grouped commit may run the closure elsewhere.
         let auto_write_rate = crate::own_rate::auto_write_rate();
+        // The checker's turn, waited for before the write opens (FIX 8751). A
+        // grant names no caller principal, so it waits under its claim's key.
+        let checker = checker
+            .map(|checker| checker.admit_for_writes(&self.store, *id))
+            .transpose()?;
+        let checker = checker.as_ref();
         let decision = self.with_write_txn_grouped(|txn| {
             precheck(txn)?;
             let proposal = load(self, txn, id)?.ok_or(Error::EntityNotFound)?;

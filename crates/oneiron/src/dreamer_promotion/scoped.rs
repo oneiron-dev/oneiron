@@ -23,6 +23,13 @@ pub fn promote_scoped_consolidation(
     if run.agent_actor != vault.dreamer_actor_for_attempt(run.attempt_id)? {
         return Err(Error::InvalidClaimBody("scoped promotion actor mismatch"));
     }
+    // One deadline for the whole sealed write (FIX 8701): every candidate's
+    // checker turn and consult spend the wake pass's, never a fresh one each.
+    let checker = checker.map(|checker| match write.checker_deadline {
+        Some(deadline) => checker.with_deadline(deadline),
+        None => checker.clone(),
+    });
+    let checker = checker.as_ref();
     let mut outcome = PromotionOutcome::default();
     // The open markers this write's outputs answer (FIX 7325), and each head
     // the write landed or met again with the evidence its candidate cited.
@@ -227,6 +234,14 @@ fn attach_evidence(
         candidate.evidence_turn_refs.iter().copied().collect();
     // Read on this thread: a grouped commit may run the closure elsewhere.
     let auto_write_rate = crate::own_rate::auto_write_rate();
+    // The Dreamer's own read, the one the fence holds every pin to: each
+    // record the gated body names must resolve under it in the writer below
+    // (OF-063, FIX 1218).
+    let reader = fence.reader(vault)?;
+    // The checker's turn, waited for here, before the write opens (FIX 8751).
+    let checker = checker
+        .map(|checker| checker.admit_for_writes(&vault.store, run.agent_actor.entity_ref()))
+        .transpose()?;
     vault.with_write_txn_grouped(|txn| {
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
@@ -249,14 +264,14 @@ fn attach_evidence(
         let gate_body =
             gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-        crate::gate::check_claim_policy_for_write(
+        crate::gate::check_claim_policy_for_write_with_record_with_reader(
             &vault.store,
             txn,
             &head,
             crate::gate::ClaimGateWrite {
                 body: &gate_body,
                 envelope: Some(&envelope),
-                auto_checker: checker,
+                auto_checker: checker.as_ref(),
                 defer_metrics_until_commit: false,
                 transition: None,
                 owner_authored: None,
@@ -269,7 +284,8 @@ fn attach_evidence(
                 can_resolve_pending_consent: false,
                 include_source_in_gate_input: true,
             },
-            false,
+            &mut None,
+            &reader,
         )?;
         // The gate is not an authority-granting preflight: all materialization
         // below and its receipt share this transaction, including live pins.

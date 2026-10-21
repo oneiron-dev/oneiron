@@ -118,6 +118,17 @@ impl VoiceServingLimits {
     }
 }
 
+/// The voice serving limits a resolution answers, and where they came from
+/// (FIX 8772). A resolution receipt, not proof that any audio rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VoiceServingPolicyReceipt {
+    pub limits: VoiceServingLimits,
+    /// True only when the trusted manifests were read and none carries the
+    /// optional `voice_serving` row, so the shipped defaults stood in. An
+    /// authored row is never this, even one whose values equal the defaults.
+    pub used_shipped_defaults: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VoiceServingRows {
     pub(crate) vault: VoiceServingLimits,
@@ -148,12 +159,11 @@ impl VoiceServingRows {
                 }
                 "vault" if vault.is_none() => vault = Some(VoiceServingLimits::decode(value)?),
                 "holders" if holders.is_none() => {
+                    // Every holder override is kept, however many (FIX
+                    // 8773); each still meets its shape and duplicate checks.
                     let Value::Array(rows) = value else {
                         return None;
                     };
-                    if rows.len() > 256 {
-                        return None;
-                    }
                     let mut parsed = Vec::with_capacity(rows.len());
                     for row in rows {
                         let Value::Map(fields) = row else {
@@ -204,13 +214,27 @@ impl VoiceServingRows {
     }
 }
 
+/// The effective limits for `holder` under `rows`, every present row
+/// composing restrictively. With no row at all, the shipped defaults stand in
+/// only on `trusted_absence`, the resolution's positive proof that trusted
+/// manifests were read and simply omit the optional row (FIX 8772); without
+/// that proof the policy is unavailable.
 pub(crate) fn resolve(
     rows: &[VoiceServingRows],
     holder: Option<EntityId>,
-) -> Result<VoiceServingLimits> {
-    let first = rows
-        .first()
-        .ok_or_else(|| Error::InvalidConfig("voice serving manifest row missing".into()))?;
+    trusted_absence: bool,
+) -> Result<VoiceServingPolicyReceipt> {
+    let Some(first) = rows.first() else {
+        if trusted_absence {
+            return Ok(VoiceServingPolicyReceipt {
+                limits: VoiceServingLimits::DEFAULT,
+                used_shipped_defaults: true,
+            });
+        }
+        return Err(Error::InvalidConfig(
+            "voice serving manifest row missing".into(),
+        ));
+    };
     let vault = rows
         .iter()
         .skip(1)
@@ -238,5 +262,8 @@ pub(crate) fn resolve(
             "voice serving effective limits invalid".into(),
         ));
     }
-    Ok(effective)
+    Ok(VoiceServingPolicyReceipt {
+        limits: effective,
+        used_shipped_defaults: false,
+    })
 }

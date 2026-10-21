@@ -1,5 +1,7 @@
 //! Claim write entry seams plus the phase-ordered inner executor.
 
+mod reference_read;
+
 use super::burst_inputs::claim_burst_inputs;
 use super::consent::{
     GateConsentBinding, claim_gate_input, enforce_claim_gate_decision_with_consent,
@@ -135,6 +137,7 @@ pub(crate) fn check_claim_policy_for_write(
         &mut recorded_decision,
         None,
         operation_effect_body,
+        None,
     )
 }
 
@@ -163,6 +166,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         // The batch/replay claim door only ever carries PERSISTED candidates,
         // so it never opens the synthetic-operation mode.
         false,
+        None,
     )
 }
 
@@ -186,6 +190,44 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         None,
         // Every caller of the record seam writes a persisted candidate.
         false,
+        None,
+    )
+}
+
+/// [`check_claim_policy_for_write_with_record`] for a writer whose own scoped
+/// read the caller holds (OF-063, FIX 1218): every typed record ref the body
+/// names must resolve under `reader` in this final write's snapshot. One that
+/// does not is the door's verdict, a hard Deny
+/// (`gate.deny.unresolved_record_reference`) recorded on the ordinary path,
+/// that no isolation, confirmation, checker, source trust or Proposed lane
+/// overrides. Missing and unreadable are the same refusal. Everything else is
+/// the record seam's, unchanged; a trusted caller with no reader keeps that
+/// seam.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the record seam's arguments plus the writer's own scoped read"
+)]
+pub(crate) fn check_claim_policy_for_write_with_record_with_reader(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    write: ClaimGateWrite<'_>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+    recorded_decision: &mut Option<RecordedClaimGateDecision>,
+    reader: &crate::claim::ScopedRead<'_>,
+) -> Result<()> {
+    check_claim_policy_for_write_with_record_inner(
+        store,
+        wtxn,
+        id,
+        write,
+        policy,
+        mode,
+        recorded_decision,
+        None,
+        false,
+        Some(reader),
     )
 }
 
@@ -224,6 +266,7 @@ fn check_claim_policy_for_write_with_record_inner(
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
     preflight_decision_id: Option<GateDecisionId>,
     operation_effect_body: bool,
+    reader: Option<&crate::claim::ScopedRead<'_>>,
 ) -> Result<()> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let ClaimGateWrite {
@@ -271,6 +314,18 @@ fn check_claim_policy_for_write_with_record_inner(
     } else {
         None
     };
+    // OF-063 (FIX 1218): with the writer's own read, a record the body names
+    // that does not resolve for it here, in this final snapshot, is a hard
+    // deny in the same slot as a validity refusal, after it. A synthetic
+    // operation body is not a persisted claim and is not judged.
+    let mut reference_denial = None;
+    if let Some(reader) = reader.filter(|_| !operation_effect_body)
+        && let Some(field) = reference_read::unresolved_claim_reference(reader, &*wtxn, body)?
+    {
+        tracing::info!(%field, "a claim names a record its writer cannot read; denied");
+        reference_denial = Some(GateReasonCode::DenyUnresolvedRecordReference);
+    }
+    let hard_denial = precommit_denial.or(reference_denial);
 
     if policy.enforces_write_gate() {
         let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
@@ -328,7 +383,7 @@ fn check_claim_policy_for_write_with_record_inner(
             .map(|envelope| crate::gate::foreign_agent::resolve(store, &*wtxn, envelope.actor()))
             .transpose()?
             .flatten();
-        let mut decision = match precommit_denial {
+        let mut decision = match hard_denial {
             Some(reason_code) => GateDecision::deny(reason_code),
             None => policy.evaluate_gate_with_lineage(&input, lineage),
         };
@@ -688,7 +743,7 @@ fn check_claim_policy_for_write_with_record_inner(
             },
             owner_write,
         )?;
-    } else if let Some(reason_code) = precommit_denial {
+    } else if let Some(reason_code) = hard_denial {
         // No manifest is loaded, so there is no policy verdict for the denial
         // to replace and no gate-decision row this bootstrap path would have
         // written anyway. The refusal itself is not optional: the same Deny

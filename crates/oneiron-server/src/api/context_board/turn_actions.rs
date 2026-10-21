@@ -10,11 +10,11 @@
 //! slip, reads none.
 use std::sync::Arc;
 
-use oneiron::EntityId;
 use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
 use oneiron::conversation::TurnActionAttempt;
 use oneiron::settings::ReadDestination;
+use oneiron::{EntityId, ModelLocality};
 
 use super::PromptBoard;
 use crate::ai_host::AiHandle;
@@ -24,12 +24,14 @@ use crate::server::{SyncServer, blocking};
 
 /// The board `action`'s reply reads for `query`, the user turn it answers,
 /// with `agent`, the answering agent's definition, shaping its recall, and
-/// what its context records keep of it (FIX 7145). It is read as an
-/// off-device read is. Its rows meet the hold of a prompt that goes back to
-/// the requester and as far as the chat role's live route from `seat`, on
-/// `ai`, may take the call (FIX 7257); the call that carries it is judged
-/// again once admitted ([`PromptBoard::rides`]). `None` when the action
-/// reads none.
+/// what its context records keep of it (FIX 7145). It is read on the device
+/// only when the action's requester asked from the device and the chat
+/// role's live route from `seat` stays on it (FIX 8997, as a live turn reads
+/// its own); otherwise as an off-device read is. Its rows meet the hold of a
+/// prompt that goes back to the requester and as far as the chat role's live
+/// route from `seat`, on `ai`, may take the call (FIX 7257); the call that
+/// carries it is judged again once admitted ([`PromptBoard::rides`]). `None`
+/// when the action reads none.
 pub(crate) async fn action_board(
     server: &Arc<SyncServer>,
     ai: &AiHandle,
@@ -38,7 +40,14 @@ pub(crate) async fn action_board(
     agent: EntityId,
     query: &str,
 ) -> Option<PromptBoard> {
-    let auth = blocking(|| requester_auth(server, action))?.at(CallerLocality::OffDevice);
+    let reads_at = if !action.off_device
+        && PromptBoard::route_locality(ai, server.vault(), seat) == ModelLocality::OnDevice
+    {
+        CallerLocality::OnDevice
+    } else {
+        CallerLocality::OffDevice
+    };
+    let auth = blocking(|| requester_auth(server, action))?.at(reads_at);
     // The answer goes back to where its attempt recorded the requester
     // asking from, toward no machine anyone proved now; never where the
     // actor might be.

@@ -911,7 +911,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
                 if let Err(error) =
-                    resources.accept_verified(resources.scope(), self.sink, candidates)
+                    resources.accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
                 {
                     return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
                 }
@@ -924,7 +924,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 retry_at_ms,
             }) => {
                 if let Err(error) =
-                    resources.accept_verified(resources.scope(), self.sink, candidates)
+                    resources.accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
                 {
                     return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
                 }

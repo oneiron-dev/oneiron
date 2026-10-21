@@ -46,9 +46,6 @@ pub const POLICY_PATTERN_ID_MAX_LEN: usize = 64;
 /// Longest pattern source the engine accepts, in bytes.
 pub const POLICY_PATTERN_MAX_LEN: usize = 512;
 
-/// Most rules one plane may carry.
-pub const POLICY_PATTERN_RULES_MAX: usize = 256;
-
 /// What a matching pattern is allowed to do. See the module doc for why
 /// [`Self::Escalate`] is the default.
 #[derive(
@@ -224,7 +221,9 @@ impl CompiledPatternRules {
     }
 }
 
-/// Validates and compiles a plane's rules.
+/// Validates and compiles a plane's rules, every one of them: a plane is
+/// never refused, shortened or truncated for how many rules it carries (FIX
+/// 8774). Each rule still meets its own id, category and pattern checks.
 ///
 /// `category_ok` is the plane's own vocabulary check — the engine has no
 /// opinion about which labels are meaningful, only that a rule names one its
@@ -233,12 +232,6 @@ pub(super) fn compile_pattern_rules(
     rules: &[PolicyPatternRule],
     category_ok: &dyn Fn(&str) -> bool,
 ) -> Result<CompiledPatternRules, PatternRuleDefect> {
-    if rules.len() > POLICY_PATTERN_RULES_MAX {
-        return Err(PatternRuleDefect {
-            field: "pattern_rules",
-            reason: "carries more rules than one plane may hold",
-        });
-    }
     let mut compiled = Vec::with_capacity(rules.len());
     let mut seen: Vec<&str> = Vec::with_capacity(rules.len());
     for rule in rules {

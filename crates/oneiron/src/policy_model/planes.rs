@@ -45,17 +45,14 @@ pub const POLICY_HOSTED_CATEGORY_MAX_LEN: usize = 64;
 /// shape itself capped them at four; nothing replaced that ceiling when the
 /// enum went away, and a registration is a host-supplied blob.
 ///
-/// Set to the owner plane's own rule ceiling
-/// ([`POLICY_PATTERN_RULES_MAX`]) because the two hold the same kind of thing
-/// — one plane's rules — and neither plane should be able to outgrow the
-/// other by an order of magnitude. It is a flood stop, not a recommendation:
-/// a legal policy with hundreds of distinct rows is already past what a model
-/// can weigh in one pass. It REFUSES at registration rather than truncating,
-/// because a silently shortened legal policy is the one failure this plane
-/// exists to prevent.
-///
-/// [`POLICY_PATTERN_RULES_MAX`]: super::pattern::POLICY_PATTERN_RULES_MAX
-pub const POLICY_HOSTED_ROWS_MAX: usize = super::pattern::POLICY_PATTERN_RULES_MAX;
+/// It once borrowed the owner plane's rule ceiling; that ceiling is gone
+/// (FIX 8774: an owner's plane holds every rule it is given), and this row
+/// bound keeps its own value, unchanged, as its own limit. It is a flood
+/// stop, not a recommendation: a legal policy with hundreds of distinct rows
+/// is already past what a model can weigh in one pass. It REFUSES at
+/// registration rather than truncating, because a silently shortened legal
+/// policy is the one failure this plane exists to prevent.
+pub const POLICY_HOSTED_ROWS_MAX: usize = 256;
 
 /// Where a rule came from. These are the only two sources of authority in the
 /// engine — there is no third, engine-authored plane underneath them.
