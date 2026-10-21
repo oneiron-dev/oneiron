@@ -79,6 +79,69 @@ pub struct ConsolidationCursor {
     pub last_ledger_revision_hint: u64,
 }
 
+/// The payload key naming the thing a nightly child is cut for (OF-498c).
+const KEY_THING: &str = "thing";
+
+/// The thing a nightly child is cut for (OF-498c, FIX 7497), carried in its
+/// partition payload: the entity a span's reading bound (`None`: the
+/// partition's structural topic) and the private thread its turns are of
+/// (`None`: off any private thread). Its world and facet are the payload's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct PartitionThing {
+    pub(crate) entity: Option<EntityId>,
+    pub(crate) audience: Option<EntityId>,
+}
+
+impl PartitionThing {
+    fn encode(self) -> Value {
+        let reference = |entity: Option<EntityId>| {
+            entity.map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec()))
+        };
+        Value::Map(vec![
+            (Value::from("entity"), reference(self.entity)),
+            (Value::from("audience"), reference(self.audience)),
+        ])
+    }
+
+    fn decode(value: &Value) -> Result<Self> {
+        let entries = expect_map(value, "partition payload thing must be a MessagePack map")?;
+        let mut thing = Self {
+            entity: None,
+            audience: None,
+        };
+        for (key, value) in entries {
+            let slot = match expect_key(key)? {
+                "entity" => &mut thing.entity,
+                "audience" => &mut thing.audience,
+                _ => {
+                    return Err(invalid_consolidation(
+                        "partition payload thing key is not pinned",
+                    ));
+                }
+            };
+            *slot = match value {
+                Value::Nil => None,
+                _ => Some(entity_ref_from_value(value).ok_or(invalid_consolidation(
+                    "partition payload thing refs must be 16-byte binary",
+                ))?),
+            };
+        }
+        Ok(thing)
+    }
+}
+
+/// The thing a partition payload names; `None` for one that names none, or
+/// whose thing does not decode (its partition decoder refuses that one).
+pub(crate) fn decode_partition_thing(value: &Value) -> Option<PartitionThing> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(KEY_THING))
+        .and_then(|(_, thing)| PartitionThing::decode(thing).ok())
+}
+
 /// One planned partition attempt over the dirty turns that fell into it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConsolidationPartitionPlan {
@@ -442,20 +505,21 @@ pub(crate) fn enqueue_partition_plans_in_txn(
 }
 
 /// Enqueues already-selected interest topics as children of one recipe
-/// receipt. The interest queue has done selection; running the statistical
-/// prefilter again here would consume work without giving it a child.
+/// receipt, each naming the thing it is cut for in its payload. The interest
+/// queue has done selection; running the statistical prefilter again here
+/// would consume work without giving it a child.
 pub(crate) fn enqueue_parented_partition_plans_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
-    plans: &[ConsolidationPartitionPlan],
+    plans: &[(ConsolidationPartitionPlan, PartitionThing)],
     parent: crate::attempt_queue::AttemptId,
     run_id: Option<&str>,
     now: u64,
 ) -> Result<Vec<(ConsolidationPartitionKey, EnqueueDreamerAttemptOutcome)>> {
     let store = DreamerRunnerStore::new(vault);
     let mut outcomes = Vec::with_capacity(plans.len());
-    for plan in plans {
+    for (plan, thing) in plans {
         let carried = plan
             .turns
             .iter()
@@ -464,6 +528,9 @@ pub(crate) fn enqueue_parented_partition_plans_in_txn(
         let mut input =
             partition_attempt_input(scope, plan, &carried, run_id.map(str::to_owned), now);
         input.parent_attempt = Some(parent);
+        if let Value::Map(entries) = &mut input.input {
+            entries.push((Value::from(KEY_THING), thing.encode()));
+        }
         input.dedupe_key = input
             .dedupe_key
             .map(|key| format!("{}:{key}", bytes_to_hex_lower(parent.as_bytes())));
@@ -669,6 +736,9 @@ pub fn decode_partition_payload(
         match expect_key(key)? {
             KEY_SCHEMA_VERSION => {}
             super::branch_scope::KEY_BRANCH_SCOPE => {}
+            KEY_THING => {
+                PartitionThing::decode(value)?;
+            }
             KEY_CONVERSATION => conversation = entity_ref_from_value(value),
             KEY_WORLD => world = entity_ref_from_value(value),
             KEY_FACET => facet = entity_ref_from_value(value),
