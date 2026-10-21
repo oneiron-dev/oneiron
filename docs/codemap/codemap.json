@@ -13385,7 +13385,7 @@
      "path": "src/code_run/consent_wait/settle.rs",
      "purpose": "The answer and the settlement (DOOR-079 1a)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -14300,7 +14300,7 @@
      "path": "src/code_run/storage/program_resume.rs",
      "purpose": "A turn program's resume checkpoint (DOOR-141 PR3b, FIX 4382): the compact head and keyed pages its pinned…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -23483,7 +23483,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 4,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -23591,7 +23591,7 @@
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
       "crate-vis": 7,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -23609,6 +23609,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/program/read/answer.rs",
+     "purpose": "A program write step's kept answer (FIX 5837): the rows its receipt says the answer was served from, and the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/program/read/checkpoint.rs",
      "purpose": "A turn program's fourth read (DOOR-141 PR3b): the resume checkpoint its restarter reads, as the caller reads…",
      "surface": {
@@ -23621,6 +23631,7 @@
      "notable": [
       "ProgramAdmissionOutcomeView",
       "ProgramCheckpointCallView",
+      "ProgramCheckpointConsentView",
       "ProgramCheckpointHeadView",
       "ProgramCheckpointRequest",
       "ProgramCheckpointView",
@@ -23647,7 +23658,23 @@
      "purpose": "The wire shapes of a turn program's reads (DOOR-141 PR3a)",
      "surface": {
       "enum": 5,
-      "struct": 18
+      "struct": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProgramHoldReleaseAction",
+      "ProgramHoldReleaseView",
+      "ReleaseTurnProgramHoldRequest"
+     ],
+     "path": "src/dreamer_runner/program/release.rs",
+     "purpose": "The owner's release of a held turn program (DOOR-141, FIX 5880)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -23657,7 +23684,7 @@
      "path": "src/dreamer_runner/program/resume.rs",
      "purpose": "A turn program's holds and their resume (DOOR-141 PR3b, FIX 4382, FIX 5711)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -59504,7 +59531,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1141
+      "fn": 1142
      }
     },
     {
@@ -66829,7 +66856,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 109,
+     "files": 111,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67846,7 +67873,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4265,
+   "source_files": 4267,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77652,7 +77679,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1112
+      "fn": 1113
      }
     },
     {
@@ -78867,7 +78894,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1113
+      "fn": 1114
      }
     },
     {
@@ -83170,7 +83197,7 @@
      "path": "src/api/facade/program_read_doors.rs",
      "purpose": "A turn program's reads (DOOR-141 PR3a, PR3b): what a landed turn's wakes admitted, where one program's run…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -95869,12 +95896,15 @@
       "ProductivityTreeRequest",
       "ProgramAdmissionOutcomeView",
       "ProgramCheckpointCallView",
+      "ProgramCheckpointConsentView",
       "ProgramCheckpointHeadView",
       "ProgramCheckpointRequest",
       "ProgramCheckpointView",
       "ProgramCheckpointWaitView",
       "ProgramFrontierView",
       "ProgramHeldView",
+      "ProgramHoldReleaseAction",
+      "ProgramHoldReleaseView",
       "ProgramQueueView",
       "ProgramRecipePin",
       "ProgramResultAvailability",
@@ -96022,6 +96052,7 @@
       "RelayBoundaryDegrade",
       "RelayClassifierMode",
       "RelayResolution",
+      "ReleaseTurnProgramHoldRequest",
       "ReleasedWait",
       "RemoteWriteReceipt",
       "RemovalExportDelivery",
@@ -97211,8 +97242,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 916,
-      "struct": 2880
+      "enum": 917,
+      "struct": 2883
      }
     },
     {
