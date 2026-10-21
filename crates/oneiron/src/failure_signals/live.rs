@@ -48,9 +48,10 @@ pub(super) const ATTEMPT_FAILURE_DETECTOR: &str = "attempt.failure.v1";
 
 /// Each compiled T1 detector's tier-1 class (`None`: never counted) and
 /// surface. An owner's consent refusal is the owner's choice, not an agent
-/// failure; a storm of pending asks is. A detector absent here is a
-/// model-graded window, counted by its family's event class.
-const T1_DETECTORS: [(&str, Option<FailureClassV1>, AgentSurface); 5] = [
+/// failure; a storm of pending asks is, and so is a tray backlog at the
+/// consent depth. A detector absent here is a model-graded window, counted
+/// by its family's event class.
+const T1_DETECTORS: [(&str, Option<FailureClassV1>, AgentSurface); 6] = [
     ("consent.denied.v1", None, AgentSurface::Other),
     (
         "retrieval.miss.v1",
@@ -64,6 +65,11 @@ const T1_DETECTORS: [(&str, Option<FailureClassV1>, AgentSurface); 5] = [
     ),
     (
         "consent.storm.v1",
+        Some(FailureClassV1::Other),
+        AgentSurface::Other,
+    ),
+    (
+        "consent.queue_depth.v1",
         Some(FailureClassV1::Other),
         AgentSurface::Other,
     ),
