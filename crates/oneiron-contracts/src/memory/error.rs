@@ -690,6 +690,16 @@ impl From<Error> for MemoryError {
                     "An erase took this reply: what the call did stands, and no call sends it again.",
                 ],
             ),
+            // A credential's custody key does not open, or custody could not
+            // take a new one (KS-6): the vault's state, never the request's
+            // shape, and the message names the credential and its way out.
+            ErrorKind::CredentialLeafUnreadable | ErrorKind::CredentialCustodyUnavailable => {
+                Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &["Do what the message names: retry, or re-enter or reissue that credential."],
+                )
+            }
             // The host skipped a setup step, so neither the request nor the
             // caller's standing is what has to change.
             ErrorKind::EngineIdentitiesNotProvisioned => Self::new(
