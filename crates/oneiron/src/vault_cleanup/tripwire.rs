@@ -7,7 +7,7 @@ use super::run_snapshot::{self, CleanupRunSnapshot, CleanupSnapshotEntry};
 use super::scan;
 use super::{
     CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
-    CleanupRunReport, fresh_row_id, put_digest_in_txn, put_proposal_in_txn,
+    CleanupRunReport, fresh_row_id, live_slots, put_digest_in_txn, put_proposal_in_txn,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -330,7 +330,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
         return Ok(CleanupRunReport {
             attempt: *attempt,
             posture,
-            candidates,
+            candidates: Vec::new(),
             proposal: None,
             archived: Vec::new(),
             digest: None,
@@ -343,7 +343,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 id: fresh_row_id(vault)?,
                 attempt: *attempt,
                 created_at: now,
-                candidates: candidates.clone(),
+                candidates: live_slots(candidates),
             };
             put_proposal_in_txn(vault, wtxn, &proposal)?;
             crate::failure_ladder::oversight::proposed_in_txn(
@@ -355,7 +355,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
             Ok(CleanupRunReport {
                 attempt: *attempt,
                 posture,
-                candidates,
+                candidates: proposal.candidates,
                 proposal: Some(proposal.id),
                 archived: Vec::new(),
                 digest: None,
@@ -370,8 +370,8 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 decision: CleanupDecision::AutoArchived,
                 posture,
                 at: now,
-                archived: applied.archived.clone(),
-                skipped: applied.skipped,
+                archived: live_slots(applied.archived),
+                skipped: live_slots(applied.skipped),
             };
             put_digest_in_txn(vault, wtxn, &digest)?;
             run_snapshot::record_in_txn(
@@ -382,15 +382,15 @@ pub(super) fn run_cleanup_candidates_in_txn(
                     at: now,
                     decision: CleanupDecision::AutoArchived,
                     digest: digest.id,
-                    entries: applied.entries,
+                    entries: live_slots(applied.entries),
                 },
             )?;
             Ok(CleanupRunReport {
                 attempt: *attempt,
                 posture,
-                candidates,
+                candidates: live_slots(candidates),
                 proposal: None,
-                archived: applied.archived,
+                archived: digest.archived,
                 digest: Some(digest.id),
             })
         }

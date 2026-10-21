@@ -25,6 +25,9 @@ use super::{OwnerError, OwnerResult, entity_id};
 /// The `kind` of an archived record, as against a completed attempt.
 const RECORD: &str = "record";
 
+/// What an erased slot reads as, an id slot or a revert's outcome (FIX 7517).
+const ERASED: &str = "erased";
+
 /// Everything the owner reviews about cleanup.
 #[derive(Debug, Serialize)]
 pub(crate) struct CleanupReview {
@@ -61,7 +64,7 @@ pub(crate) struct Run {
     pub(crate) digest: String,
     pub(crate) archived_at: String,
     /// What the run archived, each entry as it stood just before.
-    pub(crate) entries: Vec<RunEntry>,
+    pub(crate) entries: Vec<Slot<RunEntry>>,
     /// The stored answer of the run's revert; null until it is reverted.
     pub(crate) reverted: Option<Reverted>,
 }
@@ -84,7 +87,7 @@ pub(crate) struct RunEntry {
 #[derive(Debug, Serialize)]
 pub(crate) struct Reverted {
     pub(crate) at: String,
-    pub(crate) entries: Vec<RevertEntry>,
+    pub(crate) entries: Vec<Slot<RevertEntry>>,
 }
 
 /// What reverting a whole run did.
@@ -94,7 +97,7 @@ pub(crate) struct RunReverted {
     pub(crate) reverted_at: String,
     /// True when an earlier revert stored this answer; nothing changed now.
     pub(crate) repeated: bool,
-    pub(crate) entries: Vec<RevertEntry>,
+    pub(crate) entries: Vec<Slot<RevertEntry>>,
 }
 
 /// What reverting a run did to one entry.
@@ -112,12 +115,43 @@ pub(crate) struct RevertEntry {
     pub(crate) edited: bool,
 }
 
+/// One slot of a listing: what it names, or its erased form once an erase
+/// reached what it named (FIX 7517). The slot keeps its place, so each list
+/// keeps its count.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum Slot<T> {
+    Live(T),
+    Erased(ErasedSlot),
+}
+
+/// An erased slot: `{"erased": true}`, with no id, kind, hash or mark. A
+/// revert's entry also answers `"outcome": "erased"`: nothing was lifted.
+#[derive(Debug, Serialize)]
+pub(crate) struct ErasedSlot {
+    pub(crate) erased: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) outcome: Option<&'static str>,
+}
+
+impl<T> Slot<T> {
+    fn of<S>(slot: Option<&S>, live: impl FnOnce(&S) -> T) -> Self {
+        match slot {
+            Some(slot) => Self::Live(live(slot)),
+            None => Self::Erased(ErasedSlot {
+                erased: true,
+                outcome: None,
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct Proposal {
     pub(crate) id: String,
     pub(crate) attempt: String,
     pub(crate) created_at: String,
-    pub(crate) candidates: Vec<Candidate>,
+    pub(crate) candidates: Vec<Slot<Candidate>>,
     /// What accepting archives, by kind.
     pub(crate) impact: Impact,
 }
@@ -144,8 +178,10 @@ pub(crate) struct Digest {
     pub(crate) decision: &'static str,
     pub(crate) posture: &'static str,
     pub(crate) at: String,
+    /// Each archived id; `"erased"` once an erase reached it (FIX 7517).
     pub(crate) archived: Vec<String>,
-    /// Candidates the accept found no longer empty, so left alone.
+    /// Candidates the accept found no longer empty, so left alone;
+    /// `"erased"` as in `archived`.
     pub(crate) skipped: Vec<String>,
 }
 
@@ -166,6 +202,10 @@ pub(crate) struct Accepted {
     pub(crate) proposal: String,
     pub(crate) archived: Vec<String>,
     pub(crate) skipped: Vec<String>,
+    /// Candidates an erase reached before the accept: they name no one, and
+    /// nothing was archived for them (FIX 7517). Absent when there were none.
+    #[serde(skip_serializing_if = "none_erased")]
+    pub(crate) erased: usize,
     pub(crate) digest: String,
 }
 
@@ -195,6 +235,7 @@ pub(crate) fn review(vault: &Vault) -> OwnerResult<CleanupReview> {
                 .find(|row| {
                     row.archived
                         .iter()
+                        .flatten()
                         .any(|id| id.as_bytes() == attempt.as_bytes())
                 })
                 .map(|row| rfc3339_secs(row.at)),
@@ -228,6 +269,7 @@ pub(crate) fn accept(
         proposal: outcome.proposal.to_hex(),
         archived: hexes(&outcome.archived),
         skipped: hexes(&outcome.skipped),
+        erased: outcome.erased,
         digest: outcome.digest.to_hex(),
     })
 }
@@ -339,9 +381,11 @@ fn proposal(row: &CleanupProposal) -> Proposal {
         candidates: row
             .candidates
             .iter()
-            .map(|candidate| Candidate {
-                entity: candidate.entity.to_hex(),
-                kind: candidate.kind.as_str(),
+            .map(|candidate| {
+                Slot::of(candidate.as_ref(), |candidate| Candidate {
+                    entity: candidate.entity.to_hex(),
+                    kind: candidate.kind.as_str(),
+                })
             })
             .collect(),
         impact: Impact {
@@ -360,8 +404,8 @@ fn digest(row: &CleanupDigest) -> Digest {
         decision: row.decision.as_str(),
         posture: row.posture.as_str(),
         at: rfc3339_secs(row.at),
-        archived: hexes(&row.archived),
-        skipped: hexes(&row.skipped),
+        archived: slot_hexes(&row.archived),
+        skipped: slot_hexes(&row.skipped),
     }
 }
 
@@ -379,10 +423,15 @@ fn run_view(row: &CleanupRunRecord) -> Run {
         decision: row.snapshot.decision.as_str(),
         digest: row.snapshot.digest.to_hex(),
         archived_at: rfc3339_secs(row.snapshot.at),
-        entries: row.snapshot.entries.iter().map(run_entry).collect(),
+        entries: row
+            .snapshot
+            .entries
+            .iter()
+            .map(|entry| Slot::of(entry.as_ref(), run_entry))
+            .collect(),
         reverted: row.revert.as_ref().map(|revert| Reverted {
             at: rfc3339_secs(revert.reverted_at),
-            entries: revert.entries.iter().map(revert_entry).collect(),
+            entries: revert_entries(revert),
         }),
     }
 }
@@ -402,8 +451,24 @@ fn run_reverted(revert: &CleanupRunRevert) -> RunReverted {
         attempt: attempt_hex(revert.attempt),
         reverted_at: rfc3339_secs(revert.reverted_at),
         repeated: revert.repeated,
-        entries: revert.entries.iter().map(revert_entry).collect(),
+        entries: revert_entries(revert),
     }
+}
+
+/// A revert's answers, each entry an erase reached since answering
+/// `erased`: nothing was lifted for it (FIX 7517).
+fn revert_entries(revert: &CleanupRunRevert) -> Vec<Slot<RevertEntry>> {
+    revert
+        .entries
+        .iter()
+        .map(|entry| match entry {
+            Some(entry) => Slot::Live(revert_entry(entry)),
+            None => Slot::Erased(ErasedSlot {
+                erased: true,
+                outcome: Some(ERASED),
+            }),
+        })
+        .collect()
 }
 
 fn revert_entry(entry: &CleanupRevertEntry) -> RevertEntry {
@@ -422,6 +487,24 @@ fn bytes_hex(bytes: &[u8]) -> String {
 
 fn hexes(ids: &[EntityId]) -> Vec<String> {
     ids.iter().map(EntityId::to_hex).collect()
+}
+
+/// Each id as hex, an erased slot as `"erased"` (FIX 7517).
+fn slot_hexes(ids: &[Option<EntityId>]) -> Vec<String> {
+    ids.iter()
+        .map(|id| {
+            id.as_ref()
+                .map_or_else(|| ERASED.to_owned(), EntityId::to_hex)
+        })
+        .collect()
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if hands the field by reference"
+)]
+fn none_erased(count: &usize) -> bool {
+    *count == 0
 }
 
 fn attempt_hex(attempt: oneiron::attempt_queue::AttemptId) -> String {

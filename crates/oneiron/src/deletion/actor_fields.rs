@@ -92,6 +92,8 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     erased.extend(live);
     for actor in &erased {
         scrub_actor_fields_in_txn(vault, wtxn, actor)?;
+        // The image's cleanup rows name it again; they go once more (FIX 7517).
+        crate::vault_cleanup::erase_in_txn(&vault.store, wtxn, actor)?;
     }
     // Their dispatch text, carried back by the image's attempt rows, goes
     // again: one pass over the ledger for every id (FIX 7076).

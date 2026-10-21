@@ -47,7 +47,9 @@ impl HandOff {
     /// `None` when `spent` carries neither a binding nor a CLI runner task:
     /// an unbound endpoint or MCP seat's work parks, as before. A bound
     /// work's task is `None` when its original request record is erased or
-    /// unreadable, or none was kept: its CLI seats are passed over.
+    /// unreadable, or none was kept: its CLI seats are passed over. So it is
+    /// when the spent attempt is that record and an erase left it no task
+    /// (FIX 7502): the work goes on to its next seat, never parked for it.
     fn of(
         vault: &Vault,
         rtxn: &heed::RoTxn<'_>,
@@ -61,12 +63,14 @@ impl HandOff {
             ..
         } = payload;
         if let ByoaConnectorSpec::CliSandbox(ran) = connector {
-            // A CLI runner attempt carries its task (the argv after `--`).
-            let Some(own) = runner_task(&ran).map(str::to_owned) else {
-                return Ok(None);
-            };
+            // A CLI runner attempt carries its task (the argv after `--`),
+            // unless an erase took it.
+            let own = runner_task(&ran).map(str::to_owned);
             let Some(work) = work else {
                 // Unbound work's task lives in the spent argv alone.
+                let Some(own) = own else {
+                    return Ok(None);
+                };
                 return Ok(Some(Self {
                     task: Some(own),
                     base: ran.checkout_id,
@@ -83,7 +87,7 @@ impl HandOff {
                 ..work
             };
             let task = if work.task_source == Some(here) {
-                Some(own)
+                own
             } else {
                 original_task(vault, rtxn, &work)?
             };

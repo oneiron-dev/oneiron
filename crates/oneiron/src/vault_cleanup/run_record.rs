@@ -23,7 +23,8 @@ pub(super) const KEY_SNAPSHOT: &str = "snapshot";
 pub(super) const KEY_REVERT: &str = "revert";
 
 /// Durable cleanup-scan result for one attempt. Key: id16 (AttemptId).
-const RUN: SideTable<[u8; 16], Vec<u8>, Raw> = SideTable::new(&side_table::VAULT_CLEANUP_RUN);
+pub(super) const RUN: SideTable<[u8; 16], Vec<u8>, Raw> =
+    SideTable::new(&side_table::VAULT_CLEANUP_RUN);
 
 pub(super) fn read_in_txn(
     vault: &Vault,
@@ -41,21 +42,10 @@ pub(super) fn read_in_txn(
     let Some(Value::Array(rows)) = field(&fields, KEY_CANDIDATES) else {
         return Err(Error::CorruptedIndex(RUN_LABEL));
     };
-    let mut candidates = Vec::with_capacity(rows.len());
-    for row in rows {
-        let Value::Map(parts) = row else {
-            return Err(Error::CorruptedIndex(RUN_LABEL));
-        };
-        let entity = field(parts, KEY_ENTITY)
-            .and_then(Value::as_str)
-            .and_then(|hex| EntityId::from_hex(hex).ok())
-            .ok_or(Error::CorruptedIndex(RUN_LABEL))?;
-        let kind = field(parts, KEY_KIND)
-            .and_then(Value::as_str)
-            .and_then(CleanupKind::parse)
-            .ok_or(Error::CorruptedIndex(RUN_LABEL))?;
-        candidates.push(CleanupCandidate { entity, kind });
-    }
+    let candidates = rows
+        .iter()
+        .map(|row| candidate_slot(row, RUN_LABEL))
+        .collect::<Result<_>>()?;
     Ok(Some(CleanupRunReport {
         attempt: *attempt,
         posture,
@@ -102,15 +92,7 @@ pub(super) fn put_in_txn(
             report
                 .candidates
                 .iter()
-                .map(|candidate| {
-                    Value::Map(vec![
-                        (
-                            Value::from(KEY_ENTITY),
-                            Value::from(candidate.entity.to_hex()),
-                        ),
-                        (Value::from(KEY_KIND), Value::from(candidate.kind.as_str())),
-                    ])
-                })
+                .map(|candidate| candidate_value(candidate.as_ref()))
                 .collect(),
         ),
     );

@@ -60,26 +60,74 @@ pub(super) fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a
         .map(|(_, value)| value)
 }
 
+/// A stored id list read back, slot by slot; nil is a slot an erase reached
+/// (FIX 7517).
 pub(super) fn id_list(
     entries: &[(Value, Value)],
     name: &str,
     label: &'static str,
-) -> Result<Vec<EntityId>> {
+) -> Result<Vec<Option<EntityId>>> {
     let Some(Value::Array(items)) = field(entries, name) else {
         return Err(Error::CorruptedIndex(label));
     };
     items
         .iter()
-        .map(|item| {
-            item.as_str()
+        .map(|item| match item {
+            Value::Nil => Ok(None),
+            item => item
+                .as_str()
                 .and_then(|hex| EntityId::from_hex(hex).ok())
-                .ok_or(Error::CorruptedIndex(label))
+                .map(Some)
+                .ok_or(Error::CorruptedIndex(label)),
         })
         .collect()
 }
 
-pub(super) fn id_value_list(ids: &[EntityId]) -> Value {
-    Value::Array(ids.iter().map(|id| Value::from(id.to_hex())).collect())
+/// An id list as stored: each id as hex, an erased slot as nil.
+pub(super) fn id_value_list(ids: &[Option<EntityId>]) -> Value {
+    Value::Array(
+        ids.iter()
+            .map(|id| match id {
+                Some(id) => Value::from(id.to_hex()),
+                None => Value::Nil,
+            })
+            .collect(),
+    )
+}
+
+/// One candidate slot as stored: its entity and kind, or nil for a slot an
+/// erase reached (FIX 7517).
+pub(super) fn candidate_value(candidate: Option<&CleanupCandidate>) -> Value {
+    candidate.map_or(Value::Nil, |candidate| {
+        Value::Map(vec![
+            (
+                Value::from(KEY_ENTITY),
+                Value::from(candidate.entity.to_hex()),
+            ),
+            (Value::from(KEY_KIND), Value::from(candidate.kind.as_str())),
+        ])
+    })
+}
+
+/// A stored candidate slot read back; `None` for an erased one.
+pub(super) fn candidate_slot(
+    item: &Value,
+    label: &'static str,
+) -> Result<Option<CleanupCandidate>> {
+    let fields = match item {
+        Value::Nil => return Ok(None),
+        Value::Map(fields) => fields,
+        _ => return Err(Error::CorruptedIndex(label)),
+    };
+    let entity = field(fields, KEY_ENTITY)
+        .and_then(Value::as_str)
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+        .ok_or(Error::CorruptedIndex(label))?;
+    let kind = field(fields, KEY_KIND)
+        .and_then(Value::as_str)
+        .and_then(CleanupKind::parse)
+        .ok_or(Error::CorruptedIndex(label))?;
+    Ok(Some(CleanupCandidate { entity, kind }))
 }
 
 pub(super) fn put_proposal_in_txn(
@@ -106,15 +154,7 @@ pub(super) fn put_proposal_in_txn(
                 proposal
                     .candidates
                     .iter()
-                    .map(|candidate| {
-                        Value::Map(vec![
-                            (
-                                Value::from(KEY_ENTITY),
-                                Value::from(candidate.entity.to_hex()),
-                            ),
-                            (Value::from(KEY_KIND), Value::from(candidate.kind.as_str())),
-                        ])
-                    })
+                    .map(|candidate| candidate_value(candidate.as_ref()))
                     .collect(),
             ),
         ),
@@ -142,21 +182,10 @@ pub(super) fn decode_proposal(id: EntityId, raw: &[u8]) -> Result<CleanupProposa
     let Some(Value::Array(items)) = field(&entries, KEY_CANDIDATES) else {
         return Err(Error::CorruptedIndex(PROPOSAL_ROW_LABEL));
     };
-    let mut candidates = Vec::with_capacity(items.len());
-    for item in items {
-        let Value::Map(fields) = item else {
-            return Err(Error::CorruptedIndex(PROPOSAL_ROW_LABEL));
-        };
-        let entity = field(fields, KEY_ENTITY)
-            .and_then(Value::as_str)
-            .and_then(|hex| EntityId::from_hex(hex).ok())
-            .ok_or(Error::CorruptedIndex(PROPOSAL_ROW_LABEL))?;
-        let kind = field(fields, KEY_KIND)
-            .and_then(Value::as_str)
-            .and_then(CleanupKind::parse)
-            .ok_or(Error::CorruptedIndex(PROPOSAL_ROW_LABEL))?;
-        candidates.push(CleanupCandidate { entity, kind });
-    }
+    let candidates = items
+        .iter()
+        .map(|item| candidate_slot(item, PROPOSAL_ROW_LABEL))
+        .collect::<Result<_>>()?;
     Ok(CleanupProposal {
         id,
         attempt: AttemptId::from_bytes(&attempt)?,
@@ -398,8 +427,11 @@ fn cleanup_digest_receipt(digest: &CleanupDigest) -> ReceiptRecord {
     }
 }
 
-fn join_ids(ids: &[EntityId]) -> String {
+/// The live ids, comma-joined. An erased slot names no one, so it is left
+/// out here and kept in the count beside it (FIX 7517).
+fn join_ids(ids: &[Option<EntityId>]) -> String {
     ids.iter()
+        .flatten()
         .map(EntityId::to_hex)
         .collect::<Vec<_>>()
         .join(",")

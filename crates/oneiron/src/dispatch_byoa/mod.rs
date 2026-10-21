@@ -112,6 +112,7 @@ pub use self::exhaust::{
     read_checkpoint_frontier,
 };
 pub use self::repo_binding::ByoaRepoBinding;
+pub(crate) use self::staged_input::erase_staged_input_in_txn;
 pub use self::staged_input::{ByoaInputStager, StagedInputPin};
 pub use self::stream::{ByoaStream, ByoaStreamWriter};
 pub use self::validate::validate_connector;

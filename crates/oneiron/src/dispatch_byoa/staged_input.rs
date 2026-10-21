@@ -11,6 +11,8 @@
 //! writes it into the checkout. Completion reads the job back through the
 //! same pin. Nothing here refuses a job for its size.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -21,7 +23,9 @@ use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_
 use crate::checkout::CheckoutLeaseAct;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::Error;
+use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
+use crate::store::Store;
 use crate::temporal::TimeRange;
 
 use super::connector::{BYOA_ATTEMPT_KIND, ByoaConnectorSpec, CliSandboxSpec};
@@ -152,6 +156,61 @@ fn staged_input_name(digest: &[u8; 32]) -> String {
         "{BYOA_STAGED_INPUT_DIR}/{}.json",
         bytes_to_hex_lower(digest)
     )
+}
+
+/// Erases each staged job `jobs` names by its digest, in the erase's
+/// transaction (FIX 7502): the bodies its artifact owns retire as an
+/// erase's do, and its version chain, head and byte references go by the
+/// artifact delete's own rules, its bytes with them once nothing else holds
+/// them. The artifact row stays, so the same job staged again later stages
+/// afresh. A legal hold on the artifact keeps it whole, as every erase door
+/// keeps a held row's bodies: the refusal goes to the hold's log and the
+/// rest of the erase goes on. An id that holds no artifact here is left
+/// alone. The attempt payload pass erases the pins themselves.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_staged_input_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    jobs: &BTreeSet<[u8; 32]>,
+) -> Result<()> {
+    for digest in jobs {
+        let artifact = entity_id_from_hash_material(
+            BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN,
+            &[digest.as_slice()],
+        )?;
+        let stored = EntityStoreRead::port_entity_raw(store, txn, &artifact)?
+            .as_deref()
+            .and_then(crate::batch::EntityMetadataHeader::parse)
+            .map(|header| header.entity_type);
+        if stored != Some(crate::registry::ENTITY_TYPE_BLOB_ARTIFACT) {
+            continue;
+        }
+        if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
+            if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
+                return Err(error);
+            }
+            tracing::warn!(
+                artifact = %artifact.to_hex(),
+                "staged job erase: a legal hold keeps the job's artifact; its pins are erased"
+            );
+            continue;
+        }
+        crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
+            store, txn, &artifact, true,
+        )?;
+        let cleanup =
+            crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(store, txn, &artifact)?;
+        if cleanup.had_graph_mutation {
+            crate::ppr::increment_graph_version(store, txn)?;
+        }
+        if cleanup.had_vector {
+            crate::hnsw::increment_vector_version(store, txn)?;
+        }
+    }
+    Ok(())
 }
 
 impl<'a, B, E> ByoaDispatcher<'a, B, E> {

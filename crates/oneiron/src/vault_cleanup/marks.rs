@@ -64,6 +64,24 @@ impl CleanupMark {
             Self::Kept { revision } => revision.to_vec(),
         }
     }
+
+    /// This mark moved to `revision` when it binds `bound`, the bytes a row
+    /// held before an in-place rewrite; none when it binds other bytes.
+    pub(super) fn moved(self, bound: &Revision, revision: &Revision) -> Option<Self> {
+        match self {
+            Self::Archived {
+                revision: held,
+                run,
+            } if held == *bound => Some(Self::Archived {
+                revision: *revision,
+                run,
+            }),
+            Self::Kept { revision: held } if held == *bound => Some(Self::Kept {
+                revision: *revision,
+            }),
+            _ => None,
+        }
+    }
 }
 
 /// The BLAKE3 revision of `bytes`.

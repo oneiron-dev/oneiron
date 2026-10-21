@@ -141,8 +141,10 @@ pub struct CleanupRunRevert {
     pub attempt: AttemptId,
     /// When the first revert committed, in recorded seconds.
     pub reverted_at: u64,
-    /// One answer per snapshot entry, in snapshot order.
-    pub entries: Vec<CleanupRevertEntry>,
+    /// One answer per snapshot entry, in snapshot order. `None` answers an
+    /// entry an erase reached: it names no one, and the revert lifted nothing
+    /// for it (FIX 7517).
+    pub entries: Vec<Option<CleanupRevertEntry>>,
     /// An earlier revert stored this answer; this call changed nothing.
     pub repeated: bool,
 }
@@ -193,6 +195,12 @@ pub(super) fn revert_cleanup_run_in_txn(
     let mut entries = Vec::new();
     let mut records_restored = false;
     for entry in snapshot.map_or_else(Vec::new, |snapshot| snapshot.entries) {
+        // An erased entry names no one, so nothing is looked up, restored or
+        // kept for it: no revert brings an erased entity back (FIX 7517).
+        let Some(entry) = entry else {
+            entries.push(None);
+            continue;
+        };
         let record = entry.kind != CleanupKind::CompletedAttempt;
         let (outcome, edited) = if record {
             revert_record(vault, txn, &entry)?
@@ -200,12 +208,12 @@ pub(super) fn revert_cleanup_run_in_txn(
             revert_attempt(vault, txn, run, &entry)?
         };
         records_restored |= record && outcome == CleanupRevertOutcome::Restored;
-        entries.push(CleanupRevertEntry {
+        entries.push(Some(CleanupRevertEntry {
             entity: entry.entity,
             kind: entry.kind,
             outcome,
             edited,
-        });
+        }));
     }
     if records_restored {
         // FIX 6058, once for the whole run: a restored grant or actor may
@@ -351,7 +359,13 @@ fn encode_revert(answer: &CleanupRunRevert) -> Value {
         (Value::from(KEY_AT), Value::from(answer.reverted_at)),
         (
             Value::from(KEY_ENTRIES),
-            Value::Array(answer.entries.iter().map(encode_entry).collect()),
+            Value::Array(
+                answer
+                    .entries
+                    .iter()
+                    .map(|entry| entry.as_ref().map_or(Value::Nil, encode_entry))
+                    .collect(),
+            ),
         ),
     ])
 }
@@ -391,7 +405,10 @@ pub(super) fn decode_revert(attempt: AttemptId, value: &Value) -> Result<Cleanup
             .ok_or_else(corrupt)?,
         entries: rows
             .iter()
-            .map(decode_entry)
+            .map(|row| match row {
+                Value::Nil => Some(None),
+                row => decode_entry(row).map(Some),
+            })
             .collect::<Option<_>>()
             .ok_or_else(corrupt)?,
         repeated: false,

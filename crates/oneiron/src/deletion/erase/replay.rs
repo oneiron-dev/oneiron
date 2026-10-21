@@ -249,6 +249,9 @@ impl Vault {
                 crate::store::erase_sync_response_owner_in_txn(&self.store, wtxn, id)?;
                 crate::store::erase_response_owner_in_txn(&self.store, wtxn, id)?;
             }
+            // Cleanup's rows that name it go, as the registry's tear takes
+            // them on every other erase (FIX 7517).
+            crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
             crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
