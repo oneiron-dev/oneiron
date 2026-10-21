@@ -152,6 +152,10 @@ pub(crate) struct BlockedRunHost {
     /// The model request the run's executor bound before the call; `None`
     /// when no request of the run reached this engine.
     pub(crate) request: Option<BlockedRunRequest>,
+    /// The capture epoch the run's host holds while every answer the run was
+    /// served is in its read-world ledger (FIX 6130); `None` when it holds
+    /// none clean.
+    pub(crate) read_worlds: Option<crate::code_run::ReadWorldSeal>,
 }
 
 /// The worlds a run's host scoped it to, as the report's filing read them.
@@ -180,6 +184,11 @@ pub(crate) struct BlockedReplaySource {
     pub(crate) reporter: EntityId,
     pub(crate) worlds: RunWorlds,
     pub(crate) reported_at: u64,
+    /// The worlds of the rows the run was served up to the report, as its
+    /// complete read-world ledger stood in the filing commit (FIX 6130);
+    /// `None` when the ledger was not complete there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) read_worlds: Option<crate::code_run::ReadWorldSnapshot>,
 }
 
 impl BlockedReplaySource {
@@ -245,8 +254,10 @@ fn canonical_hash(request: &LlmRequest) -> Result<[u8; 32]> {
 /// Keeps `source` for the report `receipt`, in the report's filing commit,
 /// through the side-row wall with the vault's custody door: each secret it
 /// places is a custody handle. A request the run's replay capsule holds stays
-/// there, named by its hash (FIX 1662). A request the wall refuses to keep
-/// is dropped from the row, and the report files without it.
+/// there, named by its hash (FIX 1662); a capsule of the same hash whose
+/// request the wall withheld holds none, so the row keeps it (FIX 6349). A
+/// request the wall refuses to keep is dropped from the row, and the report
+/// files without it.
 pub(super) fn put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -261,7 +272,13 @@ pub(super) fn put_in_txn(
             .and_then(|request| request.sent.as_mut())
         && crate::code_run::step_replay_capsules_in_txn(vault, &*txn, run)?
             .iter()
-            .any(|capsule| capsule.request_hash == sent.digest)
+            .any(|capsule| {
+                capsule.request_hash == sent.digest
+                    && matches!(
+                        capsule.request,
+                        crate::code_run::CapsuleRequest::Kept { .. }
+                    )
+            })
     {
         sent.kept = None;
     }

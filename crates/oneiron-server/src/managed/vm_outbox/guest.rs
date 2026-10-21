@@ -257,6 +257,11 @@ impl Roots for GuestRoots {
                 .is_some_and(|(label, _)| label == plan.label),
         })
     }
+
+    fn backup_label(&self) -> Option<String> {
+        let registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
+        registry.as_ref().map(|plan| plan.label.clone())
+    }
 }
 
 /// Lays out `/vault/outbox` for `uid` and returns it, held.

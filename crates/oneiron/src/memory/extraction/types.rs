@@ -1,6 +1,7 @@
 //! Typed serving payloads and observable extraction receipts.
 use crate::{ModelId, affect::Vad, embed::EmbedderLocality};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 #[derive(Debug, Clone, Serialize)]
 pub struct EncoderMessage {
     pub id: String,
@@ -134,11 +135,136 @@ fn strict_vad<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Optio
         }),
     )
 }
+/// The scheduling class of one extraction call. It orders calls in a host's
+/// dispatcher and is never part of the input, its digest or a marker's dedupe
+/// key: the tagger never sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtractionWork {
+    /// A call someone waits on: the explicit tag door. It goes before every
+    /// waiting bulk call, and a running call is never pre-empted for it.
+    Live,
+    /// Everything else: the backlog the tagging worker drains, and feedback
+    /// redaction.
+    Bulk,
+}
+/// The runtime that ran one call. A call names the runtime that actually ran
+/// it, never one it fell back from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionRuntime {
+    /// The host's in-process candle runtime.
+    Candle,
+    /// A configured tagger server: one opaque worker, whose own runtime the
+    /// host does not claim.
+    Endpoint,
+}
+impl ExecutionRuntime {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Candle => "candle",
+            Self::Endpoint => "endpoint",
+        }
+    }
+}
+/// The compute a call's runtime was configured for: what the host asked
+/// for, not a reading of which chip ran it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionCompute {
+    Cpu,
+    Metal,
+    Cuda,
+    /// An endpoint's own, which the host does not claim.
+    Opaque,
+}
+impl ExecutionCompute {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Metal => "metal",
+            Self::Cuda => "cuda",
+            Self::Opaque => "opaque",
+        }
+    }
+}
+/// Why a host's dispatcher sent a call to the worker that ran it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionPick {
+    /// Several workers were free; the calibrated rank chose this one.
+    Calibrated,
+    /// This worker was free: the only free one, or the first to free up.
+    Free,
+    /// Every worker was busy; this one had the shorter waiting live queue.
+    ShorterQueue,
+    /// A worker ranked above this one was not ready.
+    Fallback,
+    /// The slot serves one configured worker: a named device or an endpoint.
+    Pinned,
+}
+/// What ran one extraction call: the worker's runtime and compute, why it
+/// was picked, and how long the call waited and ran. Host facts only: no
+/// field holds anything a worker reported.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EncoderExecution {
+    pub runtime: ExecutionRuntime,
+    pub compute: ExecutionCompute,
+    /// `runtime/compute` as engine rows and logs name it (`candle/metal`),
+    /// or the runtime alone when its compute is opaque (`endpoint`).
+    pub engine: String,
+    pub pick: ExecutionPick,
+    /// Milliseconds the call waited before its worker took it.
+    pub queue_ms: u64,
+    /// Milliseconds its worker ran it.
+    pub infer_ms: u64,
+}
+impl EncoderExecution {
+    /// One call's facts; the engine id is derived from the runtime and
+    /// compute, never taken from the worker.
+    pub fn new(
+        runtime: ExecutionRuntime,
+        compute: ExecutionCompute,
+        pick: ExecutionPick,
+        queued: Duration,
+        ran: Duration,
+    ) -> Self {
+        let millis = |span: Duration| u64::try_from(span.as_millis()).unwrap_or(u64::MAX);
+        Self {
+            runtime,
+            compute,
+            engine: Self::engine_id(runtime, compute),
+            pick,
+            queue_ms: millis(queued),
+            infer_ms: millis(ran),
+        }
+    }
+    /// The engine id of `runtime` on `compute`: `runtime/compute`, or the
+    /// runtime alone when its compute is opaque.
+    pub fn engine_id(runtime: ExecutionRuntime, compute: ExecutionCompute) -> String {
+        match compute {
+            ExecutionCompute::Opaque => runtime.as_str().to_owned(),
+            _ => format!("{}/{}", runtime.as_str(), compute.as_str()),
+        }
+    }
+}
+/// One call's answer beside the facts of the worker that ran it. The answer
+/// stays semantic, so parity and digests never compare where it ran.
+#[derive(Debug)]
+pub struct EncoderAttempt<E = crate::Error> {
+    /// `None` only when no worker was dispatched: a dispatched failure keeps
+    /// the facts of the worker that failed.
+    pub execution: Option<EncoderExecution>,
+    pub result: Result<EncoderOutput, E>,
+}
 /// Hosts own checkpoint execution. No engine implementation guesses model outputs.
 pub trait ExtractionEncoder: Send + Sync {
     fn model_id(&self) -> &ModelId;
     fn locality(&self) -> EmbedderLocality;
-    fn infer(&self, input: &EncoderInput) -> crate::Result<EncoderOutput>;
+    /// Runs one call in `work`'s class: its answer with the facts of the
+    /// worker that ran it. The class orders the call and never changes what
+    /// the tagger reads.
+    fn infer(&self, input: &EncoderInput, work: ExtractionWork) -> EncoderAttempt;
 }
 /// Not deserializable: persistence requires a locally validated shadow receipt.
 #[derive(Debug, Clone, Serialize)]
@@ -147,6 +273,9 @@ pub struct ShadowTrace {
     pub(super) input_hash: String,
     pub(super) output: Option<EncoderOutput>,
     pub(super) failure: Option<String>,
+    /// What ran the call, when a worker was dispatched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) execution: Option<EncoderExecution>,
     #[serde(skip)]
     pub(super) input: EncoderInput,
 }
@@ -156,6 +285,9 @@ impl ShadowTrace {
     }
     pub fn failure(&self) -> Option<&str> {
         self.failure.as_deref()
+    }
+    pub fn execution(&self) -> Option<&EncoderExecution> {
+        self.execution.as_ref()
     }
     pub fn model(&self) -> &str {
         &self.model

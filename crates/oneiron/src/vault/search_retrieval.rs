@@ -147,19 +147,52 @@ impl Vault {
         profile: &crate::config::Bm25RankProfile,
     ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
         let results = if profile == &crate::config::Bm25RankProfile::default() {
-            let started_at = self.store.clock.now_recorded_at();
-            let started = Instant::now();
-            let txn = self.store.env.read_txn()?;
-            let scores =
-                crate::ports::RetrievalIndex::port_retrieval_text_search(self, &txn, query, limit)?;
-            TimedSearch {
-                scores,
-                started_at,
-                started,
-            }
+            self.default_text_search(query, limit, |_, _| {})?
         } else {
             self.search_text_scored(&self.store, query, limit, profile, |_| Ok(()))?
         };
+        Ok(self.text_search_telemetry(results, limit))
+    }
+
+    /// [`Self::search_text`], with `observe` run over its hits in the read
+    /// that scored them, before that read closes (FIX 6130).
+    pub(crate) fn search_text_observed(
+        &self,
+        query: &str,
+        limit: usize,
+        observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
+    ) -> Result<Vec<ScoredEntity>> {
+        let results = self.default_text_search(query, limit, observe)?;
+        Ok(self.text_search_telemetry(results, limit).value)
+    }
+
+    /// One BM25 search under the contract-default rank profile, `observe`
+    /// run over its hits in the read that scored them.
+    fn default_text_search(
+        &self,
+        query: &str,
+        limit: usize,
+        observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
+    ) -> Result<TimedSearch> {
+        let started_at = self.store.clock.now_recorded_at();
+        let started = Instant::now();
+        let txn = self.store.env.read_txn()?;
+        let scores =
+            crate::ports::RetrievalIndex::port_retrieval_text_search(self, &txn, query, limit)?;
+        observe(&txn, scores.as_slice());
+        Ok(TimedSearch {
+            scores,
+            started_at,
+            started,
+        })
+    }
+
+    /// A text search's result with its telemetry row, recorded best-effort.
+    fn text_search_telemetry(
+        &self,
+        results: TimedSearch,
+        limit: usize,
+    ) -> RetrievalWithTelemetry<Vec<ScoredEntity>> {
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Text,
             results.started_at,
@@ -167,7 +200,7 @@ impl Vault {
             &results.scores,
             limit,
         );
-        Ok(RetrievalWithTelemetry {
+        RetrievalWithTelemetry {
             retrieval_quality: crate::retrieval_quality::classify_retrieval_quality(
                 &crate::retrieval_quality::RetrievalDiagnostics {
                     attempted: vec![RetrievalSignal::Text],
@@ -177,7 +210,7 @@ impl Vault {
             ),
             value: results.scores,
             run_id,
-        })
+        }
     }
 
     /// Scores one BM25 search against `target` and returns the scores plus the

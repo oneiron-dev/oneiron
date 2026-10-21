@@ -620,6 +620,8 @@ class Oneiron:
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
+        def repo(self) -> "Oneiron._VaultRepoVerbs": ...
+        @property
         def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs": ...
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
@@ -2448,6 +2450,14 @@ class Oneiron:
             """The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept."""
         def get(self, spec: Facade.PlannedSpawnRead) -> Facade.PlannedSpawnObservation:
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
+    class _VaultRepoVerbs:
+        @property
+        def git_push(self) -> "Oneiron._VaultRepoGitPushVerbs": ...
+    class _VaultRepoGitPushVerbs:
+        def mint(self, spec: Facade.GitPushGrantMintInput) -> Facade.GitPushGrantMintOutput:
+            """The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it."""
+        def revoke(self, spec: Facade.GitPushGrantRevokeInput) -> Facade.GitPushGrantRevokeOutput:
+            """The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."""
     class _VaultStandingBlocksVerbs:
         def configure(self, spec: Facade.StandingBlockConfigureRequest) -> Facade.StandingBlockView:
             """The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."""
