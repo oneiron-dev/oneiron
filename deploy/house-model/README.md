@@ -124,16 +124,17 @@ Two knobs, set in `/etc/oneiron-house.env`:
 | Variable | Flag | Default | What it sets |
 |---|---|---|---|
 | `ONEIRON_HOUSE_EXL3_IN_FLIGHT` | `--max-in-flight` | 4 | requests in flight at once, 1 to 4 (`MAX_IN_FLIGHT`); the cache's recurrent slots and the generator's batch follow it |
-| `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | `DEFAULT_CACHE_TOKENS` (32768), or one full request when that is larger: the context + 1 + the draft depth + 16, rounded up to 256 (33024 at the defaults) | the KV pool all requests in flight share, target and draft alike; a multiple of 256 and at least that floor |
+| `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | `DEFAULT_CACHE_TOKENS` (40192), or one full request when that is larger: the context + 1 + the draft depth + 16, rounded up to 256 (33024 at the defaults) | the KV pool all requests in flight share, target and draft alike; a multiple of 256 and at least that floor |
 
 The defaults are four in flight (Engine ruling 10-21, INF 1) over the pool
-`DEFAULT_CACHE_TOKENS` names, the one place `exl3_server.py` sets it: 32768,
-where E5 measured a 22196 MiB peak at batch 4, more than 2 GiB under the
-card's 24564 MiB. The pool never drops below one full-context request with
-its draft and close room (Engine ruling 10-20, FIX 6723; the context alone
-left a full request one page short), so at the default context and depth the
-server takes that floor, 33024. Four in flight over that pool admits beside a
-long call only what fits in the pages it leaves.
+`DEFAULT_CACHE_TOKENS` names, the one place `exl3_server.py` sets it: 40192,
+the largest of the pools INF 1 measured at four in flight (33024, 37120,
+40192) whose peak leaves 2 GiB of the card's 24564 MiB (22488 MiB; FIX 6974).
+The pool never drops below one full-context request with its draft and close
+room (Engine ruling 10-20, FIX 6723; the context alone left a full request
+one page short): 33024 at the default context and depth, so the default pool
+holds one full request and about 7000 tokens beside it. Four in flight over
+that pool admits beside a long call only what fits in the pages it leaves.
 
 ### Solo admission
 
