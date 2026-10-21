@@ -296,6 +296,8 @@ pub fn request_turn_wake(
     vault.set_queued_wake_projection_in_txn(&mut txn, &projection_digest)?;
     txn.commit()?;
     vault.store.notify_attempt_observers();
+    // FIX 6941: a raw commit has no owner to drain the enqueue's marker.
+    vault.store.notify_proactivity_changes();
     Ok(Some(outcome))
 }
 

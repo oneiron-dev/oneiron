@@ -19,6 +19,12 @@
 //! and stands for that alternative (FIX 6152). The owner may approve such a
 //! staged member and keep it in one step, beside the plain Approve and Keep
 //! (FIX 6151).
+//!
+//! A staged Keep the owner declines there stays a member, but it stands for
+//! nothing (FIX 7072): its alternative is keepable again unless another Keep
+//! of it still waits or stands, and an explicit Keep stages it afresh, at a
+//! fresh id. The declined claim never reopens and is never approved, and
+//! nothing stages it again on its own: the Dreamer's ruling never offers it.
 
 use super::retained_conflict::{RetainedAlternative, retained_alternatives};
 use super::settle::{
@@ -26,7 +32,8 @@ use super::settle::{
 };
 use super::support::invalid_consolidation;
 use crate::claim::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, PREDICATE_CONFLICT_RESOLVED, claim_surfaceable,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, PREDICATE_CONFLICT_RESOLVED,
+    claim_surfaceable,
 };
 use crate::dreamer_promotion::{KeptConflictLink, KeptLanding};
 use crate::{EntityId, Result, Vault};
@@ -75,30 +82,86 @@ pub(super) enum KeptAlternative {
     ImportReview(StagedKeep),
 }
 
-/// What the reverted settlements of a conflict left of its retained
-/// alternatives, each as (selector, claim).
+/// What a conflict's earlier Keeps left of its retained alternatives, each
+/// as (selector, claim).
 #[derive(Debug, Default)]
-pub(super) struct RevertedKeeps {
-    /// The landings those settlements made, each retracted with its answer
-    /// and no longer standing: a Keep after them lands afresh (FIX 5752).
+pub(super) struct KeepHistory {
+    /// The landings reverted settlements made, each retracted with its
+    /// answer and no longer standing: a Keep after them lands afresh (FIX
+    /// 5752).
     pub(super) landings: Vec<(EntityId, EntityId)>,
-    /// The Keeps staged since in their import's review, each linked to the
-    /// marker by its provenance (FIX 6152): a member standing for its
-    /// alternative.
+    /// The Keeps staged in their import's review, each linked to the marker
+    /// by its provenance (FIX 6152): a member standing for its alternative.
     pub(super) staged: Vec<(EntityId, EntityId)>,
+    /// Those of the staged Keeps the owner declined there (FIX 7072): still
+    /// members, standing for nothing, so a Keep after them stages afresh.
+    pub(super) declined: Vec<(EntityId, EntityId)>,
 }
 
-/// What the reverted settlements of `marker`, on `subject`, left of its
-/// retained alternatives: each landing they made while it no longer stands,
-/// by the answers the owner retracted that name one, and each Keep staged
-/// since that names the marker.
-pub(super) fn reverted_keeps_in_txn(
+/// What the earlier Keeps of `marker`, on `subject`, left of its retained
+/// alternatives. After a reverted settlement: each landing those
+/// settlements made while it no longer stands, by the answers the owner
+/// retracted that name one, and each Keep staged since that names the
+/// marker. With none reverted, a Keep is staged at a fresh id only after the
+/// owner declined one staged at its alternative's own id, which the marker
+/// names among `named` (FIX 7072): only then are the subject's staged Keeps
+/// read, and a subject that does not read leaves the history as it stood
+/// before, the declined Keep still standing in for its alternative.
+pub(super) fn keep_history_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     marker: EntityId,
     subject: EntityId,
-) -> Result<RevertedKeeps> {
-    let mut kept = RevertedKeeps::default();
+    named: &[EntityId],
+    reverted: bool,
+) -> Result<KeepHistory> {
+    if reverted {
+        return subject_keeps_in_txn(vault, txn, marker, subject, true);
+    }
+    let mut declined_named = false;
+    for id in named {
+        if vault
+            .get_claim_in_txn(txn, id)?
+            .is_some_and(|claim| declined_keep_of(&claim, marker))
+        {
+            declined_named = true;
+            break;
+        }
+    }
+    if !declined_named {
+        return Ok(KeepHistory::default());
+    }
+    Ok(
+        subject_keeps_in_txn(vault, txn, marker, subject, false).unwrap_or_else(|error| {
+            tracing::warn!(
+                target: "oneiron::dreamer",
+                kind = ?error.kind(),
+                marker = %marker.to_hex(),
+                "a declined Keep's history did not read; its alternative stays as it stood"
+            );
+            KeepHistory::default()
+        }),
+    )
+}
+
+/// Whether `claim` is a Keep of `marker`'s retained alternative, staged in
+/// its import's review, that the owner declined there (FIX 7072).
+fn declined_keep_of(claim: &ClaimBody, marker: EntityId) -> bool {
+    claim.approval == ClaimApprovalStatus::Rejected
+        && KeptConflictLink::of_claim(claim).is_some_and(|link| link.marker == marker)
+}
+
+/// The subject's claims read for [`keep_history_in_txn`]: each staged Keep
+/// that names `marker`, declined or not, and, with `landings`, each landing
+/// a reverted settlement of it made.
+fn subject_keeps_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    marker: EntityId,
+    subject: EntityId,
+    landings: bool,
+) -> Result<KeepHistory> {
+    let mut kept = KeepHistory::default();
     for id in vault.claims_for_subject_in_txn(txn, &subject)? {
         let Some(claim) = vault.get_claim_in_txn(txn, &id)? else {
             continue;
@@ -106,10 +169,14 @@ pub(super) fn reverted_keeps_in_txn(
         if let Some(link) = KeptConflictLink::of_claim(&claim) {
             if link.marker == marker {
                 kept.staged.push((link.selector, id));
+                if claim.approval == ClaimApprovalStatus::Rejected {
+                    kept.declined.push((link.selector, id));
+                }
             }
             continue;
         }
-        if claim.predicate != PREDICATE_CONFLICT_RESOLVED
+        if !landings
+            || claim.predicate != PREDICATE_CONFLICT_RESOLVED
             || claim.lifecycle != ClaimLifecycleStatus::Retracted
             || !marker_ids(&claim.value, "open_marker").any(|named| named == marker)
         {
@@ -137,38 +204,47 @@ pub(super) fn reverted_keeps_in_txn(
 
 /// The retained alternatives a responder may keep: each one no member
 /// stands in for, by its own id or as a staged Keep of it, with the
-/// reverted landings made of it.
+/// reverted landings made of it and the staged Keeps of it the owner
+/// declined. A declined Keep stays a member but stands in for nothing (FIX
+/// 7072): its alternative is keepable again unless another Keep of it still
+/// waits or stands.
 pub(super) fn keepable(
     alternatives: Vec<RetainedAlternative>,
     members: &[EntityId],
-    kept: &RevertedKeeps,
+    kept: &KeepHistory,
 ) -> Vec<RetainedAlternative> {
+    let declined = |id: &EntityId| kept.declined.iter().any(|(_, claim)| claim == id);
     alternatives
         .into_iter()
         .filter(|alternative| {
-            !members.contains(&alternative.id)
+            (!members.contains(&alternative.id) || declined(&alternative.id))
                 && !kept
                     .staged
                     .iter()
-                    .any(|(selector, _)| *selector == alternative.id)
+                    .any(|(selector, staged)| *selector == alternative.id && !declined(staged))
         })
         .map(|mut alternative| {
-            alternative.landings = kept
-                .landings
-                .iter()
-                .filter(|(selector, _)| *selector == alternative.id)
-                .map(|(_, landed)| *landed)
-                .collect();
+            alternative.landings = of_selector(&kept.landings, alternative.id);
+            alternative.declined = of_selector(&kept.declined, alternative.id);
             alternative
         })
         .collect()
 }
 
+/// The claims of `kept` made of the alternative `selector`.
+fn of_selector(kept: &[(EntityId, EntityId)], selector: EntityId) -> Vec<EntityId> {
+    kept.iter()
+        .filter(|(of, _)| *of == selector)
+        .map(|(_, claim)| *claim)
+        .collect()
+}
+
 /// Keeps `alternative` of the conflict `marker` in the settlement's
 /// transaction: lands it at its own id the first time, at a fresh id after
-/// a revert took a landing of it back, or stages it in its import's review
-/// at that same id, linked to `marker` and the alternative so it stays a
-/// member of the conflict (FIX 6152).
+/// a revert took a landing of it back or the owner declined a Keep of it
+/// staged in its import's review (FIX 7072), or stages it in its import's
+/// review at that same id, linked to `marker` and the alternative so it
+/// stays a member of the conflict (FIX 6152).
 pub(super) fn keep_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -176,7 +252,7 @@ pub(super) fn keep_in_txn(
     alternative: &RetainedAlternative,
     now: u64,
 ) -> Result<KeptAlternative> {
-    let landing = if alternative.landings.is_empty() {
+    let landing = if alternative.landings.is_empty() && alternative.declined.is_empty() {
         alternative.id
     } else {
         EntityId::now()

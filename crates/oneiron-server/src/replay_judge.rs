@@ -89,6 +89,11 @@ pub struct JournalRow {
     pub revision: String,
     pub question: DecisionQuestion,
     pub decision: TypedDecision,
+    /// The rows the decision's inputs were read from, as its caller
+    /// assembled them beside the question and state (FIX 7105): `Some` only
+    /// when every constituent has a typed witness, `None` when any lacks one
+    /// or the caller handed none. `None` is unknown, never an empty set.
+    pub decision_sources: Option<Vec<EntityId>>,
     /// The call's state, as JSON text.
     pub state: String,
 }
@@ -319,6 +324,29 @@ impl ServeReplayJudge {
         }
         *wording = Box::leak(Box::new(next));
     }
+
+    /// Journals one typed question, with the rows its inputs were read from
+    /// as its caller handed them (FIX 7105).
+    fn journal_decision(
+        &self,
+        question: &DecisionQuestion,
+        decision: &TypedDecision,
+        state: &Value,
+        decision_sources: Option<Vec<EntityId>>,
+    ) -> Result<()> {
+        let row = JournalRow {
+            at: now(),
+            revision: self.revision.clone(),
+            question: question.clone(),
+            decision: decision.clone(),
+            decision_sources,
+            state: state.to_string(),
+        };
+        let bytes = rmp_serde::to_vec_named(&row)
+            .map_err(|_| Error::CorruptedIndex("skill judge journal"))?;
+        self.vault
+            .sync_state_put(&format!("{JOURNAL}{}", EntityId::now().to_hex()), &bytes)
+    }
 }
 
 impl HeldOutReplayNotes for ServeReplayJudge {
@@ -348,23 +376,26 @@ impl HeldOutReplayNotes for ServeReplayJudge {
         self.response_basis(receipts)
     }
 
+    /// A decision whose caller handed no input rows: its sources are
+    /// unknown.
     fn record_decision(
         &self,
         question: &DecisionQuestion,
         decision: &TypedDecision,
         state: &Value,
     ) -> Result<()> {
-        let row = JournalRow {
-            at: now(),
-            revision: self.revision.clone(),
-            question: question.clone(),
-            decision: decision.clone(),
-            state: state.to_string(),
-        };
-        let bytes = rmp_serde::to_vec_named(&row)
-            .map_err(|_| Error::CorruptedIndex("skill judge journal"))?;
-        self.vault
-            .sync_state_put(&format!("{JOURNAL}{}", EntityId::now().to_hex()), &bytes)
+        self.journal_decision(question, decision, state, None)
+    }
+
+    /// Keeps the decision's input rows on its journal row (FIX 7105).
+    fn record_decision_sourced(
+        &self,
+        question: &DecisionQuestion,
+        decision: &TypedDecision,
+        state: &Value,
+        decision_sources: Option<Vec<EntityId>>,
+    ) -> Result<()> {
+        self.journal_decision(question, decision, state, decision_sources)
     }
 
     /// The goal's task axes: the honesty floor is the engine's own audit,

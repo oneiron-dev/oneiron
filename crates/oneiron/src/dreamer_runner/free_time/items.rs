@@ -13,6 +13,8 @@
 //! read lands none of its copies (FIX 5664): each writer rechecks the erase
 //! in its own commit.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::cycle::{FreeTimeCycle, FreeTimeCycleState, FreeTimeNote, FreeTimeOwnTimeChoice};
@@ -24,8 +26,10 @@ use crate::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::{ClaimInput, ClaimSource, EdgeActorClass, EntityId, Error, Result, Vault};
 
-/// The longest retry chain an item's binding is looked up along.
-pub(super) const MAX_RETRY_DEPTH: usize = 64;
+/// A binding lookup that walks a retry chain of more tries than this logs
+/// it once (FIX 7057). The chain is walked whole all the same: this bounds
+/// nothing.
+const LONG_RETRY_LINEAGE: usize = 64;
 /// The predicate an agent's free-time suggestion for its human lands under.
 const SUGGESTION_PREDICATE: &str = "autonomy.suggestion";
 
@@ -93,15 +97,28 @@ pub fn is_free_time_try(record: &AttemptRecord) -> bool {
     free_time_line(record).is_some()
 }
 
-/// `attempt`'s binding: its own, else the try it retries.
+/// `attempt`'s binding: its own, else the binding of the try it retries,
+/// followed back to the chain's first try. A visited set stops a cycle,
+/// never a count (FIX 7057): a chain of any length is walked to its end.
 fn binding_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,
 ) -> Result<Option<FreeTimeItemBinding>> {
     let queue = AttemptQueue::new(vault);
+    let mut visited = BTreeSet::new();
     let mut cursor = attempt;
-    for _ in 0..MAX_RETRY_DEPTH {
+    loop {
+        if !visited.insert(cursor) {
+            return Err(invalid("the retry chain runs in a cycle"));
+        }
+        if visited.len() == LONG_RETRY_LINEAGE + 1 {
+            tracing::warn!(
+                kind = "retry_lineage_long",
+                past = LONG_RETRY_LINEAGE,
+                "free-time binding lookup walks an unusually long retry lineage"
+            );
+        }
         if let Some(binding) = ITEM.get(&vault.store, txn, &cursor)? {
             return Ok(Some(binding));
         }
@@ -110,7 +127,6 @@ fn binding_in_txn(
             None => return Ok(None),
         }
     }
-    Err(invalid("the retry chain runs past its bound"))
 }
 
 impl Vault {
@@ -118,7 +134,7 @@ impl Vault {
     /// attempt no free-time cycle queued.
     ///
     /// # Errors
-    /// A store read that fails, or a retry chain past its bound.
+    /// A store read that fails, or a retry chain that runs in a cycle.
     pub fn free_time_item_binding(
         &self,
         attempt: AttemptId,

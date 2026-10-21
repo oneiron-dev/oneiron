@@ -68,6 +68,24 @@ pub trait WeaveDigestSettingsDrafter {
     /// # Errors
     /// A state or storage error, never read as the drafter being unavailable.
     fn draft(&self, owner: EntityId, generation: u64, brief: &str) -> Result<Option<String>>;
+
+    /// [`Self::draft`], handed the rows the brief was read from (FIX 7105):
+    /// `Some` only when every constituent the brief read has a typed
+    /// witness, `None` when any lacks one. A drafter that sources its model
+    /// call overrides this; the default drops the rows and drafts as
+    /// [`Self::draft`] does. `None` never refuses or changes a draft.
+    ///
+    /// # Errors
+    /// As [`Self::draft`].
+    fn draft_sourced(
+        &self,
+        owner: EntityId,
+        generation: u64,
+        brief: &str,
+        _source_rows: Option<Vec<EntityId>>,
+    ) -> Result<Option<String>> {
+        self.draft(owner, generation, brief)
+    }
 }
 
 /// What the Coach's model answered, as the engine admits it.
@@ -136,6 +154,14 @@ pub(super) fn weave_digest_coach_brief(input: &CoachInput<'_>) -> Result<String>
         refused: input.refused,
     })
     .map_err(|_| invalid())
+}
+
+/// The rows [`weave_digest_coach_brief`] reads `input` from, for
+/// [`WeaveDigestSettingsDrafter::draft_sourced`] (FIX 7105). `None` today:
+/// its schedule, settings and feedback, period and change rows are side-table
+/// rows with no entity witness.
+pub(super) fn coach_brief_sources(_input: &CoachInput<'_>) -> Option<Vec<EntityId>> {
+    None
 }
 
 /// The Coach's model's answer, the one JSON object in its text, checked

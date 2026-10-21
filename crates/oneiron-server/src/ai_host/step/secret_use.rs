@@ -15,8 +15,11 @@
 //! Nothing here expands a handle. The tool result is the door's typed
 //! answer, or its refusal as the door words it (revoked, unbound and
 //! unknown-operation refusals included); neither holds the value, and
-//! neither is logged. `connector.call` is not offered: the door refuses it
-//! here, and its served host door stays the only one that sends it.
+//! neither is logged. Every table operation is offered. On a served vault
+//! the call goes, past the same boundary, to the server's own `self.use`
+//! door ([`crate::api::self_use_as`]), which sends `connector.call` under
+//! the agent's own grant and gate (FIX 7016); with no server bound the
+//! embedded door answers, and it refuses `connector.call`.
 //!
 //! The tool rides only a route every rung of which takes tool calls and
 //! their results: a rung without them refuses a request that carries tools,
@@ -35,6 +38,7 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
+use super::StepHost;
 use crate::models::OfferLadder;
 
 /// The `self.use` verb as the step's tool: providers take letters, digits,
@@ -92,12 +96,14 @@ fn tool_spec() -> LlmToolSpec {
 }
 
 /// One step's `self.use`: its vault, the leased try it runs as, its agent,
-/// and the run its invocations derive from.
+/// the run its invocations derive from, and the server it sends through
+/// once one is bound.
 pub(super) struct StepSecretUse<'a> {
     vault: &'a Vault,
     attempt: &'a AttemptRecord,
     actor: WriteActor,
     run: Vec<u8>,
+    host: &'a StepHost,
 }
 
 impl<'a> StepSecretUse<'a> {
@@ -106,12 +112,14 @@ impl<'a> StepSecretUse<'a> {
         attempt: &'a AttemptRecord,
         actor: WriteActor,
         run_id: &str,
+        host: &'a StepHost,
     ) -> Self {
         Self {
             vault,
             attempt,
             actor,
             run: format!("{run_id}/self.use").into_bytes(),
+            host,
         }
     }
 
@@ -213,7 +221,13 @@ impl<'a> StepSecretUse<'a> {
             let request = serde_json::from_value::<SecretUseRequest>(args).map_err(|_| {
                 MemoryError::bad_request("self_use's arguments did not read after its hooks")
             })?;
-            let answer = sdk::use_secret_as_caller(&memory, request)?;
+            // A served vault's own door, as a pumped run's `self.use` calls
+            // it (FIX 7016); with no server bound, the embedded one. The
+            // step's thread is its blocking worker, outside any runtime.
+            let answer = match self.host.get().and_then(std::sync::Weak::upgrade) {
+                Some(server) => crate::api::self_use_as(&server, &memory, request)?,
+                None => sdk::use_secret_as_caller(&memory, request)?,
+            };
             serde_json::to_value(&answer).map_err(|_| {
                 MemoryError::new(
                     MEMORY_CODE_INTERNAL,

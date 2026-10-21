@@ -311,6 +311,21 @@ pub trait HeldOutReplayNotes {
         state: &serde_json::Value,
     ) -> Result<()>;
 
+    /// [`Self::record_decision`], handed the rows the decision's inputs were
+    /// read from, assembled beside its question and state (FIX 7105): `Some`
+    /// only when every constituent has a typed witness, `None` when any lacks
+    /// one. A journal that keeps them overrides this; the default drops them
+    /// and records as [`Self::record_decision`] does.
+    fn record_decision_sourced(
+        &self,
+        question: &crate::llm::decision::DecisionQuestion,
+        decision: &crate::llm::decision::TypedDecision,
+        state: &serde_json::Value,
+        _decision_sources: Option<Vec<crate::EntityId>>,
+    ) -> Result<()> {
+        self.record_decision(question, decision, state)
+    }
+
     /// Every held-out replay with every objective its run took on, in
     /// receipt order. The decision path asks about each objective's hidden
     /// flaw on its own; raw confession and judge agreement are not findings.

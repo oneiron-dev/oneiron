@@ -117,8 +117,9 @@ pub struct OpenConflict {
     pub subject: EntityId,
     /// The stored claims the marker names, in its own order. An id it names
     /// that is no stored claim (a candidate its round dropped) is left out.
-    /// A Keep staged after a revert, linked to the marker, follows them
-    /// (FIX 6152).
+    /// A Keep staged at a fresh id, after a revert or after the owner
+    /// declined one (FIX 7072), linked to the marker, follows them (FIX
+    /// 6152). A staged Keep the owner declined stays a member.
     pub members: Vec<EntityId>,
     /// The candidates the marker's round dropped, retained on it whole (FIX
     /// 496): none is a stored claim or active truth. Keeping one lands it.
@@ -281,15 +282,15 @@ fn open_conflict_from(
     };
     // A landing a reverted settlement made of a retained candidate is no
     // member: the candidate stays keepable (FIX 5752). A Keep of it staged
-    // since in its import's review is one, standing for it (FIX 6152).
-    let kept = if reverted {
-        super::retained_keep::reverted_keeps_in_txn(vault, txn, marker, subject)?
-    } else {
-        super::retained_keep::RevertedKeeps::default()
-    };
+    // since in its import's review is one, standing for it (FIX 6152)
+    // unless the owner declined it there; a declined one stays a member
+    // standing for nothing (FIX 7072).
+    let named = named_ids(&body);
+    let kept =
+        super::retained_keep::keep_history_in_txn(vault, txn, marker, subject, &named, reverted)?;
     let staged = kept.staged.iter().map(|(_, staged)| *staged);
     let mut members = Vec::new();
-    for id in named_ids(&body).into_iter().chain(staged) {
+    for id in named.into_iter().chain(staged) {
         if !members.contains(&id)
             && !kept.landings.iter().any(|(_, landed)| *landed == id)
             && vault
@@ -949,8 +950,14 @@ impl ConflictSettleDecisions<'_> {
         }
         drop(txn);
         // A candidate the round dropped rides as retained, never as a stored
-        // claim; keeping it lands it (FIX 496).
-        for alternative in &conflict.alternatives {
+        // claim; keeping it lands it (FIX 496). One whose staged Keep the
+        // owner declined is the owner's to keep again, never this ladder's
+        // (FIX 7072).
+        for alternative in conflict
+            .alternatives
+            .iter()
+            .filter(|alternative| alternative.declined.is_empty())
+        {
             let keep_option = if keepable.len() < MAX_KEEP_OPTIONS {
                 keepable.push(alternative.id);
                 Some(format!("{KEEP_PREFIX}{}", alternative.id.to_hex()))

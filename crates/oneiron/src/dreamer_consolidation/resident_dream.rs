@@ -41,8 +41,10 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS: u64 = 32_000;
 /// The share of the window its inputs may fill; the rest is the entry's.
 const INPUT_SHARE_DIVISOR: u64 = 2;
-/// The longest fork chain a resident's dreaming follows back to it.
-const MAX_FORK_DEPTH: usize = 16;
+/// A fork chain of more hops than this, followed back to a resident, is
+/// logged once per walk (FIX 7057). It is walked whole all the same: this
+/// bounds nothing.
+const LONG_FORK_LINEAGE: usize = 16;
 /// The most of a diary-read reason the Inbox cut prints, as the board does.
 const REVIEW_REASON_BYTES: usize = 160;
 /// The fence that opens a dreaming reply's craft notes, after its entry.
@@ -349,8 +351,9 @@ fn resident_forks(vault: &Vault, resident: EntityId) -> Result<Vec<EntityId>> {
 
 /// Whether `fork`'s chain of fork parents reaches `resident` first. A bound
 /// resident on the way, or one whose binding does not read, ends the chain;
-/// so do a row that does not decode, a cycle and a chain past
-/// [`MAX_FORK_DEPTH`].
+/// so do a row that does not decode, the chain's root and a cycle. A visited
+/// set stops a cycle, never a count (FIX 7057): a chain of any length is
+/// followed to its end.
 fn forked_from_resident(vault: &Vault, fork: EntityId, resident: EntityId) -> bool {
     let unbound = |id: EntityId| matches!(vault.settled_resident_agent(id), Ok(None));
     if !unbound(fork) {
@@ -358,7 +361,7 @@ fn forked_from_resident(vault: &Vault, fork: EntityId, resident: EntityId) -> bo
     }
     let mut seen = BTreeSet::from([fork]);
     let mut at = fork;
-    for _ in 0..MAX_FORK_DEPTH {
+    loop {
         let Ok(Some(definition)) = vault.get_agent_definition(&at) else {
             return false;
         };
@@ -371,9 +374,15 @@ fn forked_from_resident(vault: &Vault, fork: EntityId, resident: EntityId) -> bo
         if !seen.insert(parent) || !unbound(parent) {
             return false;
         }
+        if seen.len() == LONG_FORK_LINEAGE + 1 {
+            tracing::warn!(
+                kind = "fork_lineage_long",
+                past = LONG_FORK_LINEAGE,
+                "a resident's fork walk follows an unusually long fork lineage"
+            );
+        }
         at = parent;
     }
-    false
 }
 
 /// Reads what `resident` has not dreamed over yet, oldest first within each
