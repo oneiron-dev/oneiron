@@ -397,6 +397,11 @@ pub struct ByoaAttemptPayload {
     /// Labels and choices only; never credential material.
     #[serde(default)]
     pub official_seat: Option<OfficialSeatStamp>,
+    /// A CLI attempt's checkout custody (FIX 6867, G1 PR3b), pinned by the
+    /// dispatch writer before this payload is encoded; `None` for an
+    /// endpoint or MCP attempt, and on a row dispatched before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_binding: Option<super::repo_binding::ByoaRepoBinding>,
 }
 
 /// Encodes a connector payload in its canonical form.
