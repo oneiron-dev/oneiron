@@ -34,6 +34,7 @@ pub(crate) mod evidence;
 mod executor;
 mod extracted_people;
 mod failure_rules;
+mod follower_attempt;
 #[cfg(test)]
 pub(crate) use failure_rules::PREDICATE as DREAMER_FAILURE_RULES_PREDICATE;
 pub(crate) use failure_rules::{
