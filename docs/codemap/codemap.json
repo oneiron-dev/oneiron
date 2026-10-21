@@ -1395,6 +1395,19 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "RenderedWorkflowStepContext"
+     ],
+     "path": "src/agent_dispatch/workflow/model_context.rs",
+     "purpose": "A workflow step's selected memory and chat as model context (FIX 6290)",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/workflow/workflow_task.rs",
      "purpose": "A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper…",
@@ -2210,7 +2223,7 @@
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 16,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -2231,6 +2244,20 @@
      "path": "src/attempt_queue/ports.rs",
      "purpose": "JobQueue adapter over the existing lease state machine",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptReadSet"
+     ],
+     "path": "src/attempt_queue/read_set.rs",
+     "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -22728,7 +22755,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CandidateRun",
@@ -22744,10 +22771,66 @@
      "purpose": "The Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 3,
+      "re-export": 1,
       "struct": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/code_fix/engine.rs",
+     "purpose": "A publisher's engine candidate replayed against the real failure (FIX 1661, 2144, 6357): one matched pair on…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/code_fix/instruction.rs",
+     "purpose": "The Coach's in-vault replay of an instruction candidate (OF-380, FIX 1662): the failing agent's call as the…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CodeFixShadowHost",
+      "EngineAdmission",
+      "EngineArm",
+      "EngineArmStatus",
+      "EngineArmSummary",
+      "EngineCallUsage",
+      "EngineCandidateRun",
+      "EngineNotRun",
+      "EnginePairState",
+      "PublisherCandidateKind"
+     ],
+     "path": "src/dreamer_runner/maintenance/code_fix/publisher.rs",
+     "purpose": "A publisher's candidates beyond an instruction (FIX 1661, 2144): a candidate engine build, or a patch over…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 7,
+      "fn": 3,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/code_fix/work.rs",
+     "purpose": "A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -27042,7 +27125,7 @@
      "path": "src/failure_signals/code_fix.rs",
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 11,
       "enum": 9,
       "fn": 3,
@@ -36854,7 +36937,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 20,
-      "mod": 26,
+      "mod": 27,
       "re-export": 55
      }
     },
@@ -38139,6 +38222,30 @@
      "path": "src/memory/transcript/tests.rs",
      "purpose": "A conversation's transcript is what its reader may read of it, in order: never an erased message, never one…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "UndecodableUsageList",
+      "UndecodableUsageReason",
+      "UndecodableUsageRow",
+      "UsageRepairAuthority",
+      "UsageRepairCaller",
+      "UsageRepairListRequest",
+      "UsageRepairReason",
+      "UsageRepairReceipt",
+      "UsageRepairRemoveRequest",
+      "UsageRepairSurface",
+      "UsageRepairVerb"
+     ],
+     "path": "src/memory/usage_repair.rs",
+     "purpose": "The authority seam of a host's usage repair (FIX 6476)",
+     "surface": {
+      "enum": 5,
+      "fn": 6,
+      "struct": 6
+     }
     },
     {
      "bucket": "s",
@@ -44862,8 +44969,8 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 1,
-      "fn": 20,
+      "crate-vis": 2,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -58839,7 +58946,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1114
+      "fn": 1116
      }
     },
     {
@@ -61546,6 +61653,16 @@
      "path": "src/vault/transactions/sync_scan_tests.rs",
      "purpose": "Host sync-state doors: scans refuse undeclared rows even under a broad prefix, and writes refuse the…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/transactions/sync_state_delete.rs",
+     "purpose": "One host row's delete in its caller's writer (FIX 6476): a host that reads a row, decides on its bytes and…",
+     "surface": {
+      "fn": 1
+     }
     },
     {
      "bucket": "s",
@@ -65622,7 +65739,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65664,7 +65781,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66112,7 +66229,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 104,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66448,7 +66565,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 227,
+     "files": 228,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67043,7 +67160,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67127,9 +67244,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 188,
+   "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4210,
+   "source_files": 4218,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76908,7 +77025,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1085
+      "fn": 1087
      }
     },
     {
@@ -78123,7 +78240,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1086
+      "fn": 1088
      }
     },
     {
@@ -79703,6 +79820,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/code_fix/shadow.rs",
+     "purpose": "The Coach's shadow runner for a code fix's engine candidates (FIX 1661, 2144): the host's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -80057,6 +80184,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/step/secret_use.rs",
+     "purpose": "`self.use` on a saved-workflow text step (FIX 2315)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/step_failure.rs",
      "purpose": "A failed workflow step, settled through the engine's typed failure ladder: the one door that may retry or…",
      "surface": {
@@ -80308,7 +80445,7 @@
      "path": "src/api/ai/chat/sources.rs",
      "purpose": "The rows a live chat turn's call is read from (FIX 6935), ids only, for its run's permits and metered…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -82096,7 +82233,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 180
+      "crate-vis": 181
      }
     },
     {
@@ -82743,6 +82880,16 @@
      "notable": [],
      "path": "src/api/facade/ui_action_routes.rs",
      "purpose": "OF-181: a host-rendered lens card's events, against the frame this server holds for it…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/usage_repair_doors.rs",
+     "purpose": "The usage repair doors (FIX 6476): the stored usage events of this server's metering scope that no longer…",
      "surface": {
       "crate-vis": 2
      }
@@ -84155,6 +84302,16 @@
      "notable": [],
      "path": "src/api/owner_routes/training_swap_routes.rs",
      "purpose": "`/v1/owner/coach/training-runs` (OF-577, FIX 857): the owner's view of a training run's result and their own…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/usage_repair_routes.rs",
+     "purpose": "`/v1/owner/usage/events/undecodable`: the stored usage events of this server's metering scope that no longer…",
      "surface": {
       "crate-vis": 1
      }
@@ -86113,7 +86270,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FailureSignalsConfig",
@@ -86124,8 +86281,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
+      "enum": 1,
       "fn": 2,
-      "struct": 2
+      "struct": 1
      }
     },
     {
@@ -90945,7 +91103,7 @@
      "path": "src/usage/keys.rs",
      "purpose": "Owner/vault keys and validation for the durable meter queue",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -90986,6 +91144,7 @@
      "path": "src/usage/mod.rs",
      "purpose": "Provider-list metering and host-pushed vault budget limits",
      "surface": {
+      "crate-vis": 1,
       "re-export": 5
      }
     },
@@ -91032,10 +91191,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/usage/repair.rs",
+     "purpose": "The repair of stored usage events that no longer decode (FIX 6476)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/usage/rollup.rs",
      "purpose": "The derived per-vault rollup, kept from the stamped events",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -91709,14 +91878,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 64,
+     "files": 66,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 483,
+     "files": 485,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92122,7 +92291,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92166,7 +92335,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 965,
+   "source_files": 970,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95892,6 +96061,9 @@
       "UnclearAttributionView",
       "UnclearNoteView",
       "UncutFamily",
+      "UndecodableUsageList",
+      "UndecodableUsageReason",
+      "UndecodableUsageRow",
       "UndoneKeep",
       "UnitAbstention",
       "UnitRefusal",
@@ -95900,6 +96072,11 @@
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
       "UsageEventOrigin",
+      "UsageRepairAuthority",
+      "UsageRepairReason",
+      "UsageRepairReceipt",
+      "UsageRepairRemoveRequest",
+      "UsageRepairSurface",
       "UsedProvenanceEdge",
       "Vad",
       "VadAnnotationSource",
@@ -96080,8 +96257,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 900,
-      "struct": 2813
+      "enum": 904,
+      "struct": 2817
      }
     },
     {

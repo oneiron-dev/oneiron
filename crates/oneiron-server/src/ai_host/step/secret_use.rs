@@ -1,0 +1,236 @@
+//! `self.use` on a saved-workflow text step (FIX 2315). A step whose
+//! context holds a masked secret's handle (`sc<n>`) may hand it to one of
+//! the engine's table operations and read the operation's answer, never the
+//! value. Each call goes through the use door
+//! ([`sdk::use_secret_as_caller`]) as the step's own agent while the step
+//! still holds its lease, under an invocation derived from the step's run,
+//! the same on every replay of the try. Every round the model is asked
+//! again is admitted and metered on the step's one funded run, so the
+//! step's budget bounds the rounds; nothing else does.
+//!
+//! Nothing here expands a handle. The tool result is the door's typed
+//! answer, or its refusal as the door words it (revoked, unbound and
+//! unknown-operation refusals included); neither holds the value, and
+//! neither is logged. `connector.call` is not offered: the door refuses it
+//! here, and its served host door stays the only one that sends it.
+//!
+//! The tool rides only a route every rung of which takes tool calls and
+//! their results: a rung without them refuses a request that carries tools,
+//! and a step that ran before must still run.
+
+use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
+use oneiron::llm::run_admission::RunAdmission;
+use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError};
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::secret_custody::SECRET_USE_OPERATIONS;
+use oneiron::task_verb::sdk::{self, SecretUseRequest};
+use oneiron::{
+    ContentPart, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult,
+    LlmToolSpec, ModelId, Vault, WriteActor,
+};
+use serde_json::{Value, json};
+
+use crate::models::OfferLadder;
+
+/// The `self.use` verb as the step's tool: providers take letters, digits,
+/// `_` and `-` in a tool's name, so the dot becomes `_`.
+const SELF_USE_TOOL: &str = "self_use";
+
+/// Puts `self.use` on `request` when every rung of `ladder` takes tool
+/// calls and their results; whether it did.
+pub(super) fn offer(ladder: &OfferLadder, request: &mut LlmRequest) -> bool {
+    let takes = [LlmCapability::ToolCalling, LlmCapability::ToolResults]
+        .iter()
+        .all(|capability| ladder.supports(&request.model, capability));
+    if takes {
+        request.tools.push(tool_spec());
+    }
+    takes
+}
+
+/// The tool: the use door's input, its operations the engine's table.
+fn tool_spec() -> LlmToolSpec {
+    let operations: Vec<&str> = SECRET_USE_OPERATIONS.iter().map(|op| op.name).collect();
+    let described = SECRET_USE_OPERATIONS
+        .iter()
+        .map(|op| format!("{} ({})", op.name, op.what))
+        .collect::<Vec<_>>()
+        .join("; ");
+    LlmToolSpec {
+        name: SELF_USE_TOOL.to_owned(),
+        description: format!(
+            "self.use: hand a masked secret to one trusted operation by its handle, such as \
+             sc12, and read the operation's answer, never the secret's value. The operations \
+             are: {described}."
+        ),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "handle": {
+                    "type": "string",
+                    "description": "The secret's handle, such as sc12, as the text holds it."
+                },
+                "operation": {
+                    "type": "string",
+                    "enum": operations,
+                    "description": "The operation to hand the secret to."
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "The operation's arguments; {} for one that takes none."
+                }
+            },
+            "required": ["handle", "operation"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+/// One step's `self.use`: its vault, the leased try it runs as, its agent,
+/// and the run its invocations derive from.
+pub(super) struct StepSecretUse<'a> {
+    vault: &'a Vault,
+    attempt: &'a AttemptRecord,
+    actor: WriteActor,
+    run: Vec<u8>,
+}
+
+impl<'a> StepSecretUse<'a> {
+    pub(super) fn new(
+        vault: &'a Vault,
+        attempt: &'a AttemptRecord,
+        actor: WriteActor,
+        run_id: &str,
+    ) -> Self {
+        Self {
+            vault,
+            attempt,
+            actor,
+            run: format!("{run_id}/self.use").into_bytes(),
+        }
+    }
+
+    /// Asks `ladder` on `run` until an answer calls no tool, answering each
+    /// tool call in between; that answer and the rung that gave it. Each
+    /// round is the step's model call again: its permit, its gate, its
+    /// meter, and the same errors end it.
+    pub(super) fn converse(
+        &self,
+        runtime: &tokio::runtime::Runtime,
+        ladder: &OfferLadder,
+        run: &RunAdmission,
+        mut request: LlmRequest,
+    ) -> LlmResult<(LlmResponse, ModelId)> {
+        // A rung that cannot read reasoning back is never sent it.
+        let reasoning = ladder.supports(&request.model, &LlmCapability::Reasoning);
+        let mut uses = 0_u64;
+        loop {
+            let (response, served) =
+                runtime.block_on(ladder.generate_served(run, request.clone(), None))?;
+            let calls: Vec<(String, String, Value)> = response
+                .message
+                .content
+                .iter()
+                .filter_map(|part| match part {
+                    ContentPart::ToolCall {
+                        call_id,
+                        name,
+                        input,
+                    } => Some((call_id.clone(), name.clone(), input.clone())),
+                    _ => None,
+                })
+                .collect();
+            if calls.is_empty() {
+                return Ok((response, served));
+            }
+            let content = response
+                .message
+                .content
+                .into_iter()
+                .filter(|part| reasoning || !matches!(part, ContentPart::Reasoning { .. }))
+                .collect();
+            request.messages.push(LlmMessage {
+                role: LlmMessageRole::Assistant,
+                content,
+            });
+            for (call_id, name, input) in calls {
+                let (output, is_error) = if name == SELF_USE_TOOL {
+                    uses += 1;
+                    self.use_once(input, uses)
+                } else {
+                    refusal(&MemoryError::bad_request_with(
+                        format!("{name} is not a tool of this step"),
+                        &["Call self_use, the one tool this step has."],
+                    ))
+                };
+                request.messages.push(LlmMessage {
+                    role: LlmMessageRole::Tool,
+                    content: vec![ContentPart::ToolResult {
+                        call_id,
+                        output,
+                        is_error,
+                    }],
+                });
+            }
+        }
+    }
+
+    /// One `self.use` call's result: the door's answer, or a refusal marked
+    /// as an error. `ordinal` numbers the step's uses, so its invocation is
+    /// the same on every replay of the try.
+    fn use_once(&self, input: Value, ordinal: u64) -> (Value, bool) {
+        let Ok(request) = serde_json::from_value::<SecretUseRequest>(input) else {
+            return refusal(&MemoryError::bad_request_with(
+                "self_use takes a handle, an operation and the operation's arguments",
+                &[
+                    "Name the handle as the text holds it, such as sc12, one of the listed \
+                     operations, and its arguments object.",
+                ],
+            ));
+        };
+        if !self.lease_live() {
+            return refusal(&MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "this step no longer holds its lease, so nothing was used",
+                &["The step's next try may use the secret again."],
+            ));
+        }
+        let memory = self
+            .vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .with_invocation(InvocationId::of_run_step(&self.run, ordinal));
+        match sdk::use_secret_as_caller(&memory, request) {
+            Ok(answer) => match serde_json::to_value(&answer) {
+                Ok(output) => (output, false),
+                Err(_) => refusal(&MemoryError::new(
+                    MEMORY_CODE_INTERNAL,
+                    "the use's answer could not be read",
+                    &["Its receipt is on the vault's Gate record."],
+                )),
+            },
+            Err(error) => refusal(&error),
+        }
+    }
+
+    /// Whether the try this step runs as still holds the lease it was
+    /// claimed under.
+    fn lease_live(&self) -> bool {
+        matches!(
+            AttemptQueue::new(self.vault).get(self.attempt.id),
+            Ok(Some(row)) if row.state == AttemptState::Leased
+                && row.lease_owner == self.attempt.lease_owner
+                && row.attempt_count == self.attempt.attempt_count
+        )
+    }
+}
+
+/// A refusal as a tool result: the door's typed error, marked as one.
+fn refusal(error: &MemoryError) -> (Value, bool) {
+    let output = serde_json::to_value(error).unwrap_or_else(|_| {
+        json!({
+            "code": error.code,
+            "message": error.message,
+        })
+    });
+    (output, true)
+}
