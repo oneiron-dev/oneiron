@@ -12,7 +12,7 @@ use crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE;
 
 use super::codec::map_str;
 use super::posterior::{ProvenanceTrustClass, SkillReliabilityPosterior};
-use super::read::active_claims_in_txn;
+use super::read::{active_claims_in_txn, posterior_from_estimate, resolved_estimate_in_txn};
 
 /// `skill.scan_verdict` body keys + the values that decide whether canonical
 /// bytes were actually CLEARED. Duplicated rather than imported:
@@ -47,6 +47,17 @@ fn skill_provenance_trust_class_in_txn(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<ProvenanceTrustClass> {
+    skill_provenance_trust_class_sourced_in_txn(vault, rtxn, skill).map(|(class, _)| class)
+}
+
+/// [`skill_provenance_trust_class_in_txn`] and the rows its tier stands on
+/// (FIX 3515): the SKILL row, and for a vetted import the hub alias and the
+/// scan verdict that cleared its bytes.
+fn skill_provenance_trust_class_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<(ProvenanceTrustClass, Vec<EntityId>)> {
     let raw = vault
         .store
         .port_entity_record(rtxn, skill)?
@@ -57,23 +68,28 @@ fn skill_provenance_trust_class_in_txn(
         ));
     }
     let record = decode_skill_record(&raw.body)?;
-    provenance_trust_class(vault, rtxn, skill, &record)
+    let (class, witnesses) = provenance_trust_class(vault, rtxn, skill, &record)?;
+    let mut sources = vec![*skill];
+    sources.extend(witnesses);
+    Ok((class, sources))
 }
 
+/// The tier, and for a vetted import the hub alias and the clearing scan
+/// verdict it was read from.
 fn provenance_trust_class(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
     record: &SkillRecord,
-) -> Result<ProvenanceTrustClass> {
+) -> Result<(ProvenanceTrustClass, Vec<EntityId>)> {
     if record.generated {
-        return Ok(ProvenanceTrustClass::Generated);
+        return Ok((ProvenanceTrustClass::Generated, Vec::new()));
     }
     if record.source != ClaimSource::Imported {
-        return Ok(ProvenanceTrustClass::HumanAuthored);
+        return Ok((ProvenanceTrustClass::HumanAuthored, Vec::new()));
     }
     let Some(content_hash) = record.content_hash else {
-        return Ok(ProvenanceTrustClass::UnvettedImport);
+        return Ok((ProvenanceTrustClass::UnvettedImport, Vec::new()));
     };
     // The top prior is the VETTED-HUB import (ARCH-0053 §5): a hub carries
     // these bytes AND a scanner cleared them. Both halves are read, because
@@ -82,8 +98,8 @@ fn provenance_trust_class(
     // trust relationship behind it to be optimistic about — and a hub alias
     // over bytes nobody scanned is what `UnvettedImport` NAMES.
     // A half awaiting its owner's answer vouches for nothing yet.
-    let mut vetted = false;
-    if hub_vouches_for_content(vault, rtxn, skill, content_hash)? {
+    let mut vetted = None;
+    if let Some(alias) = hub_alias_for_content(vault, rtxn, skill, content_hash)? {
         for (id, body) in crate::skill_hub::skill_scan_verdict_heads_for_content_hash_in_store(
             &vault.store,
             rtxn,
@@ -97,15 +113,14 @@ fn provenance_trust_class(
                     ConsolidationReader::SkillScanPrior,
                 )?
             {
-                vetted = true;
+                vetted = Some(vec![alias, id]);
                 break;
             }
         }
     }
-    Ok(if vetted {
-        ProvenanceTrustClass::VettedImport
-    } else {
-        ProvenanceTrustClass::UnvettedImport
+    Ok(match vetted {
+        Some(witnesses) => (ProvenanceTrustClass::VettedImport, witnesses),
+        None => (ProvenanceTrustClass::UnvettedImport, Vec::new()),
     })
 }
 
@@ -128,18 +143,18 @@ fn scan_verdict_cleared_the_bytes(body: &ClaimBody) -> bool {
         && map_str(&body.value, SCAN_GOVERNANCE_KEY) != Some(SCAN_GOVERNANCE_PROHIBITED)
 }
 
-/// True when an active `skill.hub_provenance` alias on this skill names exactly
-/// these canonical bytes.
+/// The active `skill.hub_provenance` alias on this skill that names exactly
+/// these canonical bytes, if one does.
 ///
 /// Scan verdicts hang off the content ANCHOR, which is content-global — every
 /// holder of the same bytes sees the same verdicts. The provenance row is the
 /// per-skill half: it is what says a HUB carried these bytes to this vault.
-fn hub_vouches_for_content(
+fn hub_alias_for_content(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
     content_hash: SkillContentHash,
-) -> Result<bool> {
+) -> Result<Option<EntityId>> {
     let hash_hex = content_hash.to_hex();
     for (id, body, _) in active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_HUB_PROVENANCE)? {
         if map_str(&body.value, HUB_PROVENANCE_CONTENT_HASH_KEY) == Some(hash_hex.as_str())
@@ -150,38 +165,43 @@ fn hub_vouches_for_content(
                 ConsolidationReader::SkillHubPrior,
             )?
         {
-            return Ok(true);
+            return Ok(Some(id));
         }
     }
-    Ok(false)
+    Ok(None)
 }
 
-/// The rows a skill's reliability, as a reader is shown it, may stand on
-/// (DEC-0005): every CLAIM about the skill, its reliability heads and its
-/// hub aliases among them, and every scan verdict on its stored bytes. A
-/// host lists them beside an answer that shows the skill's reliability.
+/// The rows a skill's reliability, as a reader is shown it, stands on
+/// (DEC-0005, FIX 3515): the reliability head the posterior read selects, or
+/// with none, the rows its prior's tier was read from. A host lists them
+/// beside an answer that shows the skill's reliability.
 ///
 /// # Errors
 ///
-/// A read failure, or a skill record that does not decode.
+/// A read failure, or a skill record or head that does not decode.
 pub(crate) fn skill_reliability_sources(vault: &Vault, skill: &EntityId) -> Result<Vec<EntityId>> {
+    skill_reliability_with_sources(vault, skill).map(|(_, sources)| sources)
+}
+
+/// A skill's posterior as [`super::skill_reliability_posterior`] reads it, or
+/// with no measured head its prior, and the rows it stands on, from one
+/// snapshot.
+fn skill_reliability_with_sources(
+    vault: &Vault,
+    skill: &EntityId,
+) -> Result<(SkillReliabilityPosterior, Vec<EntityId>)> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut rows = vault.claims_for_subject_in_txn(&rtxn, skill)?;
-    if let Some(raw) = vault.store.port_entity_record(&rtxn, skill)?
-        && raw.entity_type == ENTITY_TYPE_SKILL
-        && let Some(content_hash) = decode_skill_record(&raw.body)?.content_hash
-    {
-        rows.extend(
-            crate::skill_hub::skill_scan_verdict_heads_for_content_hash_in_store(
-                &vault.store,
-                &rtxn,
-                content_hash,
-            )?
-            .into_iter()
-            .map(|(id, _)| id),
-        );
+    if let Some(head) = resolved_estimate_in_txn(vault, &rtxn, skill, None)? {
+        return Ok((
+            posterior_from_estimate(&head.estimate)?,
+            vec![head.claim_id],
+        ));
     }
-    Ok(rows)
+    let (class, sources) = skill_provenance_trust_class_sourced_in_txn(vault, &rtxn, skill)?;
+    Ok((
+        SkillReliabilityPosterior::seeded_from_provenance(class),
+        sources,
+    ))
 }
 
 /// The prior a skill's posterior starts from, before any attributed outcome.

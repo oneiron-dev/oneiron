@@ -142,7 +142,9 @@ fn check_floor_for(
     at: u64,
 ) -> Result<Option<EntityId>> {
     vault.with_write_txn_grouped(|txn| {
-        let Some(estimate) = resolved_estimate_in_txn(vault, txn, skill, executor)? else {
+        let Some(estimate) =
+            resolved_estimate_in_txn(vault, txn, skill, executor)?.map(|head| head.estimate)
+        else {
             return Ok(None);
         };
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

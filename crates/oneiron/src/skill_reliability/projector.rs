@@ -13,6 +13,7 @@ use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribut
 use crate::temporal::TimeRange;
 
 use super::codec::invalid;
+use super::equivalent::redirect_equivalent_subjects_in_txn;
 use super::ledger::{
     projection_outcomes_in_txn, receipt_executor, receipt_manifest_names_skill,
     record_outcome_in_txn,
@@ -215,14 +216,29 @@ pub(super) fn project_in_txn(
 ) -> Result<SkillReliabilityPosterior> {
     let executor = executor.ok_or(invalid("skill reliability requires an executor revision"))?;
     validate_executor(executor)?;
-    let outcomes = projection_outcomes_in_txn(vault, txn, skill, executor)?;
+    // A shell merged into the skill folds its history into the skill's cells
+    // (FIX 7815): each receipt counts once, and a suppressed copy withdraws
+    // it whichever subject holds it. The rows keep their stored skill.
+    let subjects = redirect_equivalent_subjects_in_txn(vault, txn, skill)?;
+    let mut folded = BTreeMap::new();
+    for subject in &subjects {
+        for (receipt, outcome) in projection_outcomes_in_txn(vault, txn, subject, executor)? {
+            let held = folded.entry(receipt).or_insert(outcome);
+            if outcome.is_none() {
+                *held = None;
+            }
+        }
+    }
+    let outcomes: Vec<_> = folded.into_iter().collect();
     let managed: BTreeSet<_> = outcomes
         .iter()
         .map(|(receipt, _)| receipt.clone())
         .collect();
     let mut judges = BTreeMap::new();
     for judgment in crate::skill_attribution::attribution_judgments_in_txn(vault, txn)? {
-        if judgment.subject == *skill && judgment.verdict == AttributionVerdict::SkillDefect {
+        if subjects.contains(&judgment.subject)
+            && judgment.verdict == AttributionVerdict::SkillDefect
+        {
             let judge =
                 crate::skill_attribution::judgment_judge_in_txn(vault, txn, judgment.sequence)?;
             for receipt in judgment.evidence_receipts {
@@ -313,7 +329,8 @@ pub(super) fn project_in_txn(
     for digest in changed {
         project_cell_in_txn(vault, txn, &digest, at)?;
     }
-    let estimate = resolved_estimate_in_txn(vault, txn, skill, Some(executor))?;
+    let estimate =
+        resolved_estimate_in_txn(vault, txn, skill, Some(executor))?.map(|head| head.estimate);
     let posterior = estimate
         .as_ref()
         .map(posterior_from_estimate)

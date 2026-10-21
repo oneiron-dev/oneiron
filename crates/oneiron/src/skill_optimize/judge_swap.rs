@@ -42,6 +42,7 @@ use crate::learning::{
 };
 use crate::llm::decision::DecisionAnswer;
 use crate::self_heal::audit::SealCheckKind;
+use crate::skill_optimize::labels::JUDGE_SKILL_ID;
 use crate::skill_optimize::{
     GoalAxisKind, JudgeLabel, SkillEditDisposition, TradeoffRung, judge_label_anchor,
     skill_edit_goal, skill_edit_verdicts_for_proposal,
@@ -63,6 +64,9 @@ const SCORE_AGREEMENT: f64 = 0.1;
 const NOISE_AXIS: &str = "agreement";
 /// One-sided 95% normal quantile, as the takeover ladder reads divergence.
 const WILSON_Z: f64 = 1.645;
+/// Why a pass recorded no retest noise: the judge SKILL it is kept about is
+/// absent (FIX 8079).
+const NOISE_SUBJECT_ABSENT: &str = "judge_swap.noise_subject_absent";
 
 const INCUMBENT_KEY: &str = "skill:judge:v1:swap:incumbent";
 const POLICY_KEY: &str = "skill:judge:v1:swap:policy";
@@ -391,6 +395,22 @@ fn retest(
     now: u64,
 ) -> Result<JudgeSwapReport> {
     let scorer = scorer()?;
+    // With the judge SKILL gone the noise has no subject to be kept under,
+    // so nothing is retested or asked of the host (FIX 8079).
+    let present = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, &scorer)?.is_live()
+    };
+    if !present {
+        tracing::warn!(
+            reason = NOISE_SUBJECT_ABSENT,
+            "the judge's retest noise was not recorded: its subject is absent"
+        );
+        return Ok(JudgeSwapReport::Retested {
+            judge: incumbent.to_owned(),
+            retests: 0,
+        });
+    }
     let mut probe = Some(probe);
     let mut retests = 0;
     for case in own {
@@ -1498,9 +1518,14 @@ fn count(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-/// The scoring subject the incumbent's retest noise is kept under.
+/// The scoring subject the incumbent's retest noise is kept under: the
+/// shipped `judge` SKILL (FIX 8079), a row the learning projection can write
+/// its claim about.
 fn scorer() -> Result<EntityId> {
-    EntityId::derive(b"oneiron.skill_optimize.judge_swap", &[b"kept judgments"])
+    EntityId::derive(
+        crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
+        &[JUDGE_SKILL_ID.as_bytes()],
+    )
 }
 
 /// The cell [`record_retest`] keeps the incumbent's noise in.

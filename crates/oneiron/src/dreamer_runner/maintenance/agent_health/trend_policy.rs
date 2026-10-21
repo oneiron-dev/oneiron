@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::rollups::TrendMargin;
 use crate::learning_setting::{
-    SettingScope, SettingSpec, list_setting_rows, setting_value_in_scope_in_txn,
+    SettingScope, SettingSpec, list_setting_rows_in_txn, setting_value_in_scope_in_txn,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -133,9 +133,10 @@ pub struct DetectionDialChanges {
 }
 
 impl DetectionDialChanges {
-    /// Every owner seed and pin over a detection dial.
-    pub(super) fn read(vault: &Vault) -> Result<Self> {
-        let rows = list_setting_rows(vault)?
+    /// Every owner seed and pin over a detection dial, in the caller's
+    /// snapshot: the one its rollups read (FIX 8358).
+    pub(super) fn read_in(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<Self> {
+        let rows = list_setting_rows_in_txn(vault, rtxn)?
             .into_iter()
             .filter(|(_, row, _)| DETECTION_DIALS.contains(&row.key.as_str()))
             .map(|(scope, row, _)| (scope, row.at))

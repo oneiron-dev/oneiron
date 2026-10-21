@@ -12,6 +12,7 @@
 mod amended;
 mod callable;
 mod codec;
+mod equivalent;
 mod floor;
 mod ledger;
 mod posterior;
@@ -23,18 +24,18 @@ mod resident;
 
 pub(crate) use self::amended::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
+pub(crate) use self::equivalent::redirect_equivalent_subjects_in_txn;
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
     SKILL_RELIABILITY_FLOOR_KEY, SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, check_reliability_floor,
     check_reliability_floor_for_executor, set_skill_reliability_floor, skill_reliability_floor,
 };
-pub use self::ledger::{
-    SKILL_RELIABILITY_MAX_CITED_RECEIPTS, effective_skill_outcome,
-    record_resident_skill_contributing_win, record_skill_contributing_win,
-};
 pub(crate) use self::ledger::{
     attributed_outcome_receipts, attributed_outcome_results, attributed_outcomes_weighted,
     mark_displaced_outcome_in_txn, record_skill_settled_loss,
+};
+pub use self::ledger::{
+    effective_skill_outcome, record_resident_skill_contributing_win, record_skill_contributing_win,
 };
 pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,

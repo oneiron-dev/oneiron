@@ -75,9 +75,11 @@ pub struct AttributionCauseRecord {
 }
 
 /// Keeps the sole label one projector pass settled for one evidence row, in
-/// that pass's write. A row held for the receipt and sequence stays as it
-/// was written: a rerun keeps its source id, and a later judge's different
-/// answer never rewrites an earlier one, as judgments are never rescored.
+/// that pass's write. A row held for the receipt and sequence keeps its
+/// source id. A held `unclear` charged nobody, so a later replay that settles
+/// the row takes its place (FIX 8260); any other held label stays as it was
+/// written, and a later judge's different answer never rewrites it, as
+/// judgments are never rescored.
 ///
 /// # Errors
 ///
@@ -93,7 +95,17 @@ pub(super) fn put_attribution_cause_in_txn(
     judge_revision: Option<&str>,
 ) -> Result<()> {
     let key = (receipt_key(&evidence.receipt_ref), sequence);
-    if let Some(held) = CAUSES.get(&vault.store, wtxn, &key)? {
+    if let Some(mut held) = CAUSES.get(&vault.store, wtxn, &key)? {
+        if held.label == AttributionVerdict::Unclear.as_str()
+            && label != AttributionVerdict::Unclear
+        {
+            // The held actor and skill slots stay as they are: an erase
+            // that nilled one is never undone by a replay.
+            held.label = label.as_str().to_owned();
+            held.share = share;
+            held.judge_revision = judge_revision.map(str::to_owned);
+            return CAUSES.put(&vault.store, wtxn, &key, &held);
+        }
         if held.label != label.as_str() || held.judge_revision.as_deref() != judge_revision {
             tracing::debug!(
                 sequence,
@@ -164,8 +176,9 @@ pub(crate) fn attempt_attribution_causes(
 /// Forgets erased `entity` on every cause row that names it, in the erase's
 /// own write: an actor it executed or a skill it loaded (FIX 8265), each slot
 /// nil, and the label stays with its receipt, as a call receipt keeps its row
-/// and drops its identity. A later projection keeps the row as it is held
-/// ([`put_attribution_cause_in_txn`]), so it never names either again.
+/// and drops its identity. A later projection keeps the row's identity slots
+/// as they are held ([`put_attribution_cause_in_txn`]), so it never names
+/// either again.
 ///
 /// # Errors
 ///

@@ -51,6 +51,9 @@ pub struct SessionDistillTurn {
     /// holding a question and its answer yields two utterances, and flattening
     /// them into one speaker would attribute half the turn to the wrong actor.
     pub said: Vec<SessionDistillUtterance>,
+    /// The MESSAGE rows `said` was read from, in its order (FIX 7101); empty
+    /// when the TURN body held the words.
+    pub messages: Vec<EntityId>,
 }
 /// What a session-end distillation gets to reason over.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +64,10 @@ pub struct SessionDistillBrief {
     pub ended_at: u64,
     /// Its turns, in `(learned_at, id)` scan order.
     pub turns: Vec<SessionDistillTurn>,
+    /// The rows the brief was read from (FIX 7101): the sitting, each TURN
+    /// and each MESSAGE its words came from. A host that resolves speakers
+    /// adds the rows it reads for them; `None` is unknown.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 /// Distills an ended sitting into actor notes, or returns none.
 ///
@@ -143,10 +150,12 @@ pub(super) fn distill_session(
 ) -> Result<Vec<EntityId>> {
     let ended_at = distill_job(vault, session)?;
     let sitting = sitting_window(vault, session, ended_at)?;
+    let turns = sitting_turns(vault, session, sitting)?;
     let brief = SessionDistillBrief {
         session: *session,
         ended_at,
-        turns: sitting_turns(vault, session, sitting)?,
+        source_rows: Some(brief_rows(session, &turns)),
+        turns,
     };
     if brief.turns.is_empty() {
         // Nothing to learn from, and nothing that can arrive later: the sitting
@@ -302,13 +311,29 @@ fn distill_turns(vault: &Vault, turn_ids: Vec<EntityId>) -> Result<Vec<SessionDi
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, turn_ids.len() as u64);
     let mut turns = Vec::with_capacity(turn_ids.len());
     for turn in turn_ids {
-        let said = match turn_utterance(vault, &turn)? {
-            Some(utterance) => vec![utterance],
+        let (messages, said) = match turn_utterance(vault, &turn)? {
+            Some(utterance) => (Vec::new(), vec![utterance]),
             None => turn_message_utterances(vault, &turn)?,
         };
-        turns.push(SessionDistillTurn { turn, said });
+        turns.push(SessionDistillTurn {
+            turn,
+            said,
+            messages,
+        });
     }
     Ok(turns)
+}
+
+/// The rows a brief over `turns` of `session` was read from: the sitting,
+/// then each turn and the MESSAGE rows its words came from.
+fn brief_rows(session: &EntityId, turns: &[SessionDistillTurn]) -> Vec<EntityId> {
+    std::iter::once(*session)
+        .chain(
+            turns
+                .iter()
+                .flat_map(|turn| std::iter::once(turn.turn).chain(turn.messages.iter().copied())),
+        )
+        .collect()
 }
 /// The utterance a TURN body carries itself when it has text, or `None` when
 /// it has only the witness door's speaker stamp and its words are children.
@@ -327,8 +352,12 @@ fn turn_utterance(vault: &Vault, turn: &EntityId) -> Result<Option<SessionDistil
     let utterance = decode_utterance(body, "spkr", "txt");
     Ok(utterance.text.is_some().then_some(utterance))
 }
-/// The witnessed words of a turn: its MESSAGE children, in `(order, id)`.
-fn turn_message_utterances(vault: &Vault, turn: &EntityId) -> Result<Vec<SessionDistillUtterance>> {
+/// The witnessed words of a turn: its MESSAGE children, in `(order, id)`,
+/// each beside the MESSAGE it was read from.
+fn turn_message_utterances(
+    vault: &Vault,
+    turn: &EntityId,
+) -> Result<(Vec<EntityId>, Vec<SessionDistillUtterance>)> {
     // `edges_in` reports the FAR end in `target`, so these are the messages
     // that named this turn as their part-of container.
     let messages: Vec<EntityId> = vault
@@ -358,8 +387,8 @@ fn turn_message_utterances(vault: &Vault, turn: &EntityId) -> Result<Vec<Session
     said.sort_by_key(|(order, id, _)| (*order, *id));
     Ok(said
         .into_iter()
-        .map(|(_, _, utterance)| utterance)
-        .collect())
+        .map(|(_, message, utterance)| (message, utterance))
+        .unzip())
 }
 /// Reads one utterance from a MessagePack body, tolerating any other shape: an
 /// undecodable turn is still a turn that happened.

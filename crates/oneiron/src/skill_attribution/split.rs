@@ -3,8 +3,11 @@
 //! `attribution_unclear_floor` setting applied by the engine.
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning_setting::{ATTRIBUTION_UNCLEAR_FLOOR, setting_value};
+use crate::learning_setting::{
+    ATTRIBUTION_UNCLEAR_FLOOR, setting_value, setting_value_sourced_in_txn,
+};
 
 use super::judge::{Attributed, AttributionDecisions, AttributionRules, JudgeTrace};
 use super::types::{
@@ -28,6 +31,22 @@ pub(crate) fn unclear_floor(vault: &Vault) -> Result<f32> {
         reason = "a unit-interval setting narrowed to the judge's f32 confidence"
     )]
     Ok(setting_value(vault, &ATTRIBUTION_UNCLEAR_FLOOR)? as f32)
+}
+
+/// [`unclear_floor`] beside the rows it stands on, from one snapshot
+/// ([`setting_value_sourced_in_txn`], FIX 7101).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn unclear_floor_sourced(vault: &Vault) -> Result<(f32, Option<Vec<EntityId>>)> {
+    let rtxn = vault.store.env.read_txn()?;
+    let (floor, rows) = setting_value_sourced_in_txn(vault, &rtxn, &ATTRIBUTION_UNCLEAR_FLOOR)?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a unit-interval setting narrowed to the judge's f32 confidence"
+    )]
+    Ok((floor as f32, rows))
 }
 
 /// Asks about `request` and turns the answers into a split, beside the exact

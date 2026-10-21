@@ -18,6 +18,7 @@ use crate::registry::{
 use crate::skill_attribution::{
     AttributionJudgment, AttributionVerdict, attribution_judgments, judgment_displaced_in_txn,
 };
+use crate::skill_reliability::redirect_equivalent_subjects_in_txn;
 use crate::temporal::TimeRange;
 
 use super::candidate::is_approved_craft_verdict;
@@ -379,16 +380,28 @@ pub(super) fn require_session_entity(vault: &Vault, session: &EntityId) -> Resul
 /// The join point ED-07 and the SK-05 bandit read. Two active heads for one
 /// pair is a legitimate post-sync convergence state (see [`write_actor_claim`]),
 /// not corruption, so the newest head wins deterministically — by `valid_from`,
-/// then claim id — rather than bricking every read with an error.
+/// then claim id — rather than bricking every read with an error. A shell
+/// merged into the actor or the skill reads as them (FIX 7815): its heads
+/// fold in, each keeping its stored subject and pair.
 pub fn skill_fit_for(vault: &Vault, actor: &EntityId, skill: &EntityId) -> Result<Option<f32>> {
     let rtxn = vault.store.env.read_txn()?;
+    let skills = redirect_equivalent_subjects_in_txn(vault, &rtxn, skill)?;
+    let mut heads = Vec::new();
+    for subject in redirect_equivalent_subjects_in_txn(vault, &rtxn, actor)? {
+        heads.extend(active_heads_in_txn(
+            vault,
+            &rtxn,
+            &subject,
+            PREDICATE_ACTOR_SKILL_FIT,
+        )?);
+    }
     let mut best: Option<(u64, EntityId, f32)> = None;
-    for (id, body, _) in active_heads_in_txn(vault, &rtxn, actor, PREDICATE_ACTOR_SKILL_FIT)? {
+    for (id, body, _) in heads {
         // The PAIR is the conflict key, so the pair entry is what a read
         // matches on — the scope map also carries the row's lineage meet, and
         // comparing whole maps would make two lanes' estimates of one pair
         // look like estimates of two different pairs.
-        if skill_fit_scope_skill(body.scope.as_ref()) != Some(*skill)
+        if !skill_fit_scope_skill(body.scope.as_ref()).is_some_and(|fit| skills.contains(&fit))
             || !crate::claim::has_live_support_in_txn(&vault.store, &rtxn, &body)?
             || !crate::gate::claim_consolidation_eligible_in_txn(
                 &vault.store,
