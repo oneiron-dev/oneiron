@@ -10,7 +10,14 @@ chromium)
 # Chromium reads CDP from fd 3 and writes it to fd 4 (--remote-debugging-pipe).
 # They are the container's stdin and stdout: no debugging port exists.
 # The engine serves a declared fixture through the same private HTTP door.
+# No crash reporter: its handler spawn calls setsid(), which the fence refuses
+# (it keeps every guest process in the group it stops and kills), and Chromium
+# aborts at start. The network service runs in the browser process: as a child
+# it crash-loops on an FD ownership check once crashpad is off, and no page
+# loads (FIX 7662, proved on the fenced guest 10-22).
 exec chromium \
+  --disable-crashpad-for-testing \
+  --enable-features=NetworkServiceInProcess2 \
   --headless \
   --no-sandbox \
   --disable-quic \

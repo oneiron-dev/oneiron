@@ -1943,6 +1943,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BorrowedAttemptLease"
+     ],
+     "path": "src/attempt_queue/borrowed_lease.rs",
+     "purpose": "A parent attempt's lease as a child borrows it (FIX 7507): the attempt, its lease owner and its lease…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HoldAttemptForBudget"
      ],
      "path": "src/attempt_queue/budget_hold.rs",
@@ -2253,7 +2267,7 @@
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 17,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -14098,7 +14112,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "mod": 7,
       "re-export": 23
      }
@@ -14176,6 +14190,17 @@
      "path": "src/code_run/reader_brief.rs",
      "purpose": "The task text a reader child's run is given: a read child's names its one source; a scoped child's (FIX…",
      "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/reader_clock.rs",
+     "purpose": "Which part of its parent's clock a reader job runs to (FIX 7507 PR3), and the parent attempt lease a scoped…",
+     "surface": {
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -14433,9 +14458,9 @@
      "path": "src/code_run/scoped_child.rs",
      "purpose": "Scoped children (FIX 7507 PR2): a separate code-mode agent a host queues on the reader-job machinery…",
      "surface": {
-      "const": 3,
-      "crate-vis": 6,
-      "fn": 8,
+      "const": 5,
+      "crate-vis": 7,
+      "fn": 11,
       "struct": 4,
       "trait": 1
      }
@@ -14675,7 +14700,7 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "enum": 1,
       "fn": 11,
       "struct": 2
@@ -14688,7 +14713,8 @@
      "path": "src/code_run/storage/reader_jobs/scoped.rs",
      "purpose": "A host's scoped child (FIX 7507 PR2), queued on its parent's reader rows as every child of the parent is…",
      "surface": {
-      "fn": 1
+      "crate-vis": 3,
+      "fn": 2
      }
     },
     {
@@ -23447,7 +23473,7 @@
       "crate-vis": 6,
       "enum": 6,
       "fn": 12,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 7
      }
     },
@@ -23508,6 +23534,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/call_evidence.rs",
+     "purpose": "The call receipts the agent-health review reads, by the attempt each names (OF-568 L4)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/call_loop.rs",
+     "purpose": "`loop` over agents' call receipts, one call stream at a time (`call_evidence`, OF-568 L4)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -23525,6 +23571,19 @@
      "purpose": "`duplicate_work` on action digests (agent-mind §3.4, OF-568): two attempts ran the same action on the same…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealthCauseSource"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/environment.rs",
+     "purpose": "What the attribution judge settled on a finding's exact attempt (OF-568 L10, agent-mind §3.5: \"An…",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 1
      }
     },
     {
@@ -36589,6 +36648,7 @@
      "purpose": "The seat pick as typed decisions through the host's ladder, and the note seam beside it",
      "surface": {
       "crate-vis": 1,
+      "fn": 1,
       "struct": 1,
       "trait": 1
      }
@@ -47454,6 +47514,8 @@
      "kind": "src",
      "notable": [
       "ActionInputs",
+      "CallAttemptRef",
+      "CallAttemptWitness",
       "CallOutcome",
       "CallReceipt",
       "CallReceiptInput",
@@ -47464,10 +47526,10 @@
      "purpose": "OF-538: one lasting receipt per wire call, reads included",
      "surface": {
       "const": 5,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 12,
-      "struct": 4
+      "struct": 6
      }
     },
     {
@@ -53158,6 +53220,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttributionCauseRecord"
+     ],
+     "path": "src/skill_attribution/causes.rs",
+     "purpose": "The labels the attribution judge settled on each attempt's terminal outcome, kept whatever their subject…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -53222,7 +53297,7 @@
      "path": "src/skill_attribution/judge_supersession.rs",
      "purpose": "Judge-revision provenance for routed receipts, and non-destructive displacement",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -53249,8 +53324,8 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 10,
-      "re-export": 14
+      "crate-vis": 11,
+      "re-export": 15
      }
     },
     {
@@ -53283,7 +53358,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_attribution/projector.rs",
@@ -61146,7 +61221,7 @@
      "surface": {
       "crate-vis": 11,
       "enum": 8,
-      "fn": 2,
+      "fn": 3,
       "struct": 11
      }
     },
@@ -69075,7 +69150,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69257,7 +69332,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 134,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69523,7 +69598,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 118,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70258,7 +70333,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70540,7 +70615,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4485,
+   "source_files": 4491,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74860,6 +74935,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/limit_ask/cgroup.rs",
+     "purpose": "The memory cgroup this process runs in (FIX 8067), and what its limits leave (FIX 8066)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -75254,7 +75339,7 @@
      "purpose": "Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay…"
     },
     "limit_ask": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -75354,7 +75439,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 58,
+   "source_files": 59,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -83194,7 +83279,7 @@
      "path": "src/admission.rs",
      "purpose": "Admission for work a remote caller can start",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -83204,6 +83289,19 @@
      "path": "src/admission/tests.rs",
      "purpose": "The queue law every permit site shares (ARCH-0044 C5, SEC rule 5): past the bound, work waits and is served…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BrowserPlannerRuns"
+     ],
+     "path": "src/ai_host/browser_planner.rs",
+     "purpose": "A code-mode run's browser planner (CUA E5, DESIGN-2 §4): the role each step's model call runs on while the…",
+     "surface": {
+      "crate-vis": 7,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -83577,7 +83675,7 @@
      "surface": {
       "crate-vis": 36,
       "fn": 22,
-      "mod": 2,
+      "mod": 3,
       "re-export": 1,
       "struct": 2
      }
@@ -83623,14 +83721,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ReaderParentClock",
+      "ReaderParentHost"
+     ],
      "path": "src/ai_host/scoped_child.rs",
      "purpose": "Scoped children at the host (FIX 7507 PR2): the door a scoped child runs behind, the binding of its lent…",
      "surface": {
       "crate-vis": 3,
-      "fn": 1
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -84426,7 +84528,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -86928,7 +87030,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
@@ -89824,9 +89926,19 @@
      "path": "src/config/browser.rs",
      "purpose": "`[browser]`: the guest a code run's `self.browser.*` verbs drive",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/browser/readiness.rs",
+     "purpose": "The server's browser readiness (FIX 7670): one value, seeded at start from the `[browser]` section, its…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -90133,6 +90245,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/config/models/browser_planner.rs",
+     "purpose": "`[models.roles.browser_planner]`: the mid planner a browser subgoal's next code-mode step runs on (CUA E5…",
+     "surface": {
+      "const": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CompactionSettings"
      ],
@@ -90234,7 +90357,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 7
      }
     },
@@ -91921,7 +92044,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 23
      }
     },
     {
@@ -93024,7 +93147,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7,
       "struct": 1
      }
@@ -94906,7 +95029,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 16,
       "re-export": 1,
       "struct": 1
@@ -95214,7 +95337,7 @@
      "path": "src/server/reader_runner.rs",
      "purpose": "The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -95255,6 +95378,16 @@
      "purpose": "The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/resident_pump/browser_workflow.rs",
+     "purpose": "A TASK bound to a library program (CUA E4, FIX 7603; DESIGN-2 §2): its try runs the program its first lease…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -95415,13 +95548,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/slide_render.rs",
      "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 15
      }
     },
     {
@@ -96230,7 +96363,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 71,
+     "files": 72,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96314,7 +96447,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 50,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96615,7 +96748,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -96631,7 +96764,7 @@
     "slide_render": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…"
     },
@@ -96687,7 +96820,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1052,
+   "source_files": 1056,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -97273,6 +97406,7 @@
       "CalendarSel",
       "CalendarSyncOutcome",
       "CalibrationPair",
+      "CallAttemptRef",
       "CallClass",
       "CallEnvelope",
       "CallOutcome",
@@ -98407,6 +98541,7 @@
       "HandoverInput",
       "HandoverOutput",
       "HealthBriefPin",
+      "HealthCauseSource",
       "HealthReviewReceipt",
       "HeapDropReport",
       "HeldAttempt",
@@ -100777,7 +100912,7 @@
      "purpose": "—",
      "surface": {
       "enum": 940,
-      "struct": 2948
+      "struct": 2950
      }
     },
     {
@@ -101078,8 +101213,25 @@
       "const": 4,
       "enum": 12,
       "fn": 6,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BrowserReadiness",
+      "BrowserTier",
+      "BrowserUnavailableReason",
+      "GuestRuntimeFact"
+     ],
+     "path": "src/lib/ctl/browser.rs",
+     "purpose": "A managed vault's browser readiness (FIX 7670): what every `Ping` says of its `[browser]` guest, and the…",
+     "surface": {
+      "const": 2,
+      "enum": 4,
+      "fn": 1
      }
     },
     {
@@ -101763,7 +101915,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -101772,7 +101924,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 47,
+   "source_files": 48,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

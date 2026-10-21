@@ -117,6 +117,9 @@ pub(crate) struct RpcCall {
     request_digest: String,
     /// The input versions the call reads (OF-568); `None` when uncaptured.
     inputs: Option<oneiron::receipt::ActionInputs>,
+    /// The attempt whose live run the call held, as the hold witnessed it
+    /// (OF-568 L4); `None` when it held none, or more than one.
+    attempt: Option<oneiron::receipt::CallAttemptWitness>,
     /// The call ran inside an anonymous off-record session its principal is
     /// verified in (OF-063), on arrival or when it answered: it writes no
     /// receipt.
@@ -129,6 +132,7 @@ impl RpcCall {
             method: request.method.clone(),
             request_digest: oneiron::receipt::call_json_digest(&request.params),
             inputs: None,
+            attempt: None,
             anonymous: false,
         }
     }
@@ -216,6 +220,7 @@ impl RpcReply {
                 request_digest: call.request_digest,
                 result_digest,
                 inputs: call.inputs,
+                attempt: call.attempt,
                 served,
             },
         );
@@ -355,7 +360,15 @@ pub(crate) async fn rpc_reply(
     context: SocketCallContext,
 ) -> Result<RpcReply, ProtocolError> {
     let mut call = RpcCall::captured(server, &request);
-    let result = rpc::claimed(server, auth, &context, &request.method, request.params).await;
+    let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
+        server,
+        auth,
+        &context,
+        &request.method,
+        request.params,
+    ))
+    .await;
+    call.attempt = attempt;
     // OF-063: judged on arrival and again before the receipt is written, so
     // a session closed mid-call keeps its call's exception.
     call.anonymous = context.anonymous(server, auth);
