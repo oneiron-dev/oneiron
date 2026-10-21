@@ -25,6 +25,11 @@
 //!
 //! The first review to finish in a calendar month also runs the NOTE
 //! tombstone review (`note/tombstone_review.rs`, FIX 2419).
+//!
+//! A review whose reply names the note's topic keeps it on the record as
+//! its topic membership, and that write also declares the topic group's
+//! summary (`note_topics.rs`, FIX 907). A reply that names none, or names
+//! one malformed, keeps none and declares nothing.
 
 use std::ops::Range;
 
@@ -33,7 +38,11 @@ use rmpv::Value;
 use super::evidence::EvidenceLocator;
 use super::executor::ConsolidationExecutor;
 use super::executor::extraction::{
-    PadAsk, check_extraction_reply, decode_model_locator, entity_id_from_hex, extraction_reply,
+    check_extraction_reply, decode_model_locator, entity_id_from_hex,
+};
+use super::note_classification::{PadAsk, note_classification_reply};
+use super::note_topics::{
+    NoteTopicLineage, NoteTopicMembership, queue_note_topic_summaries_in_txn,
 };
 use super::provenance::PromotionCandidate;
 use super::roles::DREAMER_EXTRACTION_ROLE;
@@ -95,6 +104,9 @@ struct NoteReviewRecord {
     /// The review attempt that wrote this record: an attempt resumed after a
     /// checkpoint never re-asks what it just asked.
     attempt: AttemptId,
+    /// The note's topic, when its classification named one (FIX 907): the
+    /// one record of its topic membership.
+    topic: Option<NoteTopicMembership>,
 }
 /// NOTEs per page. The cursor moves a page at a time, so a review cut by
 /// its deadline resumes where it stopped.
@@ -282,15 +294,11 @@ impl ConsolidationExecutor<'_> {
         if ctx.deadline.expired() {
             return Ok(Some(charges.checkpoint()));
         }
-        let reply = match extraction_reply(&response) {
+        let reply = match note_classification_reply(&response) {
             Ok(reply) => reply,
             Err(error) => return Ok(Some(charges.park_on_error(&error))),
         };
-        let importance = reply
-            .importance
-            .as_ref()
-            .and_then(serde_json::Value::as_f64)
-            .filter(|importance| (0.0..=1.0).contains(importance));
+        let importance = reply.importance;
         let mut candidates = Vec::new();
         let mut cited = Vec::new();
         for item in &reply.candidates {
@@ -333,6 +341,14 @@ impl ConsolidationExecutor<'_> {
             .reask_of
             .as_ref()
             .map_or(0, |prior| prior.keep_reasks.saturating_add(1));
+        // A re-ask's topic stays the first review's, as its verdict does.
+        let topic = match &note.reask_of {
+            Some(prior) => prior.topic,
+            None => reply
+                .topic_key
+                .as_deref()
+                .map(|key| NoteTopicMembership::new(key, note.facet, note.project)),
+        };
         if !keep_missed.is_empty() {
             tracing::info!(
                 target: "oneiron::dreamer",
@@ -356,7 +372,13 @@ impl ConsolidationExecutor<'_> {
                 );
             }
         }
-        ctx.vault.with_write_txn_grouped(|txn| {
+        let lineage = NoteTopicLineage {
+            requester: run.agent_actor,
+            parent: run.attempt_id,
+            run_id: attempt.status.attempt.run_id.as_deref(),
+            now: ctx.now_ms / 1_000,
+        };
+        let declared = ctx.vault.with_write_txn_grouped(|txn| {
             SEEN.put(
                 &ctx.vault.store,
                 txn,
@@ -368,11 +390,39 @@ impl ConsolidationExecutor<'_> {
                     keep_missed,
                     keep_reasks,
                     attempt: run.attempt_id,
+                    topic,
                 },
-            )
+            )?;
+            // The membership and its topic's summary commit together (FIX
+            // 907): a replay never finds this NOTE reviewed and the summary
+            // unqueued.
+            match &topic {
+                Some(topic) => queue_note_topic_summaries_in_txn(ctx.vault, txn, topic, &lineage),
+                None => Ok(false),
+            }
         })?;
+        if declared {
+            ctx.vault.store.notify_attempt_observers();
+        }
         Ok(None)
     }
+}
+
+/// Every reviewed NOTE whose review record keeps `topic`, in id order: the
+/// record is the one membership, kept in no other index (FIX 907).
+pub(super) fn topic_members_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    topic: &NoteTopicMembership,
+) -> Result<Vec<EntityId>> {
+    let mut members = Vec::new();
+    for row in SEEN.iter_from(&vault.store, txn, &[])? {
+        let (note, record) = row?;
+        if record.topic.as_ref() == Some(topic) {
+            members.push(note);
+        }
+    }
+    Ok(members)
 }
 
 /// The NOTEs on `page` the review reads: live and readable by the Dreamer,
