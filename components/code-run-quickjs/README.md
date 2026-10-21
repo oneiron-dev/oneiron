@@ -136,6 +136,9 @@ with no component rebuild. The memory reads and writes the run answers itself
 row the WIT world already imports at the same path (`self.report_blocked`) is
 skipped and that import serves it, taking the row's input object or its
 positional strings; any other row that lands on a host import refuses the
+component. A bare row that is also a root (`reveal`, with `reveal.wait` and
+`reveal.describe`) is one global, the verb carrying the root's verbs; each
+global is installed once, and a second value under a set name refuses the
 component. A
 verb input is encoded once and the call sends that text. One holding a
 non-finite number, boxed or not, is refused before the call

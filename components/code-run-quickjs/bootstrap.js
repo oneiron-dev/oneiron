@@ -237,6 +237,11 @@
       if (!roots.has(root)) bare[root] = refusal(root);
     for (const root of ["connectors", "mcp"]) sdk.self[root] ??= refusal(`self.${root}`);
     roots.add("self");
+    // A bare verb that is also a root (`reveal` and `reveal.wait`) is one
+    // global: the verb carries the root's verbs, as a segment that is a verb
+    // and holds verbs does above.
+    for (const root of roots)
+      if (root in bare) { sdk[root] = Object.assign(bare[root], sdk[root]); delete bare[root]; }
     for (const root of roots) sdk[root] = guard(root, sdk[root]);
   }
   const {clock, random} = sdk.oneiron;
@@ -300,8 +305,16 @@
     }
     return path;
   };
-  const set = (name, value) => Object.defineProperty(globalThis, name,
-    {value, writable: false, configurable: false});
+  // Each global is installed once: a name already set to this same value is
+  // left as it is, and any other value under a set name refuses the component.
+  const set = (name, value) => {
+    const held = Object.getOwnPropertyDescriptor(globalThis, name);
+    if (held && !held.configurable) {
+      if (held.value === value) return;
+      throw new TypeError(`global ${name} is installed twice`);
+    }
+    Object.defineProperty(globalThis, name, {value, writable: false, configurable: false});
+  };
   const freeze = object => {
     for (const v of Object.values(object)) if (v && typeof v === "object") freeze(v);
     return Object.freeze(object);
