@@ -82,15 +82,15 @@ impl HostBinding {
         }
     }
 
-    pub(super) const fn parent(&self) -> AttemptId {
+    pub(crate) const fn parent(&self) -> AttemptId {
         self.parent
     }
 
-    pub(super) fn lease_owner(&self) -> &str {
+    pub(crate) fn lease_owner(&self) -> &str {
         &self.lease_owner
     }
 
-    pub(super) const fn attempt_count(&self) -> u32 {
+    pub(crate) const fn attempt_count(&self) -> u32 {
         self.attempt_count
     }
 

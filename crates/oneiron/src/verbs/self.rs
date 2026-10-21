@@ -6,8 +6,6 @@
 //! owner route, on their own authenticated session ([`steer_child_as_owner`]).
 use serde::{Deserialize, Serialize};
 
-use super::presence_scan::superseded_attempt_ids;
-use super::rate_limit::task_create_owner_in;
 use crate::attempt_queue::AttemptQueue;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{
@@ -16,6 +14,8 @@ use crate::memory::{
 };
 use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
 use crate::run_tree::{RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter};
+use crate::task_verb::superseded_attempt_ids;
+use crate::task_verb::task_create_owner_in;
 use crate::{EdgeActorClass, EntityId};
 
 /// `self.memory.diary`'s input: one private entry, and the kind of entry it

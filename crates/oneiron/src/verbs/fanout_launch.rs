@@ -8,11 +8,11 @@
 //! its slip names; an embedded handle its own embedded owner, or its actor.
 use serde::{Deserialize, Serialize};
 
-use super::{ConsultFanOutChoice, FanoutCheckChoice, FanoutLaunchReceipt};
 use crate::agent_dispatch::FanoutStatement;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::task_verb::{ConsultFanOutChoice, FanoutCheckChoice, FanoutLaunchReceipt};
 
 /// `vault.fanout.launch`'s input: the launch to read.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

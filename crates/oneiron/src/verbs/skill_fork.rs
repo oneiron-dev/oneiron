@@ -6,8 +6,8 @@ use crate::error::ClaimError;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Error, TimeRange, Vault, WriteActor};
 
-use super::sdk::HubSkillRequest;
-use super::sdk_skills::{
+use super::HubSkillRequest;
+use super::skills::{
     SkillLibraryForkRequest, SkillLibraryView, skill_library_get_as_owner, skill_library_view,
 };
 
