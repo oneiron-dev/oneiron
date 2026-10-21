@@ -58,6 +58,7 @@ mod call_evidence;
 mod call_loop;
 mod check_repeat;
 mod duplicate;
+mod environment;
 mod loaded;
 mod outcomes;
 mod run_loop;
@@ -72,6 +73,7 @@ pub use ask::{
     ConcernMove, ConcernMoveOutcome, ConcernMoveRequest,
 };
 pub use brief::{HealthBriefPin, HealthObservedBrief};
+pub use environment::HealthCauseSource;
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 pub use outcomes::HealthReviewReceipt;
 pub(super) use targeted::review;
@@ -298,6 +300,10 @@ pub enum AgentHealthCounter {
     /// Too few runs of the task type for a p90: the spend was held against
     /// the plan's expected spend.
     FewRuns,
+    /// The attribution judge labelled the attempt's outcome `environment`: an
+    /// outside fact may be the cause, and the card's `causes` name each label
+    /// (OF-568 L10).
+    EnvironmentCause,
 }
 
 /// Low when counter-evidence stands against the signal.
@@ -371,7 +377,8 @@ pub struct AgentHealthCard {
     /// The attempt whose sealed receipt holds the agent's confession.
     pub confession: Option<EntityId>,
     pub moves: Vec<AgentHealthMove>,
-    /// The leader, the spawner, and the owners when they get a copy.
+    /// The leader, the spawner, the owners when they get a copy, and the Coach
+    /// once an `environment` label stands in `causes` (OF-568 L10).
     pub recipients: Vec<EntityId>,
     pub owner_copy: bool,
     pub outcome: AgentHealthOutcome,
@@ -395,6 +402,12 @@ pub struct AgentHealthCard {
     /// Every outcome set on the card, oldest first, kept across reopens
     /// (`outcomes`).
     pub review_outcomes: Vec<HealthReviewReceipt>,
+    /// The attribution judge's labels on the exact attempts behind the card
+    /// when one is `environment` (OF-568 L10): each with its share and judge
+    /// revision, oldest first, kept after its judge is displaced. The
+    /// DIAGNOSTICs cite their source ids; `evidence` and the watermark never
+    /// count them.
+    pub causes: Vec<HealthCauseSource>,
 }
 
 impl AgentHealthCard {
@@ -629,10 +642,22 @@ fn land(
             said_blocked(vault, finding.subject, finding.task, began, finding.attempt)?;
     }
 
+    // The attribution judge's labels on each finding's exact attempt
+    // (OF-568 L10) and, at the nightly pass, on each open card's, so a label
+    // that lands after its review still reaches its card. The Coach resolves
+    // here: before the read snapshot, outside any writer.
+    let causes = environment::attach(vault, &mut findings);
+    let late = if escalate {
+        environment::late(vault)
+    } else {
+        environment::Late::new()
+    };
+    let coach = environment::coach(vault, &causes, &late);
+
     // Each finding's DIAGNOSTIC, in its own write: the event door opens one.
     let mut emitted = Vec::with_capacity(findings.len());
-    for finding in &findings {
-        emitted.push(emit(vault, finding)?);
+    for (finding, causes) in findings.iter().zip(&causes) {
+        emitted.push(emit(vault, finding, causes)?);
     }
     label_digest_pairs(vault, digest_pairs, &findings, &emitted, attempts)?;
 
@@ -652,14 +677,17 @@ fn land(
 
     vault.with_write_txn_grouped(|txn| {
         let mut touched = BTreeSet::new();
-        for ((finding, diagnostic), route) in findings.iter().zip(&emitted).zip(&routes) {
+        for (((finding, diagnostic), route), causes) in
+            findings.iter().zip(&emitted).zip(&routes).zip(&causes)
+        {
             let floor = book.for_attempt(dispatched, finding.attempt).card_floor;
             if f64::from(AgentHealthTone::of(finding.signal).impact()) < floor {
                 continue;
             }
             let key = card_key(finding.subject, finding.signal, finding.task);
             let card = CARDS.get(&vault.store, txn, &key)?;
-            let card = merge(card, finding, *diagnostic, route, &owners, now);
+            let mut card = merge(card, finding, *diagnostic, route, &owners, now);
+            environment::fold_finding(vault, txn, &mut card, causes, coach);
             for items in [card.evidence.len(), card.diagnostics.len()] {
                 let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
             }
@@ -673,6 +701,8 @@ fn land(
             Vec::new()
         };
         for (key, mut card) in scan {
+            // A label that landed after its card's review (OF-568 L10).
+            let mut changed = environment::fold_late(&mut card, &late, &key, coach, now);
             if card.outcome == AgentHealthOutcome::Open
                 && !card.owner_copy
                 && now
@@ -685,6 +715,9 @@ fn land(
             {
                 card.owner_copy = true;
                 add_recipients(&mut card.recipients, card.subject, &owners);
+                changed = true;
+            }
+            if changed {
                 CARDS.put(&vault.store, txn, &key, &card)?;
                 touched.insert(key);
             }
@@ -1516,10 +1549,14 @@ fn detector_id(signal: AgentHealthSignal) -> String {
 }
 
 /// Writes the finding's DIAGNOSTIC once: the same evidence is the same body
-/// and the same id. It cites every evidence ref; past
+/// and the same id. It cites every evidence ref, and the source id of each
+/// attribution label in `causes` (OF-568 L10); past
 /// `limits.maintenance_row_items` it asks and cites them all.
-fn emit(vault: &Vault, finding: &Finding) -> Result<EntityId> {
+fn emit(vault: &Vault, finding: &Finding, causes: &[HealthCauseSource]) -> Result<EntityId> {
     let mut evidence = finding.evidence.clone();
+    // The labels ride on the DIAGNOSTIC alone: a card's evidence, and so its
+    // watermark, never counts them.
+    evidence.extend(causes.iter().map(|cause| cause.source));
     evidence.sort_unstable();
     evidence.dedup();
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, evidence.len() as u64);
@@ -1695,6 +1732,7 @@ fn merge(
         observed_brief: None,
         reviewer: detector_id(finding.signal),
         review_outcomes: Vec::new(),
+        causes: Vec::new(),
     });
     add_ids(&mut card.evidence, &finding.evidence);
     add_ids(&mut card.diagnostics, &[diagnostic]);

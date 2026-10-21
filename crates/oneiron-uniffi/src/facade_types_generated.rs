@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1127 facade rows, 3889 generated types.
+// UniFFI census: 1127 facade rows, 3890 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1079.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -1411,6 +1411,8 @@ pub enum AgentHealthCounter {
     QueueWait,
     #[serde(rename = "few_runs")]
     FewRuns,
+    #[serde(rename = "environment_cause")]
+    EnvironmentCause,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthMove`.
@@ -1643,6 +1645,34 @@ pub struct HealthReviewReceipt {
     pub projected: bool,
 }
 
+/// `oneiron::dreamer_runner::maintenance::agent_health::environment::HealthCauseSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HealthCauseSource {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "skill", default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "share")]
+    pub share: f64,
+    #[serde(
+        rename = "judge_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judge_revision: Option<String>,
+    #[serde(
+        rename = "displaced_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub displaced_by: Option<String>,
+}
+
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCard`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -1721,6 +1751,8 @@ pub struct AgentHealthCard {
     pub reviewer: String,
     #[serde(rename = "review_outcomes")]
     pub review_outcomes: Vec<HealthReviewReceipt>,
+    #[serde(rename = "causes")]
+    pub causes: Vec<HealthCauseSource>,
 }
 
 /// `oneiron::run_tree::types::RunTreeStatus`.

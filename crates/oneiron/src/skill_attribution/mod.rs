@@ -10,7 +10,7 @@
 //!        ├─ skill_defect    → judgment against the SKILL entity
 //!        ├─ execution_lapse → judgment against the ACTOR entity
 //!        ├─ discovery       → a skill EDIT PROPOSAL, never a claim
-//!        ├─ environment     → nothing: an outside fact blames nobody
+//!        ├─ environment     → no judgment: an outside fact blames nobody
 //!        └─ unclear         → a row in the unclear ledger, for the Dreamer
 //! ```
 //!
@@ -38,6 +38,9 @@ pub(crate) use self::calibration::record_unclear_floor_fit_in_txn;
 pub use self::calibration::{
     AuditAnswerSource, AuditBatch, AuditCase, FloorFit, RawAnswer, UNCLEAR_FLOOR_FITTER_VERSION,
 };
+mod causes;
+pub use self::causes::AttributionCauseRecord;
+pub(crate) use self::causes::{attempt_attribution_causes, erase_attribution_cause_actor_in_txn};
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 mod judge;

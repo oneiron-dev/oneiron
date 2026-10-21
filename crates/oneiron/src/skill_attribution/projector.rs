@@ -78,10 +78,12 @@ pub fn run_attribution_projector(
 ///
 /// A failed attempt carries no edit, so the judge answers once and the split
 /// is one label at 100%. An `environment` answer blames nobody and leaves no
-/// row; an `unclear` one — the judge's own, a label held below the
+/// judgment row; an `unclear` one — the judge's own, a label held below the
 /// `attribution_unclear_floor` setting, or `preference_shift`, which this lane
 /// does not admit — leaves no judgment and files the evidence in the unclear
-/// ledger instead.
+/// ledger instead. Every settled label, those two included, is kept as the
+/// attempt's cause in the same write as the cursor (OF-568 L10), charging
+/// nobody.
 pub fn run_attribution_projector_with_decisions(
     vault: &Vault,
     since_cursor: u64,
@@ -92,6 +94,7 @@ pub fn run_attribution_projector_with_decisions(
     let mut judgments = Vec::new();
     let mut revisions = Vec::new();
     let mut unclear = Vec::new();
+    let mut causes = Vec::new();
     let mut highest = since_cursor;
     for (sequence, evidence) in pending {
         highest = highest.max(sequence);
@@ -108,6 +111,16 @@ pub fn run_attribution_projector_with_decisions(
         let Some(verdict) = split.sole() else {
             continue;
         };
+        // Every settled label is kept before subject routing drops the ones
+        // that charge nobody, `environment` and `unclear` among them
+        // (OF-568 L10).
+        causes.push((
+            sequence,
+            evidence.clone(),
+            verdict,
+            split.share_of(verdict),
+            revision.clone(),
+        ));
         if verdict == AttributionVerdict::Unclear {
             unclear.push((
                 sequence,
@@ -176,6 +189,19 @@ pub fn run_attribution_projector_with_decisions(
                 &judgment.sequence.to_string(),
             )?;
             mint_edit_proposal_in_txn(vault, wtxn, judgment)?;
+        }
+        // In the cursor's write: a cause that fails to land leaves its
+        // evidence for the next pass.
+        for (sequence, evidence, label, share, revision) in &causes {
+            super::causes::put_attribution_cause_in_txn(
+                vault,
+                wtxn,
+                *sequence,
+                evidence,
+                *label,
+                *share,
+                revision.as_deref(),
+            )?;
         }
         if highest > since_cursor {
             CURSOR.put(&vault.store, wtxn, &(), &highest)?;
