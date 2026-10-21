@@ -1,8 +1,10 @@
 //! Explicit PERSON outputs from the production extraction response.
 //!
 //! Subject ids alone never imply PERSON. Only typed person outputs backed by
-//! admissible turns in this extraction's working set may mint a new row. The
-//! mint door stamps Generated provenance and refuses existing/deleted ids.
+//! admissible turns in this extraction's working set, or by the NOTE a
+//! review read, may mint a new row. The id is the engine's, bound once per
+//! reply (`bindings`, FIX 7506), never the reply's. The mint door stamps
+//! Generated provenance and refuses existing/deleted ids.
 
 use super::resources::ConsolidationFence;
 use super::support::invalid_consolidation;
@@ -14,21 +16,24 @@ use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_rol
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::LlmResponse;
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::llm::ScopeResource;
+use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
+mod bindings;
+pub(super) use bindings::{MintNamespace, PersonBindings, bind_people};
+
 pub(super) fn mint_extracted_people(
     vault: &Vault,
-    response: &LlmResponse,
+    people: &PersonBindings,
     working_set: &[EntityId],
     scope: &crate::llm::Scope,
     now: u64,
     deadline: Option<&WakePassDeadline>,
     fence: Option<&ConsolidationFence>,
 ) -> Result<()> {
-    let people = super::executor::extraction::extraction_reply(response)?.persons;
+    let people: Vec<_> = people.bound().collect();
     if people.is_empty() {
         return Ok(());
     }
@@ -67,9 +72,6 @@ pub(super) fn mint_extracted_people(
             fence.validate_in_txn(vault, txn)?;
         }
         for person in &people {
-            let Ok(id) = EntityId::from_hex(&person.id) else {
-                continue;
-            };
             let name = person.name.trim();
             if name.is_empty() {
                 continue;
@@ -80,11 +82,7 @@ pub(super) fn mint_extracted_people(
             }
             let mut admissible = true;
             let mut mentioned = false;
-            for reference in &person.evidence_turn_refs {
-                let Ok(turn) = EntityId::from_hex(reference) else {
-                    admissible = false;
-                    break;
-                };
+            for &turn in &person.sources {
                 if !working_set.contains(&turn)
                     || !matches!(
                         live_entity_row_in_txn(&vault.store, txn, &turn)?,
@@ -128,26 +126,96 @@ pub(super) fn mint_extracted_people(
             if !admissible || !mentioned {
                 continue;
             }
-            let mut body = Vec::new();
-            rmpv::encode::write_value(
-                &mut body,
-                &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
-            )
-            .map_err(|_| invalid_consolidation("extracted person body"))?;
-            vault.put_extraction_minted_person_in_txn(
-                txn,
-                &id,
-                ClaimSource::Generated,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-                &body,
-            )?;
+            put_person(vault, txn, &person.id, name, now)?;
         }
         Ok(())
     })
+}
+
+/// The NOTE a review read, as its people are minted from it: its id, the
+/// stored version the review read, and the projected markdown its call
+/// showed.
+pub(super) struct NoteSource<'n> {
+    pub(super) id: EntityId,
+    pub(super) version: &'n ScopeResource,
+    pub(super) markdown: &'n str,
+}
+
+/// The people a NOTE review's reply declared (FIX 7506), each from the NOTE
+/// itself: written only while that NOTE is live at the version the review
+/// read and its projected markdown names them, under the writer's own name
+/// rules. A NOTE changed since is the next review's to read.
+pub(super) fn mint_note_people(
+    vault: &Vault,
+    people: &PersonBindings,
+    note: &NoteSource<'_>,
+    now: u64,
+) -> Result<()> {
+    let people: Vec<_> = people
+        .bound()
+        .filter(|person| person.sources == [note.id])
+        .collect();
+    if people.is_empty() {
+        return Ok(());
+    }
+    vault.with_write_txn_grouped(|txn| {
+        let current = match live_entity_row_in_txn(&vault.store, txn, &note.id)? {
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_NOTE,
+                ..
+            } => vault.get_raw_in(txn, &note.id)?.map(|raw| {
+                super::resources::document_version(
+                    note.id,
+                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                )
+            }),
+            _ => None,
+        };
+        if current.as_ref() != Some(note.version) {
+            return Ok(());
+        }
+        for person in &people {
+            let name = person.name.trim();
+            let normalized_name = normalize_name_span(name);
+            if name.is_empty()
+                || !normalized_name.chars().any(char::is_alphabetic)
+                || !has_name_span(note.markdown, &normalized_name)
+            {
+                continue;
+            }
+            put_person(vault, txn, &person.id, name, now)?;
+        }
+        Ok(())
+    })
+}
+
+/// Writes one extracted PERSON named `name` under `id`, Generated; the door
+/// refuses an existing or deleted id.
+fn put_person(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    name: &str,
+    now: u64,
+) -> Result<()> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
+    )
+    .map_err(|_| invalid_consolidation("extracted person body"))?;
+    vault.put_extraction_minted_person_in_txn(
+        txn,
+        id,
+        ClaimSource::Generated,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &body,
+    )?;
+    Ok(())
 }
 
 // Normalize spelling and whitespace, but never strip punctuation or accents:

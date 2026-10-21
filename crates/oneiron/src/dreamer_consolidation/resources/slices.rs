@@ -1,10 +1,17 @@
 //! Read-only extraction children attenuated from one prepared branch.
 use super::*;
+use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) turns: Vec<EntityId>,
+    /// The child's extraction input: its conversation header, its listing
+    /// and its turns, each named by its label in `labels`.
     pub(in crate::dreamer_consolidation) transcript: String,
     pub(in crate::dreamer_consolidation) scope: Scope,
+    /// The child call's labels (FIX 7506), built from exactly the inputs
+    /// it renders, before they render. The request, its reply check, its
+    /// candidates and its people all read this one map.
+    pub(in crate::dreamer_consolidation) labels: CallLabelMap,
 }
 
 impl BranchResources<'_> {
@@ -62,11 +69,15 @@ impl BranchResources<'_> {
                         scope.writable.remove(version);
                     }
                 }
-                let mut transcript = known.render(|id| self.priors.contains_key(id));
+                let mut labels = CallLabelMap::default();
+                let conversation =
+                    labels.assign(LabelKind::Conversation, self.partition.conversation_ref);
+                let mut transcript = format!("conversation {conversation}\n");
+                transcript.push_str(&known.render(&mut labels, |id| self.priors.contains_key(id)));
                 for (id, facts) in chunk {
+                    let turn = labels.assign(LabelKind::Turn, *id);
                     transcript.push_str(&format!(
-                        "[{} {}] {}\n",
-                        id.to_hex(),
+                        "[{turn} {}] {}\n",
                         facts.speaker.as_deref().unwrap_or("unknown"),
                         facts.text.as_deref().unwrap_or_default(),
                     ));
@@ -75,6 +86,7 @@ impl BranchResources<'_> {
                     turns: chunk.iter().map(|(id, _)| *id).collect(),
                     transcript,
                     scope,
+                    labels,
                 });
             }
         }

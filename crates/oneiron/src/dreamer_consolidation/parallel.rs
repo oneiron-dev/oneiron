@@ -7,12 +7,14 @@ use std::task::Poll;
 use rmpv::Value;
 
 use super::executor::{ConsolidationExecutor, PartitionRun, extraction};
+use super::extracted_people::MintNamespace;
 use super::failure_rules::{self, Stage};
 use super::partition::decode_partition_payload;
 use super::resources::{BranchResources, FallbackOutputPin};
 use super::roles::DREAMER_EXTRACTION_ROLE;
 use super::step_charge::StepChargeTally;
 use crate::attempt_queue::AttemptId;
+use crate::dreamer_runner::DreamerRunnerStore;
 use crate::dreamer_wake::WakeAttemptContext;
 use crate::llm::{
     DurableStepContext, DurableStepError, DurableStepResult, StepEffectBinding, StepOutcome,
@@ -96,10 +98,27 @@ impl ConsolidationExecutor<'_> {
         };
         let call = self.role(DREAMER_EXTRACTION_ROLE);
         let rules = failure_rules::load(ctx.vault)?;
+        // The people a reply declares are minted under its queued parent's
+        // namespace, so nightly children and retry chunks share one (FIX 7506).
+        let parent = DreamerRunnerStore::new(ctx.vault)
+            .status(attempt_id)?
+            .and_then(|status| status.payload.parent_attempt);
+        let namespace = MintNamespace::new(
+            attempt_id,
+            parent,
+            partition.world_ref,
+            partition.facet_ref,
+            resources.scope().relationship,
+        );
         let mut requests = Vec::with_capacity(slices.len());
         for slice in &slices {
-            let mut request =
-                Self::extraction_request(&call, &partition, &slice.transcript, &slice.scope)?;
+            let mut request = Self::extraction_request(
+                &call,
+                &slice.transcript,
+                &slice.labels,
+                &slice.scope,
+                &namespace,
+            )?;
             if let Some(rules) = &rules {
                 rules.bind(Stage::Extraction, &mut request);
             }
@@ -115,14 +134,15 @@ impl ConsolidationExecutor<'_> {
         // range verification refuses the whole partition over refuses the
         // reply here, never memoized (FIX 7274).
         let citations = Arc::new(extraction::CitationCheck::new(
-            resources, partition, attempt_id, ctx.now_ms,
+            resources, partition, attempt_id, ctx.now_ms, namespace,
         ));
         let checks: Vec<_> = slices
             .iter()
             .map(|slice| {
                 let citations = Arc::clone(&citations);
                 let scope = slice.scope.clone();
-                move |response: &crate::LlmResponse| citations.check(response, &scope)
+                let labels = slice.labels.clone();
+                move |response: &crate::LlmResponse| citations.check(response, &scope, &labels)
             })
             .collect();
         let jobs = requests
@@ -210,7 +230,22 @@ impl ConsolidationExecutor<'_> {
                     &response,
                 )?)?;
             }
-            let (taken, missed) = Self::parse_candidates(&response, resources, &slice.scope)?;
+            // Each declared person binds once, before any candidate reads
+            // it; the candidates and the mint read these same ids.
+            let call = extraction::CallPins {
+                labels: &slice.labels,
+                pins: resources.pins(),
+            };
+            let people = super::extracted_people::bind_people(&reply.persons, &call, &namespace);
+            let (taken, missed) = Self::parse_candidates(
+                &response,
+                resources,
+                &slice.scope,
+                extraction::ReplyContext {
+                    call,
+                    people: &people,
+                },
+            )?;
             parsed.extend(taken);
             skipped += missed;
             resources.require_output(resources.scope())?;
@@ -225,7 +260,7 @@ impl ConsolidationExecutor<'_> {
             }
             if let Err(error) = super::extracted_people::mint_extracted_people(
                 ctx.vault,
-                &response,
+                &people,
                 &slice.turns,
                 &slice.scope,
                 ctx.now_ms,
