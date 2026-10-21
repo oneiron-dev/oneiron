@@ -223,7 +223,7 @@ export type HealthCauseSource = { source: EntityId; receipt: string; skill?: Ent
 /** `oneiron::dreamer_runner::maintenance::agent_health::silence::HealthOtherSession` */
 export type HealthOtherSession = { attempt: EntityId; generation: number; at: number }
 /** `oneiron::dreamer_runner::maintenance::agent_health::silence::HealthSilenceActivity` */
-export type HealthSilenceActivity = { own_call_at?: number | null; own_step_at?: number | null; actor_only_at?: number | null; other_session?: HealthOtherSession | null }
+export type HealthSilenceActivity = { own_call_at?: number | null; own_step_at?: number | null; actor_only_at?: number | null; stream_at?: number | null; tool_finished_at?: number | null; other_session?: HealthOtherSession | null }
 /** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCard` */
 export type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null }
 /** `oneiron::run_tree::types::RunTreeStatus` */

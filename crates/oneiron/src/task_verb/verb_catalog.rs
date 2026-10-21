@@ -12689,7 +12689,7 @@ impl AgentVerb {
             Self::SelfDesktopCrop => "Crops a held image to a rectangle.",
             Self::SelfDesktopZoom => "Zooms into a rectangle of a held image.",
             Self::SelfDesktopBatch => {
-                "Runs one batched program of one or more desktop steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, and a long one comes in pages, read on with observe and the batch's next cursor."
+                "Runs one batched program of desktop steps for a subgoal, stopping at the first failing step or after 3 acting steps leave the window unchanged; its last observation edits the caller's base, a long one paged, read on with observe and next."
             }
             Self::SelfDesktopWindows => "Lists the desktop guest's windows, or one app's.",
             Self::SelfDesktopWindow => {
@@ -13380,7 +13380,7 @@ impl AgentVerb {
             Self::SelfBrowserCrop => "Crops a held image to a rectangle.",
             Self::SelfBrowserZoom => "Zooms into a rectangle of a held image.",
             Self::SelfBrowserBatch => {
-                "Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle, stopping at the first failing step with its stop_cause and a failed_receipt of missed checks and the page."
+                "Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a failed_receipt."
             }
             Self::SelfBrowserLibraryFind => {
                 "The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."
@@ -13395,7 +13395,7 @@ impl AgentVerb {
                 "The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."
             }
             Self::SelfBrowserLibraryRun => {
-                "Runs a replay library program live in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, as its proof allows; secret slots take run-bound handles; 3 strict misses retire it drift."
+                "Runs a replay library program in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; no_progress hands up; 3 strict misses retire it drift."
             }
             Self::SelfBrowserHandover => {
                 "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."
