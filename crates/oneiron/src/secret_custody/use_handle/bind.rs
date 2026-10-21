@@ -15,22 +15,16 @@
 //! record keeps the handle, the effector, the rung and the scopes, never the
 //! value.
 
-use zeroize::Zeroize;
-
 use super::super::codec::EFFECTOR_MAX_BYTES;
 use super::super::control::{
     ActiveChange, CustodyKeptHere, CustodyPlan, Material, SecretCustodyWork,
     refuse_revoked_use_in_txn,
 };
-use super::super::doors::{
-    put_secret_custody_in_txn, read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor,
-    resolve_secret_ref_in_txn,
-};
+use super::super::doors::{refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn};
 use super::super::reveal::RevealTarget;
+use super::super::storage_seal::{put_stored_custody_in_txn, read_stored_custody_in_txn};
 use super::super::transition::custody_portable;
-use super::super::types::{
-    CustodyTier, SECRET_SCOPE_READ, SecretBinding, SecretCustodyRecord, SecretCustodyStatus,
-};
+use super::super::types::{CustodyTier, SECRET_SCOPE_READ, SecretBinding, SecretCustodyStatus};
 use super::{handle_record_in_txn, not_active, unknown};
 use crate::authority::{ActSurface, CustodyChange};
 use crate::consent::AuthenticatedOwner;
@@ -148,10 +142,11 @@ impl Vault {
             )));
         }
         let (handle, id) = target_in_txn(&self.store, &wtxn, &request.target)?;
-        let mut held = Held(
-            read_secret_custody_in_txn(&self.store, &wtxn, &id)?.ok_or_else(|| unknown(&handle))?,
-        );
-        let rec = &mut held.0;
+        // The value stays as stored, never opened: a bind needs no custody
+        // key (KS-6).
+        let mut held =
+            read_stored_custody_in_txn(&self.store, &wtxn, &id)?.ok_or_else(|| unknown(&handle))?;
+        let rec = &mut held.record;
         refuse_revoked_use_in_txn(self, &wtxn, &id, rec.class, &handle)?;
         if rec.status != SecretCustodyStatus::Active {
             return Err(not_active(&handle));
@@ -189,11 +184,11 @@ impl Vault {
             // An install that carries no owner act, or holds no key, binds
             // here alone, and the receipt says so.
             if recorded.custody.kept_here.is_some() {
-                put_secret_custody_in_txn(self, &mut wtxn, &id, rec, at)?;
+                put_stored_custody_in_txn(self, &mut wtxn, &id, &held, at)?;
             }
             recorded.custody
         } else {
-            put_secret_custody_in_txn(self, &mut wtxn, &id, rec, at)?;
+            put_stored_custody_in_txn(self, &mut wtxn, &id, &held, at)?;
             SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal)
         };
         let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
@@ -227,8 +222,8 @@ impl Vault {
         let bound = SecretBound {
             secret_id: id,
             handle,
-            name: rec.name.clone(),
-            bindings: rec.bindings.clone(),
+            name: held.record.name.clone(),
+            bindings: held.record.bindings.clone(),
             receipt: decision_id,
             custody,
         };
@@ -252,15 +247,5 @@ fn target_in_txn(
                 .map_or_else(|| name.clone(), |(short, _)| short);
             Ok((handle, id))
         }
-    }
-}
-
-/// The record a binding reads, its value wiped when the door is done with
-/// it, on every path.
-struct Held(SecretCustodyRecord);
-
-impl Drop for Held {
-    fn drop(&mut self) {
-        self.0.value_bytes.zeroize();
     }
 }
