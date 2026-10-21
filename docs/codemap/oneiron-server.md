@@ -766,7 +766,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedded/runtime.rs` | src | s | 5 crate-vis | — | The runtime an embedded engine serves on, under the app's advisory CPU share (FIX 2661, OF-237) |
 | `src/embedder/admitted.rs` | src | s | 6 crate-vis | — | An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and… |
 | `src/embedder/brokered.rs` | src | s | 8 crate-vis | — | How an endpoint embedder's requests reach their server: a plain client, whose default headers carry an… |
-| `src/embedder/endpoint.rs` | src | L | 22 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
+| `src/embedder/endpoint.rs` | src | L | 23 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
 | `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |
 | `src/embedder/local/batcher.rs` | src | s | 7 crate-vis | — | Tokenisation and packing |
 | `src/embedder/local/bench.rs` | src | s | 4 crate-vis | — | Throughput and query latency of the local provider on synthetic text, the numbers its PR bodies report |
@@ -782,7 +782,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/local/spec.rs` | src | s | 3 crate-vis | — | What a local checkpoint declares about itself, read from its metadata files alone: the body, how it attends… |
 | `src/embedder/local/st_modules.rs` | src | m | 14 crate-vis | — | The sentence-transformers module chain that turns hidden states into one vector per input |
 | `src/embedder/local/tests.rs` | test | L | — | — | Local-provider rows |
-| `src/embedder/mod.rs` | src | m | 30 crate-vis | — | The embedder provider slot |
+| `src/embedder/mod.rs` | src | m | 31 crate-vis | — | The embedder provider slot |
 | `src/embedder/remote.rs` | src | s | 4 crate-vis | — | Builds a remote rung with a nonblocking host egress predicate |
 | `src/embedder/serve.rs` | src | m | 5 crate-vis | — | `oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several… |
 | `src/embedder/serve/budget.rs` | src | s | 3 crate-vis | — | How many bytes an answer may hold, and the buffer it is encoded into |
