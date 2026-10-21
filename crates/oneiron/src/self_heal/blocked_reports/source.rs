@@ -257,13 +257,27 @@ fn canonical_hash(request: &LlmRequest) -> Result<[u8; 32]> {
 /// there, named by its hash (FIX 1662); a capsule of the same hash whose
 /// request the wall withheld holds none, so the row keeps it (FIX 6349). A
 /// request the wall refuses to keep is dropped from the row, and the report
-/// files without it.
+/// files without it. A reporter already erased keeps no row (FIX 6252),
+/// checked in this same write, so an erase that committed first never finds
+/// a copy written after it; nor does one whose markers cannot be read, and
+/// the report still files.
 pub(super) fn put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     receipt: &EntityId,
     source: &BlockedReplaySource,
 ) -> Result<()> {
+    match crate::llm::owner_gone_in_txn(vault, &*txn, &[source.reporter]) {
+        Ok(false) => {}
+        Ok(true) => return Ok(()),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a blocked report's source was not kept: its reporter could not be read"
+            );
+            return Ok(());
+        }
+    }
     let mut source = source.clone();
     if let Some(run) = source.code_run
         && let Some(sent) = source
@@ -466,7 +480,9 @@ pub(crate) fn bind_step_claim_in_txn(
     }
 }
 
-/// Stamps `claim` on each step row of `step` of `attempt` that decodes.
+/// Stamps `claim` on each step row of `step` of `attempt` that decodes. A
+/// row one of whose owners is gone in this write is taken instead of bound
+/// (FIX 6252).
 fn bind_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -475,14 +491,22 @@ fn bind_claim_in_txn(
     claim: EntityId,
 ) -> Result<()> {
     let mut bound = Vec::new();
+    let mut gone = Vec::new();
     for row in STEPS.iter_raw_from(&vault.store, &*wtxn, &step_prefix(attempt, step))? {
         let (key, bytes) = row?;
         if let Some(key) = StepSourceKey::decode_key(&key)
             && let Ok(mut source) = STEPS.decode_value(&bytes)
         {
             source.claim = Some(claim);
-            bound.push((key, source));
+            if crate::llm::owner_gone_in_txn(vault, &*wtxn, &source.owners())? {
+                gone.push(key);
+            } else {
+                bound.push((key, source));
+            }
         }
+    }
+    for key in &gone {
+        STEPS.delete(&vault.store, wtxn, key)?;
     }
     for (key, source) in &bound {
         STEPS.put(vault, wtxn, key, source)?;
