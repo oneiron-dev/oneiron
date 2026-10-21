@@ -18610,7 +18610,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BoardStreamRegistry",
@@ -18620,7 +18620,7 @@
      "purpose": "The board stream registry: connections, subscriptions and event routing",
      "surface": {
       "crate-vis": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -18633,7 +18633,7 @@
      "path": "src/context_board/stream/review.rs",
      "purpose": "The diary-review producer: a pending diary-read review wakes the reviewed agent's STREAM connections (FIX…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4,
       "struct": 1
      }
@@ -27790,7 +27790,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 2,
       "re-export": 19
      }
@@ -27892,6 +27892,16 @@
      "path": "src/federation/pending_act/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/queue_reconciliation.rs",
+     "purpose": "The sealed admission of a merge queue reconciliation (FIX 6868, G2 PR2, L02 authority seam)",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "L",
@@ -39057,7 +39067,7 @@
      "purpose": "The checker's companion rows and their attempt lifecycle (FIX 6868)",
      "surface": {
       "const": 2,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 3,
       "fn": 4,
       "struct": 3
@@ -39082,6 +39092,63 @@
      "surface": {
       "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/driver.rs",
+     "purpose": "The merge queue's restart driver (FIX 6868, G2 PR2): one reducer over a checked queue's durable rows, run by…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/driver_materialize.rs",
+     "purpose": "The driver's custody of staged objects and saved paths, and its overlap preflight (FIX 6868, G2 PR2)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/driver_store.rs",
+     "purpose": "The queue driver's reads of the checker's rows and its own durable writes (FIX 6868, G2 PR2)",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QueueBatchDrive",
+      "QueueConflictLink",
+      "QueueConflictView",
+      "QueueDriveHold",
+      "QueueDriveHoldReason",
+      "QueueDriveOutcome",
+      "QueueDrivePass",
+      "QueueDriveStatus",
+      "QueueDriveView",
+      "QueueDriverTarget",
+      "QueueSurvivorLink",
+      "QueueWork"
+     ],
+     "path": "src/merge_queue/driver_types.rs",
+     "purpose": "The queue driver's instructions, outcomes, holds and the durable drive record a batch keeps (FIX 6868, G2 PR2)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 5,
+      "fn": 3,
+      "struct": 7
      }
     },
     {
@@ -39124,8 +39191,9 @@
      "path": "src/merge_queue/mod.rs",
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 1
      }
     },
@@ -39178,7 +39246,7 @@
      "path": "src/merge_queue/staging.rs",
      "purpose": "Bounded speculation, materialization and cleanup through the shared repo writer",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "fn": 5
      }
     },
@@ -47185,8 +47253,18 @@
      "path": "src/repo_mutation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/conflict/write.rs",
+     "purpose": "The checked repository conflict claim writer (moved from `conflict.rs` unchanged in behavior) and the merge…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -47196,7 +47274,7 @@
      "path": "src/repo_mutation/conflict_doors.rs",
      "purpose": "Owner-bound admission of real overlaps, retaining both proposed changes",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -47387,7 +47465,7 @@
      "path": "src/repo_mutation/reviewed_stack.rs",
      "purpose": "Atomic critic admission and exact-prefix replay for a tested proposal stack",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -59287,6 +59365,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/reconciliation/queue.rs",
+     "purpose": "The reconciliation TASK of a merge queue overlap (FIX 6868, G2 PR2) and the one TASK builder both conflict…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SelfRefusalInput",
       "SelfRefusalReceipt",
@@ -67450,7 +67538,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67681,7 +67769,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 17,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67898,7 +67986,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68185,7 +68273,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 203,
+     "files": 204,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68355,7 +68443,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4305,
+   "source_files": 4312,
    "test_files": 902
   },
   "oneiron-android": {
@@ -87647,6 +87735,7 @@
      "path": "src/config/merge_queue.rs",
      "purpose": "`[merge_queue]`: the executor the queue checker runs a repository's frozen check plan in (FIX 6868)",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
       "enum": 2,
       "fn": 4,
@@ -92355,7 +92444,7 @@
      "path": "src/server/merge_queue_checker.rs",
      "purpose": "The standalone merge queue checker drain (FIX 6868)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -96728,6 +96817,9 @@
       "QuestionScheduleRequest",
       "QueueCheckHoldReason",
       "QueueCheckPhase",
+      "QueueConflictView",
+      "QueueDriveStatus",
+      "QueueDriveView",
       "QueueTaskBrief",
       "QuickFilterAtom",
       "QuoteAnchor",
@@ -97966,8 +98058,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 922,
-      "struct": 2892
+      "enum": 923,
+      "struct": 2894
      }
     },
     {
