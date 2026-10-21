@@ -30,6 +30,9 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod chunks;
+use chunks::retry_chunks_in_txn;
+
 pub(crate) const ATTEMPT: &str = "dreamer.nightly.merge";
 const OUTPUT: SideTable<AttemptId, Vec<EntityId>, Named> =
     SideTable::new(&side_table::DREAMER_NIGHTLY_OUTPUT);
@@ -570,85 +573,6 @@ fn scoped_draft(
         candidate = candidate.with_scope(scope);
     }
     Ok((candidate.with_evidence_taint(meet)?, meet))
-}
-
-/// The retry chunks of `listed` (FIX 7495): the partition attempts a listed
-/// child's selection retry owed as its siblings (`wake_plan/chunks.rs`),
-/// under this merge's parent and in a listed child's partition. One that
-/// another merge under that parent lists, or has read, is that merge's. A
-/// lineage that does not read leaves the listed children alone, as before:
-/// nothing here refuses a merge.
-fn retry_chunks_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    merge: &DreamerAttemptStatus,
-    listed: &[AttemptId],
-) -> Vec<AttemptId> {
-    let Some(parent) = merge.payload.parent_attempt else {
-        return Vec::new();
-    };
-    chunks_under_in_txn(vault, txn, merge.attempt.id, parent, listed).unwrap_or_else(|error| {
-        tracing::warn!(
-            merge = %crate::entity_id::bytes_to_hex_lower(merge.attempt.id.as_bytes()),
-            kind = ?error.kind(),
-            "nightly merge retry chunks did not read; it fans in its listed children"
-        );
-        Vec::new()
-    })
-}
-
-/// [`retry_chunks_in_txn`] over `parent`'s run-tree children.
-fn chunks_under_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    merge: AttemptId,
-    parent: AttemptId,
-    listed: &[AttemptId],
-) -> Result<Vec<AttemptId>> {
-    let queue = AttemptQueue::new(vault);
-    let mut partitions = BTreeSet::new();
-    for id in listed {
-        if let Some(record) = queue.get_in_txn(txn, *id)?
-            && let Ok(payload) =
-                crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
-            && let Ok((key, _, _)) = super::partition::decode_partition_payload(&payload.input)
-        {
-            partitions.insert(key);
-        }
-    }
-    let mut claimed: BTreeSet<AttemptId> = listed.iter().copied().collect();
-    let mut candidates = Vec::new();
-    for sibling in DreamerRunnerStore::new(vault).child_attempts_in_txn(txn, parent)? {
-        if sibling == merge {
-            continue;
-        }
-        let Some(record) = queue.get_in_txn(txn, sibling)? else {
-            continue;
-        };
-        let Ok(payload) = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
-        else {
-            continue;
-        };
-        if payload.attempt_type == ATTEMPT {
-            if let Some(input) = payload
-                .input
-                .as_str()
-                .and_then(|raw| serde_json::from_str::<MergeInput>(raw).ok())
-            {
-                claimed.extend(input.children);
-            }
-            if let Some(result) = MERGED.get(&vault.store, txn, &sibling)? {
-                claimed.extend(result.chunks);
-            }
-        } else if payload.attempt_type == DreamerConsolidationScope::Macro.as_str()
-            && super::partition::decode_partition_payload(&payload.input)
-                .is_ok_and(|(key, _, _)| partitions.contains(&key))
-        {
-            candidates.push(sibling);
-        }
-    }
-    candidates.retain(|id| !claimed.contains(id));
-    Ok(candidates)
 }
 
 fn invalid() -> Error {

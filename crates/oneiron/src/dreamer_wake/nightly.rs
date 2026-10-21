@@ -1,7 +1,7 @@
 //! Budgeted interest-queue spending, one thing per entity or topic (OF-498c,
 //! see `things`): its world, facet and private thread, and the entity a
 //! span's reading bound, else the structural topic. A thing may span
-//! conversations; its children are cut by conversation.
+//! conversations, and a bound thing's child reads it across them (FIX 7524).
 //!
 //! A Timer wake that names no partition (FIX 336) plans the same spending
 //! at its enqueue: a typed parent, its children and the remainder land in
@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::{
-    ConsolidationWatermark, enqueue_parented_partition_plans_in_txn, partition_turns_in_txn,
+    ConsolidationWatermark, enqueue_parented_branch_plans_in_txn, partition_turns_in_txn,
     read_partition_turns_in_txn,
 };
 use crate::dreamer_runner::{
@@ -22,6 +22,7 @@ use crate::{Result, Vault};
 
 use super::{recipes, sieve};
 
+mod exposure;
 mod things;
 
 pub(crate) const CONTINUE_ATTEMPT: &str = "dreamer.nightly.continue";
@@ -195,16 +196,11 @@ fn plan_children_in_txn(
     // gets its children, so the night spends the spans it spent before.
     plans.truncate(policy.nightly_children as usize);
     let audiences = things::audiences_in_txn(vault, txn, &plans)?;
-    let thing_plans = things::plan_things(&plans, &spans, &audiences);
+    let exposures = exposure::exposures_in_txn(vault, txn, &plans);
+    let thing_plans = things::plan_things(&plans, &spans, &audiences, &exposures);
     let child_plans: Vec<_> = thing_plans
         .iter()
-        .flat_map(|thing| {
-            let payload = thing.key.payload();
-            thing
-                .children
-                .iter()
-                .map(move |child| (child.clone(), payload))
-        })
+        .flat_map(|thing| thing.children.iter().cloned())
         .collect();
     tracing::debug!(
         partitions = plans.len(),
@@ -214,9 +210,13 @@ fn plan_children_in_txn(
             .filter(|thing| thing.key.entity.is_some())
             .count(),
         children = child_plans.len(),
+        spanning = child_plans
+            .iter()
+            .filter(|child| child.parts.len() > 1)
+            .count(),
         "nightly children planned one per thing"
     );
-    let outcomes = enqueue_parented_partition_plans_in_txn(
+    let outcomes = enqueue_parented_branch_plans_in_txn(
         vault,
         txn,
         scope,
@@ -227,7 +227,7 @@ fn plan_children_in_txn(
     )?;
     let children = outcomes
         .into_iter()
-        .map(|(_, outcome)| match outcome {
+        .map(|outcome| match outcome {
             crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(status)
             | crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(status) => {
                 status.attempt.id

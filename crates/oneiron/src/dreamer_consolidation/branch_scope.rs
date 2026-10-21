@@ -16,22 +16,21 @@ const SELECTION_SCOPE: SideTable<[u8; 16], Option<Scope>, LegacyJson> =
 pub(super) const KEY_BRANCH_SCOPE: &str = "branch_scope";
 
 impl ConsolidationPartitionPlan {
-    /// Exact output resource for this ordered, queued TURN slice.
+    /// Exact output resource for this ordered, queued TURN slice: its
+    /// one-part branch's.
     pub fn output_resource(&self) -> crate::llm::ScopeResource {
-        let turns: Vec<_> = self.turns.iter().map(|turn| turn.turn_id).collect();
-        super::resources::output_projection(&self.key, &turns)
+        self.branch().output_resource()
     }
 
     /// Exact graph/vector signals projection for this TURN slice. Reading it
     /// still requires actor authority and the accompanying four-axis scope.
     pub fn signals_resource(&self) -> crate::llm::ScopeResource {
-        let turns: Vec<_> = self.turns.iter().map(|turn| turn.turn_id).collect();
-        super::resources::signals_projection(&self.key, &turns)
+        self.branch().signals_resource()
     }
 
     /// Exact stored gap projection for this partition and branch slice.
     pub fn gap_resource(&self, scope: &Scope) -> crate::llm::ScopeResource {
-        super::gap::branch_gap_projection(&self.key, scope)
+        super::gap::branch_gap_projection(&self.branch(), scope)
     }
 
     /// Bind a queued branch to the caller's exact scope. Project and relationship

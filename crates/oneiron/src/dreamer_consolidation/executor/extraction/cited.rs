@@ -9,10 +9,10 @@ use super::wire::{CallPins, ReplyContext, read_candidate};
 use super::{check_extraction_reply, extraction_reply, resolve_proposal};
 use crate::LlmResponse;
 use crate::attempt_queue::AttemptId;
+use crate::dreamer_consolidation::branch::BranchAxes;
 use crate::dreamer_consolidation::call_labels::CallLabelMap;
 use crate::dreamer_consolidation::evidence::EvidenceLocator;
 use crate::dreamer_consolidation::extracted_people::{MintNamespace, bind_people};
-use crate::dreamer_consolidation::partition::ConsolidationPartitionKey;
 use crate::dreamer_consolidation::resources::{BranchResources, OwnedPins};
 use crate::llm::{FinishReason, Scope};
 
@@ -21,7 +21,7 @@ use crate::llm::{FinishReason, Scope};
 /// the namespace its declared people bind under.
 pub(in crate::dreamer_consolidation) struct CitationCheck {
     pins: OwnedPins,
-    partition: ConsolidationPartitionKey,
+    partition: BranchAxes,
     attempt_id: AttemptId,
     now_ms: u64,
     namespace: MintNamespace,
@@ -30,7 +30,7 @@ pub(in crate::dreamer_consolidation) struct CitationCheck {
 impl CitationCheck {
     pub(in crate::dreamer_consolidation) fn new(
         resources: &BranchResources<'_>,
-        partition: ConsolidationPartitionKey,
+        partition: BranchAxes,
         attempt_id: AttemptId,
         now_ms: u64,
         namespace: MintNamespace,

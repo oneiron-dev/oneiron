@@ -75,7 +75,17 @@ impl ConsolidationExecutor<'_> {
         run_id: Option<String>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<PartitionRun> {
-        let (partition, turn_ids, _) = decode_partition_payload(payload_input)?;
+        let branch = decode_partition_payload(payload_input)?;
+        let turn_ids = branch.turn_ids();
+        let axes = branch.axes();
+        // A one-part branch's steps record its conversation; a multi-part
+        // one's its thing, never one of its parts (FIX 7524).
+        let subject = match branch.subject() {
+            Some(subject) => subject,
+            None => {
+                crate::EntityId::from_bytes(*attempt_id.as_bytes()).map_err(crate::Error::from)?
+            }
+        };
         resources.require_output(resources.scope())?;
         resources.require_signals(resources.scope())?;
         super::neighbourhood::pin(ctx.vault, attempt_id, resources.known())?;
@@ -92,7 +102,7 @@ impl ConsolidationExecutor<'_> {
             attempt_id,
             run_id: run_id.clone(),
             envelope_actor: self.actor,
-            subject: partition.conversation_ref,
+            subject,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
         };
@@ -106,8 +116,8 @@ impl ConsolidationExecutor<'_> {
         let namespace = MintNamespace::new(
             attempt_id,
             parent,
-            partition.world_ref,
-            partition.facet_ref,
+            axes.world_ref,
+            axes.facet_ref,
             resources.scope().relationship,
         );
         let mut requests = Vec::with_capacity(slices.len());
@@ -134,7 +144,7 @@ impl ConsolidationExecutor<'_> {
         // range verification refuses the whole partition over refuses the
         // reply here, never memoized (FIX 7274).
         let citations = Arc::new(extraction::CitationCheck::new(
-            resources, partition, attempt_id, ctx.now_ms, namespace,
+            resources, axes, attempt_id, ctx.now_ms, namespace,
         ));
         let checks: Vec<_> = slices
             .iter()
@@ -304,7 +314,7 @@ impl ConsolidationExecutor<'_> {
             return Ok(PartitionRun::Checkpoint);
         }
         let (candidates, waiting) = Self::build_candidates(
-            parsed, &corrects, skipped, &partition, resources, attempt_id, ctx.now_ms,
+            parsed, &corrects, skipped, &axes, resources, attempt_id, ctx.now_ms,
         );
         // Assembly verifies and collapses evidence across ALL child slots
         // before counting corroboration or routing coupled conflicts.

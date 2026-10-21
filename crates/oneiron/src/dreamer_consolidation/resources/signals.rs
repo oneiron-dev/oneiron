@@ -136,7 +136,9 @@ impl BranchResources<'_> {
                 if scope.relationship.is_some() && !pinned {
                     return Ok(false);
                 }
-                // Membership is the ChildOf edge alone, as for a branch turn.
+                // Membership is the ChildOf edge alone, as for a branch turn:
+                // a neighbour counts only under a declared part's parent, at
+                // that parent's pin and axes (FIX 7524).
                 let edges = self.read.edges_out_of_kind(id, EdgeKind::ChildOf)?;
                 self.fold_read_receipt(&edges.receipt)?;
                 if edges.receipt.suppressed_count != 0 {
@@ -149,16 +151,16 @@ impl BranchResources<'_> {
                     .iter()
                     .filter(|e| e.kind == EdgeKind::ChildOf)
                     .collect();
-                if parents.len() != 1 || parents[0].target != self.partition.conversation_ref {
+                if parents.len() != 1 || !self.is_part_parent(&parents[0].target) {
                     return Ok(false);
                 }
-                let (_, parent) = self.source(scope, &self.partition.conversation_ref)?;
+                let (_, parent) = self.source(scope, &parents[0].target)?;
                 let (world, facet) = turn_axes(&bytes)?;
                 let (parent_world, parent_facet) = turn_axes(&parent)?;
                 Ok(world.or(parent_world) == scope.world && facet.or(parent_facet) == scope.facet)
             }
             ENTITY_TYPE_SESSION | ENTITY_TYPE_CONVERSATION => {
-                if *id != self.partition.conversation_ref {
+                if !self.is_part_parent(id) {
                     return Ok(false);
                 }
                 self.source(scope, id)?;

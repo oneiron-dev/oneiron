@@ -59,7 +59,9 @@ pub(super) const WATERMARK_SCHEMA_VERSION_V1: u64 = 1;
 pub(super) const WATERMARK_SCHEMA_VERSION: u64 = 2;
 pub(super) const CURSOR_SCHEMA_VERSION: u64 = 1;
 pub(super) const GAP_SCHEMA_VERSION: u64 = 1;
-pub(super) const PARTITION_PAYLOAD_SCHEMA_VERSION: u64 = 1;
+/// v2 (FIX 7524): a branch of conversation parts, each with its own turns
+/// and watermark. No v1 reader.
+pub(super) const PARTITION_PAYLOAD_SCHEMA_VERSION: u64 = 2;
 
 pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
 pub(super) const KEY_LAST_LEARNED_AT: &str = "last_learned_at";

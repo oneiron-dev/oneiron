@@ -260,7 +260,7 @@ pub(crate) fn hold_in_txn(
             continue;
         };
         let id = round_id(&status.attempt.kind, dedupe_key);
-        let (_, payload, _) = decode_partition_payload(&status.payload.input)?;
+        let payload = decode_partition_payload(&status.payload.input)?.turn_ids();
         // A replay of a completed batch is a new attempt under the same key;
         // an attempt still pending was counted when it was queued.
         let fresh = matches!(outcome, EnqueueDreamerAttemptOutcome::Enqueued(_));

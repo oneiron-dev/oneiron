@@ -342,16 +342,17 @@ pub(super) fn run_gap_scan(
     }
 }
 
-/// A real private projection namespace. Partition identity includes the world
-/// and facet, so a branch can neither refresh nor decay a different branch.
-pub(super) fn branch_gap_projection(
-    partition: &super::partition::ConsolidationPartitionKey,
+/// A real private projection namespace. Branch identity includes the world
+/// and facet and binds every part (a one-part branch is its partition's
+/// hash), so a branch can neither refresh nor decay a different branch.
+pub(super) fn branch_gap_projection<T>(
+    branch: &super::ConsolidationBranchPlan<T>,
     scope: &crate::llm::Scope,
 ) -> crate::llm::ScopeResource {
     crate::llm::ScopeResource::Projection {
         key: format!(
             "dreamer:gap-branch:v1:{}:{}:{}:",
-            crate::entity_id::bytes_to_hex_lower(&partition.partition_hash()),
+            crate::entity_id::bytes_to_hex_lower(&branch.identity()),
             scope
                 .relationship
                 .map_or_else(|| "none".to_owned(), |id| id.to_hex()),
@@ -368,15 +369,15 @@ pub(super) fn branch_gap_projection(
 pub(super) fn upsert_branch_gap_queue(
     vault: &Vault,
     scope: &crate::llm::Scope,
-    partition: &super::partition::ConsolidationPartitionKey,
+    branch: &super::branch::QueuedBranch,
     fence: &super::resources::ConsolidationFence,
     gaps: Vec<ReflectionGap>,
     now: u64,
 ) -> Result<GapQueueDelta> {
-    let resource = branch_gap_projection(partition, scope);
+    let resource = branch_gap_projection(branch, scope);
     if !scope.allows_write(&resource)
-        || scope.world != partition.world_ref
-        || scope.facet != partition.facet_ref
+        || scope.world != branch.world_ref
+        || scope.facet != branch.facet_ref
     {
         return Err(invalid_consolidation("branch gap projection write refused"));
     }
