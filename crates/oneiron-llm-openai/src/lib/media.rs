@@ -355,6 +355,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         };
         let (mut vectors, mut tokens, mut raws, mut served) =
             (Vec::new(), 0, Vec::new(), Value::Null);
+        let mut marks = Vec::new();
         for (count, field, input) in documents {
             let mut body = with_params([("model", json!(wire)), (field, input)], &request.params)?;
             body.entry("encoding_format".into())
@@ -384,6 +385,14 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
                 .get_mut("model")
                 .map(Value::take)
                 .unwrap_or(Value::Null);
+            // FIX 7796: the device and runtime this reply names, if it names one, kept for the
+            // host to read as its vectors' mark; never checked here.
+            marks.push(
+                reply
+                    .get_mut("provenance")
+                    .map(Value::take)
+                    .unwrap_or(Value::Null),
+            );
         }
         // One width for every vector: the `dimensions` asked for, else the
         // first one's.
@@ -401,6 +410,15 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         } else {
             Value::Array(raws)
         };
+        let mut raw_provider = json!({ "usage": raw, "served_model": served });
+        // One mark per request, in request order, as the usage is, when any reply named one.
+        if marks.iter().any(|mark| !mark.is_null()) {
+            raw_provider["provenance"] = if marks.len() == 1 {
+                marks.swap_remove(0)
+            } else {
+                Value::Array(marks)
+            };
+        }
         Ok(MediaResponse {
             parts: vectors
                 .into_iter()
@@ -408,7 +426,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
                 .collect(),
             usage: MediaUsage {
                 input_tokens: tokens,
-                raw_provider: json!({ "usage": raw, "served_model": served }),
+                raw_provider,
                 ..MediaUsage::default()
             },
             model: request.model,
