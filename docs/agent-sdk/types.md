@@ -2927,6 +2927,8 @@ class Oneiron:
             """Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only."""
         def check_status(self, spec: Facade.MergeQueueCheckStatusRequest) -> Facade.MergeQueueCheckWorkView:
             """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
+        def export_green(self, spec: Facade.MergeQueueGreenExportRequest) -> Facade.CodeExportResult:
+            """Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."""
     class _VaultResultsVerbs:
         def status(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
             """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""

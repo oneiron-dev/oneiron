@@ -717,6 +717,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.merge_queue.check", post(facade_route))
         .route("/vault.code.merge_queue.diagnose", post(facade_route))
         .route("/vault.code.merge_queue.check_status", post(facade_route))
+        .route("/vault.code.merge_queue.export_green", post(facade_route))
         .route("/vault.artifacts.export", post(facade_route))
         .route("/vault.agents.create", post(facade_route))
         .route("/vault.agents.get", post(facade_route))

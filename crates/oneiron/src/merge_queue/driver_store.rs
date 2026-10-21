@@ -16,7 +16,7 @@ use super::storage::{BATCHES, check_row_size};
 use super::{
     BatchState, CheckPhase, MergeBatch, MergeProposal, MergeQueue, QUEUE_CHECK_CANDIDATE_PREFIX,
     QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDriveHold, QueueDriveHoldReason,
-    QueueDriveOutcome, QueueDriveStatus, QueueDriveView, QueueSurvivorLink,
+    QueueDriveOutcome, QueueDriveStatus, QueueDriveView, QueueRevisionLink, QueueSurvivorLink,
 };
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -350,6 +350,8 @@ impl MergeQueue<'_> {
                 receipt_refs: Vec::new(),
                 conflicts: Vec::new(),
                 survivor_batch: None,
+                tested_revision: None,
+                seal_hold: None,
             },
         }
     }
@@ -392,6 +394,11 @@ impl MergeQueue<'_> {
             &drive,
             &works,
         );
+        let (tested_revision, seal_hold) = match &drive.tested {
+            Some(QueueRevisionLink::Sealed { revision }) => (Some(revision.to_hex()), None),
+            Some(QueueRevisionLink::Pending { hold, .. }) => (None, hold.clone()),
+            None => (None, None),
+        };
         Ok(QueueDriveView {
             batch_ref: batch.id.clone(),
             status,
@@ -419,6 +426,8 @@ impl MergeQueue<'_> {
                 Some(QueueSurvivorLink::Batch(child)) => Some(child),
                 _ => None,
             },
+            tested_revision,
+            seal_hold,
         })
     }
 }
