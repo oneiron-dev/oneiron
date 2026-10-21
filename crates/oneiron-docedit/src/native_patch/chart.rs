@@ -1,10 +1,17 @@
 //! Classic chart parts: creation from a dataset, the series model read from
 //! `c:ser`, point-wise cache rebuilds, and the re-import that compares a
-//! cache with the workbook cells its reference names.
+//! cache with the workbook cells its reference names. A multi-level
+//! category reference reads as its block, level by level ([`categories`]).
+mod cache;
+mod categories;
+
+pub(crate) use categories::{Count, declared, level_cache};
+
 use super::table::graphic_frame;
 use super::workbook::{CellKey, DATE_FORMAT, Range, Workbook, header, number, serial};
 use super::{ChartFamily, Frame, NativeRefusal, REL, Target, WorkbookReport};
 use crate::design_plan::{Cell, ColumnKind, Dataset};
+use crate::edit::xml;
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
 use std::collections::BTreeMap;
@@ -45,8 +52,21 @@ struct Seq {
     kind: Kind,
     reference: String,
     range: Range,
-    /// The `c:strCache` / `c:numCache` node.
+    /// The `c:strCache` / `c:numCache` node, or a multi-level reference's
+    /// `c:multiLvlStrCache`.
     cache: usize,
+    /// A multi-level reference's block, level by level.
+    block: Option<categories::Block>,
+}
+
+impl Seq {
+    /// The cells the sequence reads, in its cache's order.
+    fn keys(&self) -> Vec<CellKey> {
+        match &self.block {
+            Some(block) => block.keys.clone(),
+            None => self.range.cells(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -146,8 +166,12 @@ impl Model {
         })
     }
 
-    /// Cache values by point, `ptCount` long.
+    /// Cache values by point, `ptCount` long (a multi-level cache's level by
+    /// level).
     fn cache(&self, seq: &Seq) -> Result<Vec<Cell>, NativeRefusal> {
+        if let Some(block) = &seq.block {
+            return categories::cells(&self.tree, seq, block);
+        }
         let tree = &self.tree;
         let count = tree
             .child(seq.cache, C, "ptCount")?
@@ -192,9 +216,7 @@ fn sequence(tree: &XmlTree, slot: usize) -> Result<Option<Seq>, NativeRefusal> {
         let (kind, cache) = match element.name.as_str() {
             "strRef" => (Kind::Text, "strCache"),
             "numRef" => (Kind::Number, "numCache"),
-            "multiLvlStrRef" => {
-                return Err(NativeRefusal::AmbiguousChartData("multi-level categories"));
-            }
+            "multiLvlStrRef" => return categories::sequence(tree, node).map(Some),
             _ => continue,
         };
         let reference = tree
@@ -215,6 +237,7 @@ fn sequence(tree: &XmlTree, slot: usize) -> Result<Option<Seq>, NativeRefusal> {
             reference,
             range,
             cache,
+            block: None,
         }));
     }
     Ok(None)
@@ -315,6 +338,11 @@ pub(super) fn set_series(
     .ok_or(NativeRefusal::AmbiguousChartData(
         "the sequence has no workbook source",
     ))?;
+    if seq.block.is_some() {
+        return Err(NativeRefusal::AmbiguousChartData(
+            "a multi-level category block is written by the chart rewrite",
+        ));
+    }
     let cells = seq.range.cells();
     if cells.len() != values.len() {
         return Err(NativeRefusal::LengthChange {
@@ -348,58 +376,31 @@ pub(super) fn set_series(
     let written: BTreeMap<CellKey, Cell> = writes.into_iter().collect();
     let mut edits = Vec::new();
     for seq in model.sequences() {
-        let keys = seq.range.cells();
+        let keys = seq.keys();
         if !keys.iter().any(|key| written.contains_key(key)) {
             continue;
         }
-        let mut cache = model.cache(seq)?;
+        if seq.block.is_some() {
+            return Err(NativeRefusal::AmbiguousChartData(
+                "a write into a multi-level category block",
+            ));
+        }
+        let held = model.cache(seq)?;
+        let mut cache = held.clone();
         for (slot, key) in cache.iter_mut().zip(&keys) {
             if let Some(value) = written.get(key) {
                 *slot = as_kind(seq.kind, value.clone());
             }
         }
-        let node = &model.tree.nodes[seq.cache];
-        edits.push((
-            node.span.clone(),
-            cache_xml(&model, seq.cache, &node.qualified, &cache),
-        ));
+        edits.extend(cache::patched(&model, seq.cache, &held, &cache)?);
     }
-    edits.sort_by_key(|(span, _)| span.start);
-    let mut out = Vec::with_capacity(model.bytes.len());
-    let mut at = 0;
-    for (span, xml) in edits {
-        out.extend_from_slice(&model.bytes[at..span.start]);
-        out.extend_from_slice(xml.as_bytes());
-        at = span.end;
-    }
-    out.extend_from_slice(&model.bytes[at..]);
+    let out = xml::splice(&model.bytes, edits)
+        .map_err(|_| NativeRefusal::Invalid("overlapping cache writes"))?;
     package.replace_xml_part(chart, out)?;
     package
         .replace_nested_package(&book, bytes)
         .map_err(NativeRefusal::Workbook)?;
     Ok((report, written.into_keys().collect()))
-}
-
-/// A cache element with new points; `formatCode` and `extLst` keep their bytes.
-fn cache_xml(model: &Model, cache: usize, qualified: &str, values: &[Cell]) -> String {
-    let p = qualified
-        .rsplit_once(':')
-        .map_or(String::new(), |(prefix, _)| format!("{prefix}:"));
-    let keep = |name: &str| {
-        model
-            .tree
-            .children(cache)
-            .find(|(_, node)| node.is(C, name))
-            .map_or(String::new(), |(_, node)| {
-                String::from_utf8_lossy(&model.bytes[node.span.clone()]).into_owned()
-            })
-    };
-    format!(
-        "<{qualified}>{}{}{}</{qualified}>",
-        keep("formatCode"),
-        points(&p, values),
-        keep("extLst")
-    )
 }
 
 fn points(p: &str, values: &[Cell]) -> String {
@@ -425,9 +426,7 @@ pub(super) fn read_back(
     let book = open_workbook(package, &workbook_part(package, chart, &model)?)?;
     model
         .sequences()
-        .filter(|seq| {
-            written.is_none_or(|keys| seq.range.cells().iter().any(|key| keys.contains(key)))
-        })
+        .filter(|seq| written.is_none_or(|keys| seq.keys().iter().any(|key| keys.contains(key))))
         .map(|seq| imported(&model, &book, seq))
         .collect()
 }
@@ -437,7 +436,7 @@ fn imported(model: &Model, book: &Workbook, seq: &Seq) -> Result<Sequence, Nativ
         reference: seq.reference.clone(),
         cache: model.cache(seq)?,
         workbook: book
-            .read(&seq.range.cells())?
+            .read(&seq.keys())?
             .into_iter()
             .map(|cell| as_kind(seq.kind, cell))
             .collect(),

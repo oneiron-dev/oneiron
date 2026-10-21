@@ -11,6 +11,8 @@ homepage.workspace = true
 [dependencies]
 blake3 = { workspace = true }
 flate2 = "1"
+# The host's free memory, for a declared size measured before it is allocated (FIX 8589).
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 expat-sys = "2.1.6"
 crc32fast = "1"
 # Same pin as the core crate: one quick-xml in the graph.

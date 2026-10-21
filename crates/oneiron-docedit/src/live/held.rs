@@ -26,7 +26,7 @@ const FRAME_DATA: &[(&str, &str)] = &[(A, "graphic"), (A, "graphicData")];
 mod chart;
 pub(super) mod table;
 
-pub(crate) use chart::{bind, chart, chart_part, label, plot_family, plots, points};
+pub(crate) use chart::{bind, chart, chart_part, descriptor, label, plot_family, plots, points};
 
 /// A slide part's parsed tree; [`ShapeView::node`] indexes into it.
 pub(crate) fn slide_tree(package: &Package, part: &str) -> Result<XmlTree, LiveError> {
@@ -49,8 +49,30 @@ pub(crate) fn shape_preset(tree: &XmlTree, shape: &ShapeView) -> Option<Preset> 
 /// SmartArt's text outline, or an OLE object's program id and preview (a
 /// table is read with its identities by [`table::import`]). Anything else,
 /// and a chart the reader cannot read, reads as none and stays in the
-/// retained markup.
+/// retained markup. A chart cache declaring more than the host can hold
+/// refuses ([`LiveError::MemoryFloor`]).
 pub(crate) fn payload(
+    package: &Package,
+    part: &str,
+    tree: &XmlTree,
+    shape: &ShapeView,
+    node_of: impl Fn(u32) -> Option<NodeId>,
+) -> Result<Option<NodePayload>, LiveError> {
+    let at = shape.node.index;
+    if matches!(shape.kind, ShapeKind::GraphicFrame)
+        && let Some(data) = xml::path(tree, at, FRAME_DATA)
+        && tree.nodes[data].attr("uri") == Some(C)
+    {
+        return match chart_part(package, part, tree, at) {
+            Some(target) => chart(package, &target),
+            None => Ok(None),
+        };
+    }
+    Ok(other(package, part, tree, shape, node_of))
+}
+
+/// [`payload`] for anything but a chart.
+fn other(
     package: &Package,
     part: &str,
     tree: &XmlTree,
@@ -84,7 +106,6 @@ pub(crate) fn payload(
         ShapeKind::GraphicFrame => {
             let data = xml::path(tree, at, FRAME_DATA)?;
             match tree.nodes[data].attr("uri")? {
-                C => chart(package, &chart_part(package, part, tree, at)?),
                 DGM => smart_art(package, part, tree, data),
                 OLE => ole(package, part, tree, at),
                 _ => None,

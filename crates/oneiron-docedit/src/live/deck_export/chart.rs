@@ -9,7 +9,10 @@ use crate::design_plan::{Cell, Column, ColumnKind, Dataset, Rect};
 use crate::edit::xml::next_part;
 use crate::live::LiveError;
 use crate::live::held;
-use crate::live::pptx::{ChartKind, DeckNode, NodeId, NodePayload, SeriesBinding, WRITTEN_FRAME};
+use crate::live::pptx::{
+    ChartKind, DeckNode, NodeId, NodePayload, SeriesBinding, WRITTEN_FRAME, draws_categories,
+    effective_categories,
+};
 use crate::live::reshape;
 use crate::native_patch::{ChartFamily, Frame, NativeEdit, native_patch};
 use crate::ooxml::XmlTree;
@@ -18,20 +21,74 @@ use crate::ooxml::XmlTree;
 const CHART_SHEET: &str = "Sheet1";
 
 /// The binding a chart frame's export takes: its series in the order the
-/// export wrote its part (`written`), else as its binding held them.
+/// export wrote its part (`written`), each with the category identities it
+/// draws, else as its binding held them.
 pub(super) fn binding(node: &DeckNode, written: Option<&[NodeId]>) -> Option<SeriesBinding> {
-    if !matches!(node.payload, Some(NodePayload::Chart { .. })) {
+    let Some(NodePayload::Chart {
+        family,
+        categories,
+        series,
+        ..
+    }) = &node.payload
+    else {
         return None;
-    }
+    };
     match written {
-        Some(series) => Some(SeriesBinding {
-            series: series.to_vec(),
+        Some(order) => Some(SeriesBinding {
+            series: order.to_vec(),
+            categories: order
+                .iter()
+                .map(|id| {
+                    series
+                        .iter()
+                        .find(|line| line.id == Some(*id))
+                        .filter(|line| draws_categories(*family, line))
+                        .map_or_else(Vec::new, |line| {
+                            effective_categories(categories, line).ids()
+                        })
+                })
+                .collect(),
         }),
         None => node
             .binding
             .as_ref()
             .and_then(|binding| binding.series.clone()),
     }
+}
+
+/// Whether the chart's series are the ones `bound` holds, in its order,
+/// each drawing the category points its held series drew, in their order:
+/// then a write by place is a write by identity.
+fn same_identities(payload: &NodePayload, bound: &SeriesBinding) -> bool {
+    let NodePayload::Chart {
+        family,
+        categories,
+        series,
+        ..
+    } = payload
+    else {
+        return false;
+    };
+    series
+        .iter()
+        .map(|line| line.id)
+        .eq(bound.series.iter().copied().map(Some))
+        && series.iter().enumerate().all(|(at, line)| {
+            let held = bound.categories.get(at).map_or(&[][..], Vec::as_slice);
+            if !draws_categories(*family, line) {
+                return held.is_empty();
+            }
+            let set = effective_categories(categories, line);
+            // Points the draw adds past the set name no identity.
+            set.points
+                .iter()
+                .map(|point| point.id)
+                .take_while(Option::is_some)
+                .eq(held.iter().copied().map(Some))
+                && set.points[held.len().min(set.len())..]
+                    .iter()
+                    .all(|point| point.id.is_none())
+        })
 }
 
 /// Write what a bound chart's data changed over its retained chart part,
@@ -50,23 +107,21 @@ pub(super) fn project(
     payload: &NodePayload,
 ) -> Result<(), LiveError> {
     let payload = &payload.drawn();
-    let NodePayload::Chart { source, series, .. } = payload else {
+    let NodePayload::Chart { source, .. } = payload else {
         return Err(LiveError::Invalid(WRITTEN_FRAME));
     };
-    let bound: &[NodeId] = node
+    let unbound = SeriesBinding::default();
+    let bound: &SeriesBinding = node
         .binding
         .as_ref()
         .and_then(|binding| binding.series.as_ref())
-        .map_or(&[][..], |binding| binding.series.as_slice());
-    // The retained series are the live ones in the live order: a write by
-    // place is a write by identity.
-    let same_ids = series
-        .iter()
-        .map(|line| line.id)
-        .eq(bound.iter().copied().map(Some));
+        .unwrap_or(&unbound);
+    // The retained series and their category points are the live ones in
+    // the live order: a write by place is a write by identity.
+    let same_ids = same_identities(payload, bound);
     let chart =
         held::chart_part(&work.package, part, tree, at).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
-    let have = held::chart(&work.package, &chart).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
+    let have = held::chart(&work.package, &chart)?.ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
     // Data that lived outside the chart's own workbook moves into a
     // new one, as PowerPoint's Edit Data embeds it.
     let moved = matches!(&have, NodePayload::Chart { source: from, .. } if from != source);
@@ -122,6 +177,7 @@ pub(super) fn born(
     else {
         return Err(LiveError::Invalid(WRITTEN_FRAME));
     };
+    let categories = categories.labels();
     let column = |name: &str, kind| Column {
         name: name.to_owned(),
         kind,
@@ -212,7 +268,7 @@ pub(super) fn born(
     work.changed.extend(report.changed_parts);
     // The seed holds one series per live series, in the live order.
     let mut written: Vec<NodeId> = series.iter().filter_map(|line| line.id).collect();
-    if held::chart(&work.package, &chart).is_none_or(|read| !reshape::same_data(&read, payload)) {
+    if held::chart(&work.package, &chart)?.is_none_or(|read| !reshape::same_data(&read, payload)) {
         let (changed, reseeded) = reshape::reseed(work.next_mut(), &chart, payload)?;
         work.changed.extend(changed);
         written = reseeded;
