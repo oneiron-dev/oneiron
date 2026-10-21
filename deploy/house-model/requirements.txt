@@ -1,5 +1,7 @@
 # The EXL3 server's Python environment. Install a CUDA PyTorch wheel that
-# matches the host's driver first; exllamav3 builds against it.
+# matches the host's driver first; exllamav3 builds against it. A managed
+# worker builds its environment from requirements-exl3.lock instead: these
+# packages and every dependency, pinned by version and SHA-256.
 exllamav3==1.6.0
 jinja2
 llguidance
