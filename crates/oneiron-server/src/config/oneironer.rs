@@ -162,6 +162,10 @@ pub struct OneironerConfig {
     pub mode: OneironerMode,
     /// Directory containing the native model's oneironer.json artifact manifest.
     pub model_dir: Option<PathBuf>,
+    /// The local tagger's runtimes. `auto`, the default, serves the Candle
+    /// baseline, and a platform runtime joins it once its answers clear the
+    /// bundle's reference here; `candle` serves Candle alone
+    /// ([`OneironerRuntime`]).
     pub runtime: OneironerRuntime,
     pub backbone: OneironerBackbone,
     /// The local tagger's engine device. `auto`, the default, serves the
@@ -562,7 +566,8 @@ pub struct OneironerArgs {
     /// Local artifact bundle directory.
     #[arg(long = "oneironer-model-dir")]
     pub oneironer_model_dir: Option<PathBuf>,
-    /// Native runtime: candle.
+    /// Local runtimes: auto (the default: the Candle baseline, joined by a
+    /// platform runtime once it clears the bundle's reference) or candle.
     #[arg(long = "oneironer-runtime")]
     pub oneironer_runtime: Option<OneironerRuntime>,
     /// Backbone: auto (from config.json), gte or bert.

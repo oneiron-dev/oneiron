@@ -405,6 +405,7 @@ pub(crate) fn apply_ops_session(
                 id,
                 entity_type,
                 data,
+                allow_maintenance,
                 allow_reserved_predicate,
                 ..
             } => {
@@ -412,8 +413,12 @@ pub(crate) fn apply_ops_session(
                 // where unknown or engine-authored type bytes become writable.
                 // Promote replays these rows into base, so a byte that would
                 // be rejected there is rejected here, and so is an id a base
-                // provisional entity holds.
-                crate::registry::validate_public_entity_type(*entity_type)?;
+                // provisional entity holds. The one engine-authored row a room
+                // stages is a read's served-form receipt, on its host's
+                // carrier path ([`session_receipt_carrier`]).
+                if !session_receipt_carrier(*entity_type, *allow_maintenance) {
+                    crate::registry::validate_public_entity_type(*entity_type)?;
+                }
                 crate::tagging::refuse_held_id_in_txn(view, wtxn, id)?;
                 // D18, on the same terms: a CLAIM body is structurally
                 // validated before a byte of it is staged. The type-byte gate
@@ -583,6 +588,14 @@ pub(crate) fn apply_ops_session(
         }
     }
     Ok(())
+}
+
+/// Whether a session apply's Put is a read's served-form receipt, staged on
+/// its host's carrier path (WILL L11-01 S01-2b, CALLS-8): a RECEIPT_RECORD
+/// carrying the maintenance flag the canonical carrier sets. The flag on any
+/// other kind admits nothing, and neither does the kind without the flag.
+fn session_receipt_carrier(entity_type: u8, allow_maintenance: bool) -> bool {
+    allow_maintenance && entity_type == crate::registry::ENTITY_TYPE_RECEIPT_RECORD
 }
 
 /// Leaves `id`, a row the room holds and has not given a vector for its

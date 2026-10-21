@@ -1,5 +1,6 @@
 //! The served-form receipts a read writes (OF-329): what it served of each
-//! asset, recorded under the holder it read as, before it answers.
+//! asset, recorded under the holder it read as, before it answers. A read in
+//! an off-record room keeps them in the room instead ([`session`]).
 use super::ScopedRead;
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
@@ -7,6 +8,8 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::receipt::ServedForm;
+
+mod session;
 
 impl ScopedRead<'_> {
     /// Records `served`, what this read served, as one served-form receipt
