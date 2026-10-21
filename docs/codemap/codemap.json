@@ -27772,7 +27772,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -36563,6 +36563,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/answers.rs",
+     "purpose": "`vault.questions.answers` (FIX 1585, FIX 2337): one reader for every door that serves it",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -36584,11 +36594,22 @@
      "path": "src/llm/decision/questions/artifact_refresh.rs",
      "purpose": "Standing artifact questions (ARCH-0076, OF-506): a question whose adapter is [`ARTIFACT_ADAPTER`] asks each…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
-      "re-export": 1,
+      "fn": 2,
+      "re-export": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/artifact_refresh/history.rs",
+     "purpose": "FIX 2337: every ask a standing artifact question makes is kept, one by one, in the question's ask log…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -36599,6 +36620,16 @@
      "purpose": "FIX 3085: `vault.questions.refresh` on a standing artifact question asks its artifacts by hand, now, beside…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/ask_history.rs",
+     "purpose": "One commit-ordered log of a question's asks (FIX 2337, FIX 1585): each graph answer receipt a question…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -36676,8 +36707,8 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 9,
-      "re-export": 13
+      "crate-vis": 10,
+      "re-export": 14
      }
     },
     {
@@ -36730,6 +36761,7 @@
       "OutcomeSource",
       "OutcomeWindowClose",
       "QuestionActivation",
+      "QuestionAskerClass",
       "QuestionAudience",
       "QuestionCriteria",
       "QuestionDefinition",
@@ -36747,7 +36779,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "enum": 6,
+      "enum": 7,
       "fn": 12,
       "struct": 15,
       "type": 1
@@ -36763,9 +36795,19 @@
      "path": "src/llm/decision/questions/refresh.rs",
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 9,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/refresh/asker.rs",
+     "purpose": "FIX 1588: a standing question's work is written under the class its asker authenticated as when it wrote the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -49221,6 +49263,8 @@
       "GraphAskRequest",
       "GraphAskSelection",
       "QuestionAnswer",
+      "QuestionAnswersPage",
+      "QuestionAnswersReply",
       "QuestionAnswersRequest",
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
@@ -49239,9 +49283,9 @@
      "purpose": "OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs",
      "surface": {
       "const": 2,
-      "enum": 2,
+      "enum": 3,
       "fn": 4,
-      "struct": 17
+      "struct": 18
      }
     },
     {
@@ -49854,7 +49898,7 @@
      "path": "src/recovery/checkpoint/mod.rs",
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 19,
       "re-export": 10,
@@ -72186,7 +72230,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 123,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72895,7 +72939,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4684,
+   "source_files": 4688,
    "test_files": 902
   },
   "oneiron-android": {
@@ -89303,6 +89347,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/graph_ask_doors/question_answers.rs",
+     "purpose": "`vault.questions.answers` (FIX 1585, FIX 2337): the engine's one reader ([`question_answers`]), as the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/guest_document_doors.rs",
      "purpose": "Guest document envelopes under the owner's or the recipient's own proof",
      "surface": {
@@ -100127,7 +100181,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 503,
+     "files": 504,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -100584,7 +100638,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1097,
+   "source_files": 1098,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -103430,7 +103484,10 @@
       "Quarantine",
       "QuestionActivation",
       "QuestionAnswer",
+      "QuestionAnswersPage",
+      "QuestionAnswersReply",
       "QuestionAnswersRequest",
+      "QuestionAskerClass",
       "QuestionAudience",
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
@@ -104740,8 +104797,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 962,
-      "struct": 2993
+      "enum": 964,
+      "struct": 2994
      }
     },
     {
