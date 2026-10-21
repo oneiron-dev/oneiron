@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1167 code-mode rows (1127 host rows, 40 run rows), 3888 declarations.
-// Replies: 1047 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1168 code-mode rows (1128 host rows, 40 run rows), 3892 declarations.
+// Replies: 1048 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2279,10 +2279,13 @@ declare namespace Sdk {
   type CommandOutput = { status: number; stdout: number[]; stderr: number[] };
   type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } };
   type ContractVerdict = { schema_version: number; id: string; baseline_id: string; candidate: string; tests_passed: boolean; diffs: ContractDiff[] };
-  type QueueDriveStatus = "unenrolled" | "driving" | "waiting_check" | "waiting_symbols" | "waiting_review" | "waiting_admission" | "held_needs_new_base" | "held_diverged" | "held_binding" | "held_materialization" | "held_overlap" | "held_task_authority" | "held_recovery" | "held_check" | "needs_configuration" | "unavailable" | "done";
+  type QueueDriveStatus = "unenrolled" | "driving" | "waiting_check" | "waiting_symbols" | "waiting_review" | "waiting_admission" | "held_needs_new_base" | "held_diverged" | "held_binding" | "held_materialization" | "held_overlap" | "held_task_authority" | "held_recovery" | "held_check" | "needs_configuration" | "held_seal" | "unavailable" | "done";
   type QueueConflictView = { source_proposals: string[]; conflict: string; task?: string | null; resolution_batch?: string | null };
-  type QueueDriveView = { batch_ref: string; status: QueueDriveStatus; reason?: string | null; check_work_refs: string[]; receipt_refs: string[]; conflicts: QueueConflictView[]; survivor_batch?: string | null };
-  type MergeQueueObservation = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[]; batches: MergeQueueBatchView[]; verdicts: ContractVerdict[]; drive: QueueDriveView[] };
+  type QueueExportHoldReason = "seal_pending" | "held_seal_ancestor" | "held_binding" | "held_object" | "held_unsupported_tree" | "held_unreviewed_change" | "held_store" | "held_untouched_promotion" | "author_erased" | "author_unavailable" | "unenrolled" | "unavailable";
+  type QueueExportHold = { reason: QueueExportHoldReason; detail: string; way_out: string };
+  type QueueDriveView = { batch_ref: string; status: QueueDriveStatus; reason?: string | null; check_work_refs: string[]; receipt_refs: string[]; conflicts: QueueConflictView[]; survivor_batch?: string | null; tested_revision?: string | null; seal_hold?: QueueExportHold | null };
+  type QueueGreenExportView = { green_commit: string; tested_revision?: string | null; hold?: QueueExportHold | null };
+  type MergeQueueObservation = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[]; batches: MergeQueueBatchView[]; verdicts: ContractVerdict[]; drive: QueueDriveView[]; green_export: QueueGreenExportView };
   type MergeQueueRequeueView = { source_batch_ref: string; batch?: MergeQueueBatchView | null };
   type MergeQueueRepoRequest = { repo: EntityId };
   type MergeQueuePointersView = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[] };
@@ -2295,6 +2298,7 @@ declare namespace Sdk {
   type MergeQueueCheckRequest = { repo: EntityId; batch_ref: string; mask: number; phase: QueueCheckPhase; force_refresh?: boolean };
   type MergeQueueDiagnoseRequest = { repo: EntityId; batch_ref: string };
   type MergeQueueCheckStatusRequest = { repo: EntityId; work_ref: string };
+  type MergeQueueGreenExportRequest = { repo: EntityId; served_repo: string; checkout: string; epoch: number; ref_name: string; expected_old_oid?: string | null; endpoint: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type AgentSkillInput = { skill_id: string; min_version?: string | null };
@@ -4907,6 +4911,8 @@ declare const vault: Sdk.VaultHost & {
       diagnose(input: Sdk.MergeQueueDiagnoseRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
       /** Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
       enqueue(input: Sdk.MergeQueueEnqueueRequest): Promise<Sdk.MergeQueueBatchView | StoredResult>;
+      /** Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result. */
+      export_green(input: Sdk.MergeQueueGreenExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
       /** Request owner-approved baseline checks and checked queue initialization from the plan pinned at baseline_commit. Retains missing configuration and work; never resets an existing queue. */
       init(input: Sdk.MergeQueueInitializeRequest): Promise<Sdk.MergeQueueCheckWorkView | StoredResult>;
       /** Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing. */

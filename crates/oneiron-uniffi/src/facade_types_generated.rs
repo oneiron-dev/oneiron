@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1117 facade rows, 3817 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1069.
+// UniFFI census: 1118 facade rows, 3821 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1070.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -34156,6 +34156,8 @@ pub enum QueueDriveStatus {
     HeldCheck,
     #[serde(rename = "needs_configuration")]
     NeedsConfiguration,
+    #[serde(rename = "held_seal")]
+    HeldSeal,
     #[serde(rename = "unavailable")]
     Unavailable,
     #[serde(rename = "done")]
@@ -34179,6 +34181,46 @@ pub struct QueueConflictView {
     pub resolution_batch: Option<String>,
 }
 
+/// `oneiron::merge_queue::tested_types::QueueExportHoldReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QueueExportHoldReason {
+    #[serde(rename = "seal_pending")]
+    SealPending,
+    #[serde(rename = "held_seal_ancestor")]
+    HeldSealAncestor,
+    #[serde(rename = "held_binding")]
+    HeldBinding,
+    #[serde(rename = "held_object")]
+    HeldObject,
+    #[serde(rename = "held_unsupported_tree")]
+    HeldUnsupportedTree,
+    #[serde(rename = "held_unreviewed_change")]
+    HeldUnreviewedChange,
+    #[serde(rename = "held_store")]
+    HeldStore,
+    #[serde(rename = "held_untouched_promotion")]
+    HeldUntouchedPromotion,
+    #[serde(rename = "author_erased")]
+    AuthorErased,
+    #[serde(rename = "author_unavailable")]
+    AuthorUnavailable,
+    #[serde(rename = "unenrolled")]
+    Unenrolled,
+    #[serde(rename = "unavailable")]
+    Unavailable,
+}
+
+/// `oneiron::merge_queue::tested_types::QueueExportHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueExportHold {
+    #[serde(rename = "reason")]
+    pub reason: QueueExportHoldReason,
+    #[serde(rename = "detail")]
+    pub detail: String,
+    #[serde(rename = "way_out")]
+    pub way_out: String,
+}
+
 /// `oneiron::merge_queue::driver_types::QueueDriveView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct QueueDriveView {
@@ -34200,6 +34242,29 @@ pub struct QueueDriveView {
         skip_serializing_if = "Option::is_none"
     )]
     pub survivor_batch: Option<String>,
+    #[serde(
+        rename = "tested_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tested_revision: Option<String>,
+    #[serde(rename = "seal_hold", default, skip_serializing_if = "Option::is_none")]
+    pub seal_hold: Option<QueueExportHold>,
+}
+
+/// `oneiron::merge_queue::tested_types::QueueGreenExportView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QueueGreenExportView {
+    #[serde(rename = "green_commit")]
+    pub green_commit: String,
+    #[serde(
+        rename = "tested_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tested_revision: Option<String>,
+    #[serde(rename = "hold", default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<QueueExportHold>,
 }
 
 /// `oneiron::memory::merge_queue_doors::types::MergeQueueObservation`.
@@ -34219,6 +34284,8 @@ pub struct MergeQueueObservation {
     pub verdicts: Vec<ContractVerdict>,
     #[serde(rename = "drive")]
     pub drive: Vec<QueueDriveView>,
+    #[serde(rename = "green_export")]
+    pub green_export: QueueGreenExportView,
 }
 
 /// `oneiron::memory::merge_queue_doors::types::MergeQueueRequeueView`.
@@ -34408,6 +34475,30 @@ pub struct MergeQueueCheckStatusRequest {
     pub repo: String,
     #[serde(rename = "work_ref")]
     pub work_ref: String,
+}
+
+/// `oneiron::memory::merge_queue_doors::export_types::MergeQueueGreenExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueGreenExportRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "served_repo")]
+    pub served_repo: String,
+    #[serde(rename = "checkout")]
+    pub checkout: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(
+        rename = "expected_old_oid",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_old_oid: Option<String>,
+    #[serde(rename = "endpoint")]
+    pub endpoint: String,
 }
 
 /// `oneiron::blob_artifact::verbs::ArtifactExportRequest`.
