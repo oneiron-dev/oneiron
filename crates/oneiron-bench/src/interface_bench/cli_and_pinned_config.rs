@@ -225,7 +225,7 @@ pub(crate) enum PinnedCoverageError {
 ///   revision covers it. Two candidate revisions are ambiguous and refuse:
 ///   the revision the provider would serve is operator-asserted, not
 ///   wire-attested, so the bench must not guess which pin a row claims.
-pub(super) fn pinned_model_for_wire_id(
+pub(crate) fn pinned_model_for_wire_id(
     config: &PinnedModelConfig,
     wire_id: &str,
 ) -> Result<ModelId, PinnedCoverageError> {

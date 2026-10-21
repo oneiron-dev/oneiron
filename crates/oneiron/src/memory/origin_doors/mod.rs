@@ -5,8 +5,9 @@
 //! publication result.
 //!
 //! Authority is the owner's live proof alone (`Memory::origin_owner`), save
-//! the exact publish doors (`publish`, FIX 6866), which also admit one live
-//! Grant in the engine's own snapshot.
+//! the exact publish doors (`publish`, FIX 6866) and the exact export
+//! preview doors (`preview`, FIX 6869), which also admit one live Grant in
+//! the engine's own snapshot.
 //! Export and binding also take a live checkout lease the owner holds on the
 //! served repository, through the same gate every lease-route git request
 //! redeems (`credential_door::require_checkout_lease`).
@@ -15,18 +16,26 @@ mod external_import;
 mod import;
 mod import_types;
 mod operations;
+mod preview;
 mod publish;
 mod setup;
 mod types;
 mod workbench;
 mod workbench_types;
 
+pub use crate::origin::export_preview::{
+    CodeExportBlockingSource, CodeExportByteHandle, CodeExportFileBytes, CodeExportFileDelta,
+    CodeExportFileIdentity, CodeExportFileReadAnswer, CodeExportFileReadRequest, CodeExportPreview,
+    CodeExportPreviewAnswer, CodeExportPreviewBlockReason, CodeExportPreviewBlocker,
+    CodeExportPreviewHold, CodeExportPreviewRequest, CodeExportSide,
+};
 pub use crate::repo_mutation::external_import::{
     ExternalImportDoor, ExternalImportLookup, ExternalImportPhase, ExternalImportReceipt,
     ExternalImportRequest, ExternalImportSource, ExternalImportStatus,
 };
 pub use external_import::ExternalImportProof;
 pub use import_types::*;
+pub use preview::CodeExportPreviewProof;
 pub use publish::OriginPublishProof;
 pub use types::*;
 pub use workbench_types::*;

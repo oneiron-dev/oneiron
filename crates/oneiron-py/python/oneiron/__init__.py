@@ -3528,9 +3528,9 @@ class Oneiron:
         def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
             return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
-        def export(self, spec):
-            """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
-            return json.loads(_translate(lambda: self._client.vault_code_export(json.dumps(spec))))
+        @property
+        def export(self) -> "Oneiron._VaultCodeExportVerbs":
+            return Oneiron._VaultCodeExportVerbs(self._client)
         def import_(self, spec):
             """Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_import(json.dumps(spec))))
@@ -3591,6 +3591,24 @@ class Oneiron:
         def receipt(self, spec):
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
             return json.loads(_translate(lambda: self._client.vault_code_waits_receipt(json.dumps(spec))))
+    class _VaultCodeExportVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+            return json.loads(_translate(lambda: self._client.vault_code_export(json.dumps(spec))))
+        @property
+        def preview(self) -> "Oneiron._VaultCodeExportPreviewVerbs":
+            return Oneiron._VaultCodeExportPreviewVerbs(self._client)
+    class _VaultCodeExportPreviewVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written."""
+            return json.loads(_translate(lambda: self._client.vault_code_export_preview(json.dumps(spec))))
+        def read(self, spec):
+            """Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read."""
+            return json.loads(_translate(lambda: self._client.vault_code_export_preview_read(json.dumps(spec))))
     class _VaultCodeReposVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
