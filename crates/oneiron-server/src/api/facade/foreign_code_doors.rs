@@ -81,6 +81,10 @@ pub(crate) async fn execute_code(
         Ok(caller) => caller,
         Err(error) => return refused(error.into_memory_error()),
     };
+    // The guest's proposed files spool on the server's one disk floor, the
+    // one its uploads keep (FIX 7650).
+    let spool: Arc<dyn oneiron::code_sandbox::ProposalSpoolFloor> =
+        Arc::new(server.transfers.disk.clone());
     credential_listing(server, auth, caller, "execute_code", move |_, _, memory| {
         let _permit = permit;
         let manifest: serde_json::Value = serde_json::from_str(COMPONENT_MANIFEST)
@@ -101,6 +105,7 @@ pub(crate) async fn execute_code(
                 sha256,
             },
             oneiron::code_sandbox::microvm::ExecutionBudget::default(),
+            spool,
         )
     })
     .await

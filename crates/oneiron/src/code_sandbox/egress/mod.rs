@@ -4,11 +4,13 @@
 mod dns;
 mod fixture;
 mod http;
+mod name_gate;
 mod receipt;
 
 use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyVerdictCategory};
 use crate::{EntityId, Vault};
 pub use fixture::{FixtureForward, FixtureForwardError};
+pub use name_gate::EgressNameRefusal;
 use oneiron_container::{
     EgressRelay, HostNetFloor, HostNetPermit, HttpRequest, HttpResponse, UnmeteredFloor,
 };
@@ -17,14 +19,20 @@ pub use receipt::EgressReceipt;
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, TcpStream, ToSocketAddrs, UdpSocket};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Host-owned limits, shared by all transports in a session.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EgressConfig {
     pub allowed_domains: Option<Vec<String>>,
+    /// The owner's raw endpoint grants (FIX 7652). Each admits raw sockets
+    /// to its endpoint unread, where a domain of `allowed_domains` alone
+    /// admits a stream only once the name its opening bytes carry is bound
+    /// to the address.
+    pub raw_endpoints: Vec<RawEndpointGrant>,
     pub request_timeout: Duration,
     pub max_response_bytes: usize,
     pub max_redirects: u8,
@@ -33,6 +41,7 @@ impl Default for EgressConfig {
     fn default() -> Self {
         Self {
             allowed_domains: None,
+            raw_endpoints: Vec::new(),
             request_timeout: Duration::from_secs(30),
             max_response_bytes: 32 * 1024 * 1024,
             max_redirects: 3,
@@ -47,6 +56,61 @@ impl EgressConfig {
             None => Ok(Self::default()),
         }
     }
+}
+
+/// An owner grant of raw socket authority to one endpoint (FIX 7652, CALLS):
+/// its streams and datagrams go on unread, past the name gate a domain of
+/// the allowlist alone keeps. A grant is the owner's own act, written in the
+/// host's egress config.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawEndpointGrant {
+    /// An IP address, or a name matched as `allowed_domains` matches its
+    /// entries, which grants an address it is bound to now.
+    pub host: String,
+    pub port: u16,
+    pub protocol: RawProtocol,
+}
+
+/// The transport a [`RawEndpointGrant`] admits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RawProtocol {
+    Tcp,
+    Udp,
+}
+
+impl RawEndpointGrant {
+    /// The address this grant names, when its host is an IP literal.
+    fn address(&self) -> Option<IpAddr> {
+        self.host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse()
+            .ok()
+    }
+}
+
+/// What admits a raw socket to an address (FIX 7652).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RawAuthority {
+    /// No allowlist, an allowlisted address or an owner raw endpoint grant:
+    /// the guest's bytes go on unread.
+    Open,
+    /// A name of the allowlist bound to the address now: a stream's opening
+    /// bytes must carry a name bound to it.
+    Named,
+}
+
+/// Whether `host` is `domain` or a name under it, as the owner allowlist
+/// matches: case and trailing dots aside, at a label boundary.
+fn within(domain: &str, host: &str) -> bool {
+    let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    host == domain
+        || host
+            .strip_suffix(&domain)
+            .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
 impl Vault {
@@ -76,7 +140,11 @@ pub struct OpenEgressProxy {
     vault: Arc<Vault>,
     run_id: EntityId,
     config: EgressConfig,
-    resolutions: Mutex<HashMap<IpAddr, Vec<String>>>,
+    /// Each address a name of the owner allowlist was answered with, by
+    /// that name, until the least TTL on its answer's chain ends (FIX 7652).
+    /// An ended binding admits nothing: it names the name to look up again
+    /// when its address is used.
+    bindings: Mutex<HashMap<IpAddr, HashMap<String, Instant>>>,
     fixture: Option<std::path::PathBuf>,
     /// The fixture origin's one upstream (FIX 8061), none unless the host
     /// set one through [`OpenEgressProxy::with_fixture_forward`].
@@ -89,7 +157,7 @@ impl OpenEgressProxy {
             vault,
             run_id,
             config,
-            resolutions: Mutex::new(HashMap::new()),
+            bindings: Mutex::new(HashMap::new()),
             fixture: None,
             fixture_forward: None,
         }
@@ -118,27 +186,85 @@ impl OpenEgressProxy {
         Ok(self)
     }
     fn domain_allowed(&self, host: &str) -> bool {
-        self.config.allowed_domains.as_ref().is_none_or(|domains| {
-            domains.iter().any(|d| {
-                let domain = d.trim_end_matches('.').to_ascii_lowercase();
-                let host = host.trim_end_matches('.').to_ascii_lowercase();
-                host == domain
-                    || host
-                        .strip_suffix(&domain)
-                        .is_some_and(|prefix| prefix.ends_with('.'))
-            })
-        })
+        self.config
+            .allowed_domains
+            .as_ref()
+            .is_none_or(|domains| domains.iter().any(|domain| within(domain, host)))
     }
-    fn address_allowed(&self, address: SocketAddr) -> bool {
-        global_address(address.ip())
-            && (self.config.allowed_domains.is_none()
-                || self.domain_allowed(&address.ip().to_string())
-                || self
-                    .resolutions
-                    .lock()
-                    .ok()
-                    .and_then(|m| m.get(&address.ip()).cloned())
-                    .is_some_and(|names| names.iter().any(|name| self.domain_allowed(name))))
+    /// What admits a raw socket to `target` over `protocol`, if anything: a
+    /// public address, and then no allowlist, the address itself on it, an
+    /// owner grant of the endpoint, or a name of it bound to the address now
+    /// (FIX 7652). An ended binding is looked up again on this use.
+    fn raw_authority(&self, target: SocketAddr, protocol: RawProtocol) -> Option<RawAuthority> {
+        let ip = target.ip();
+        if !global_address(ip) {
+            return None;
+        }
+        let grants: Vec<&RawEndpointGrant> = self
+            .config
+            .raw_endpoints
+            .iter()
+            .filter(|grant| grant.port == target.port() && grant.protocol == protocol)
+            .collect();
+        if self.config.allowed_domains.is_none()
+            || self.domain_allowed(&ip.to_string())
+            || grants.iter().any(|grant| grant.address() == Some(ip))
+        {
+            return Some(RawAuthority::Open);
+        }
+        let granted = |name: &str| {
+            grants
+                .iter()
+                .any(|grant| grant.address().is_none() && within(&grant.host, name))
+        };
+        if !grants.is_empty() && dns::bound_name(self, ip, granted).is_some() {
+            return Some(RawAuthority::Open);
+        }
+        dns::bound_name(self, ip, |_| true).map(|_| RawAuthority::Named)
+    }
+    /// A stream to `target`, and whether a name gates its upload. A caller
+    /// that reads no opening bytes (`reads_opening` false) is refused a
+    /// stream a name would gate, before any connect.
+    fn open_stream(
+        &self,
+        target: SocketAddr,
+        reads_opening: bool,
+    ) -> io::Result<(TcpStream, bool)> {
+        let url = format!("tcp://{target}");
+        let authority = self.raw_authority(target, RawProtocol::Tcp);
+        if authority.is_none() || (authority == Some(RawAuthority::Named) && !reads_opening) {
+            self.record(
+                "connect",
+                &url,
+                &[],
+                PolicyClassifyDecision::Block,
+                PolicyVerdictCategory::None,
+                None,
+            )?;
+            return Err(match authority {
+                None => io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "non-public or ungranted destination",
+                ),
+                Some(_) => io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    EgressNameRefusal::Unverifiable {
+                        target,
+                        why: "this relay path reads no opening bytes",
+                    },
+                ),
+            });
+        }
+        let (decision, category, policy_receipt) = self.policy(&url, &[])?;
+        self.record("connect", &url, &[], decision, category, policy_receipt)?;
+        if !Self::permits(decision) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "egress policy",
+            ));
+        }
+        let stream = TcpStream::connect_timeout(&target, self.config.request_timeout)?;
+        Ok((stream, authority == Some(RawAuthority::Named)))
     }
     fn resolve(&self, host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
         let answer = (|| {
@@ -168,16 +294,8 @@ impl OpenEgressProxy {
                     "no public address",
                 ));
             }
-            let mut resolutions = self
-                .resolutions
-                .lock()
-                .map_err(|_| io::Error::other("fence state poisoned"))?;
-            for address in &addresses {
-                let names = resolutions.entry(address.ip()).or_default();
-                if !names.iter().any(|n| n == host) {
-                    names.push(host.to_owned());
-                }
-            }
+            // These addresses serve this request alone: a host lookup has no
+            // TTL, so it binds no raw socket authority (FIX 7652).
             Ok(addresses)
         })();
         let bytes = answer
@@ -297,7 +415,7 @@ impl EgressRelay for OpenEgressProxy {
         )
     }
     fn authorize_datagram(&self, target: SocketAddr) -> io::Result<()> {
-        let allowed = target.port() == 53 || self.address_allowed(target);
+        let allowed = target.port() == 53 || self.raw_authority(target, RawProtocol::Udp).is_some();
         self.record(
             "connect_udp",
             &format!("udp://{target}"),
@@ -321,37 +439,27 @@ impl EgressRelay for OpenEgressProxy {
     }
 
     fn connect(&self, target: SocketAddr) -> io::Result<TcpStream> {
-        let url = format!("tcp://{target}");
-        if !self.address_allowed(target) {
-            self.record(
-                "connect",
-                &url,
-                &[],
-                PolicyClassifyDecision::Block,
-                PolicyVerdictCategory::None,
-                None,
-            )?;
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "non-public or ungranted destination",
-            ));
-        }
-        let (decision, category, policy_receipt) = self.policy(&url, &[])?;
-        self.record("connect", &url, &[], decision, category, policy_receipt)?;
-        if !Self::permits(decision) {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "egress policy",
-            ));
-        }
-        TcpStream::connect_timeout(&target, self.config.request_timeout)
+        self.open_stream(target, false).map(|(stream, _)| stream)
+    }
+    /// The name gate's stream (FIX 7652): one a name of the allowlist
+    /// admits is gated on the name its opening bytes carry.
+    fn connect_stream(&self, target: SocketAddr) -> io::Result<(TcpStream, bool)> {
+        self.open_stream(target, true)
+    }
+    fn open_upload(
+        &self,
+        target: SocketAddr,
+        guest: &mut dyn io::Read,
+        alive: &AtomicBool,
+    ) -> io::Result<Vec<u8>> {
+        name_gate::open_upload(self, target, guest, alive)
     }
     fn datagram(&self, target: SocketAddr, bytes: &[u8]) -> io::Result<Vec<u8>> {
         if target.port() == 53 {
             return dns::answer(self, bytes);
         }
         let url = format!("udp://{target}");
-        if !self.address_allowed(target) {
+        if self.raw_authority(target, RawProtocol::Udp).is_none() {
             self.record(
                 "datagram",
                 &url,

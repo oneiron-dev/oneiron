@@ -444,6 +444,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
         | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
         | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
+        | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,
@@ -463,6 +464,11 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // management; an agent reads the name, not the sentence.
         oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
             Some("off_record_room_management_consent_unavailable")
+        }
+        // FIX 7650: a foreign guest's proposal spool met the host's disk
+        // floor; the agent reads the name, not the sentence.
+        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
+            Some("sandbox_proposal_disk_floor")
         }
         _ => None,
     };

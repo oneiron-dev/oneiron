@@ -29,7 +29,12 @@ use std::{
 
 /// Boots one guest under its step's token (FIX 600). The watchdog ends this
 /// guest's own process group at its deadline or once `cancel` fires,
-/// whichever is first, and stops watching once the exchange is done.
+/// whichever is first, and stops watching once the exchange is done. Its
+/// proposed files spool on `spool` when the host lent one (FIX 7650).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the launch takes the VM, image, budget, policies, spool and token"
+)]
 pub(super) fn run(
     config: &FirecrackerHostConfig,
     vm: &MicroVmHandle,
@@ -37,6 +42,7 @@ pub(super) fn run(
     budget: ExecutionBudget,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
+    spool: Option<&dyn crate::code_sandbox::ProposalSpoolFloor>,
     cancel: &StepCancellation,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     cancel.check()?;
@@ -82,6 +88,7 @@ pub(super) fn run(
                 deadline,
                 proxy,
                 transport,
+                spool,
                 cancel,
             )
         })();

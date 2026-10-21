@@ -132,6 +132,12 @@ pub const MEMORY_CODE_WORLD_RECIPIENT_LIMIT: &str = "WORLD_RECIPIENT_LIMIT";
 /// Content-free, like `WORLD_RECIPIENT_LIMIT`.
 pub const MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE: &str = "WORLD_PLACEMENT_UNVERIFIABLE";
 
+/// A foreign guest's proposal spool append would cross the host's disk floor
+/// (FIX 7650): the message names the measured bytes needed and free and the
+/// reserve, never the file's contents. The host's storage refuses, not the
+/// request; the run proposed nothing and goes through once the disk has room.
+pub const MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR: &str = "SANDBOX_PROPOSAL_DISK_FLOOR";
+
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
 /// engine→binding error mapping (S8); the HTTP mapping stays server-side.
@@ -730,6 +736,13 @@ impl From<Error> for MemoryError {
                     &["Do what the message names: retry, or re-enter or reissue that credential."],
                 )
             }
+            // A foreign guest's proposal spool met the host's disk floor
+            // (FIX 7650): the host's storage, never the request's shape.
+            ErrorKind::SandboxProposalDiskFloor => Self::new(
+                MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR,
+                message,
+                &["The host disk is at its free-space floor; run again once it has room."],
+            ),
             // The host skipped a setup step, so neither the request nor the
             // caller's standing is what has to change.
             ErrorKind::EngineIdentitiesNotProvisioned => Self::new(

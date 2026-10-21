@@ -410,7 +410,7 @@ fn operate(
                         .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
                     relay_dns(peer, *target, Arc::clone(state));
                 } else {
-                    let stream = state.relay.connect(*target)?;
+                    let (stream, gated) = state.relay.connect_stream(*target)?;
                     let peer = peer
                         .take()
                         .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
@@ -418,7 +418,7 @@ fn operate(
                         .target
                         .lock()
                         .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-                    relay_stream(peer, stream, *target, Arc::clone(state));
+                    relay_stream(peer, stream, *target, gated, Arc::clone(state));
                 }
             }
         }
@@ -546,10 +546,15 @@ fn datagram_writer(socket: Arc<Socket>, state: Arc<State>) {
         }
     });
 }
+/// Relays one admitted stream both ways. A `gated` stream's opening bytes
+/// pass the relay's name gate after the guest's connect was answered and
+/// before any reaches the remote; a refused one ends with nothing sent
+/// (FIX 7652).
 fn relay_stream(
     mut guest: UnixStream,
     mut remote: std::net::TcpStream,
     target: SocketAddr,
+    gated: bool,
     state: Arc<State>,
 ) {
     std::thread::spawn(move || {
@@ -559,7 +564,15 @@ fn relay_stream(
         let _ = incoming.set_read_timeout(Some(Duration::from_millis(250)));
         let _ = guest.set_read_timeout(Some(Duration::from_millis(250)));
         let alive = Arc::clone(&state.alive);
+        let relay = Arc::clone(&state.relay);
         let upload = std::thread::spawn(move || {
+            if gated {
+                let opening = relay.open_upload(target, &mut guest, &alive);
+                if opening.and_then(|bytes| remote.write_all(&bytes)).is_err() {
+                    let _ = remote.shutdown(Shutdown::Both);
+                    return;
+                }
+            }
             let mut bytes = [0; 32768];
             while alive.load(Ordering::Acquire) {
                 match guest.read(&mut bytes) {

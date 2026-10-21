@@ -174,6 +174,10 @@ pub struct Vault {
     /// ([`Vault::lend_host_net_floor`]); none until it lends one.
     pub(crate) host_net_floor:
         std::sync::OnceLock<std::sync::Arc<dyn oneiron_container::HostNetFloor>>,
+    /// The measured disk floor a host lends its guests' proposal spools
+    /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
+    pub(crate) proposal_spool:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::result_body::ResultBodyPins,

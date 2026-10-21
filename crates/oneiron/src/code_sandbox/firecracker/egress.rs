@@ -71,16 +71,28 @@ fn request(
         RelayRequest::Connect { target } => match relay
             .host_net_floor()
             .acquire(STREAM.0, STREAM.1)
-            .and_then(|room| relay.connect(target).map(|remote| (room, remote)))
+            .and_then(|room| relay.connect_stream(target).map(|remote| (room, remote)))
         {
-            Ok((_room, mut remote)) => {
+            Ok((_room, (mut remote, gated))) => {
                 write_relay(&mut channel, &reply)?;
                 let mut upload = channel.try_clone()?;
                 let mut send = remote.try_clone()?;
                 let upload_alive = Arc::clone(&alive);
                 upload.set_read_timeout(Some(Duration::from_millis(250)))?;
                 remote.set_read_timeout(Some(Duration::from_millis(250)))?;
+                // A gated stream's opening bytes pass the relay's name gate,
+                // after the VM was told its connect succeeded and before any
+                // reaches the remote; a refused one ends with nothing sent
+                // (FIX 7652).
+                let gate = gated.then(|| Arc::clone(&relay));
                 let thread = std::thread::spawn(move || {
+                    if let Some(gate) = gate {
+                        let opening = gate.open_upload(target, &mut upload, &upload_alive);
+                        if opening.and_then(|bytes| send.write_all(&bytes)).is_err() {
+                            let _ = send.shutdown(Shutdown::Both);
+                            return;
+                        }
+                    }
                     let mut bytes = [0; 32768];
                     while upload_alive.load(Ordering::Acquire) {
                         match upload.read(&mut bytes) {

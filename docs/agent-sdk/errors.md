@@ -25,6 +25,7 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `HOST_ACTION_REQUIRES_SUPPORT_GRANT` | A hosted operator's root acts as nobody inside a customer's vault. Ask the customer for a support grant; the operator's admin commands need none. |
 | `WORLD_RECIPIENT_LIMIT` | The owner's read setting for a row's world keeps it from where this answer goes; the message names his choice, never the world. Read it where his choice admits, or ask him to change that setting. The row is there: do not treat this as not found. |
 | `WORLD_PLACEMENT_UNVERIFIABLE` | A row's world placement, the rows a result came from or the vault root cannot be verified now, so nothing was released. No change to the request helps; retry once the vault has settled it. |
+| `SANDBOX_PROPOSAL_DISK_FLOOR` | A foreign program's proposed file would cross the host disk's free-space floor, so the run failed and proposed nothing. The message names the bytes needed and free. No change to the request helps; run again once the host has room. |
 
 Remote server-specific codes and HTTP schemas are also indexed by
 [the engine API reference](../../oneiron.skills.md).

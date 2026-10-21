@@ -27,6 +27,14 @@ pub trait MicroVmBackend: Send + Sync {
     ) {
     }
     fn set_egress(&mut self, _relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) {}
+    /// Lends the host's measured disk floor its guests' proposed files spool
+    /// on (FIX 7650). A backend lent none spools as before; a backend that
+    /// receives no streamed proposals takes none.
+    fn set_proposal_spool(
+        &mut self,
+        _spool: std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+    ) {
+    }
     fn session_manifest(&self, _vm: &MicroVmHandle) -> Option<oneiron_container::SessionManifest> {
         None
     }
@@ -136,6 +144,12 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
     }
     fn set_egress(&mut self, relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) {
         (**self).set_egress(relay);
+    }
+    fn set_proposal_spool(
+        &mut self,
+        spool: std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>,
+    ) {
+        (**self).set_proposal_spool(spool);
     }
     fn session_manifest(&self, vm: &MicroVmHandle) -> Option<oneiron_container::SessionManifest> {
         (**self).session_manifest(vm)

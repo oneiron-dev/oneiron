@@ -280,6 +280,10 @@ pub(crate) fn execute_callable_skill_cancellable(
                     .map_err(|e| Error::InvalidConfig(e.to_string()))?,
             ),
         ))?;
+        // Its proposed files spool on the host's disk floor (FIX 7650).
+        if let Some(spool) = vault.proposal_spool() {
+            runtime.bind_proposal_spool(spool);
+        }
     }
     let mut lent = SkillHost {
         host,

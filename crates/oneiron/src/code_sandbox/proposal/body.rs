@@ -1,7 +1,11 @@
 //! A proposed file's bytes, spooled to an anonymous host temp file as they
 //! arrive. A foreign guest streams a file of any size in frames; the host
 //! never holds it whole, and review reads only the ranges it needs.
+//!
+//! A body spooled on a host's measured spool ([`SandboxProposalBody::spool_floored`])
+//! admits each append on the shared disk floor before writing it (FIX 7650).
 
+use super::spool::{ProposalSpoolClaim, ProposalSpoolFloor};
 use crate::{Error, Result};
 use std::{
     fs::File,
@@ -21,6 +25,9 @@ struct Spooled {
     file: Mutex<File>,
     len: u64,
     digest: [u8; 32],
+    /// The floor claim the file holds until the last clone drops, given
+    /// back after the file is closed.
+    _claim: Option<Box<dyn ProposalSpoolClaim>>,
 }
 
 impl SandboxProposalBody {
@@ -30,6 +37,28 @@ impl SandboxProposalBody {
             file: tempfile::tempfile()?,
             len: 0,
             hasher: blake3::Hasher::new(),
+            claim: None,
+        })
+    }
+
+    /// Starts a body on a host's measured spool (FIX 7650): its file is made
+    /// in `floor`'s spool directory, never on another disk, and each append
+    /// is admitted on the shared floor before it is written.
+    ///
+    /// # Errors
+    /// The spool directory or file cannot be made; a disk with no room for
+    /// it refuses as [`crate::error::CodeError::SandboxProposalDiskFloor`].
+    pub fn spool_floored(floor: &dyn ProposalSpoolFloor) -> Result<SandboxProposalBodyWriter> {
+        let claim = floor.claim();
+        let file = floor
+            .spool_dir()
+            .and_then(tempfile::tempfile_in)
+            .map_err(|error| spool_error(error, Some(claim.as_ref()), 0))?;
+        Ok(SandboxProposalBodyWriter {
+            file,
+            len: 0,
+            hasher: blake3::Hasher::new(),
+            claim: Some(claim),
         })
     }
 
@@ -40,6 +69,7 @@ impl SandboxProposalBody {
             file: tempfile::tempfile_in(dir)?,
             len: 0,
             hasher: blake3::Hasher::new(),
+            claim: None,
         })
     }
 
@@ -146,17 +176,37 @@ pub struct SandboxProposalBodyWriter {
     file: File,
     len: u64,
     hasher: blake3::Hasher,
+    /// The floor claim each append is admitted on (FIX 7650); none for a
+    /// body spooled where no floor was lent. Given back after the file.
+    claim: Option<Box<dyn ProposalSpoolClaim>>,
 }
 
 impl SandboxProposalBodyWriter {
-    /// Appends one frame.
+    /// Appends one frame. On a measured spool the frame is admitted on the
+    /// disk floor before it is written, and its hold ends once it is on the
+    /// disk (FIX 7650).
+    ///
+    /// # Errors
+    /// [`crate::error::CodeError::SandboxProposalDiskFloor`] when the frame
+    /// would cross the floor or the disk has no room for it; the floor's
+    /// I/O error when its free space cannot be read; the file's I/O error.
     pub fn append(&mut self, frame: &[u8]) -> Result<()> {
-        self.file.write_all(frame)?;
-        self.hasher.update(frame);
-        self.len = self
+        let bytes = frame.len() as u64;
+        let len = self
             .len
-            .checked_add(frame.len() as u64)
+            .checked_add(bytes)
             .ok_or(Error::InvalidClaimBody("proposal body length overflow"))?;
+        if let Some(claim) = &self.claim {
+            claim.admit(bytes)?;
+        }
+        self.file
+            .write_all(frame)
+            .map_err(|error| spool_error(error, self.claim.as_deref(), bytes))?;
+        if let Some(claim) = &self.claim {
+            claim.landed();
+        }
+        self.hasher.update(frame);
+        self.len = len;
         Ok(())
     }
 
@@ -173,14 +223,27 @@ impl SandboxProposalBodyWriter {
 
     /// Settles the body: its length and digest are fixed from here on.
     pub fn finish(mut self) -> Result<SandboxProposalBody> {
-        self.file.flush()?;
+        self.file
+            .flush()
+            .map_err(|error| spool_error(error, self.claim.as_deref(), 0))?;
         Ok(SandboxProposalBody {
             spooled: Arc::new(Spooled {
                 file: Mutex::new(self.file),
                 len: self.len,
                 digest: *self.hasher.finalize().as_bytes(),
+                _claim: self.claim,
             }),
         })
+    }
+}
+
+/// A spool file's I/O error. On a measured spool a disk with no room
+/// refuses as the floor does, named with what it measures now (FIX 7650);
+/// every other error stays I/O.
+fn spool_error(error: std::io::Error, claim: Option<&dyn ProposalSpoolClaim>, bytes: u64) -> Error {
+    match claim {
+        Some(claim) if error.kind() == std::io::ErrorKind::StorageFull => claim.full(bytes).into(),
+        _ => error.into(),
     }
 }
 

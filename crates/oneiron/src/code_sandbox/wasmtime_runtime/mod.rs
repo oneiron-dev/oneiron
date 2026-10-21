@@ -74,6 +74,9 @@ pub struct WasmtimeComponentRuntime {
     component: Component,
     component_bytes: std::sync::Arc<[u8]>,
     foreign_egress: Option<std::sync::Arc<dyn oneiron_container::EgressRelay>>,
+    /// The host's measured disk floor foreign steps' proposed files spool on
+    /// (FIX 7650); none spools them as before.
+    proposal_spool: Option<std::sync::Arc<dyn super::ProposalSpoolFloor>>,
     budget: ComponentBudget,
     adapter: Option<Box<dyn SandboxBoundaryAdapter + Send>>,
 }
@@ -108,6 +111,7 @@ impl WasmtimeComponentRuntime {
             component,
             component_bytes: std::sync::Arc::from(bytes),
             foreign_egress: None,
+            proposal_spool: None,
             budget,
             adapter: None,
         })
@@ -122,6 +126,7 @@ impl WasmtimeComponentRuntime {
             component: self.component.clone(),
             component_bytes: std::sync::Arc::clone(&self.component_bytes),
             foreign_egress: self.foreign_egress.clone(),
+            proposal_spool: self.proposal_spool.clone(),
             budget: self.budget,
             adapter: None,
         }
@@ -442,6 +447,10 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
     ) -> Result<()> {
         self.foreign_egress = Some(relay);
         Ok(())
+    }
+
+    fn bind_proposal_spool(&mut self, spool: std::sync::Arc<dyn super::ProposalSpoolFloor>) {
+        self.proposal_spool = Some(spool);
     }
 
     fn run_step(

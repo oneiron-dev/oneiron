@@ -23,7 +23,7 @@ use super::microvm::{
     CredentialEgressProxy, CredentialReadTransport, CredentialResolver, ExecutionBudget,
     GuestImage, MicroVmBackend, MicroVmExit, MicroVmHandle, prepare_overlay_handle,
 };
-use super::{SandboxBoundaryContract, SandboxMountTable, SandboxProposalWrite};
+use super::{ProposalSpoolFloor, SandboxBoundaryContract, SandboxMountTable, SandboxProposalWrite};
 use crate::engine_executor::StepCancellation;
 use crate::error::CodeError;
 use crate::{Error, Result};
@@ -47,6 +47,9 @@ pub struct FirecrackerBackend {
     root: PathBuf,
     config: Option<FirecrackerHostConfig>,
     transport: Option<Arc<dyn CredentialReadTransport>>,
+    /// The host's measured disk floor guests' proposed files spool on
+    /// (FIX 7650); none spools them as before.
+    spool: Option<Arc<dyn ProposalSpoolFloor>>,
     state: Mutex<BTreeMap<String, VmState>>,
 }
 
@@ -73,6 +76,7 @@ impl FirecrackerBackend {
             root: root.into(),
             config: None,
             transport: None,
+            spool: None,
             state: Mutex::new(BTreeMap::new()),
         }
     }
@@ -85,6 +89,7 @@ impl FirecrackerBackend {
             root: config.scratch_root.clone(),
             config: Some(config),
             transport: None,
+            spool: None,
             state: Mutex::new(BTreeMap::new()),
         })
     }
@@ -154,6 +159,7 @@ impl FirecrackerBackend {
             budget,
             proxy,
             self.transport.as_deref(),
+            self.spool.as_deref(),
             cancel,
         );
         #[cfg(not(target_os = "linux"))]
@@ -254,6 +260,10 @@ impl MicroVmBackend for FirecrackerBackend {
 
     fn set_read_transport(&mut self, transport: Arc<dyn CredentialReadTransport>) {
         self.transport = Some(transport);
+    }
+
+    fn set_proposal_spool(&mut self, spool: Arc<dyn ProposalSpoolFloor>) {
+        self.spool = Some(spool);
     }
 
     fn name(&self) -> &'static str {

@@ -35,6 +35,9 @@ pub struct ContainerBackend {
     states: Mutex<BTreeMap<String, State>>,
     transport: Option<Arc<dyn CredentialReadTransport>>,
     egress: Option<Arc<dyn EgressRelay>>,
+    /// The host's measured disk floor guests' proposed files spool on
+    /// (FIX 7650); none spools them as before.
+    spool: Option<Arc<dyn crate::code_sandbox::ProposalSpoolFloor>>,
 }
 struct State {
     handle: MicroVmHandle,
@@ -52,6 +55,7 @@ impl ContainerBackend {
             states: Mutex::new(BTreeMap::new()),
             transport: None,
             egress: None,
+            spool: None,
         })
     }
 
@@ -70,6 +74,7 @@ impl ContainerBackend {
             states: Mutex::new(BTreeMap::new()),
             transport: None,
             egress: None,
+            spool: None,
         })
     }
     fn state<'a>(
@@ -126,6 +131,9 @@ impl MicroVmBackend for ContainerBackend {
     }
     fn set_egress(&mut self, relay: Arc<dyn EgressRelay>) {
         self.egress = Some(relay);
+    }
+    fn set_proposal_spool(&mut self, spool: Arc<dyn crate::code_sandbox::ProposalSpoolFloor>) {
+        self.spool = Some(spool);
     }
     fn session_manifest(&self, vm: &MicroVmHandle) -> Option<SessionManifest> {
         self.states.lock().ok()?.get(vm.id())?.manifest.clone()
@@ -259,6 +267,7 @@ impl MicroVmBackend for ContainerBackend {
                 deadline,
                 proxy,
                 self.transport.as_deref(),
+                self.spool.as_deref(),
                 cancel,
             );
             let _ = finish.send(());
@@ -277,7 +286,15 @@ impl MicroVmBackend for ContainerBackend {
                 .map_err(|e| failed(e.to_string()))?;
         }
         cancel.check()?;
-        if abandoned {
+        // A proposal refused at the disk floor keeps its own outcome: the
+        // host ending that run is what left its guest abandoned (FIX 7650).
+        let at_floor = matches!(
+            result,
+            Err(crate::Error::Code(
+                crate::error::CodeError::SandboxProposalDiskFloor { .. }
+            ))
+        );
+        if abandoned && !at_floor {
             return Err(crate::Error::Code(
                 crate::error::CodeError::SandboxAbandoned {
                     backend: CONTAINER_BACKEND_NAME,

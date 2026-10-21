@@ -4,9 +4,10 @@ use super::refused;
 use crate::{
     Result,
     code_sandbox::{
-        SandboxCredentialCall, SandboxCredentialHandle, SandboxFileDeleteProposal,
-        SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxMount, SandboxProposalBody,
-        SandboxProposalBodyWriter, SandboxProposalWrite, SandboxVirtualPath,
+        ProposalSpoolFloor, SandboxCredentialCall, SandboxCredentialHandle,
+        SandboxFileDeleteProposal, SandboxFileRenameProposal, SandboxFileWriteProposal,
+        SandboxMount, SandboxProposalBody, SandboxProposalBodyWriter, SandboxProposalWrite,
+        SandboxVirtualPath,
         microvm::{
             CredentialEgressProxy, CredentialReadTransport, ExecutionBudget, MicroVmExit,
             MicroVmHandle,
@@ -115,6 +116,7 @@ pub(in crate::code_sandbox) fn exchange(
         deadline,
         proxy,
         transport,
+        None,
         &StepCancellation::never(),
     )
 }
@@ -123,10 +125,12 @@ pub(in crate::code_sandbox) fn exchange(
 /// before the exchange starts, at each frame boundary and around the host
 /// call a credential frame makes. The backend cuts the stream once the token
 /// fires; the cut stream's error, and any result that raced the cancel, give
-/// way to [`crate::error::CodeError::CodeStepCancelled`].
+/// way to [`crate::error::CodeError::CodeStepCancelled`]. Its proposed files
+/// spool on `spool`, the host's measured disk floor, when one was lent
+/// (FIX 7650).
 #[expect(
     clippy::too_many_arguments,
-    reason = "the exchange takes the guest's stream, program, budget, credential policy and step token"
+    reason = "the exchange takes the guest's stream, program, budget, policies, spool and token"
 )]
 pub(in crate::code_sandbox) fn exchange_cancellable(
     mut stream: UnixStream,
@@ -136,6 +140,7 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
     deadline: Instant,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
+    spool: Option<&dyn ProposalSpoolFloor>,
     cancel: &StepCancellation,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let exchanged = (|| {
@@ -192,8 +197,9 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
         }
         cancel.check()?;
         write_frame(&mut stream, &HostFrame::Ready, deadline)?;
-        let (mut exit, writes) =
-            receive_proposals_cancellable(stream, vm, &base, deadline, proxy, transport, cancel)?;
+        let (mut exit, writes) = receive_proposals_cancellable(
+            stream, vm, &base, deadline, proxy, transport, spool, cancel,
+        )?;
         let mut edits = Vec::new();
         for write in writes {
             match write {
@@ -243,10 +249,20 @@ fn receive_proposals(
         deadline,
         proxy,
         transport,
+        None,
         &StepCancellation::never(),
     )
 }
 
+/// The guest's proposals. A proposed file spools on `spool`, the host's
+/// measured disk floor, when one was lent: each chunk is admitted on the
+/// shared floor before it is written, and one that would cross it ends the
+/// exchange with [`crate::error::CodeError::SandboxProposalDiskFloor`]
+/// (FIX 7650). Without one it spools as before.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the receiver takes the guest's stream, snapshot, policies, spool and token"
+)]
 fn receive_proposals_cancellable(
     mut stream: UnixStream,
     vm: &MicroVmHandle,
@@ -254,6 +270,7 @@ fn receive_proposals_cancellable(
     deadline: Instant,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
+    spool: Option<&dyn ProposalSpoolFloor>,
     cancel: &StepCancellation,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
@@ -323,7 +340,11 @@ fn receive_proposals_cancellable(
                 shape
                     .replace_file(&workspace_path(&path)?, 0)
                     .map_err(|error| refused(error.reason()))?;
-                open = Some((path, SandboxProposalBody::spool()?));
+                let body = match spool {
+                    Some(floor) => SandboxProposalBody::spool_floored(floor)?,
+                    None => SandboxProposalBody::spool()?,
+                };
+                open = Some((path, body));
                 write_frame(
                     &mut stream,
                     &HostFrame::Receipt { accepted: true },
