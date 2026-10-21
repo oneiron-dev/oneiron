@@ -8,6 +8,7 @@ mod frozen_payload;
 mod govern;
 mod pipeline;
 mod policy_risk;
+mod publisher_signature;
 mod request_binding;
 pub(super) mod retry_after;
 pub(super) mod seat_policy;
@@ -24,6 +25,8 @@ pub use self::govern::{outbound_approve_once_digest, outbound_step_approve_once_
 pub use self::pipeline::OutboundDispatchPipeline;
 pub(crate) use self::pipeline::RecordedDispatch;
 pub(super) use self::policy_risk::GATE_OUTCOME_PENDING;
+pub use self::publisher_signature::PublisherSignatureAuthorization;
+pub(crate) use self::publisher_signature::validate_publisher_signature_in_txn;
 pub(crate) use self::request_binding::FrozenDispatchIdentity;
 pub(super) use self::retry_after::PROVIDER_RETRY_AFTER_FIELD;
 pub(super) use crate::channel_identity::enrich_dispatch_channel_identity;

@@ -1,9 +1,18 @@
 //! OF-537: free, actor-bound reports about a durable subject, never a task kind.
 
+mod delivery;
 mod routing;
 mod store;
 
 pub use crate::edit_distance::publisher::IssueCategory;
+pub use delivery::{
+    COACH_FEEDBACK_DELIVERY_FACET, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
+    REPORT_SIGNATURE_VERB, ReportDeliveryHold, ReportDeliveryKey, ReportDeliveryOutcome,
+    ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRun, ReportDeliveryRunRequest,
+    ReportDeliveryStatus, ReportDeliveryStatusRequest, ReportFrozenSend, ReportFrozenSignature,
+    ReportPublisherBinding, ReportPublisherBindingRequest, ReportPublisherEndpoint,
+    ReportPublisherMetadata, ReportSignatureTransport, ReportSignatureTransportRequest,
+};
 pub use routing::{ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature};
 
 use super::{FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_REF_MAX_BYTES, FeedbackProposal};

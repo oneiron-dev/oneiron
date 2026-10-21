@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::connector_key::{self, ConnectorKeyStatus};
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
+use crate::outbound::validate_publisher_signature_in_txn;
 use crate::outbound_consent::{FrozenCallValidation, OutboundBindingAuthority};
 use crate::outbound_intent_ledger::{
     FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentId,
@@ -171,6 +172,11 @@ fn send_pending_with_gate<T: OutboundTransport>(
             &prepared.payload,
             prepared.gate.provenance.actor_entity_ref,
         )?;
+        // OF-420: a publisher signature retries only while its custody still
+        // lets those exact bytes leave, with both participation switches on.
+        if let PreparedAuthorization::PublisherSignature(signature) = &prepared.authorization {
+            validate_publisher_signature_in_txn(vault, &wtxn, signature, prepared)?;
+        }
         let invite = super::admission::calendar_admission_in_txn(vault, &wtxn, prepared)?;
         let required_grant_id = invite
             .as_ref()
@@ -195,7 +201,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
             required_grant_id,
             match &prepared.authorization {
                 PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-                PreparedAuthorization::None => None,
+                PreparedAuthorization::None | PreparedAuthorization::PublisherSignature(_) => None,
             },
             retry.map_or(gate::ApprovalContext::Observe, gate::ApprovalContext::Retry),
         )?;

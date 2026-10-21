@@ -18,6 +18,7 @@ use crate::connector_key::{
 };
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
+use crate::outbound::validate_publisher_signature_in_txn;
 use crate::outbound_consent::OutboundBindingAuthority;
 use crate::outbound_intent_ledger::{
     BudgetChargeMarker, BudgetClass, IntentEscalationReason, IntentLedgerError, IntentState,
@@ -265,7 +266,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         required_grant_id,
         match &prepared.authorization {
             PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-            PreparedAuthorization::None => None,
+            PreparedAuthorization::None | PreparedAuthorization::PublisherSignature(_) => None,
         },
         code_wait.map_or(
             gate::ApprovalContext::FirstAdmission,
@@ -464,6 +465,10 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             }
             // An ordinary authorization path never carries capability
             // provenance, whatever its connector string happens to spell.
+            (None, None)
+        }
+        PreparedAuthorization::PublisherSignature(signature) => {
+            validate_publisher_signature_in_txn(vault, &wtxn, signature, &prepared)?;
             (None, None)
         }
         PreparedAuthorization::ScopedMcp {
@@ -787,7 +792,7 @@ pub(super) fn required_grant_id(
     authorization: &PreparedAuthorization,
 ) -> Option<crate::entity_id::EntityId> {
     match authorization {
-        PreparedAuthorization::None => None,
+        PreparedAuthorization::None | PreparedAuthorization::PublisherSignature(_) => None,
         PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
     }
 }

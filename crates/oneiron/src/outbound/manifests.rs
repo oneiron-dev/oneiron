@@ -705,18 +705,34 @@ fn feedback_manifest(channel: &'static str) -> OutboundCapabilityManifest {
         channel,
         "feedback",
         "Approved bundle delivery; exact destination and bytes are consent-bound.",
-        vec![verb(
-            "send",
-            "POST",
-            json!({"bundle":"approved MessagePack bytes","target":"exact HTTPS endpoint"}),
-            OutboundInterruptionClass::Ambient,
-            OutboundDeliverySemanticsKind::FireAndForget,
-            None,
-            OutboundRetryClass::NonIdempotentInterrupt,
-            OutboundPermissionState::Conditional,
-            false,
-            "Requires one approval for one bundle and one destination; never a standing grant.",
-        )],
+        vec![
+            verb(
+                "send",
+                "POST",
+                json!({"bundle":"approved MessagePack bytes","target":"exact HTTPS endpoint"}),
+                OutboundInterruptionClass::Ambient,
+                OutboundDeliverySemanticsKind::FireAndForget,
+                None,
+                OutboundRetryClass::NonIdempotentInterrupt,
+                OutboundPermissionState::Conditional,
+                false,
+                "Requires one approval for one bundle and one destination; never a standing grant.",
+            ),
+            // OF-420: a content-free ED-08 issue signature the publisher
+            // delivery sends on its own; it never carries a bundle or text.
+            verb(
+                "signature",
+                "POST",
+                json!({"signature":"oneiron.issue_signature.v1 JSON","target":"exact HTTPS endpoint"}),
+                OutboundInterruptionClass::Ambient,
+                OutboundDeliverySemanticsKind::FireAndForget,
+                None,
+                OutboundRetryClass::NonIdempotentInterrupt,
+                OutboundPermissionState::Conditional,
+                false,
+                "Allowed while the owner's \"Help improve Oneiron\" switch and the publisher dial are both on, to the publisher endpoint the owner bound.",
+            ),
+        ],
     )
 }
 

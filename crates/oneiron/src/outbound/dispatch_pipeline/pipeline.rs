@@ -247,8 +247,14 @@ impl OutboundDispatchPipeline {
             co_actor,
         } = prepared;
         // Calendar authority is read under the outbound writer, not prepared
-        // from a snapshot before it acquires the publication transaction.
-        let authorization = PreparedAuthorization::None;
+        // from a snapshot before it acquires the publication transaction. A
+        // publisher signature's custody is likewise checked there (OF-420).
+        let authorization = request
+            .publisher_signature
+            .clone()
+            .map_or(PreparedAuthorization::None, |signature| {
+                PreparedAuthorization::PublisherSignature(Box::new(signature))
+            });
         // FIX 6424 part 2a: a Linear send's press pins the payload frozen
         // above, the bytes its ledger row and every retry compare.
         let effect =

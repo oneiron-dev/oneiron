@@ -6,6 +6,11 @@
 //! continuation, each committed result and what holds triage back. Nothing
 //! here reads, moves or closes a note, and the inbox's own doors are
 //! unchanged.
+//!
+//! `/v1/owner/feedback/delivery` sits beside it: the owner runs the Coach's
+//! publisher delivery of content-free issue signatures now (OF-420, FIX
+//! 739), reads one issue's delivery, and binds a publisher to this server's
+//! feedback destination. Nothing here sends a report's text.
 
 use std::sync::Arc;
 
@@ -13,10 +18,12 @@ use axum::Router;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use oneiron::feedback::{
     FeedbackTriageBinding, FeedbackTriageBindingRequest, FeedbackTriageRun,
-    FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest,
+    FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest, ReportDeliveryRun,
+    ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
+    ReportPublisherBinding, ReportPublisherBindingRequest, ReportPublisherEndpoint,
 };
 
 use super::{OwnerReply, blocking, owner};
@@ -30,6 +37,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/feedback/triage/run", post(run))
         .route("/feedback/triage/status", get(status))
         .route("/feedback/triage/binding", get(binding).put(set_binding))
+        .route("/feedback/delivery/run", post(delivery_run))
+        .route("/feedback/delivery/status", get(delivery_status))
+        .route("/feedback/delivery/binding", put(delivery_binding))
 }
 
 /// `POST /v1/owner/feedback/triage/run` with `{}`: queues the sweep now and
@@ -96,6 +106,75 @@ async fn set_binding(
         Ok(server
             .vault()
             .set_feedback_triage_binding(&owner, &request)?)
+    })
+    .await?;
+    Ok(Json(binding))
+}
+
+/// `POST /v1/owner/feedback/delivery/run` with `{}`: queues the Coach's
+/// publisher delivery now, joining one already queued, and answers
+/// `{attempt}`. Read each issue's status for what it sent or holds.
+async fn delivery_run(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ReportDeliveryRunRequest>, JsonRejection>,
+) -> OwnerReply<ReportDeliveryRun> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let run = blocking(move || -> OwnerResult<ReportDeliveryRun> {
+        Ok(server
+            .vault()
+            .queue_feedback_report_delivery(&owner, request)?)
+    })
+    .await?;
+    Ok(Json(run))
+}
+
+/// `GET /v1/owner/feedback/delivery/status?issue_ref=<32 hex>`: one issue's
+/// signature delivery; not found when the vault holds no such issue.
+async fn delivery_status(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<ReportDeliveryStatusRequest>, QueryRejection>,
+) -> OwnerReply<ReportDeliveryStatus> {
+    let owner = owner(&auth, &server)?;
+    let request = query_params(query)?;
+    let status = blocking(move || -> OwnerResult<ReportDeliveryStatus> {
+        server
+            .vault()
+            .report_delivery_status(&owner, &request)?
+            .ok_or_else(|| OwnerError::NotFound("report issue", request.issue_ref.clone()))
+    })
+    .await?;
+    Ok(Json(status))
+}
+
+/// `PUT /v1/owner/feedback/delivery/binding` with `{publisher_ref, bound}`:
+/// binds the publisher to this server's feedback destination, its channel
+/// and exact endpoint as configured now, or unbinds it with `false`.
+/// Binding needs a configured destination. Answers the binding.
+async fn delivery_binding(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ReportPublisherBindingRequest>, JsonRejection>,
+) -> OwnerReply<ReportPublisherBinding> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let endpoint = if request.bound {
+        let route = super::feedback_host(&server)?.config.route();
+        Some(ReportPublisherEndpoint {
+            channel: route.channel,
+            endpoint: route.target,
+        })
+    } else {
+        None
+    };
+    let binding = blocking(move || -> OwnerResult<ReportPublisherBinding> {
+        Ok(server.vault().set_report_publisher_endpoint(
+            &owner,
+            &request.publisher_ref,
+            endpoint,
+        )?)
     })
     .await?;
     Ok(Json(binding))

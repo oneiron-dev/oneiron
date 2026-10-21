@@ -40,6 +40,7 @@ mod dreamer;
 pub(crate) use dreamer::DreamerControl;
 mod eval_authoring;
 pub(crate) mod failure_signals;
+mod feedback_report_delivery;
 mod feedback_triage;
 mod harness;
 pub(crate) mod home_digests;

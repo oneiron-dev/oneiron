@@ -12,7 +12,7 @@ use crate::{EntityId, Error, Result, Vault};
 
 // Read the canonical source receipts directly: the owner-facing recent-install
 // projection is deliberately bounded and cannot resolve an older subject.
-const IMPORTS: SideTable<(EntityId, EntityId, [u8; 32]), HubImportReceipt, LegacyJson> =
+pub(super) const IMPORTS: SideTable<(EntityId, EntityId, [u8; 32]), HubImportReceipt, LegacyJson> =
     SideTable::new(&side_table::SKILL_HUB_IMPORT_RECEIPT);
 
 const ROUTES: SideTable<String, ReportRoute, Named> =
@@ -189,6 +189,8 @@ impl Vault {
 
     /// The outbound view of an ISSUE. The host uses the existing publisher
     /// channel; this door cannot run repairs, open tasks or send unapproved text.
+    /// A report whose text still waits on the owner's disclosure answers its
+    /// content-free signature with no `disclosed` request (FIX 4630).
     pub fn report_routed_payload(&self, id: &EntityId) -> Result<Option<ReportRoutedPayload>> {
         let txn = self.store.env.read_txn()?;
         let Some(issue) = super::store::read(self, &txn, id)? else {
@@ -211,9 +213,6 @@ impl Vault {
         };
         let approved = issue.disclosure == ReportDisclosure::Approved
             || (issue.disclosure == ReportDisclosure::NeedsApproval && standing);
-        if issue.request.carries_text() && !approved {
-            return Ok(None);
-        }
         Ok(Some(ReportRoutedPayload {
             signature: ReportSignature {
                 issue_ref: issue.issue_ref,
