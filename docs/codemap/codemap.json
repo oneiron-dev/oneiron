@@ -91192,7 +91192,7 @@
      "path": "src/managed/vm_outbox/host.rs",
      "purpose": "The host's end of a vault VM's outbox carrier: an attachment bound to one VM's guest-initiated socket for…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2
      }
