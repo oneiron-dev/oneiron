@@ -279,6 +279,9 @@ impl OneironClient {
                 "tasks.accept" => remote_agent_verb_output::<oneiron::task_verb::TaskCallReceipt>(
                     client, verb, &input,
                 ),
+                "tasks.redo" => remote_agent_verb_output::<oneiron::task_verb::TaskCallReceipt>(
+                    client, verb, &input,
+                ),
                 "vault.commit_message" => {
                     remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
                         client, verb, &input,
@@ -1381,6 +1384,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.cleanup.run" => remote_agent_verb_output::<
                     oneiron::vault_cleanup::surface::CleanupRunView,
+                >(client, verb, &input),
+                "vault.archive.delete.preview" => remote_agent_verb_output::<
+                    oneiron::memory::ArchiveDeletePreviewView,
+                >(client, verb, &input),
+                "vault.archive.delete.confirm" => remote_agent_verb_output::<
+                    oneiron::memory::ArchiveDeleteBatchResult,
                 >(client, verb, &input),
                 "vault.usage.events.undecodable" => remote_agent_verb_output::<
                     oneiron::memory::usage_repair::UndecodableUsageList,
@@ -4519,6 +4528,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.accept", value)
+    }
+    pub fn tasks_redo(
+        &self,
+        input: &oneiron::task_verb::TaskRedo,
+    ) -> Result<oneiron::task_verb::TaskCallReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.redo", value)
     }
     pub fn vault_commit_message(
         &self,
@@ -8933,6 +8954,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.cleanup.run", value)
+    }
+    pub fn vault_archive_delete_preview(
+        &self,
+        input: &oneiron::memory::ArchiveDeletePreviewRequest,
+    ) -> Result<oneiron::memory::ArchiveDeletePreviewView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.archive.delete.preview", value)
+    }
+    pub fn vault_archive_delete_confirm(
+        &self,
+        input: &oneiron::memory::ArchiveDeleteConfirmRequest,
+    ) -> Result<oneiron::memory::ArchiveDeleteBatchResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.archive.delete.confirm", value)
     }
     pub fn vault_usage_events_undecodable(
         &self,

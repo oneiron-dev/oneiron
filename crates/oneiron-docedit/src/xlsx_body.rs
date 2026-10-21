@@ -13,7 +13,17 @@
 //! with none gets a minimal one. The body itself (its Loro document, actors
 //! and forks) lives in the engine; this module knows only SpreadsheetML.
 
-use crate::edit::xml::{Splice, escape_attribute, next_part, set_attribute, splice};
+mod header;
+mod insert;
+mod retain;
+mod titles;
+
+pub use header::header_rename;
+pub use insert::calculated_fill;
+
+use crate::edit::xml::{
+    Splice, escape_attribute, insert_end, next_part, replace_text, set_attribute, splice,
+};
 use crate::ooxml::{
     DOCUMENT_RELATIONSHIPS as REL, Node, SPREADSHEET_MAIN as SML, XmlError, XmlTree, escape_text,
 };
@@ -242,6 +252,13 @@ pub struct XlsxTable {
     /// A worksheet table. A query or XML-mapped table takes its columns from
     /// its source, so no column edit goes inside it.
     pub worksheet: bool,
+    /// Each column's calculated formula (`calculatedColumnFormula`, not an
+    /// array one), as a person types it and as its first data row reads it,
+    /// left to right; `None` for a column without one, and empty when no
+    /// column has one. A row inserted inside the data area takes them
+    /// ([`calculated_fill`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calculated: Vec<Option<String>>,
 }
 
 /// A table after a row or column edit to its sheet.
@@ -272,12 +289,20 @@ impl XlsxTable {
         // A table whose columns do not match its range refuses at export.
         let matched = self.columns.len() == (self.last.0 - self.first.0 + 1) as usize;
         if let Some(at) = column_span(self.first.0, self.last.0, edit).filter(|_| matched) {
+            // The calculated formulas stay beside their columns.
+            let formulas = table.calculated.len() == table.columns.len();
             if edit.delete {
+                if formulas {
+                    table.calculated.drain(at.clone());
+                }
                 deleted = table.columns.drain(at).collect();
             } else {
                 let names = free_column_names(&self.columns, edit.count);
                 for (offset, name) in names.iter().enumerate() {
                     table.columns.insert(at.start + offset, name.clone());
+                    if formulas {
+                        table.calculated.insert(at.start + offset, None);
+                    }
                 }
                 inserted = (edit.at..).zip(names).collect();
             }
@@ -293,6 +318,13 @@ impl XlsxTable {
     #[must_use]
     pub fn header_row(&self) -> Option<u32> {
         (self.header_rows > 0).then_some(self.first.1)
+    }
+
+    /// Whether cell `(col, row)` is inside its range: an unqualified
+    /// structured reference there (`[@Price]`) is to this table.
+    #[must_use]
+    pub fn contains(&self, col: u32, row: u32) -> bool {
+        (self.first.0..=self.last.0).contains(&col) && (self.first.1..=self.last.1).contains(&row)
     }
 }
 
@@ -338,7 +370,10 @@ fn free_column_names(taken: &[String], count: u32) -> Vec<String> {
 /// the edit deleted from a table rewritten as Excel does, a reference to a
 /// deleted column reading `#REF!` and a column span shrinking. `dropped`
 /// holds each table that lost columns, as it was before the edit, with the
-/// names it lost. `None` when nothing changed.
+/// names it lost. `own` is the table the formula belongs to (a cell's
+/// inside its range, a table part's own), whose columns its unqualified
+/// structured references (`[@Price]`) name; a defined name, chart or
+/// hyperlink has none. `None` when nothing changed.
 #[must_use]
 pub fn shift_axis_formula(
     formula: &str,
@@ -346,7 +381,9 @@ pub fn shift_axis_formula(
     sheet: &str,
     edit: &XlsxAxisEdit,
     dropped: &[(XlsxTable, Vec<String>)],
+    own: Option<&str>,
 ) -> Option<String> {
+    let own = own.map(str::to_lowercase);
     let mut out = shift_axis(formula, home, sheet, edit);
     for (table, deleted) in dropped {
         if let Some(next) = drop_table_columns(
@@ -354,6 +391,7 @@ pub fn shift_axis_formula(
             &table.name,
             &table.columns,
             deleted,
+            own.as_deref() == Some(table.name.to_lowercase().as_str()),
         ) {
             out = Some(next);
         }
@@ -384,7 +422,8 @@ pub struct XlsxStyle {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum XlsxChange {
     /// The cell's whole new state: a formula is written without a cached
-    /// value; a blank cell without a format is removed.
+    /// value; a blank cell without a format is removed, unless the stored
+    /// cell keeps other markup (an extension, a phonetic flag), which stays.
     Cell {
         sheet: String,
         col: u32,
@@ -423,6 +462,17 @@ pub enum XlsxChange {
     /// names the `k`-th. An equal record the stylesheet holds is reused.
     Formats {
         formats: Vec<XlsxFormat>,
+    },
+    /// Rename column `column` of worksheet table `table` on `sheet` to
+    /// `name` (FIX 6399): the table part's `tableColumn` name, and every
+    /// structured reference to the column, follow. It pairs with the `Cell`
+    /// change writing `name` as text into the column's header cell, the one
+    /// table header write a body may make ([`header_rename`]).
+    RenameColumn {
+        sheet: String,
+        table: String,
+        column: String,
+        name: String,
     },
 }
 
@@ -576,7 +626,10 @@ pub fn project_xlsx(
         else {
             if !matches!(
                 change,
-                XlsxChange::Sheets { .. } | XlsxChange::Shift { .. } | XlsxChange::Formats { .. }
+                XlsxChange::Sheets { .. }
+                    | XlsxChange::Shift { .. }
+                    | XlsxChange::Formats { .. }
+                    | XlsxChange::RenameColumn { .. }
             ) {
                 names.push(change);
             }
@@ -600,6 +653,37 @@ pub fn project_xlsx(
             return Err(refused("two changes write one cell"));
         }
     }
+    // A column rename writes its table part and the references to the
+    // column first, and admits the write of its header cell (FIX 6399).
+    let mut admitted: HashSet<(&str, u32, u32)> = HashSet::new();
+    for change in changes {
+        let XlsxChange::RenameColumn {
+            sheet,
+            table,
+            column,
+            name,
+        } = change
+        else {
+            continue;
+        };
+        let (col, row) = book.rename_column(sheet, table, column, name)?;
+        let paired = by_sheet
+            .get(sheet.as_str())
+            .and_then(|rows| rows.get(&row))
+            .and_then(|line| line.get(&col))
+            .copied();
+        if !matches!(
+            paired,
+            Some(XlsxChange::Cell { value: XlsxValue::Text(text), formula: None, .. }) if text == name
+        ) {
+            return Err(refused(
+                "a column rename needs its header cell written with the same name",
+            ));
+        }
+        if !admitted.insert((sheet.as_str(), col, row)) {
+            return Err(refused("two renames of one column"));
+        }
+    }
     let mut dropped_formula = false;
     for (sheet, rows) in &by_sheet {
         let part = book
@@ -618,8 +702,16 @@ pub fn project_xlsx(
         for (row, line) in rows {
             for (col, change) in line {
                 let held = stored.get(&(*col, *row));
-                if held.is_some_and(|cell| cell.locked.is_some())
-                    || areas.iter().any(|area| area.contains(*col, *row))
+                // A header cell its column's rename admits (FIX 6399).
+                let open = |lock: XlsxLock| {
+                    lock == XlsxLock::TableRow && admitted.contains(&(*sheet, *col, *row))
+                };
+                if held
+                    .and_then(|cell| cell.locked)
+                    .is_some_and(|lock| !open(lock))
+                    || areas
+                        .iter()
+                        .any(|area| area.contains(*col, *row) && !open(area.lock))
                 {
                     return Err(refused("a change writes a read-only cell"));
                 }
@@ -1222,14 +1314,29 @@ impl Book {
                     .and_then(|count| count.trim().parse::<u32>().ok())
                     .unwrap_or(default)
             };
-            let columns = match table.child(0, SML, "tableColumns")? {
-                Some((list, _)) => table
+            let mut columns = Vec::new();
+            let mut calculated = Vec::new();
+            if let Some((list, _)) = table.child(0, SML, "tableColumns")? {
+                for (at, column) in table
                     .children(list)
                     .filter(|(_, node)| node.is(SML, "tableColumn"))
-                    .map(|(_, node)| node.attr("name").unwrap_or_default().to_owned())
-                    .collect(),
-                None => Vec::new(),
-            };
+                {
+                    columns.push(column.attr("name").unwrap_or_default().to_owned());
+                    calculated.push(
+                        table
+                            .children(at)
+                            .find(|(_, node)| node.is(SML, "calculatedColumnFormula"))
+                            .filter(|(_, formula)| {
+                                !formula.attr("array").is_some_and(truthy)
+                                    && !formula.text.trim().is_empty()
+                            })
+                            .map(|(_, formula)| ui_form(&formula.text)),
+                    );
+                }
+            }
+            if calculated.iter().all(Option::is_none) {
+                calculated.clear();
+            }
             tables.push(XlsxTable {
                 name: node
                     .attr("displayName")
@@ -1244,6 +1351,7 @@ impl Book {
                 worksheet: node
                     .attr("tableType")
                     .is_none_or(|kind| kind == "worksheet"),
+                calculated,
             });
         }
         Ok(tables)
@@ -1496,12 +1604,14 @@ impl Book {
         }
         let mut edits = vec![(list_node.content.clone(), content)];
         if let Some((list, node)) = tree.child(0, SML, "definedNames")? {
+            // The list's other markup counts as kept, so it stays with it.
             let mut kept_names = 0;
             let mut name_edits = Vec::new();
-            for (_, name) in tree
-                .children(list)
-                .filter(|(_, node)| node.is(SML, "definedName"))
-            {
+            for (_, name) in tree.children(list) {
+                if !name.is(SML, "definedName") {
+                    kept_names += 1;
+                    continue;
+                }
                 if let Some(old) = name
                     .attr("localSheetId")
                     .and_then(|at| at.trim().parse::<usize>().ok())
@@ -1521,10 +1631,14 @@ impl Book {
                     }
                 }
                 kept_names += 1;
+                // Only the name's text changes (FIX 8572).
                 if !name.empty
                     && let Some(text) = retarget(&name.text)
                 {
-                    name_edits.push((name.content.clone(), escape_text(&text).into_bytes()));
+                    name_edits.extend(
+                        replace_text(&bytes, name, &text)
+                            .ok_or(refused("the workbook part could not be rewritten"))?,
+                    );
                 }
             }
             if kept_names == 0 {
@@ -1586,7 +1700,7 @@ impl Book {
                 .map(str::to_owned)
                 .collect();
             for part in parts {
-                self.rewrite_formulas(&part, &retarget)?;
+                self.rewrite_formulas(&part, &|text: &str, _| retarget(text))?;
             }
             self.move_pivot_sources(&|source: &Node| {
                 if let Some(sheet) = source.attr("sheet") {
@@ -1605,7 +1719,22 @@ impl Book {
             })?;
         }
         if layout.iter().map(|(_, name, _)| name).ne(self.order.iter()) {
-            self.drop_part_titles()?;
+            // The worksheets' titles, in the old order and as laid out; a
+            // chart or dialog sheet is not one (FIX 3441).
+            let old: Vec<String> = self
+                .order
+                .iter()
+                .filter(|name| self.worksheets.contains_key(*name))
+                .cloned()
+                .collect();
+            let new: Vec<String> = layout
+                .iter()
+                .filter(|(at, ..)| {
+                    at.is_none_or(|at| self.worksheets.contains_key(&self.order[at]))
+                })
+                .map(|(_, name, _)| name.clone())
+                .collect();
+            self.retitle_parts(&old, &new)?;
         }
         self.visibility = layout
             .iter()
@@ -1618,7 +1747,8 @@ impl Book {
 
     /// Drop the sheet titles and their heading counts from the extended
     /// properties (`TitlesOfParts` and `HeadingPairs` in docProps/app.xml),
-    /// which a sheet layout change leaves naming the old sheets. Both are
+    /// which a sheet layout change leaves naming the old sheets, when their
+    /// worksheet titles cannot be told apart to rewrite them. Both are
     /// optional, and the opening application writes them again on save.
     fn drop_part_titles(&mut self) -> Result<()> {
         let Some(part) = self
@@ -1723,11 +1853,13 @@ impl Book {
 
     /// Rewrite one part's formulas (its defined names, for the workbook) and
     /// hyperlink locations through `rewrite`, which answers `None` for text
-    /// it leaves alone.
+    /// it leaves alone. It is also given a worksheet cell formula's cell, as
+    /// the part holds it. Only the formula's text changes: its comments and
+    /// other markup keep their bytes (FIX 8572).
     fn rewrite_formulas(
         &mut self,
         part: &str,
-        rewrite: &dyn Fn(&str) -> Option<String>,
+        rewrite: &dyn Fn(&str, Option<(u32, u32)>) -> Option<String>,
     ) -> Result<()> {
         let bytes = self
             .package
@@ -1740,11 +1872,22 @@ impl Book {
                 && node.children.is_empty()
                 && !node.empty
             {
-                if let Some(text) = rewrite(&node.text) {
-                    edits.push((node.content.clone(), escape_text(&text).into_bytes()));
+                let at = node
+                    .parent
+                    .map(|cell| &tree.nodes[cell])
+                    .filter(|cell| node.is(SML, "f") && cell.is(SML, "c"))
+                    .and_then(|cell| cell.attr("r"))
+                    .and_then(cell_ref);
+                if let Some(text) = rewrite(&node.text, at) {
+                    edits.extend(
+                        replace_text(&bytes, node, &text)
+                            .ok_or(refused("a part could not be rewritten"))?,
+                    );
                 }
             } else if node.is(SML, "hyperlink")
-                && let Some(text) = node.attr("location").and_then(rewrite)
+                && let Some(text) = node
+                    .attr("location")
+                    .and_then(|location| rewrite(location, None))
             {
                 edits.push(set_attribute(&bytes, node, "location", &text));
             }
@@ -1825,15 +1968,15 @@ impl Book {
             let text = own
                 .get(&at)
                 .ok_or(refused("a shared formula member is missing"))?;
-            edits.push((
-                node.span.clone(),
-                format!(
-                    "<{0}>{1}</{0}>",
-                    node.qualified,
-                    escape_text(&storage_form(text))
-                )
-                .into_bytes(),
-            ));
+            // Only the group's attributes go and the text changes; the
+            // formula's other attributes stay (FIX 8571).
+            for attr in ["t", "si", "ref"] {
+                edits.extend(drop_attribute(&bytes, node, attr));
+            }
+            edits.extend(
+                replace_text(&bytes, node, &storage_form(text))
+                    .ok_or(refused("a worksheet could not be rewritten"))?,
+            );
         }
         let value =
             splice(&bytes, edits).map_err(|_| refused("a worksheet could not be rewritten"))?;
@@ -1885,10 +2028,20 @@ impl Book {
                 parts.push(rel.target);
             }
         }
+        let before = self.tables(&part)?;
+        // Each table's first data row as the edit moves it, by its name in
+        // lower case: an inserted row's calculated formulas are read there
+        // (FIX 3695).
+        let anchors: Vec<(String, u32)> = before
+            .iter()
+            .filter_map(|table| {
+                let anchor = edit.moved(table.first.1.checked_add(table.header_rows)?)?;
+                Some((table.name.to_lowercase(), anchor))
+            })
+            .collect();
         // The tables that lose columns, as they were, for the structured
         // references that name them.
-        let dropped: Vec<(XlsxTable, Vec<String>)> = self
-            .tables(&part)?
+        let dropped: Vec<(XlsxTable, Vec<String>)> = before
             .into_iter()
             .filter_map(|table| {
                 let deleted = table.shifted(edit)?.deleted;
@@ -1903,6 +2056,7 @@ impl Book {
         for target in &parts {
             self.move_coordinates(sheet, target, edit)?;
         }
+        self.inherit_lines(&part, edit)?;
         for drawing in &drawings {
             self.move_anchors(sheet, drawing, edit)?;
         }
@@ -1950,15 +2104,51 @@ impl Book {
             let bytes = rewrite_rows(&self.package, &part, &rows, &BTreeSet::new())?;
             self.package.replace_xml_part(&part, bytes)?;
         }
-        // Each part with formulas, and the sheet its unprefixed references
-        // are into: a worksheet's own, a table's worksheet, none for a chart
-        // or the defined names.
-        let mut homes: Vec<(String, Option<String>)> = Vec::new();
+        // Each part with formulas follows, an unqualified structured
+        // reference to the table it belongs to (FIX 3438).
+        for home in self.formula_homes()? {
+            self.rewrite_formulas(&home.part, &|text: &str, at| {
+                shift_axis_formula(
+                    text,
+                    home.sheet.as_deref(),
+                    sheet,
+                    edit,
+                    &dropped,
+                    home.owner(at),
+                )
+            })?;
+        }
+        if !edit.delete && edit.axis == XlsxAxis::Row {
+            self.fill_calculated(sheet, &part, edit, &anchors)?;
+        }
+        Ok(())
+    }
+
+    /// Each part with formulas, as [`FormulaHome`] reads it: every
+    /// worksheet with its tables, every table part, the charts and the
+    /// workbook's defined names.
+    fn formula_homes(&self) -> Result<Vec<FormulaHome>> {
+        let mut homes = Vec::new();
         for (name, part) in &self.worksheets {
-            homes.push((part.clone(), Some(name.clone())));
+            homes.push(FormulaHome {
+                part: part.clone(),
+                sheet: Some(name.clone()),
+                tables: self.tables(part)?,
+                own: None,
+            });
             for rel in self.package.relationships(part)? {
                 if !rel.external && rel.kind.ends_with("/table") {
-                    homes.push((rel.target, Some(name.clone())));
+                    let table = parse(&self.package, &rel.target)?;
+                    let root = &table.nodes[0];
+                    homes.push(FormulaHome {
+                        own: root
+                            .attr("displayName")
+                            .or_else(|| root.attr("name"))
+                            .map(str::to_owned),
+                        part: rel.target,
+                        sheet: Some(name.clone()),
+                        tables: Vec::new(),
+                    });
                 }
             }
         }
@@ -1969,15 +2159,20 @@ impl Book {
                     let lower = name.to_ascii_lowercase();
                     lower.contains("/charts/") && lower.ends_with(".xml")
                 })
-                .map(|name| (name.to_owned(), None)),
+                .map(|name| FormulaHome {
+                    part: name.to_owned(),
+                    sheet: None,
+                    tables: Vec::new(),
+                    own: None,
+                }),
         );
-        homes.push((self.part.clone(), None));
-        for (part, home) in homes {
-            self.rewrite_formulas(&part, &|text: &str| {
-                shift_axis_formula(text, home.as_deref(), sheet, edit, &dropped)
-            })?;
-        }
-        Ok(())
+        homes.push(FormulaHome {
+            part: self.part.clone(),
+            sheet: None,
+            tables: Vec::new(),
+            own: None,
+        });
+        Ok(homes)
     }
 
     /// Move one part's cell coordinates by a row or column edit to worksheet
@@ -3032,8 +3227,11 @@ impl Book {
         Ok(picked)
     }
 
-    /// Rebuild `definedNames` with the changed names replaced, added or
-    /// removed; untouched names keep their bytes.
+    /// Write the changed names into `definedNames` (FIX 8572): a changed
+    /// name keeps its element, and only its spelling, hidden flag and
+    /// formula text change where they differ; a deleted one goes; a new one
+    /// is added at the list's end. The list's other names and markup keep
+    /// their bytes, and the list goes only with the last of its contents.
     fn rewrite_names(&mut self, changes: &[&XlsxChange]) -> Result<()> {
         let bytes = self
             .package
@@ -3041,10 +3239,9 @@ impl Book {
             .ok_or(refused("the workbook part is missing"))?;
         let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
         let root = &tree.nodes[0];
-        let element = root.child_name("definedName");
-        let mut pending: Vec<((String, Option<usize>), Option<String>)> = Vec::new();
+        let mut pending: Vec<((String, Option<usize>), Option<retain::NameWrite<'_>>)> = Vec::new();
         for change in changes {
-            let (name, sheet, xml) = match change {
+            let (name, sheet, write) = match change {
                 XlsxChange::SetName {
                     name,
                     sheet,
@@ -3053,21 +3250,19 @@ impl Book {
                 } => {
                     check_name(name)?;
                     check_cell(&XlsxValue::Blank, Some(formula))?;
-                    let local = local_sheet(&self.order, sheet.as_deref())?
-                        .map_or_else(String::new, |at| format!(" localSheetId=\"{at}\""));
-                    let hidden = if *hidden { " hidden=\"1\"" } else { "" };
-                    let xml = format!(
-                        "<{element} name=\"{}\"{local}{hidden}>{}</{element}>",
-                        escape_text(name),
-                        escape_text(&storage_form(formula)),
-                    );
-                    (name, sheet, Some(xml))
+                    let write = retain::NameWrite {
+                        name,
+                        formula,
+                        hidden: *hidden,
+                    };
+                    (name, sheet, Some(write))
                 }
                 XlsxChange::DeleteName { name, sheet } => (name, sheet, None),
                 XlsxChange::Cell { .. }
                 | XlsxChange::Sheets { .. }
                 | XlsxChange::Shift { .. }
-                | XlsxChange::Formats { .. } => {
+                | XlsxChange::Formats { .. }
+                | XlsxChange::RenameColumn { .. } => {
                     continue;
                 }
             };
@@ -3078,70 +3273,86 @@ impl Book {
             if pending.iter().any(|(held, _)| *held == key) {
                 return Err(refused("two changes write one name"));
             }
-            pending.push((key, xml));
+            pending.push((key, write));
         }
         let list = tree.child(0, SML, "definedNames")?;
-        let mut children = Vec::new();
+        let mut edits = Vec::new();
+        // The list's elements that stay.
+        let mut kept = 0;
         if let Some((list, _)) = list {
-            for (_, node) in tree
-                .children(list)
-                .filter(|(_, node)| node.is(SML, "definedName"))
-            {
+            for (_, node) in tree.children(list) {
+                if !node.is(SML, "definedName") {
+                    kept += 1;
+                    continue;
+                }
                 let name = node.attr("name").unwrap_or_default().to_lowercase();
                 let local = node
                     .attr("localSheetId")
                     .and_then(|at| at.trim().parse::<usize>().ok());
-                match pending
+                let Some(at) = pending
                     .iter()
                     .position(|(key, _)| key.0 == name && key.1 == local)
-                {
-                    Some(at) => {
-                        if name.starts_with("_xlnm.") {
-                            return Err(refused("a built-in name is read-only"));
-                        }
-                        if let (_, Some(xml)) = pending.remove(at) {
-                            children.extend_from_slice(xml.as_bytes());
-                        }
+                else {
+                    kept += 1;
+                    continue;
+                };
+                if name.starts_with("_xlnm.") {
+                    return Err(refused("a built-in name is read-only"));
+                }
+                match pending.remove(at).1 {
+                    Some(write) => {
+                        kept += 1;
+                        edits.extend(retain::name_patch(&bytes, node, &write)?);
                     }
-                    None => children.extend_from_slice(&bytes[node.span.clone()]),
+                    None => edits.push((node.span.clone(), Vec::new())),
                 }
             }
         }
-        for (_, xml) in pending {
-            children.extend(xml.ok_or(refused("no such defined name"))?.into_bytes());
-        }
-        let wrapper = root.child_name("definedNames");
-        let replacement = if children.is_empty() {
-            Vec::new()
-        } else {
-            [
-                format!("<{wrapper}>").into_bytes(),
-                children,
-                format!("</{wrapper}>").into_bytes(),
-            ]
-            .concat()
+        let element = match list {
+            Some((_, node)) => node.child_name("definedName"),
+            None => root.child_name("definedName"),
         };
-        let value = match list {
-            Some((_, node)) => [
-                &bytes[..node.span.start],
-                &replacement[..],
-                &bytes[node.span.end..],
-            ]
-            .concat(),
+        let mut added = Vec::new();
+        for ((_, local), write) in pending {
+            let write = write.ok_or(refused("no such defined name"))?;
+            added.extend(write.xml(&element, local).into_bytes());
+        }
+        match list {
+            Some((_, node)) if kept == 0 && added.is_empty() => {
+                edits = vec![(node.span.clone(), Vec::new())];
+            }
+            Some((_, node)) => {
+                if !added.is_empty() {
+                    edits.push(insert_end(&bytes, node, &added));
+                }
+            }
+            None if added.is_empty() => {}
             None => {
                 let at = insertion(&tree, &["sheets", "functionGroups", "externalReferences"])
                     .ok_or(refused("the workbook has no sheet list"))?;
-                [&bytes[..at], &replacement[..], &bytes[at..]].concat()
+                let wrapper = root.child_name("definedNames");
+                let mut list = format!("<{wrapper}>").into_bytes();
+                list.extend(added);
+                list.extend(format!("</{wrapper}>").into_bytes());
+                edits.push((at..at, list));
             }
-        };
+        }
+        if edits.is_empty() {
+            return Ok(());
+        }
+        let value = splice(&bytes, edits)
+            .map_err(|_| refused("the workbook part could not be rewritten"))?;
         self.package.replace_xml_part(&self.part, value)?;
         Ok(())
     }
 }
 
-/// Rebuild `sheetData` with the touched rows rewritten in column order and new
-/// rows inserted in row order; untouched rows and cells keep their bytes.
-/// `restyled` (column, row) cells are written as their format alone.
+/// Write `rows`' changes into a worksheet's `sheetData` (FIX 8571): a
+/// stored cell is patched in place ([`retain::patch_cell`]), a new cell goes
+/// in column order before the row's other content, and a new row in row
+/// order. Every row's attributes and extensions, every untouched cell and
+/// the markup between them keep their bytes. `restyled` (column, row) cells
+/// are written as their format alone.
 fn rewrite_rows(
     package: &Package,
     part: &str,
@@ -3157,58 +3368,71 @@ fn rewrite_rows(
         .ok_or(refused("a worksheet has no sheetData"))?;
     let mut pending: BTreeMap<u32, &BTreeMap<u32, &XlsxChange>> =
         rows.iter().map(|(row, line)| (*row, line)).collect();
-    let mut out_rows: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+    // Each stored row's span by its number, and the end of the last one.
+    let mut held_rows: BTreeMap<u32, std::ops::Range<usize>> = BTreeMap::new();
+    let mut rows_end = None;
+    let mut edits: Vec<Splice> = Vec::new();
     for (index, row) in tree.children(data).filter(|(_, node)| node.is(SML, "row")) {
         let number = row
             .attr("r")
             .and_then(|r| r.trim().parse::<u32>().ok())
             .ok_or(refused("a worksheet row has no number"))?;
-        if out_rows.contains_key(&number) {
+        if held_rows.insert(number, row.span.clone()).is_some() {
             return Err(refused("a worksheet repeats a row"));
         }
+        rows_end = Some(row.span.end);
         let Some(changes) = pending.remove(&number) else {
-            out_rows.insert(number, bytes[row.span.clone()].to_vec());
             continue;
         };
-        let mut line: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
-        let mut held = BTreeMap::new();
-        for (_, cell) in tree.children(index).filter(|(_, node)| node.is(SML, "c")) {
+        // Each stored cell (its index and node) by its column, and the end
+        // of the last one.
+        let mut cells: BTreeMap<u32, (usize, &Node)> = BTreeMap::new();
+        let mut cells_end = None;
+        for (at, cell) in tree.children(index).filter(|(_, node)| node.is(SML, "c")) {
             let col = cell
                 .attr("r")
                 .and_then(cell_ref)
                 .ok_or(refused("a worksheet cell has no reference"))?
                 .0;
-            line.insert(col, bytes[cell.span.clone()].to_vec());
-            held.insert(col, cell);
+            cells.insert(col, (at, cell));
+            cells_end = Some(cell.span.end);
         }
+        // New cells by where they go: before a stored cell or the row's
+        // first other child, else at its end (`None`).
+        let mut added: BTreeMap<Option<usize>, Vec<u8>> = BTreeMap::new();
         let cell_name = row.child_name("c");
         for (col, change) in changes {
-            if restyled.contains(&(*col, number))
-                && let Some(cell) = held.get(col)
-                && let XlsxChange::Cell { style, .. } = change
-            {
-                line.insert(*col, restyle(&bytes, cell, *style));
-                continue;
+            match cells.get(col) {
+                Some(&(_, cell)) if restyled.contains(&(*col, number)) => {
+                    if let XlsxChange::Cell { style, .. } = change {
+                        edits.push((cell.span.clone(), restyle(&bytes, cell, *style)));
+                    }
+                }
+                Some(&(at, _)) => edits.extend(retain::patch_cell(&bytes, &tree, at, change)?),
+                None => {
+                    let Some(xml) = cell_xml(&cell_name, *col, number, change)? else {
+                        continue;
+                    };
+                    let point = cells
+                        .range(col + 1..)
+                        .next()
+                        .map(|(_, (_, cell))| cell.span.start)
+                        .or(cells_end)
+                        .or_else(|| tree.children(index).next().map(|(_, node)| node.span.start));
+                    added.entry(point).or_default().extend(xml.into_bytes());
+                }
             }
-            match cell_xml(&cell_name, *col, number, change)? {
-                Some(cell) => line.insert(*col, cell.into_bytes()),
-                None => line.remove(col),
-            };
         }
-        let open = &bytes[row.span.start..row.open_end];
-        let open = if row.empty {
-            open.strip_suffix(b"/>").unwrap_or(open)
-        } else {
-            open.strip_suffix(b">").unwrap_or(open)
-        };
-        let mut out = open.to_vec();
-        out.push(b'>');
-        line.into_values().for_each(|cell| out.extend(cell));
-        out.extend_from_slice(format!("</{}>", row.qualified).as_bytes());
-        out_rows.insert(number, out);
+        for (point, xml) in added {
+            edits.push(match point {
+                Some(at) => (at..at, xml),
+                None => insert_end(&bytes, row, &xml),
+            });
+        }
     }
     let row_name = data_node.child_name("row");
     let cell_name = data_node.child_name("c");
+    let mut added: BTreeMap<Option<usize>, Vec<u8>> = BTreeMap::new();
     for (number, changes) in pending {
         let mut cells = String::new();
         for (col, change) in changes {
@@ -3216,25 +3440,26 @@ fn rewrite_rows(
                 cells.push_str(&cell);
             }
         }
-        if !cells.is_empty() {
-            out_rows.insert(
-                number,
-                format!("<{row_name} r=\"{number}\">{cells}</{row_name}>").into_bytes(),
-            );
+        if cells.is_empty() {
+            continue;
         }
+        let point = held_rows
+            .range(number + 1..)
+            .next()
+            .map(|(_, span)| span.start)
+            .or(rows_end);
+        added
+            .entry(point)
+            .or_default()
+            .extend(format!("<{row_name} r=\"{number}\">{cells}</{row_name}>").into_bytes());
     }
-    let open = &bytes[data_node.span.start..data_node.open_end];
-    let open = open
-        .strip_suffix(b"/>")
-        .or_else(|| open.strip_suffix(b">"))
-        .unwrap_or(open);
-    let mut out = bytes[..data_node.span.start].to_vec();
-    out.extend_from_slice(open);
-    out.push(b'>');
-    out_rows.into_values().for_each(|row| out.extend(row));
-    out.extend_from_slice(format!("</{}>", data_node.qualified).as_bytes());
-    out.extend_from_slice(&bytes[data_node.span.end..]);
-    Ok(out)
+    for (point, xml) in added {
+        edits.push(match point {
+            Some(at) => (at..at, xml),
+            None => insert_end(&bytes, data_node, &xml),
+        });
+    }
+    splice(&bytes, edits).map_err(|_| refused("a worksheet could not be rewritten"))
 }
 
 /// A stored cell element with only its format changed: its `s` set, or
@@ -3567,6 +3792,32 @@ fn escape_at(text: &str) -> Option<char> {
         return None;
     }
     char::from_u32(u32::from_str_radix(&text[2..6], 16).ok()?)
+}
+
+/// A part whose formulas follow a sheet's edits: the sheet its unprefixed
+/// references are into (a worksheet's own, a table's worksheet, none for a
+/// chart or the defined names), and the table its unqualified structured
+/// references (`[@Price]`) are to: a table part's own, or for a worksheet
+/// cell the table whose range holds it.
+struct FormulaHome {
+    part: String,
+    sheet: Option<String>,
+    /// A worksheet's tables, as its part holds them now.
+    tables: Vec<XlsxTable>,
+    own: Option<String>,
+}
+
+impl FormulaHome {
+    /// The table a formula at `at` (a worksheet cell) belongs to.
+    fn owner(&self, at: Option<(u32, u32)>) -> Option<&str> {
+        self.own.as_deref().or_else(|| {
+            let (col, row) = at?;
+            self.tables
+                .iter()
+                .find(|table| table.contains(col, row))
+                .map(|table| table.name.as_str())
+        })
+    }
 }
 
 /// A table's columns a column edit deleted.

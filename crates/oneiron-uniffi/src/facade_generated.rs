@@ -388,6 +388,11 @@ export_facade! {
     let output = client.tasks_accept(&input)?;
     crate::codec::lift_record("tasks.accept", &output)
 };
+"tasks.redo" => fn tasks_redo(&self, input: TaskRedo) -> TaskCallReceipt = |client| {
+    let input: oneiron::task_verb::TaskRedo = crate::codec::lower_record("tasks.redo", input)?;
+    let output = client.tasks_redo(&input)?;
+    crate::codec::lift_record("tasks.redo", &output)
+};
 "vault.commit_message" => fn vault_commit_message(&self, input: CommitMessageRequest) -> WitnessReceipt = |client| {
     let input: oneiron::memory::CommitMessageRequest = crate::codec::lower_record("vault.commit_message", input)?;
     let output = client.vault_commit_message(&input)?;
@@ -2185,6 +2190,16 @@ export_facade! {
     let input: oneiron::vault_cleanup::surface::CleanupRunRequest = crate::codec::lower_empty("vault.cleanup.run")?;
     let output = client.vault_cleanup_run(&input)?;
     crate::codec::lift_record("vault.cleanup.run", &output)
+};
+"vault.archive.delete.preview" => fn vault_archive_delete_preview(&self, input: ArchiveDeletePreviewRequest) -> ArchiveDeletePreviewView = |client| {
+    let input: oneiron::memory::ArchiveDeletePreviewRequest = crate::codec::lower_record("vault.archive.delete.preview", input)?;
+    let output = client.vault_archive_delete_preview(&input)?;
+    crate::codec::lift_record("vault.archive.delete.preview", &output)
+};
+"vault.archive.delete.confirm" => fn vault_archive_delete_confirm(&self, input: ArchiveDeleteConfirmRequest) -> ArchiveDeleteBatchResult = |client| {
+    let input: oneiron::memory::ArchiveDeleteConfirmRequest = crate::codec::lower_record("vault.archive.delete.confirm", input)?;
+    let output = client.vault_archive_delete_confirm(&input)?;
+    crate::codec::lift_record("vault.archive.delete.confirm", &output)
 };
 "vault.usage.events.undecodable" => fn vault_usage_events_undecodable(&self) -> UndecodableUsageList = |client| {
     let input: oneiron::memory::usage_repair::UsageRepairListRequest = crate::codec::lower_empty("vault.usage.events.undecodable")?;

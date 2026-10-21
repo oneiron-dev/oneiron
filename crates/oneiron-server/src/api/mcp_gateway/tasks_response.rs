@@ -966,6 +966,7 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "tasks.redo" => a.spec.clone().ok_or_else(invalid),
         "vault.commit_message" => a.spec.clone().ok_or_else(invalid),
         "vault.begin_message_stream" => a.spec.clone().ok_or_else(invalid),
         "vault.append_to_stream" => a.spec.clone().ok_or_else(invalid),
@@ -1325,6 +1326,8 @@ fn mcp_agent_verb_input(
         "vault.authority.handoff_alarms.acknowledge" => a.spec.clone().ok_or_else(invalid),
         "vault.roots.requests.cancel" => a.spec.clone().ok_or_else(invalid),
         "vault.cleanup.run" => a.spec.clone().ok_or_else(invalid),
+        "vault.archive.delete.preview" => a.spec.clone().ok_or_else(invalid),
+        "vault.archive.delete.confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.usage.events.undecodable" => a.spec.clone().ok_or_else(invalid),
         "vault.usage.events.remove_undecodable" => a.spec.clone().ok_or_else(invalid),
         "vault.entities.mention" => a.spec.clone().ok_or_else(invalid),
@@ -2448,6 +2451,9 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("task_ref".to_owned(), value.clone());
             }
         }
+        "tasks.redo" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.commit_message" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3513,6 +3519,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.cleanup.run" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.archive.delete.preview" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.archive.delete.confirm" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.usage.events.undecodable" => {
@@ -6908,6 +6920,20 @@ async fn execute_agent_verb_row(
             served.extend([input.task_ref]);
             let output =
                 oneiron::task_verb::sdk::tasks_accept(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.redo" => {
+            let input: oneiron::task_verb::TaskRedo =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.task_ref]);
+            let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| {
+                oneiron::task_verb::sdk::tasks_redo(memory, input)
+            })
+            .await?;
+            // Derived from the rows its reads listed, on a refusal too.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -12155,6 +12181,22 @@ async fn execute_agent_verb_row(
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.archive.delete.preview" => {
+            let input: oneiron::memory::ArchiveDeletePreviewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_archive_delete_preview(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.archive.delete.confirm" => {
+            let input: oneiron::memory::ArchiveDeleteConfirmRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_archive_delete_confirm(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

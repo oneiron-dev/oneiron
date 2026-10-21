@@ -36,6 +36,7 @@ mod result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
 mod scoped_child;
+mod scoped_child_io;
 pub mod shadow_runner;
 mod storage;
 mod support;
@@ -183,6 +184,11 @@ pub use self::scoped_child::{
     SCOPED_CHILD_PORT_EXCEEDS_PARENT, SCOPED_CHILD_PORT_NOT_LENT, SCOPED_CHILD_SERVICE_UNBOUND,
     ScopedChildCallContext, ScopedChildLoan, ScopedChildPorts, ScopedChildSpec, ScopedInputRead,
     scoped_child_authority,
+};
+pub use self::scoped_child_io::{
+    HostInput, ScopedChildHosts, ScopedChildProfile, ScopedChildStop, collect_scoped_child,
+    commit_host_inputs, host_run_recorded, read_host_output, read_scoped_finding,
+    scoped_child_task, stage_host_output,
 };
 pub use self::storage::ReaderJobs;
 pub(crate) use self::storage::SpendBook;

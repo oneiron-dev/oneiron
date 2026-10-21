@@ -82,6 +82,7 @@ pub enum AgentVerb {
     VaultFanoutAck,
     TasksUpdate,
     TasksAccept,
+    TasksRedo,
     VaultCommitMessage,
     VaultBeginMessageStream,
     VaultAppendToStream,
@@ -441,6 +442,8 @@ pub enum AgentVerb {
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultRootsRequestsCancel,
     VaultCleanupRun,
+    VaultArchiveDeletePreview,
+    VaultArchiveDeleteConfirm,
     VaultUsageEventsUndecodable,
     VaultUsageEventsRemoveUndecodable,
     VaultEntitiesMention,
@@ -904,6 +907,8 @@ pub enum AgentVerb {
     SelfDesktopWindows,
     SelfDesktopWindow,
     SelfDesktopHandover,
+    SelfDreamerThingExtract,
+    SelfDreamerThingDecide,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -1238,6 +1243,7 @@ impl AgentVerb {
         Self::VaultFanoutAck,
         Self::TasksUpdate,
         Self::TasksAccept,
+        Self::TasksRedo,
         Self::VaultCommitMessage,
         Self::VaultBeginMessageStream,
         Self::VaultAppendToStream,
@@ -1597,6 +1603,8 @@ impl AgentVerb {
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultRootsRequestsCancel,
         Self::VaultCleanupRun,
+        Self::VaultArchiveDeletePreview,
+        Self::VaultArchiveDeleteConfirm,
         Self::VaultUsageEventsUndecodable,
         Self::VaultUsageEventsRemoveUndecodable,
         Self::VaultEntitiesMention,
@@ -2060,6 +2068,8 @@ impl AgentVerb {
         Self::SelfDesktopWindows,
         Self::SelfDesktopWindow,
         Self::SelfDesktopHandover,
+        Self::SelfDreamerThingExtract,
+        Self::SelfDreamerThingDecide,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -2397,6 +2407,7 @@ impl AgentVerb {
             Self::VaultFanoutAck => "vault.fanout.ack",
             Self::TasksUpdate => "tasks.update",
             Self::TasksAccept => "tasks.accept",
+            Self::TasksRedo => "tasks.redo",
             Self::VaultCommitMessage => "vault.commit_message",
             Self::VaultBeginMessageStream => "vault.begin_message_stream",
             Self::VaultAppendToStream => "vault.append_to_stream",
@@ -2768,6 +2779,8 @@ impl AgentVerb {
             }
             Self::VaultRootsRequestsCancel => "vault.roots.requests.cancel",
             Self::VaultCleanupRun => "vault.cleanup.run",
+            Self::VaultArchiveDeletePreview => "vault.archive.delete.preview",
+            Self::VaultArchiveDeleteConfirm => "vault.archive.delete.confirm",
             Self::VaultUsageEventsUndecodable => "vault.usage.events.undecodable",
             Self::VaultUsageEventsRemoveUndecodable => "vault.usage.events.remove_undecodable",
             Self::VaultEntitiesMention => "vault.entities.mention",
@@ -3243,6 +3256,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => "self.desktop.windows",
             Self::SelfDesktopWindow => "self.desktop.window",
             Self::SelfDesktopHandover => "self.desktop.handover",
+            Self::SelfDreamerThingExtract => "self.dreamer.thing.extract",
+            Self::SelfDreamerThingDecide => "self.dreamer.thing.decide",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -3583,6 +3598,7 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -3942,6 +3958,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeletePreview
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -4768,6 +4786,7 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -5127,6 +5146,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeletePreview
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -5833,6 +5854,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
@@ -6092,6 +6114,7 @@ impl AgentVerb {
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -6438,6 +6461,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeletePreview
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -6870,6 +6895,8 @@ impl AgentVerb {
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
                 | Self::SelfDesktopHandover
+                | Self::SelfDreamerThingExtract
+                | Self::SelfDreamerThingDecide
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
@@ -7138,6 +7165,7 @@ impl AgentVerb {
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::TasksAccept
+                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -7360,6 +7388,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
@@ -7627,6 +7656,8 @@ impl AgentVerb {
                 | Self::SelfDesktopHotkey
                 | Self::SelfDesktopBatch
                 | Self::SelfDesktopHandover
+                | Self::SelfDreamerThingExtract
+                | Self::SelfDreamerThingDecide
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -7770,6 +7801,7 @@ impl AgentVerb {
             Self::SelfStandingEdit
                 | Self::Cancel
                 | Self::TasksCreate
+                | Self::TasksRedo
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultClusterPropose
@@ -7791,7 +7823,10 @@ impl AgentVerb {
         matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
     }
     pub const fn takes_task_decisions(self) -> bool {
-        matches!(self, Self::TasksCreate | Self::TasksUpdate)
+        matches!(
+            self,
+            Self::TasksCreate | Self::TasksUpdate | Self::TasksRedo
+        )
     }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
@@ -7893,6 +7928,7 @@ impl AgentVerb {
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::TasksAccept => &["spec", "task_ref"],
+            Self::TasksRedo => &["spec"],
             Self::VaultCommitMessage => &["spec"],
             Self::VaultBeginMessageStream => &["spec"],
             Self::VaultAppendToStream => &["spec"],
@@ -8252,6 +8288,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
+            Self::VaultArchiveDeletePreview => &["spec"],
+            Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
@@ -8715,6 +8753,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
             Self::SelfDesktopHandover => &["spec"],
+            Self::SelfDreamerThingExtract => &["spec"],
+            Self::SelfDreamerThingDecide => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -9050,6 +9090,7 @@ impl AgentVerb {
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::TasksAccept => &["spec", "task_ref"],
+            Self::TasksRedo => &["spec"],
             Self::VaultCommitMessage => &["spec"],
             Self::VaultBeginMessageStream => &["spec"],
             Self::VaultAppendToStream => &["spec"],
@@ -9409,6 +9450,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
+            Self::VaultArchiveDeletePreview => &["spec"],
+            Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
@@ -9872,6 +9915,8 @@ impl AgentVerb {
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
             Self::SelfDesktopHandover => &["spec"],
+            Self::SelfDreamerThingExtract => &["spec"],
+            Self::SelfDreamerThingDecide => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -10357,6 +10402,9 @@ impl AgentVerb {
             }
             Self::TasksAccept => {
                 "Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."
+            }
+            Self::TasksRedo => {
+                "Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."
             }
             Self::VaultCommitMessage => {
                 "Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."
@@ -11418,6 +11466,12 @@ impl AgentVerb {
             }
             Self::VaultCleanupRun => {
                 "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."
+            }
+            Self::VaultArchiveDeletePreview => {
+                "Previews explicit archived records under the caller's delete authority."
+            }
+            Self::VaultArchiveDeleteConfirm => {
+                "Deletes explicit archived records under the caller's current delete authority and returns each receipt."
             }
             Self::VaultUsageEventsUndecodable => {
                 "Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb."
@@ -12741,6 +12795,12 @@ impl AgentVerb {
             }
             Self::SelfDesktopHandover => {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
+            }
+            Self::SelfDreamerThingExtract => {
+                "Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate."
+            }
+            Self::SelfDreamerThingDecide => {
+                "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt."
             }
             Self::VaultCommit => {
                 "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
