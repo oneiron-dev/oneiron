@@ -134,7 +134,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking_anti_abuse/tests_guards.rs` | src | s | 1 crate-vis | — | Guard behavior tests for booking anti-abuse enforcement |
 | `src/api/booking_anti_abuse/tests_quarantine.rs` | src | s | 1 crate-vis | — | Quarantine-behavior tests for booking anti-abuse enforcement |
 | `src/api/booking_anti_abuse/tests_support.rs` | src | s | 15 crate-vis | — | Shared test fixtures for booking anti-abuse guard tests |
-| `src/api/call_receipt.rs` | src | m | 29 crate-vis | — | OF-538: the lasting receipt every wire reply carries, reads included |
+| `src/api/call_receipt.rs` | src | m | 31 crate-vis | — | OF-538: the lasting receipt every wire reply carries, reads included |
 | `src/api/campaign.rs` | src | m | 16 crate-vis | — | CA-07 campaign HTTP routes |
 | `src/api/client_metadata.rs` | src | s | 2 crate-vis | — | Public CIMD documents derived only from the configured OAuth resource origin |
 | `src/api/companion/access_grants.rs` | src | s | 9 crate-vis | — | Companion access-grant routes and DTOs |
@@ -386,7 +386,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/board_setup.rs` | src | XL | 21 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/booking_call.rs` | src | s | 4 crate-vis | — | A managed vault's attested holder the vault no longer records as its live owner, calling a booking tool on… |
 | `src/api/mcp_gateway/call_meta.rs` | src | s | 4 crate-vis | — | What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and… |
-| `src/api/mcp_gateway/code_mode_verbs.rs` | src | L | 16 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
+| `src/api/mcp_gateway/code_mode_verbs.rs` | src | XL | 16 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 6 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
 | `src/api/mcp_gateway/code_mode_verbs/receipt_evidence.rs` | src | s | 2 crate-vis | — | A run's receipt screenshots kept for the caller its guest call came from (FIX 2150) |
 | `src/api/mcp_gateway/code_mode_verbs/session_write.rs` | src | s | 1 crate-vis | — | A room write a session-bound code run stages, at this connector's door (WILL L11-01, S01-2a) |
@@ -669,7 +669,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/unauthenticated_bind_tests.rs` | test | s | — | — | Unauthenticated mode (`--insecure-allow-unauthenticated` with no `auth_secret`) admits a request with no… |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
 | `src/config/backup.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | BackupConfig, BackupConfigOverride | The `[backup]` section: where local backups go, whether `serve` takes them on its own, how often, and how… |
-| `src/config/browser.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | BrowserConfig | `[browser]`: the guest a code run's `self.browser.*` verbs drive |
+| `src/config/browser.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | BrowserConfig | `[browser]`: the guest a code run's `self.browser.*` verbs drive |
+| `src/config/browser/readiness.rs` | src | s | 5 crate-vis | — | The server's browser readiness (FIX 7670): one value, seeded at start from the `[browser]` section, its… |
 | `src/config/connectors.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | ConnectorHostConfig, ConnectorTransport | `[connectors.<name>]`: where this host installed each catalog connector's transport (ONE-2510) |
 | `src/config/desktop.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | DesktopConfig | `[desktop]`: the guest a code run's `self.desktop.*` verbs drive |
 | `src/config/device_sync.rs` | src | s | 1 struct · 6 crate-vis | DeviceSyncConfig | `[device_sync]`: the home this machine keeps its vault in sync with |
@@ -1118,7 +1119,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/connector_sends.rs` | src | s | 1 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |
 | `src/server/consult_settle.rs` | src | s | 1 crate-vis | — | Consult settlement on every housekeeping pass (DOOR-063), on every substrate |
 | `src/server/cooperative_deletion.rs` | src | s | 1 crate-vis | — | Delivers queued courtesy deletion asks and answers (OF-273) |
-| `src/server/core.rs` | src | L | 1 struct · 16 fn · 1 re-export · 19 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
+| `src/server/core.rs` | src | L | 1 struct · 16 fn · 1 re-export · 20 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
 | `src/server/core/pattern_workflow.rs` | src | m | 1 fn · 8 crate-vis | — | The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house… |
 | `src/server/core/usage.rs` | src | s | 2 fn | — | The usage meter the trusted host binds to this vault before work starts |
 | `src/server/desktop_seats.rs` | src | m | 16 crate-vis | — | The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door… |

@@ -6,6 +6,11 @@
 //! host's browser guest and the host's retained line; never the seat, the
 //! library or the receipt sink, which stay with the session.
 //!
+//! Each start moves the server's browser readiness (FIX 7670): one that
+//! stops, by the phase it stopped at, and one [`start_run_browser`]
+//! attaches (a run's first guest, a replay's fresh one) once its driver
+//! attaches. A switch target's attach is the session's own and moves none.
+//!
 //! A guest's command names its engine and the largest CDP message its
 //! browser takes, derived from the egress door's largest answer body, so
 //! one setting moves both (FIX 6815).
@@ -29,8 +34,10 @@ use oneiron_browser::{
     BrowserEngine, BrowserError, BrowserGuest, BrowserGuestStarter, BrowserRequestHandler,
     BrowserSession, HandleRetention, StartedGuest,
 };
+use oneiron_vault_contract::BrowserUnavailableReason;
 
 use super::start_run_guest;
+use crate::config::browser::BrowserReadinessCell;
 use crate::server::HandleLine;
 
 /// Starts one run's browser guests on the host's own path.
@@ -39,10 +46,15 @@ struct RunGuestStarter {
     run_id: EntityId,
     guest: BrowserGuest,
     handles: HandleLine,
+    readiness: BrowserReadinessCell,
 }
 
 impl BrowserGuestStarter for RunGuestStarter {
     fn start(&mut self, engine: BrowserEngine) -> Result<StartedGuest, BrowserError> {
+        let command = guest_argv(engine).inspect_err(|_| {
+            self.readiness
+                .unavailable(BrowserUnavailableReason::GuestStartFailed)
+        })?;
         let (transport, relay) = start_run_guest(
             &self.vault,
             self.run_id,
@@ -50,8 +62,12 @@ impl BrowserGuestStarter for RunGuestStarter {
             &self.guest.image,
             self.guest.limits,
             self.guest.fixture.as_ref(),
-            &guest_argv(engine)?,
-        )?;
+            &command,
+        )
+        .map_err(|failure| {
+            self.readiness.unavailable(failure.phase);
+            failure.error
+        })?;
         Ok(StartedGuest {
             transport,
             relay,
@@ -67,12 +83,14 @@ impl BrowserGuestStarter for RunGuestStarter {
 /// Starts run `run_id`'s browser on the engine the host's `guest` names and
 /// attaches it, with the starter its engine switches take, and the host's
 /// `requests` handler where the host gives one (FIX 7122): it then performs
-/// every request of the run's pages in place of the run's relay.
+/// every request of the run's pages in place of the run's relay. The start
+/// and the attach move `readiness`.
 pub(super) fn start_run_browser(
     vault: &Arc<Vault>,
     run_id: EntityId,
     guest: &BrowserGuest,
     handles: &HandleLine,
+    readiness: &BrowserReadinessCell,
     requests: Option<Arc<dyn BrowserRequestHandler>>,
 ) -> Result<BrowserSession, BrowserError> {
     let mut starter = RunGuestStarter {
@@ -80,6 +98,7 @@ pub(super) fn start_run_browser(
         run_id,
         guest: guest.clone(),
         handles: handles.clone(),
+        readiness: readiness.clone(),
     };
     let StartedGuest {
         transport,
@@ -88,6 +107,8 @@ pub(super) fn start_run_browser(
     } = starter.start(guest.engine)?;
     let starter: Box<dyn BrowserGuestStarter> = Box::new(starter);
     BrowserSession::attach(guest, transport, relay, retention, Some(starter), requests)
+        .inspect(|session| readiness.started(session.manifest()))
+        .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::DriverAttachFailed))
 }
 
 /// The command that starts a run's browser guest on `engine`: the image's

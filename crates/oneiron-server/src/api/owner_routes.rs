@@ -413,8 +413,8 @@ pub(super) async fn blocking<T: Send + 'static>(
 }
 
 /// `GET /v1/owner/status`: where the data lives, the embedder as this
-/// server serves it, where feedback goes, and the bytes this process's sync
-/// links moved.
+/// server serves it, where feedback goes, the bytes this process's sync
+/// links moved, and how its browser stands.
 #[derive(serde::Serialize)]
 struct OwnerStatus {
     #[serde(flatten)]
@@ -424,6 +424,9 @@ struct OwnerStatus {
     /// Every sync link since this process started, summed per inner frame
     /// tag: raw bytes against the bytes on the wire, each way (OF-604).
     link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
+    /// The browser readiness a managed `Ping` carries, read from the same
+    /// value: its section, its binding and its last guest start (FIX 7670).
+    browser: oneiron_vault_contract::BrowserReadiness,
 }
 
 /// The admission of a ROOT ADMIN command here (FIX 2222): status, backups,
@@ -454,6 +457,7 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerR
             embedder: server.embedder_report()?,
             feedback: feedback::status(server.feedback.as_deref(), &server.config.feedback_inbox),
             link_bytes: oneiron::sync::transport::process_link_bytes(),
+            browser: server.browser_readiness().snapshot(),
         })
     })
     .await?;
