@@ -1071,7 +1071,7 @@
      "path": "src/agent_dispatch/planner_live/intent.rs",
      "purpose": "The reserved spawn intent (DOOR-111 S2, S4c-1): a planned spawn, durable under its asker's intent key",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -1084,6 +1084,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/intent/erase.rs",
+     "purpose": "A planned intent's erase (Engine 10-22)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -2118,7 +2128,7 @@
      "path": "src/attempt_queue/engine/enqueue_claim.rs",
      "purpose": "Enqueue doors plus kind-scoped claim machinery and read-repair scans",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 13,
       "fn": 5
      }
     },
@@ -64176,7 +64186,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FrozenPackFile",
@@ -64186,13 +64196,14 @@
       "PlannedLeaderLaunch",
       "PlannedSpawnHost",
       "PlannedSpawnRequest",
+      "SpawnErasure",
       "SpawnPhase"
      ],
      "path": "src/team/spawn_intent.rs",
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
      "surface": {
       "crate-vis": 2,
-      "enum": 1,
+      "enum": 2,
       "fn": 7,
       "struct": 7
      }
@@ -71247,7 +71258,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72761,7 +72772,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4672,
+   "source_files": 4673,
    "test_files": 902
   },
   "oneiron-android": {
@@ -104098,6 +104109,7 @@
       "SpawnAskKnobU32",
       "SpawnAskKnobU64",
       "SpawnCare",
+      "SpawnErasure",
       "SpawnIntentReply",
       "SpawnIntentRequest",
       "SpawnKnobSpawnPattern",
@@ -104605,7 +104617,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 961,
+      "enum": 962,
       "struct": 2993
      }
     },

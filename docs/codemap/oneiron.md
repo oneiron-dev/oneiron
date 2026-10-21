@@ -95,8 +95,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/planner.rs` | src | L | 11 struct · 1 enum · 13 fn · 1 const · 1 re-export · 4 crate-vis | AvailableModel, CostEnvelope, PlanBudget, PlannerDecisions, PlannerEvidence, PlannerQuestionContext, PlannerRung, PlannerThresholds +4 | The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a launch-ready plan — which… |
 | `src/agent_dispatch/planner/measured.rs` | src | s | 2 struct · 2 crate-vis | MeasuredRate, PatternCandidate | What the planner weighs for one candidate (ARCH-0079 #planner): its measured rate on each seat, and a… |
 | `src/agent_dispatch/planner_live.rs` | src | m | 3 struct · 5 fn · 3 crate-vis | LivePlanRequest, PlannerSeat, PlannerSkills | The live spawn planner (ARCH-0079 #planner, OF-541): the one vault-backed service a spawn door and the CEO's… |
-| `src/agent_dispatch/planner_live/intent.rs` | src | m | 1 fn · 14 crate-vis | — | The reserved spawn intent (DOOR-111 S2, S4c-1): a planned spawn, durable under its asker's intent key |
+| `src/agent_dispatch/planner_live/intent.rs` | src | m | 1 fn · 13 crate-vis | — | The reserved spawn intent (DOOR-111 S2, S4c-1): a planned spawn, durable under its asker's intent key |
 | `src/agent_dispatch/planner_live/intent/child.rs` | src | m | 3 fn · 2 crate-vis | — | The leased child's planned spawn (DOOR-111 S4c-1): a leased agent's `self.agents.spawn` with an ask… |
+| `src/agent_dispatch/planner_live/intent/erase.rs` | src | s | 6 crate-vis | — | A planned intent's erase (Engine 10-22) |
 | `src/agent_dispatch/planner_live/learning.rs` | src | s | 6 crate-vis | — | The measured reads the live planner weighs, and what a thin project leaf borrows into them (FIX 5496… |
 | `src/agent_dispatch/planner_live/root_plan.rs` | src | s | 4 crate-vis | — | The owner's root plan (DOOR-111 S3): the live planner a leased parent's spawn reads, for a spawn the… |
 | `src/agent_dispatch/planner_live/team_launch.rs` | src | m | 1 fn | — | The planned launch (DOOR-111 S4a, S4c-2): a planned intent's plan, launched as one group, at the root for… |
@@ -172,7 +173,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/completion.rs` | src | s | 3 crate-vis | — | Attempt completion inside a caller-owned transaction |
 | `src/attempt_queue/encoding.rs` | src | m | 19 crate-vis | — | Storage key derivation and LMDB row encode/decode for the attempt queue |
 | `src/attempt_queue/engine/defer.rs` | src | s | 1 crate-vis | — | A fresh row held to its own due instant (FIX 5957): the readiness a retry's backoff gives the try it mints… |
-| `src/attempt_queue/engine/enqueue_claim.rs` | src | m | 5 fn · 15 crate-vis | — | Enqueue doors plus kind-scoped claim machinery and read-repair scans |
+| `src/attempt_queue/engine/enqueue_claim.rs` | src | m | 5 fn · 13 crate-vis | — | Enqueue doors plus kind-scoped claim machinery and read-repair scans |
 | `src/attempt_queue/engine/enqueue_record.rs` | src | s | 1 crate-vis | — | The one storage write every enqueue door ends in: a fresh row, its readiness, run and dedupe entries, in the… |
 | `src/attempt_queue/engine/mod.rs` | src | s | 1 struct · 1 re-export · 5 crate-vis | AttemptQueue | The [`AttemptQueue`] handle and its lease state machine |
 | `src/attempt_queue/engine/mutate.rs` | src | m | 6 fn · 7 crate-vis | — | Retry/intervene/manifest append plus lease-cleanup mutation doors |
@@ -5048,7 +5049,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/team/receipt.rs` | src | m | 5 struct · 1 enum · 11 fn · 1 type · 5 crate-vis | Coverage, DecidedBy, PatternSkillRef, TeamOutcome, TeamReceipt, TeamShape | The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and… |
 | `src/team/run.rs` | src | m | 5 struct · 3 enum · 5 crate-vis | SelfTeamCall, TeamCoverageInput, TeamDecisionInput, TeamMemberAnswer, TeamMemberInput, TeamRecordInput, TeamRunAnswer, TeamStartInput | OF-540: a pattern-skill run's own team, from code mode |
 | `src/team/run_binding.rs` | src | s | 1 struct · 9 fn · 1 type · 1 crate-vis | TeamRunBinding | OF-540: what the host saw a team start do, and the team a run works in |
-| `src/team/spawn_intent.rs` | src | s | 7 struct · 1 enum · 7 fn · 2 crate-vis | FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch, PlannedSpawnHost, PlannedSpawnRequest, SpawnPhase | The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask… |
+| `src/team/spawn_intent.rs` | src | m | 7 struct · 2 enum · 7 fn · 2 crate-vis | FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch, PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure +1 | The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask… |
 | `src/team/stack.rs` | src | s | 2 struct · 1 fn | BranchResult, NodeComparison | Stacking (ARCH-0079 #stacking): a sub-project may run a different pattern from its parent, and every node… |
 | `src/temporal.rs` | src | s | 1 enum · 1 re-export | TemporalAnchorMode | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
 | `src/test_support.rs` | src | s | 8 fn · 1 crate-vis | — | Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which… |
