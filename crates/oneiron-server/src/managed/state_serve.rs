@@ -1205,10 +1205,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ));
     // Pending vectors are filled while the vault admits writes (FIX 777).
     ladder_workers.extend(sync_server.spawn_embedding_worker_admitted(admitted()));
-    // Witnessed turns' tagging markers drain under the same admission,
-    // counted as tagging, with the reap freeze as their pause.
+    // Witnessed turns' tagging markers, paused by the freeze, drain at shutdown, never aborted.
     let tagging = state.pass_control(WriteKind::BackgroundTagging);
-    ladder_workers.extend(sync_server.spawn_tagging_worker_admitted(tagging));
+    let tagging = sync_server.spawn_tagging_worker_until(tagging, shutdown.triggered());
     // Stored media is embedded under the same admission (OF-370).
     ladder_workers.extend(sync_server.spawn_media_embedding_worker_admitted(admitted()));
     // Queued and resumed agent runs, each admitted with its permit (OF-533):
@@ -1387,6 +1386,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let _ = coach_host.await;
     failure_signals.abort();
     let _ = failure_signals.await;
+    let _ = futures_util::future::OptionFuture::from(tagging).await;
     for worker in ladder_workers {
         worker.abort();
         let _ = worker.await;
