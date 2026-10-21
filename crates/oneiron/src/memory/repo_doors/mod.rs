@@ -12,17 +12,28 @@
 //! that is not this run's reads as no membership, and one whose run holds
 //! another lease now as a stale lease. PR2b adds the run's symbol
 //! declarations, its proposals and its queue entries (`symbols`,
-//! `proposals`), fenced by its declaration in each writer.
+//! `proposals`), fenced by its declaration in each writer. PR3b adds the
+//! public run binding (`host`), the run's checkout and export (`custody`)
+//! and the host's stock review policy (`review_policy`).
 
+mod custody;
+mod host;
 mod proposals;
 mod reads;
+mod review_policy;
 mod symbols;
 mod types;
 mod work;
 
+pub use custody::{
+    REPO_PUBLICATION_POLICY_REQUIRED, RepoCheckoutBindInput, RepoCheckoutBindOutput,
+    RepoExportInput, RepoExportOutput,
+};
+pub use host::repo_provenance_unwitnessed;
 pub use proposals::{
     REPO_PROVENANCE_REQUIRED, REPO_REVIEW_POLICY_REQUIRED, RepoReviewPolicy, RepoRunSources,
 };
+pub use review_policy::{OwnerProposalReviewPolicy, owner_review_catalog};
 pub use types::*;
 
 use crate::attempt_queue::AttemptId;
@@ -189,7 +200,7 @@ pub(crate) fn refusal_error(refusal: RepoAccessRefusal) -> MemoryError {
 }
 
 /// Whether `code` is one of the typed repo refusals, or one of a run
-/// proposal's two typed holds.
+/// proposal's or export's typed holds.
 pub(crate) fn is_repo_refusal_code(code: &str) -> bool {
     [
         RepoAccessRefusal::NoMembership,
@@ -200,7 +211,12 @@ pub(crate) fn is_repo_refusal_code(code: &str) -> bool {
     ]
     .iter()
     .any(|refusal| refusal.public_code() == code)
-        || [REPO_REVIEW_POLICY_REQUIRED, REPO_PROVENANCE_REQUIRED].contains(&code)
+        || [
+            REPO_REVIEW_POLICY_REQUIRED,
+            REPO_PROVENANCE_REQUIRED,
+            REPO_PUBLICATION_POLICY_REQUIRED,
+        ]
+        .contains(&code)
 }
 
 /// A ref-level act's paths: none.

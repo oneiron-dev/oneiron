@@ -4,6 +4,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use super::attempt_binding::{BOUND_ATTEMPT_KEY, decode_bound_attempt, encode_bound_attempt};
 use super::types::{
     CHECKOUT_LEASE_SCHEMA_VERSION, CHECKOUT_RESULT_ID_DOMAIN, CheckoutError, CheckoutId,
     CheckoutLeaseAct, CheckoutLeaseState, CheckoutResult, CheckoutSettlementDisposition,
@@ -208,6 +209,35 @@ fn fields(bytes: &[u8], keys: &[&str]) -> CheckoutResult<Vec<Value>> {
         })
         .collect()
 }
+/// The lease body's eleven fields, and its `bound_attempt` value when the
+/// row carries one (FIX 6867, G1 PR3b): an unbound lease is written without
+/// it, so its bytes are what they always were.
+fn lease_fields(bytes: &[u8]) -> CheckoutResult<(Vec<Value>, Option<Value>)> {
+    let mut c = Cursor::new(bytes);
+    let v = rmpv::decode::read_value(&mut c).map_err(|_| corrupt())?;
+    if c.position() as usize != bytes.len() {
+        return Err(corrupt());
+    }
+    let Value::Map(mut xs) = v else {
+        return Err(corrupt());
+    };
+    let bound = xs
+        .iter()
+        .position(|(k, _)| k.as_str() == Some(BOUND_ATTEMPT_KEY))
+        .map(|at| xs.remove(at).1);
+    if xs.len() != CHECKOUT_LEASE_BODY_KEYS.len() {
+        return Err(corrupt());
+    }
+    let fields = CHECKOUT_LEASE_BODY_KEYS
+        .iter()
+        .map(|key| {
+            xs.iter()
+                .find_map(|(k, v)| (k.as_str() == Some(*key)).then(|| v.clone()))
+                .ok_or_else(corrupt)
+        })
+        .collect::<CheckoutResult<Vec<_>>>()?;
+    Ok((fields, bound))
+}
 fn text(v: &Value) -> CheckoutResult<String> {
     v.as_str().map(str::to_owned).ok_or_else(corrupt)
 }
@@ -215,7 +245,7 @@ fn u(v: &Value) -> CheckoutResult<u64> {
     v.as_u64().ok_or_else(corrupt)
 }
 pub(in crate::checkout) fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
-    map_bytes(vec![
+    let mut entries = vec![
         (
             CHECKOUT_LEASE_BODY_KEYS[0],
             Value::from(CHECKOUT_LEASE_SCHEMA_VERSION),
@@ -256,13 +286,21 @@ pub(in crate::checkout) fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Ve
             a.lease_expires_at.map_or(Value::Nil, Value::from),
         ),
         (CHECKOUT_LEASE_BODY_KEYS[10], Value::from(a.updated_at)),
-    ])
+    ];
+    if let Some(bound) = &a.bound_attempt {
+        entries.push((BOUND_ATTEMPT_KEY, encode_bound_attempt(bound)));
+    }
+    map_bytes(entries)
 }
 pub(in crate::checkout) fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseAct> {
-    let x = fields(b, &CHECKOUT_LEASE_BODY_KEYS)?;
+    let (x, bound) = lease_fields(b)?;
     if u(&x[0])? != 1 {
         return Err(corrupt());
     };
+    let epoch = u(&x[5])?;
+    let bound_attempt = bound
+        .map(|bound| decode_bound_attempt(&bound, epoch))
+        .transpose()?;
     let id = x[1]
         .as_slice()
         .filter(|b| b.len() == 16)
@@ -298,12 +336,13 @@ pub(in crate::checkout) fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseA
         task_ref: EntityId::from_bytes(tb).map_err(CheckoutError::Store)?,
         repo_ref: RepoRef::parse(&text(&x[3])?).map_err(CheckoutError::Store)?,
         holder_ref: holder,
-        epoch: u(&x[5])?,
+        epoch,
         task_class: class,
         state,
         claimed_at: u(&x[8])?,
         lease_expires_at: if x[9].is_nil() { None } else { Some(u(&x[9])?) },
         updated_at: u(&x[10])?,
+        bound_attempt,
     })
 }
 pub(in crate::checkout) fn encode_tombstone(max_epoch: u64) -> CheckoutResult<Vec<u8>> {
