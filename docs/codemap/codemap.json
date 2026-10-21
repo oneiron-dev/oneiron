@@ -8846,10 +8846,10 @@
      "path": "src/browser_library.rs",
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 2,
       "enum": 5,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -73244,7 +73244,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 40,
       "trait": 2
      }
@@ -73276,7 +73276,7 @@
       "crate-vis": 5,
       "enum": 1,
       "fn": 3,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 14,
       "trait": 1
      }
@@ -73299,6 +73299,23 @@
       "enum": 4,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FiledWorkflow",
+      "LibraryRunMode",
+      "RunOutcome"
+     ],
+     "path": "src/library/live_run.rs",
+     "purpose": "A library run (CUA E2): strict, where only a rule answers its routine steps and a step only a model could…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -73477,6 +73494,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AskUpReason",
+      "BatchStopCause",
+      "CheckReceipt",
+      "ClockScope",
+      "FailedStepReceipt",
+      "StrictDenial",
+      "StrictDenied"
+     ],
+     "path": "src/stop.rs",
+     "purpose": "Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 6,
+      "enum": 4,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EngineSwitchRecord",
       "StoragePhase",
       "SwitchCarried",
@@ -73547,7 +73586,7 @@
      "purpose": "What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page…"
     },
     "library": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -73609,6 +73648,13 @@
      "layout": "file+dir",
      "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…"
     },
+    "stop": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already…"
+    },
     "switch": {
      "files": 1,
      "impl_vault": false,
@@ -73619,7 +73665,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 38,
+   "source_files": 40,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -96732,6 +96778,7 @@
       "AskPrior",
       "AskRole",
       "AskTo",
+      "AskUpReason",
       "AsofScrubberAtom",
       "AsrCloseRequest",
       "AsrClosed",
@@ -96793,6 +96840,7 @@
       "BatchOutput",
       "BatchState",
       "BatchStep",
+      "BatchStopCause",
       "BeginMessageStreamRequest",
       "Birth",
       "BlindCampaignJudgeInput",
@@ -97046,6 +97094,7 @@
       "ChatProjection",
       "ChatRole",
       "ChatStop",
+      "CheckReceipt",
       "CheckoutAction",
       "CheckoutClaimInput",
       "CheckoutClass",
@@ -97097,6 +97146,7 @@
       "CleanupPosture",
       "CleanupRunView",
       "ClickInput",
+      "ClockScope",
       "CloseLensFrameReply",
       "ClusterClaimInput",
       "ClusterCohort",
@@ -97835,6 +97885,7 @@
       "ExtractionDefault",
       "FactKind",
       "FactSource",
+      "FailedStepReceipt",
       "FamilyDecision",
       "FamilyPurpose",
       "FanoutAckRequest",
@@ -98349,6 +98400,7 @@
       "LibraryRetiredInput",
       "LibraryRetiredOutput",
       "LibraryRunInput",
+      "LibraryRunMode",
       "LibraryRunOutput",
       "LiftCause",
       "LiftCauseCount",
@@ -99986,6 +100038,7 @@
       "StreamFinality",
       "StreamFinalityReason",
       "StreamSyncVisibility",
+      "StrictDenial",
       "SubgoalStatus",
       "SubscriptionScope",
       "SufficiencyCard",
@@ -100423,8 +100476,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 933,
-      "struct": 2942
+      "enum": 938,
+      "struct": 2944
      }
     },
     {
