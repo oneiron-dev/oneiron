@@ -13,6 +13,10 @@
 //! reaches the same dispatcher through [`ProviderTagger::claim_room`] and
 //! [`ProviderTagger::submit`] (FIX 6755), so its markers queue beside every
 //! other call.
+//!
+//! On a Mac, the serving build also starts the slot's platform admission
+//! ([`Admission`]), which adds the bundle's managed MLX worker
+//! ([`mlx`]) to the dispatcher in the background once it clears here.
 
 #[cfg(test)]
 use std::collections::VecDeque;
@@ -27,6 +31,7 @@ use oneiron::{ModelId, embed::EmbedderLocality};
 
 use crate::config::{OneironerConfig, OneironerProvider};
 use dispatcher::{Completion, Dispatcher, WorkerSpec};
+use engines::Admission;
 use local::WindowCounter;
 
 pub(crate) use dispatcher::DispatchClaim;
@@ -36,6 +41,7 @@ mod dispatcher;
 pub(crate) mod endpoint;
 pub(crate) mod engines;
 mod local;
+mod mlx;
 pub(crate) mod release;
 
 #[cfg(test)]
@@ -176,6 +182,8 @@ pub(crate) struct TaggerSlot {
     card: Mutex<Option<endpoint::ModelCard>>,
     /// The engine a local tagger runs on and how it was picked.
     serving: Option<engines::Serving>,
+    /// The platform admission the serving build starts, until it does.
+    platforms: Option<Admission>,
     /// The test door onto the traces the worker emitted, bounded.
     #[cfg(test)]
     traces: Mutex<VecDeque<LoggedTrace>>,
@@ -268,6 +276,15 @@ impl TaggerSlot {
         }
     }
 
+    /// Starts the slot's platform admission once, on its own thread (FIX
+    /// 6755 slice 3). Only the serving build calls it, never `init`'s
+    /// check; a later call starts nothing.
+    fn start_platform_workers(&mut self) {
+        if let Some(admission) = self.platforms.take() {
+            admission.start();
+        }
+    }
+
     /// The emitted traces, oldest first.
     #[cfg(test)]
     pub(crate) fn traces(&self) -> Vec<LoggedTrace> {
@@ -304,7 +321,7 @@ pub(crate) fn build_slot_with_rows(
         return Ok(None);
     };
     config.validate()?;
-    let mut serving = None;
+    let (mut serving, mut platforms) = (None, None);
     let tagger = match config.provider {
         OneironerProvider::Local => {
             let (tagger, engine) = match engines::load(config, rows_location) {
@@ -330,8 +347,9 @@ pub(crate) fn build_slot_with_rows(
                 "oneironer engine serving"
             );
             serving = Some(engine);
+            let card = tagger.card();
             let provider = Provider::Local {
-                card: tagger.card(),
+                card: card.clone(),
                 decode_revision: tagger.decode_revision(),
             };
             let model = tagger.model_id().clone();
@@ -352,6 +370,10 @@ pub(crate) fn build_slot_with_rows(
             // named, ranks first (FIX 6755).
             let worker = tagger.dispatcher.add(worker)?;
             tagger.dispatcher.publish_rank(worker, 0);
+            // A platform runtime joins it only from the serving build, in
+            // the background, and never beside a pinned engine.
+            let handle = tagger.dispatcher.handle();
+            platforms = Admission::new(config, rows_location, handle, engine, worker, card);
             tagger
         }
         OneironerProvider::Endpoint => {
@@ -370,6 +392,7 @@ pub(crate) fn build_slot_with_rows(
         tagger: Arc::new(tagger),
         card: Mutex::new(None),
         serving,
+        platforms,
         #[cfg(test)]
         traces: Mutex::new(VecDeque::new()),
     };
@@ -407,11 +430,19 @@ pub(crate) fn build_slot_with_rows(
 
 /// [`build_slot_with_rows`] off the async runtime: native loading and HTTP
 /// are blocking. `rows_location` is the engine rows file, `None` for the
-/// XDG/HOME default.
+/// XDG/HOME default. This is the serving build, `serve`'s and a managed
+/// vault's: it starts the slot's platform admission, which never holds back
+/// the listener (FIX 6755 slice 3).
 pub(crate) async fn build_slot_off_runtime(
     config: Option<OneironerConfig>,
     rows_location: Option<PathBuf>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
-    let build = move || build_slot_with_rows(config.as_ref(), rows_location.as_deref());
+    let build = move || {
+        let mut slot = build_slot_with_rows(config.as_ref(), rows_location.as_deref())?;
+        if let Some(slot) = slot.as_mut() {
+            slot.start_platform_workers();
+        }
+        Ok(slot)
+    };
     crate::logging::off_runtime("tagger slot task", build).await?
 }
