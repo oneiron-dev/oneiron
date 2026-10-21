@@ -23,6 +23,8 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `PENDING_ASK` | A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one. Each handle's `retry(pending, verb, input)` resends the call under it (UniFFI: the failure's `pending` payload); `oneiron mcp` resends an identical repeated tool call under the pending call's invocation. |
 | `INVENTED_REFERENCE` | Name only records this writer can read, by the ref the engine issued. The write was refused and receipted. |
 | `HOST_ACTION_REQUIRES_SUPPORT_GRANT` | A hosted operator's root acts as nobody inside a customer's vault. Ask the customer for a support grant; the operator's admin commands need none. |
+| `WORLD_RECIPIENT_LIMIT` | The owner's read setting for a row's world keeps it from where this answer goes; the message names his choice, never the world. Read it where his choice admits, or ask him to change that setting. The row is there: do not treat this as not found. |
+| `WORLD_PLACEMENT_UNVERIFIABLE` | A row's world placement, the rows a result came from or the vault root cannot be verified now, so nothing was released. No change to the request helps; retry once the vault has settled it. |
 
 Remote server-specific codes and HTTP schemas are also indexed by
 [the engine API reference](../../oneiron.skills.md).

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 mod language_server;
 mod run;
 pub use language_server::{LanguageServer, SharedLanguageServer, StdioLanguageServer};
-pub(crate) use run::view_receipt_in_txn;
+pub(crate) use run::{repo_view_receipts_in_txn, view_receipt_in_txn};
 
 /// One materialized view's receipt, keyed by view id.
 const VIEW_RECEIPTS: SideTable<EntityId, ViewReceipt, Named> =

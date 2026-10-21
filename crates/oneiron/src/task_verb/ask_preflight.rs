@@ -130,15 +130,16 @@ impl Memory<'_> {
     }
 
     /// Reads an ask's question and context rows as the ask reads them: each
-    /// is listed as a producer of what the call answers, and off this device
-    /// one a device-local world keeps reads as no row (DEC-0005).
+    /// is listed as a producer of what the call answers, and one the world
+    /// settings keep from this surface's destination is refused with that
+    /// setting's named hold (DEC-0005, FIX 7463a).
     pub(super) fn ask_question_in(
         &self,
         txn: &heed::RoTxn<'_>,
         what: &TaskAskQuestion,
     ) -> MemoryResult<()> {
         for row in std::iter::once(what.reference).chain(what.context_refs.iter().copied()) {
-            self.read_producer_in(txn, row.entity_ref())?;
+            self.ask_read_producer_in(txn, row.entity_ref())?;
         }
         Ok(())
     }

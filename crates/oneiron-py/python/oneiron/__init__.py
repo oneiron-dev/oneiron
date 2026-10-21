@@ -3535,6 +3535,15 @@ class Oneiron:
             """Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_import(json.dumps(spec))))
         @property
+        def repos(self) -> "Oneiron._VaultCodeReposVerbs":
+            return Oneiron._VaultCodeReposVerbs(self._client)
+        @property
+        def forks(self) -> "Oneiron._VaultCodeForksVerbs":
+            return Oneiron._VaultCodeForksVerbs(self._client)
+        @property
+        def ingress(self) -> "Oneiron._VaultCodeIngressVerbs":
+            return Oneiron._VaultCodeIngressVerbs(self._client)
+        @property
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs":
             return Oneiron._VaultCodeOriginVerbs(self._client)
         @property
@@ -3552,6 +3561,9 @@ class Oneiron:
         @property
         def merge_queue(self) -> "Oneiron._VaultCodeMergeQueueVerbs":
             return Oneiron._VaultCodeMergeQueueVerbs(self._client)
+        @property
+        def checks(self) -> "Oneiron._VaultCodeChecksVerbs":
+            return Oneiron._VaultCodeChecksVerbs(self._client)
     class _VaultCodeSymbolsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3576,6 +3588,24 @@ class Oneiron:
         def receipt(self, spec):
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
             return json.loads(_translate(lambda: self._client.vault_code_waits_receipt(json.dumps(spec))))
+    class _VaultCodeReposVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work."""
+            return json.loads(_translate(lambda: self._client.vault_code_repos_get(json.dumps(spec))))
+    class _VaultCodeForksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one durable code revision fork and its recorded base, proposals and document states. Owner only. A transient work view is not a persisted fork."""
+            return json.loads(_translate(lambda: self._client.vault_code_forks_get(json.dumps(spec))))
+    class _VaultCodeIngressVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one authenticated received ref and its recorded operations and candidate progress. Owner only. Pending matching does not change push acceptance."""
+            return json.loads(_translate(lambda: self._client.vault_code_ingress_get(json.dumps(spec))))
     class _VaultCodeOriginVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3750,6 +3780,12 @@ class Oneiron:
         def export_green(self, spec):
             """Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_export_green(json.dumps(spec))))
+    class _VaultCodeChecksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass."""
+            return json.loads(_translate(lambda: self._client.vault_code_checks_get(json.dumps(spec))))
     class _VaultResultsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -56,12 +56,9 @@ impl Vault {
                 &row.message,
                 Some(row.provenance_claim),
             )?;
-            let prepared = prepare_commit_file_through_queue_worktree(
-                &root,
-                &row.path,
-                &row.content,
-                &message,
-            )?;
+            let (path, content) = row.ordinary_file()?;
+            let prepared =
+                prepare_commit_file_through_queue_worktree(&root, path, content, &message)?;
             remove_queue_worktree(&root, &prepared.worktree_path)?;
             sides.push(prepared.new_head);
         }
@@ -103,7 +100,9 @@ impl Vault {
             if !super::oplog::same_repository(repo.repo_ref(), &RepoRef::parse(&row.repo)?)
                 || row.pre_action_fork_hash != overlap.snapshot
                 || !matches!(row.operation, RepoProposalOperation::CommitFile)
-                || !overlap.paths.contains(&row.path)
+                || !row
+                    .ordinary_file()
+                    .is_ok_and(|(path, _)| overlap.paths.iter().any(|shared| shared == path))
             {
                 return Err(invalid(
                     "queue conflict source is not a same-base proposal of the overlap",
@@ -172,8 +171,8 @@ fn queue_conflict_sides(
             &row.message,
             Some(row.provenance_claim),
         )?;
-        let prepared =
-            prepare_commit_file_through_queue_worktree(root, &row.path, &row.content, &message)?;
+        let (path, content) = row.ordinary_file()?;
+        let prepared = prepare_commit_file_through_queue_worktree(root, path, content, &message)?;
         remove_queue_worktree(root, &prepared.worktree_path)?;
         sides.push(GitOid::parse_hex(prepared.new_head)?);
     }
