@@ -53,9 +53,11 @@ use crate::{EntityId, Error, Result, Vault};
 
 mod apply;
 mod ask;
+mod brief;
 mod check_repeat;
 mod duplicate;
 mod loaded;
+mod outcomes;
 mod run_loop;
 mod targeted;
 pub use apply::{
@@ -67,7 +69,9 @@ pub use ask::{
     AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
     ConcernMove, ConcernMoveOutcome, ConcernMoveRequest,
 };
+pub use brief::{HealthBriefPin, HealthObservedBrief};
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
+pub use outcomes::HealthReviewReceipt;
 pub(super) use targeted::review;
 
 /// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
@@ -382,6 +386,16 @@ pub struct AgentHealthCard {
     /// The newest ask of the Coach (`ask_coach`), and its answer once drafted.
     #[serde(default)]
     pub coach: Option<AgentHealthCoachAsk>,
+    /// The typed brief the newest finding's review observed on the TASK
+    /// (`brief`): a witness, never a launch snapshot. An ask and an outcome
+    /// receipt each keep their own copy.
+    pub observed_brief: Option<HealthBriefPin>,
+    /// The deterministic evaluator that judged the newest finding,
+    /// `coach.agent_health.<signal>.v1`: the reviewer an outcome scores.
+    pub reviewer: String,
+    /// Every outcome set on the card, oldest first, kept across reopens
+    /// (`outcomes`).
+    pub review_outcomes: Vec<HealthReviewReceipt>,
 }
 
 impl AgentHealthCard {
@@ -410,6 +424,8 @@ struct Finding {
     /// The agent said it was stuck: a Blocked TASK, or a blocked report since
     /// its attempt began.
     blocked: bool,
+    /// The TASK's typed brief as this review observed it (`brief`).
+    observed_brief: Option<HealthBriefPin>,
 }
 
 /// The working set's attempts, and its agent dispatches, by attempt bytes.
@@ -625,6 +641,8 @@ fn land(
     // spawner by dispatch lineage, and the vault's live owners.
     let (owners, routes) = {
         let rtxn = vault.store.env.read_txn()?;
+        // The brief each finding's TASK holds now: what this review observed.
+        brief::pin_findings_in(vault, &rtxn, &mut findings, now);
         let owners = crate::policy_model::owners_in_txn(vault, &rtxn)?;
         let mut routes = Vec::with_capacity(findings.len());
         for finding in &findings {
@@ -714,7 +732,7 @@ fn detect(
         vault, dispatched, attempts, book, since,
     )?);
     findings.extend(unsupported_done_findings(
-        vault, dispatched, attempts, since,
+        vault, dispatched, attempts, since, now,
     )?);
     findings.extend(cost_spike_findings(
         vault, dispatched, attempts, book, since, now,
@@ -886,6 +904,7 @@ fn loop_findings(
                 counter,
                 confession: None,
                 blocked: false,
+                observed_brief: None,
             });
         }
     }
@@ -961,6 +980,7 @@ fn silent_findings(
             counter: Vec::new(),
             confession: None,
             blocked: false,
+            observed_brief: None,
         });
     }
     Ok(out)
@@ -1048,6 +1068,7 @@ fn long_wait_findings(
             counter,
             confession: None,
             blocked: false,
+            observed_brief: None,
         });
     }
     out
@@ -1182,6 +1203,7 @@ fn cost_spike_findings(
             counter,
             confession: None,
             blocked: false,
+            observed_brief: None,
         });
     }
     Ok(out)
@@ -1419,6 +1441,7 @@ fn dup_finding(record: &AttemptRecord, dispatch: &Dispatched, evidence: Vec<Enti
         counter: Vec::new(),
         confession: None,
         blocked: false,
+        observed_brief: None,
     }
 }
 
@@ -1485,6 +1508,7 @@ fn misalignment_findings(
             counter: Vec::new(),
             confession: Some(attempt),
             blocked: false,
+            observed_brief: None,
         });
     }
     Ok(out)
@@ -1532,6 +1556,7 @@ fn widen_denial_findings(
             counter: Vec::new(),
             confession: None,
             blocked: false,
+            observed_brief: None,
         });
     }
     Ok(out)
@@ -1539,12 +1564,14 @@ fn widen_denial_findings(
 
 /// `unsupported_done`: a Completed attempt whose TASK settled Done while an
 /// evidence ref its done-means names does not resolve to a live entity.
-/// Missing evidence, not deception: any one flags.
+/// Missing evidence, not deception: any one flags. The finding pins the
+/// TASK's brief under the same read its done-means came from.
 fn unsupported_done_findings(
     vault: &Vault,
     dispatched: &Dispatches,
     attempts: &Attempts,
     since: u64,
+    now: u64,
 ) -> Result<Vec<Finding>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
@@ -1571,6 +1598,7 @@ fn unsupported_done_findings(
             continue;
         }
         let count = missing.len() as i64;
+        let observed_brief = brief::pin_task_brief_in(vault, &rtxn, task, now)?;
         out.push(Finding {
             subject: dispatch.actor,
             signal: AgentHealthSignal::UnsupportedDone,
@@ -1587,9 +1615,16 @@ fn unsupported_done_findings(
             counter: Vec::new(),
             confession: None,
             blocked: false,
+            observed_brief,
         });
     }
     Ok(out)
+}
+
+/// The evaluator a finding's signal is judged by: its DIAGNOSTIC's detector
+/// and the reviewer its card's outcomes score.
+fn detector_id(signal: AgentHealthSignal) -> String {
+    format!("coach.agent_health.{}.v1", signal.as_str())
 }
 
 /// Writes the finding's DIAGNOSTIC once: the same evidence is the same body
@@ -1608,7 +1643,7 @@ fn emit(vault: &Vault, finding: &Finding) -> Result<EntityId> {
         digest.update(id.as_bytes());
     }
     let event = DiagnosticEvent {
-        detector_id: format!("coach.agent_health.{}.v1", finding.signal.as_str()),
+        detector_id: detector_id(finding.signal),
         event_class: DiagnosticEventClass::AgentHealth,
         signal: Some(finding.signal),
         actor_class: "agent".into(),
@@ -1769,6 +1804,9 @@ fn merge(
         opened_at: now,
         updated_at: now,
         coach: None,
+        observed_brief: None,
+        reviewer: detector_id(finding.signal),
+        review_outcomes: Vec::new(),
     });
     add_ids(&mut card.evidence, &finding.evidence);
     add_ids(&mut card.diagnostics, &[diagnostic]);
@@ -1785,6 +1823,10 @@ fn merge(
     };
     card.confession = finding.confession.or(card.confession);
     card.agent_blocked = finding.blocked;
+    // The newest finding's observation and evaluator: an ask or an outcome
+    // already taken keeps its own copy.
+    card.observed_brief = finding.observed_brief.clone();
+    card.reviewer = detector_id(finding.signal);
     if card.outcome != AgentHealthOutcome::Open && card.evidence.len() > card.watermark {
         card.outcome = AgentHealthOutcome::Open;
         card.outcome_by = None;
@@ -2057,7 +2099,8 @@ fn may_read(
 }
 
 /// Sets a card's outcome. A settled card leaves the inbox until its evidence
-/// grows past the watermark set here.
+/// grows past the watermark set here. Both doors reach it through
+/// `outcomes::settle_with_review_receipt_in_txn`.
 fn settle(card: &mut AgentHealthCard, by: EntityId, outcome: AgentHealthOutcome, at: u64) {
     card.outcome = outcome;
     card.outcome_by = Some(by);
@@ -2164,8 +2207,9 @@ impl Vault {
     }
 
     /// The owner sets a card's outcome: confirmed, dismissed or unresolved.
-    /// A settled card leaves the inbox until its evidence grows. The outcome
-    /// is the card's alone: it never moves `learning.reliability`.
+    /// A settled card leaves the inbox until its evidence grows. It never
+    /// moves the agent's `learning.reliability`: the owner's verdict is an
+    /// anchored outcome of the card's evaluator (`outcomes`).
     ///
     /// # Errors
     ///
@@ -2183,7 +2227,10 @@ impl Vault {
             let mut card = CARDS
                 .get(&self.store, txn, &key)?
                 .ok_or(Error::EntityNotFound)?;
-            settle(&mut card, by, outcome, self.store.clock.now_recorded_at());
+            let at = self.store.clock.now_recorded_at();
+            outcomes::settle_with_review_receipt_in_txn(
+                self, txn, &mut card, by, true, outcome, at,
+            );
             CARDS.put(&self.store, txn, &key, &card)?;
             // A settled card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self, txn);
@@ -2215,7 +2262,10 @@ impl Memory<'_> {
 
     /// `self.inbox.concern.outcome`: a card's recipient (its leader or
     /// spawner) or a vault owner marks it confirmed, dismissed or unresolved,
-    /// as the owner's route does. It never moves `learning.reliability`.
+    /// as the owner's route does. It never moves the agent's
+    /// `learning.reliability`. A live owner's verdict is an anchored outcome
+    /// of the card's evaluator; a leader's or spawner's carries no label
+    /// (`outcomes`).
     pub fn concern_outcome(
         &self,
         input: &ConcernOutcomeRequest,
@@ -2231,7 +2281,17 @@ impl Memory<'_> {
             if !may_read(self.vault(), txn, &card, self.actor())? {
                 return Err(forbidden());
             }
-            settle(&mut card, self.actor(), input.outcome.into(), at);
+            let by_owner =
+                crate::policy_model::is_live_vault_owner_in_txn(self.vault(), txn, &self.actor())?;
+            outcomes::settle_with_review_receipt_in_txn(
+                self.vault(),
+                txn,
+                &mut card,
+                self.actor(),
+                by_owner,
+                input.outcome.into(),
+                at,
+            );
             CARDS.put(&self.vault().store, txn, &key, &card)?;
             // A settled card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self.vault(), txn);

@@ -1,10 +1,12 @@
 //! Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach`
 //! move, and a `coach.agent_health_ask` attempt on the `coach.heal` queue
 //! answers it. The host Coach reads the card, the skills its run loaded
-//! (`loaded.rs`), the agent's TASK and, as the Coach, the agent's sealed pads
-//! (never its diary), and its model drafts one proposal: a whole replacement
-//! of one loaded skill's instructions, bound to that revision, or a prompt to
-//! inject before a fork-resume. The answer lands on the card for its reader.
+//! (`loaded.rs`), the brief the review observed as the ask froze it
+//! (`brief.rs`), the agent's TASK as it reads now and, as the Coach, the
+//! agent's sealed pads (never its diary), and its model drafts one proposal:
+//! a whole replacement of one loaded skill's instructions, bound to that
+//! revision, or a prompt to inject before a fork-resume. The answer lands on
+//! the card for its reader.
 //! Nothing is edited or resumed here, and no judge grades the draft in v1:
 //! the owner applies a skill edit through `apply.rs`, where the held-out gate
 //! rules on it.
@@ -13,6 +15,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::apply::{AgentHealthApplicationState, AgentHealthCoachApplication};
+use super::brief::{HealthBriefPin, HealthObservedBrief, observed_brief_in};
 use super::loaded::{
     AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills_sourced,
 };
@@ -40,6 +43,9 @@ pub struct AgentHealthCoachAsk {
     pub diagnostic: Option<EntityId>,
     /// The `coach.agent_health_ask` attempt that answers, as 32 hex.
     pub attempt: String,
+    /// The brief the card's newest finding observed when asked, frozen for
+    /// this ask and its answer: a later review never rewrites what it saw.
+    pub observed_brief: Option<HealthBriefPin>,
     pub answer: Option<AgentHealthCoachAnswer>,
     /// The owner's approval of the answer's skill edit, once given, and where
     /// the gate took it.
@@ -110,8 +116,12 @@ pub struct CoachHealthBrief {
     pub card: AgentHealthCard,
     /// The skills the card's run loaded, at their pinned revisions, whole.
     pub skills: Vec<AgentHealthLoadedSkill>,
-    /// The TASK's label, spec and brief, as text.
-    pub task: Option<String>,
+    /// The brief the ask froze, with its text only while it is still the
+    /// TASK's current brief. `None` when no typed brief was observed.
+    pub observed_brief: Option<HealthObservedBrief>,
+    /// The TASK's label, spec and brief as they read now, as text: today's
+    /// TASK, never the observed brief.
+    pub current_task: Option<String>,
     /// The sealed pads the Coach read; empty when the read was held.
     pub pads: Vec<DiaryEntry>,
     /// The rows the brief was read from (FIX 6997); `None`, unknown, while
@@ -216,6 +226,7 @@ fn ask_coach_in_txn(
         asked_at: at,
         diagnostic: newest,
         attempt: hex(status.attempt.id),
+        observed_brief: card.observed_brief.clone(),
         answer: None,
         application: None,
     };
@@ -289,7 +300,7 @@ impl Vault {
                 .as_ref()
                 .is_some_and(|ask| ask.attempt == mine && ask.answer.is_none())
         };
-        let (card, task) = {
+        let (card, task, observed_brief) = {
             let rtxn = self.store.env.read_txn()?;
             let Some(card) = CARDS.get(&self.store, &rtxn, &key)? else {
                 return Ok(());
@@ -301,7 +312,13 @@ impl Vault {
                 Some(task) => crate::task_verb::task_text_with_source_in(self, &rtxn, task)?,
                 None => None,
             };
-            (card, task)
+            // The ask's frozen pin, never the card's newer one.
+            let frozen = card
+                .coach
+                .as_ref()
+                .and_then(|ask| ask.observed_brief.as_ref());
+            let observed_brief = observed_brief_in(self, &rtxn, frozen)?;
+            (card, task, observed_brief)
         };
         let (task, task_rows) = match task {
             Some((text, row)) => (Some(text), vec![row]),
@@ -345,7 +362,8 @@ impl Vault {
         let brief = CoachHealthBrief {
             card,
             skills,
-            task,
+            observed_brief,
+            current_task: task,
             pads: entries,
             source_rows,
         };

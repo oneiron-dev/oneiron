@@ -116,7 +116,7 @@ pub(crate) use training_swap_ask::{
 pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
 pub(crate) use wire_decode::{
     TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
-    task_is_blocked_in, task_text_with_source_in,
+    task_is_blocked_in, task_stored_brief_in, task_text_with_source_in,
 };
 mod wire_encode;
 mod world_privacy_wait;

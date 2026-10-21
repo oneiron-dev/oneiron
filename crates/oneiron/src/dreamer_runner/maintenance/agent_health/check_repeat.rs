@@ -295,5 +295,6 @@ fn finding(
         counter: Vec::new(),
         confession: None,
         blocked: false,
+        observed_brief: None,
     }
 }
