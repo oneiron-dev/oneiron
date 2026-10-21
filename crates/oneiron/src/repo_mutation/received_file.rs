@@ -5,9 +5,11 @@
 //! Nothing here trusts a caller. The bundle's bytes and modes come from
 //! the retained source its candidate resolved, its actor is the push's own
 //! live pusher at the ingress System class, its session is the candidate's
-//! fork, and it carries no run. Raw push authority approves nothing: the
-//! bundle waits for the owner's review catalog, its independent critics
-//! and the owner's explicit enqueue, like any other proposal.
+//! fork, and it carries no run. Raw push authority approves nothing. It
+//! names no catalog of its own (FIX 8268): with no vault review policy it
+//! enters its queue's same checks once, on its own; with one set it waits
+//! for that policy's critics or the owner's Approve and his explicit
+//! enqueue, like any other proposal.
 use heed::{RoTxn, RwTxn};
 
 use super::mount::RepoMountRef;
@@ -18,7 +20,6 @@ use super::proposal::{
 use super::types::{RepoMutationOperation, RepoMutationRequest};
 use crate::code_document::{CodeFileEdit, CodeFileIngress, CodeOpProvenance};
 use crate::codebase::{RepoRef, entity_id_from_hash_material};
-use crate::critic::LensCatalog;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWireRepo};
@@ -41,7 +42,6 @@ pub(crate) struct ReceivedFilesProposalInput {
     pub(crate) provenance: EntityId,
     pub(crate) message: String,
     pub(crate) files: Vec<RepoProposedFile>,
-    pub(crate) catalog: LensCatalog,
     pub(crate) created_at: u64,
 }
 
@@ -125,8 +125,10 @@ impl Vault {
             },
             merge_stack: None,
             pre_action_fork_hash: base.fork_hash,
-            catalog: input.catalog,
+            review: super::proposal::RepoProposalReview::VaultDefault,
             critiques: Vec::new(),
+            policy_critiques: Vec::new(),
+            queue_review: None,
             status: RepoProposalStatus::Proposed,
             settlement: None,
             operation_seq: None,

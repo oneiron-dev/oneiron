@@ -1026,7 +1026,7 @@ fn enter_run(
         .with_agent_verb_door(Arc::clone(door) as Arc<dyn AgentVerbDoor>)
         .with_reader_spawn(seat.clone())
         .with_replay_exposures(exposures.to_vec())
-        // FIX 6867 (closes FIX 7062): the owner's review catalog for the run's repo proposals.
+        // FIX 6867, FIX 8268: the run's repo proposals take the vault's own review policy.
         .with_repo_review_policy(Arc::new(
             oneiron::memory::repo_doors::OwnerProposalReviewPolicy::new(Arc::clone(vault)),
         ));

@@ -5733,6 +5733,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_merge_queue_review_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.review_policy.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_review_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.review_policy.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_merge_queue_export_green(
         &self,
         input: serde_json::Value,

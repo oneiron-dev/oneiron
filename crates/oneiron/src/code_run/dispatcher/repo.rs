@@ -153,9 +153,9 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// Binds the host's review policy for this run's repo proposals (FIX
-    /// 6867): the lens catalog the owner approved per PROJECT repo. Unbound,
-    /// a run's proposal answers `repo_review_policy_required` and its work
-    /// is kept. No guest call reaches it.
+    /// 6867). Unbound, a run's proposal is held to the vault's own review
+    /// policy, and with none set the same checked queue lands it on green
+    /// (FIX 8268). No guest call reaches it.
     #[must_use]
     pub fn with_repo_review_policy(mut self, policy: Arc<dyn RepoReviewPolicy>) -> Self {
         self.repo_review_policy = Some(policy);

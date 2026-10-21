@@ -3,6 +3,8 @@
 //! after the queue's own recovery and urgent steps. It opens nothing new:
 //! the enrolled configuration proved this store, the queue's own rows give
 //! its sealed green and Baseline, and matching creates Proposed work only.
+//! With no vault review policy, each attached bundle then enters this
+//! queue's same checks once (FIX 8268, `received_enqueue`).
 use super::check_store::QueueCheckConfiguration;
 use super::{MergeQueue, QueueSealTarget};
 use crate::codebase::RepoRef;
@@ -12,11 +14,12 @@ use crate::origin::CandidateQueue;
 
 impl MergeQueue<'_> {
     /// Matches every retained received ref of this queue's store that has
-    /// no resolved candidate yet, and answers how many durable transitions
-    /// it wrote: an attachment or a changed hold. An unenrolled queue, or
-    /// one with an unresolved landing or rollback intent, takes none; an
-    /// unchanged hold counts nothing. Never enqueues, approves or moves a
-    /// ref, and never changes a receive result.
+    /// no resolved candidate yet, then enqueues once each attached bundle
+    /// the vault holds to no review (FIX 8268), and answers how many durable
+    /// transitions it wrote: an attachment, a changed hold or a new batch.
+    /// An unenrolled queue, or one with an unresolved landing or rollback
+    /// intent, takes none; an unchanged hold counts nothing. Never approves
+    /// or moves a ref, and never changes a receive result.
     ///
     /// # Errors
     /// A store or object store failure reading the queue. One candidate's
@@ -62,7 +65,7 @@ impl MergeQueue<'_> {
                 }
             }
         }
-        Ok(moved)
+        Ok(moved + self.enqueue_unreviewed_received_candidates()?)
     }
 
     /// What this queue's intake knows of its own store, read as the drain

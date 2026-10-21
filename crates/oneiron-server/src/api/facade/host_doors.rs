@@ -1899,6 +1899,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         "vault.code.export.preview" | "vault.code.export.preview.read" => {
             super::origin_doors::preview_admits(server, auth, verb)
         }
+        // The vault's review policy rows (FIX 8268): a live Owner, or a bound
+        // principal whose one Grant the engine door admits.
+        "vault.code.merge_queue.review_policy.get" | "vault.code.merge_queue.review_policy.set" => {
+            super::merge_queue_checker_doors::review_policy_admits(server, auth, verb)
+        }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.
         "vault.workflows.dispatch_bound" => {

@@ -1,6 +1,6 @@
 use super::*;
-use crate::critic::LensCatalog;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION};
+use crate::repo_mutation::proposal::RepoProposalReview;
 use crate::repo_mutation::{
     RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationRequest,
     RepoMutationStatus,
@@ -86,14 +86,15 @@ impl Memory<'_> {
 }
 
 /// The CALL behind proposal admission policy: the engine request stamps the
-/// caller as actor, and the review catalog is the explicit typed one the owner
-/// sent with this proposal. No built seed stands in for it and an agent never
-/// picks it; the engine validates it at admission.
+/// caller as actor, and the review is the explicit typed catalog the owner
+/// sent with this proposal, or with none the vault's review policy (FIX
+/// 8268). No built seed stands in for it and an agent never picks it; the
+/// engine validates a sent catalog at admission.
 pub(super) fn owner_submission(
     repo_ref: RepoRef,
     actor: EntityId,
     input: CodeProposalSubmitRequest,
-) -> (RepoMutationRequest, LensCatalog) {
+) -> (RepoMutationRequest, RepoProposalReview) {
     let request = RepoMutationRequest::new(
         repo_ref,
         RepoMutationOperation::CommitFile {
@@ -106,7 +107,11 @@ pub(super) fn owner_submission(
     .with_session_id(input.session)
     .with_provenance_claim_id(input.provenance_claim)
     .with_op_provenance(input.op_provenance);
-    (request, input.catalog)
+    let review = input.catalog.map_or(
+        RepoProposalReview::VaultDefault,
+        RepoProposalReview::Explicit,
+    );
+    (request, review)
 }
 
 /// The CALL behind oplog states: an entry keeps the engine's own prepared,

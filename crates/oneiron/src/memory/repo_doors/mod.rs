@@ -33,7 +33,7 @@ pub use host::repo_provenance_unwitnessed;
 pub use proposals::{
     REPO_PROVENANCE_REQUIRED, REPO_REVIEW_POLICY_REQUIRED, RepoReviewPolicy, RepoRunSources,
 };
-pub use review_policy::{OwnerProposalReviewPolicy, owner_review_catalog};
+pub use review_policy::OwnerProposalReviewPolicy;
 pub use types::*;
 
 use crate::attempt_queue::AttemptId;

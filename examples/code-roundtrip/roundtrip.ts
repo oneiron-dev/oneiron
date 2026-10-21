@@ -7,11 +7,13 @@
 //
 // CONNECTED IN SOURCE, NOT EXECUTED: every call below names a built verb and
 // its generated input and result types; nothing here has been run end to
-// end. The run needs what this script never provisions: a real owner review
-// policy for the received proposal and a configured checker (a Linux session
-// backend with its pinned image and toolchain, or the existing explicit host
-// opt-in). Until each one exists, the step that needs it answers
-// `roundtrip_pending` and the accepted push stays as it is.
+// end. The run needs what this script never provisions: a configured checker
+// (a Linux session backend with its pinned image and toolchain, or the
+// existing explicit host opt-in). The received proposal needs no review
+// unless the owner set a vault review policy (FIX 8268): with none, the
+// queue's intake enqueues it into the same checks on its own. Until a
+// prerequisite exists, the step that needs it answers `roundtrip_pending`
+// and the accepted push stays as it is.
 //
 // One step per boundary per invocation: run `bun run <this file> --plan
 // <absolute plan.json>` again to continue. No default, poll, deadline or
@@ -605,8 +607,8 @@ async function roundtrip(plan: RoundtripPlan, state: RoundtripState): Promise<Ro
   }
 
   // 9. The accepted push's ingress, its ONE all-files candidate proposal and
-  //    durable fork. A fresh vault has no review policy at the queue's source
-  //    folder until the owner provides one: held_review_policy is pending.
+  //    durable fork. The bundle names no catalog: the vault's review policy
+  //    decides its review, and with none set it needs none (FIX 8268).
   if (!state.push_provenance) {
     const row = await published(plan, plan.ref_name, pushed);
     state.push_publication_receipt = row.receipt;
@@ -620,7 +622,7 @@ async function roundtrip(plan: RoundtripPlan, state: RoundtripState): Promise<Ro
   const candidate = ingress.candidate;
   if (!candidate || candidate.state === "pending") throw pending("the received push has no matched candidate yet", candidate);
   if (candidate.state.startsWith("held_") || candidate.state === "rejected") {
-    throw pending(`the received candidate is ${candidate.state}; an owner review policy at the queue's source, or the named hold's way out, comes first`, candidate);
+    throw pending(`the received candidate is ${candidate.state}; the named hold's way out comes first`, candidate);
   }
   if (candidate.proposal_refs.length !== 1 || !candidate.fork_session) throw stopped("one push must be ONE proposal on one fork", candidate);
   state.candidate_ref = candidate.candidate;
@@ -632,15 +634,24 @@ async function roundtrip(plan: RoundtripPlan, state: RoundtripState): Promise<Ro
   if (!fork || proposal_view?.operation_kind !== "received_files") throw pending("the candidate's fork or proposal is not readable yet", { fork, proposal_view });
   await call(plan, run, "describe", { handle: { kind: "task", task_ref: plan.run_task } });
 
-  // 10. Matching proposes, never approves: real reviewers and the owner settle
-  //     with the existing proposal doors. Then one enqueue, and the queue's own
+  // 10. Matching proposes, never approves. With no vault review policy the
+  //     queue's intake enqueues the candidate once, into the same checks. With
+  //     one set, real reviewers (or the owner's Approve) settle it with the
+  //     existing proposal doors, then one owner enqueue. Then the queue's own
   //     checks, landing and seal, read once per run.
-  const settlement = await call(plan, owner, "vault.code.proposal_settlement", { proposal: state.candidate_proposal });
-  if (settlement.status === "Proposed") {
-    throw pending("the received proposal awaits real review: vault.code.proposal_review, then vault.code.proposal_settle approve", settlement);
+  const policy = await call(plan, owner, "vault.code.merge_queue.review_policy.get", {});
+  if (policy.mode === "held") throw pending("the vault's review policy does not read; an owner sets it again or clears it first", policy);
+  if (policy.mode === "land_on_green" && candidate.batch_refs.length === 0 && !state.candidate_batch) {
+    throw pending("no vault review policy: the queue's intake enqueues the received proposal on its next drain", candidate);
   }
-  if (settlement.status !== "Approved" && settlement.status !== "Applied") throw stopped(`the received proposal is ${settlement.status}`, settlement);
-  if (candidate.batch_refs.length === 0 && !state.candidate_batch) {
+  if (policy.mode === "review") {
+    const settlement = await call(plan, owner, "vault.code.proposal_settlement", { proposal: state.candidate_proposal });
+    if (settlement.status === "Proposed") {
+      throw pending("the received proposal awaits review under the vault's policy: vault.code.proposal_review, or vault.code.proposal_settle approve", settlement);
+    }
+    if (settlement.status !== "Approved" && settlement.status !== "Applied") throw stopped(`the received proposal is ${settlement.status}`, settlement);
+  }
+  if (policy.mode === "review" && candidate.batch_refs.length === 0 && !state.candidate_batch) {
     if (state.enqueue_started) throw stopped("the enqueue started earlier and never reported; read vault.code.repos.get batch_refs by hand");
     const repo = await call(plan, owner, "vault.code.repos.get", { repo: anchor.repo });
     if (!repo?.queue) throw pending("the queue is not readable yet", repo);

@@ -34,6 +34,7 @@ pub(super) mod actor_erase;
 mod files;
 mod guards;
 pub(super) mod persist;
+mod queue_review;
 mod review;
 mod run;
 pub mod settlement;
@@ -42,6 +43,7 @@ pub use files::RepoProposedFile;
 pub(super) use files::received_bundle_queue_only;
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
+pub use queue_review::{QueueReviewAdmission, RepoProposalCritique, RepoProposalReview};
 use submit::ProposalBase;
 
 /// Durable per-operation code proposal. Key: id16.
@@ -118,8 +120,18 @@ pub struct RepoProposal {
     /// Set only by atomic, all-member merge-queue admission.
     pub merge_stack: Option<String>,
     pub pre_action_fork_hash: RepoForkHash,
-    pub catalog: LensCatalog,
+    /// Its own catalog, or the vault's review policy (FIX 8268). Stored
+    /// under `catalog` as an optional catalog; every older row is explicit.
+    #[serde(rename = "catalog")]
+    pub review: RepoProposalReview,
+    /// Votes on its own catalog's lenses.
     pub critiques: Vec<CritiqueArtifact>,
+    /// Votes on the vault policy's lenses, each with the catalog it judged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policy_critiques: Vec<RepoProposalCritique>,
+    /// The review its merge stack's admission sealed, if one admitted it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_review: Option<QueueReviewAdmission>,
     pub status: RepoProposalStatus,
     pub settlement: Option<settlement::RepoProposalSettlement>,
     pub operation_seq: Option<u64>,
@@ -257,8 +269,12 @@ impl RepoProposal {
         .with_op_provenance(self.op_provenance.clone()))
     }
     /// Scores are derived from the retained immutable evidence, not accepted from a caller.
+    /// Its own catalog's votes; a vault-default proposal names no catalog.
     pub fn triage(&self) -> Result<CritiqueTriage> {
-        triage_critiques(&self.catalog, &self.critiques, &[])
+        let catalog = self.review.catalog().ok_or(invalid(
+            "a vault-default proposal is judged under the vault's review policy",
+        ))?;
+        triage_critiques(catalog, &self.critiques, &[])
     }
     pub fn approval(&self) -> ClaimApprovalStatus {
         match self.status {
@@ -270,15 +286,21 @@ impl RepoProposal {
             | RepoProposalStatus::Rejected => ClaimApprovalStatus::Proposed,
         }
     }
+    /// Its own catalog's unanimous critics. Only an explicit catalog makes a
+    /// proposal eligible outside its merge queue (FIX 8268).
     pub(super) fn eligible(&self) -> Result<bool> {
+        let Some(catalog) = self.review.catalog() else {
+            return Ok(false);
+        };
         let distinct = self
             .critiques
             .iter()
             .filter(|c| self.counts_toward_quorum(c))
             .map(|c| c.provenance.critic_ref.as_str())
             .collect::<BTreeSet<_>>();
-        Ok(distinct.len() >= 2
-            && self.catalog.lenses.iter().all(|lens| {
+        let critics = crate::merge_queue::DEFAULT_QUEUE_REVIEW_CRITICS as usize;
+        Ok(distinct.len() >= critics
+            && catalog.lenses.iter().all(|lens| {
                 self.critiques
                     .iter()
                     .any(|c| c.lens_id == lens.id && c.domain == lens.domain)
@@ -300,7 +322,7 @@ impl Vault {
     ) -> Result<RepoProposal> {
         let proposed = self.propose_repo_mutation_checked::<std::convert::Infallible>(
             request,
-            catalog,
+            RepoProposalReview::Explicit(catalog),
             ProposalBase::CurrentCheckout,
             None,
             |_| Ok(Ok(())),
@@ -315,7 +337,7 @@ impl Vault {
         owner: &crate::consent::AuthenticatedOwner,
         repository: EntityId,
         request: RepoMutationRequest,
-        catalog: LensCatalog,
+        review: RepoProposalReview,
     ) -> Result<RepoProposal> {
         let actor = request.actor_id;
         let repository_ref = request.repo_ref.clone();
@@ -328,7 +350,7 @@ impl Vault {
         ];
         let proposed = self.propose_repo_mutation_checked::<std::convert::Infallible>(
             request,
-            catalog,
+            review,
             ProposalBase::CurrentCheckout,
             None,
             |txn| {
@@ -570,7 +592,13 @@ pub(super) fn finish(
         claim.approval = ClaimApprovalStatus::Approved;
         // Keep the producer envelope on the approval transition as well as
         // admission. A reserved raw put is not a session-write capability.
-        if !row.eligible()? {
+        // A stack member keeps the review its stack's admission sealed (FIX
+        // 8268); a proposal applied alone, its own catalog's critics.
+        let reviewed = match row.merge_stack.as_deref() {
+            Some(batch) => row.stack_review_admitted(batch)?,
+            None => row.eligible()?,
+        };
+        if !reviewed {
             return Err(invalid("proposal approval lost critic coverage"));
         }
         put_journal_claim(vault, txn, id, row.actor.id(), &claim, row.created_at)?;

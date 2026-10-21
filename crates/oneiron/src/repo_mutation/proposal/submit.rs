@@ -27,7 +27,7 @@ impl Vault {
     pub(in crate::repo_mutation) fn propose_repo_mutation_checked<R>(
         &self,
         request: RepoMutationRequest,
-        catalog: LensCatalog,
+        review: RepoProposalReview,
         base: ProposalBase,
         run: Option<RepoRunStamp>,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
@@ -71,13 +71,21 @@ impl Vault {
             ),
             _ => return Err(invalid("code proposal supports one file operation")),
         };
-        if content.len() > 32 * 1024 * 1024 || catalog.lenses.is_empty() {
+        // A named catalog is never empty; naming none holds the proposal to
+        // the vault's review policy (FIX 8268), never to an empty catalog.
+        if content.len() > 32 * 1024 * 1024
+            || review
+                .catalog()
+                .is_some_and(|catalog| catalog.lenses.is_empty())
+        {
             return Err(invalid(
                 "proposal requires bounded content and review lenses",
             ));
         }
         // Empty triage validates the host's catalog without inventing a verdict.
-        triage_critiques(&catalog, &[], &[])?;
+        if let Some(catalog) = review.catalog() {
+            triage_critiques(catalog, &[], &[])?;
+        }
         let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
         let repo = admitted_repo_ref(&request.repo_ref, &repo_root)?;
         let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
@@ -107,8 +115,10 @@ impl Vault {
             operation,
             merge_stack: None,
             pre_action_fork_hash: fork,
-            catalog,
+            review,
             critiques: Vec::new(),
+            policy_critiques: Vec::new(),
+            queue_review: None,
             status: RepoProposalStatus::Proposed,
             settlement: None,
             operation_seq: None,

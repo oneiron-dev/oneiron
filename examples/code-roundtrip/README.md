@@ -25,15 +25,17 @@ answers `roundtrip_pending`, and an accepted push stays exactly as it is.
   Linux session backend with its pinned image and toolchain; the explicit host
   opt-in setting is the only other way. Without one, queue init and every later
   check answer `needs_configuration` and name the setting.
-- **A real owner review policy for the received proposal.** A pushed change
-  becomes ONE `received_files` proposal at the queue's own source folder. A
-  fresh register, import and init create no policy-bearing owner work there, so
-  matching holds the candidate as `held_review_policy` until the owner supplies
-  one. The import manifest's catalog is not that policy, and this script never
-  fakes one with a dummy proposal, a second anchor or a catalog field.
-- Real reviewers. Matching only proposes. Reviews go through
-  `vault.code.proposal_review`, approval through `vault.code.proposal_settle`.
-  The script reads `vault.code.proposal_settlement` and never votes.
+- **No review policy is needed** (FIX 8268). A pushed change becomes ONE
+  `received_files` proposal that names no catalog. With no vault review policy
+  set (`vault.code.merge_queue.review_policy.get` answers `land_on_green`), the
+  queue's intake enqueues it once into the same checks; nothing approves it and
+  no check is skipped. The import manifest's catalog is not a review policy.
+- Real reviewers, only if an owner opted the vault into a review policy
+  (`vault.code.merge_queue.review_policy.set`). Then matching only proposes:
+  reviews go through `vault.code.proposal_review`, approval through
+  `vault.code.proposal_settle`, and the owner enqueues. The script reads
+  `vault.code.proposal_settlement` and never votes. A policy row that does not
+  read holds the candidate until an owner sets or clears it.
 
 ## Running it
 
@@ -107,9 +109,11 @@ and Q the queue's own source. These are labels in this text, not wire fields.
    `git commit -S` and pushed as one exact commit U through the run's lease door.
 9. The push's ingress (by its receive provenance, not its publication receipt),
    its ONE all-files candidate proposal, its fork and the run's TASK are read.
-10. Once reviewed and approved, one enqueue. The queue checks, lands and seals
-    in Q. Its check receipts are kept: every retained generation, in saved order.
-    The candidate's `revision_refs` is the seal bound to this push.
+10. With no vault review policy, the queue's intake has enqueued the candidate
+    (its `batch_refs`); with one set, once reviewed and approved, one owner
+    enqueue. The queue checks, lands and seals in Q. Its check receipts are
+    kept: every retained generation, in saved order. The candidate's
+    `revision_refs` is the seal bound to this push.
 11. The owner previews that seal against U. Its target tree must be U's tree.
     Then `vault.code.merge_queue.export_green`, whose request has no revision pin:
     a revision that differs from the previewed seal stops the run and is shown,

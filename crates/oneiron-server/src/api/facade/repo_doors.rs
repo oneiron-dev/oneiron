@@ -357,10 +357,10 @@ pub(crate) async fn vault_repo_symbols_release(
     .await
 }
 
-/// `vault.repo.proposal_submit`: reviewed under the host's stock review
-/// policy. The host holds no witness of an external agent's model request,
-/// so a proposal past that policy holds as `repo_provenance_required`, its
-/// work kept: no author is made up.
+/// `vault.repo.proposal_submit`: held to the vault's own review policy
+/// (FIX 8268; none set, the same checked queue lands it on green). The host
+/// holds no witness of an external agent's model request, so the proposal
+/// holds as `repo_provenance_required`, its work kept: no author is made up.
 pub(crate) async fn vault_repo_proposal_submit(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

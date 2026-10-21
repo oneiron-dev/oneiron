@@ -92,17 +92,23 @@ impl RepoProposal {
     }
 
     /// Names one fresh opaque ref in place of `critic` across every critique
-    /// it wrote here (FIX 4477); whether any named it.
+    /// it wrote here (FIX 4477), on the vault policy's lenses too (FIX
+    /// 8268); whether any named it.
     fn forget_critic(&mut self, vault: &Vault, critic: &str) -> Result<bool> {
         if !self
             .critiques
             .iter()
+            .chain(self.policy_critiques.iter().map(|vote| &vote.critique))
             .any(|critique| critique.provenance.critic_ref == critic)
         {
             return Ok(false);
         }
         let opaque = crate::critic::erased_critic_ref(vault.store.clock.entity_id()?);
-        for critique in &mut self.critiques {
+        for critique in self.critiques.iter_mut().chain(
+            self.policy_critiques
+                .iter_mut()
+                .map(|vote| &mut vote.critique),
+        ) {
             if critique.provenance.critic_ref == critic {
                 critique.forget_critic(&opaque);
             }

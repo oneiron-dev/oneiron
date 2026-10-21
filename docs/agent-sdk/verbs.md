@@ -664,6 +664,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.merge_queue.diagnose`
 - `vault.code.merge_queue.check_status`
 - `vault.code.checks.get`
+- `vault.code.merge_queue.review_policy.get`
+- `vault.code.merge_queue.review_policy.set`
 - `vault.code.merge_queue.export_green`
 - `vault.artifacts.export`
 - `vault.agents.create`

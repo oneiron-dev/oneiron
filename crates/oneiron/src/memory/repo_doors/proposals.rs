@@ -12,9 +12,11 @@
 //! nothing: an overlap waits.
 //!
 //! The host, never the guest, supplies the review policy, the actor's
-//! session and the gated provenance; with no policy bound the work is kept
-//! and the proposal answers `repo_review_policy_required`, and with no model
-//! witness `repo_provenance_required`. Owner doors are unchanged.
+//! session and the gated provenance. With no policy bound the proposal is
+//! held to the vault's own review policy (FIX 8268), and with none set the
+//! same checked queue lands it on green; with no model witness it answers
+//! `repo_provenance_required` and the work is kept. Owner doors are
+//! unchanged.
 
 use std::collections::BTreeSet;
 
@@ -28,7 +30,6 @@ use super::{
 use crate::code_document::CodeOpProvenance;
 use crate::code_symbol::{CodeSymbolManifest, code_symbol_entity_id};
 use crate::codebase::RepoRef;
-use crate::critic::LensCatalog;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
@@ -38,28 +39,33 @@ use crate::merge_queue::{
     MergeBatch, MergeFile, MergeProposal, MergeQueue, RepoQueueOrder, RepoQueuePredecessor,
 };
 use crate::repo_mutation::mount::RepoMountRef;
-use crate::repo_mutation::proposal::{RepoProposal, RepoProposalOperation, RepoProposalStatus};
+use crate::repo_mutation::proposal::{
+    RepoProposal, RepoProposalOperation, RepoProposalReview, RepoProposalStatus,
+};
 use crate::repo_mutation::{RepoMutationOperation, RepoMutationRequest};
 use crate::task_verb::SymbolLease;
 use crate::{EntityId, Vault};
 
-/// The code a run's proposal answers while the host binds no review policy
-/// for its repo (CALL "FIX 6867 review policy and provenance"). The work is
-/// kept; nothing is written.
+/// The code a run's proposal answered while the host bound no review policy
+/// for its repo (CALL "FIX 6867 review policy and provenance"). Superseded
+/// by FIX 8268: no review policy now means the vault's default, so no
+/// proposal answers it; it stays a typed hold code older answers carry.
 pub const REPO_REVIEW_POLICY_REQUIRED: &str = "repo_review_policy_required";
 
 /// The code a run's proposal answers while its host holds no witness of the
 /// model request the run is serving. No author is made up.
 pub const REPO_PROVENANCE_REQUIRED: &str = "repo_provenance_required";
 
-/// The host's review policy for a run's proposals: the lens catalog the
-/// owner approved for one PROJECT's repo. A host binds it; no guest field
-/// reaches it. `None` holds the run's proposal as
-/// [`REPO_REVIEW_POLICY_REQUIRED`]; nothing stands in for it.
+/// The host's review policy for a run's proposals. A host binds it; no
+/// guest field reaches it. The stock one holds every proposal to the
+/// vault's review policy (FIX 8268); a host catalog is an explicit
+/// requirement beside it.
 pub trait RepoReviewPolicy: Send + Sync {
-    /// The catalog proposals to `repo` under `project` must pass, if the
-    /// owner set one.
-    fn review_catalog(&self, project: EntityId, repo: EntityId) -> Option<LensCatalog>;
+    /// The review proposals to `repo` under `project` are held to.
+    ///
+    /// # Errors
+    /// A read that fails: the proposal is not made, and never reviewless.
+    fn review(&self, project: EntityId, repo: EntityId) -> Result<RepoProposalReview>;
 }
 
 /// The attribution the host mints for a run's proposal: the actor's
@@ -222,14 +228,10 @@ impl Memory<'_> {
         )?;
         let now = self.vault.now_recorded_at();
         let admission = self.repo_publish_admission(binding, &own, input.declaration, now)?;
-        let Some(catalog) =
-            policy.and_then(|policy| policy.review_catalog(own.stamp.project, own.stamp.repo))
-        else {
-            return Err(MemoryError::new(
-                REPO_REVIEW_POLICY_REQUIRED,
-                "no review policy is bound for this repo's proposals; the work is kept",
-                &["The host binds the owner's review policy, then the same change resubmits."],
-            ));
+        // Unbound, the vault's own review policy (FIX 8268).
+        let review = match policy {
+            Some(policy) => policy.review(own.stamp.project, own.stamp.repo)?,
+            None => RepoProposalReview::VaultDefault,
         };
         let membership = &own.admitted.membership;
         let RepoRef::LocalFolder { path: folder, .. } = &membership.repo_ref else {
@@ -263,7 +265,7 @@ impl Memory<'_> {
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, [input.path.as_str()]);
         let proposed =
             self.vault
-                .propose_repo_mutation_for_run(request, catalog, base, stamp, |txn| {
+                .propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
                     if let Err(refused) =
                         admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
                     {
