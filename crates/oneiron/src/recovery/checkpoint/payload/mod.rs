@@ -27,6 +27,8 @@
 mod actors;
 mod rows;
 mod seal;
+#[cfg(feature = "sync")]
+mod sync;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -40,6 +42,9 @@ use self::seal::Bundle;
 #[allow(unused_imports, reason = "KS7-5 restores through it")]
 pub(super) use self::seal::open_bundle;
 pub(super) use self::seal::{BundleRole, Compartment, PayloadSection, PayloadStreams};
+#[cfg(feature = "sync")]
+#[allow(unused_imports, reason = "KS7-5 hands it to project and restore")]
+pub(super) use self::sync::SyncCarriers;
 use super::{INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, StorageTier, storage_tier};
 use crate::error::{Error, Result};
 use crate::side_table::SideDb;
@@ -243,6 +248,7 @@ fn db_name(db: RowDb) -> &'static str {
         RowDb::EdgesIn => "edges_in",
         RowDb::VaultMeta => "vault_meta",
         RowDb::SyncState => "sync_state",
+        RowDb::SyncQueue => "sync_queue",
     }
 }
 
@@ -253,6 +259,7 @@ fn row_db(database: &str) -> Option<RowDb> {
         "edges_in" => Some(RowDb::EdgesIn),
         "vault_meta" => Some(RowDb::VaultMeta),
         "sync_state" => Some(RowDb::SyncState),
+        "sync_queue" => Some(RowDb::SyncQueue),
         _ => None,
     }
 }
@@ -597,6 +604,11 @@ pub(super) fn project(
             let family = match at.db {
                 RowDb::VaultMeta => families.of(SideDb::VaultMeta, &at.key),
                 RowDb::SyncState => families.of(SideDb::SyncState, &at.key),
+                // The queue's rows are named by their database.
+                RowDb::SyncQueue => {
+                    projected.count("sync_queue");
+                    continue;
+                }
                 _ => None,
             };
             projected.count(family.map_or(UNDECLARED, |(decl, _)| decl.name));

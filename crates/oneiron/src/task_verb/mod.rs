@@ -394,83 +394,19 @@ mod production_ports_tests;
 
 pub(crate) use symbol_lease::forget_symbols;
 
-mod fanout_batch;
-mod recall_door;
-pub mod sdk;
-mod sdk_act_answer;
-mod sdk_agent_grant;
-mod sdk_agents;
-mod sdk_anonymous_chat;
-mod sdk_asr;
-mod sdk_authority_history;
-mod sdk_browser;
-mod sdk_calendar;
-mod sdk_campaign_archive;
-mod sdk_campaign_split;
-mod sdk_catalog_fragment;
-mod sdk_connector;
-mod sdk_connector_call;
-mod sdk_connector_pack;
-mod sdk_coreference;
-mod sdk_courtesy_delete;
-mod sdk_credential;
-mod sdk_describe;
-mod sdk_diary;
-mod sdk_disclosure;
-mod sdk_embedding_space;
-mod sdk_eval_cohort;
-mod sdk_explain;
-mod sdk_fanout_launch;
-mod sdk_federation;
-mod sdk_federation_burst;
-mod sdk_feedback;
-mod sdk_git_push_grant;
-mod sdk_goal_optimize;
-mod sdk_guest_document;
-mod sdk_guest_revoke;
-mod sdk_host;
-mod sdk_hub;
-mod sdk_identity_topology;
-mod sdk_legal_hold;
-mod sdk_live_run;
-mod sdk_live_voice;
-mod sdk_mesh;
-mod sdk_model_manifest;
-mod sdk_note_history;
-mod sdk_off_record;
-mod sdk_off_record_rooms;
-mod sdk_pack_preview;
-mod sdk_persona;
-mod sdk_proxy;
-mod sdk_record_erase;
-mod sdk_reply;
-mod sdk_research;
-mod sdk_residence;
-mod sdk_retrieval;
-mod sdk_root_requests;
-mod sdk_scratchpad;
-mod sdk_secret;
-mod sdk_secret_grant;
-mod sdk_secret_use;
-mod sdk_self;
-mod sdk_share;
-mod sdk_shared;
-mod sdk_shared_admin;
-mod sdk_shared_members;
-mod sdk_shared_policy;
-mod sdk_skill_attribution;
-mod sdk_skill_defaults;
-mod sdk_skill_execution;
-mod sdk_skill_fork;
-mod sdk_skills;
-mod sdk_standing;
-mod sdk_support_grant;
-mod sdk_trusted_contact;
-mod sdk_voice_bank;
-mod sdk_weave;
-mod sdk_wire_health;
-mod sdk_workflows;
-mod sdk_workspace;
+pub(crate) mod fanout_batch;
+pub(crate) mod recall_door;
+// FIX 8907: the agent SDK lives at `crate::verbs`; `task_verb::sdk` is its
+// public path, and the task-owned items its files reach are re-exported
+// here for it.
+pub use crate::verbs as sdk;
+pub(crate) use ask_world_hold::admit_ask_references;
+pub(crate) use brief::{decode_hex, hex32};
+pub(crate) use create_origin::task_create_origin_in_txn;
+pub(crate) use highway::forbidden;
+pub(crate) use presence_scan::superseded_attempt_ids;
+pub(crate) use rate_limit::task_create_owner_in;
+
 pub mod verb_hook_boundary;
 
 #[cfg(test)]
@@ -479,7 +415,7 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
-pub(crate) use ask_guest::ask_guest_grant_in;
+pub(crate) use ask_guest::{ask_guest_grant_in, ask_member_task_in};
 pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{
     ack_option_void_generation, has_option_link_void, option_void_generation,

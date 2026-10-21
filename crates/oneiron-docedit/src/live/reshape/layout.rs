@@ -10,7 +10,10 @@ use crate::design_plan::Cell;
 use crate::edit::xml;
 use crate::live::LiveError;
 use crate::live::held::{self, C, children};
-use crate::live::pptx::{ChartKind, ChartSeries, NodeId, NodePayload, WRITTEN_FRAME, positions};
+use crate::live::pptx::{
+    ChartCategories, ChartKind, ChartSeries, NodeId, NodePayload, WRITTEN_FRAME,
+    effective_categories, positions,
+};
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
 use std::collections::BTreeSet;
@@ -133,49 +136,152 @@ pub(super) struct Data {
     pub(super) y_col: u32,
     pub(super) x: Option<Vec<Cell>>,
     pub(super) values: Vec<Cell>,
+    /// The category set it draws, by its place among [`Wanted::sets`].
+    pub(super) set: Option<usize>,
 }
 
-/// The live data a chart rewrite writes: each series' family, whether the
-/// categories stay numbers, the category cells, and each series' cells on
-/// a rebuilt workbook's columns (categories in A, then each series' x
-/// column, a scatter series', and values column).
+/// One category set a chart rewrite writes: the chart's (`own` `None`) or
+/// one series' own (`own`, that series' place), as cells level by level
+/// (leaf first, one cell per point), whether its flat labels stay numbers,
+/// its points' identities, and its first column in a rebuilt workbook,
+/// where its levels stand side by side, the outermost first.
+pub(super) struct CategorySet {
+    pub(super) own: Option<usize>,
+    pub(super) numeric: bool,
+    pub(super) levels: Vec<Vec<Cell>>,
+    pub(super) ids: Vec<Option<NodeId>>,
+    pub(super) col: u32,
+}
+
+impl CategorySet {
+    /// How many points it holds.
+    pub(super) fn count(&self) -> usize {
+        self.levels.first().map_or(0, Vec::len)
+    }
+
+    /// Its leaf level's cells: a flat set's.
+    pub(super) fn leaf(&self) -> &[Cell] {
+        self.levels.first().map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether it is a hierarchy, written as `c:multiLvlStrRef`.
+    pub(super) fn multi(&self) -> bool {
+        self.levels.len() > 1
+    }
+
+    /// The columns it takes in a rebuilt workbook.
+    pub(super) fn width(&self) -> u32 {
+        u32::try_from(self.levels.len()).unwrap_or(u32::MAX)
+    }
+}
+
+/// The live data a chart rewrite writes: each series' family, each
+/// category set a series draws (the chart's once, each series' own once),
+/// and each series' cells on a rebuilt workbook's columns (each set's
+/// levels, then each series' x column, a scatter series', and values
+/// column).
 pub(super) struct Wanted {
     pub(super) resolved: Vec<ChartKind>,
-    pub(super) numeric_cats: bool,
-    pub(super) category_cells: Vec<Cell>,
+    pub(super) sets: Vec<CategorySet>,
     pub(super) data: Vec<Data>,
+}
+
+/// Every `c:ser` of the chart, its plots in document order, each plot's
+/// series in document order: the order a binding names them in.
+pub(super) fn held_series(tree: &XmlTree) -> Vec<usize> {
+    held::plots(tree).map_or_else(Vec::new, |(_, plots)| {
+        plots
+            .iter()
+            .flat_map(|&(_, at)| children(tree, at, C, "ser"))
+            .collect()
+    })
+}
+
+/// A category set as cells: a label stays a number when the set is flat,
+/// its own held slot held numbers (else the chart's first), and every
+/// label reads back as itself; a missing or empty label is a missing cell.
+fn set_cells(set: &ChartCategories, held_numeric: bool, own: Option<usize>) -> CategorySet {
+    let numeric = set.depth() == 1
+        && held_numeric
+        && set.level(0).all(|label| {
+            label.is_some_and(|label| {
+                label
+                    .trim()
+                    .parse::<f64>()
+                    .is_ok_and(|value| held::label(&Cell::Number(value)) == label)
+            })
+        });
+    let levels = (0..set.depth())
+        .map(|level| {
+            set.level(level)
+                .map(|label| match label {
+                    None | Some("") => Cell::Missing,
+                    Some(label) => match label.parse::<f64>() {
+                        Ok(value) if numeric => Cell::Number(value),
+                        _ => Cell::Text(label.to_owned()),
+                    },
+                })
+                .collect()
+        })
+        .collect();
+    CategorySet {
+        own,
+        numeric,
+        levels,
+        ids: set.points.iter().map(|point| point.id).collect(),
+        col: 0,
+    }
 }
 
 pub(super) fn wanted(
     tree: &XmlTree,
     family: ChartKind,
-    categories: &[String],
+    categories: &ChartCategories,
     series: &[ChartSeries],
+    bound: &[NodeId],
 ) -> Wanted {
     let resolved: Vec<ChartKind> = series
         .iter()
         .map(|line| line.family.unwrap_or(family))
         .collect();
-    // Categories stay numbers when the chart's were and every one reads
-    // back as itself.
-    let numeric_cats = first_category(tree)
-        .and_then(|slot| held::points(tree, slot))
-        .is_some_and(|points| points.numeric)
-        && categories.iter().all(|category| {
-            category
-                .trim()
-                .parse::<f64>()
-                .is_ok_and(|value| held::label(&Cell::Number(value)) == *category)
-        });
-    let category_cells: Vec<Cell> = categories
-        .iter()
-        .map(|category| match category.parse::<f64>() {
-            Ok(value) if numeric_cats => Cell::Number(value),
-            _ if category.is_empty() => Cell::Missing,
-            _ => Cell::Text(category.clone()),
-        })
-        .collect();
-    let mut next_col: u32 = if categories.is_empty() { 1 } else { 2 };
+    // A set's labels stay numbers when its own held slot held numbers: its
+    // own series', else the first series that draws it, else the chart's
+    // first category slot's.
+    let every = held_series(tree);
+    let places = positions(bound);
+    let numeric_slot = |slot: Option<usize>| -> Option<bool> {
+        slot.and_then(|slot| held::descriptor(tree, slot))
+            .map(|read| read.numeric && read.levels == 1)
+    };
+    let fallback = numeric_slot(first_category(tree)).unwrap_or(false);
+    let mut sets: Vec<CategorySet> = Vec::new();
+    let mut set_of: Vec<Option<usize>> = Vec::with_capacity(series.len());
+    for (index, (line, kind)) in series.iter().zip(&resolved).enumerate() {
+        let set = effective_categories(categories, line);
+        if *kind == ChartKind::Scatter || set.is_empty() {
+            set_of.push(None);
+            continue;
+        }
+        let own = line.categories.is_some().then_some(index);
+        let at = match sets.iter().position(|held| held.own == own) {
+            Some(at) => at,
+            None => {
+                let slot = line
+                    .id
+                    .and_then(|id| places.get(&id).copied())
+                    .and_then(|at| every.get(at).copied())
+                    .and_then(|ser| xml::child(tree, ser, C, "cat"));
+                sets.push(set_cells(set, numeric_slot(slot).unwrap_or(fallback), own));
+                sets.len() - 1
+            }
+        };
+        set_of.push(Some(at));
+    }
+    let mut next_col: u32 = 1;
+    for set in &mut sets {
+        set.col = next_col;
+        next_col = next_col.saturating_add(set.width());
+    }
     let mut take = || {
         let col = next_col;
         next_col = next_col.saturating_add(1);
@@ -184,13 +290,13 @@ pub(super) fn wanted(
     let data: Vec<Data> = series
         .iter()
         .zip(&resolved)
-        .map(|(line, kind)| {
+        .zip(set_of)
+        .map(|((line, kind), set)| {
             let scatter = *kind == ChartKind::Scatter;
-            let count = match (&line.x, scatter) {
-                (Some(x), true) => x.len().max(line.values.len()),
-                (None, true) => line.values.len(),
-                _ if categories.is_empty() => line.values.len(),
-                _ => categories.len(),
+            let count = match (&line.x, scatter, set) {
+                (Some(x), true, _) => x.len().max(line.values.len()),
+                (None, true, _) | (_, false, None) => line.values.len(),
+                (_, false, Some(set)) => sets[set].count(),
             };
             let x = line
                 .x
@@ -204,13 +310,13 @@ pub(super) fn wanted(
                 y_col: take(),
                 x,
                 values: number_cells(&line.values, count),
+                set,
             }
         })
         .collect();
     Wanted {
         resolved,
-        numeric_cats,
-        category_cells,
+        sets,
         data,
     }
 }
@@ -357,7 +463,7 @@ pub(super) fn resolve(
     let (bytes, tree) = xml::read(package, chart)?;
     let wanted = match read {
         Some(read) => read,
-        None => wanted(&tree, *family, categories, series),
+        None => wanted(&tree, *family, categories, series, bound),
     };
     let layout = layout(&tree, *family, &wanted.resolved, series, bound)
         .ok_or(LiveError::Invalid(WRITTEN_FRAME))?;

@@ -71,6 +71,12 @@ pub(super) struct CarriedInline {
     /// its first `keep` bytes alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) retired: Option<u32>,
+    /// The length a queue row's carried bytes land at once a restore
+    /// unleases them (FIX 7115), counted at capture from the original row, so
+    /// a restore can count what it lands before it opens anything. `None`:
+    /// the row lands at `keep` plus `len` bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) landed_len: Option<u64>,
     /// A restore over a live vault keeps this response's row as the live
     /// vault holds it, with the live vault's binding (a media job, a Live
     /// family; KS-2B2): its stream is passed over, never required or
@@ -243,6 +249,7 @@ impl BodyCensus {
                 len: body.len() as u64,
                 stored_len: 0,
                 retired: None,
+                landed_len: None,
                 superseded: false,
             },
             body.to_vec(),

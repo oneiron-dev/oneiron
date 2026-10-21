@@ -32,7 +32,9 @@ is_num() { [[ ${1:-} =~ ^[0-9]+$ ]]; }
 # (bad pattern, unreadable path, or 127 for a missing binary) -> hard fail.
 count_rg() {
   local out st
-  out=$(rg -c "$1" "${GLOBS[@]}" crates/*/src 2>&1); st=$?
+  # --no-ignore-dot: the root .ignore hides generated/ from agents, not from
+  # this count, which has always read them (FIX 8907).
+  out=$(rg --no-ignore-dot -c "$1" "${GLOBS[@]}" crates/*/src 2>&1); st=$?
   if [ "$st" -ge 2 ]; then
     echo "rg failed (exit $st) for pattern $1: $out" >&2
     return 1

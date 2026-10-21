@@ -1,3 +1,7 @@
+//! Voice UDS connection lifecycle.
+//! Entry: Connection::serve.
+//! Connection and Shutdown are owned here; frame vocabulary by codec.
+
 use std::io::{self, BufReader};
 use std::net::Shutdown as SocketShutdown;
 use std::os::unix::net::UnixStream;

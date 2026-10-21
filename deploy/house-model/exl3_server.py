@@ -31,7 +31,11 @@ server's identity, the Generator's epoch and the request's measured queue
 waits (`cache_usage.py`, FIX 6567, 8314). The identity's `model` is
 the target's weights manifest digest, when the installed shards match it
 before they load (`--weights-manifest`, FIX 7895); the server starts either
-way. The `model` it returns and lists stays `--model-id`.
+way. The `model` it returns and lists stays `--model-id`. Started by the
+model worker supervisor, it is given `--launch-manifest`: each receipt then
+echoes that manifest's digest beside the Generator's epoch, names the build
+the supervisor verified as its runtime, and says verified artifacts
+(FIX 8315). Without one the build stays reported.
 """
 import argparse
 import collections
@@ -135,6 +139,26 @@ def weights_digest(target_dir, manifest_path):
         return None
 
 
+def launch_identity(manifest_path):
+    """The supervisor's launch manifest (FIX 8315) as `(digest, runtime)`:
+    the SHA-256 of its exact bytes, and the build digest it names. None
+    without one; a manifest that cannot be read leaves the server on its
+    reported versions, with one warning, and the server still starts."""
+    if not manifest_path:
+        return None
+    try:
+        data = Path(manifest_path).read_bytes()
+        runtime = json.loads(data).get("runtime")
+        if not (isinstance(runtime, str) and len(runtime) == 64
+                and all(c in "0123456789abcdef" for c in runtime)):
+            raise ValueError("it names no 64-hex runtime")
+    except Exception as error:  # identity never stops the server
+        print(f"WARN LAUNCH_MANIFEST_UNREAD {error}; the build stays reported, not verified",
+              file=sys.stderr, flush=True)
+        return None
+    return cache_usage.sha256_hex(data), runtime
+
+
 def load(args):
     if args.context % PAGE:
         raise ValueError(f"--context must be a multiple of the cache page, {PAGE}")
@@ -154,6 +178,7 @@ def load(args):
 
     # The shards are checked before anything loads them.
     model_digest = weights_digest(args.target_dir, args.weights_manifest)
+    launch = launch_identity(args.launch_manifest)
     target_config = Config.from_directory(args.target_dir)
     target = Model.from_config(target_config, component="text")
     tokenizer = Tokenizer(target_config)
@@ -207,7 +232,7 @@ def load(args):
                         "recurrent_cache_size": args.recurrent_cache_gib * 1024**3},
         server_settings={"context": args.context, "draft": draft is not None, "draft_tokens": depth,
                          "max_in_flight": batch},
-        model_digest=model_digest)
+        model_digest=model_digest, launch=launch)
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:
@@ -704,7 +729,9 @@ class Scheduler:
                  "total_tokens": prompt_tokens + spent}
         cache_usage.add_evidence(usage, prompt_tokens, req.passes, self.identity.record(req.execution_mode),
                                  worker_wait_s=req.admission_wait,
-                                 engine_wait_s=timings["enqueued"] + req.page_wait)
+                                 engine_wait_s=timings["enqueued"] + req.page_wait,
+                                 build_evidence=self.identity.build_evidence,
+                                 launch_manifest=self.identity.launch_manifest)
         stats = {
             "prompt_n": prompt_tokens,
             "prompt_per_second": prompt_tokens / timings["prefill"] if timings["prefill"] > 0 else None,
@@ -975,6 +1002,9 @@ def main():
     p.add_argument("--model-id", default="qwen3.8-27b", help="the id /v1/models reports")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=18091)
+    p.add_argument("--launch-manifest", default=None,
+                   help="the supervisor's launch manifest (FIX 8315); its digest is echoed in every receipt "
+                        "and its runtime is the build, verified, when it reads")
     args = p.parse_args()
     serve(args, load(args))
 

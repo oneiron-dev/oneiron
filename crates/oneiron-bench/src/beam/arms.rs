@@ -30,7 +30,7 @@ impl BeamArmAdapter for DeterministicContextPackArm {
     fn run(
         &self,
         vault: &Vault,
-        _loaded: &LoadedDataset,
+        loaded: &LoadedDataset,
         case: &FixtureCase,
     ) -> BeamResult<ArmReport> {
         if case.pending_vector_count > 0 {
@@ -40,7 +40,14 @@ impl BeamArmAdapter for DeterministicContextPackArm {
             });
         }
 
-        let pack = run_deterministic_context_pack(vault, case)?;
+        let pack = run_deterministic_context_pack(
+            vault,
+            case,
+            loaded
+                .query_vector_by_case_id
+                .get(&case.case_id)
+                .map(Vec::as_slice),
+        )?;
         let report = context_pack_report(&pack, case);
 
         if report.result_count < case.expected_min_results {
@@ -241,6 +248,7 @@ pub(super) fn adapter_for(kind: ArmKind) -> Box<dyn BeamArmAdapter> {
 pub(super) fn configured_context_pack_builder<'a>(
     vault: &'a Vault,
     case: &FixtureCase,
+    query_vector: Option<&'a [f32]>,
 ) -> ContextPackBuilder<'a> {
     let text_search_limit = if case.fixture_class == FixtureClass::LowConfidence && case.limit == 0
     {
@@ -256,6 +264,11 @@ pub(super) fn configured_context_pack_builder<'a>(
         .merge_neighbors(false)
         .include_stats(true)
         .token_budget(case.token_budget);
+
+    let builder = match query_vector {
+        Some(vector) => builder.search_vector(vector, text_search_limit),
+        None => builder,
+    };
 
     // The channels fetch their fusion list length whatever they are asked
     // for, so the case's limit caps the pack itself, as for vanilla RAG.
@@ -279,8 +292,13 @@ pub(super) struct BudgetedContextPack {
 pub(super) fn run_deterministic_context_pack(
     vault: &Vault,
     case: &FixtureCase,
+    query_vector: Option<&[f32]>,
 ) -> BeamResult<BudgetedContextPack> {
-    run_budgeted_context_pack(|| configured_context_pack_builder(vault, case), vault, case)
+    run_budgeted_context_pack(
+        || configured_context_pack_builder(vault, case, query_vector),
+        vault,
+        case,
+    )
 }
 pub(super) fn run_vanilla_rag_context_pack(
     vault: &Vault,

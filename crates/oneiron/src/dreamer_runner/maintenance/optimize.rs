@@ -252,7 +252,7 @@ fn optimize(
         // is measured once that trial closes. A failed preflight is the
         // gate's evidence instead.
         if let Some(live) = optimizer.live
-            && skill_edit_needs_goal_axis_report(vault, &proposal)?
+            && skill_edit_needs_goal_axis_report(vault, &proposal, &scorer)?
             && crate::skill::drive_exploration_trial(
                 vault,
                 &proposal,
