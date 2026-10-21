@@ -17,6 +17,11 @@ use serde::{Deserialize, Serialize};
 
 use super::super::recipes::WakeRecipePolicy;
 use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, SpanBand, chunks, policy};
+use crate::dreamer_consolidation::KeptDecision;
+use crate::llm::decision::EvidenceVersion;
+
+mod consumption;
+pub(crate) use consumption::{consumed_carriers, retarget_consumed_in_txn};
 
 pub(crate) const RUNG_ATTEMPT: &str = "dreamer.sieve.rungs";
 /// Original cheap reading survives spending for later expensive-path audits.
@@ -27,8 +32,9 @@ const AUDIT: SideTable<AttemptId, SieveAuditRecord, Named> =
 const CONSUMED: SideTable<(AttemptId, [u8; 32]), SieveConsumeReceipt, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_CONSUMED);
 
-/// One span the nightly spending consumed: its ref, the attempt that spent
-/// it and when. The original reading stays in the retained history.
+/// One span the nightly spending consumed: its ref, the child attempt that
+/// carries its TURN's work (FIX 7498) and when. The original reading stays
+/// in the retained history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SieveConsumeReceipt {
     pub span: [u8; 32],
@@ -51,7 +57,7 @@ pub(crate) struct RungInput {
 }
 
 /// A sampled rule reading and the expensive path's label, kept by receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SieveAudit {
     pub sampled: bool,
     pub span: [u8; 32],
@@ -68,12 +74,15 @@ pub struct SieveAudit {
     pub at: u64,
     pub completed_units: u64,
     pub step_hashes: Vec<[u8; 32]>,
+    /// Every owed rung's typed decisions, rung by rung in pack order
+    /// (OF-498a): what the reading was read from.
+    pub decisions: Vec<KeptDecision>,
 }
 
 /// One audit receipt as kept: a flagged span's reading, sampled or owed,
 /// exactly as before, or an unflagged window's finding (OF-498f). The enum
 /// adds no tag, so a flagged receipt keeps its own bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SieveAuditRecord {
     Flagged(SieveAudit),
@@ -208,9 +217,10 @@ pub(crate) fn spend_in_txn(
     Ok(())
 }
 
-/// Spends `span` as consumed work: its receipt lands in the same
-/// transaction that takes it out of the queue, so a span is never both
-/// queued and receipted, and never spent twice.
+/// Spends `span` as consumed work carried by `attempt`, the child that owes
+/// its TURN: its receipt lands in the same transaction that takes it out of
+/// the queue, so a span is never both queued and receipted, and never spent
+/// twice.
 pub(crate) fn spend_consumed_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -352,6 +362,9 @@ pub(crate) struct RungEvidence {
     pub(crate) text: String,
     pub(crate) entities: Vec<EntityId>,
     pub(crate) scope: Scope,
+    /// The body version of each source the scope grants: the TURN, its
+    /// source and each candidate, as a rung's decisions pin them.
+    pub(crate) versions: Vec<EvidenceVersion>,
 }
 
 pub(crate) fn rung_evidence(vault: &Vault, input: &RungInput) -> Result<Option<RungEvidence>> {
@@ -397,21 +410,12 @@ fn rung_evidence_in_txn(
     .ok_or(Error::InvalidConfig("sieve read actor".into()))?;
     let read = vault.scoped_read(key);
     let mut scope = Scope::default();
+    let mut versions = Vec::new();
     for id in BTreeSet::from([span.turn, span.source]) {
         let Some(raw) = read.entity_raw_live_in(txn, &id)? else {
             return Ok(None);
         };
-        scope.readable.insert(ScopeResource::DocumentVersion {
-            document: id,
-            version: format!(
-                "blake3:{}",
-                crate::entity_id::bytes_to_hex_lower(
-                    &crate::dreamer_consolidation::swarm_evidence_content_hash(
-                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]
-                    )
-                )
-            ),
-        });
+        pin_version(&mut scope, &mut versions, id, &raw);
     }
     let mut ids = BTreeSet::new();
     for kind in [ENTITY_TYPE_PERSON, ENTITY_TYPE_ORG, ENTITY_TYPE_PLACE] {
@@ -430,17 +434,7 @@ fn rung_evidence_in_txn(
     let mut entities = Vec::new();
     for id in ids {
         if let Some(raw) = read.entity_raw_live_in(txn, &id)? {
-            scope.readable.insert(ScopeResource::DocumentVersion {
-                document: id,
-                version: format!(
-                    "blake3:{}",
-                    crate::entity_id::bytes_to_hex_lower(
-                        &crate::dreamer_consolidation::swarm_evidence_content_hash(
-                            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]
-                        )
-                    )
-                ),
-            });
+            pin_version(&mut scope, &mut versions, id, &raw);
             entities.push(id);
         }
     }
@@ -448,7 +442,23 @@ fn rung_evidence_in_txn(
         text,
         entities,
         scope,
+        versions,
     }))
+}
+
+/// Grants `id`'s body as read in `raw` to `scope`, and pins its version.
+fn pin_version(scope: &mut Scope, versions: &mut Vec<EvidenceVersion>, id: EntityId, raw: &[u8]) {
+    let body_hash = crate::dreamer_consolidation::swarm_evidence_content_hash(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    );
+    scope.readable.insert(ScopeResource::DocumentVersion {
+        document: id,
+        version: format!(
+            "blake3:{}",
+            crate::entity_id::bytes_to_hex_lower(&body_hash)
+        ),
+    });
+    versions.push(EvidenceVersion { id, body_hash });
 }
 
 pub(crate) fn finish_rungs(
@@ -463,6 +473,7 @@ pub(crate) fn finish_rungs(
     typing_owed: bool,
     completed_units: u64,
     step_hashes: Vec<[u8; 32]>,
+    decisions: Vec<KeptDecision>,
     now: u64,
 ) -> Result<bool> {
     vault.with_write_txn_grouped(|txn| {
@@ -496,6 +507,7 @@ pub(crate) fn finish_rungs(
                 at: now,
                 completed_units,
                 step_hashes,
+                decisions,
             }),
         )?;
         if !input.audit {

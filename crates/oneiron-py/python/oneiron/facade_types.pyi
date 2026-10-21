@@ -509,6 +509,8 @@ class HealthSilenceActivity(TypedDict):
     own_call_at: NotRequired[int | None]
     own_step_at: NotRequired[int | None]
     actor_only_at: NotRequired[int | None]
+    stream_at: NotRequired[int | None]
+    tool_finished_at: NotRequired[int | None]
     other_session: NotRequired[HealthOtherSession | None]
 class ConcernMoveBasis(TypedDict):
     digest: str
@@ -14313,7 +14315,7 @@ class ModelStepSubmit(TypedDict):
     step_key: str
     request: LlmRequest
     retry: NotRequired[ModelStepRetryPolicy]
-LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input"]
+LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input", "reasoning_content_history"]
 class UnsupportedCapability(TypedDict):
     capability: LlmCapability
     model: NotRequired[ModelId | None]
@@ -18343,6 +18345,7 @@ class WakeRecipePolicy(TypedDict):
     typing_instruction: str
     narrative_instruction: str
     arc_min_new_statements: int
+    arc_child_calls_per_wake: int
     audit_window_instruction: str
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy

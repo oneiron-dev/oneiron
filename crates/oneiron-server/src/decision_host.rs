@@ -1443,6 +1443,7 @@ impl SeatNotes for LadderNotes {
         candidates: &[SeatCandidate],
         model: &ModelId,
         effort: ReasoningEffort,
+        _deadline: &RetrievalDeadline,
     ) -> oneiron::Result<String> {
         let effort = match serde_json::to_value(effort) {
             Ok(serde_json::Value::String(label)) => label,
