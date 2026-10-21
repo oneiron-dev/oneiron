@@ -129,7 +129,10 @@ impl TaskActorVerb<'_> {
     /// Whether `actor` holds this verb's standing on the TASK.
     fn admits(self, standing: &TaskStanding, actor: EntityId) -> bool {
         let assignee = standing.assignee == Some(actor);
-        let taker = standing.taker.is_some_and(|taker| taker.actor == actor);
+        let taker = standing
+            .taker
+            .as_ref()
+            .is_some_and(|taker| taker.actor == actor);
         match self {
             Self::Accept => assignee,
             Self::Report => assignee || taker,

@@ -18,10 +18,20 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
 
-/// The claims shown, as the call reads them, and their ids.
+/// The claims shown, as the call reads them, their ids, and each as an
+/// entry an Arc composed in parts shows a range of (FIX 7509 PR3).
 pub(super) struct ArcClaims {
     pub(super) text: String,
     pub(super) ids: Vec<EntityId>,
+    pub(super) entries: Vec<ArcClaimEntry>,
+}
+
+/// One claim as shown: its `C` label and the words after it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ArcClaimEntry {
+    pub(super) id: EntityId,
+    pub(super) label: String,
+    pub(super) body: String,
 }
 
 /// Every active claim on a subject `turns` name, read through `read` in
@@ -58,6 +68,7 @@ pub(super) fn claims_in_txn(
     let rows = read.get_entities_parts_in_txn(txn, &candidates)?;
     let mut text = String::new();
     let mut ids = Vec::new();
+    let mut entries = Vec::new();
     for (claim, row) in candidates.iter().zip(rows) {
         let Some((ENTITY_TYPE_CLAIM, _, body)) = &row else {
             continue;
@@ -77,16 +88,22 @@ pub(super) fn claims_in_txn(
         } else {
             ""
         };
-        text.push_str(&format!(
-            "[{label}] subject={subject} {} {} confidence={} approval={}{conflict}\n",
+        let words = format!(
+            "subject={subject} {} {} confidence={} approval={}{conflict}",
             decoded.predicate,
             rmpv_to_json(&decoded.value),
             decoded.confidence,
             decoded.approval.as_str(),
-        ));
+        );
+        text.push_str(&format!("[{label}] {words}\n"));
         ids.push(*claim);
+        entries.push(ArcClaimEntry {
+            id: *claim,
+            label: label.to_string(),
+            body: words,
+        });
     }
-    Ok(ArcClaims { text, ids })
+    Ok(ArcClaims { text, ids, entries })
 }
 
 /// A claim's subject by this call's labels: a listed claim by its `C`

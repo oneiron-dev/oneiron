@@ -5,7 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::bounds::ScanBounds;
-use super::paths::{DOOR_BLOB_TOO_LARGE, DOOR_DISK_FLOOR, DOOR_PRE_RECEIVE_HOOK_NAME};
+use super::paths::{
+    DOOR_BLOB_TOO_LARGE, DOOR_DISK_FLOOR, DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WORK_HEARTBEAT_POLLS,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -275,12 +277,16 @@ mv -f "$pathspart" "$paths"
 mv -f "$historypart" "$history"
 mv -f "$blobspart" "$blobs"
 mv -f "$part" "$req"
+# The door answers once its scan, the push's marks and its intent are durable,
+# however long that takes: no count of polls ends this wait. A value-free line
+# every @DOOR_WORK_HEARTBEAT_POLLS@ polls says the hook still waits; it is no
+# deadline, and it proves no progress.
 waited=0
 while [ ! -f "$verdict" ]; do
 	waited=$((waited + 1))
-	if [ "$waited" -gt 120000 ]; then
-		echo "oneiron door: verdict window closed without an answer" >&2
-		exit 1
+	if [ "$waited" -ge @DOOR_WORK_HEARTBEAT_POLLS@ ]; then
+		waited=0
+		echo "oneiron door: still waiting for the door's answer" >&2
 	fi
 	sleep 0.005 2>/dev/null || sleep 1
 done
@@ -331,6 +337,10 @@ impl DoorHooksDir {
             )
             .replace("@DOOR_BLOB_TOO_LARGE@", DOOR_BLOB_TOO_LARGE)
             .replace("@DOOR_DISK_FLOOR@", DOOR_DISK_FLOOR)
+            .replace(
+                "@DOOR_WORK_HEARTBEAT_POLLS@",
+                &DOOR_WORK_HEARTBEAT_POLLS.to_string(),
+            )
             .replace(
                 "@DOOR_LIST_CHANGED_PATHS@",
                 if list_paths { "1" } else { "0" },

@@ -237,6 +237,11 @@ pub(crate) fn admitted_marks<'d>(
 /// tip blob's facts name. Opens no writer, calls no Git and decides no
 /// admission; with no marks it returns before reading anything.
 ///
+/// Returns how many facts this transaction newly wrote (FIX 8032): one per
+/// source and placement, spans and opaque residue alike, a fact already
+/// under its id not counted again; 0 with no marks. It counts no value,
+/// blob or record, and names none.
+///
 /// # Errors
 /// A spool, custody, mark or claim failure, or a fact that contradicts one
 /// already under its id: the whole transaction aborts with it.
@@ -247,15 +252,16 @@ pub(crate) fn record_receive_secret_marks_in_txn(
     store_identity: &str,
     marks: Option<&ReceiveSecretMarks>,
     updates: &[RefUpdate],
-) -> Result<()> {
+) -> Result<u64> {
     let Some(marks) = marks else {
-        return Ok(());
+        return Ok(0);
     };
     let operation_id = stamp.operation_id();
     let store_id = lfs_repo_id(store_identity)?;
     let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let write = CustodyWrite::of(vault);
     let mut custody = RetainedRepoCustody::load_in_writer(&vault.store, wtxn)?;
+    let mut written: u64 = 0;
     marks.drain(&mut |observation, plan| {
         let placed =
             mark_retained_repo_blob_in_txn(&write, wtxn, &mut custody, plan, operation_id, at)?;
@@ -276,11 +282,16 @@ pub(crate) fn record_receive_secret_marks_in_txn(
                     placement: placement.clone(),
                     marked_at: at,
                 };
-                put_repo_secret_mark_in_txn(vault, wtxn, &mark)?;
+                if put_repo_secret_mark_in_txn(vault, wtxn, &mark)? {
+                    written = written
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow("a push's repo secret marks"))?;
+                }
             }
         }
         Ok(())
-    })
+    })?;
+    Ok(written)
 }
 
 /// Each source `observation` names, with the path its facts carry: one per
@@ -337,13 +348,13 @@ fn span_of(key: &RetainedRepoPlacedKey) -> RepoSecretPlacement {
     }
 }
 
-/// Writes `mark` once at its id: the same fact again writes nothing; any
-/// other record under the id refuses.
+/// Writes `mark` once at its id, and says whether it wrote it: the same
+/// fact again writes nothing; any other record under the id refuses.
 fn put_repo_secret_mark_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
     mark: &RepoSecretMark,
-) -> Result<()> {
+) -> Result<bool> {
     let id = mark.id()?;
     let body = mark.claim()?;
     match vault.get_claim_in_txn(wtxn, &id)? {
@@ -352,7 +363,7 @@ fn put_repo_secret_mark_in_txn(
                 && stored.subject == body.subject
                 && stored.value == body.value =>
         {
-            return Ok(());
+            return Ok(false);
         }
         Some(_) => {
             return Err(Error::CorruptedIndex(
@@ -370,7 +381,8 @@ fn put_repo_secret_mark_in_txn(
         start: mark.marked_at,
         end: mark.marked_at,
     };
-    vault.put_reserved_claim_in_txn(wtxn, &id, &body, occurred, mark.marked_at)
+    vault.put_reserved_claim_in_txn(wtxn, &id, &body, occurred, mark.marked_at)?;
+    Ok(true)
 }
 
 fn fields(entries: Vec<(&str, Value)>) -> Value {

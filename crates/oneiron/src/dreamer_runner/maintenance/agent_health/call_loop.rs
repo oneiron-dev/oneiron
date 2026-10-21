@@ -71,6 +71,7 @@ pub(super) fn loop_findings(
                 confession: None,
                 blocked: false,
                 observed_brief: None,
+                silence: None,
             });
         }
     }

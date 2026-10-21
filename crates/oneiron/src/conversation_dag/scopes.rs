@@ -1,11 +1,11 @@
-//! Exact, capped scope resolution over a single transaction snapshot.
+//! Exact scope resolution over a single transaction snapshot: every record
+//! the scope holds, however many, counted as one DAG walk (rule 5).
 
-use super::graph::{self, chain, edge_ids, invalid, require_member, require_type};
+use super::graph::{self, chain, invalid, require_member, require_type};
 use super::migration::migrate_in_txn;
 use super::{ResolvedScope, ScopePath, ScopeSelector};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::registry::ENTITY_TYPE_SESSION;
 use crate::side_table::{self, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -36,14 +36,10 @@ fn sub_session_records(
         return Err(invalid("SubSession requires exactly one SpawnedBy edge"));
     }
     require_member(&vault.store, txn, &scope.conversation, &spawned[0])?;
+    let mut walk = graph::walk_count(&vault.store, txn, &scope.conversation)?;
     let mut records = Vec::new();
-    for (n, entry) in SESSION_TURN_MEMBERS
-        .iter_from(&vault.store, txn, session.as_bytes())?
-        .enumerate()
-    {
-        if n >= MAX_ANCESTOR_DEPTH {
-            return Err(Error::IndexOverflow("conversation_dag_walk"));
-        }
+    for entry in SESSION_TURN_MEMBERS.iter_from(&vault.store, txn, session.as_bytes())? {
+        walk.row();
         let ((_, id), value) = entry.map_err(|_| Error::CorruptedIndex("session turns index"))?;
         if value != [1] {
             return Err(Error::CorruptedIndex("session turns index"));
@@ -65,6 +61,7 @@ fn sub_session_records(
         }
         records.push(id);
     }
+    walk.defer(&vault.store);
     // A complete reverse-membership result is sorted topologically, not by
     // UUID. Each Parent is either the spawning turn or another member. Kahn's
     // bounded walk rejects cycles without an O(n^2) walk from every record.
@@ -166,19 +163,18 @@ pub(crate) fn resolve_in_txn(
     if scope.include_forks {
         let mut seen: HashSet<_> = records.iter().copied().collect();
         let mut queue: VecDeque<_> = records.iter().copied().collect();
-        let mut examined = records.len();
+        let mut walk = graph::walk_count(&vault.store, txn, &scope.conversation)?;
         while let Some(parent) = queue.pop_front() {
-            let budget = MAX_ANCESTOR_DEPTH.saturating_sub(examined);
-            let mut children =
-                edge_ids(&vault.store, txn, &parent, EdgeKind::Parent, true, budget)?;
-            examined += children.len();
-            let retained = super::redacted::children(
+            let mut children = graph::all_edge_ids(
                 &vault.store,
                 txn,
                 &parent,
-                MAX_ANCESTOR_DEPTH.saturating_sub(examined),
+                EdgeKind::Parent,
+                true,
+                &mut walk,
             )?;
-            examined += retained.len();
+            let retained = super::redacted::children(&vault.store, txn, &parent)?;
+            walk.rows(retained.len());
             children.extend(retained);
             for child in children {
                 if seen.contains(&child) {
@@ -204,6 +200,7 @@ pub(crate) fn resolve_in_txn(
                 queue.push_back(child);
             }
         }
+        walk.defer(&vault.store);
     }
     if let Some(session) = scope.session {
         let mut filtered = Vec::new();
@@ -230,8 +227,8 @@ pub(crate) fn resolve_in_txn(
 }
 
 impl Vault {
-    /// Resolves a complete scope. Safety limits refuse instead of truncating
-    /// the covers set that a later summary will attest to.
+    /// Resolves a complete scope: every record it holds, never a truncated
+    /// covers set that a later summary would attest to.
     pub fn resolve_dag_scope(&self, scope: &ScopeSelector) -> Result<ResolvedScope> {
         self.with_write_txn_grouped(|txn| resolve_in_txn(self, txn, scope))
     }
