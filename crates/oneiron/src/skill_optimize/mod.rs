@@ -179,7 +179,8 @@ pub use self::eval_set::{
     EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease, EvalSeat, EvalSourceGroup, FamilyDecision,
     FamilyPurpose, NearCopyFlag, PurposeCounts, SeatInventory, SourceFamily, SufficiencyCard,
     SufficiencyInput, SufficiencyVerdict, UncutFamily, UnknownReason, WaitingDecision,
-    apply_eval_authoring_plan, eval_authoring_inventory, setup_eval_cohorts, sufficiency_card,
+    apply_eval_authoring_plan, eval_authoring_inventory, eval_authoring_inventory_sourced,
+    setup_eval_cohorts, sufficiency_card,
 };
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,

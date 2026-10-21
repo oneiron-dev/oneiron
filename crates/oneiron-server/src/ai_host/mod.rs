@@ -475,6 +475,9 @@ pub struct AiHost {
     sync_wake: Option<sync_wake::SyncWake>,
     /// The server the Dreamer's timer runs the standing questions on.
     question_timer: dreamer::QuestionTimer,
+    /// The server a workflow step's `self.use` sends through, bound once it
+    /// exists, Dreamer or none (FIX 7016).
+    step_host: step::StepHost,
     /// The gate each Dreamer pass is admitted through.
     pass_admission: dreamer::PassAdmission,
     /// The watch that hands the bound Dreamer's timer work to its own
@@ -576,8 +579,13 @@ impl AiHost {
     /// exactly one runner serves the questions. Should the bound Dreamer end
     /// before shutdown, already or later, the questions and due digests go
     /// to their own sleepers on `server` once (FIX 1149), so one runner
-    /// still serves them.
+    /// still serves them. First, with a Dreamer or without, the workflow
+    /// pump's steps bind their `self.use` to `server`'s door (FIX 7016).
     pub(crate) fn bind_question_timer(&self, server: &Arc<SyncServer>) -> bool {
+        // A workflow step's `self.use` calls this server's door from now on,
+        // whether or not a Dreamer runs (FIX 7016); a second bind keeps the
+        // first.
+        let _ = self.step_host.set(Arc::downgrade(server));
         let Some(dreamer) = &self.dreamer else {
             return false;
         };
@@ -692,6 +700,7 @@ impl AiHost {
             sieve: None,
             sync_wake: None,
             question_timer: dreamer::QuestionTimer::default(),
+            step_host: step::StepHost::default(),
             pass_admission: dreamer::PassAdmission::default(),
             dreamer_fallback: OnceLock::new(),
             program_monitor: OnceLock::new(),
@@ -731,6 +740,7 @@ impl AiHost {
             models,
             &status,
             Arc::clone(&handle.decisions),
+            Arc::clone(&host.step_host),
         ) {
             Ok(pump) => host.workflows = Some(pump),
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
@@ -1100,6 +1110,7 @@ fn start_workflows(
     models: &ModelsConfig,
     status: &Arc<StatusCell>,
     decisions: Arc<OnceLock<DecisionHost>>,
+    host: step::StepHost,
 ) -> Result<WorkflowPump, IdleReason> {
     if !models.workflows.enabled {
         return Err(IdleReason::Disabled);
@@ -1114,6 +1125,7 @@ fn start_workflows(
             budget_units: models.workflows.step_budget_units,
             retry_backoff_secs: models.workflows.retry_backoff_secs,
             spent: Default::default(),
+            host,
         },
         Arc::clone(status),
         decisions,

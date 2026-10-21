@@ -76,14 +76,20 @@ impl ManagedHost {
     }
     /// The custody anchor door's owner credential the supervisor handed on
     /// its own pipe, read once, before storage; `None` when it handed none.
-    /// A vault VM is handed none: its argv refuses the flag.
+    /// A vault VM's comes through its bootstrap, for the URL its host bound,
+    /// which must be `anchor_url`, the vault's effective one (FIX 6517).
     pub(super) fn custody_anchor_credentials(
         &mut self,
+        anchor_url: Option<&str>,
     ) -> Result<Option<Arc<CustodyAnchorCredentials>>, ManagedError> {
         match self {
-            Self::Process(host) => host.adapter_mut().custody_anchor_credentials(),
+            // A node's credential is for whatever URL its settings name.
+            Self::Process(host) => {
+                let _ = anchor_url;
+                host.adapter_mut().custody_anchor_credentials()
+            }
             #[cfg(target_os = "linux")]
-            Self::Vm(_) => Ok(None),
+            Self::Vm(host) => host.adapter_mut().custody_anchor_credentials(anchor_url),
         }
     }
     /// The outbox carrier's revision a vault VM's companion reported at

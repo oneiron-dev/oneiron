@@ -2064,7 +2064,7 @@
      "path": "src/attempt_queue/engine/enqueue_claim.rs",
      "purpose": "Enqueue doors plus kind-scoped claim machinery and read-repair scans",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "fn": 5
      }
     },
@@ -2101,6 +2101,16 @@
      "surface": {
       "crate-vis": 7,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/owner_retained_payload.rs",
+     "purpose": "An owner-retained row's payload rewritten in place (FIX 6755): the one door through which an owner-retained…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -12394,7 +12404,7 @@
      "path": "src/claim/scoped_read/weave_digest/coach.rs",
      "purpose": "The Coach's rule for an owner's digest settings (FIX 5495): closed-form, no model call, over the owner's own…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "trait": 1
      }
     },
@@ -21541,7 +21551,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConflictSettleOutcome",
@@ -22454,7 +22464,7 @@
      "path": "src/dreamer_runner/free_time/items.rs",
      "purpose": "A free-time cycle's items (FIX 4453): the binding each item's attempt runs under, what it lands, and how it…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 13,
       "fn": 2,
       "struct": 1
      }
@@ -22665,7 +22675,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/loaded.rs",
      "purpose": "The skills a card's run loaded (OF-568, FIX 3724): each SKILL revision the pack manifest of the card's…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "struct": 2
      }
     },
@@ -22875,7 +22885,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/work.rs",
      "purpose": "A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -50856,7 +50866,7 @@
      "path": "src/skill_attribution/trace.rs",
      "purpose": "What the standing attribution classifier reads about one terminal attempt (ARCH-0056 §5, ARCH-0066 T2): the…",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -52175,7 +52185,7 @@
      "surface": {
       "crate-vis": 1,
       "fn": 2,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 8
      }
     },
@@ -52207,6 +52217,16 @@
      "purpose": "The lineage fixed code resolves for a candidate, from the existing readers' explicit links only: the…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/authoring/sourced.rs",
+     "purpose": "The eval-authoring inventory and the rows it was read from, in one set of reads (FIX 6997): the Coach's…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -57451,7 +57471,7 @@
      "purpose": "The marker row: its kind, payload, dedupe key, derived id and the in-transaction doors that commit it",
      "surface": {
       "const": 6,
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -60852,7 +60872,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -66273,7 +66293,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67477,7 +67497,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67738,7 +67758,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4256,
+   "source_files": 4258,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80696,7 +80716,7 @@
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -88784,7 +88804,7 @@
      "purpose": "Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 3,
       "re-export": 1,
@@ -88821,7 +88841,7 @@
      "path": "src/managed/args/vm_transport.rs",
      "purpose": "A vault VM's cold restore handoff (FIX 6584): `--vm-restore-revision`, which only the image's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -89322,7 +89342,7 @@
      "path": "src/managed/vm_guest.rs",
      "purpose": "Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -89338,8 +89358,22 @@
      "surface": {
       "enum": 1,
       "fn": 15,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VmAnchorHostIo"
+     ],
+     "path": "src/managed/vm_host/anchor.rs",
+     "purpose": "The host's half of a vault VM's custody anchor channels (FIX 6517, [`oneiron_vault_contract::vm_anchor`])",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -89377,7 +89411,7 @@
      "path": "src/managed/vm_host/restore.rs",
      "purpose": "The host's half of a vault VM's restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): every…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 3
      }
@@ -89403,6 +89437,16 @@
      "purpose": "A vault VM's root bootstrap, `oneiron-vm-init` (FIX 6308): the step between the image's shell init, which…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/anchor.rs",
+     "purpose": "The bootstrap's half of a vault VM's custody anchor channels (FIX 6517…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -89442,7 +89486,7 @@
      "path": "src/managed/vm_init/restore.rs",
      "purpose": "The bootstrap's half of the restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): the boot's…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -90661,7 +90705,17 @@
      "path": "src/owner/backup/custody/anchor_credentials.rs",
      "purpose": "The owner credential a custody anchor door admits (FIX 5788), handed to the process that calls the door on a…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/custody/anchor_transport.rs",
+     "purpose": "A vault VM's way to its custody anchor door (FIX 6517): the guest has no network, so its bootstrap serves a…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -92906,7 +92960,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 68,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92941,7 +92995,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93062,7 +93116,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 989,
+   "source_files": 992,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -97556,7 +97610,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 20,
+      "mod": 21,
       "re-export": 9
      }
     },
@@ -97864,9 +97918,29 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 16,
+      "const": 18,
       "enum": 2,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VmAnchorHeader",
+      "VmAnchorProxyHello",
+      "VmAnchorProxyRefusal",
+      "VmAnchorProxyReply",
+      "VmAnchorRefusal",
+      "VmAnchorReply"
+     ],
+     "path": "src/lib/vm_anchor.rs",
+     "purpose": "A vault VM's custody anchor channels (FIX 6517): the owner credential a custody anchor door admits, carried…",
+     "surface": {
+      "const": 6,
+      "enum": 4,
+      "fn": 8,
+      "struct": 2
      }
     },
     {
@@ -97966,7 +98040,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -97975,7 +98049,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 45,
+   "source_files": 46,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

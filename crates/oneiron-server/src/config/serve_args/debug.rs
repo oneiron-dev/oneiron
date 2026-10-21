@@ -30,6 +30,9 @@ impl fmt::Debug for ServeArgs {
             .field("restore_result_fd", &self.restore_result_fd)
             .field("vsock_guest", &self.vsock_guest)
             .field("vm_restore_revision", &self.vm_restore_revision)
+            .field("vm_anchor_revision", &self.vm_anchor_revision)
+            .field("vm_anchor_url", &redacted_secret(&self.vm_anchor_url))
+            .field("vm_anchor_socket", &self.vm_anchor_socket)
             .field("keystore_dir", &self.keystore_dir)
             .field("escrow_recipient_file", &self.escrow_recipient_file)
             .field(
