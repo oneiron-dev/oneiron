@@ -70,17 +70,20 @@ pub(crate) fn preflight_canonical_recovery(
         {
             return Err(refusal.err);
         }
-        // A file-plane ASSET the ingest skipped as the same body keeps its row (FIX 5393).
+        // A file-plane ASSET the ingest skipped as the same body keeps its row (FIX 5393),
+        // and a pad row rests as its reference (KS-5).
         let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?;
         let landed = match stored {
             Some(stored) if stored == entity.blob => true,
-            Some(stored) => crate::sync::asset_body::file_echo_equal(
-                &vault.store,
-                &txn,
-                &id,
-                &stored,
-                &entity.blob,
-            )?,
+            Some(stored) => {
+                crate::sync::asset_body::file_echo_equal(
+                    &vault.store,
+                    &txn,
+                    &id,
+                    &stored,
+                    &entity.blob,
+                )? || crate::world_keys::pad_echo_equal(&vault.store, &stored, &entity.blob)
+            }
             None => false,
         };
         if !landed {

@@ -113,6 +113,9 @@ impl Vault {
                 crate::world_keys::WorldKeyDestroyCause::ReplayedTombstone,
                 decoded.request_id,
             )?;
+            // A hard tombstone of one pad row retires that key's pad in
+            // custody, never another of its world's (KS-5).
+            crate::world_keys::stage_pad_row_erase_in_txn(&self.store, wtxn, id)?;
         }
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         // Receiver-only room MESSAGE content must be erased before the TURN

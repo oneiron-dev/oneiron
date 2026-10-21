@@ -348,6 +348,8 @@ pub(super) fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob:
                     blob,
                 )
                 .unwrap_or(false)
+                // A pad row resting as its reference (KS-5).
+                || crate::world_keys::pad_echo_equal(&vault.store, &existing, blob)
         }
         _ => false,
     }

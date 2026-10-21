@@ -172,6 +172,12 @@ impl Vault {
                 let stripped = census.note(&self.store, &txn, entry.name, key, value)?;
                 let value = if let Some(stripped) = stripped {
                     stripped
+                } else if entry.name == "entities"
+                    && let Some(carrier) = crate::world_keys::image_pad_row(&self.store, value)
+                {
+                    // A pad row at rest names its pad in custody; the image
+                    // carries the pad as it always did, until FIX 5686 part 2.
+                    carrier
                 } else if entry.name == "job_records" {
                     rebuild::unlease_attempt(key, value)?
                 } else {

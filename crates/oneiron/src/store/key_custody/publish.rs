@@ -275,6 +275,8 @@ impl Store {
         let mut retired = Vec::new();
         for (id, state) in custody.census()? {
             match state {
+                // KS-5: a pad its world keeps local stays out of the head.
+                EntryState::Live if recipients.keeps_local(&id) => {}
                 EntryState::Live => entries.push(HeadEntry {
                     secret: custody.read(&id)?,
                     id,

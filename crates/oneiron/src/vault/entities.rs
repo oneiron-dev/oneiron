@@ -340,7 +340,10 @@ impl Vault {
     /// those passes fail closed on the very row they exist to remove, and
     /// would turn one custody carrier into a wedged window. `get_raw_in` is
     /// unsealed for the same reason. Everything outside those passes uses the
-    /// sealed public [`Vault::get_raw`].
+    /// sealed public [`Vault::get_raw`]. A world key's pad row reads as the
+    /// carrier its live routes ship, its pad the row's own or else current
+    /// custody's, and as absent while neither is here (KS-5,
+    /// `world_keys::pad_custody`).
     /// Reads the mirror body and its source revision in one LMDB snapshot.
     #[cfg(feature = "sync")]
     pub(crate) fn get_raw_and_revision_unsealed(
@@ -348,7 +351,10 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Option<(Vec<u8>, Option<crate::vault::RevisionRef>)>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.get_raw_in(&txn, id)? else {
+        let Some(raw) = self
+            .get_raw_in(&txn, id)?
+            .and_then(|raw| crate::world_keys::live_route_row(&self.store, raw))
+        else {
             return Ok(None);
         };
         let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
@@ -362,7 +368,9 @@ impl Vault {
 
     pub(crate) fn get_raw_unsealed(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
-        self.get_raw_in(&rtxn, id)
+        Ok(self
+            .get_raw_in(&rtxn, id)?
+            .and_then(|raw| crate::world_keys::live_route_row(&self.store, raw)))
     }
 
     pub(crate) fn get_raw_in(

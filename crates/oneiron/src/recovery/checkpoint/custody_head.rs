@@ -133,8 +133,17 @@ impl Vault {
     /// Who this vault's custody heads are wrapped to: its pinned recovery
     /// root (the kit keeps only its seed), and its data key's custody
     /// subkey while the key is held. Neither is a reason to refuse: a pass
-    /// with neither stays pending.
-    pub(crate) fn custody_recipients(&self) -> Result<CustodyRecipients> {
+    /// with neither stays pending. `hosted`: the head goes to a hosted
+    /// member, which the pads of some worlds stay off (KS-5); a lookup of
+    /// those worlds that faults is warned and leaves every pad in the head.
+    pub(crate) fn custody_recipients(&self, hosted: bool) -> Result<CustodyRecipients> {
+        let pad_worlds_kept_local = self.pad_worlds_kept_local(hosted).unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a custody head's pad eligibility could not be read; every pad rides it"
+            );
+            Default::default()
+        });
         let data_key = self
             .unlock_vault_key()
             .and_then(|()| self.vault_subkey(CUSTODY_HEAD_WRAP_CONTEXT))
@@ -144,7 +153,11 @@ impl Vault {
         let root = self
             .pinned_root_recipient_in_txn(&txn, &fold)?
             .map(|root| (root.id.0, root.key));
-        Ok(CustodyRecipients { root, data_key })
+        Ok(CustodyRecipients {
+            root,
+            data_key,
+            pad_worlds_kept_local,
+        })
     }
 
     /// One publication pass of this vault's custody: its keyless log and
@@ -202,7 +215,10 @@ impl Vault {
         outbox: Option<&CustodyOutbox>,
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<CustodyStatus> {
-        let recipients = self.custody_recipients()?;
+        let hosted = declared
+            .iter()
+            .any(|spec| matches!(spec.kind(), TargetKind::Hosted(_)));
+        let recipients = self.custody_recipients(hosted)?;
         let shipped: Vec<OutboxTarget> = declared
             .iter()
             .filter(|spec| spec.kind() == TargetKind::Hosted(HostedKind::HypnosOutbox))
@@ -284,7 +300,7 @@ impl Vault {
     /// when it is behind the local log position, seals a batch for it.
     /// `None` when it is current or nothing is in custody.
     pub fn custody_batch_for(&self, spec: &TargetSpec) -> Result<Option<CustodyBatch>> {
-        let recipients = self.custody_recipients()?;
+        let recipients = self.custody_recipients(matches!(spec.kind(), TargetKind::Hosted(_)))?;
         self.store.custody_batch_for(spec, &recipients)
     }
 

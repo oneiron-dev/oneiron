@@ -1,5 +1,7 @@
 //! What a scoped door hands out for a row it admitted (FIX 3677, FIX 5397):
-//! a file-plane ASSET leaves as its body, never the manifest its row keeps.
+//! a file-plane ASSET leaves as its body, never the manifest its row keeps,
+//! and a world key's pad row as its carrier, never the reference it rests as
+//! (KS-5).
 use heed::RoTxn;
 
 use crate::{EntityId, Vault, error::Result};
@@ -22,6 +24,9 @@ impl Vault {
         id: &EntityId,
         raw: Vec<u8>,
     ) -> Result<Vec<u8>> {
+        if let Some(carrier) = crate::world_keys::image_pad_row(&self.store, &raw) {
+            return Ok(carrier);
+        }
         self.materialized_row_in_txn(txn, id, raw)
     }
 }
