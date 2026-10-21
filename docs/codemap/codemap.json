@@ -15308,11 +15308,17 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "FixtureForward",
+      "FixtureForwardError"
+     ],
      "path": "src/code_sandbox/egress/fixture.rs",
      "purpose": "Host-declared fixture origin",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -15322,7 +15328,7 @@
      "path": "src/code_sandbox/egress/http.rs",
      "purpose": "Guarded, pinned HTTP with manual redirects and final-domain decisions",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -15335,8 +15341,8 @@
      "path": "src/code_sandbox/egress/mod.rs",
      "purpose": "The engine's open egress proxy",
      "surface": {
-      "fn": 5,
-      "re-export": 1,
+      "fn": 6,
+      "re-export": 2,
       "struct": 2
      }
     },
