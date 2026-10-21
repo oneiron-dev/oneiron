@@ -18610,7 +18610,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BoardStreamRegistry",
@@ -18620,7 +18620,7 @@
      "purpose": "The board stream registry: connections, subscriptions and event routing",
      "surface": {
       "crate-vis": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -18633,7 +18633,7 @@
      "path": "src/context_board/stream/review.rs",
      "purpose": "The diary-review producer: a pending diary-read review wakes the reviewed agent's STREAM connections (FIX…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4,
       "struct": 1
      }
@@ -22840,6 +22840,23 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ProducerFixDraft",
+      "ProducerTarget"
+     ],
+     "path": "src/dreamer_runner/maintenance/coach_diagnostic.rs",
+     "purpose": "The Coach's diagnosis of a model finding's issue (OF-418 L3; ARCH-0066 §4, §6)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "CoachHealAuthor",
       "HealDecisions",
       "HealRoute",
@@ -22849,7 +22866,7 @@
      "purpose": "The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 3,
       "struct": 2,
@@ -22875,7 +22892,7 @@
      "path": "src/dreamer_runner/maintenance/coach_repair.rs",
      "purpose": "The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -23279,7 +23296,7 @@
       "const": 3,
       "crate-vis": 12,
       "fn": 1,
-      "mod": 18,
+      "mod": 19,
       "re-export": 10
      }
     },
@@ -46751,8 +46768,21 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 19,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PadRestoreNote"
+     ],
+     "path": "src/recovery/checkpoint/pad_custody.rs",
+     "purpose": "A restore's world key pads (KS-5, FIX 5686 part 2; CALLS: KS-5 restore outcomes)",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1
      }
     },
     {
@@ -46881,6 +46911,16 @@
      "purpose": "The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/side_pads.rs",
+     "purpose": "The live world key pad rows of a side restore's source (KS-5, FIX 5686 part 2): a live row keeps its own pad…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -47019,6 +47059,7 @@
      "purpose": "Three-tier repair driver with all-or-nothing bounded work admission",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 7,
       "struct": 3
@@ -49626,7 +49667,7 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1
      }
     },
@@ -49698,7 +49739,7 @@
      "path": "src/self_heal/detector_runner.rs",
      "purpose": "Deterministic detector execution: working-set validation, run loop, event ids, Vault entry points",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -49827,13 +49868,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/issue_work.rs",
+     "purpose": "The Coach's Issues work from both of its sources (OF-418 L3; ARCH-0066 §4, §6)",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 8,
       "re-export": 11
      }
@@ -50026,7 +50077,7 @@
      "purpose": "Model-graded detection over ARCH-0037 runs",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 7,
       "struct": 4
@@ -54055,7 +54106,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/checkpoint_custody/activation.rs",
@@ -54282,13 +54333,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/fork.rs",
      "purpose": "Restore planning and the fork a copy served beside its source takes (ARCH-0038 #erasure-completeness, \"Key…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -54348,7 +54399,7 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 1,
       "re-export": 1
      }
@@ -54432,13 +54483,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/publication_policy.rs",
+     "purpose": "The publication policy each custody head is sealed under (KS-5, FIX 7191): which worlds' pads a member's…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/publish.rs",
      "purpose": "Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to every…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -54661,7 +54722,7 @@
      "path": "src/store/open_gates/read_only_door.rs",
      "purpose": "Read-only door: rows of an existing vault's `vault_meta`, read without opening it as a vault, beside another…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -55082,7 +55143,7 @@
      "path": "src/store/world_pad_custody.rs",
      "purpose": "The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the exterior custody a world key's…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -65664,7 +65725,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "fn": 3,
       "re-export": 21,
       "struct": 2
@@ -65769,9 +65830,29 @@
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/pad_custody.rs",
-     "purpose": "A world key's pad at rest and on the move (KS-5, FIX 5686, part 1 of 2)",
+     "purpose": "A world key's pad at rest and on the move (KS-5, FIX 5686)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/pad_erase.rs",
+     "purpose": "A local hard erase of one world key pad row alone (KS-5, FIX 7192): its key's custody entry retires, as a…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/pad_image.rs",
+     "purpose": "A world key pad in a physical image (KS-5, FIX 5686 part 2): a checkpoint or backup image and a Layer-1…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -65785,7 +65866,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -67426,7 +67507,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 111,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67972,7 +68053,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 78,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -68098,7 +68179,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68217,7 +68298,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 125,
+     "files": 126,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68427,7 +68508,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 41,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68443,7 +68524,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4312,
+   "source_files": 4319,
    "test_files": 902
   },
   "oneiron-android": {
