@@ -1755,6 +1755,8 @@ fn mcp_agent_verb_input(
         "vault.rooms.host" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host.pin" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host.hand" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.upkeep.pending" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.upkeep.voice" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.sharing" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -4515,6 +4517,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.rooms.host.hand" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.upkeep.pending" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.upkeep.voice" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.rooms.sharing" => {
@@ -16921,6 +16929,25 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_host_hand(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.upkeep.pending" => {
+            let input: oneiron::workspace_roster::RoomUpkeepPendingRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_upkeep_pending(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.upkeep.voice" => {
+            let input: oneiron::workspace_roster::RoomUpkeepVoiceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_upkeep_voice(&memory, input)
+                .map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

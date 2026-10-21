@@ -138,6 +138,15 @@ pub const COACH_TRADEOFF_ROUTE_FACET: &str = "coach.tradeoff_route";
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 /// Predicate of the Coach's Proposed room nudge, its subject the room's host.
 pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
+/// One room nudge as `read` reads it in `txn`, for the host's own upkeep
+/// read and voice (OF-417); `None` for anything else. It writes nothing.
+pub(crate) fn room_upkeep_nudge_in_txn(
+    read: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: crate::EntityId,
+) -> crate::Result<Option<crate::workspace_roster::RoomUpkeepNudge>> {
+    super::room_upkeep::read_nudge_in_txn(read, txn, id)
+}
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
