@@ -23930,7 +23930,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 17,
       "struct": 1
      }
@@ -27270,6 +27270,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HealAttemptFact",
+      "HealDependencyEdge",
+      "HealImpactPolicy",
+      "HealImpactScore",
+      "HealPendingProposal",
+      "HealResidue",
+      "HealSourceRef",
+      "HealTaskState",
+      "HealUnknown"
+     ],
+     "path": "src/failure_ladder/impact.rs",
+     "purpose": "The self-healing loop's human residue, ordered by impact (OF-418 L4; ARCH-0066 §6): one parked run blocking…",
+     "surface": {
+      "enum": 3,
+      "fn": 6,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "FailureLadder"
      ],
      "path": "src/failure_ladder/ladder.rs",
@@ -27309,7 +27331,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -28810,6 +28832,16 @@
      "purpose": "One proposed claim decided on its own (DOOR-115): the owner's approval or decline of a claim named by its…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/bundle/pending_heal.rs",
+     "purpose": "The Coach's proposals still waiting in the pending-consent tray, for the healer's residue read (OF-418 L4)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -50109,7 +50141,7 @@
      "path": "src/self_heal/issue_work.rs",
      "purpose": "The Coach's Issues work from both of its sources (OF-418 L3; ARCH-0066 §4, §6)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -59514,7 +59546,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 43,
       "fn": 1,
       "mod": 5,
       "re-export": 27
@@ -67843,7 +67875,7 @@
      "purpose": "OF-360 extraction-quality evaluation"
     },
     "failure_ladder": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67885,7 +67917,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 145,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68769,7 +68801,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4341,
+   "source_files": 4343,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92138,7 +92170,7 @@
      "path": "src/owner/healer.rs",
      "purpose": "The owner reads the self-healing loop (ARCH-0066): the three signed oversight receipts the vault emits, and…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 15
      }
     },
     {
