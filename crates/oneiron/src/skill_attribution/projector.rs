@@ -102,9 +102,10 @@ pub fn run_attribution_projector_with_decisions(
         highest = highest.max(sequence);
         // The rows a model-tier note reads (FIX 7101); the rule tier writes
         // no note, so it reads none.
-        let sources = match decisions {
-            Some(_) => union_source_rows([evidence_rows(vault, &evidence), floor_rows.clone()]),
-            None => None,
+        let sources = if decisions.is_some() {
+            union_source_rows([evidence_rows(vault, &evidence), floor_rows.clone()])
+        } else {
+            None
         };
         let request = JudgeRequest {
             lane: AttributionLane::Attempt,
