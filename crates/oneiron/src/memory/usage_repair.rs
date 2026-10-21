@@ -10,7 +10,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::{ActSurface, principal_standing_in_txn};
+use crate::authority::{
+    ActSurface, NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
@@ -234,20 +236,28 @@ impl Memory<'_> {
                     return Err(refused(verb, "the caller's credential is no longer live"));
                 }
                 let standing = match self.actor_class() {
-                    EdgeActorClass::Agent | EdgeActorClass::System => principal_standing_in_txn(
-                        self.vault(),
-                        txn,
-                        self.actor(),
-                        self.actor_class(),
-                        verb.name(),
-                    )?,
-                    EdgeActorClass::Human => None,
+                    EdgeActorClass::Agent | EdgeActorClass::System => {
+                        principal_standing_or_lapse_in_txn(
+                            self.vault(),
+                            txn,
+                            self.actor(),
+                            self.actor_class(),
+                            verb.name(),
+                        )?
+                    }
+                    EdgeActorClass::Human => Err(NoStanding::NotStanding),
                 };
-                let Some(grant) = standing.and_then(|standing| standing.grant) else {
-                    return Err(refused(
-                        verb,
-                        "no live Grant from a live owner names this agent and lists the verb",
-                    ));
+                let grant = match standing.map(|standing| standing.grant) {
+                    Ok(Some(grant)) => grant,
+                    Err(NoStanding::PactStandingLapsed) => {
+                        return Err(refused(verb, PACT_STANDING_LAPSED));
+                    }
+                    Ok(None) | Err(NoStanding::NotStanding) => {
+                        return Err(refused(
+                            verb,
+                            "no live Grant from a live owner names this agent and lists the verb",
+                        ));
+                    }
                 };
                 UsageRepairAuthority::Grant(grant.to_hex())
             }

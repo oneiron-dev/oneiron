@@ -243,7 +243,7 @@ fn reader_grants_in(
     }
     Ok(grants
         .into_iter()
-        .filter(|standing| standing.stands_for(reader, "read", now, &owners))
+        .filter(|standing| standing.stands_in_txn(vault, txn, reader, "read", now, &owners))
         .map(|standing| (standing.id, standing.grant.authority_scope))
         .collect())
 }

@@ -273,6 +273,7 @@ fn own_authority_readable_in_txn(
             standing.grant.member_ref == actor
                 && standing.grant.confers_at(now)
                 && owners.contains(&standing.delegated_by)
+                && !standing.pact_standing_lapsed_in_txn(vault, txn)
         })
         .collect();
     arrival::readable_with(&vault.store, txn, unit, |body, facets| {
