@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1127 facade rows, 3884 declarations.
+Census: 1127 facade rows, 3885 declarations.
 Inputs: 1062 of 1127 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1014 of 1127 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -3813,7 +3813,19 @@ class WeaveItemViewSieveAudit(TypedDict):
     confidence: int
     agrees: bool
     audited_at: int
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit
+class WeaveItemViewLoopDecision(TypedDict):
+    item: Literal["loop_decision"]
+    decision_ref: str
+    created_at: int
+    family: str
+    kind: str
+    outcome: str
+    reason_codes: list[str]
+    redacted: bool
+    claim_ref: NotRequired[str | None]
+    actor_ref: NotRequired[str | None]
+    evidence_refs: list[str]
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth | WeaveItemViewSieveAudit | WeaveItemViewLoopDecision
 class WeaveSieveScoreView(TypedDict):
     sampled: int
     agreeing: int
@@ -18484,10 +18496,16 @@ class SummarySourceVersion(TypedDict):
     record_hash: NotRequired[list[int] | None]
     frontier: NotRequired[list[int] | None]
     projected_text: NotRequired[list[int] | None]
+class SummaryLineSpan(TypedDict):
+    turn: str
+    message: NotRequired[str | None]
+    start: int
+    end: int
 class SummaryLineSources(TypedDict):
     output_start: int
     output_end: int
     turn_refs: list[str]
+    source_spans: NotRequired[list[SummaryLineSpan]]
 class SummaryDerivation(TypedDict):
     request: list[int]
     trigger: list[int]

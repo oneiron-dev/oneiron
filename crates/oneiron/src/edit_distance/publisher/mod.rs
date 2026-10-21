@@ -64,6 +64,7 @@ mod signature_store;
 mod transport;
 mod vocab;
 
+pub(crate) use self::dial::publisher_enabled_in_txn;
 pub use self::dial::{
     PUBLISHER_ENABLED_COMPILED_DEFAULT, publisher_enabled, set_publisher_enabled,
     set_publisher_install_default,

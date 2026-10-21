@@ -37,6 +37,9 @@ use crate::lens::{
 use crate::provenance::EdgeRef;
 use crate::{EntityId, Vault};
 
+// A loop decision row's lens cells (OF-499 A2).
+mod loop_decisions;
+
 /// The shipped skill whose SKILL.md is the render instruction.
 pub const WEAVE_REPORT_SKILL_NAME: &str = "weave-report";
 /// The skill's axes: the reader opened the period's notice; the reader
@@ -425,12 +428,18 @@ fn cells(item: &WeaveItem, line: &str) -> Result<Vec<LedgerCell>> {
                 cells.push(cell(label, value)?);
             }
         }
+        WeaveItem::LoopDecision { .. } => {
+            for (label, value) in loop_decisions::loop_decision_cells(item) {
+                cells.push(cell(label, value)?);
+            }
+        }
     }
     Ok(cells)
 }
 
 /// The records an item stands on, which its row binds when the read admits:
-/// an audit's, the source its span was read from.
+/// an audit's, the source its span was read from. A loop decision's refs
+/// are plain evidence cells, never a minted backing handle.
 fn item_sources(item: &WeaveItem) -> Option<EntityId> {
     match item {
         WeaveItem::Claim { id, .. } | WeaveItem::Project { id, .. } => Some(*id),
@@ -438,7 +447,8 @@ fn item_sources(item: &WeaveItem) -> Option<EntityId> {
         WeaveItem::SieveAudit { audit, .. } => Some(audit.source),
         WeaveItem::Link { .. }
         | WeaveItem::DreamProgress { .. }
-        | WeaveItem::AgentHealth { .. } => None,
+        | WeaveItem::AgentHealth { .. }
+        | WeaveItem::LoopDecision { .. } => None,
     }
 }
 

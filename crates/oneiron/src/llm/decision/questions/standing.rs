@@ -1,6 +1,7 @@
 //! Explicit graph-unit backfill with same-snapshot authority and source pins.
 
 use super::super::types::invalid;
+use super::reader_authority::{Reader, question_lane};
 use super::{records::*, store::*};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
@@ -187,13 +188,18 @@ fn sources_in_txn(
     )
     .ok_or(Error::InvariantViolation("canonical question actor"))?
     .exempt_while_owner(principal);
+    // FIX 7461: each reader's NOTE position check is its old one first, then
+    // its own live authority; each still stands on its own.
+    let home = crate::authority::StandingHome::Vault(vault);
+    let principal_reads = Reader::new(home, principal, reader.clone());
+    let holder_reads = Reader::new(home, actor.entity_ref(), holder.clone());
     let mut hasher = blake3::Hasher::new();
     let mut sources = Vec::with_capacity(evidence.len() + 1);
     for id in std::iter::once(&unit).chain(evidence.iter()) {
         let proposal = proposals
             .iter()
             .find(|answer| answer.claim == *id && *id != unit);
-        let reader_lane = vault.scoped_read(reader.clone());
+        let reader_lane = question_lane(vault, reader.clone());
         let readable = if proposal.is_some() {
             // Only results already returned to this workflow may feed its next
             // proposal. They remain private to the asker and are never kept here.
@@ -202,8 +208,7 @@ fn sources_in_txn(
                 .is_entity_readable_with_policy_in(txn, &policy, id)?
         } else {
             reader_lane.is_entity_readable_with_policy_in(txn, &policy, id)?
-                && vault
-                    .scoped_read(holder.clone())
+                && question_lane(vault, holder.clone())
                     .is_entity_readable_with_policy_in(txn, &policy, id)?
         };
         if !readable {
@@ -266,8 +271,8 @@ fn sources_in_txn(
         // The shared scoped reader checks NOTE authorship, but its NOTE branch
         // returns before the non-claim record-position grant. Conjoin both.
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-            && (!crate::gate::scoped_read_record_allowed(&policy, &reader, &scope)
-                || !crate::gate::scoped_read_record_allowed(&policy, &holder, &scope))
+            && (!principal_reads.record_allowed_in_txn(txn, &policy, &scope)?
+                || !holder_reads.record_allowed_in_txn(txn, &policy, &scope)?)
         {
             return Err(Error::EntityNotFound);
         }
@@ -347,9 +352,8 @@ pub(super) fn prepare_graph_answer(
         &input.evidence,
         proposals,
     )?;
-    let scoped = vault.scoped_read(super::graph_ask::asker_reader_in_txn(
-        vault, &txn, principal,
-    )?);
+    let key = super::graph_ask::asker_reader_in_txn(vault, &txn, principal)?;
+    let scoped = question_lane(vault, key);
     let mut sources = Vec::with_capacity(input.evidence.len() + 1);
     for id in std::iter::once(&input.unit).chain(input.evidence.iter()) {
         let lane = if proposals
@@ -358,9 +362,8 @@ pub(super) fn prepare_graph_answer(
         {
             scoped.recorded_lane()?
         } else {
-            vault.scoped_read(super::graph_ask::asker_reader_in_txn(
-                vault, &txn, principal,
-            )?)
+            let key = super::graph_ask::asker_reader_in_txn(vault, &txn, principal)?;
+            question_lane(vault, key)
         };
         let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
             return Err(Error::EntityNotFound);
@@ -592,12 +595,15 @@ fn backfill_answer(
                 || body.stale
                 || body.lifecycle != ClaimLifecycleStatus::Active
                 || body.approval == ClaimApprovalStatus::Rejected
-                || !crate::gate::scoped_read_claim_allowed(
-                    &policy,
-                    &reader,
-                    &body,
-                    &crate::claim::facet_refs_in_port(&vault.store, txn, &id)?,
-                )
+            {
+                return Err(Error::EntityNotFound);
+            }
+            // FIX 7461: the old gate first, unchanged; then the principal's
+            // own live authority under its bare key, never the writer's class.
+            let facets = crate::claim::facet_refs_in_port(&vault.store, txn, &id)?;
+            let own = Reader::bare(crate::authority::StandingHome::Vault(vault), principal)?;
+            if !crate::gate::scoped_read_claim_allowed(&policy, &reader, &body, &facets)
+                && !own.own_claim_allowed_in_txn(txn, &policy, &body, &facets)?
             {
                 return Err(Error::EntityNotFound);
             }

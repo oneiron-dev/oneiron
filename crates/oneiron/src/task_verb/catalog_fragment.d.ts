@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3937 declarations.
+// Census: 1177 code-mode rows (1137 host rows, 40 run rows), 3938 declarations.
 // Replies: 1057 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -782,7 +782,7 @@ declare namespace Sdk {
   type WeaveSectionKind = "changes" | "projects" | "open_asks" | "links" | "conflicts" | "exceptions" | "admissions" | "budgets" | "sieve_score" | "digest";
   type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[]; edge_kinds?: string[] };
   type WeaveReportRequest = { sections: WeaveSectionInput[] };
-  type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard } | { item: "sieve_audit"; attempt_ref: string; span_ref: string; turn_ref: string; source_ref: string; expected_kind: string; actual_kind: string; expected_entity_ref?: string | null; actual_entity_ref?: string | null; novel: boolean; confidence: number; agrees: boolean; audited_at: number };
+  type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard } | { item: "sieve_audit"; attempt_ref: string; span_ref: string; turn_ref: string; source_ref: string; expected_kind: string; actual_kind: string; expected_entity_ref?: string | null; actual_entity_ref?: string | null; novel: boolean; confidence: number; agrees: boolean; audited_at: number } | { item: "loop_decision"; decision_ref: string; created_at: number; family: string; kind: string; outcome: string; reason_codes: string[]; redacted: boolean; claim_ref?: string | null; actor_ref?: string | null; evidence_refs: string[] };
   type WeaveSieveScoreView = { sampled: number; agreeing: number };
   type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[]; sieve_score?: WeaveSieveScoreView | null };
   type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt };
@@ -3697,7 +3697,8 @@ declare namespace Sdk {
   type SummaryReadRequest = { summary_ref: string; spans?: SummarySpan[] };
   type SummaryPurpose = { id: string; description: string };
   type SummarySourceVersion = { id: string; entity_type?: number | null; learned_at?: number | null; revision?: number[] | null; record_hash?: number[] | null; frontier?: number[] | null; projected_text?: number[] | null };
-  type SummaryLineSources = { output_start: number; output_end: number; turn_refs: string[] };
+  type SummaryLineSpan = { turn: string; message?: string | null; start: number; end: number };
+  type SummaryLineSources = { output_start: number; output_end: number; turn_refs: string[]; source_spans?: SummaryLineSpan[] };
   type SummaryDerivation = { request: number[]; trigger: number[]; content_hash: number[]; params_hash: number[]; instruction: string; model: string; policy_frontier: number[]; sources: SummarySourceVersion[]; previous?: string | null; recorded_at: number; generated_text_hash: number[]; generated_keep_hash: number[]; source_set?: number[] | null; line_sources?: SummaryLineSources[] | null };
   type ScopeSummaryMetadata = { purpose: SummaryPurpose; keep: string; derivation: SummaryDerivation };
   type TextAnchor = { entity: string; frontier: number[]; start: number[]; end: number[]; quote: string; hash: number[] };
