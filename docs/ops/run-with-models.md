@@ -1136,7 +1136,11 @@ in a row share one subgoal until it ends. A batch or library run that ends
 `NEEDS_AGENT` sends that subgoal's next step to `browser_planner`. The
 subgoal's second `NEEDS_AGENT` sends its steps to `generative_reasoner`,
 which keeps them until the subgoal ends: a `done`, or a batch of another
-subgoal. A library run counts once, never again for its own batch.
+subgoal. A `NEEDS_AGENT` whose `stop_cause` is `no_progress` (steps went on
+and the page did not change; the browser reports it from CUA E3) sends the
+subgoal's steps there at once, even on its first miss; that escalates and
+never refuses, and every other cause keeps the two-miss rule. A library run
+counts once, never again for its own batch.
 `NEEDS_YOU` goes to a person and is no miss, and neither a proposal's
 admission replays nor an answer the run already holds counts. Every other
 step, the run's first steps and its discovery among them, stays on
@@ -1154,17 +1158,22 @@ keeps every step on that pick.
 
 Each `NEEDS_AGENT` reaches the next step's model call, whichever role takes
 it, as one host data message after the executor's own: the verb, the input
-the server admitted and the browser's whole answer (status, `failed_step`,
-`error`, `observation`, receipts, decisions, rebindings, and a library run's
-`unmet` indices beside its batch), uncut, until a call that carries it
-answers. The observation is the newest page the browser read, which may come
-before the failed step. The count lives in memory beside the run's browser:
-the run's later entries keep it, and it ends with that browser, when the run
-ends or its browser sits idle. A restart starts every subgoal fresh.
-
-Not yet: the browser does not report a failed check's observed result or a
-no-progress stop. When it does, the handoff carries that typed receipt, and
-a no-progress stop sends the step to `generative_reasoner` at once.
+the server admitted, the browser's whole answer (status, `failed_step`,
+`error`, `stop_cause`, `observation`, receipts, decisions, rebindings, and a
+library run's `unmet` indices beside its batch), and beside it the failed
+step's `receipt` (CUA E2), all uncut, until a call that carries it answers.
+The receipt is the browser's `failed_receipt`, a batch's own or a library
+run's batch's, carried as the browser wrote it: the step's index (none for a
+library run's final checks), its `stop_cause`, each check it missed with
+what its read of the page found, the page as read at the stop, and the
+stop's `error` code; `null` when the browser wrote none. The answer's
+observation is the newest page a step read, which may come before the failed
+step; the receipt's is the page at the stop. `needs_agent` counts the
+subgoal's misses, and a `no_progress` stop raises it at once to the count
+that hands the subgoal to `generative_reasoner`. The count lives in memory
+beside the run's browser: the run's later entries keep it, and it ends with
+that browser, when the run ends or its browser sits idle. A restart starts
+every subgoal fresh.
 
 `browser_planner` is not `[models.planner]` (next), which picks a leased
 agent's spawn shapes.
