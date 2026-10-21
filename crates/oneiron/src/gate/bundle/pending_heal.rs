@@ -17,11 +17,11 @@ const PENDING_HEAL_PAGE: usize = 256;
 pub(crate) struct PendingHealRef {
     /// The pending claim.
     pub(crate) claim: EntityId,
-    /// The gate decision that holds it for consent; all-zero, naming none, when the tray
-    /// does not answer for its sequence row.
-    pub(crate) decision: GateDecisionId,
-    /// When it entered the tray; 0 when the tray does not answer for its sequence row.
-    pub(crate) created_at: u64,
+    /// The gate decision that holds it for consent; `None` when the tray does not answer
+    /// for its sequence row, so no decision is known (FIX 7378).
+    pub(crate) decision: Option<GateDecisionId>,
+    /// When it entered the tray; `None` when the tray does not answer for its sequence row.
+    pub(crate) created_at: Option<u64>,
     /// Its live body; `None` when the body is gone or is no CLAIM body.
     pub(crate) body: Option<ClaimBody>,
 }
@@ -65,8 +65,8 @@ impl Vault {
                         );
                         refs.push(PendingHealRef {
                             claim,
-                            decision: GateDecisionId::from_bytes([0; 16]),
-                            created_at: 0,
+                            decision: None,
+                            created_at: None,
                             body: None,
                         });
                         continue;
@@ -85,8 +85,8 @@ impl Vault {
                 };
                 refs.push(PendingHealRef {
                     claim,
-                    decision: record.decision_id,
-                    created_at: record.created_at,
+                    decision: Some(record.decision_id),
+                    created_at: Some(record.created_at),
                     body,
                 });
             }
