@@ -24070,6 +24070,16 @@
      "path": "src/dreamer_runner/maintenance/agent_health/check_repeat.rs",
      "purpose": "`failed_check_repeat` (agent-mind §3.4): the same check fails again on the same inputs",
      "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/delivery.rs",
+     "purpose": "Where an agent-health card is delivered (ARCH-0063 concern cards): the inbox rows its readers see",
+     "surface": {
       "crate-vis": 1
      }
     },
@@ -71727,7 +71737,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72751,7 +72761,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4671,
+   "source_files": 4672,
    "test_files": 902
   },
   "oneiron-android": {
