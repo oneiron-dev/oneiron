@@ -13,7 +13,7 @@ use oneiron::{LlmMessage, LlmMessageRole, ModelLocality, Vault};
 
 use super::{ChatTurnRequest, assistant, chat_request, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
-use crate::api::context_board::ChatBoard;
+use crate::api::context_board::{ChatBoard, ChatContextCapture};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
@@ -90,18 +90,24 @@ pub(super) async fn turn_board(
 /// The turn's call admitted through its role, with `board` as one User
 /// message right before the newest User, or last when there is none. A role
 /// that does not admit the call with the board admits it as it was; the flag
-/// says whether the board rides.
+/// says whether the board rides, and the board's context capture (FIX 6921)
+/// comes back only when it does.
 pub(super) fn admit(
     ai: &AiHandle,
     vault: &Vault,
     seat: &Seat,
     mut messages: Vec<LlmMessage>,
-    board: Option<String>,
-) -> (Result<RoleCall, RoleRefusal>, bool) {
-    let Some(board) = board else {
+    board: Option<(String, Option<ChatContextCapture>)>,
+) -> (
+    Result<RoleCall, RoleRefusal>,
+    bool,
+    Option<ChatContextCapture>,
+) {
+    let Some((board, capture)) = board else {
         return (
             ai.admit_role(vault, CHAT_ROLE, chat_request(seat, messages)),
             false,
+            None,
         );
     };
     let baseline = messages.clone();
@@ -111,7 +117,7 @@ pub(super) fn admit(
         .unwrap_or(messages.len());
     messages.insert(at, text_message(LlmMessageRole::User, board));
     match ai.admit_role(vault, CHAT_ROLE, chat_request(seat, messages)) {
-        Ok(admitted) => (Ok(admitted), true),
+        Ok(admitted) => (Ok(admitted), true, capture),
         Err(refusal) => {
             tracing::info!(
                 %refusal,
@@ -120,6 +126,7 @@ pub(super) fn admit(
             (
                 ai.admit_role(vault, CHAT_ROLE, chat_request(seat, baseline)),
                 false,
+                None,
             )
         }
     }
