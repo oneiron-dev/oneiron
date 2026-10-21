@@ -5,6 +5,7 @@ mod ledger;
 mod limit;
 mod model;
 mod pricing;
+mod repair;
 mod rollup;
 pub use codec::UsageError;
 pub use ledger::{CycleSettlements, SeatUsage, UnpricedCache, UsageLedger};
@@ -15,5 +16,6 @@ pub use model::{
     UsageRollupStatus, UsageRun, UsageTokenCounts,
 };
 pub use pricing::catalog_cost_rates;
+pub(crate) use repair::UsageScope;
 #[cfg(test)]
 mod tests;

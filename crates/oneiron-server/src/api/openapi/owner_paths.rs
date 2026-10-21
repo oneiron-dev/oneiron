@@ -1758,6 +1758,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/usage/events/undecodable",
+        summary: "The stored usage events of this server's metering scope that do not decode (FIX 6476), in key order: `events`, each `{rowRef, byteLength, hash, decodeReason}`, the row's opaque locator, its length, the BLAKE3 hash of its exact bytes (64 lowercase hex) and `stored_event_decode_failed`, none of its bytes. The owner, or an agent whose own Grant names the verb, lists them; a server that meters no usage answers `usage_metering_unbound`.",
+        row: Some("vault.usage.events.undecodable"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/usage/events/undecodable/remove",
+        summary: "Remove one listed row (`rowRef`, `expectedHash`, as the list gave them) while it still holds those bytes and still does not decode (FIX 6476): the row goes, the vault's usage rollup is rebuilt without it, and the receipt kept in the same write answers. A row that is gone is not found; one that changed is `usage_event_changed`, one that decodes now `usage_event_decodable`, and neither changes anything. Every other undecodable row stays counted as before.",
+        row: Some("vault.usage.events.remove_undecodable"),
+    },
+    OwnerRoute {
+        method: "get",
         path: "/vault-key",
         summary: "Whether the vault has a data key, whether this server holds it, and its wraps, each passkey's with its PRF input.",
         row: None,

@@ -92,6 +92,7 @@ mod space_posting_routes;
 mod steer_routes;
 mod support_grant_routes;
 mod training_swap_routes;
+mod usage_repair_routes;
 mod vault_key_routes;
 mod weave_routes;
 mod widen_proposal_routes;
@@ -187,6 +188,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(secret_lift_routes::routes())
         .merge(steer_routes::routes())
         .merge(training_swap_routes::routes())
+        .merge(usage_repair_routes::routes())
         .merge(conversation_learning_routes::routes())
         .merge(world_privacy_routes::routes())
         .merge(world_privacy_work_routes::routes())
