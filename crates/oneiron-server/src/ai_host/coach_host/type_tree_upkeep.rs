@@ -54,6 +54,16 @@ struct HostNamer<'a> {
 
 impl TypeNamer for HostNamer<'_> {
     fn name(&self, parent: &TaskTypeNode, node: &TaskTypeNode) -> oneiron::Result<Option<String>> {
+        self.name_sourced(parent, node, None)
+    }
+
+    /// The call carries the rows the prompt was read from (FIX 6997).
+    fn name_sourced(
+        &self,
+        parent: &TaskTypeNode,
+        node: &TaskTypeNode,
+        source_rows: Option<Vec<EntityId>>,
+    ) -> oneiron::Result<Option<String>> {
         let (Some(axis), Some(winner)) = (node.split_axis, node.split_winner.as_deref()) else {
             return Ok(None);
         };
@@ -62,12 +72,13 @@ impl TypeNamer for HostNamer<'_> {
             "decision": axis.as_str(),
             "winning_value": clip(winner, PARENT_NAME_BYTES),
         });
-        let Some(text) = self.models.generate(
+        let Some(text) = self.models.generate_sourced(
             self.models.coach(),
             vec![
                 message(LlmMessageRole::System, SYSTEM.to_owned()),
                 message(LlmMessageRole::User, data.to_string()),
             ],
+            source_rows,
         )?
         else {
             return Ok(None);
