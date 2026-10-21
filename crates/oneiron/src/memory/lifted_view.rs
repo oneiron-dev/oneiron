@@ -66,7 +66,6 @@ fn masked_view<T: Serialize + DeserializeOwned>(
     if !keys.mask_json(&mut value) {
         return Ok(view);
     }
-    Ok(serde_json::from_value(value).map_err(|_| {
-        Error::InvariantViolation("a lifted carrier's masked view did not decode")
-    })?)
+    Ok(serde_json::from_value(value)
+        .map_err(|_| Error::InvariantViolation("a lifted carrier's masked view did not decode"))?)
 }
