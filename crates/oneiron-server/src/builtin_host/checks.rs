@@ -160,8 +160,9 @@ fn browser_session_ready(
     let transport = backend
         .start_session(&spec, &command, Arc::clone(&relay))
         .map_err(|error| format!("the browser guest did not start: {error}"))?;
-    // No starter: the readiness session serves no engine switch.
-    let session = BrowserSession::attach(guest, transport, relay, retention, None)
+    // No starter: the readiness session serves no engine switch. No request
+    // handler: its pages take its relay.
+    let session = BrowserSession::attach(guest, transport, relay, retention, None, None)
         .map_err(|error| format!("the browser driver did not open a page: {error}"))?;
     let manifest = session.manifest().clone();
     drop(session);

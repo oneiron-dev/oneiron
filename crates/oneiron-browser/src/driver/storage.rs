@@ -247,6 +247,17 @@ impl CdpDriver {
         self.keep_read(StoragePhase::PreInput, read);
     }
 
+    /// Drops the snapshots of the `closed` tabs (FIX 6891), each once
+    /// another tab is in front: a switch reads only the tab in front, so no
+    /// switch or carry reads a closed tab's again, and no other tab reads
+    /// another's. A closed tab still in front, where the front could not
+    /// move, keeps its snapshots.
+    pub(super) fn drop_closed(&self, closed: &[String]) {
+        for tab in closed.iter().filter(|tab| **tab != self.target) {
+            self.pipe.drop_snapshots(tab);
+        }
+    }
+
     /// Keeps a read of the front tab's stores another step took: a
     /// switch's fresh export.
     pub(crate) fn keep(&self, phase: StoragePhase, sample: Sample) {

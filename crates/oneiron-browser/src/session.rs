@@ -55,8 +55,14 @@
 //! replaces only the session's engine group (`guest`); the run's state
 //! stays, the storage snapshots of the origins its tabs visited with it
 //! (`storage`).
+//!
+//! A host may take custody of the session's requests at attach (FIX 7122,
+//! `crate::request`): its handler then performs every request of every
+//! engine the session runs, and a destination refusal it gives answers the
+//! navigation or act it ended, or the host's own take (`request`).
 
 mod guest;
+mod request;
 pub(crate) mod storage;
 pub(crate) mod switch;
 
@@ -67,6 +73,7 @@ use self::storage::{Collector, OriginSnapshots};
 use self::switch::OriginHistory;
 use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
+use crate::request::{BrowserRequestHandler, Custody};
 use crate::retention::HandleRetention;
 use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserEngine, BrowserError,
@@ -158,6 +165,10 @@ pub struct BrowserSession {
     /// Their stores as last read, across switches; none where the host gave
     /// no starter, so no switch.
     snapshots: Option<Collector>,
+    /// The host's custody of the session's requests, shared with each
+    /// engine's pipe: its handler, if it gave one, and the refusal not yet
+    /// delivered.
+    custody: Custody,
 }
 
 impl BrowserSession {
@@ -165,13 +176,17 @@ impl BrowserSession {
     /// A lower driver crate must never silently select a weaker backend.
     /// The session's live-handle registry is charged to the host's memory
     /// floor through `retention` (C013). A session given the host's
-    /// `starter` serves `switch_engine`.
+    /// `starter` serves `switch_engine`. A session given the host's
+    /// `requests` handler has it perform every request of its pages in
+    /// place of `relay`, from before any page loads (FIX 7122); one given
+    /// none takes `relay` as always.
     pub fn attach(
         config: &BrowserGuest,
         transport: SessionTransport,
         relay: Arc<dyn EgressRelay>,
         retention: Box<dyn HandleRetention>,
         starter: Option<Box<dyn BrowserGuestStarter>>,
+        requests: Option<Arc<dyn BrowserRequestHandler>>,
     ) -> Result<Self, BrowserError> {
         let started = StartedGuest {
             transport,
@@ -182,11 +197,13 @@ impl BrowserSession {
             .as_ref()
             .map(|starter| OriginSnapshots::collector(starter.state_charge()));
         let sink = snapshots.as_ref().map(OriginSnapshots::sink);
+        let custody = Custody::new(requests);
+        let (engine, wait_cap) = (config.engine, config.wait_cap);
         let EngineGuest {
             driver,
             lease,
             manifest,
-        } = EngineGuest::attach(config.engine, started, config.wait_cap, sink)?;
+        } = EngineGuest::attach(engine, started, wait_cap, sink, custody.clone())?;
         Ok(Self {
             driver,
             guest: lease,
@@ -202,6 +219,7 @@ impl BrowserSession {
             starter,
             history: OriginHistory::default(),
             snapshots,
+            custody,
         })
     }
 
@@ -667,8 +685,10 @@ impl BrowserDriver for BrowserSession {
         if !web_page(&input.url) {
             return Err(BrowserError::Url(input.url));
         }
-        let mut observation = self.live()?.open(input)?;
+        let opened = self.live()?.open(input);
+        let mut observation = self.crossed(opened)?;
         self.receipt("open", None, None, PressMode::None, &mut observation);
+        self.undelivered()?;
         // Repeated work on a site tries the library first. A lookup that
         // fails leaves the page open without its programs.
         if let Some(site) = site_of(&observation.url)
@@ -702,9 +722,11 @@ impl BrowserDriver for BrowserSession {
             Some(class) => self.press_for(class, &target.row)?,
             None => PressMode::None,
         };
-        let mut observation = self.driver.click_target(&target, &Base::of(input.base))?;
+        let clicked = self.driver.click_target(&target, &Base::of(input.base));
+        let mut observation = self.crossed(clicked)?;
         let class = receipt_class(class, Some(&target.row));
         self.receipt("click", Some(&target.row), class, press, &mut observation);
+        self.undelivered()?;
         Ok(observation)
     }
 
@@ -717,18 +739,21 @@ impl BrowserDriver for BrowserSession {
             _ => PressMode::None,
         };
         let base = Base::of(input.base);
-        let mut observation = self.driver.click_point(x, y, row.as_ref(), &base)?;
+        let clicked = self.driver.click_point(x, y, row.as_ref(), &base);
+        let mut observation = self.crossed(clicked)?;
         let class = receipt_class(class, row.as_ref());
         self.receipt("click_at", row.as_ref(), class, press, &mut observation);
+        self.undelivered()?;
         Ok(observation)
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
         let target = self.live()?.resolve_target(&input.target)?;
         let base = Base::of(input.base);
-        let mut observation = self
+        let typed = self
             .driver
-            .type_target(&target, &input.text, input.clear, &base)?;
+            .type_target(&target, &input.text, input.clear, &base);
+        let mut observation = self.crossed(typed)?;
         self.receipt(
             "type",
             Some(&target.row),
@@ -736,13 +761,15 @@ impl BrowserDriver for BrowserSession {
             PressMode::None,
             &mut observation,
         );
+        self.undelivered()?;
         Ok(observation)
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
         let target = self.live()?.resolve_target(&input.target)?;
         let base = Base::of(input.base);
-        let mut observation = self.driver.select_target(&target, &input.option, &base)?;
+        let selected = self.driver.select_target(&target, &input.option, &base);
+        let mut observation = self.crossed(selected)?;
         self.receipt(
             "select",
             Some(&target.row),
@@ -750,6 +777,7 @@ impl BrowserDriver for BrowserSession {
             PressMode::None,
             &mut observation,
         );
+        self.undelivered()?;
         Ok(observation)
     }
 
@@ -878,7 +906,9 @@ impl BrowserDriver for BrowserSession {
         &mut self,
         input: SwitchEngineInput,
     ) -> Result<SwitchEngineOutput, BrowserError> {
-        self.switch_to(input)
+        let output = self.switch_to(input)?;
+        self.undelivered()?;
+        Ok(output)
     }
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {

@@ -12,6 +12,7 @@ use crate::BrowserEngine;
 use crate::BrowserError;
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
+use crate::request::Custody;
 use crate::retention::HandleRetention;
 use oneiron_container::{EgressRelay, SessionLease, SessionManifest, SessionTransport};
 use std::sync::Arc;
@@ -49,13 +50,15 @@ pub(crate) struct EngineGuest {
 impl EngineGuest {
     /// Attaches the driver for `engine` to a started guest whose fence the
     /// backend proved: its pipe on the engine's transport, behind the run's
-    /// relay, keeping its pages' storage reads through `sink` when the
+    /// relay or the host's request handler the session's `custody` holds
+    /// (FIX 7122), keeping its pages' storage reads through `sink` when the
     /// session keeps snapshots, and its first page readied as every page is.
     pub(crate) fn attach(
         engine: BrowserEngine,
         started: StartedGuest,
         wait_cap: Duration,
         sink: Option<Sink>,
+        custody: Custody,
     ) -> Result<Self, BrowserError> {
         let StartedGuest {
             transport,
@@ -73,7 +76,7 @@ impl EngineGuest {
             manifest,
             lease,
         } = transport;
-        let pipe = Pipe::for_engine(engine, reader, writer, Some(relay))?;
+        let pipe = Pipe::for_engine(engine, reader, writer, Some(relay), custody)?;
         if let Some(sink) = sink {
             pipe.collect(sink);
         }

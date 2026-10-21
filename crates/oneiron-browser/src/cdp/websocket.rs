@@ -25,6 +25,7 @@ mod gate;
 
 use super::{MAX_MESSAGE, Outbound, Pipe, overrun, route};
 use crate::BrowserError;
+use crate::request::Custody;
 use gate::Gate;
 use oneiron_container::EgressRelay;
 use serde_json::Value;
@@ -107,11 +108,13 @@ impl Outbound for Socket {
 }
 
 /// Opens the pipe to a Lightpanda guest over its session's two halves, once
-/// its browser answered the discovery and the upgrade.
+/// its browser answered the discovery and the upgrade, holding the
+/// session's `custody` before its pump starts.
 pub(super) fn open(
     reader: impl Read + Send + 'static,
     writer: impl Write + Send + 'static,
     relay: Option<Arc<dyn EgressRelay>>,
+    custody: Custody,
 ) -> Result<Pipe, BrowserError> {
     let (events, inbound) = mpsc::sync_channel(QUEUE);
     let fed = events.clone();
@@ -127,7 +130,7 @@ pub(super) fn open(
     let deadline = Instant::now() + HANDSHAKE;
     discover(&mut carrier, &inbound, deadline)?;
     let (socket, ahead) = upgrade(carrier, &inbound, deadline)?;
-    let pipe = Pipe::routed(Box::new(Socket(events)), relay.is_some());
+    let pipe = Pipe::routed(Box::new(Socket(events)), relay.is_some(), custody);
     let handle = pipe.clone();
     std::thread::spawn(move || {
         pump(socket, ahead, &inbound, &handle, relay.as_ref());

@@ -21,8 +21,8 @@
 //! main frame, one exact HTTP(S) URL. The `Fetch.requestPaused` of that URL
 //! on that session takes the slot before any relay worker is dispatched,
 //! and its own worker answers it locally with an inert page, so the seed's
-//! URL never reaches the network. Every other request takes the relay as
-//! before.
+//! URL never reaches the network. Every other request crosses the host as
+//! before (`requests`).
 
 use super::Pipe;
 use crate::SwitchLoss;
@@ -183,12 +183,14 @@ impl Pipe {
             .is_ok_and(|pages| pages.seeds.contains(url))
     }
 
-    /// Drops page `session`: its binding and its navigation count, and its
-    /// page's queued origins once no session drives that page.
+    /// Drops page `session`: its binding, its navigation count and its
+    /// main-document notes, and its page's queued origins once no session
+    /// drives that page.
     pub(crate) fn forget_page(&self, session: &str) {
         if let Ok(mut navigations) = self.navigations.lock() {
             navigations.remove(session);
         }
+        self.forget_documents(session);
         if let Ok(mut pages) = self.pages.lock()
             && let Some(target) = pages.bound.remove(session)
             && !pages.bound.values().any(|bound| *bound == target)
