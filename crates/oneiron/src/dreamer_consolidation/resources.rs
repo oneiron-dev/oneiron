@@ -486,14 +486,17 @@ impl<'a> BranchResources<'a> {
     }
 
     /// The extraction input: the known entities with the claims this branch
-    /// holds as priors, then each turn.
+    /// holds as priors, then each turn, each named by a call-local label.
     pub(super) fn transcript(&self, scope: &Scope, turns: &[EntityId]) -> Result<String> {
-        let mut transcript = self.known.render(|id| self.priors.contains_key(id));
+        let mut labels = super::call_labels::CallLabelMap::default();
+        let mut transcript = self
+            .known
+            .render(&mut labels, |id| self.priors.contains_key(id));
         for id in turns {
             let facts = self.turn(scope, id)?;
+            let turn = labels.assign(super::call_labels::LabelKind::Turn, *id);
             transcript.push_str(&format!(
-                "[{} {}] {}\n",
-                id.to_hex(),
+                "[{turn} {}] {}\n",
                 facts.speaker.as_deref().unwrap_or("unknown"),
                 facts.text.as_deref().unwrap_or_default()
             ));
