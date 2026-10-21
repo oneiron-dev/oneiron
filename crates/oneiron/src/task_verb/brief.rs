@@ -10,9 +10,12 @@
 //! context text back into state (ARCH-0067). Its policy and budget refs
 //! describe the rules enforced underneath; they grant nothing.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::browser_library::{WorkflowResolution, resolve_workflow_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::decision::Reversibility;
@@ -22,6 +25,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use super::ask_types::{TaskAskDefault, TaskAskTarget};
 use super::consts::TASK_BRIEF_SCHEMA;
 use super::consult_payload::ConsultPayloadRef;
+use super::verb_kind::TaskAssignee;
 
 /// Domain of [`brief_digest`].
 const BRIEF_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.digest.v1";
@@ -29,6 +33,8 @@ const BRIEF_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.digest.v1";
 const PIN_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.pin.v1";
 /// Largest encoded brief one TASK body carries.
 const MAX_BRIEF_BYTES: usize = 65_536;
+/// What a workflow handle starts with, before its record's 32 hex.
+const WORKFLOW_HANDLE_PREFIX: &str = "workflow:";
 /// The typed record slots of a brief (OF-063): each must resolve under the
 /// writer's own read. The type ref is not among them: it names a node of the
 /// team's type tree, not a record.
@@ -202,6 +208,66 @@ pub struct BriefContext {
     pub pack: Option<PinnedPack>,
     #[serde(default)]
     pub read_first: Vec<PinnedRef>,
+    /// The library program the TASK binds (CUA E4): each try runs it strict
+    /// before any planner call. A handle, never the program's steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowBinding>,
+}
+
+/// A TASK's binding of one filed library program (CUA E4; DESIGN-2 §2):
+/// `workflow:<record id>` and the string arguments its slots take. The TASK
+/// refers to the program and never copies its steps; each try pins the
+/// record its first lease resolved the handle to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowBinding {
+    /// `workflow:` and the record id's 32 hex.
+    pub handle: String,
+    #[serde(default)]
+    pub args: BTreeMap<String, String>,
+}
+
+impl WorkflowBinding {
+    /// The record the handle names: an exact `workflow:` prefix, then the
+    /// record id's 32 hex. `None` for any other text.
+    #[must_use]
+    pub fn record(&self) -> Option<EntityId> {
+        self.handle
+            .strip_prefix(WORKFLOW_HANDLE_PREFIX)
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+    }
+
+    /// Refuses a binding at bind (CUA E4; Engine C2): on a TASK `assignee`
+    /// names no agent definition for, with a handle that is not
+    /// `workflow:<32 hex>`, or with one that names no library record. A
+    /// retired record binds: the try that starts on it records why it runs
+    /// no program.
+    pub(super) fn validate_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        assignee: Option<TaskAssignee>,
+    ) -> MemoryResult<()> {
+        if !matches!(assignee, Some(TaskAssignee::AgentDef { .. })) {
+            let lane = assignee.map_or(TaskAssignee::Dreamer.as_str(), TaskAssignee::as_str);
+            return Err(MemoryError::bad_request(format!(
+                "gate.workflow_assignee_unsupported: a workflow binding needs an agent_def assignee, and this TASK's is {lane}"
+            )));
+        }
+        let Some(record) = self.record() else {
+            return Err(MemoryError::bad_request(format!(
+                "gate.workflow_handle_malformed: workflow handle {:?} is not workflow:<32 hex>",
+                self.handle
+            )));
+        };
+        match resolve_workflow_in_txn(vault, txn, &record)? {
+            WorkflowResolution::Missing => Err(MemoryError::bad_request(format!(
+                "gate.workflow_record_missing: workflow handle {:?} names no library record",
+                self.handle
+            ))),
+            WorkflowResolution::Active { .. } | WorkflowResolution::Retired { .. } => Ok(()),
+        }
+    }
 }
 
 /// One criterion of the done-means question.
@@ -226,6 +292,12 @@ pub struct DoneMeans {
     pub no_if_any: Vec<Criterion>,
     #[serde(default)]
     pub outcome_binding: Option<OutcomeBinding>,
+    /// The checks the host reads, at the rule tier with no model, on the page
+    /// a bound TASK's program left (CUA E4; Engine C1). On a bound TASK with
+    /// no criterion they are its whole goal, and the question their label;
+    /// beside a criterion the TASK's judge still decides.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_checks: Vec<oneiron_browser::ExpectInput>,
 }
 
 /// What makes the work ask up.
@@ -442,16 +514,25 @@ impl QueueTaskBrief {
 
     /// Refuses a brief before any write: a known schema, a non-blank
     /// objective and need, a done-means question with at least one
-    /// criterion, a resolvable escalation target, and every pin resolvable
-    /// with a digest that matches the row it names.
-    pub(super) fn validate_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+    /// criterion (on a bound TASK, a browser check will do), a resolvable
+    /// escalation target, every pin resolvable with a digest that matches
+    /// the row it names, and a workflow binding [`WorkflowBinding::validate_in`]
+    /// refuses for the TASK's `assignee`.
+    pub(super) fn validate_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        assignee: Option<TaskAssignee>,
+    ) -> MemoryResult<()> {
         if self.schema != TASK_BRIEF_SCHEMA {
             return Err(MemoryError::bad_request("unknown task brief schema"));
         }
         require_text(&self.objective, "objective")?;
         require_text(&self.intent.need, "need")?;
         require_text(&self.success.question, "done-means question")?;
-        if self.success.yes_if_all.is_empty() && self.success.no_if_any.is_empty() {
+        // A bound TASK's browser checks alone are a whole goal (Engine C1).
+        let typed_goal = self.context.workflow.is_some() && !self.success.browser_checks.is_empty();
+        if self.success.yes_if_all.is_empty() && self.success.no_if_any.is_empty() && !typed_goal {
             return Err(MemoryError::bad_request(
                 "task brief done-means needs at least one criterion",
             ));
@@ -501,6 +582,9 @@ impl QueueTaskBrief {
         }
         for pin in &self.context.read_first {
             check_pin(vault, txn, pin.target, &pin.digest)?;
+        }
+        if let Some(binding) = &self.context.workflow {
+            binding.validate_in(vault, txn, assignee)?;
         }
         Ok(())
     }
