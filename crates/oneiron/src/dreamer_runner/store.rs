@@ -965,6 +965,23 @@ impl<'a> DreamerRunnerStore<'a> {
         walk
     }
 
+    /// The attempts whose private run-tree parent is `parent`, in attempt
+    /// order, read in `txn` (FIX 7495). A row that does not read is a gap,
+    /// skipped, never an error.
+    pub(crate) fn child_attempts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: AttemptId,
+    ) -> Result<Vec<AttemptId>> {
+        Ok(RUN_TREE
+            .iter_from(&self.vault.store, txn, &[])?
+            .filter_map(|row| match row {
+                Ok((id, record)) if record.parent_attempt == Some(parent) => Some(id),
+                _ => None,
+            })
+            .collect())
+    }
+
     /// Parks a Dreamer attempt in private runner state without changing the
     /// generic queue row.
     ///
