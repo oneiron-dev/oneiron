@@ -148,10 +148,12 @@ pub(crate) fn run_graph_question_with_proposals(
             Ok(Some(answer)) => completed.answers.push(answer),
             Ok(None) => completed.abstained.push(input.unit),
             Err(error) => {
+                // A recipe keeps no abstaining decision, so it carries none.
                 return Err(GraphAskFailure {
                     failed_unit: Some(input.unit),
                     error: Box::new(error),
                     completed,
+                    declined: Vec::new(),
                 });
             }
         }
