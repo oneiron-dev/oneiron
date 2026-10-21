@@ -55,7 +55,7 @@ pub(super) use self::actor_erase::names_no_actor;
 pub use self::actor_erase::{ACTOR_ERASE_REVEAL_ASK, RevealAskErase};
 pub(crate) use self::file::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
-    RepoFileRevealScope, RepoFileRevealTarget, RepoFileSight,
+    RepoFileRevealTarget, RepoFileSight,
 };
 
 /// How long a pending reveal waits for its answer and its collection, in

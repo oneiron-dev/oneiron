@@ -25,7 +25,7 @@ mod projection_edit;
 mod retained_iterative;
 
 pub(crate) use self::projection_edit::{
-    RetainedMemberDiff, RetainedProjectionEdit, apply_retained_repo_projection_diff,
+    RetainedProjectionEdit, apply_retained_repo_projection_diff,
 };
 
 use super::{release_hit, scan_payload, secret_scan_error};

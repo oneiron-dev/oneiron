@@ -745,5 +745,5 @@ mod repo;
 
 pub(crate) use self::repo::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
-    RepoFileRevealScope, RepoFileRevealTarget, RepoFileSight,
+    RepoFileRevealTarget, RepoFileSight,
 };

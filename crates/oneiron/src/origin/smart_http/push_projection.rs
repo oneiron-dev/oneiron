@@ -44,11 +44,8 @@ use crate::origin::secret_projection::claims::{
 };
 use crate::origin::secret_projection::git::RepoGitProjection;
 
-mod forward;
-mod recovery;
-
-pub(crate) use self::forward::{ExactForwardPlan, forward_exact_received_push_in_txn};
-pub(crate) use self::recovery::{RepoProjectionIngressRecovery, recover_projection_ingress};
+pub(crate) mod forward;
+pub(crate) mod recovery;
 
 /// Domain of the canonical authority digest an ingress proof binds.
 const INGRESS_AUTHORITY_DOMAIN: &[u8] = b"oneiron.repo_projection.ingress_authority.v1";

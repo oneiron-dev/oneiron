@@ -146,8 +146,8 @@ pub use self::reveal::{
 };
 pub(crate) use self::reveal::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
-    RepoFileRevealScope, RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority,
-    erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
+    RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, erase_reveal_actor_in_txn,
+    parse_secret_handle, reveal_value_in_txn,
 };
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::storage_seal::{

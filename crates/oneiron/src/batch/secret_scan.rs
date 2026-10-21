@@ -9,8 +9,8 @@ mod wordlist;
 use heed::{RoTxn, RwTxn};
 
 pub(crate) use self::container::{
-    RetainedMemberDiff, RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container,
-    is_sealed, masked_copy, scan_members as scan_container_members,
+    RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container, is_sealed,
+    masked_copy, scan_members as scan_container_members,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
