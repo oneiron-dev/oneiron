@@ -5319,6 +5319,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.runs.program_hold.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::ReleaseTurnProgramHoldRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.home.get",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -6885,6 +6891,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.runs.program",
     "vault.runs.program_step",
     "vault.runs.program_checkpoint",
+    "vault.runs.program_hold.release",
     "vault.consolidation.home.get",
     "vault.consolidation.home.pick",
     "vault.consolidation.lineage",
@@ -8897,6 +8904,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.runs.program_checkpoint" => crate::code_run::vault_read::request_schema::<
             Option<crate::dreamer_runner::ProgramCheckpointView>,
+        >(),
+        "vault.runs.program_hold.release" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::ProgramHoldReleaseView,
         >(),
         "vault.consolidation.home.get" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::ConsolidationHomeView,
@@ -16038,6 +16048,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.runs.program_hold.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.home.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20235,6 +20252,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.runs.program_checkpoint" => {
             let _input: crate::dreamer_runner::ProgramCheckpointRequest = decode(value.clone())?;
         }
+        "vault.runs.program_hold.release" => {
+            let _input: crate::dreamer_runner::ReleaseTurnProgramHoldRequest =
+                decode(value.clone())?;
+        }
         "vault.consolidation.home.get" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -22613,6 +22634,9 @@ pub fn invoke(
         "vault.runs.program_step" => encode(vault_runs_program_step(memory, decode(value)?)?),
         "vault.runs.program_checkpoint" => {
             encode(vault_runs_program_checkpoint(memory, decode(value)?)?)
+        }
+        "vault.runs.program_hold.release" => {
+            encode(vault_runs_program_hold_release(memory, decode(value)?)?)
         }
         "vault.consolidation.home.get" => {
             encode(vault_consolidation_home_get(memory, decode(value)?)?)
@@ -31240,6 +31264,17 @@ pub fn vault_runs_program_checkpoint(
     input: crate::dreamer_runner::ProgramCheckpointRequest,
 ) -> MemoryResult<Option<crate::dreamer_runner::ProgramCheckpointView>> {
     crate::dreamer_runner::program_checkpoint(memory, &input)
+}
+pub fn vault_runs_program_hold_release(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::ReleaseTurnProgramHoldRequest,
+) -> MemoryResult<crate::dreamer_runner::ProgramHoldReleaseView> {
+    crate::dreamer_runner::release_turn_program_hold_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.runs.program_hold.release")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_consolidation_home_get(
     memory: &Memory<'_>,

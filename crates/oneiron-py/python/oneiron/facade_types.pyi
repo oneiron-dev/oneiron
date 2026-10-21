@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1096 facade rows, 3777 declarations.
-Inputs: 1031 of 1096 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 983 of 1096 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1097 facade rows, 3781 declarations.
+Inputs: 1032 of 1097 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 984 of 1097 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -17079,11 +17079,25 @@ class ProgramCheckpointRequest(TypedDict):
     root: str
     cursor: NotRequired[str | None]
     limit: NotRequired[int | None]
+class ProgramCheckpointConsentView(TypedDict):
+    binding_digest: str
+    effect_digest: str
+    state: str
+    ask: NotRequired[str | None]
+    choice: NotRequired[str | None]
+    word: NotRequired[str | None]
+    answer_receipt: NotRequired[str | None]
+    outcome: NotRequired[str | None]
+    settlement_receipt: NotRequired[str | None]
+    consumption_receipt: NotRequired[str | None]
+    settlement_facts_digest: NotRequired[str | None]
+    consumption_facts_digest: NotRequired[str | None]
 class ProgramCheckpointWaitView(TypedDict):
     row: int
     wait_id: str
     generation: int
     delivered: bool
+    consent: NotRequired[ProgramCheckpointConsentView | None]
 class ProgramCheckpointHeadView(TypedDict):
     committed_by: str
     content_hash: str
@@ -17113,6 +17127,19 @@ class ProgramCheckpointView(TypedDict):
     calls: list[ProgramCheckpointCallView]
     next_cursor: NotRequired[str | None]
     withheld: list[str]
+ProgramHoldReleaseAction = Literal["stop", "resume_validated"]
+class ReleaseTurnProgramHoldRequest(TypedDict):
+    attempt: str
+    reason: str
+    parked_at: int
+    action: ProgramHoldReleaseAction
+    note: NotRequired[str | None]
+class ProgramHoldReleaseView(TypedDict):
+    attempt: str
+    action: ProgramHoldReleaseAction
+    released: str
+    state: str
+    effected: bool
 ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": str, "class": str, "elected_at": int})
 ConsolidationHomeCandidate = TypedDict("ConsolidationHomeCandidate", {"node_id": str, "class": NotRequired[str | None], "cloud": bool, "attached": bool, "always_on_local": bool, "primary_device": bool})
 class ConsolidationHomePickHead(TypedDict):
@@ -17571,6 +17598,7 @@ class FreeTimeItemReceiptView(TypedDict):
     policy_revision: int
     attempt: NotRequired[str | None]
     proposal: NotRequired[str | None]
+    context_unread: NotRequired[str | None]
     at: int
 class FreeTimeItemView(TypedDict):
     item: str

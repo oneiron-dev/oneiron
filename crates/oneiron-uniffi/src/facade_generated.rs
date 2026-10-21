@@ -4786,6 +4786,11 @@ export_facade! {
     let output = client.vault_runs_program_checkpoint(&input)?;
     crate::codec::lift_record("vault.runs.program_checkpoint", &output)
 };
+"vault.runs.program_hold.release" => fn vault_runs_program_hold_release(&self, input: ReleaseTurnProgramHoldRequest) -> ProgramHoldReleaseView = |client| {
+    let input: oneiron::dreamer_runner::ReleaseTurnProgramHoldRequest = crate::codec::lower_record("vault.runs.program_hold.release", input)?;
+    let output = client.vault_runs_program_hold_release(&input)?;
+    crate::codec::lift_record("vault.runs.program_hold.release", &output)
+};
 "vault.consolidation.home.get" => fn vault_consolidation_home_get(&self) -> ConsolidationHomeView = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consolidation.home.get")?;
     let output = client.vault_consolidation_home_get(&input)?;
