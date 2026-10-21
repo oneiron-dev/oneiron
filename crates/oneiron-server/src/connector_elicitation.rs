@@ -39,7 +39,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
-use oneiron::llm::decision::DecisionAnswer;
+use oneiron::llm::decision::{DecisionAnswer, DecisionAsks};
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorElicitationAnswer,
@@ -535,7 +535,8 @@ fn lapsed() -> ConnectorCallReply {
 
 /// Asks the owner about exactly `frozen`, and waits for the ruling within
 /// the round's deadline. A lapsed ask is withdrawn, so it leaves the
-/// owner's queue.
+/// owner's queue, and so are the linked parts of a long one once it is
+/// decided or lapses (FIX 3842).
 fn owner_rules(
     server: &SyncServer,
     claim: &Claim<'_>,
@@ -549,20 +550,30 @@ fn owner_rules(
         answers: &frozen.text,
         digest: frozen.digest,
     };
-    let seq = match server
+    let asked = match server
         .vault()
         .queue_connector_elicitation_owner_ask(authority, &answer)
     {
-        Ok(seq) => seq,
+        Ok(asked) => asked,
         Err(error) => {
             tracing::warn!(%error, "connector elicitation owner ask not queued");
             return OwnerRuling::Unasked;
         }
     };
     let asks = server.decision_host().asks();
+    let ruling = owner_ruling(asks, asked.seq, claim.deadline);
+    for part in asked.parts {
+        drop(asks.withdraw(part));
+    }
+    ruling
+}
+
+/// Waits for the owner's ruling on ask `seq` until `deadline`; a lapsed ask
+/// is withdrawn.
+fn owner_ruling(asks: &DecisionAsks, seq: u64, deadline: Instant) -> OwnerRuling {
     let runtime = tokio::runtime::Handle::try_current().ok();
     loop {
-        let left = claim.deadline.saturating_duration_since(Instant::now());
+        let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
             drop(asks.withdraw(seq));
             return OwnerRuling::Lapsed;
