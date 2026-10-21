@@ -592,18 +592,25 @@ impl PolicyManifestResolution {
         (!self.diagnostics.loaded_manifest_forces_fail_closed()).then_some(self.retrieval_retention)
     }
 
-    /// The trusted, nested-narrow voice limits. A malformed or absent policy
-    /// never falls back to compiled operational allowances.
-    pub(crate) fn voice_serving_limits(
+    /// The trusted, nested-narrow voice limits, in a receipt that says when
+    /// the shipped defaults stood in. A malformed, unreadable or untrusted
+    /// policy never falls back to them; only trusted manifests that were read
+    /// and omit the optional row do (FIX 8772).
+    pub(crate) fn voice_serving_policy(
         &self,
         holder: Option<crate::EntityId>,
-    ) -> Result<crate::gate::VoiceServingLimits> {
+    ) -> Result<crate::gate::voice_serving::VoiceServingPolicyReceipt> {
         if self.diagnostics.is_fail_closed() {
             return Err(crate::error::Error::InvalidConfig(
                 "voice serving policy unavailable".into(),
             ));
         }
-        crate::gate::voice_serving::resolve(&self.voice_serving, holder)
+        // `packs` holds exactly the trusted packs this fold read: one is
+        // pushed per trusted pack, after untrusted ones have left the fold.
+        // An untrusted pack counts in `manifest_count`, so the count proves
+        // nothing; a trusted pack read is the positive proof of absence.
+        let trusted_absence = !self.packs.is_empty();
+        crate::gate::voice_serving::resolve(&self.voice_serving, holder, trusted_absence)
     }
 
     /// The resolved wait window, or a fail-closed contradiction.
