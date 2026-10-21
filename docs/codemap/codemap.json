@@ -23526,6 +23526,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/feedback_triage.rs",
+     "purpose": "The Coach's feedback triage findings (OF-420 T1)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -28979,8 +28990,9 @@
      "path": "src/feedback/mod.rs",
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -29074,6 +29086,52 @@
      "path": "src/feedback/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FeedbackTriageBinding",
+      "FeedbackTriageContinuation",
+      "FeedbackTriageFinding",
+      "FeedbackTriageHandoff",
+      "FeedbackTriageInput",
+      "FeedbackTriageJob",
+      "FeedbackTriageOutput",
+      "FeedbackTriageResult",
+      "FeedbackTriageSourceRef",
+      "FeedbackTriageSweep"
+     ],
+     "path": "src/feedback/triage.rs",
+     "purpose": "Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the…",
+     "surface": {
+      "const": 4,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FeedbackTriageBindingRequest",
+      "FeedbackTriageChild",
+      "FeedbackTriageHold",
+      "FeedbackTriageRun",
+      "FeedbackTriageRunRequest",
+      "FeedbackTriageStatus",
+      "FeedbackTriageStatusRequest"
+     ],
+     "path": "src/feedback/triage/owner.rs",
+     "purpose": "The owner's feedback triage doors: run the sweep now, read a sweep's status, and read or set the skill binding",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
+     }
     },
     {
      "bucket": "s",
@@ -68465,7 +68523,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 114,
+     "files": 115,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68584,7 +68642,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 32,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69482,7 +69540,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4400,
+   "source_files": 4403,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82316,6 +82374,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/feedback_triage.rs",
+     "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"We sweep both on a schedule with the triage…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/harness.rs",
      "purpose": "The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit…",
      "surface": {
@@ -86397,6 +86465,16 @@
      "notable": [],
      "path": "src/api/owner_routes/federation_connect_routes.rs",
      "purpose": "`/v1/owner/federation/connect`: the owner's Connect (ARCH-0043 #relationship-lifecycle, FIX 323), behind the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/feedback_triage_routes.rs",
+     "purpose": "`/v1/owner/feedback/triage`: the owner runs the Coach's feedback triage now, reads one run's status, and…",
      "surface": {
       "crate-vis": 1
      }
@@ -94914,14 +94992,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 67,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 493,
+     "files": 494,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -95371,7 +95449,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1037,
+   "source_files": 1039,
    "test_files": 182
   },
   "oneiron-spawn": {
