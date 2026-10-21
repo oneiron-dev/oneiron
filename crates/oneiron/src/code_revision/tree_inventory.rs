@@ -301,11 +301,11 @@ impl CodeTreeInventory {
 /// The one render body: documents regenerated from their authenticated
 /// folds at their modes, blobs read at their recorded object and checked
 /// against their size and hash. A submodule link stays a visible refusal.
-fn render_files<'d>(
+fn render_files(
     vault: &Vault,
     git: &GitWire<'_>,
     repo: &GitWireRepo,
-    documents: impl Iterator<Item = (&'d CodeDocumentFrontier, u32)>,
+    documents: impl Iterator<Item = (&CodeDocumentFrontier, u32)>,
     blobs: &BTreeMap<String, CodeTreeBlob>,
 ) -> Result<BTreeMap<String, OriginTreeFile>> {
     let mut files = BTreeMap::new();
