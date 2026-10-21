@@ -37,9 +37,6 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// any fetch may run, so a fetch that has created its file and not yet locked
 /// it is never asked about.
 const STALE_PARTIAL: Duration = Duration::from_secs(2 * DOWNLOAD_TIMEOUT.as_secs());
-/// Refuse a file larger than this before writing it: a redirect to the wrong
-/// place must not fill the disk.
-const MAX_ARTIFACT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// One file of the model, with the digest that makes it that file.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -737,12 +734,6 @@ fn download(
             &format!("HTTP {}", response.status()),
         ));
     }
-    if response
-        .content_length()
-        .is_some_and(|n| n > MAX_ARTIFACT_BYTES)
-    {
-        return Err(download_failed(&artifact.file, "exceeds the artifact cap"));
-    }
     let (temp, file) = locked_partial(path)?;
     #[cfg(test)]
     tests::partial_created(path);
@@ -790,12 +781,14 @@ fn place(
     path: &Path,
     artifact: &PinnedArtifact,
 ) -> oneiron::Result<FileStamp> {
+    // A pinned file is read to one byte past its size, which `verify` then
+    // refuses; an unpinned one has no size to hold it to.
+    let limit = match artifact.bytes {
+        0 => u64::MAX,
+        pinned => pinned.saturating_add(1),
+    };
     let mut writer = file;
-    let written = std::io::copy(&mut response.take(MAX_ARTIFACT_BYTES + 1), &mut writer)
-        .map_err(oneiron::Error::Io)?;
-    if written > MAX_ARTIFACT_BYTES {
-        return Err(download_failed(&artifact.file, "exceeds the artifact cap"));
-    }
+    std::io::copy(&mut response.take(limit), &mut writer).map_err(oneiron::Error::Io)?;
     verify(temp, artifact)?;
     let stamp = FileStamp::read(temp)?;
     std::fs::rename(temp, path).map_err(oneiron::Error::Io)?;
@@ -983,7 +976,7 @@ pub(crate) fn fetch_resumable(
         tool,
         code: format!("{}: {reason}", artifact.file),
     };
-    let cap = artifact.bytes.min(MAX_ARTIFACT_BYTES);
+    let cap = artifact.bytes;
     let mut file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
