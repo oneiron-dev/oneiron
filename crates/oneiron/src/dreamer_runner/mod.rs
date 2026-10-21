@@ -66,14 +66,19 @@ pub(crate) use self::program::{
 };
 // DOOR-141 PR3a/PR3b: a turn program's reads, for its host doors and the SDK.
 pub use self::program::{
-    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointHeadView,
-    ProgramCheckpointRequest, ProgramCheckpointView, ProgramCheckpointWaitView,
-    ProgramFrontierView, ProgramHeldView, ProgramQueueView, ProgramResultAvailability,
-    ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView, ProgramRunView,
-    ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
+    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
+    ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,
+    ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
+    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
+    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
     SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_checkpoint, program_run,
     settled_program_step, turn_program_admission,
+};
+// FIX 5880: the owner's release of a held turn program.
+pub use self::program::{
+    ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
+    release_turn_program_hold_as_owner,
 };
 #[cfg(feature = "sync")]
 pub use self::progress::*;

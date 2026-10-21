@@ -1967,6 +1967,7 @@ fn mcp_agent_verb_input(
         "vault.runs.program" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.program_step" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.program_checkpoint" => a.spec.clone().ok_or_else(invalid),
+        "vault.runs.program_hold.release" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.home.get" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.home.pick" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.lineage" => a.spec.clone().ok_or_else(invalid),
@@ -5122,6 +5123,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.runs.program_checkpoint" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.runs.program_hold.release" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consolidation.home.get" => {
@@ -19402,6 +19406,22 @@ async fn execute_agent_verb_row(
                     "vault.runs.program_checkpoint",
                 ),
                 input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.runs.program_hold.release" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.runs.program_hold.release", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::dreamer_runner::ReleaseTurnProgramHoldRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_runs_program_hold_release(
+                server, auth, input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

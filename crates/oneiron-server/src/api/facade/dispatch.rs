@@ -30072,6 +30072,41 @@ async fn vault_runs_program_checkpoint(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_runs_program_hold_release(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.runs.program_hold.release")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.runs.program_hold.release", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.runs.program_hold.release", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_runs_program_hold_release(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_consolidation_home_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -36233,6 +36268,9 @@ pub(crate) async fn call_verb(
         "vault.runs.program" => vault_runs_program(server, call, input).await,
         "vault.runs.program_step" => vault_runs_program_step(server, call, input).await,
         "vault.runs.program_checkpoint" => vault_runs_program_checkpoint(server, call, input).await,
+        "vault.runs.program_hold.release" => {
+            vault_runs_program_hold_release(server, call, input).await
+        }
         "vault.consolidation.home.get" => vault_consolidation_home_get(server, call, input).await,
         "vault.consolidation.home.pick" => vault_consolidation_home_pick(server, call, input).await,
         "vault.consolidation.lineage" => vault_consolidation_lineage(server, call, input).await,

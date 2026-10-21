@@ -2237,6 +2237,10 @@ export class Oneiron {
       program_step: (input: Facade.SettledProgramStepRequest): Facade.SettledProgramStepView | null => this.#call(() => this.#client.vaultRunsProgramStep(input) as Facade.SettledProgramStepView | null),
       /** Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it. */
       program_checkpoint: (input: Facade.ProgramCheckpointRequest): Facade.ProgramCheckpointView | null => this.#call(() => this.#client.vaultRunsProgramCheckpoint(input) as Facade.ProgramCheckpointView | null),
+      program_hold: {
+        /** The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out. */
+        release: (input: Facade.ReleaseTurnProgramHoldRequest): Facade.ProgramHoldReleaseView => this.#call(() => this.#client.vaultRunsProgramHoldRelease(input) as Facade.ProgramHoldReleaseView),
+      },
       /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
       review: (input: Facade.RunReviewRequest): Facade.RunReview => this.#call(() => this.#client.vaultRunsReview(input) as Facade.RunReview),
       /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */

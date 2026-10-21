@@ -3079,6 +3079,8 @@ class Oneiron:
             """Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body."""
         def program_checkpoint(self, spec: Facade.ProgramCheckpointRequest) -> Facade.ProgramCheckpointView | None:
             """Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it."""
+        @property
+        def program_hold(self) -> "Oneiron._VaultRunsProgramHoldVerbs": ...
         def review(self, spec: Facade.RunReviewRequest) -> Facade.RunReview:
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
         def settle(self, spec: Facade.RunSettleRequest) -> Facade.RunSettlement:
@@ -3088,6 +3090,9 @@ class Oneiron:
     class _VaultRunsBranchesVerbs:
         def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
+    class _VaultRunsProgramHoldVerbs:
+        def release(self, spec: Facade.ReleaseTurnProgramHoldRequest) -> Facade.ProgramHoldReleaseView:
+            """The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out."""
     class _VaultConsultsVerbs:
         def get(self, spec: Facade.ConsultReadRequest) -> Facade.ConsultInspection:
             """The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies."""

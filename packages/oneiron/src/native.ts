@@ -1005,6 +1005,7 @@ vaultTurnProgramsAdmission(input: unknown): unknown
 vaultRunsProgram(input: unknown): unknown
 vaultRunsProgramStep(input: unknown): unknown
 vaultRunsProgramCheckpoint(input: unknown): unknown
+vaultRunsProgramHoldRelease(input: unknown): unknown
 vaultConsolidationHomeGet(input: unknown): unknown
 vaultConsolidationHomePick(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown

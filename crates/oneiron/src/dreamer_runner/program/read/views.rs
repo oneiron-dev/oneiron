@@ -284,7 +284,8 @@ pub struct SettledProgramStepView {
     pub step_ref: String,
     pub issue: ProgramStepIssueView,
     pub settled_at: u64,
-    /// 64-hex digest of the exact result the step settled with.
+    /// 64-hex digest of the exact result the step settled with: for a write,
+    /// of the outcome its receipt stores, not of `body_base64`'s bytes.
     pub result_digest: String,
     /// The record that holds the exact result: the model step's terminal
     /// claim (32 hex), the write's receipt (32 hex) or the send's intent (64
@@ -294,8 +295,9 @@ pub struct SettledProgramStepView {
     pub availability: ProgramResultAvailability,
     /// A model step's terminal record and stored response, when readable.
     pub model_step: Option<SettledStepView>,
-    /// A send's body as the side-row wall admitted it, base64, when it was
-    /// kept and is readable.
+    /// A send's body as the side-row wall admitted it, or a write's answer
+    /// (the verb's JSON output as its receipt keeps it, FIX 5837), base64,
+    /// when it was kept and is readable.
     pub body_base64: Option<String>,
 }
 
@@ -396,6 +398,42 @@ pub struct ProgramCheckpointWaitView {
     /// Whether a reply is delivered to it, or it settled with one: the
     /// program resumes only then.
     pub delivered: bool,
+    /// The consent evidence of the code consent wait it is, when one binds
+    /// it (FIX 5883); none for any other wait, and withheld by name
+    /// (`checkpoint.wait.consent`) when it does not read on the caller's
+    /// lane.
+    pub consent: Option<ProgramCheckpointConsentView>,
+}
+
+/// What a program's parked code consent wait holds as consent evidence
+/// (FIX 5883): refs and digests only, never the reply, the held input, a
+/// credential or model text. A receipt is `gate:<hex>`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProgramCheckpointConsentView {
+    /// 64-hex digest of the wait's immutable binding to its held effect.
+    pub binding_digest: String,
+    /// 64-hex code-bound approval digest an answer names.
+    pub effect_digest: String,
+    /// Where the wait stands: provisional, waiting, settling, settled or
+    /// consumed.
+    pub state: String,
+    /// 32-hex ask the owner's word stands on, once it is open.
+    pub ask: Option<String>,
+    /// The first answer's choice, and its 32-hex word on the ask.
+    pub choice: Option<String>,
+    pub word: Option<String>,
+    /// The consent act's receipt.
+    pub answer_receipt: Option<String>,
+    /// What the settlement came to, and its receipt.
+    pub outcome: Option<String>,
+    pub settlement_receipt: Option<String>,
+    /// The parked run's consumption of the settled reply, its receipt.
+    pub consumption_receipt: Option<String>,
+    /// 64-hex facts digests of the settlement and consumption receipts as
+    /// the consent Gate ledger holds them: none before the fact, or once an
+    /// opted-in retention sweep dropped its record.
+    pub settlement_facts_digest: Option<String>,
+    pub consumption_facts_digest: Option<String>,
 }
 
 /// One settled call of a program's pinned source.

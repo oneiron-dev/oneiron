@@ -4005,6 +4005,9 @@ class Oneiron:
         def program_checkpoint(self, spec):
             """Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it."""
             return json.loads(_translate(lambda: self._client.vault_runs_program_checkpoint(json.dumps(spec))))
+        @property
+        def program_hold(self) -> "Oneiron._VaultRunsProgramHoldVerbs":
+            return Oneiron._VaultRunsProgramHoldVerbs(self._client)
         def review(self, spec):
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
             return json.loads(_translate(lambda: self._client.vault_runs_review(json.dumps(spec))))
@@ -4020,6 +4023,12 @@ class Oneiron:
         def get(self, spec):
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
             return json.loads(_translate(lambda: self._client.vault_runs_branches_get(json.dumps(spec))))
+    class _VaultRunsProgramHoldVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def release(self, spec):
+            """The owner releases one held turn program's try against the exact hold he read: stop ends it and clears the hold, its run kept; resume queues the same try once its checkpoint, authority, pin and effects check out."""
+            return json.loads(_translate(lambda: self._client.vault_runs_program_hold_release(json.dumps(spec))))
     class _VaultConsultsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

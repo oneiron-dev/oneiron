@@ -19,8 +19,11 @@
 //! selection (FIX 5874, FIX 5875): a commit that stores an authority row
 //! rechecks each lapsed-authority hold, and a host that binds its program
 //! runtime resumes each hold for want of it whose waking actor it now lends
-//! to. The resumed try binds its authority, its pin and its host again at
-//! its entry, and is held again for whatever still holds it.
+//! to. A restore that brings an archived grant or actor back rechecks them
+//! in its own commit (FIX 6058). The resumed try binds its authority, its
+//! pin and its host again at its entry, and is held again for whatever still
+//! holds it. The holds no condition returns are the owner's to release
+//! (`release`, FIX 5880).
 
 use crate::attempt_queue::AttemptId;
 use crate::code_run::{WaitKey, program_resume_head_in_txn, wait_delivered_in_txn};
@@ -110,7 +113,7 @@ impl ProgramHold {
     }
 
     /// The hold a park's exact reason names, if any does.
-    fn of_reason(reason: &str) -> Option<Self> {
+    pub(super) fn of_reason(reason: &str) -> Option<Self> {
         HOLDS.into_iter().find(|hold| hold.reason() == reason)
     }
 }
@@ -203,29 +206,58 @@ impl DreamerRunnerStore<'_> {
         now: u64,
     ) -> Result<usize> {
         // Read-only first: a vault with no returned hold opens no write.
-        let due: Vec<AttemptId> = {
+        let due = {
             let rtxn = self.vault.store.env.read_txn()?;
-            PARKED
-                .scan(&self.vault.store, &rtxn)?
-                .into_iter()
-                .filter(|(attempt, park)| returned_hold(self.vault, &rtxn, *attempt, park, host))
-                .map(|(attempt, _)| attempt)
-                .collect()
+            returned_holds_in_txn(self.vault, &rtxn, host)?
         };
         if due.is_empty() {
             return Ok(0);
         }
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let resumed = self.resume_due_program_holds_in_txn(&mut wtxn, due, host, now)?;
+        wtxn.commit()?;
+        if resumed > 0 {
+            self.vault.store.notify_attempt_observers();
+            // The deadline lane arms the queued tries at once.
+            self.vault.store.notify_proactivity_changes();
+        }
+        Ok(resumed)
+    }
+
+    /// Transaction-composable [`Self::resume_returned_program_holds`]: the
+    /// holds whose cause has returned at `wtxn`'s revision, each resumed in a
+    /// savepoint of the caller's writer, which commits them with its own
+    /// change. The caller signals observers after its commit.
+    fn resume_returned_program_holds_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        host: Option<&dyn Fn(WriteActor) -> bool>,
+        now: u64,
+    ) -> Result<usize> {
+        let due = returned_holds_in_txn(self.vault, &*wtxn, host)?;
+        self.resume_due_program_holds_in_txn(wtxn, due, host, now)
+    }
+
+    /// Resumes each of `due` whose hold's cause still returned at `wtxn`'s
+    /// revision, each in a savepoint. A hold whose resume fails is logged
+    /// and left as it is. Returns how many it resumed.
+    fn resume_due_program_holds_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        due: Vec<AttemptId>,
+        host: Option<&dyn Fn(WriteActor) -> bool>,
+        now: u64,
+    ) -> Result<usize> {
         let mut resumed = 0_usize;
         for attempt in due {
-            let Some(park) = PARKED.get(&self.vault.store, &wtxn, &attempt)? else {
+            let Some(park) = PARKED.get(&self.vault.store, &*wtxn, &attempt)? else {
                 continue;
             };
-            if !returned_hold(self.vault, &wtxn, attempt, &park, host) {
+            if !returned_hold(self.vault, &*wtxn, attempt, &park, host) {
                 continue;
             }
             let one = (|| -> Result<bool> {
-                let mut savepoint = self.vault.store.env.nested_write_txn(&mut wtxn)?;
+                let mut savepoint = self.vault.store.env.nested_write_txn(wtxn)?;
                 let cleared = self
                     .resume_parked_in_txn(&mut savepoint, attempt, PROGRAM_PARK_OWNER, now)?
                     .is_some();
@@ -241,12 +273,6 @@ impl DreamerRunnerStore<'_> {
                     "a held turn program was not resumed; its hold stands"
                 ),
             }
-        }
-        wtxn.commit()?;
-        if resumed > 0 {
-            self.vault.store.notify_attempt_observers();
-            // The deadline lane arms the queued tries at once.
-            self.vault.store.notify_proactivity_changes();
         }
         Ok(resumed)
     }
@@ -271,6 +297,57 @@ impl Vault {
             );
         }
     }
+
+    /// In the writer of a change that may return a waking actor's authority
+    /// without storing an authority row (FIX 6058: an archived grant or
+    /// actor a restore brings back), resumes each program held for a lapsed
+    /// authority that stands again at `wtxn`'s revision, under the same
+    /// actor and pin checks, so the resume commits with the change and rolls
+    /// back with it. A resume stages the proactivity wake its writer's owner
+    /// signals after the commit. Best-effort: a recheck that fails is logged
+    /// and never fails the caller's change; the program kind's admission
+    /// chain still judges each hold before its next selection. Opens no
+    /// writer of its own.
+    pub(crate) fn resume_turn_programs_after_authority_change_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) {
+        let now = self.now_recorded_at();
+        let resumed = (|| -> Result<usize> {
+            let mut savepoint = self.store.env.nested_write_txn(wtxn)?;
+            let resumed = DreamerRunnerStore::new(self).resume_returned_program_holds_in_txn(
+                &mut savepoint,
+                None,
+                now,
+            )?;
+            savepoint.commit()?;
+            Ok(resumed)
+        })();
+        match resumed {
+            Ok(0) => {}
+            Ok(_) => crate::batch::queue_proactivity_change(self, wtxn),
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "held turn programs were not rechecked after a restore; the next program \
+                 admission rechecks them"
+            ),
+        }
+    }
+}
+
+/// The program runtime's own holds whose cause has returned at `txn`'s
+/// revision, by attempt.
+fn returned_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    host: Option<&dyn Fn(WriteActor) -> bool>,
+) -> Result<Vec<AttemptId>> {
+    Ok(PARKED
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .filter(|(attempt, park)| returned_hold(vault, txn, *attempt, park, host))
+        .map(|(attempt, _)| attempt)
+        .collect())
 }
 
 /// Whether `park` is the program runtime's own hold of `attempt` whose cause
@@ -353,7 +430,7 @@ fn hold_ready_in_txn(
     }
 }
 
-fn resume_preflight_in_txn(
+pub(super) fn resume_preflight_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,

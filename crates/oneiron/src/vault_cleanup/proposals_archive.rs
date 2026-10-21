@@ -312,6 +312,10 @@ impl Vault {
         crate::dreamer_consolidation::strength::restored_in_txn(self, wtxn, entity)?;
         person_provenance::clear_mint_evidence_in_txn(self, wtxn, entity)?;
         super::restore_task_attempts(self, wtxn, *entity)?;
+        // FIX 6058: a restored grant or actor may stand a held program's
+        // authority again. Rechecked in this commit, best-effort: a recheck
+        // that fails is logged and never fails the restore.
+        self.resume_turn_programs_after_authority_change_in_txn(wtxn);
         Ok(())
     }
 }

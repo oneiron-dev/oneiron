@@ -979,6 +979,7 @@ both bindings and their export-census tests in one change.
 - `vault.runs.program`
 - `vault.runs.program_step`
 - `vault.runs.program_checkpoint`
+- `vault.runs.program_hold.release`
 - `vault.consolidation.home.get`
 - `vault.consolidation.home.pick`
 - `vault.consolidation.lineage`

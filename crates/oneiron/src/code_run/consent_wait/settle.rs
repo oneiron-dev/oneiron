@@ -146,6 +146,44 @@ impl Vault {
         let ledger = ledger_links_in_txn(self, &txn, &row)?;
         Ok(view_of(&row, ledger, already_answered))
     }
+
+    /// The consent evidence of the code consent wait a program's resume
+    /// checkpoint parked on (FIX 5883), read in the caller's snapshot `txn`:
+    /// the wait's view, its receipts' links joined from the consent Gate
+    /// ledger as [`Self::code_consent_wait_view`] joins them, and its binding
+    /// digest. `key` is the wait the checkpoint names and `row` the record row
+    /// of the call that parked on it. `None` for a wait no control row binds.
+    /// Read-only: nothing is answered, settled, consumed or asked.
+    ///
+    /// # Errors
+    ///
+    /// A row bound to another run or call, or not sealed at `key`'s
+    /// generation ([`Error::CorruptedIndex`]); a ledger record that disagrees
+    /// with the row; storage.
+    pub(crate) fn code_consent_checkpoint_evidence_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &crate::code_run::WaitKey,
+        row: u64,
+    ) -> Result<Option<(CodeConsentWaitView, [u8; 32])>> {
+        let Some(wait) = read_code_consent_wait_in_txn(self, txn, key.wait_id)? else {
+            return Ok(None);
+        };
+        let sealed = wait
+            .checkpoint
+            .as_ref()
+            .is_some_and(|sealed| sealed.wait_generation == key.generation);
+        if wait.binding.run_id != key.run || wait.binding.bridge_seq != row || !sealed {
+            return Err(Error::CorruptedIndex(
+                "a code consent wait is not the one its program checkpoint parked on",
+            ));
+        }
+        let ledger = ledger_links_in_txn(self, txn, &wait)?;
+        Ok(Some((
+            view_of(&wait, ledger, false),
+            wait.binding.binding_digest,
+        )))
+    }
 }
 
 /// The answer's writer: the proof again, the exact sealed target, the first
