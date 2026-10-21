@@ -75,11 +75,18 @@ pub(crate) enum OriginClaimKind {
     Change,
     Admission,
     Outcome,
+    /// An outside import's source claim (FIX 6871): its importer.
+    ExternalImportSource,
 }
 
 impl OriginClaimKind {
     /// The families the publication protocol writes.
-    pub(crate) const PUBLICATION: [Self; 3] = [Self::Intent, Self::Publication, Self::Change];
+    pub(crate) const PUBLICATION: [Self; 4] = [
+        Self::Intent,
+        Self::Publication,
+        Self::Change,
+        Self::ExternalImportSource,
+    ];
     /// The families the receive-pack observer writes beside its receipts.
     pub(crate) const RECEIVE_PACK: [Self; 2] = [Self::Admission, Self::Outcome];
 
@@ -98,6 +105,9 @@ impl OriginClaimKind {
             Self::Change => ORIGIN_CHANGE_PREDICATE,
             Self::Admission => RECEIVE_PACK_ADMISSION_PREDICATE,
             Self::Outcome => RECEIVE_PACK_OUTCOME_PREDICATE,
+            Self::ExternalImportSource => {
+                crate::repo_mutation::external_import::EXTERNAL_IMPORT_SOURCE_PREDICATE
+            }
         }
     }
 }
@@ -173,7 +183,9 @@ pub(crate) fn erased_claim(
                     target,
                 },
                 OriginClaimKind::Admission => ClaimSubject::Entity(source),
-                OriginClaimKind::Publication | OriginClaimKind::Change => body.subject,
+                OriginClaimKind::Publication
+                | OriginClaimKind::Change
+                | OriginClaimKind::ExternalImportSource => body.subject,
             };
         }
     }
@@ -433,7 +445,9 @@ pub(crate) fn redact_origin_claim_in_txn(
             OriginClaimKind::Admission | OriginClaimKind::Outcome => {
                 vault.redact_receive_pack_claim_in_txn(wtxn, &rewrite)?;
             }
-            OriginClaimKind::Intent | OriginClaimKind::Publication => {
+            OriginClaimKind::Intent
+            | OriginClaimKind::Publication
+            | OriginClaimKind::ExternalImportSource => {
                 rewrite.put_in_txn(vault, wtxn)?;
             }
         },

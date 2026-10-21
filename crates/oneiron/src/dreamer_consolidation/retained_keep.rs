@@ -27,6 +27,7 @@
 //! nothing stages it again on its own: the Dreamer's ruling never offers it.
 
 use super::retained_conflict::{RetainedAlternative, retained_alternatives};
+use super::settle::keep_approval::KeepAs;
 use super::settle::{
     ConflictSettleReceipt, MATERIALIZED_KEY, OpenConflict, SettledConflict, marker_ids, string_at,
 };
@@ -244,12 +245,14 @@ fn of_selector(kept: &[(EntityId, EntityId)], selector: EntityId) -> Vec<EntityI
 /// a revert took a landing of it back or the owner declined a Keep of it
 /// staged in its import's review (FIX 7072), or stages it in its import's
 /// review at that same id, linked to `marker` and the alternative so it
-/// stays a member of the conflict (FIX 6152).
+/// stays a member of the conflict (FIX 6152). `keep_as` says how it lands
+/// (FIX 5753).
 pub(super) fn keep_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     marker: EntityId,
     alternative: &RetainedAlternative,
+    keep_as: KeepAs<'_>,
     now: u64,
 ) -> Result<KeptAlternative> {
     let landing = if alternative.landings.is_empty() && alternative.declined.is_empty() {
@@ -261,7 +264,15 @@ pub(super) fn keep_in_txn(
         marker,
         selector: alternative.id,
     };
-    match super::retained_conflict::land_in_txn(vault, txn, alternative, landing, link, now)? {
+    match super::retained_conflict::land_in_txn(
+        vault,
+        txn,
+        alternative,
+        landing,
+        link,
+        keep_as,
+        now,
+    )? {
         KeptLanding::Landed => Ok(KeptAlternative::Landed(landing)),
         KeptLanding::ImportReview(review) => Ok(KeptAlternative::ImportReview(StagedKeep {
             marker,
