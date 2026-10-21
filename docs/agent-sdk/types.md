@@ -1087,6 +1087,8 @@ class Oneiron:
         @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
         @property
+        def archive(self) -> "Oneiron._VaultArchiveVerbs": ...
+        @property
         def usage(self) -> "Oneiron._VaultUsageVerbs": ...
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
@@ -2386,6 +2388,14 @@ class Oneiron:
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
+    class _VaultArchiveVerbs:
+        @property
+        def delete(self) -> "Oneiron._VaultArchiveDeleteVerbs": ...
+    class _VaultArchiveDeleteVerbs:
+        def preview(self, spec: Facade.ArchiveDeletePreviewRequest) -> Facade.ArchiveDeletePreviewView:
+            """Previews explicit archived records under the caller's delete authority."""
+        def confirm(self, spec: Facade.ArchiveDeleteConfirmRequest) -> Facade.ArchiveDeleteBatchResult:
+            """Deletes explicit archived records under the caller's current delete authority and returns each receipt."""
     class _VaultUsageVerbs:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs": ...
@@ -3988,6 +3998,8 @@ class Oneiron:
             """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries."""
         def accept(self, spec: Facade.TaskAccept) -> Facade.TaskCallReceipt:
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
+        def redo(self, spec: Facade.TaskRedo) -> Facade.TaskCallReceipt:
+            """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
@@ -4126,6 +4138,8 @@ class Oneiron:
             """Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."""
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs": ...
+        def answer(self, spec: Facade.ConnectorAnswerRequest) -> Facade.ConnectorCallReply:
+            """Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."""
     class _ConnectorOutboundVerbs:
         def schedule(self, spec: Facade.OutboundScheduleRequest) -> Facade.OutboundIntentReceipt:
             """Schedules one send through a granted outbound connector, gated and held for delivery."""

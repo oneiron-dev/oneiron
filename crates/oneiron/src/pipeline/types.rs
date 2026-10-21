@@ -99,7 +99,7 @@ pub(super) const RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE: &[(u8, f32)] = &[
     (ENTITY_TYPE_PSYCH_PROFILE, 365.0),
 ];
 
-pub(super) fn retrieval_recency_half_life_days_for_type(entity_type: u8) -> f32 {
+pub(crate) fn retrieval_recency_half_life_days_for_type(entity_type: u8) -> f32 {
     RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE
         .iter()
         .find_map(|(kind, half_life_days)| (*kind == entity_type).then_some(*half_life_days))
@@ -541,10 +541,6 @@ pub const PREDICATE_WORLD_ACCESS_ALLOWED_SET: &str = "core.world_access.allowed_
 /// default. Consumed only when the turn supplies no explicit selection.
 pub const PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET: &str = "core.world_access.default_subset";
 
-/// Hard cap on the world members ONE authority row (or one per-turn selection)
-/// may carry. A longer list fails closed rather than being truncated.
-pub const MAX_WORLD_ACCESS_MEMBERS: usize = 256;
-
 const WORLD_ACCESS_VALUE_KEY_SCHEMA_VERSION: &str = "schema_version";
 const WORLD_ACCESS_VALUE_KEY_INCLUDE_BASE: &str = "include_base";
 const WORLD_ACCESS_VALUE_KEY_WORLDS: &str = "worlds";
@@ -568,23 +564,16 @@ pub struct WorldAuthoritySet {
 
 impl WorldAuthoritySet {
     /// Builds an authority set from any world-id iterator, normalizing it to
-    /// sorted-unique order.
+    /// sorted-unique order. Every world is kept, however many a scope selects
+    /// (FIX 8668).
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConfig`] when the deduplicated membership exceeds
-    /// [`MAX_WORLD_ACCESS_MEMBERS`].
+    /// None today: a set of any size is valid.
     pub fn new(include_base: bool, worlds: impl IntoIterator<Item = EntityId>) -> Result<Self> {
-        let worlds: BTreeSet<EntityId> = worlds.into_iter().collect();
-        if worlds.len() > MAX_WORLD_ACCESS_MEMBERS {
-            return Err(Error::InvalidConfig(format!(
-                "world-access set carries {} worlds, above the {MAX_WORLD_ACCESS_MEMBERS} cap",
-                worlds.len()
-            )));
-        }
         Ok(Self {
             include_base,
-            worlds,
+            worlds: worlds.into_iter().collect(),
         })
     }
 
@@ -621,8 +610,7 @@ impl WorldAuthoritySet {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConfig`] when the named set exceeds
-    /// [`MAX_WORLD_ACCESS_MEMBERS`].
+    /// None today: [`Self::new`] keeps a named set of any size.
     pub fn from_scope_axis(axis: &ScopeAxis<ScopeId>) -> Result<Option<Self>> {
         let base = ScopeId(crate::claim::base_world_id());
         match axis {
@@ -637,7 +625,7 @@ impl WorldAuthoritySet {
     }
 
     /// What both sets admit: the meet on the Scope worlds axis. It holds no
-    /// more worlds than either, so it stays inside the cap.
+    /// more worlds than either.
     #[must_use]
     pub fn meet(&self, other: &Self) -> Self {
         // Two named sets meet at a named set or bottom, never the open axis.
@@ -714,8 +702,7 @@ pub struct ResolvedWorldAuthority {
 /// # Errors
 ///
 /// [`Error::InvalidConfig`] when `predicate` is not one of the two pinned
-/// world-access predicates, when the value exceeds
-/// [`MAX_WORLD_ACCESS_MEMBERS`], or when the validity window is empty
+/// world-access predicates, or when the validity window is empty
 /// (`valid_to <= valid_from`), which would mint a row that is never in force.
 pub fn world_access_claim_body(
     predicate: &'static str,
@@ -731,12 +718,6 @@ pub fn world_access_claim_body(
     {
         return Err(Error::InvalidConfig(format!(
             "{predicate} is not a world-access authority predicate"
-        )));
-    }
-    if value.worlds.len() > MAX_WORLD_ACCESS_MEMBERS {
-        return Err(Error::InvalidConfig(format!(
-            "world-access set carries {} worlds, above the {MAX_WORLD_ACCESS_MEMBERS} cap",
-            value.worlds.len()
         )));
     }
     if let (Some(from), Some(to)) = (valid_from, valid_to)
@@ -798,9 +779,9 @@ fn encode_world_access_claim_value(value: &WorldAuthoritySet) -> Value {
 /// Every deviation fails CLOSED with [`Error::InvalidConfig`]: a non-map value,
 /// a non-string key, an unknown or duplicated key, a missing key, an
 /// unsupported `schema_version`, a non-boolean `include_base`, a non-array
-/// `worlds`, an element that is not exactly 16 bytes of MessagePack binary, an
-/// out-of-order or duplicated world id, and a list above
-/// [`MAX_WORLD_ACCESS_MEMBERS`]. A malformed authority row can therefore never
+/// `worlds`, an element that is not exactly 16 bytes of MessagePack binary, and
+/// an out-of-order or duplicated world id. A list of any length is read whole
+/// (FIX 8668). A malformed authority row can therefore never
 /// be read as a WIDER authority than it encodes — the read that consulted it
 /// refuses instead.
 ///
@@ -868,19 +849,12 @@ pub fn decode_world_access_claim_value(body: &ClaimBody) -> Result<WorldAuthorit
     WorldAuthoritySet::new(include_base, worlds)
 }
 
-/// Decodes the `worlds` array: strictly ascending 16-byte binary ids, at most
-/// [`MAX_WORLD_ACCESS_MEMBERS`] of them.
+/// Decodes the `worlds` array: strictly ascending 16-byte binary ids, every
+/// one of them.
 fn decode_world_access_members(value: &Value) -> Result<BTreeSet<EntityId>> {
     let Value::Array(items) = value else {
         return Err(invalid_world_access_value("worlds must be an array"));
     };
-    if items.len() > MAX_WORLD_ACCESS_MEMBERS {
-        return Err(Error::InvalidConfig(format!(
-            "world-access value lists {} worlds, above the {MAX_WORLD_ACCESS_MEMBERS} cap",
-            items.len()
-        )));
-    }
-
     let mut members = BTreeSet::new();
     let mut previous: Option<EntityId> = None;
     for item in items {

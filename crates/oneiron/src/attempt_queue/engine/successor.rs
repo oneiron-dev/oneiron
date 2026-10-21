@@ -147,6 +147,7 @@ fn failed_successor(source: &AttemptRecord, id: AttemptId, now: u64) -> AttemptR
         executor_model: None,
         executor_seat: None,
         executor_role: None,
+        planned_binding: None,
         read_set: None,
         // The dial's values carry over; its one-shot mark and the spent
         // reserve do not: the successor's own admission dials it.

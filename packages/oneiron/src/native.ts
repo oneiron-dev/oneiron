@@ -110,6 +110,7 @@ vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 tasksAccept(input: unknown): unknown
+tasksRedo(input: unknown): unknown
 vaultCommitMessage(input: unknown): unknown
 vaultBeginMessageStream(input: unknown): unknown
 vaultAppendToStream(input: unknown): unknown
@@ -469,6 +470,8 @@ vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultRootsRequestsCancel(input: unknown): unknown
 vaultCleanupRun(input: unknown): unknown
+vaultArchiveDeletePreview(input: unknown): unknown
+vaultArchiveDeleteConfirm(input: unknown): unknown
 vaultUsageEventsUndecodable(input: unknown): unknown
 vaultUsageEventsRemoveUndecodable(input: unknown): unknown
 vaultEntitiesMention(input: unknown): unknown
@@ -1130,6 +1133,7 @@ vaultIdentityResolve(input: unknown): unknown
 vaultIdentityEventsGet(input: unknown): unknown
 vaultIdentityProposalsResolve(input: unknown): unknown
 vaultIdentityProposalsForPair(input: unknown): unknown
+connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
 selfBrowserFind(input: unknown): unknown

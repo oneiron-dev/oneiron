@@ -82,15 +82,15 @@ impl HostBinding {
         }
     }
 
-    pub(super) const fn parent(&self) -> AttemptId {
+    pub(crate) const fn parent(&self) -> AttemptId {
         self.parent
     }
 
-    pub(super) fn lease_owner(&self) -> &str {
+    pub(crate) fn lease_owner(&self) -> &str {
         &self.lease_owner
     }
 
-    pub(super) const fn attempt_count(&self) -> u32 {
+    pub(crate) const fn attempt_count(&self) -> u32 {
         self.attempt_count
     }
 
@@ -182,6 +182,7 @@ pub enum TaskCall {
     Accept(TaskAccept),
     Report(TaskReport),
     Status(TaskStatusQuery),
+    Redo(TaskRedo),
 }
 
 /// Post work as a TASK with a typed brief and an explicit assignee.
@@ -211,6 +212,17 @@ pub struct TaskPost {
 #[serde(deny_unknown_fields)]
 pub struct TaskAccept {
     pub task_ref: EntityId,
+    pub intent_key: String,
+}
+
+/// Redo one TASK (FIX 3153): post a new TASK from its current brief and its
+/// assignee, spec, label and parent. The TASK named is never written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRedo {
+    /// The TASK whose content the new one copies.
+    pub task_ref: EntityId,
+    /// The caller's idempotency key: one actor, TASK and key name one redo.
     pub intent_key: String,
 }
 

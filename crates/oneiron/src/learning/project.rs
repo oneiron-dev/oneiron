@@ -4,7 +4,7 @@
 //! Nobody writes a learning claim by hand. A claim exists only while its cell
 //! has own runs; a zero-run prior is assembled at read and never minted.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,9 +28,6 @@ use super::estimate::{
 use super::evidence::{Anchor, CELL, CellRow, Observation, evidence_in_txn};
 use super::judge::{JudgeConversion, conversions_in_txn};
 use super::prior::cell_prior_in_txn;
-
-/// The newest receipts a learning claim cites.
-const MAX_CITED_RECEIPTS: usize = 64;
 
 /// Seconds in a day, for the window setting's unit.
 const DAY_SECS: f64 = 86_400.0;
@@ -176,7 +173,7 @@ pub(super) fn measured_tally_in_txn(
 }
 
 /// One cell's evidence, folded: the own tally, its effective runs, the
-/// labels explaining them and the newest receipts cited.
+/// labels explaining them and every receipt cited.
 struct FoldedEvidence {
     tally: OwnTally,
     runs: f64,
@@ -194,7 +191,7 @@ fn fold_evidence_in_txn(
 ) -> Result<FoldedEvidence> {
     let conversions = conversions_in_txn(vault, txn)?;
     let mut evidence = evidence_in_txn(vault, txn, digest)?;
-    // Newest first, so the citations are the newest receipts.
+    // Newest first, so the citations run newest to oldest.
     evidence.sort_by(|a, b| b.1.at.cmp(&a.1.at).then_with(|| a.0.cmp(&b.0)));
 
     let mut tally = OwnTally::empty(row.form);
@@ -202,6 +199,8 @@ fn fold_evidence_in_txn(
     let mut outcome_counts: BTreeMap<String, f64> = BTreeMap::new();
     let mut runs = 0.0;
     let mut cited = Vec::new();
+    // Every counted receipt is cited, each once (FIX 8987).
+    let mut seen = BTreeSet::new();
     for (receipt, ev) in &evidence {
         if ev.observation.form() != row.form {
             continue;
@@ -275,7 +274,7 @@ fn fold_evidence_in_txn(
             references.push(&pack.outcome_receipt);
         }
         for reference in references {
-            if cited.len() < MAX_CITED_RECEIPTS && !cited.iter().any(|r| r == reference) {
+            if seen.insert(reference) {
                 cited.push(reference.to_owned());
             }
         }

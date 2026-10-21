@@ -39,6 +39,7 @@ mod connector_event;
 mod contribution;
 mod dreamer;
 pub(crate) use dreamer::DreamerControl;
+mod dreamer_thing;
 mod eval_authoring;
 pub(crate) mod failure_signals;
 mod feedback_report_delivery;
@@ -82,7 +83,8 @@ pub(crate) use lens_callbacks::{LensCallback, queue_lens_callback};
 pub(crate) use local_vision::LocalVisionModel;
 pub(crate) use policy::route_dreamer_extraction;
 pub use status::{
-    AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
+    AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, UnservedNote,
+    UnservedReason, WorkState, WorkStatus,
 };
 pub(crate) use weave_lens::{
     WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_for_run,

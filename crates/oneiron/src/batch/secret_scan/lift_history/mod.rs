@@ -498,6 +498,8 @@ pub(crate) fn run_lift_pass(vault: &Vault, passed: impl Fn() -> bool) -> Result<
     proposals::review(vault)?;
     loop {
         let (run, mode) = {
+            // Every result body is pinned before the snapshot opens (FIX 7201).
+            let _bodies = vault.pin_all_result_bodies();
             let txn = vault.store.env.read_txn()?;
             (
                 RUN.get_lenient(&vault.store, &txn, &())?,
@@ -527,6 +529,8 @@ pub(crate) fn run_lift_pass(vault: &Vault, passed: impl Fn() -> bool) -> Result<
 fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> {
     let family = run.family;
     let read = |known: Option<&KnownValues>| -> Result<(Page, Vec<Vec<u8>>)> {
+        // Every result body is pinned before the snapshot opens (FIX 7201).
+        let _bodies = vault.pin_all_result_bodies();
         let txn = vault.store.env.read_txn()?;
         let after = &run.after;
         let page = match family {
@@ -603,6 +607,8 @@ fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> 
 /// known-value pass follows it.
 fn run_finished(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> {
     let current = {
+        // Every result body is pinned before the snapshot opens (FIX 7201).
+        let _bodies = vault.pin_all_result_bodies();
         let txn = vault.store.env.read_txn()?;
         RUN.get_lenient(&vault.store, &txn, &())?
     };
@@ -1003,6 +1009,8 @@ impl Vault {
     /// The lift sweep's state: the run in progress, the last receipt and the
     /// proposals still open.
     pub fn secret_lift_status(&self) -> Result<SecretLiftStatus> {
+        // Every result body is pinned before the snapshot opens (FIX 7201).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let mode = secret_scan_mode_in_txn(&self.store, &txn)?;
         let running = RUN
@@ -1117,6 +1125,8 @@ pub fn secret_lift_as_owner(
         return vault.start_secret_lift(owner, vault.now_recorded_at());
     }
     {
+        // Every result body is pinned before the snapshot opens (FIX 7201).
+        let _bodies = vault.pin_all_result_bodies();
         let txn = vault.store.env.read_txn()?;
         live_owner_in_txn(vault, owner, &txn)?;
     }

@@ -1536,6 +1536,14 @@ export class Oneiron {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
       run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
     },
+    archive: {
+      delete: {
+        /** Previews explicit archived records under the caller's delete authority. */
+        preview: (input: Facade.ArchiveDeletePreviewRequest): Facade.ArchiveDeletePreviewView => this.#call(() => this.#client.vaultArchiveDeletePreview(input) as Facade.ArchiveDeletePreviewView),
+        /** Deletes explicit archived records under the caller's current delete authority and returns each receipt. */
+        confirm: (input: Facade.ArchiveDeleteConfirmRequest): Facade.ArchiveDeleteBatchResult => this.#call(() => this.#client.vaultArchiveDeleteConfirm(input) as Facade.ArchiveDeleteBatchResult),
+      },
+    },
     usage: {
       events: {
         /** Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb. */
@@ -3110,6 +3118,8 @@ export class Oneiron {
     update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
     /** Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports. */
     accept: (input: Facade.TaskAccept): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksAccept(input) as Facade.TaskCallReceipt),
+    /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
+    redo: (input: Facade.TaskRedo): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksRedo(input) as Facade.TaskCallReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
@@ -3258,6 +3268,8 @@ export class Oneiron {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),
     },
+    /** Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data. */
+    answer: (input: Facade.ConnectorAnswerRequest): Facade.ConnectorCallReply => this.#call(() => this.#client.connectorAnswer(input) as Facade.ConnectorCallReply),
   }
   readonly calendar = {
     /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */

@@ -16,6 +16,7 @@ use crate::llm::decision::{
     ProviderDecision, ProviderPin, Reversibility, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::skill_optimize::union_source_rows;
 
 use super::calibration::{AuditAnswerSource, RawAnswer};
 use super::types::{
@@ -181,7 +182,19 @@ impl AttributionDecisions<'_> {
         if let Some(notes) = self.notes
             && answers.iter().any(|answer| doubtful(answer, request.floor))
         {
-            let notes = notes.notes(request, &answers)?;
+            // A note reads the request and the decisions' answers, so it
+            // stands on the request's rows and each decision's evidence (FIX
+            // 7101); unknown stays unknown.
+            let decided: Vec<EntityId> = decisions
+                .iter()
+                .flat_map(|decision| decision.evidence.iter().copied())
+                .collect();
+            let sources = union_source_rows([request.sources, Some(decided.as_slice())]);
+            let noted = JudgeRequest {
+                sources: sources.as_deref(),
+                ..*request
+            };
+            let notes = notes.notes(&noted, &answers)?;
             if notes.len() != answers.len() {
                 return Err(Error::InvalidClaimBody(
                     "attribution notes must cover every hunk",

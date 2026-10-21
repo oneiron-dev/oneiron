@@ -622,6 +622,9 @@ class Oneiron:
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
             return Oneiron._VaultCleanupVerbs(self._client)
         @property
+        def archive(self) -> "Oneiron._VaultArchiveVerbs":
+            return Oneiron._VaultArchiveVerbs(self._client)
+        @property
         def usage(self) -> "Oneiron._VaultUsageVerbs":
             return Oneiron._VaultUsageVerbs(self._client)
         @property
@@ -2795,6 +2798,21 @@ class Oneiron:
         def run(self, spec):
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
             return json.loads(_translate(lambda: self._client.vault_cleanup_run(json.dumps(spec))))
+    class _VaultArchiveVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def delete(self) -> "Oneiron._VaultArchiveDeleteVerbs":
+            return Oneiron._VaultArchiveDeleteVerbs(self._client)
+    class _VaultArchiveDeleteVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def preview(self, spec):
+            """Previews explicit archived records under the caller's delete authority."""
+            return json.loads(_translate(lambda: self._client.vault_archive_delete_preview(json.dumps(spec))))
+        def confirm(self, spec):
+            """Deletes explicit archived records under the caller's current delete authority and returns each receipt."""
+            return json.loads(_translate(lambda: self._client.vault_archive_delete_confirm(json.dumps(spec))))
     class _VaultUsageVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5552,6 +5570,9 @@ class Oneiron:
         def accept(self, spec):
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
             return json.loads(_translate(lambda: self._client.tasks_accept(json.dumps(spec))))
+        def redo(self, spec):
+            """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
+            return json.loads(_translate(lambda: self._client.tasks_redo(json.dumps(spec))))
         def answer(self, handle, word):
             """Admits one person's word on an ask; the word is evidence, never approval."""
             return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))
@@ -5777,6 +5798,9 @@ class Oneiron:
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
             return Oneiron._ConnectorOutboundVerbs(self._client)
+        def answer(self, spec):
+            """Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."""
+            return json.loads(_translate(lambda: self._client.connector_answer(json.dumps(spec))))
     class _ConnectorOutboundVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

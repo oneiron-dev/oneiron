@@ -256,20 +256,19 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// private origin. A vault VM has no config-drive file for it. This version
 /// stays 3.
 ///
-/// Browser readiness on `Ping` (FIX 7670): every
-/// [`CtlResponse::Ping`](crate::CtlResponse::Ping) requires `browser`
-/// ([`BrowserReadiness`](crate::BrowserReadiness)), how the vault's browser
-/// stands now, beside the boot-only `readiness`, which does not change. It
-/// carries a build floor, at the engine revision it merged in. Its `state`
-/// and each state's keys are required: `image`, `runtime_fact` (present as
-/// `null` when the supervisor observed none) and, where the state has them,
-/// `tier`, `reason` and `last_observed_at`. A vault built before the floor
-/// sends no `browser`, and no reader that takes such a line as a `Ping` is
-/// kept; the untagged [`CtlResponse`](crate::CtlResponse) still matches it as
-/// `Ok`, which a supervisor never takes for a `Ping`. So a supervisor reads
-/// `browser` only with installed engines at or after the floor, and deploys
-/// them before it moves its contract pin. No browser state fails the ready
-/// handshake, turns `ok` false or asks for a restart. This version stays 3.
+/// Browser readiness on `Ping` (FIX 7670): a
+/// [`CtlResponse::Ping`](crate::CtlResponse::Ping) carries an optional
+/// `browser` ([`BrowserReadiness`](crate::BrowserReadiness)), how the
+/// vault's browser stands now, beside the boot-only `readiness`, which does
+/// not change. It carries a build floor, at the engine revision it merged
+/// in. Absent, it says this engine offers no browser, as an engine built
+/// before the floor sends none; that line is still a `Ping`, and no browser
+/// state stands in for it. Present, its `state` and each state's keys are
+/// required: `image`, `runtime_fact` (present as `null` when the supervisor
+/// observed none) and, where the state has them, `tier`, `reason` and
+/// `last_observed_at`. No browser state, and no absent `browser`, fails the
+/// ready handshake, turns `ok` false or asks for a restart. This version
+/// stays 3.
 ///
 /// Browser readiness on the owner's status (FIX 7670): the authenticated
 /// `GET /v1/owner/status` reply requires `browser`, the same
