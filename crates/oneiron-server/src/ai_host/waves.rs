@@ -183,14 +183,17 @@ impl WavePlanner for ModelWavePlanner<'_> {
             // its requester, so it carries both crafts, each attributed: the
             // planner's here, after the instructions; the requester's after
             // it, as every step's travels. Payer and actor stay the
-            // requester's.
+            // requester's. The rows the planner's shows go beside it, to be
+            // stamped on the attempt before the call (FIX 5912).
+            let mut craft_exposures = Vec::new();
             if let Some(craft) = super::resident_craft::planner_craft(
                 self.vault,
                 &planner,
                 &self.actor.entity_ref(),
                 super::unix_now(),
             ) {
-                super::resident_craft::join_craft(&mut messages, craft);
+                super::resident_craft::join_craft(&mut messages, craft.message);
+                craft_exposures = craft.entries;
             }
             let bytes = self
                 .runner
@@ -203,6 +206,7 @@ impl WavePlanner for ModelWavePlanner<'_> {
                         actor: self.actor,
                         purpose: WAVE_PLAN_ATTEMPT_KIND,
                         messages,
+                        craft_exposures,
                         response_format: ResponseFormat::Json {
                             schema: output_schema(),
                         },

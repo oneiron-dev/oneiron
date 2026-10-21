@@ -17851,6 +17851,46 @@
       "effect": "RepoWorkOpen"
     },
     {
+      "name": "self.code.symbols.declare",
+      "input": "crate::memory::repo_doors::RepoSymbolsDeclareInput",
+      "output": "crate::memory::repo_doors::RepoSymbolsDeclareOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoSymbolsDeclare"
+    },
+    {
+      "name": "self.code.symbols.renew",
+      "input": "crate::memory::repo_doors::RepoSymbolsRenewInput",
+      "output": "crate::memory::repo_doors::RepoSymbolsRenewOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoSymbolsRenew"
+    },
+    {
+      "name": "self.code.symbols.release",
+      "input": "crate::memory::repo_doors::RepoSymbolsReleaseInput",
+      "output": "crate::memory::repo_doors::RepoSymbolsReleaseOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoSymbolsRelease"
+    },
+    {
+      "name": "self.code.proposal_submit",
+      "input": "crate::memory::repo_doors::RepoProposalSubmitInput",
+      "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoProposalSubmit"
+    },
+    {
+      "name": "self.code.merge_queue.enqueue",
+      "input": "crate::memory::repo_doors::RepoMergeQueueEnqueueInput",
+      "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoMergeQueueEnqueue"
+    },
+    {
       "name": "self.leader.advice",
       "input": "crate::code_run::LeaderAdviceInput",
       "output": "serde_json::Value",

@@ -75,13 +75,54 @@ impl DreamerRunnerStore<'_> {
         crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, wtxn, attempt_id)
     }
 
+    /// Settle real usage and pin the paid receipts of `step_hashes` in one
+    /// writer, so a memo the same try replays later is not paid twice
+    /// (FIX 6100). Receipts land only beside a settled reservation, so no
+    /// step reads paid before its charge commits; a step already pinned is
+    /// refused, as a checkpoint's double charge always was.
+    pub(in crate::dreamer_runner) fn settle_budget_and_step_receipts_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: SettleDreamerBudget,
+        step_hashes: &[[u8; 32]],
+    ) -> Result<DreamerBudgetSettlementOutcome> {
+        let child = input.child_attempt;
+        let settled = self.settle_budget_in_txn(wtxn, input)?;
+        if matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
+            for hash in step_hashes {
+                let key = (child, *hash);
+                if BUDGET_STEP_CHARGE.contains(&self.vault.store, wtxn, &key)? {
+                    return Err(invalid_dreamer_runner("checkpoint step charged twice"));
+                }
+                BUDGET_STEP_CHARGE.put(&self.vault.store, wtxn, &key, &[1])?;
+            }
+        }
+        Ok(settled)
+    }
+
+    /// [`Self::settle_budget_and_step_receipts_in_txn`] in its own writer:
+    /// a failed or plainly parked try settles what its run line charged and
+    /// pins the terminal steps that charge paid for (FIX 6100).
+    pub(crate) fn settle_budget_with_step_receipts(
+        &self,
+        input: SettleDreamerBudget,
+        step_hashes: &[[u8; 32]],
+    ) -> Result<DreamerBudgetSettlementOutcome> {
+        self.vault.with_write_txn_grouped(|wtxn| {
+            self.settle_budget_and_step_receipts_in_txn(wtxn, input, step_hashes)
+        })
+    }
+
     /// Settle real usage, pin charged step identities, and park atomically.
-    /// A failure at any door rolls back all three writes.
+    /// A failure at any door rolls back all three writes. The park is fenced
+    /// on `lease` (FIX 6057): a try resumed or claimed again since that lease
+    /// ran it keeps its spend settled and is not parked.
     pub(crate) fn settle_checkpoint_budget(
         &self,
         input: SettleDreamerBudget,
         step_hashes: &[[u8; 32]],
         park: ParkDreamerAttempt,
+        lease: crate::dreamer_runner::DreamerTryLease<'_>,
     ) -> Result<DreamerBudgetSettlementOutcome> {
         if park.attempt_id != input.child_attempt {
             return Err(invalid_dreamer_runner(
@@ -89,23 +130,16 @@ impl DreamerRunnerStore<'_> {
             ));
         }
         let settled = self.vault.with_write_txn_grouped(|wtxn| {
-            let settled = self.settle_budget_in_txn(wtxn, input.clone())?;
+            let settled = self.settle_budget_and_step_receipts_in_txn(wtxn, input, step_hashes)?;
             if !matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
                 return Err(invalid_dreamer_runner(
                     "checkpoint has no budget reservation",
                 ));
             }
-            for hash in step_hashes {
-                let key = (input.child_attempt, *hash);
-                if BUDGET_STEP_CHARGE.contains(&self.vault.store, wtxn, &key)? {
-                    return Err(invalid_dreamer_runner("checkpoint step charged twice"));
-                }
-                BUDGET_STEP_CHARGE.put(&self.vault.store, wtxn, &key, &[1])?;
-            }
             // A trapped child already parked under the step layer's owner.
             // Settle completed siblings without stealing that park.
             if !self.is_parked_in_txn(wtxn, park.attempt_id)? {
-                self.park_attempt_in_txn(wtxn, park)?;
+                self.park_if_current_lease_in_txn(wtxn, park, lease)?;
             }
             Ok(settled)
         })?;

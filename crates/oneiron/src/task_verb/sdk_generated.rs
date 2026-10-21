@@ -6179,6 +6179,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.code.symbols.declare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSymbolsDeclareInput,
+                >(),
+            ),
+            (
+                "self.code.symbols.renew",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSymbolsRenewInput,
+                >(),
+            ),
+            (
+                "self.code.symbols.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSymbolsReleaseInput,
+                >(),
+            ),
+            (
+                "self.code.proposal_submit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoProposalSubmitInput,
+                >(),
+            ),
+            (
+                "self.code.merge_queue.enqueue",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoMergeQueueEnqueueInput,
+                >(),
+            ),
+            (
                 "self.leader.advice",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
             ),

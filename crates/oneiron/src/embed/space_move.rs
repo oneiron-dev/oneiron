@@ -31,7 +31,7 @@ use super::space::{
     set_kind_slot_in_txn, slot_setup_id, space_setup_id,
 };
 use super::space_card::{ProbeRetest, probe_versions, read_cards, record_space_retests};
-use super::space_probe::{SpaceProbe, media_query_in, space_probes_in_txn};
+use super::space_probe::{ProbeCohortLedger, SpaceProbe, media_query_in, space_probes_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -794,16 +794,21 @@ impl Vault {
                 && incumbent_space.query_towers.contains(&kind)
         };
         let candidate_ref = SpaceRef::Declared(candidate.to_owned());
+        // The probes' cohort and exposure metadata (FIX 6744), outside any transaction and best
+        // effort: it never moves a run.
+        let ledger = ProbeCohortLedger::prepare(self, candidate, &probes, &towers, &versions);
         let mut encoded = Vec::new();
         for (id, probe, query) in &probes {
             let runs = match query {
                 None if towers(InputKind::Text) => {
+                    ledger.served(self, id);
                     let first = encoder.encode_probe(&moving.incumbent, &probe.query)?;
                     let retest = encoder.encode_probe(&moving.incumbent, &probe.query)?;
                     let next = encoder.encode_probe(&candidate_ref, &probe.query)?;
                     Some((InputKind::Text, first, retest, next))
                 }
                 Some(media) if towers(media.kind) => {
+                    ledger.served(self, id);
                     let input = media.input();
                     let mut three = Vec::with_capacity(3);
                     for space in [&moving.incumbent, &moving.incumbent, &candidate_ref] {
@@ -915,6 +920,9 @@ impl Vault {
             })
             .collect();
         record_space_retests(self, &moving, checked_at, &retests);
+        if matches!(outcome, SpaceMoveOutcome::SwappedIn(_)) {
+            ledger.promoted(self, runs.iter().map(|run| run.probe));
+        }
         Ok((outcome, Some(rows)))
     }
 
