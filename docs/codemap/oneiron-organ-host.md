@@ -13,24 +13,25 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/asks.rs` | src | m | 11 crate-vis | — | Protocol 1.1 asks, the engine side: who answers, and what the receipt records |
 | `src/bin/oneiron-organ-probe.rs` | src | m | 12 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
-| `src/budget.rs` | src | m | 1 struct · 1 fn · 22 crate-vis | BudgetConfig | One admission budget for every organ: threads, memory, in-flight calls |
+| `src/budget.rs` | src | m | 1 struct · 1 fn · 24 crate-vis | BudgetConfig | One admission budget for every organ: threads, memory, in-flight calls |
 | `src/error.rs` | src | s | 2 enum | HostError, Unavailable | What can go wrong on the engine side of an organ call |
 | `src/fetch.rs` | src | m | 1 struct · 3 crate-vis | GuardedFetch | The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the… |
 | `src/handlers.rs` | src | s | 3 struct · 1 trait · 4 fn · 5 crate-vis | Answered, AskHandler, AskHandlers, AskRequest | The handlers a caller supplies for an organ's asks (protocol 1.1) |
-| `src/host.rs` | src | m | 1 struct · 15 fn · 1 re-export · 1 crate-vis | OrganHost | The organ host: install, call, unload, revoke |
+| `src/host.rs` | src | m | 1 struct · 16 fn · 1 re-export · 1 crate-vis | OrganHost | The organ host: install, call, unload, revoke |
 | `src/host/outputs.rs` | src | s | 3 crate-vis | — | A call's reply, checked: its outputs mapped, hashed and kept in the call's room, which grows to hold them… |
 | `src/host/sized.rs` | src | s | 2 struct · 1 fn · 6 crate-vis | CallMeasure, CallSize | A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input… |
 | `src/landing.rs` | src | s | 3 fn | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
-| `src/lib.rs` | src | s | 2 mod · 15 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
+| `src/lib.rs` | src | s | 2 mod · 16 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
 | `src/measure.rs` | src | s | 1 crate-vis | — | The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host… |
 | `src/mesh/client.rs` | src | m | 3 crate-vis | — | The asking side of a mesh organ call: stage the inputs, send the call, answer the organ's asks while it… |
 | `src/mesh/mod.rs` | src | s | 1 struct · 1 const · 1 re-export · 22 crate-vis | Offer | Organ calls between the owner's nodes (OF-575, owner ruling MESH) |
-| `src/mesh/serve.rs` | src | s | 1 struct · 2 fn | OrganService | The serving side of a mesh organ call: this node's host runs another owner node's call as its own, and sends… |
+| `src/mesh/serve.rs` | src | m | 1 struct · 2 fn | OrganService | The serving side of a mesh organ call: this node's host runs another owner node's call as its own, and sends… |
 | `src/outcome.rs` | src | s | 2 struct · 1 crate-vis | OrganOutcome, OrganOutput | What an organ call proposed, checked by the host that ran it: on this machine, or on another of the owner's… |
 | `src/pin.rs` | src | s | 2 fn | — | Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are… |
 | `src/process.rs` | src | L | 23 crate-vis | — | One live organ process: spawn, handshake, a reader thread, calls |
 | `src/receipt.rs` | src | s | 6 struct · 1 enum · 2 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… |
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
+| `src/resource_memory.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 crate-vis | FloorRefusal, MachineFloor, MemoryGrow | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
 | `src/route.rs` | src | m | 3 struct · 2 enum · 1 trait · 5 fn | NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
 | `src/sandbox.rs` | src | s | 2 crate-vis | — | What the host does to an organ process between fork and exec |
 | `src/seal.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 7 const · 1 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
