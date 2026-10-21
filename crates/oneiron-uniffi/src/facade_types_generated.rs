@@ -10243,7 +10243,7 @@ pub struct AssetResolveRequest {
     pub room_bytes: Option<u64>,
 }
 
-/// `oneiron::memory::asset_resolve::ServedAssetForm`.
+/// `oneiron::memory::asset_resolve::types::ServedAssetForm`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ServedAssetForm {
     #[serde(rename = "image")]
@@ -10402,7 +10402,7 @@ pub struct ScopedReadResultVectorSearchResult {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::memory::asset_resolve::PixelRegion`.
+/// `oneiron::memory::asset_resolve::types::PixelRegion`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PixelRegion {
@@ -10416,7 +10416,7 @@ pub struct PixelRegion {
     pub height: u32,
 }
 
-/// `oneiron::memory::asset_resolve::ImageViewRequest`.
+/// `oneiron::memory::asset_resolve::types::ImageViewRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ImageViewRequest {
@@ -10428,7 +10428,7 @@ pub struct ImageViewRequest {
     pub edge: Option<u32>,
 }
 
-/// `oneiron::memory::asset_resolve::PulledImage`.
+/// `oneiron::memory::asset_resolve::types::PulledImage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PulledImage {
     #[serde(rename = "asset_ref")]
@@ -47019,7 +47019,7 @@ pub struct AiCallRequest {
     pub voice: Option<AiVoice>,
 }
 
-/// `oneiron_model::llm::media::MediaUsage`.
+/// `oneiron_model::llm::media::response::MediaUsage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MediaUsage {
     #[serde(
@@ -47401,7 +47401,7 @@ pub struct VoiceBankInspection {
     pub target: VoiceTargetInspection,
 }
 
-/// `oneiron_model::llm::media::AiOperation`.
+/// `oneiron_model::llm::media::caps::AiOperation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AiOperation {
     #[serde(rename = "text")]
@@ -48139,7 +48139,7 @@ pub struct AskPrior {
     pub person: Option<PairedReading>,
 }
 
-/// `oneiron::llm::decision::ladder::AskRole`.
+/// `oneiron::llm::decision::ladder::roles::AskRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "role")]
 pub enum AskRole {
@@ -48159,7 +48159,7 @@ pub enum AskRole {
     Owner,
 }
 
-/// `oneiron::llm::decision::ladder::RoleRank`.
+/// `oneiron::llm::decision::ladder::roles::RoleRank`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RoleRank {
     #[serde(rename = "responsible")]
@@ -48170,7 +48170,7 @@ pub enum RoleRank {
     Owner,
 }
 
-/// `oneiron::llm::decision::ladder::AskAct`.
+/// `oneiron::llm::decision::ladder::roles::AskAct`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AskAct {
     #[serde(rename = "judgment")]
@@ -48181,7 +48181,7 @@ pub enum AskAct {
     Payment,
 }
 
-/// `oneiron::llm::decision::ladder::AskTo`.
+/// `oneiron::llm::decision::ladder::roles::AskTo`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AskTo {
@@ -48193,7 +48193,7 @@ pub struct AskTo {
     pub act: AskAct,
 }
 
-/// `oneiron::llm::decision::ladder::HolderKind`.
+/// `oneiron::llm::decision::ladder::roles::HolderKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HolderKind {
     #[serde(rename = "person")]
@@ -48202,7 +48202,7 @@ pub enum HolderKind {
     Agent,
 }
 
-/// `oneiron::llm::decision::ladder::RoleHolder`.
+/// `oneiron::llm::decision::ladder::roles::RoleHolder`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RoleHolder {
@@ -48212,7 +48212,7 @@ pub struct RoleHolder {
     pub kind: HolderKind,
 }
 
-/// `oneiron::llm::decision::ladder::ResolvedRole`.
+/// `oneiron::llm::decision::ladder::roles::ResolvedRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedRole {

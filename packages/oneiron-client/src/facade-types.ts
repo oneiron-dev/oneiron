@@ -1328,7 +1328,7 @@ export type AssetIngestRequest = { asset_ref?: string | null; embedding_kind: In
 export type AssetIngestReceipt = { asset_ref: string; asset_text_ref?: string | null; embedding_kind: InputKind; mime_type: string; blake3: string; byte_size: number }
 /** `oneiron::memory::asset_doors::AssetResolveRequest` */
 export type AssetResolveRequest = { asset_ref: string; image_input?: boolean; audio_input?: boolean; room_bytes?: number | null }
-/** `oneiron::memory::asset_resolve::ServedAssetForm` */
+/** `oneiron::memory::asset_resolve::types::ServedAssetForm` */
 export type ServedAssetForm = "image" | "audio" | "thumbnail" | "asset_text" | "ask"
 /** `oneiron::memory::asset_doors::AssetResolved` */
 export type AssetResolved = { asset_ref: string; form: ServedAssetForm; mime_type?: string | null; bytes_b64?: string | null; text?: string | null; asset_text_ref?: string | null; handle?: string | null; receipt_refs: string[] }
@@ -1342,11 +1342,11 @@ export type VectorSearchHit = { entity_ref: string; source_revision_ref?: string
 export type VectorRefinement = { stored_dimensions: number; candidate_dimensions: number; query_dimensions: number; score_dimensions: number; full_dimension_rescore: boolean }
 /** `oneiron::memory::search_vector::VectorSearchResult` */
 export type VectorSearchResult = { hits: VectorSearchHit[]; lane: VectorSearchLane; effective_limit: number; limit_clamped: boolean; refinement?: VectorRefinement | null }
-/** `oneiron::memory::asset_resolve::PixelRegion` */
+/** `oneiron::memory::asset_resolve::types::PixelRegion` */
 export type PixelRegion = { x: number; y: number; width: number; height: number }
-/** `oneiron::memory::asset_resolve::ImageViewRequest` */
+/** `oneiron::memory::asset_resolve::types::ImageViewRequest` */
 export type ImageViewRequest = { handle: string; region?: PixelRegion | null; edge?: number | null }
-/** `oneiron::memory::asset_resolve::PulledImage` */
+/** `oneiron::memory::asset_resolve::types::PulledImage` */
 export type PulledImage = { asset_ref: string; pull: string; mime_type: string; bytes: string; width?: number | null; height?: number | null }
 /** `oneiron::receipt::call::CallReceiptRequest` */
 export type CallReceiptRequest = { receipt_ref: string }
@@ -5966,7 +5966,7 @@ export type AiPart = { kind: "text"; text: string } | { kind: "image"; media_typ
 export type AiVoice = { kind: "stock"; name: string } | { kind: "bank"; voice_id: string; include_generated?: boolean }
 /** `oneiron::task_verb::sdk_host::AiCallRequest` */
 export type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null }
-/** `oneiron_model::llm::media::MediaUsage` */
+/** `oneiron_model::llm::media::response::MediaUsage` */
 export type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown }
 /** `oneiron::task_verb::sdk_host::AiAnswer` */
 export type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage }
@@ -6014,7 +6014,7 @@ export type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: stri
 export type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null }
 /** `oneiron::voice_identity::ref_bank::owner_acts::VoiceBankInspection` */
 export type VoiceBankInspection = { voice_id: string; identity?: VoiceIdentityView | null; packs: VoicePackSummary[]; render_consent?: VoiceRenderConsentView | null; target: VoiceTargetInspection }
-/** `oneiron_model::llm::media::AiOperation` */
+/** `oneiron_model::llm::media::caps::AiOperation` */
 export type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed"
 /** `oneiron::task_verb::sdk_host::AiVideoTicket` */
 export type AiVideoTicket = { job: string; model: string; operation: AiOperation }
@@ -6118,19 +6118,19 @@ export type DecisionBandEnforceRequest = { question: DecisionQuestion; reversibi
 export type DecisionAskAnswerRequest = { seq: number; answer: DecisionAnswer }
 /** `oneiron::llm::decision::asks::AskPrior` */
 export type AskPrior = { answer: DecisionAnswer; probability?: number | null; provider: ProviderPin; paired?: PairedReading | null; person?: PairedReading | null }
-/** `oneiron::llm::decision::ladder::AskRole` */
+/** `oneiron::llm::decision::ladder::roles::AskRole` */
 export type AskRole = { role: "responsible"; actor: string; project?: string | null } | { role: "board"; project: string } | { role: "owner" }
-/** `oneiron::llm::decision::ladder::RoleRank` */
+/** `oneiron::llm::decision::ladder::roles::RoleRank` */
 export type RoleRank = "responsible" | "board" | "owner"
-/** `oneiron::llm::decision::ladder::AskAct` */
+/** `oneiron::llm::decision::ladder::roles::AskAct` */
 export type AskAct = "judgment" | "e_signature" | "payment"
-/** `oneiron::llm::decision::ladder::AskTo` */
+/** `oneiron::llm::decision::ladder::roles::AskTo` */
 export type AskTo = { role: AskRole; ceiling: RoleRank; act: AskAct }
-/** `oneiron::llm::decision::ladder::HolderKind` */
+/** `oneiron::llm::decision::ladder::roles::HolderKind` */
 export type HolderKind = "person" | "agent"
-/** `oneiron::llm::decision::ladder::RoleHolder` */
+/** `oneiron::llm::decision::ladder::roles::RoleHolder` */
 export type RoleHolder = { actor: string; kind: HolderKind }
-/** `oneiron::llm::decision::ladder::ResolvedRole` */
+/** `oneiron::llm::decision::ladder::roles::ResolvedRole` */
 export type ResolvedRole = { role: AskRole; holders: RoleHolder[] }
 /** `oneiron::llm::decision::asks::AskAnswer` */
 export type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null }
