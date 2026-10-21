@@ -93813,10 +93813,30 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/vm_init/guest_runtime.rs",
+     "purpose": "The guests' container runtime in a vault VM (FIX 7671, placement A): the root bootstrap's preparation, for…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/guest_runtime/store.rs",
+     "purpose": "The vault UID's own image store (FIX 7671): every container CLI call the guest runtime's preparation makes…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/vm_init/layout.rs",
      "purpose": "The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -97731,7 +97751,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 79,
+     "files": 81,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -97887,7 +97907,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1065,
+   "source_files": 1067,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -102879,10 +102899,25 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 27,
+      "const": 37,
       "enum": 2,
       "fn": 4,
-      "re-export": 1
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VmGuestImageArchive",
+      "VmGuestRuntimeDescriptor",
+      "VmGuestRuntimeFile"
+     ],
+     "path": "src/lib/vm/guest_runtime.rs",
+     "purpose": "A vault VM image's guest runtime (FIX 7671, placement A): what the image stages for the vault's fenced…",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -103016,7 +103051,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -103025,7 +103060,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 48,
+   "source_files": 49,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
