@@ -1361,6 +1361,7 @@ pub(super) fn intent_escalation_code(reason: IntentEscalationReason) -> &'static
         IntentEscalationReason::CorruptLedgerRow => "corrupt_ledger_row",
         IntentEscalationReason::DedupeReservationReplaced => "dedupe_reservation_replaced",
         IntentEscalationReason::DedupeSuppressed => "dedupe_suppressed",
+        IntentEscalationReason::OwnerStopped => "owner_stopped",
     }
 }
 

@@ -15,6 +15,7 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 mod approval;
 pub(crate) mod checkpoint;
 pub(super) mod pending;
+mod transition;
 
 /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting.
 /// Key: hash32 (the intent id).
@@ -602,39 +603,14 @@ fn transition_record_with_outcome_and(
     also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
-        IntentLedgerError::InvalidRecord("transition target is missing"),
-    )?;
-    if record.state == next {
-        drop(wtxn);
-        if record.recorded_outcome != Some(outcome) {
-            return Err(IntentLedgerError::InvalidRecord(
-                "terminal replay outcome does not match persisted outcome",
-            ));
-        }
-        return Ok(record);
-    }
-    if !record.state.may_transition_to(next) {
-        return Err(IntentLedgerError::InvalidTransition {
-            from: record.state,
-            to: next,
-        });
-    }
-    record.state = next;
-    record.recorded_outcome = Some(outcome);
-    record.updated_ms = now_ms.max(record.created_ms);
-    LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
-    if next == IntentState::Done
-        || (next == IntentState::Abandoned
-            && outcome
-                != RecordedOutboundOutcome::Abandoned(
-                    IntentEscalationReason::DedupeReservationReplaced,
-                ))
-    {
-        // Abandonment may follow a wire-started attempt whose delivery is
-        // unknown. Keep its conservative floor anchored to this transition.
-        crate::outbound_chokepoint::dedupe::delivered_in_txn(vault, &mut wtxn, &id)?;
-    }
+    let record =
+        match transition::transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
+            transition::Transitioned::Moved(record) => record,
+            transition::Transitioned::Replayed(record) => {
+                drop(wtxn);
+                return Ok(record);
+            }
+        };
     also(&mut wtxn, &record);
 
     wtxn.commit().map_err(Error::from)?;
