@@ -22,7 +22,7 @@ use std::path::Path;
 use oneiron::recovery::checkpoint::BackupSnapshotReceipt;
 use oneiron_vault_contract::backup_handoff::write_private_file;
 
-use super::{BackupPlan, FILE_SUFFIX, sync_dir};
+use super::{BackupPlan, FILE_SUFFIX, parse_file_stamp, parse_sequence, sync_dir};
 
 /// The suffix of a backup's checkpoint fact: `<artifact>.cpfact`.
 const CHECKPOINT_FACT_SUFFIX: &str = ".cpfact";
@@ -95,7 +95,6 @@ fn sweep_orphans(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<()
         Err(error) => return Err(error.into()),
     };
     let prefix = format!("{}-", plan.label);
-    let suffix = fact_name(FILE_SUFFIX);
     let mut orphans = Vec::new();
     for entry in entries {
         let entry = entry?;
@@ -104,8 +103,8 @@ fn sweep_orphans(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<()
         // artifact's name is its own less the one suffix.
         let Some(artifact) = file
             .to_str()
-            .filter(|name| name.starts_with(&prefix) && name.ends_with(&suffix))
             .and_then(|name| name.strip_suffix(CHECKPOINT_FACT_SUFFIX))
+            .filter(|artifact| labels_backup(&prefix, artifact))
         else {
             continue;
         };
@@ -135,6 +134,22 @@ fn sweep_orphans(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<()
         }
         Ok(())
     })?
+}
+
+/// Whether `artifact` is named as [`super::list`] reads one of the backups
+/// `prefix` (`<label>-`) names: `<sequence>-<stamp>-<id8>.oneiron-backup`
+/// after it, or `<stamp>-<id8>.oneiron-backup` from before sequences. So a
+/// sweep takes no fact whose artifact `list` would not read as this label's,
+/// and a longer label's sequenced backups that share its prefix fail it.
+fn labels_backup(prefix: &str, artifact: &str) -> bool {
+    artifact
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(FILE_SUFFIX))
+        .and_then(|rest| rest.rsplit_once('-'))
+        .map(|(rest, _)| rest.split_once('-').unwrap_or(("0", rest)))
+        .is_some_and(|(sequence, stamp)| {
+            parse_sequence(sequence).is_some() && parse_file_stamp(stamp).is_some()
+        })
 }
 
 /// Whether nothing at all is at `dir/<artifact>`, a link included: the one
