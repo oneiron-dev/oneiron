@@ -155,12 +155,8 @@ pub(crate) fn finish_redaction_erase_in_txn(
     let identity = crate::identity::ensure_device_identity_in_txn(vault, wtxn)?;
     let body = sign_redaction_audit_receipt(row, &final_id, now, &identity)?;
     validate_redaction_receipt_body(&body)?;
-    crate::off_record::FloorWrites::new(&vault.store).append_redaction_audit(
-        wtxn,
-        &final_id,
-        now,
-        &body,
-    )?;
+    crate::off_record::FloorWrites::new(&vault.store)
+        .append_redaction_audit(wtxn, &final_id, now, &body)?;
     crate::store::legal_hold::note_erase_completed_in_txn(
         &vault.store,
         wtxn,

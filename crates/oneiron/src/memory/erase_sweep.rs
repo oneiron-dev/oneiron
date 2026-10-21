@@ -124,7 +124,11 @@ impl Memory<'_> {
             let final_ref = receipt
                 .erase_complete_at
                 .map(|_| format!("redaction:{}", receipt_id.to_hex()));
-            (receipt.sweep_complete_at, receipt.erase_complete_at, final_ref)
+            (
+                receipt.sweep_complete_at,
+                receipt.erase_complete_at,
+                final_ref,
+            )
         };
         let claims: Vec<[u8; 16]> = receipt
             .scope
