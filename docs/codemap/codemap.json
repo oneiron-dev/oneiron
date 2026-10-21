@@ -15763,7 +15763,7 @@
      "path": "src/code_sandbox/mod.rs",
      "purpose": "Sandbox boundary contract for code-mode execution",
      "surface": {
-      "mod": 7,
+      "mod": 8,
       "re-export": 5
      }
     },
@@ -15861,6 +15861,25 @@
      "path": "src/code_sandbox/quickjs/tests.rs",
      "purpose": "Acceptance tests require the real artifacts produced by the pinned build",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparationNote",
+      "PreparedSource",
+      "SourceLanguage",
+      "TranspiledSource"
+     ],
+     "path": "src/code_sandbox/source.rs",
+     "purpose": "Code-mode source preparation (FIX 8276, owner ruling CODE-MODE-TS = A)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 15,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -21145,7 +21164,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 31,
       "re-export": 11
      }
     },
@@ -21166,7 +21185,7 @@
      "path": "src/deletion/receipt.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -21176,7 +21195,28 @@
      "path": "src/deletion/receipt_completion.rs",
      "purpose": "The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/receipt_final.rs",
+     "purpose": "An erase's overall final REDACTION_AUDIT row (FIX 5844, C-ERASE-FINAL)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/receipt_grammar.rs",
+     "purpose": "The pinned REDACTION_AUDIT body grammar (ONE-1134, ONE-1140, FIX 5844): the one structural validator every…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -28215,7 +28255,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 2,
       "struct": 1
      }
@@ -28269,7 +28309,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 51
+      "crate-vis": 56
      }
     },
     {
@@ -39121,7 +39161,7 @@
       "RecordEraseSweepRequest"
      ],
      "path": "src/memory/erase_sweep.rs",
-     "purpose": "Owner-bound historical erasure timing from the immutable redaction receipt",
+     "purpose": "Owner-bound historical erasure timing from the immutable redaction receipt, its factual sweep row and its…",
      "surface": {
       "const": 1,
       "fn": 1,
@@ -57813,6 +57853,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/erase_binding.rs",
+     "purpose": "The custody retirements one erase owes, bound by name on its receipt (FIX 5844, C-ERASE-FINAL): read in the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71360,7 +71410,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71556,7 +71606,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 36,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72410,7 +72460,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 135,
+     "files": 136,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72643,7 +72693,7 @@
    },
    "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4662,
+   "source_files": 4666,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76377,6 +76427,14 @@
   "oneiron-code-check": {
    "files": [
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/backend_screen.rs",
+     "purpose": "Fleet-only, sequential direction screen; no fallback and no default switch",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -76402,7 +76460,7 @@
       "ShadowCheck"
      ],
      "path": "src/lib.rs",
-     "purpose": "An optional type check of code-mode programs before they run",
+     "purpose": "An optional type check of code-mode programs, run beside them",
      "surface": {
       "enum": 4,
       "fn": 6,
@@ -76436,7 +76494,7 @@
       "MicrosoftTsc"
      ],
      "path": "src/microsoft.rs",
-     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is…",
+     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when the…",
      "surface": {
       "const": 1,
       "fn": 1,
@@ -76514,7 +76572,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is…"
+     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when the…"
     },
     "output": {
      "files": 1,
@@ -76546,8 +76604,8 @@
     }
    },
    "over_bar": 0,
-   "purpose": "An optional type check of code-mode programs before they run",
-   "source_files": 8,
+   "purpose": "An optional type check of code-mode programs, run beside them",
+   "source_files": 9,
    "test_files": 1
   },
   "oneiron-container": {

@@ -1250,13 +1250,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/microvm/overlay.rs` | src | m | 2 fn · 11 crate-vis | — | The host-side scratch root and the bounded overlay walk that turns guest writes into proposals |
 | `src/code_sandbox/microvm/scratch.rs` | src | s | 4 crate-vis | — | Private, clone-safe per-VM scratch custody and crash-leftover reclamation |
 | `src/code_sandbox/microvm/tests.rs` | test | m | — | — | — |
-| `src/code_sandbox/mod.rs` | src | s | 7 mod · 5 re-export | — | Sandbox boundary contract for code-mode execution |
+| `src/code_sandbox/mod.rs` | src | s | 8 mod · 5 re-export | — | Sandbox boundary contract for code-mode execution |
 | `src/code_sandbox/paths.rs` | src | s | 2 struct · 1 enum · 10 fn · 5 const | SandboxMount, SandboxMountTable, SandboxVirtualPath | The stable /mnt guest namespace: mounts, virtual paths and host-path resolution |
 | `src/code_sandbox/proposal.rs` | src | s | 7 struct · 2 enum · 10 fn · 2 re-export · 1 crate-vis | SandboxClaimProposal, SandboxDirectoryOpaqueProposal, SandboxFileDeleteProposal, SandboxFileEditProposal, SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxProposalDelta, SandboxProposalKind +1 | The proposal-delta channel a guest write becomes instead of a direct mutation |
 | `src/code_sandbox/proposal/body.rs` | src | s | 3 struct · 15 fn | SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter | A proposed file's bytes, spooled to an anonymous host temp file as they arrive |
 | `src/code_sandbox/proposal/spool.rs` | src | s | 1 struct · 1 enum · 2 trait · 2 fn | ProposalSpoolClaim, ProposalSpoolFloor, SpoolAtFloor, SpoolFloorRefusal | Where a proposal body is spooled, and the disk floor each of its appends keeps (FIX 7650) |
 | `src/code_sandbox/quickjs.rs` | src | s | 1 struct · 3 fn | QuickJsRuntimeFactory | Hash-pinned, readiness-checked QuickJS artifact factory |
 | `src/code_sandbox/quickjs/tests.rs` | test | m | — | — | Acceptance tests require the real artifacts produced by the pinned build |
+| `src/code_sandbox/source.rs` | src | m | 2 struct · 2 enum · 15 fn · 2 const · 3 crate-vis | PreparationNote, PreparedSource, SourceLanguage, TranspiledSource | Code-mode source preparation (FIX 8276, owner ruling CODE-MODE-TS = A) |
 | `src/code_sandbox/tests.rs` | test | s | — | — | — |
 | `src/code_sandbox/wasmtime_boundary.rs` | src | m | 2 struct · 8 fn · 1 mod | WasmtimeBoundary, WasmtimeRequest | Real Component Model boundary |
 | `src/code_sandbox/wasmtime_boundary/tests.rs` | test | s | — | — | Component fixtures test the boundary, not a substitute JavaScript runtime |
@@ -1652,10 +1653,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/identity_event_stamps.rs` | src | s | 2 crate-vis | — | Erase independent author-attribution carriers without changing decisions |
 | `src/deletion/legal_hold/mod.rs` | src | m | 14 fn · 1 re-export · 3 crate-vis | — | Legal hold doors (OF-470, design B; owner ruling 2026-10-17: "B, and that stuff is for cloud only + we… |
 | `src/deletion/legal_hold/types.rs` | src | m | 6 struct · 7 enum · 4 fn · 7 const | ErasePendingReason, HostOrderHold, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance +5 | The legal-hold vocabulary (OF-470, design B; ARCH-0038 #legal-hold, BIZ-LEGAL-0004 §12, owner ruling… |
-| `src/deletion/mod.rs` | src | s | 11 re-export · 29 crate-vis | — | ARCH-0038 deletion/redaction contract types |
+| `src/deletion/mod.rs` | src | s | 11 re-export · 31 crate-vis | — | ARCH-0038 deletion/redaction contract types |
 | `src/deletion/publish.rs` | src | L | 5 crate-vis | — | — |
-| `src/deletion/receipt.rs` | src | m | 16 crate-vis | — | — |
-| `src/deletion/receipt_completion.rs` | src | s | 3 crate-vis | — | The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10) |
+| `src/deletion/receipt.rs` | src | m | 20 crate-vis | — | — |
+| `src/deletion/receipt_completion.rs` | src | s | 4 crate-vis | — | The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10) |
+| `src/deletion/receipt_final.rs` | src | s | 2 fn · 3 crate-vis | — | An erase's overall final REDACTION_AUDIT row (FIX 5844, C-ERASE-FINAL) |
+| `src/deletion/receipt_grammar.rs` | src | m | 2 crate-vis | — | The pinned REDACTION_AUDIT body grammar (ONE-1134, ONE-1140, FIX 5844): the one structural validator every… |
 | `src/deletion/rendezvous.rs` | src | s | 15 crate-vis | — | — |
 | `src/deletion/sweep_queue.rs` | src | m | 1 fn · 25 crate-vis | — | — |
 | `src/deletion/tests.rs` | test | m | — | — | — |
@@ -2195,12 +2198,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/host.rs` | src | XL | 12 crate-vis | — | JS host bridge: recording dispatcher, sandbox contract, and prompt sites |
 | `src/engine_executor/mod.rs` | src | s | 3 mod · 7 re-export · 4 crate-vis | — | Engine-native JS code-mode executor |
 | `src/engine_executor/program_entry.rs` | src | m | 7 crate-vis | — | A turn program's pinned entry (DOOR-141 PR3b, FIX 4382) |
-| `src/engine_executor/record.rs` | src | m | 1 struct · 2 fn · 25 crate-vis | EnteredRun | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
+| `src/engine_executor/record.rs` | src | m | 1 struct · 2 fn · 26 crate-vis | EnteredRun | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
 | `src/engine_executor/repl.rs` | src | L | 2 fn · 4 crate-vis | — | Durable REPL loop: run(), persistence helpers, and LLM request building |
 | `src/engine_executor/shadow_step.rs` | src | m | 1 fn · 1 crate-vis | — | One captured step of a shadow arm (PR-S1, FIX 1661/2144): the pinned model's answer to the step's captured… |
 | `src/engine_executor/skill_call.rs` | src | s | 2 fn | — | One callable bridge entry between turns of an attached, leased run |
 | `src/engine_executor/stack_floor.rs` | src | s | 2 crate-vis | — | The native stack a callable skill's call leaves its thread (FIX 600) |
-| `src/engine_executor/store.rs` | src | m | 51 crate-vis | — | Output envelope and path helpers for the routed raw-output store |
+| `src/engine_executor/store.rs` | src | m | 56 crate-vis | — | Output envelope and path helpers for the routed raw-output store |
 | `src/engine_executor/tests.rs` | test | XL | — | — | — |
 | `src/engine_executor/tests/agent_verb_regressions.rs` | test | XL | — | — | — |
 | `src/engine_executor/tests/code_check.rs` | test | s | — | — | The checked-in `src/task_verb/code-mode.d.ts`, which a shadow check's oracle fixtures read, is the verb… |
@@ -3011,7 +3014,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/dreamer_wake_read.rs` | src | m | 11 struct · 2 enum · 1 fn | ConsolidationWakeStatusRequest, DreamerWakeCallEndView, DreamerWakeCallStateView, DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeEndView, DreamerWakeGenerationView, DreamerWakeHeaderView +5 | `vault.consolidation.wake.status` (DOOR-144 B): the typed wake read beside `vault.consolidation.status` |
 | `src/memory/entity_delete.rs` | src | s | 3 fn · 5 crate-vis | — | Owner-bound preview and one-call unshare-before-delete confirmation |
 | `src/memory/entity_erase.rs` | src | m | 2 struct · 3 enum · 2 fn · 2 crate-vis | EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome | Owner erase that can also take every record in this vault holding the same bytes |
-| `src/memory/erase_sweep.rs` | src | s | 3 struct · 1 fn · 1 const | RecordEraseCustody, RecordEraseSweep, RecordEraseSweepRequest | Owner-bound historical erasure timing from the immutable redaction receipt |
+| `src/memory/erase_sweep.rs` | src | s | 3 struct · 1 fn · 1 const | RecordEraseCustody, RecordEraseSweep, RecordEraseSweepRequest | Owner-bound historical erasure timing from the immutable redaction receipt, its factual sweep row and its… |
 | `src/memory/export.rs` | src | m | 3 struct · 10 fn · 2 const · 2 crate-vis | ExportOptions, MemoryExport, MemoryExportReceipt | Full-vault memory export: the whole-vault archive (OF-222) |
 | `src/memory/export_audit.rs` | src | m | 1 struct · 1 enum · 2 fn · 7 crate-vis | ExportAuditScope, ExportReceipt | The vault's export audit (FIX 6427, owner ruling RT-EXPORT 2026-10-20) |
 | `src/memory/expression_preference.rs` | src | s | 3 struct · 3 fn | ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView | Typed `companion.expression.*` doors on the [`Memory`] surface |
@@ -4512,6 +4515,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/anchor.rs` | src | s | 7 crate-vis | — | The custody anchor (KS-4, FIX 5685): one lineage's current position, kept where neither the vault's image… |
 | `src/store/key_custody/body_history.rs` | src | m | 12 crate-vis | — | A vault's body history in its exterior custody (KS-2A/KS-2B1, FIX 6229, 6023): the obligations an erase… |
 | `src/store/key_custody/credential_faults.rs` | src | s | 3 crate-vis | — | A credential's keys in the passes every custody client shares (KS-6, FIX-LIST 5687 part 1): a head's… |
+| `src/store/key_custody/erase_binding.rs` | src | s | 3 crate-vis | — | The custody retirements one erase owes, bound by name on its receipt (FIX 5844, C-ERASE-FINAL): read in the… |
 | `src/store/key_custody/files.rs` | src | m | 29 crate-vis | — | The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so… |
 | `src/store/key_custody/folder.rs` | src | m | 11 crate-vis | — | The folder target (KS-4A1; acknowledgements KS-4A2, FIX 5685): `<folder>/oneiron-custody/<namespace… |
 | `src/store/key_custody/fork.rs` | src | m | 14 crate-vis | — | Restore planning and the fork a copy served beside its source takes (ARCH-0038 #erasure-completeness, "Key… |

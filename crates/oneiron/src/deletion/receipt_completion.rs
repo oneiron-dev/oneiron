@@ -4,8 +4,10 @@
 //! receipt R are scrubbed, it appends a second type-72 row C: R's body with
 //! `sweep_complete_at` set, freshly signed (OD-6) over C's own id and point
 //! envelope. C's id is derived from R's, so R → C needs no index, and a
-//! retried sweep finds C instead of writing it twice. Shared `request_id` and
-//! scope are the request link; the derived id is the exact-parent link.
+//! retried sweep finds C instead of writing it twice. Every other field is
+//! R's: a row at C's id that differs from R elsewhere is not R's sweep row.
+//! C is factual, the sweep alone: the erase's overall completion is its
+//! final row's (`receipt_final`, FIX 5844).
 
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -17,8 +19,8 @@ use crate::store::Store;
 
 use super::receipt::{
     RedactionAuditReceipt, decode_redaction_audit_receipt, sign_redaction_audit_receipt,
-    validate_redaction_receipt_body,
 };
+use super::receipt_grammar::validate_redaction_receipt_body;
 
 /// Domain separator of the completion row id derived from its receipt's id.
 const REDACTION_SWEEP_COMPLETION_DOMAIN: &[u8] = b"oneiron:redaction-sweep-completion:v1\0";
@@ -34,11 +36,34 @@ pub(crate) fn redaction_sweep_completion_id(receipt_id: &EntityId) -> Result<Ent
     EntityId::from_bytes(id)
 }
 
+/// The row `raw` holds when it is one linked to the initial receipt
+/// `receipt`: a valid REDACTION_AUDIT body equal to `receipt` in every field
+/// but the two completion times and its own signature.
+pub(super) fn linked_row_in(
+    raw: &[u8],
+    receipt: &RedactionAuditReceipt,
+) -> Option<RedactionAuditReceipt> {
+    raw.get(ENTITY_METADATA_HEADER_LEN..)
+        .filter(|_| raw.first() == Some(&ENTITY_TYPE_REDACTION_AUDIT))
+        .filter(|body| validate_redaction_receipt_body(body).is_ok())
+        .and_then(|body| decode_redaction_audit_receipt(body).ok())
+        .filter(|row| {
+            let unlinked = RedactionAuditReceipt {
+                sweep_complete_at: receipt.sweep_complete_at,
+                erase_complete_at: receipt.erase_complete_at,
+                verification: receipt.verification.clone(),
+                ..row.clone()
+            };
+            unlinked == *receipt
+        })
+}
+
 /// The completion time on `receipt`'s linked completion row, or `None` while
 /// its sweep has not completed. The row at the derived id must be a valid
-/// REDACTION_AUDIT body carrying the receipt's `request_id`, its scope and a
-/// `sweep_complete_at`. Anything else there is a different occupant: an
-/// error the sweep keeps its obligation on, never one it overwrites.
+/// REDACTION_AUDIT body linked to the receipt ([`linked_row_in`]) with a
+/// `sweep_complete_at` and no `erase_complete_at`. Anything else there is a
+/// different occupant: an error the sweep keeps its obligation on, never
+/// one it overwrites.
 pub(crate) fn redaction_sweep_completion_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -49,14 +74,8 @@ pub(crate) fn redaction_sweep_completion_in_txn(
     let Some(raw) = store.port_entity_raw(txn, &completion_id)? else {
         return Ok(None);
     };
-    let completed_at = raw
-        .get(ENTITY_METADATA_HEADER_LEN..)
-        .filter(|_| raw[0] == ENTITY_TYPE_REDACTION_AUDIT)
-        .filter(|body| validate_redaction_receipt_body(body).is_ok())
-        .and_then(|body| decode_redaction_audit_receipt(body).ok())
-        .filter(|completion| {
-            completion.request_id == receipt.request_id && completion.scope == receipt.scope
-        })
+    let completed_at = linked_row_in(&raw, receipt)
+        .filter(|completion| completion.erase_complete_at.is_none())
         .and_then(|completion| completion.sweep_complete_at);
     if completed_at.is_none() {
         tracing::error!(
@@ -69,11 +88,12 @@ pub(crate) fn redaction_sweep_completion_in_txn(
     Ok(completed_at)
 }
 
-/// Appends `receipt`'s linked completion row, completed at `now`, and logs
-/// a legal hold's "erase completed" for its request in the same txn (C4: the
-/// linked receipt pair is now complete). Idempotent: when a valid completion
-/// row already exists this writes nothing and returns `false`. The device key
-/// must already be on the handle (P6c): the signer never opens the keystore.
+/// Appends `receipt`'s linked completion row, completed at `now`: the sweep's
+/// fact alone. The erase's overall "erase completed" is logged with its final
+/// row, once its custody retirements have finished too (FIX 5844).
+/// Idempotent: when a valid completion row already exists this writes
+/// nothing and returns `false`. The device key must already be on the handle
+/// (P6c): the signer never opens the keystore.
 pub(crate) fn append_redaction_sweep_completion_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -81,7 +101,7 @@ pub(crate) fn append_redaction_sweep_completion_in_txn(
     receipt: &RedactionAuditReceipt,
     now: u64,
 ) -> Result<bool> {
-    if receipt.sweep_complete_at.is_some() {
+    if !receipt.is_initial() {
         return Err(Error::InvariantViolation(
             "a sweep completion row is not completed again",
         ));
@@ -102,13 +122,6 @@ pub(crate) fn append_redaction_sweep_completion_in_txn(
         &completion_id,
         now,
         &body,
-    )?;
-    crate::store::legal_hold::note_erase_completed_in_txn(
-        &vault.store,
-        wtxn,
-        &receipt.scope.entity_ids,
-        &receipt.request_id,
-        now,
     )?;
     Ok(true)
 }
