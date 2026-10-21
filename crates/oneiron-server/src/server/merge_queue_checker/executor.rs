@@ -213,11 +213,31 @@ impl QueueCheckExecutor {
             .unwrap_or_else(PoisonError::into_inner)
             .take()
             .unwrap_or(started);
+        let refused = relay
+            .refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         Ok(match driven {
             QueueCheckExecution::Completed(_) if abandoned => {
                 QueueCheckExecution::Held(QueueCheckHold::new(
                     QueueCheckHoldReason::Interrupted,
                     "the guest session was abandoned",
+                ))
+            }
+            // A red run that reached off its session lacked an input the
+            // image must hold offline: held naming it, not a red verdict.
+            QueueCheckExecution::Completed(run)
+                if refused.is_some()
+                    && run.commands.iter().any(|command| !command.exited_zero()) =>
+            {
+                QueueCheckExecution::Held(QueueCheckHold::new(
+                    QueueCheckHoldReason::MissingOfflineInput,
+                    format!(
+                        "a command failed after reaching for {} with the network denied; the \
+                         image lacks an input it needs offline",
+                        refused.unwrap_or_default()
+                    ),
                 ))
             }
             QueueCheckExecution::Completed(mut run) => {
@@ -384,10 +404,10 @@ fn drive(
     }
     let sent = match send_tree(writer.as_mut(), invocation.tree)? {
         Sent::Tree(digest) => digest,
-        Sent::Closed(_) => {
-            return Ok(interrupted(
-                "the check helper closed before the tree was in",
-            ));
+        Sent::Closed(error) => {
+            return Ok(interrupted(&format!(
+                "the check helper closed before the tree was in: {error}"
+            )));
         }
     };
     let (frames, received) = mpsc::channel();
@@ -556,22 +576,31 @@ impl Collected {
 struct QueueCheckRelay {
     manifest: Mutex<Option<SessionManifest>>,
     abandoned: AtomicBool,
+    /// The first destination the guest reached for and was refused: a red
+    /// run that reached off its session lacked an offline input.
+    refused: Mutex<Option<String>>,
 }
 
-fn denied() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        "a queue check guest reaches nothing off its session (merge_queue.network = \"deny\")",
-    )
+impl QueueCheckRelay {
+    fn deny(&self, destination: impl FnOnce() -> String) -> io::Error {
+        self.refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(destination);
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "a queue check guest reaches nothing off its session (merge_queue.network = \"deny\")",
+        )
+    }
 }
 
 impl EgressRelay for QueueCheckRelay {
-    fn connect(&self, _target: SocketAddr) -> io::Result<TcpStream> {
-        Err(denied())
+    fn connect(&self, target: SocketAddr) -> io::Result<TcpStream> {
+        Err(self.deny(|| format!("a connection to {target}")))
     }
 
-    fn authorize_datagram(&self, _target: SocketAddr) -> io::Result<()> {
-        Err(denied())
+    fn authorize_datagram(&self, target: SocketAddr) -> io::Result<()> {
+        Err(self.deny(|| format!("a datagram to {target}")))
     }
 
     fn record_session(&self, manifest: &SessionManifest) -> io::Result<()> {
@@ -584,12 +613,12 @@ impl EgressRelay for QueueCheckRelay {
         Ok(())
     }
 
-    fn datagram(&self, _target: SocketAddr, _bytes: &[u8]) -> io::Result<Vec<u8>> {
-        Err(denied())
+    fn datagram(&self, target: SocketAddr, _bytes: &[u8]) -> io::Result<Vec<u8>> {
+        Err(self.deny(|| format!("a datagram to {target}")))
     }
 
     fn fetch(&self, _request: HttpRequest) -> io::Result<HttpResponse> {
-        Err(denied())
+        Err(self.deny(|| "an HTTP fetch".to_owned()))
     }
 
     fn transferred(&self, _target: SocketAddr, _content_hash: [u8; 32], _bytes: u64) {}
