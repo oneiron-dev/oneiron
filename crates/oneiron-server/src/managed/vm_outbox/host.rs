@@ -15,9 +15,9 @@
 //! in the carrier's records, for the vault the attachment is bound to, and
 //! [`read_vm_backup_label`] reads it (FIX 7046). It proves the label the
 //! expected VM's carrier reported, not a signed fact of the backups: a node
-//! still checks each held artifact's commitment against its own pins. Until
-//! a session keeps the label its guest names, that session's backup sets
-//! wait, deferred, and its other kinds go on (FIX 7127).
+//! still checks each held artifact's commitment against its own pins. A
+//! label a session cannot keep makes that session's backup sets wait,
+//! deferred, until it keeps one, and its other kinds go on (FIX 7127).
 
 use super::local::{Owner, make_dir_at, open_dir_path};
 use super::store::{self, BackupLabelBinding, Store};
@@ -204,21 +204,10 @@ fn valid_backup_label(label: &str) -> bool {
 }
 
 impl Carrier {
-    /// Opens a session's wait for its backup label: the backup sets wait
-    /// until the guest names one this session keeps, whatever an earlier
-    /// session kept.
-    pub(super) fn await_backup_label(&mut self) {
-        self.backup_wait = Some(VmOutboxOutcome::deferred(
-            VmOutboxDeferral::TargetUnavailable,
-            "the guest's backup label registration",
-            "the guest has not named a backup label this session kept",
-        ));
-    }
-
     /// Why `kind`'s sets wait in this session, when it is a backup kind and
-    /// no label the guest named this session is kept: such a set is taken
-    /// whole and answered with this, and none is sent. `None` on the guest,
-    /// whose sets never wait on it.
+    /// the label the guest last named in it was not kept: such a set is
+    /// taken whole and answered with this, and none is sent. `None` on the
+    /// guest, whose sets never wait on it.
     pub(super) fn backup_waits(&self, kind: VmOutboxKind) -> Option<&VmOutboxOutcome> {
         match kind {
             VmOutboxKind::Backup | VmOutboxKind::BackupStageAck => self.backup_wait.as_ref(),

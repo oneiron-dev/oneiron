@@ -79,9 +79,9 @@ struct Carrier {
     said: HashMap<(VmOutboxKind, String), String>,
     /// When each set the other end deferred goes again, and its step.
     paced: HashMap<(VmOutboxKind, String), (Instant, Duration)>,
-    /// The host's, for its session: why the backup sets wait while no
-    /// backup label the guest named this session is kept; `None` once one
-    /// is, and always on the guest.
+    /// The host's, for its session: why its backup sets wait, once a backup
+    /// label the guest named was not kept; `None` until then, once one is
+    /// kept again, and always on the guest.
     backup_wait: Option<VmOutboxOutcome>,
 }
 

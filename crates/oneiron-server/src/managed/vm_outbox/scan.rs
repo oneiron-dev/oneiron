@@ -44,9 +44,9 @@ pub(super) struct OutSet {
 
 impl Carrier {
     /// Every set this end has to send now, kind by kind. A set the other end
-    /// deferred waits out its pacing first. A backup kind waiting on the
-    /// session's backup label is not scanned, so its records stay as they
-    /// are until it goes.
+    /// deferred waits out its pacing first. A backup kind waiting on a
+    /// backup label the session did not keep is not scanned, so its records
+    /// stay as they are until it goes.
     pub(super) fn outgoing(&mut self) -> anyhow::Result<Vec<OutSet>> {
         let mut sets = Vec::new();
         let now = Instant::now();

@@ -177,8 +177,8 @@ impl Carrier {
     /// The host's session for the VM bound to `vault`, until the guest
     /// closes the connection. A hello naming another vault is refused; a
     /// backup label the welcomed guest names is kept for `vault` before
-    /// anything after it is taken. Until one is, the session's backup sets
-    /// wait and its other kinds go on.
+    /// anything after it is taken. While one it names is not kept, the
+    /// session's backup sets wait and its other kinds go on.
     pub(super) fn host_session<S: Read + Write>(
         &mut self,
         link: &mut Link<S>,
@@ -218,7 +218,8 @@ impl Carrier {
             wire_revision: VM_OUTBOX_WIRE_REVISION,
         })?;
         link.flush()?;
-        self.await_backup_label();
+        // A session's backup sets go until a label named in it is not kept.
+        self.backup_wait = None;
         loop {
             match link.read()? {
                 None => return Ok(()),
@@ -488,8 +489,8 @@ impl Carrier {
 
     /// The answer `transfer` gets without a change here, if it gets one: a
     /// replay of one taken before, one a newer change already passed, or one
-    /// with nowhere to go yet, a backup set's while the session's backup
-    /// label is not kept included.
+    /// with nowhere to go yet, a backup set's while the label the guest
+    /// last named is not kept included.
     fn decide(
         &self,
         transfer: &VmOutboxDescriptor,
