@@ -5,7 +5,8 @@
 //! [`preflight_skill_edit_offline_floors`] scores the offline part of the
 //! goal's plan (each floor and cost axis but human minutes) and the honesty
 //! floor on the same reserved evidence, and keeps the result bound to both
-//! bodies, that evidence and the goal revision. It passes when no floor's
+//! bodies, that evidence, the goal revision and the judge and rubric that
+//! scored it, so a new judge or rubric judges again. It passes when no floor's
 //! proposal score is below the incumbent's: the gate's own floor test. An
 //! exploration trial opens only on a passed preflight. A failed one is the
 //! gate's evidence in place of a live report, so a regressing floor rejects
@@ -24,7 +25,7 @@ const fn retry(reason: &'static str) -> Error {
     Error::Artifact(crate::error::ArtifactError::SkillEditGateRetry(reason))
 }
 
-/// What a preflight was judged on.
+/// What a preflight was judged on, and by which judge and rubric.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreflightBasis {
@@ -32,6 +33,7 @@ struct PreflightBasis {
     target_digest: String,
     evidence_digest: String,
     goal_revision: String,
+    judge: JudgeBinding,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -95,6 +97,7 @@ fn basis_in_txn(
     staged: &SkillRecord,
     target: &EntityId,
     current: &SkillRecord,
+    judge_revision: &str,
 ) -> Result<(PreflightBasis, GoalDefinition, Vec<String>)> {
     let definition = goal_definition_in_txn(vault, txn, target)?;
     let held_out = held_out_receipts_in_txn(vault, txn, target)?;
@@ -103,13 +106,15 @@ fn basis_in_txn(
         target_digest: skill_body_binding_digest(current)?,
         evidence_digest: evidence_identity(&held_out).1,
         goal_revision: definition.revision.clone(),
+        judge: JudgeBinding::in_txn(vault, txn, judge_revision)?,
     };
     Ok((basis, definition, held_out))
 }
 
 /// Judge `proposal`'s offline floors on the held-out set and keep the result,
 /// or return the kept result while it still binds both bodies, the reserved
-/// evidence and the goal revision. No live run is pulled here.
+/// evidence, the goal revision and `scorer`'s judge and rubric. No live run
+/// is pulled here.
 /// # Errors
 /// A proposal that is not an open optimizer proposal of the current skill it
 /// revises, missing held-out evidence, scorer errors, and the retryable
@@ -148,7 +153,14 @@ fn preflight_with_owner(
             "an offline preflight needs the current skill the proposal revises",
         ));
     }
-    let (basis, definition, held_out) = basis_in_txn(vault, &txn, &staged, &target, &current)?;
+    let (basis, definition, held_out) = basis_in_txn(
+        vault,
+        &txn,
+        &staged,
+        &target,
+        &current,
+        scorer.judge_revision(),
+    )?;
     if let Some(row) = PREFLIGHTS.get(&vault.store, &txn, proposal)?
         && row.basis == basis
     {
@@ -207,10 +219,17 @@ fn preflight_with_owner(
         }
         let staged_now = vault.read_skill_record_in_txn(txn, proposal)?;
         let current_now = vault.read_skill_record_in_txn(txn, &target)?;
-        let (now, _, _) = basis_in_txn(vault, txn, &staged_now, &target, &current_now)?;
+        let (now, _, _) = basis_in_txn(
+            vault,
+            txn,
+            &staged_now,
+            &target,
+            &current_now,
+            scorer.judge_revision(),
+        )?;
         if now != row.basis {
             return Err(retry(
-                "a body, the reserved evidence or the goal moved while the offline floors were judged",
+                "a body, the reserved evidence, the goal or the judge moved while the offline floors were judged",
             ));
         }
         PREFLIGHTS.put(&vault.store, txn, proposal, &row)
@@ -255,9 +274,11 @@ pub(crate) fn skill_edit_trial_basis_in_txn(
 }
 
 /// Whether `proposal`'s kept preflight passed on `basis` and on the reserved
-/// evidence of the skill it revises in this snapshot.
+/// evidence of the skill it revises in this snapshot. No scorer is in hand
+/// here, so the row's judge stands while it is not displaced, and the rubric
+/// must be the one in force now.
 /// # Errors
-/// An unreadable row, or storage errors.
+/// An unreadable row or rubric, or storage errors.
 pub(crate) fn skill_edit_preflight_passed_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -268,30 +289,37 @@ pub(crate) fn skill_edit_preflight_passed_in_txn(
         return Ok(false);
     };
     let evidence = evidence_identity(&held_out_receipts_in_txn(vault, txn, &basis.target)?).1;
+    let judge = JudgeBinding::in_txn(vault, txn, &row.basis.judge.judge_revision)?;
     Ok(row.passed
+        && displaced_judge_revision_in_txn(vault, txn, &judge.judge_revision)?.is_none()
         && row.basis
             == PreflightBasis {
                 proposal_digest: basis.proposal_digest.clone(),
                 target_digest: basis.target_digest.clone(),
                 evidence_digest: evidence,
                 goal_revision: basis.goal_revision.clone(),
+                judge,
             })
 }
 
 /// A failed preflight's scores for the gate's vector, while it binds the
-/// scored `basis`: each offline floor and cost axis and the honesty floor.
-/// No trial ran, so its regressing floor is the gate's rejection with no
-/// live report to wait on.
+/// scored `basis` and the judge `judge_revision` with the rubric in force:
+/// each offline floor and cost axis and the honesty floor. No trial ran, so
+/// its regressing floor is the gate's rejection with no live report to wait
+/// on.
 /// # Errors
-/// An unreadable row, a row naming an axis the goal lacks, or storage errors.
+/// An unreadable row or rubric, a row naming an axis the goal lacks, or
+/// storage errors.
 pub(super) fn failed_preflight_axes(
     vault: &Vault,
     proposal: &EntityId,
     basis: &ScoredBasis,
     definition: &GoalDefinition,
+    judge_revision: &str,
 ) -> Result<Option<BTreeMap<String, GoalAxisScore>>> {
     let txn = vault.store.env.read_txn()?;
     let row = PREFLIGHTS.get(&vault.store, &txn, proposal)?;
+    let judge = JudgeBinding::in_txn(vault, &txn, judge_revision)?;
     drop(txn);
     let Some(row) = row.filter(|row| {
         !row.passed
@@ -301,6 +329,7 @@ pub(super) fn failed_preflight_axes(
                     target_digest: basis.target_digest.clone(),
                     evidence_digest: basis.evidence_digest.clone(),
                     goal_revision: basis.goal_revision.clone(),
+                    judge,
                 }
     }) else {
         return Ok(None);

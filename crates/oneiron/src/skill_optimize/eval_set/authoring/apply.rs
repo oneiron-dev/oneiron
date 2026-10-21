@@ -266,6 +266,13 @@ impl EvalAuthoringReport {
     }
 }
 
+/// The named skip for a candidate whose source group is blocked by a family
+/// conflict (FIX 8843): no case is created and no label is appended to its
+/// reused case through that group. The candidate stays in the inventory,
+/// pending the conflict, and the rest of the plan applies.
+const BLOCKED_SOURCE_GROUP: &str =
+    "blocked_source_group: its roots already belong to different eval families";
+
 /// The reason an eval-set door refused, or the error when it was no refusal.
 fn refusal(error: Error) -> Result<&'static str> {
     match error {
@@ -384,7 +391,8 @@ fn assign_families(
 }
 
 /// Step two: each kept candidate's case, reusing the one its receipt already
-/// has, then every grounded label a case lacks.
+/// has, then every grounded label a case lacks. A candidate of a blocked
+/// group is skipped by name, never placed.
 fn record_cases(
     vault: &Vault,
     plan: &EvalAuthoringPlan,
@@ -397,8 +405,22 @@ fn record_cases(
         kept.entry(decision.candidate.as_str())
             .or_insert(decision.stratum.as_deref().map(str::trim));
     }
+    let blocked: BTreeSet<&str> = inventory
+        .groups
+        .iter()
+        .filter(|group| group.blocked.is_some())
+        .map(|group| group.id.as_str())
+        .collect();
     for candidate in &inventory.candidates {
         let chosen = kept.get(candidate.id.as_str());
+        if blocked.contains(candidate.group.as_str()) {
+            let appends =
+                candidate.case.is_some() && candidate.labels.iter().any(|label| !label.held);
+            if chosen.is_some() || appends {
+                report.skip(&candidate.id, BLOCKED_SOURCE_GROUP);
+            }
+            continue;
+        }
         let case = match (candidate.case, chosen) {
             (Some(case), _) => {
                 if chosen.is_some() {

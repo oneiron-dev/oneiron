@@ -330,8 +330,9 @@ pub(crate) fn tournament_start_check(
 /// run's team receipt (a Market team decided by its pre-signed ranking rule)
 /// and join the attempt's terminal pack receipt.
 /// # Errors
-/// An unbound campaign, a run attempt that is not a campaign experiment, no
-/// persisted evidence for the winner, a winner claim that never landed, a
+/// An unbound campaign, a run attempt that is not a campaign experiment, a
+/// failed run with no winner, no persisted evidence for the winner, a winner
+/// claim that never landed, a
 /// rule signed after the work, a malformed or duplicate team receipt, an
 /// already-finalized run, or storage errors.
 pub fn finalize_claim_tournament(
@@ -358,8 +359,20 @@ pub fn finalize_claim_tournament(
             "the run attempt is not an experiment of this campaign",
         ));
     }
+    // A failed run (every candidate discarded) has no winner to finalize.
+    let stop = match result.stop_reason {
+        DreamerTournamentStopReason::Consensus => TournamentStop::Consensus,
+        DreamerTournamentStopReason::RoundCap => TournamentStop::RoundCap,
+        DreamerTournamentStopReason::ExhaustedRounds => TournamentStop::ExhaustedRounds,
+        DreamerTournamentStopReason::AllDiscarded => {
+            return Err(invalid("the tournament discarded every candidate"));
+        }
+    };
+    let winner = result
+        .winner
+        .as_ref()
+        .ok_or(invalid("the tournament result names no winner"))?;
     let evidence = DreamerTournamentEvidenceStore::new(vault).list_run(run_id)?;
-    let winner = &result.winner;
     if !evidence.iter().any(|row| {
         row.branch_attempt == winner.branch_attempt && row.candidate_ref == winner.candidate_ref
     }) {
@@ -428,11 +441,7 @@ pub fn finalize_claim_tournament(
         winner_branch: winner.branch_attempt,
         winner_score: winner.score,
         rounds_executed: result.rounds_executed,
-        stop: match result.stop_reason {
-            DreamerTournamentStopReason::Consensus => TournamentStop::Consensus,
-            DreamerTournamentStopReason::RoundCap => TournamentStop::RoundCap,
-            DreamerTournamentStopReason::ExhaustedRounds => TournamentStop::ExhaustedRounds,
-        },
+        stop,
         approval: claim.approval,
         skill: campaign.skill,
         strategy: campaign.strategy,

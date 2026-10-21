@@ -24,26 +24,22 @@
 //! the A/B ask goes to the project's board, then up its parents' boards to the
 //! vault's owners. A pick there is learned for this goal and proposed, never
 //! written, to the project's record.
+//!
+//! Rule counts meet the policy limits only as an advisory (`tradeoff_capacity`,
+//! FIX 8847): no preference write, ask or pick is refused or hidden for a
+//! count, and every pending decision keeps its durable ask.
 use super::project_goal::{
     ProjectGoalJoin, TradeoffRole, current_roles_in_txn, project_goal_in_txn, project_rules,
     propose_learned_preference_in_txn, responsible_roles_in_txn,
 };
 use super::*;
 use crate::consent::AuthenticatedOwner;
-use crate::error::ArtifactError;
-use crate::gate::{SkillTradeoffLimits, skill_tradeoff_limits_in_txn};
 use crate::llm::decision::{DecisionAnswer, DecisionBand, DecisionRung, ProviderPin};
 use serde::{Deserialize, Serialize};
 
 const PREFERENCES_PREFIX: &[u8] = b"skill_optimize/tradeoff_preferences/v1\0";
 const ASK_PREFIX: &[u8] = b"skill_optimize/tradeoff_ask/v1\0";
 const LABEL: &str = "skill tradeoff record";
-const CAPACITY_EXHAUSTED: &str =
-    "tradeoff learning capacity exhausted; revise policy before another ask";
-
-const fn retry(reason: &'static str) -> Error {
-    Error::Artifact(ArtifactError::SkillEditGateRetry(reason))
-}
 
 /// A rule matches the exact sets of axes gained and lost, not unbound prose.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -109,30 +105,6 @@ fn matching_rule(
         .or_else(|| {
             preferences.and_then(|preferences| indexed(&preferences.learned, "learned_rule"))
         })
-}
-
-fn learning_full(
-    preferences: Option<&SkillTradeoffPreferences>,
-    limits: SkillTradeoffLimits,
-) -> bool {
-    let learned = preferences.map_or(0, |preferences| preferences.learned.len());
-    limits
-        .max_learned_rules
-        .is_some_and(|cap| u64::try_from(learned).unwrap_or(u64::MAX) >= cap)
-}
-
-/// Whose learning policy bounds the picks: the preferences' author, or for a
-/// project goal with none yet, the first person the ask reaches.
-fn limits_holder(
-    preferences: Option<&SkillTradeoffPreferences>,
-    question: &SkillTradeoffQuestion,
-) -> Result<EntityId> {
-    match preferences {
-        Some(preferences) => Ok(preferences.responsible),
-        None => question
-            .accountable()
-            .ok_or(Error::CorruptedIndex("tradeoff question without a role")),
-    }
 }
 
 /// The exact scored question. Jev must echo its digest before its answer can
@@ -339,9 +311,10 @@ pub(super) fn clear_ask_in_txn(
 /// the authenticated owner as the responsible person; only that person may
 /// revise the rules or the band. Learned picks are kept. Returns the new goal
 /// revision: every pending ask and standing acceptance is re-ruled.
+/// More rules than the resolved policy names is an advisory, never a refusal.
 /// # Errors
-/// An invalid rule or band, a rule naming an axis outside the goal, more rules
-/// than the resolved policy allows, another person's goal, or storage errors.
+/// An invalid rule or band, a rule naming an axis outside the goal, another
+/// person's goal, or storage errors.
 pub fn set_skill_tradeoff_preferences(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -361,10 +334,6 @@ pub fn set_skill_tradeoff_preferences(
                 "only the responsible person may revise tradeoff preferences",
             ));
         }
-        let limits = skill_tradeoff_limits_in_txn(&vault.store, txn, &actor)?;
-        if u64::try_from(rules.len()).unwrap_or(u64::MAX) > limits.max_authored_rules {
-            return Err(invalid("tradeoff rules exceed the resolved policy limit"));
-        }
         if rules
             .iter()
             .flat_map(|rule| rule.gains.iter().chain(&rule.losses))
@@ -380,6 +349,7 @@ pub fn set_skill_tradeoff_preferences(
             jev_band,
         };
         preferences.validate()?;
+        tradeoff_capacity::advise_in_txn(vault, txn, &definition.goal_id, &preferences);
         save(
             vault,
             txn,
@@ -432,11 +402,10 @@ fn bound_ask_in_txn(
 }
 
 /// The A/B question pending on `proposal`, for a host to render to the
-/// responsible person. `None` once the proposal is answered, when its goal has
-/// moved since the question was put, or while policy leaves no capacity to
-/// learn the answer.
+/// responsible person. `None` once the proposal is answered, or when its goal
+/// has moved since the question was put. No rule count hides it.
 /// # Errors
-/// An unreadable verdict, goal, ask or policy row, or storage errors.
+/// An unreadable verdict, goal or ask row, or storage errors.
 pub fn skill_tradeoff_ask(vault: &Vault, proposal: &EntityId) -> Result<Option<SkillTradeoffAsk>> {
     let txn = vault.store.env.read_txn()?;
     skill_tradeoff_ask_in_txn(vault, &txn, proposal)
@@ -454,12 +423,7 @@ pub(crate) fn skill_tradeoff_ask_in_txn(
     let Some(pending) = standing_verdict_in_txn(vault, txn, proposal)? else {
         return Ok(None);
     };
-    let Some((ask, preferences)) = bound_ask_in_txn(vault, txn, &pending)? else {
-        return Ok(None);
-    };
-    let holder = limits_holder(preferences.as_ref(), &ask.question)?;
-    let limits = skill_tradeoff_limits_in_txn(&vault.store, txn, &holder)?;
-    Ok((!learning_full(preferences.as_ref(), limits)).then_some(ask))
+    Ok(bound_ask_in_txn(vault, txn, &pending)?.map(|(ask, _)| ask))
 }
 
 /// The bound asks `person` may answer now, for a host to render as that
@@ -548,9 +512,8 @@ pub fn escalate_skill_tradeoff_ask(
 }
 
 /// Whether a standing pending verdict may be returned to a redelivery as it
-/// is. It waits on its bound A/B ask; a pending verdict with no bound ask is
-/// ruled again. While policy leaves no capacity to learn the pick, the delivery is
-/// refused before any judge is paid, and a policy revision recovers it.
+/// is. It waits on its bound A/B ask, however many picks its goal has
+/// learned; a pending verdict with no bound ask is ruled again.
 pub(super) fn pending_waits_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -559,17 +522,7 @@ pub(super) fn pending_waits_in_txn(
     pending.goal_id.ok_or(Error::CorruptedIndex(
         "pending skill tradeoff without a goal",
     ))?;
-    let Some((ask, preferences)) = bound_ask_in_txn(vault, txn, pending)? else {
-        return Ok(false);
-    };
-    let holder = limits_holder(preferences.as_ref(), &ask.question)?;
-    if learning_full(
-        preferences.as_ref(),
-        skill_tradeoff_limits_in_txn(&vault.store, txn, &holder)?,
-    ) {
-        return Err(invalid(CAPACITY_EXHAUSTED));
-    }
-    Ok(true)
+    Ok(bound_ask_in_txn(vault, txn, pending)?.is_some())
 }
 
 /// What the ladder decided outside the write transaction.
@@ -589,14 +542,16 @@ pub(super) enum TradeoffPlan {
         question: SkillTradeoffQuestion,
         jev: Option<JevTradeoffVerdict>,
     },
+    /// A person's approval of this exact question, kept on the row a spent
+    /// cycle or the judge's cadence deferred, answers it again (FIX 8848).
+    Carried(TradeoffResolution),
 }
 
-/// Climb the ladder for a scored vector, OUTSIDE any write transaction. A rule
-/// hit never calls Jev. A Jev choice rules only when it echoes the exact
-/// question digest with a choice confidence at or above the band's high edge;
-/// anything lower asks the person. Learning capacity bounds only the ask: it
-/// is checked after Jev and before a question is put, so a confident Jev still
-/// decides at a full cap and no person receives a pick that cannot be learned.
+/// Climb the ladder for a scored vector, OUTSIDE any write transaction. A
+/// person's kept approval of this exact question answers first. A rule hit
+/// never calls Jev. A Jev choice rules only when it echoes the exact question
+/// digest with a choice confidence at or above the band's high edge; anything
+/// lower asks the person, whatever the learning policy's limit.
 pub(super) fn plan(
     vault: &Vault,
     proposal: &EntityId,
@@ -609,6 +564,11 @@ pub(super) fn plan(
         return Ok(TradeoffPlan::None);
     }
     let txn = vault.store.env.read_txn()?;
+    if let Some(carried) =
+        deferred_approval::deferred_approval_in_txn(vault, &txn, proposal, basis, axes)?
+    {
+        return Ok(TradeoffPlan::Carried(carried));
+    }
     let preferences = preferences_in_txn(vault, &txn, &basis.goal_id)?;
     let prior: Option<SkillTradeoffAsk> = load(vault, &txn, &key(ASK_PREFIX, proposal))?;
     let roles = responsible_roles_in_txn(
@@ -707,21 +667,13 @@ pub(super) fn plan(
             None
         }
     };
-    let holder = limits_holder(preferences.as_ref(), &question)?;
-    let txn = vault.store.env.read_txn()?;
-    let limits = skill_tradeoff_limits_in_txn(&vault.store, &txn, &holder)?;
-    drop(txn);
-    if learning_full(preferences.as_ref(), limits) {
-        return Err(invalid(CAPACITY_EXHAUSTED));
-    }
     Ok(TradeoffPlan::Ask { question, jev })
 }
 
 /// Settle or park a pending ruling inside the gate's committing transaction,
 /// after the tier checks. That transaction re-checked the goal revision
 /// against the scored basis, so the preferences the plan read are still in
-/// force; only the learning policy, which is not part of the goal, is read
-/// again. Returns the resolution the decision door writes after the pending
+/// force. Returns the resolution the decision door writes after the pending
 /// row. An approval under a spent cycle cap defers like a dominating win.
 pub(super) fn apply_in_txn(
     vault: &Vault,
@@ -745,7 +697,6 @@ pub(super) fn apply_in_txn(
             jev,
         } => {
             verdict.tradeoff_jev.clone_from(jev);
-            clear_ask_in_txn(vault, txn, &verdict.proposal)?;
             let resolution = TradeoffResolution {
                 pending: verdict.id,
                 owner: question
@@ -755,31 +706,23 @@ pub(super) fn apply_in_txn(
                 evidence: question.digest()?,
                 rung: *rung,
             };
-            if *choice == TradeoffChoice::Approve
-                && let Some(deferred) =
-                    approval_deferral_in_txn(vault, txn, cycle, &verdict.proposal, &verdict.skill)?
-            {
-                // The deferred row keeps the approval, so the answer it gave
-                // to this exact question stays known.
-                verdict.disposition = deferred;
-                verdict.tradeoff_resolution = Some(resolution);
-                return Ok(None);
-            }
-            Ok(Some((*choice, resolution)))
+            decided_in_txn(vault, txn, cycle, verdict, *choice, resolution)
+        }
+        TradeoffPlan::Carried(carried) => {
+            let resolution = TradeoffResolution {
+                pending: verdict.id,
+                ..carried.clone()
+            };
+            decided_in_txn(
+                vault,
+                txn,
+                cycle,
+                verdict,
+                TradeoffChoice::Approve,
+                resolution,
+            )
         }
         TradeoffPlan::Ask { question, jev } => {
-            let preferences = preferences_in_txn(vault, txn, &question.goal_id)?;
-            // A policy contraction while Jev was thinking cannot commit an
-            // ask the person is no longer permitted to settle.
-            let holder = limits_holder(preferences.as_ref(), question)?;
-            if learning_full(
-                preferences.as_ref(),
-                skill_tradeoff_limits_in_txn(&vault.store, txn, &holder)?,
-            ) {
-                return Err(retry(
-                    "tradeoff learning capacity moved before the ask commit",
-                ));
-            }
             verdict.tradeoff_jev.clone_from(jev);
             // Re-ruling the same question keeps the rung its ask climbed to.
             let rung = load::<SkillTradeoffAsk>(vault, txn, &key(ASK_PREFIX, &verdict.proposal))?
@@ -801,6 +744,29 @@ pub(super) fn apply_in_txn(
     }
 }
 
+/// A ladder rung decided the pending row: its ask is answered, and an approval
+/// the cycle cannot admit yet is kept on the row it defers, so the answer it
+/// gave to this exact question stays known.
+fn decided_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    cycle: &SkillEditCycle,
+    verdict: &mut HeldOutVerdict,
+    choice: TradeoffChoice,
+    resolution: TradeoffResolution,
+) -> Result<Option<(TradeoffChoice, TradeoffResolution)>> {
+    clear_ask_in_txn(vault, txn, &verdict.proposal)?;
+    if choice == TradeoffChoice::Approve
+        && let Some(deferred) =
+            approval_deferral_in_txn(vault, txn, cycle, &verdict.proposal, &verdict.skill)?
+    {
+        verdict.disposition = deferred;
+        verdict.tradeoff_resolution = Some(resolution);
+        return Ok(None);
+    }
+    Ok(Some((choice, resolution)))
+}
+
 /// The responsible role's answer to the pending A/B question. The digest
 /// must name the exact question the person saw, so an older reply cannot
 /// answer a replacement question on the same proposal. Any live person
@@ -810,11 +776,12 @@ pub(super) fn apply_in_txn(
 /// write it or impersonate the person. For a project-bound goal the pick is
 /// also proposed for the project's goal record, which only its interview
 /// revises. An approval under a spent cycle cap is still learned and defers
-/// the proposal: a later cycle re-rules it through the new preference.
+/// the proposal: a later cycle re-rules it through the new preference. A pick
+/// past the learning policy's limit is still learned, with an advisory.
 /// # Errors
 /// No pending ask, a digest for another question, a person holding no role the
 /// ask has reached, a question stale against the goal, bodies, tier or
-/// evidence, no capacity to learn, or storage errors. An error writes nothing.
+/// evidence, or storage errors. An error writes nothing.
 pub fn settle_skill_tradeoff_ask(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -998,15 +965,6 @@ fn settle_ask_in_txn(
                 "tradeoff pick must come from a responsible role the ask has reached",
             ));
         }
-        let holder = previous
-            .as_ref()
-            .map_or(actor, |previous| previous.responsible);
-        if learning_full(
-            previous.as_ref(),
-            skill_tradeoff_limits_in_txn(&vault.store, txn, &holder)?,
-        ) {
-            return Err(invalid(CAPACITY_EXHAUSTED));
-        }
         let mut preferences = match previous {
             Some(previous) => previous,
             None => SkillTradeoffPreferences {
@@ -1025,6 +983,7 @@ fn settle_ask_in_txn(
             losses: question.losses.clone(),
             choice,
         });
+        tradeoff_capacity::advise_in_txn(vault, txn, &question.goal_id, &preferences);
         save(
             vault,
             txn,
@@ -1045,18 +1004,15 @@ fn settle_ask_in_txn(
         {
             // The deferred row keeps the person's approval, so the outcome of
             // the question they answered stays known.
-            let deferred = HeldOutVerdict {
-                id: vault.store.clock.entity_id()?,
+            return deferred_approval::record_deferred_approval_in_txn(
+                vault,
+                txn,
+                pending,
+                resolution,
                 disposition,
-                accepted: false,
-                tradeoff_resolution: Some(resolution),
-                goal_revision: goal_definition_in_txn(vault, txn, &pending.skill)?.revision,
+                &cycle,
                 at,
-                ..pending
-            };
-            record_verdict_in_txn(vault, txn, &deferred)?;
-            clear_ask_in_txn(vault, txn, proposal)?;
-            return Ok(deferred);
+            );
         }
         record_tradeoff_resolution_in_txn(vault, txn, pending, resolution, choice, &cycle, at)
     }

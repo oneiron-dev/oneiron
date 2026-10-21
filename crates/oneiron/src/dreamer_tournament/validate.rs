@@ -5,14 +5,13 @@ use std::collections::BTreeSet;
 use crate::error::{Error, Result};
 
 use super::types::{
-    DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION, DREAMER_TOURNAMENT_MAX_FANOUT_M,
-    DREAMER_TOURNAMENT_MAX_ROUNDS_K, DREAMER_TOURNAMENT_MIN_FANOUT_M, DreamerTournamentAuthorFork,
-    DreamerTournamentBordaBallot, DreamerTournamentBranch, DreamerTournamentBranchEvidence,
-    DreamerTournamentBranchVerdict, DreamerTournamentCandidate, DreamerTournamentCandidateIdentity,
-    DreamerTournamentRound, DreamerTournamentRun, DreamerTournamentSynthesisArtifact,
-    DreamerTournamentSynthesisVerdict, DreamerTournamentWeaveArtifact,
-    MAX_TOURNAMENT_ARTIFACT_ID_BYTES, MAX_TOURNAMENT_CANDIDATE_REF_BYTES,
-    MAX_TOURNAMENT_EVIDENCE_REF_BYTES, MAX_TOURNAMENT_EVIDENCE_REFS,
+    DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION, DREAMER_TOURNAMENT_MAX_ROUNDS_K,
+    DREAMER_TOURNAMENT_MIN_FANOUT_M, DreamerTournamentAuthorFork, DreamerTournamentBordaBallot,
+    DreamerTournamentBranch, DreamerTournamentBranchEvidence, DreamerTournamentBranchVerdict,
+    DreamerTournamentCandidate, DreamerTournamentCandidateIdentity, DreamerTournamentRound,
+    DreamerTournamentRun, DreamerTournamentSynthesisArtifact, DreamerTournamentSynthesisVerdict,
+    DreamerTournamentWeaveArtifact, MAX_TOURNAMENT_ARTIFACT_ID_BYTES,
+    MAX_TOURNAMENT_CANDIDATE_REF_BYTES, MAX_TOURNAMENT_EVIDENCE_REF_BYTES,
     MAX_TOURNAMENT_JUDGE_TEXT_BYTES, MAX_TOURNAMENT_RUN_ID_BYTES, MAX_TOURNAMENT_STRATEGY_BYTES,
     OF366_CLAIM_AUTHORING_LENSES,
 };
@@ -25,9 +24,10 @@ pub(super) fn validate_run(run: &DreamerTournamentRun) -> Result<()> {
         "tournament run id",
     )?;
     validate_author_fork(&run.author_fork)?;
-    if !(DREAMER_TOURNAMENT_MIN_FANOUT_M..=DREAMER_TOURNAMENT_MAX_FANOUT_M).contains(&run.fanout_m)
-    {
-        return Err(invalid_tournament("tournament fanout_m must be 2 or 3"));
+    // Width has no engine-wide count cap: M=2/3 is the campaign's arm choice
+    // (`autoreason_campaign::config`), and a tournament only needs two to rank.
+    if run.fanout_m < DREAMER_TOURNAMENT_MIN_FANOUT_M {
+        return Err(invalid_tournament("tournament fanout_m must be at least 2"));
     }
     if run.max_rounds_k == 0 || run.max_rounds_k > DREAMER_TOURNAMENT_MAX_ROUNDS_K {
         return Err(invalid_tournament("tournament max_rounds_k must be 1 or 2"));
@@ -62,11 +62,9 @@ pub(super) fn validate_author_fork(fork: &DreamerTournamentAuthorFork) -> Result
         MAX_TOURNAMENT_CANDIDATE_REF_BYTES,
         "tournament author seed ref",
     )?;
-    if !(DREAMER_TOURNAMENT_MIN_FANOUT_M as usize..=DREAMER_TOURNAMENT_MAX_FANOUT_M as usize)
-        .contains(&fork.sibling_branch_attempts.len())
-    {
+    if fork.sibling_branch_attempts.len() < usize::from(DREAMER_TOURNAMENT_MIN_FANOUT_M) {
         return Err(invalid_tournament(
-            "tournament author fork must produce 2 or 3 sibling branches",
+            "tournament author fork must produce at least 2 sibling branches",
         ));
     }
     let mut branch_attempts = BTreeSet::new();
@@ -108,11 +106,9 @@ pub(super) fn validate_author_fork_outputs(run: &DreamerTournamentRun) -> Result
 }
 
 pub(super) fn validate_round(round: &DreamerTournamentRound) -> Result<()> {
-    if round.branches.is_empty()
-        || round.branches.len() > usize::from(DREAMER_TOURNAMENT_MAX_FANOUT_M)
-    {
+    if round.branches.is_empty() {
         return Err(invalid_tournament(
-            "tournament round must contain 1..=3 branches",
+            "tournament round must contain at least one branch",
         ));
     }
     let mut refs = BTreeSet::new();
@@ -127,7 +123,12 @@ pub(super) fn validate_round(round: &DreamerTournamentRound) -> Result<()> {
     if let Some(weave) = &round.two_parent_weave {
         validate_weave_artifact(weave)?;
     }
-    if round.ballots.is_empty() {
+    // A round that discards every branch ranks nothing, so it needs no ballot.
+    let all_discarded = round
+        .branches
+        .iter()
+        .all(|branch| branch.synthesis.verdict == DreamerTournamentSynthesisVerdict::Discarded);
+    if round.ballots.is_empty() && !all_discarded {
         return Err(invalid_tournament(
             "tournament round requires blind Borda ballots",
         ));
@@ -523,12 +524,8 @@ pub(super) fn validate_text(value: &str, max_bytes: usize, field: &'static str) 
     Ok(())
 }
 
+/// Every valid reference is kept: only each reference's own bytes are bounded.
 pub(super) fn validate_evidence_refs(refs: &[String]) -> Result<()> {
-    if refs.len() > MAX_TOURNAMENT_EVIDENCE_REFS {
-        return Err(invalid_tournament(
-            "tournament evidence_refs exceeds 64 entries",
-        ));
-    }
     for evidence_ref in refs {
         validate_identifier(
             evidence_ref,

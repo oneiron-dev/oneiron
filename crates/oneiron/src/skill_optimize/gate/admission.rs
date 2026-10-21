@@ -67,10 +67,13 @@ pub fn admit_optimized_skill_revision(
 /// owner handle, current scored basis and every admission clamp. An approval
 /// writes a distinct accepted-tradeoff permission, not automatic dominance.
 /// It learns no preference; an A/B pick through
-/// [`super::settle_skill_tradeoff_ask`] does.
+/// [`super::settle_skill_tradeoff_ask`] does. An approval the cycle cannot
+/// admit yet (its accepts spent, or the judge's cadence holding) is kept on a
+/// deferred row, and a later cycle that scores the same question admits
+/// through it (FIX 8848).
 /// # Errors
-/// Invalid input, changed goal/evidence/body/tier, exhausted cycle cap, or
-/// storage failures. A stale decision writes no permission or closure.
+/// Invalid input, changed goal/evidence/body/tier, or storage failures. A
+/// stale decision writes no permission or closure.
 pub fn resolve_skill_edit_tradeoff(
     vault: &Vault,
     proposal: &EntityId,
@@ -87,9 +90,10 @@ pub fn resolve_skill_edit_tradeoff(
 
 /// Resolve a pending tradeoff in a later, proven Dreamer attempt. The new
 /// cycle is charged only when the approval is written; a retry returns the
-/// same ruling without spending another slot.
+/// same ruling without spending another slot. A spent cycle defers the
+/// approval as [`resolve_skill_edit_tradeoff`] does.
 /// # Errors
-/// Unknown attempt, stale scored basis, exhausted cycle cap, or storage errors.
+/// Unknown attempt, stale scored basis, or storage errors.
 #[expect(
     clippy::too_many_arguments,
     reason = "the exact decision and proven attempt must both be supplied at the authority door"
@@ -148,30 +152,38 @@ fn resolve_skill_edit_tradeoff_with_cycle(
         let latest = standing_verdict_in_txn(vault, txn, proposal)?.ok_or(invalid(
             "no scored tradeoff verdict stands for this proposal",
         ))?;
-        if latest.tradeoff_resolution.as_ref() == Some(&decision)
-            && latest.disposition
-                == match choice {
-                    TradeoffChoice::Approve => SkillEditDisposition::AcceptedTradeoff,
-                    TradeoffChoice::Reject => SkillEditDisposition::RejectedTradeoff,
-                }
-        {
-            return Ok(latest); // exact redelivery, even after activation
+        let answered = match choice {
+            TradeoffChoice::Approve => matches!(
+                latest.disposition,
+                SkillEditDisposition::AcceptedTradeoff
+                    | SkillEditDisposition::DeferredCycleCap
+                    | SkillEditDisposition::DeferredJudgeCadence
+            ),
+            TradeoffChoice::Reject => latest.disposition == SkillEditDisposition::RejectedTradeoff,
+        };
+        if latest.tradeoff_resolution.as_ref() == Some(&decision) && answered {
+            return Ok(latest); // exact redelivery, deferred or even after activation
         }
         let latest = open_pending_tradeoff_in_txn(vault, txn, proposal, pending_id, latest, at)?;
         let granting_cycle = match &cycle {
             Some(cycle) => cycle.clone(),
             None => SkillEditCycle::new(latest.cycle.clone())?,
         };
+        // The owner's approval is kept, never refused, when the cycle cannot
+        // admit it yet: the A/B pick's retention, at this door too.
         if matches!(choice, TradeoffChoice::Approve)
-            && accepted_in_cycle_in_txn(vault, txn, &granting_cycle, proposal)?
-                >= cycle_cap_in_txn(vault, txn)?
+            && let Some(disposition) =
+                approval_deferral_in_txn(vault, txn, &granting_cycle, proposal, &latest.skill)?
         {
-            return Err(invalid("tradeoff approval exceeds the cycle admission cap"));
-        }
-        if matches!(choice, TradeoffChoice::Approve)
-            && !judge_cadence_allows_in_txn(vault, txn, &granting_cycle, proposal, &latest.skill)?
-        {
-            return Err(invalid("the judge's rubric waits on its revision cadence"));
+            return deferred_approval::record_deferred_approval_in_txn(
+                vault,
+                txn,
+                latest,
+                decision,
+                disposition,
+                &granting_cycle,
+                at,
+            );
         }
         record_tradeoff_resolution_in_txn(vault, txn, latest, decision, choice, &granting_cycle, at)
     })
