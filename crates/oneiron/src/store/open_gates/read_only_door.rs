@@ -46,6 +46,21 @@ pub(in crate::store) fn read_existing_vault_meta(
     )
 }
 
+/// The `entities` rows at exactly `keys` of the vault at `path`, read
+/// through the same read-only environment: a side restore's source's live
+/// world key pad rows (KS-5).
+pub(crate) fn read_existing_entity_rows(
+    path: &Path,
+    keys: &[&[u8]],
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let rows = read_existing_rows(path, ("entities", "vault holds no entity database"), keys)?;
+    Ok(rows
+        .rows
+        .into_iter()
+        .filter(|(key, _)| keys.contains(&key.as_slice()))
+        .collect())
+}
+
 /// The embedding model the vault at `path` is pinned to, read through the
 /// same read-only environment; `None` when it holds none.
 pub(crate) fn read_existing_embedding_model(path: &Path) -> Result<Option<String>> {

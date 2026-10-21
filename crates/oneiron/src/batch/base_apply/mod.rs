@@ -720,6 +720,13 @@ pub(super) fn apply_ops_with_origin(
                     None,
                     mutation_recorded_at,
                 )?;
+                // A pad row's key leaves custody with it (KS-5, FIX 7192).
+                crate::world_keys::erase_batch_pad_row_in_txn(
+                    store,
+                    wtxn,
+                    &id,
+                    mutation_recorded_at,
+                )?;
                 // Capture before tear (R2-F4): a PROJECT row's signed chain
                 // is kept as revisions before the row goes.
                 let captured = crate::workspace_roster::capture_before_tear(store, wtxn, id)?;
