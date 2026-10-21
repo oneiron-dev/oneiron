@@ -31330,7 +31330,7 @@
      "path": "src/identity.rs",
      "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -46680,7 +46680,7 @@
      "path": "src/recovery/checkpoint/commitment.rs",
      "purpose": "Hash-signed checkpoints (OF-570 (e))",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1,
       "re-export": 1
      }
@@ -47149,7 +47149,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/snapshot.rs",
@@ -65909,7 +65909,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/doors/frontier.rs",
@@ -73473,6 +73473,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CheckpointFact",
+      "SignedCheckpointFact"
+     ],
+     "path": "src/backup/checkpoint_fact.rs",
+     "purpose": "A sealed backup's checkpoint fact (FIX 7326): its engine vault id, the full BLAKE3 of its canonical image…",
+     "surface": {
+      "const": 5,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CheckpointSigner",
       "Commitment",
       "CustodyRef"
@@ -73506,7 +73521,7 @@
      "path": "src/backup/mod.rs",
      "purpose": "The clear parts of the engine's sealed checkpoint and backup artifacts (`ONEIRONS` files): the artifact…",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -73809,7 +73824,7 @@
    ],
    "modules": {
     "backup": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -73881,7 +73896,7 @@
    },
    "over_bar": 0,
    "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
-   "source_files": 20,
+   "source_files": 21,
    "test_files": 8
   },
   "oneiron-docedit": {
@@ -82825,7 +82840,7 @@
      "path": "src/api/conversations.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -86809,7 +86824,7 @@
      "path": "src/auth/left_notices.rs",
      "purpose": "`POST /v1/shared/left-notices` (OF-158 client leave): a device whose person left or was removed from this…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -89457,6 +89472,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/idempotency/caller.rs",
+     "purpose": "The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/idempotency/reclaim.rs",
      "purpose": "Reclaim of expired idempotency entries (FIX 5951)",
      "surface": {
@@ -91909,6 +91934,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/checkpoint_fact.rs",
+     "purpose": "Each backup's checkpoint fact beside it (FIX 7327): the signed fact the snapshot's receipt carries (FIX…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -94184,7 +94219,7 @@
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through"
     },
     "idempotency": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -94275,7 +94310,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94396,7 +94431,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1018,
+   "source_files": 1020,
    "test_files": 182
   },
   "oneiron-spawn": {

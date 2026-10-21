@@ -22,7 +22,7 @@ use oneiron_vault_contract::backup_handoff::write_private_file;
 
 use super::{
     BackupOutcome, BackupPlan, BackupRecord, FILE_SUFFIX, PARTIAL_SUFFIX, SEQUENCE_WIDTH,
-    create_private_dir, list, sync_dir, write_budget,
+    checkpoint_fact, create_private_dir, list, sync_dir, write_budget,
 };
 use crate::owner::stamp::{file_stamp, now_unix_ms, rfc3339};
 
@@ -68,7 +68,9 @@ impl Unproduced {
 /// artifact claims its room on the floor the plan was lent, and on the disk
 /// of the directory it lands in when that is another, and gives it back once
 /// written or refused (FIX 5479, FIX 5675). On an owner's request the
-/// snapshot rechecks `owner` in its own read transaction.
+/// snapshot rechecks `owner` in its own read transaction. The backup's
+/// checkpoint fact, where the snapshot signed one, lands beside it first
+/// (`checkpoint_fact`).
 pub(crate) fn produce(
     vault: &oneiron::Vault,
     plan: &BackupPlan,
@@ -117,7 +119,16 @@ pub(crate) fn produce(
         plan.label
     );
     let path = plan.dir.join(&file);
-    std::fs::rename(&partial, &path).map_err(|error| Unproduced::Landing(error.into()))?;
+    // Its checkpoint fact lands first, durable under its name before the
+    // artifact shows (FIX 7327); a fact that does not land leaves the backup
+    // without one. An artifact that does not land takes its fact with it.
+    let fact = checkpoint_fact::publish(&plan.dir, &file, &receipt);
+    if let Err(error) = std::fs::rename(&partial, &path) {
+        if fact {
+            checkpoint_fact::remove(&plan.dir, &file);
+        }
+        return Err(Unproduced::Landing(error.into()));
+    }
     sync_dir(&plan.dir).map_err(Unproduced::Landing)?;
     Ok(Produced {
         file,
