@@ -13,11 +13,16 @@
 //! TURN, which lands with its reply or not at all. Replies are whole
 //! messages: no partial is published.
 //!
+//! On a host bound to its server, a slip-backed action also reads the
+//! vault's memory through a fresh context board, as a live chat turn does
+//! (FIX 6920): one request-only message right before the user turn the
+//! reply answers. Reading it never fails the action.
+//!
 //! It wakes on the vault's post-commit attempt signal and once at start. An
 //! attempt claimed a second time was cut off when the process stopped under
 //! it: it is failed and never run again, so its reply stays as saved until
 //! someone asks again.
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::attempt_queue::{
@@ -37,7 +42,8 @@ use crate::api::ai::chat::{
     begin_answer, chat_request, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint,
     text_message, turn_generate_pre, witness_turn,
 };
-use crate::server::blocking;
+use crate::api::context_board::action_board;
+use crate::server::{SyncServer, blocking};
 
 const LEASE_OWNER: &str = "oneiron-server-turn-actions";
 /// Recorded on an attempt whose reason does not fit the queue's bound.
@@ -46,6 +52,17 @@ const FAILED: &str = "the turn action failed";
 /// Starts the worker on the current runtime when a seat serves chat;
 /// otherwise queued actions stay queued, visibly, for a host that has one.
 pub(super) fn spawn(vault: &Arc<Vault>, ai: &AiHandle) {
+    run(vault, ai, None);
+}
+
+/// [`spawn`], for a host attached to `server`: each action also reads a
+/// fresh context board through it (FIX 6920), held weakly.
+pub(super) fn spawn_hosted(vault: &Arc<Vault>, ai: &AiHandle, server: Weak<SyncServer>) {
+    run(vault, ai, Some(server));
+}
+
+/// The worker, reading each action's board through `server` when it has one.
+fn run(vault: &Arc<Vault>, ai: &AiHandle, server: Option<Weak<SyncServer>>) {
     if ai.chat_seat().is_none() {
         return;
     }
@@ -67,7 +84,7 @@ pub(super) fn spawn(vault: &Arc<Vault>, ai: &AiHandle) {
                 let Some(attempt) = claim(&vault) else {
                     break;
                 };
-                let result = act(&vault, &ai, &attempt).await;
+                let result = act(&vault, &ai, server.as_ref(), &attempt).await;
                 settle(&vault, &attempt, result);
             }
             tokio::select! {
@@ -113,8 +130,13 @@ fn claim(vault: &Vault) -> Option<AttemptRecord> {
 
 /// Runs one claimed action to its reply's terminal. `Ok` once the reply is
 /// saved, complete or not; the reason it did not run or was not saved
-/// otherwise.
-async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Result<(), String> {
+/// otherwise. `server`, the host's own once bound, reads its fresh board.
+async fn act(
+    vault: &Arc<Vault>,
+    ai: &AiHandle,
+    server: Option<&Weak<SyncServer>>,
+    attempt: &AttemptRecord,
+) -> Result<(), String> {
     if attempt.attempt_count > 1 {
         return Err("cut off when the process stopped; not run again".into());
     }
@@ -190,27 +212,59 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         };
         messages.push(text_message(role, line.text));
     }
+    // FIX 6920: the board the action reads, hydrated once, as its
+    // requester's kept slip reads now. It rides as one request-only User
+    // right before the user turn the reply answers, so a Continue's saved
+    // reply and its suffix stay after it; the witness and the log never
+    // hold it.
+    let board = match server.and_then(Weak::upgrade) {
+        Some(server) => action_board(&server, &action, context.agent, &context.user_text).await,
+        None => None,
+    };
+    let answers = messages.len();
     messages.push(text_message(LlmMessageRole::User, context.user_text));
     let admit = |messages| {
         ai.admit_role(vault, CHAT_ROLE, chat_request(&seat, messages))
             .map_err(|refusal| refusal.to_string())
     };
-    let mut admitted = admit(messages.clone())?;
     // An empty saved reply is an honest empty prefix: the reply is generated
     // afresh on the same MESSAGE.
-    if action.action == TurnAction::Continue && !context.saved.is_empty() {
-        let prefill = admitted
-            .ladder
-            .supports(&admitted.request.model, &LlmCapability::AssistantPrefill);
-        messages.push(text_message(LlmMessageRole::Assistant, context.saved));
-        if !prefill {
+    let continues = action.action == TurnAction::Continue && !context.saved.is_empty();
+    let request = |mut messages: Vec<LlmMessage>| {
+        let mut admitted = admit(messages.clone())?;
+        if continues {
+            let prefill = admitted
+                .ladder
+                .supports(&admitted.request.model, &LlmCapability::AssistantPrefill);
             messages.push(text_message(
-                LlmMessageRole::User,
-                CONTINUE_INSTRUCTION.to_owned(),
+                LlmMessageRole::Assistant,
+                context.saved.clone(),
             ));
+            if !prefill {
+                messages.push(text_message(
+                    LlmMessageRole::User,
+                    CONTINUE_INSTRUCTION.to_owned(),
+                ));
+            }
+            admitted = admit(messages)?;
         }
-        admitted = admit(messages)?;
-    }
+        Ok::<_, String>(admitted)
+    };
+    // A call its role does not admit with the board, first or with its
+    // suffix, is admitted exactly as it always was.
+    let admitted = match board {
+        Some(board) => {
+            let mut framed = messages.clone();
+            framed.insert(answers, text_message(LlmMessageRole::User, board));
+            request(framed).or_else(|_| {
+                tracing::info!(
+                    "a turn action's call was not admitted with its context board; it goes without it"
+                );
+                request(messages)
+            })?
+        }
+        None => request(messages)?,
+    };
     // A missing, stale or refused breakpoint leaves the action as it always
     // ran; a kept one is sent first, with this call behind it.
     let (admitted, today, breakpoint) = match reuse {

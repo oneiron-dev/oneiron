@@ -1033,6 +1033,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         Arc::new(move || gate.get()?.admit_background(WriteKind::Dreamer))
     });
     let sync_server = Arc::new(sync_server);
+    // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
+    ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
     // serve installs it, before the connector settler starts (DOOR-079 1a).
     crate::code_consent_host::ServerCodeConsentHost::install(&sync_server);
