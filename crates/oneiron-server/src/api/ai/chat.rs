@@ -549,10 +549,9 @@ fn start_turn(
     // FIX 6794: the board rides after the stable history, right before the
     // newest User (FIX 6676's layout); a role that does not admit it with
     // the board admits the turn as it was.
-    let (board, board_rows) = board
-        .map(|board| ((board.block, board.context), board.rows))
-        .unzip();
-    let (admitted, recalled, context) = recall::admit(&server.ai, &vault, &seat, messages, board);
+    let board_rows = board.as_ref().map(|board| board.rows.clone());
+    let (admitted, recalled, context) =
+        recall::admit(&server.ai, &vault, &seat, auth, messages, board);
     // A board the call goes without is no row it read.
     if recalled {
         sources.add(board_rows.as_deref());

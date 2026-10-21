@@ -8,6 +8,8 @@ pub(crate) use chat_emit::{
     ChatContextCapture, freeze_chat_context, record_action_answer, record_chat_answer,
 };
 mod cursor;
+mod egress;
+pub(crate) use egress::PromptBoard;
 mod explain;
 mod history;
 mod memories;

@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use oneiron::claim::CallerLocality;
 use oneiron::memory::resolve_entity_ref;
-use oneiron::{LlmMessage, LlmMessageRole, ModelLocality, Vault};
+use oneiron::{LlmMessage, LlmMessageRole, Vault};
 
 use super::{ChatTurnRequest, assistant, chat_request, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
-use crate::api::context_board::{ChatBoard, ChatContextCapture};
+use crate::api::context_board::{ChatBoard, ChatContextCapture, PromptBoard};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
@@ -22,9 +22,11 @@ use crate::server::SyncServer;
 /// written, beside every row it served (FIX 6935); `None` when the turn reads
 /// none: a caller or request the turn refuses, no chat seat, a refused
 /// assembly, an empty frame, or rows a world keeps from where the call goes.
-/// The seat's ladder may fall back to a rung off this device, so the board is
-/// read as an off-device read is, and its rows meet the hold of a prompt that
-/// leaves the device.
+/// The board is read as an off-device read is. Its rows meet the hold of a
+/// prompt that goes back to the caller and as far as the chat role's live
+/// route may take the call (FIX 7257): a route that only stays on this device
+/// reads it, and any other, or one that is not read, holds it as a prompt
+/// that leaves the device.
 pub(super) async fn turn_board(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -61,49 +63,32 @@ pub(super) async fn turn_board(
             return None;
         }
     };
-    let prompt_for =
-        crate::device_local::prompt_destination(auth.destination(), ModelLocality::ThirdParty);
-    match crate::device_local::retained_hold(
-        vault,
-        &prompt_for,
-        &board.rows,
-        board.block.as_bytes(),
-    ) {
-        Ok(None) => Some(board),
-        Ok(Some(hold)) => {
-            tracing::info!(
-                reason = hold.reason(),
-                "a chat turn's context board is kept on this device; the turn runs without it"
-            );
-            None
-        }
-        Err(error) => {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a chat turn's context board hold was not read; the turn runs without it"
-            );
-            None
-        }
-    }
+    let seat = server.ai.chat_seat()?;
+    let board = PromptBoard::new(board, auth.destination());
+    board
+        .rides_route(&server.ai, vault, seat)
+        .then_some(board.board)
 }
 
 /// The turn's call admitted through its role, with `board` as one User
 /// message right before the newest User, or last when there is none. A role
-/// that does not admit the call with the board admits it as it was; the flag
-/// says whether the board rides, and the board's context capture (FIX 6921)
-/// comes back only when it does.
+/// that does not admit the call with the board admits it as it was, and so
+/// does a call admitted where the board may not go for `auth`, the caller
+/// (FIX 7257), never sent with it; the flag says whether the board rides,
+/// and the board's context capture (FIX 6921) comes back only when it does.
 pub(super) fn admit(
     ai: &AiHandle,
     vault: &Vault,
     seat: &Seat,
+    auth: &CoreAuth,
     mut messages: Vec<LlmMessage>,
-    board: Option<(String, Option<ChatContextCapture>)>,
+    board: Option<ChatBoard>,
 ) -> (
     Result<RoleCall, RoleRefusal>,
     bool,
     Option<ChatContextCapture>,
 ) {
-    let Some((board, capture)) = board else {
+    let Some(board) = board else {
         return (
             ai.admit_role(vault, CHAT_ROLE, chat_request(seat, messages)),
             false,
@@ -115,9 +100,15 @@ pub(super) fn admit(
         .iter()
         .rposition(|message| message.role == LlmMessageRole::User)
         .unwrap_or(messages.len());
-    messages.insert(at, text_message(LlmMessageRole::User, board));
+    messages.insert(at, text_message(LlmMessageRole::User, board.block.clone()));
+    let board = PromptBoard::new(board, auth.destination());
     match ai.admit_role(vault, CHAT_ROLE, chat_request(seat, messages)) {
-        Ok(admitted) => (Ok(admitted), true, capture),
+        Ok(admitted) if board.rides(vault, &admitted) => (Ok(admitted), true, board.board.context),
+        Ok(_) => (
+            ai.admit_role(vault, CHAT_ROLE, chat_request(seat, baseline)),
+            false,
+            None,
+        ),
         Err(refusal) => {
             tracing::info!(
                 %refusal,
