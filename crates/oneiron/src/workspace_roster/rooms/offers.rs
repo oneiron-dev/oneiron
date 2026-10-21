@@ -319,13 +319,14 @@ fn delete_offers_where(
     Ok(())
 }
 
-/// A caller's idempotency key: 1..=128 printable bytes, as a join's.
+/// A caller's idempotency key: one or more printable bytes, as a join's. It
+/// is hashed into the card's id, so its length bounds no stored key.
 pub(super) fn valid_intent_key(key: &str) -> bool {
-    !key.is_empty() && key.len() <= 128 && key.bytes().all(|byte| byte.is_ascii_graphic())
+    !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
-/// One sentence on one line: trimmed, not empty, no line break, within the
-/// bound a lens text holds.
+/// One sentence on one line: trimmed, not empty, no line break. The card
+/// keeps it whole; its drawn payload shows a preview (`genui::offer_card`).
 fn one_line(field: &str, value: &str) -> MemoryResult<String> {
     let value = value.trim();
     if value.is_empty() || value.contains(['\n', '\r']) {
@@ -333,7 +334,6 @@ fn one_line(field: &str, value: &str) -> MemoryResult<String> {
             "an offer's {field} is one line of text"
         )));
     }
-    crate::lens::LensText::new(value)?;
     Ok(value.to_owned())
 }
 
@@ -562,7 +562,7 @@ impl Memory<'_> {
             .transpose()?;
         if !valid_intent_key(&draft.intent_key) {
             return Err(MemoryError::bad_request(
-                "an offer's intent_key is 1..=128 printable bytes",
+                "an offer's intent_key is one or more printable bytes",
             ));
         }
         self.require_offer_audience(draft.room, draft.branch)?;
