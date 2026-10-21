@@ -23,7 +23,10 @@ use crate::error::GateError;
 
 mod lineage;
 mod person_credential;
+mod queue_check;
 mod request_credential;
+
+pub(crate) use queue_check::QueuedCheckApproval;
 
 // ---------------------------------------------------------------------------
 // Owner authentication — invariant 2

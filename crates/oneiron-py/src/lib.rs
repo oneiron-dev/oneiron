@@ -6079,6 +6079,48 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_merge_queue_init(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.init")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.merge_queue.init", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_check(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.check")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.merge_queue.check", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_diagnose(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.diagnose")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.diagnose", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_check_status(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.check_status")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.check_status", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_export(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.artifacts.export")?;
         let output = py

@@ -6,7 +6,8 @@
 //!
 //! None initializes or configures a queue, runs a check, diagnoses a red
 //! batch, takes a verdict, a test result or a receipt from the caller, or
-//! publishes a tested-tree record; the engine has no host checker for them.
+//! publishes a tested-tree record. The checker doors (`checker`, FIX 6868)
+//! request those checks on the frozen plan; the server's drain runs them.
 //! Landing keeps every engine gate: unanimous multi-critic admission, the
 //! sealed queue permit, exact bytes and base, and durable mutation receipts.
 //! The owner proof is not a critic approval and never stands in for one.
@@ -14,10 +15,13 @@
 //! Authority is the owner's live proof alone (`Memory::merge_queue_owner`),
 //! checked before any id resolves, so a refusal is no existence oracle.
 
+mod checker;
+mod checker_types;
 mod observation;
 mod operations;
 mod types;
 
+pub use checker_types::*;
 pub use types::*;
 
 use std::path::Path;
