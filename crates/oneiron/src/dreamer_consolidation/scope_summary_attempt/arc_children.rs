@@ -459,10 +459,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 Called::Reply(reply, step) => (reply, step),
                 Called::Exit(exit) => return Ok(ChildStep::Exit(exit)),
             };
-            let reviewing = shape.kind == KIND_REVIEW;
-            if reviewing {
+            // A review step is kept at once; a compose step only when its
+            // reply opened nothing.
+            let compose_step = if shape.kind == KIND_REVIEW {
                 row.reviewed.push(step);
-            }
+                None
+            } else {
+                Some(step)
+            };
             let mut changed = false;
             if !reply.open.is_empty() {
                 match self.open_for(run, ctx, row, &reply.open, room)? {
@@ -475,7 +479,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     row.composed.clear();
                     row.parts = 0;
                 }
-            } else if !reviewing {
+            } else if let Some(step) = compose_step {
                 row.composed.push(step);
                 if row.mode == ChildMode::Single {
                     row.parts = 1;
