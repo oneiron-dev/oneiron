@@ -9,17 +9,29 @@
 //! with its own runtime and returns at once: the Coach's sequential round
 //! never waits on a GPU. The durable `Running` state and its dispatched flag
 //! record the one dispatch, and a lost waiter never sends the run again.
-//! No trainer adapter or seat evaluator ships yet; both register here.
+//!
+//! The one trainer adapter is the question-head worker (FIX 7263,
+//! `trainer`): a local process on this host, on a connector
+//! `[models.training.connectors]` names. It trains a question run on its one
+//! recipe and nothing else; a role run, another recipe or an unnamed
+//! connector holds with `training.no_connector`, as with no connector at
+//! all. No seat evaluator ships yet, so a returned run holds with
+//! `training.no_evaluator`: Returned is where a trained run stops here.
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::llm::run_admission::{BudgetLine, PaidConnector, RunAdmission, RunDeclaration};
 use oneiron::training_pack::{
-    ComputePin, HeldOutResult, TrainingConnector, TrainingEvalInput, TrainingRun, TrainingState,
+    HeldOutResult, TrainingConnector, TrainingEvalInput, TrainingRun, TrainingState,
 };
 use oneiron::{EntityId, Error, Vault};
 
 use crate::server::SyncServer;
+
+mod trainer;
+mod wire;
+
+use trainer::QuestionHeadTrainer;
 
 /// An authorized run waits: no trainer adapter serves its connector here.
 const HOLD_NO_CONNECTOR: &str = "training.no_connector";
@@ -73,21 +85,37 @@ pub(crate) fn training_declaration(run: &TrainingRun) -> oneiron::Result<RunDecl
 }
 
 /// The paid connector named `name` that a trainer on this host dispatches
-/// through: its route, payer, credential binding and quote. None is
-/// configured until a trainer adapter registers here (see
-/// `training_connector`); there is no default connector.
-pub(crate) fn trainer_binding(_server: &SyncServer, _name: &str) -> Option<PaidConnector> {
-    None
+/// through: its route, payer, credential binding and quote, as
+/// `[models.training.connectors.<name>]` configures it. There is no default
+/// connector.
+pub(crate) fn trainer_binding(server: &SyncServer, name: &str) -> Option<PaidConnector> {
+    server
+        .ai
+        .model_runtime()
+        .training()
+        .connector(name)
+        .map(|connector| connector.binding.clone())
 }
 
-/// The trainer for the connector `compute` pinned. No trainer adapter ships
-/// yet: one registers here, keyed by the connector name it serves, and until
-/// then every authorized run holds with `training.no_connector`.
+/// The trainer for `run`, on the connector its compute pinned: the
+/// question-head worker, for a question run on its recipe. Anything else
+/// gets none before any dispatch, so a role run is never sent to it.
 fn training_connector(
-    _server: &SyncServer,
-    _compute: &ComputePin,
+    server: &SyncServer,
+    run: &TrainingRun,
 ) -> Option<Box<dyn TrainingConnector + Send + Sync>> {
-    None
+    if !QuestionHeadTrainer::serves(&run.plan) {
+        return None;
+    }
+    let connector = server
+        .ai
+        .model_runtime()
+        .training()
+        .connector(&run.compute.connector)?;
+    Some(Box::new(QuestionHeadTrainer::new(
+        Arc::clone(server.vault()),
+        connector.clone(),
+    )))
 }
 
 /// The evaluator for a returned run's seat. No seat evaluator or
@@ -103,7 +131,7 @@ fn train(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<()
     let vault = server.vault();
     let (Some(binding), Some(connector)) = (
         trainer_binding(server, &run.compute.connector),
-        training_connector(server, &run.compute),
+        training_connector(server, run),
     ) else {
         let detail = format!("{}: no trainer adapter on this host", run.compute.connector);
         vault.hold_training_run(&run.id, HOLD_NO_CONNECTOR, &detail, now)?;

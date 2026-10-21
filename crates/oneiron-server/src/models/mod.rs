@@ -72,6 +72,7 @@ mod status;
 #[cfg(test)]
 mod tests;
 mod token_ratio;
+mod training;
 mod voice;
 mod voxcpm2_speech;
 mod walk;
@@ -150,6 +151,8 @@ pub struct ModelRuntime {
     rests: Arc<OfferCooldowns>,
     /// Counts each catalog model's tokenizer on the fixed passage (OF-577).
     token_ratios: Option<Arc<TokenRatios>>,
+    /// The trainer connectors `[models.training]` names (FIX 7263).
+    training: crate::config::models::TrainingSettings,
 }
 
 impl ModelRuntime {
@@ -168,6 +171,7 @@ impl ModelRuntime {
             media: MediaRuntime::empty(),
             rests: OfferCooldowns::unkept(),
             token_ratios: None,
+            training: Default::default(),
         }
     }
 
@@ -497,6 +501,7 @@ impl ModelRuntime {
             media,
             rests,
             token_ratios,
+            training: config.training.clone(),
         }
     }
 

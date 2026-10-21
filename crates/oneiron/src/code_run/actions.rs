@@ -251,12 +251,15 @@ impl ActionRegistry {
     /// no authority the row's direct call lacks. Board, browser and
     /// definition-only rows need a run or a socket of their own, and a row
     /// whose name is no action id is one no lens can name; none is offered.
+    /// A row that is also a memory or live run row is offered once, as the
+    /// run row registered below.
     pub fn register_sdk_verbs(&mut self) -> Result<()> {
-        for verb in AgentVerb::ALL
-            .iter()
-            .copied()
-            .filter(|verb| verb.is_facade() && !super::live_run::is_live_run_verb(verb.as_str()))
-        {
+        for verb in AgentVerb::ALL.iter().copied().filter(|verb| {
+            verb.is_facade()
+                && !super::live_run::is_live_run_verb(verb.as_str())
+                && !RunVerb::from_name(verb.as_str())
+                    .is_some_and(|run| super::run_verb_call::MEMORY_RUN_VERBS.contains(&run))
+        }) {
             let Ok(id) = SelfUiActionId::new(verb.as_str()) else {
                 continue;
             };
