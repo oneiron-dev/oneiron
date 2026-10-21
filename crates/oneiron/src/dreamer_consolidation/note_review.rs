@@ -228,7 +228,7 @@ impl ConsolidationExecutor<'_> {
             call.backend,
             self.guard,
             request,
-            &check_extraction_reply,
+            &check_note_review_reply,
         )
         .await
         {
@@ -245,7 +245,7 @@ impl ConsolidationExecutor<'_> {
                         ctx.vault,
                         run.attempt_id,
                         hash,
-                        "note review needs the extraction model",
+                        NOTE_FALLBACK,
                         &response,
                     )?));
                 }
@@ -373,6 +373,20 @@ impl ConsolidationExecutor<'_> {
         })?;
         Ok(None)
     }
+}
+
+/// Why a review parks on a deterministic fallback.
+const NOTE_FALLBACK: &str = "note review needs the extraction model";
+
+/// The review step's check (FIX 7431): a deterministic fallback whose park
+/// would resume as a Retry is refused inside the step, never memoized, so
+/// the Retry asks the model again; any other reply answers to the extraction
+/// contract, as before.
+fn check_note_review_reply(response: &crate::llm::LlmResponse) -> std::result::Result<(), String> {
+    if super::step_charge::retry_fallback(response) {
+        return Err(NOTE_FALLBACK.to_owned());
+    }
+    check_extraction_reply(response)
 }
 
 /// The NOTEs on `page` the review reads: live and readable by the Dreamer,

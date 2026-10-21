@@ -124,6 +124,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/cleanup/accept", post(accept_cleanup))
         .route("/cleanup/reject", post(reject_cleanup))
         .route("/cleanup/restore", post(restore_archived))
+        .route("/cleanup/revert-run", post(revert_cleanup_run))
         .route("/notes/tombstones", get(note_tombstone_review))
         .route("/notes/tombstones/accept", post(accept_note_tombstone))
         .route("/notes/tombstones/decline", post(decline_note_tombstone))
@@ -868,6 +869,25 @@ async fn restore_archived(
     })
     .await?;
     Ok(Json(review))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevertCleanupRun {
+    /// A run's `attempt` from the `runs` list of `GET /v1/owner/cleanup`.
+    attempt: String,
+}
+
+async fn revert_cleanup_run(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<RevertCleanupRun>, JsonRejection>,
+) -> OwnerReply<cleanup::RunReverted> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reverted =
+        blocking(move || cleanup::revert_run(server.vault(), &owner, &request.attempt)).await?;
+    Ok(Json(reverted))
 }
 
 #[derive(Debug, Deserialize)]
