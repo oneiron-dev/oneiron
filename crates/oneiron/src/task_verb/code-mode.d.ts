@@ -314,7 +314,11 @@ declare namespace Sdk {
   type WorldPrivacyWaitStatus = { state: "pending" } | { state: "applied"; receipt_id: string } | { state: "declined" };
   type WorldPrivacyWaitResult = { request_id: string; world: string; status: WorldPrivacyWaitStatus };
   type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult } | { WorldPrivacy: WorldPrivacyWaitResult };
-  type TaskWorkflowHandoff = "program" | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } };
+  type StrictDenial = "rule_abstained" | "no_rule" | "image";
+  type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial };
+  type ClockScope = "wait" | "navigation" | "decision";
+  type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text" } | { cause: "no_progress" } | { cause: "browser"; code: string };
+  type TaskWorkflowHandoff = { program: { stop_cause: BatchStopCause } } | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } };
   type TaskWorkflowOutcome = "pending" | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } };
   type TaskWorkflowStatus = { attempt_ref: string; requested: EntityId; resolved?: EntityId | null; brief: BriefStamp; outcome: TaskWorkflowOutcome };
   type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; workflow?: TaskWorkflowStatus | null; observed: string };
@@ -3121,10 +3125,6 @@ declare namespace Sdk {
   type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
-  type StrictDenial = "rule_abstained" | "no_rule" | "image";
-  type AskUpReason = { why: "asked"; ladder?: string | null } | { why: "looks" } | { why: "no_answer" } | { why: "wrong_answer" } | { why: "strict"; denied: StrictDenial };
-  type ClockScope = "wait" | "navigation" | "decision";
-  type BatchStopCause = { cause: "postcondition_unmet" } | { cause: "locator_missing" } | { cause: "incomplete_observation" } | { cause: "decider_asked_up"; reason: AskUpReason } | { cause: "clock"; scope: ClockScope } | { cause: "press_needed" } | { cause: "taken_over" } | { cause: "field_text" } | { cause: "no_progress" } | { cause: "browser"; code: string };
   type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput };
   type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: Observation2 | null; error?: string | null };
   type StepRebound = { step: number; rebound: Rebound };

@@ -74909,6 +74909,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/limit_ask/cgroup.rs",
+     "purpose": "The memory cgroup this process runs in (FIX 8067), and what its limits leave (FIX 8066)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -75303,7 +75313,7 @@
      "purpose": "Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay…"
     },
     "limit_ask": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -75403,7 +75413,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 58,
+   "source_files": 59,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -83243,7 +83253,7 @@
      "path": "src/admission.rs",
      "purpose": "Admission for work a remote caller can start",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -83253,6 +83263,19 @@
      "path": "src/admission/tests.rs",
      "purpose": "The queue law every permit site shares (ARCH-0044 C5, SEC rule 5): past the bound, work waits and is served…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BrowserPlannerRuns"
+     ],
+     "path": "src/ai_host/browser_planner.rs",
+     "purpose": "A code-mode run's browser planner (CUA E5, DESIGN-2 §4): the role each step's model call runs on while the…",
+     "surface": {
+      "crate-vis": 7,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -83626,7 +83649,7 @@
      "surface": {
       "crate-vis": 36,
       "fn": 22,
-      "mod": 2,
+      "mod": 3,
       "re-export": 1,
       "struct": 2
      }
@@ -90196,6 +90219,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/config/models/browser_planner.rs",
+     "purpose": "`[models.roles.browser_planner]`: the mid planner a browser subgoal's next code-mode step runs on (CUA E5…",
+     "surface": {
+      "const": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CompactionSettings"
      ],
@@ -90297,7 +90331,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 7
      }
     },
@@ -91984,7 +92018,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 23
      }
     },
     {
@@ -93087,7 +93121,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7,
       "struct": 1
      }
@@ -95324,6 +95358,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/resident_pump/browser_workflow.rs",
+     "purpose": "A TASK bound to a library program (CUA E4, FIX 7603; DESIGN-2 §2): its try runs the program its first lease…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/resident_pump/craft.rs",
      "purpose": "A resident's own craft in its run's task (OF-490): every lesson and failure mode it keeps, learned or…",
      "surface": {
@@ -95478,13 +95522,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/slide_render.rs",
      "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 15
      }
     },
     {
@@ -96293,7 +96337,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 71,
+     "files": 72,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96377,7 +96421,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -96678,7 +96722,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -96694,7 +96738,7 @@
     "slide_render": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…"
     },
@@ -96750,7 +96794,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1053,
+   "source_files": 1056,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -1561,6 +1561,49 @@ class TaskAskStatusSettled(TypedDict):
 class TaskAskStatusWorldPrivacy(TypedDict):
     WorldPrivacy: WorldPrivacyWaitResult
 TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled | TaskAskStatusWorldPrivacy
+StrictDenial = Literal["rule_abstained", "no_rule", "image"]
+class AskUpReasonAsked(TypedDict):
+    why: Literal["asked"]
+    ladder: NotRequired[str | None]
+class AskUpReasonLooks(TypedDict):
+    why: Literal["looks"]
+class AskUpReasonNoAnswer(TypedDict):
+    why: Literal["no_answer"]
+class AskUpReasonWrongAnswer(TypedDict):
+    why: Literal["wrong_answer"]
+class AskUpReasonStrict(TypedDict):
+    why: Literal["strict"]
+    denied: StrictDenial
+AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict
+ClockScope = Literal["wait", "navigation", "decision"]
+class BatchStopCausePostconditionUnmet(TypedDict):
+    cause: Literal["postcondition_unmet"]
+class BatchStopCauseLocatorMissing(TypedDict):
+    cause: Literal["locator_missing"]
+class BatchStopCauseIncompleteObservation(TypedDict):
+    cause: Literal["incomplete_observation"]
+class BatchStopCauseDeciderAskedUp(TypedDict):
+    cause: Literal["decider_asked_up"]
+    reason: AskUpReason
+class BatchStopCauseClock(TypedDict):
+    cause: Literal["clock"]
+    scope: ClockScope
+class BatchStopCausePressNeeded(TypedDict):
+    cause: Literal["press_needed"]
+class BatchStopCauseTakenOver(TypedDict):
+    cause: Literal["taken_over"]
+class BatchStopCauseFieldText(TypedDict):
+    cause: Literal["field_text"]
+class BatchStopCauseNoProgress(TypedDict):
+    cause: Literal["no_progress"]
+class BatchStopCauseBrowser(TypedDict):
+    cause: Literal["browser"]
+    code: str
+BatchStopCause = BatchStopCausePostconditionUnmet | BatchStopCauseLocatorMissing | BatchStopCauseIncompleteObservation | BatchStopCauseDeciderAskedUp | BatchStopCauseClock | BatchStopCausePressNeeded | BatchStopCauseTakenOver | BatchStopCauseFieldText | BatchStopCauseNoProgress | BatchStopCauseBrowser
+class TaskWorkflowHandoffProgramBody(TypedDict):
+    stop_cause: BatchStopCause
+class TaskWorkflowHandoffProgram(TypedDict):
+    program: TaskWorkflowHandoffProgramBody
 class TaskWorkflowHandoffRetiredBody(TypedDict):
     id: EntityId
     reason: NotRequired[str | None]
@@ -1574,7 +1617,7 @@ class TaskWorkflowHandoffUnreadableBody(TypedDict):
     id: EntityId
 class TaskWorkflowHandoffUnreadable(TypedDict):
     unreadable: TaskWorkflowHandoffUnreadableBody
-TaskWorkflowHandoff = Literal["program", "goal_unmet"] | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
+TaskWorkflowHandoff = Literal["goal_unmet"] | TaskWorkflowHandoffProgram | TaskWorkflowHandoffRetired | TaskWorkflowHandoffMissing | TaskWorkflowHandoffUnreadable
 class TaskWorkflowOutcomeDoneBody(TypedDict):
     receipt_ref: EntityId
 class TaskWorkflowOutcomeDone(TypedDict):
@@ -19649,45 +19692,6 @@ class BatchInput(TypedDict):
     until_ms: NotRequired[int | None]
     no_model: NotRequired[bool]
 SubgoalStatus = Literal["done", "NEEDS_AGENT", "NEEDS_YOU"]
-StrictDenial = Literal["rule_abstained", "no_rule", "image"]
-class AskUpReasonAsked(TypedDict):
-    why: Literal["asked"]
-    ladder: NotRequired[str | None]
-class AskUpReasonLooks(TypedDict):
-    why: Literal["looks"]
-class AskUpReasonNoAnswer(TypedDict):
-    why: Literal["no_answer"]
-class AskUpReasonWrongAnswer(TypedDict):
-    why: Literal["wrong_answer"]
-class AskUpReasonStrict(TypedDict):
-    why: Literal["strict"]
-    denied: StrictDenial
-AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict
-ClockScope = Literal["wait", "navigation", "decision"]
-class BatchStopCausePostconditionUnmet(TypedDict):
-    cause: Literal["postcondition_unmet"]
-class BatchStopCauseLocatorMissing(TypedDict):
-    cause: Literal["locator_missing"]
-class BatchStopCauseIncompleteObservation(TypedDict):
-    cause: Literal["incomplete_observation"]
-class BatchStopCauseDeciderAskedUp(TypedDict):
-    cause: Literal["decider_asked_up"]
-    reason: AskUpReason
-class BatchStopCauseClock(TypedDict):
-    cause: Literal["clock"]
-    scope: ClockScope
-class BatchStopCausePressNeeded(TypedDict):
-    cause: Literal["press_needed"]
-class BatchStopCauseTakenOver(TypedDict):
-    cause: Literal["taken_over"]
-class BatchStopCauseFieldText(TypedDict):
-    cause: Literal["field_text"]
-class BatchStopCauseNoProgress(TypedDict):
-    cause: Literal["no_progress"]
-class BatchStopCauseBrowser(TypedDict):
-    cause: Literal["browser"]
-    code: str
-BatchStopCause = BatchStopCausePostconditionUnmet | BatchStopCauseLocatorMissing | BatchStopCauseIncompleteObservation | BatchStopCauseDeciderAskedUp | BatchStopCauseClock | BatchStopCausePressNeeded | BatchStopCauseTakenOver | BatchStopCauseFieldText | BatchStopCauseNoProgress | BatchStopCauseBrowser
 class CheckReceipt(TypedDict):
     expect: ExpectInput
     observed: ExpectOutput

@@ -4260,11 +4260,93 @@ pub struct AttemptView {
     pub backoff_until: Option<u64>,
 }
 
+/// `oneiron_browser::stop::StrictDenial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StrictDenial {
+    #[serde(rename = "rule_abstained")]
+    RuleAbstained,
+    #[serde(rename = "no_rule")]
+    NoRule,
+    #[serde(rename = "image")]
+    Image,
+}
+
+/// `oneiron_browser::stop::AskUpReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "why")]
+pub enum AskUpReason {
+    #[serde(rename = "asked")]
+    Asked {
+        #[serde(rename = "ladder", default, skip_serializing_if = "Option::is_none")]
+        ladder: Option<String>,
+    },
+    #[serde(rename = "looks")]
+    Looks,
+    #[serde(rename = "no_answer")]
+    NoAnswer,
+    #[serde(rename = "wrong_answer")]
+    WrongAnswer,
+    #[serde(rename = "strict")]
+    Strict {
+        #[serde(rename = "denied")]
+        denied: StrictDenial,
+    },
+}
+
+/// `oneiron_browser::stop::ClockScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ClockScope {
+    #[serde(rename = "wait")]
+    Wait,
+    #[serde(rename = "navigation")]
+    Navigation,
+    #[serde(rename = "decision")]
+    Decision,
+}
+
+/// `oneiron_browser::stop::BatchStopCause`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "cause")]
+pub enum BatchStopCause {
+    #[serde(rename = "postcondition_unmet")]
+    PostconditionUnmet,
+    #[serde(rename = "locator_missing")]
+    LocatorMissing,
+    #[serde(rename = "incomplete_observation")]
+    IncompleteObservation,
+    #[serde(rename = "decider_asked_up")]
+    DeciderAskedUp {
+        #[serde(rename = "reason")]
+        reason: AskUpReason,
+    },
+    #[serde(rename = "clock")]
+    Clock {
+        #[serde(rename = "scope")]
+        scope: ClockScope,
+    },
+    #[serde(rename = "press_needed")]
+    PressNeeded,
+    #[serde(rename = "taken_over")]
+    TakenOver,
+    #[serde(rename = "field_text")]
+    FieldText,
+    #[serde(rename = "no_progress")]
+    NoProgress,
+    #[serde(rename = "browser")]
+    Browser {
+        #[serde(rename = "code")]
+        code: String,
+    },
+}
+
 /// `oneiron::task_verb::highway_types::TaskWorkflowHandoff`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum TaskWorkflowHandoff {
     #[serde(rename = "program")]
-    Program,
+    Program {
+        #[serde(rename = "stop_cause")]
+        stop_cause: BatchStopCause,
+    },
     #[serde(rename = "goal_unmet")]
     GoalUnmet,
     #[serde(rename = "retired")]
@@ -60623,85 +60705,6 @@ pub enum SubgoalStatus {
     NeedsAgent,
     #[serde(rename = "NEEDS_YOU")]
     NeedsYou,
-}
-
-/// `oneiron_browser::stop::StrictDenial`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum StrictDenial {
-    #[serde(rename = "rule_abstained")]
-    RuleAbstained,
-    #[serde(rename = "no_rule")]
-    NoRule,
-    #[serde(rename = "image")]
-    Image,
-}
-
-/// `oneiron_browser::stop::AskUpReason`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "why")]
-pub enum AskUpReason {
-    #[serde(rename = "asked")]
-    Asked {
-        #[serde(rename = "ladder", default, skip_serializing_if = "Option::is_none")]
-        ladder: Option<String>,
-    },
-    #[serde(rename = "looks")]
-    Looks,
-    #[serde(rename = "no_answer")]
-    NoAnswer,
-    #[serde(rename = "wrong_answer")]
-    WrongAnswer,
-    #[serde(rename = "strict")]
-    Strict {
-        #[serde(rename = "denied")]
-        denied: StrictDenial,
-    },
-}
-
-/// `oneiron_browser::stop::ClockScope`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ClockScope {
-    #[serde(rename = "wait")]
-    Wait,
-    #[serde(rename = "navigation")]
-    Navigation,
-    #[serde(rename = "decision")]
-    Decision,
-}
-
-/// `oneiron_browser::stop::BatchStopCause`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "cause")]
-pub enum BatchStopCause {
-    #[serde(rename = "postcondition_unmet")]
-    PostconditionUnmet,
-    #[serde(rename = "locator_missing")]
-    LocatorMissing,
-    #[serde(rename = "incomplete_observation")]
-    IncompleteObservation,
-    #[serde(rename = "decider_asked_up")]
-    DeciderAskedUp {
-        #[serde(rename = "reason")]
-        reason: AskUpReason,
-    },
-    #[serde(rename = "clock")]
-    Clock {
-        #[serde(rename = "scope")]
-        scope: ClockScope,
-    },
-    #[serde(rename = "press_needed")]
-    PressNeeded,
-    #[serde(rename = "taken_over")]
-    TakenOver,
-    #[serde(rename = "field_text")]
-    FieldText,
-    #[serde(rename = "no_progress")]
-    NoProgress,
-    #[serde(rename = "browser")]
-    Browser {
-        #[serde(rename = "code")]
-        code: String,
-    },
 }
 
 /// `oneiron_browser::stop::CheckReceipt`.

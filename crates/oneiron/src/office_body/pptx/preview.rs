@@ -16,7 +16,14 @@
 //! an agent that says `why` once a grant covers its keys, judged on every
 //! read, a kept drawing's included (OF-067, FIX 2941). Every other reader is
 //! refused, any ask its read filed kept.
-use std::cell::RefCell;
+//!
+//! The memory a preview allocates is admitted to the host's renderer before
+//! it is (FIX 7653, [`SlideRenderer::admit`]): the package and the copy it
+//! keeps, each picture, the export, the kept drawings it copies and each
+//! slide's base64. A size known only once read is admitted as soon as it is.
+//! Every named slide is still drawn; only a real floor or the render's
+//! deadline refuses, typed by the host.
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -169,7 +176,7 @@ impl Memory<'_> {
             return Err(lifted_refusal());
         }
         let vault = self.vault();
-        let projection = vault.deck_projection(&artifact, fork.as_ref())?;
+        let projection = vault.deck_projection(&artifact, fork.as_ref(), renderer)?;
         let key = projection.key.hash();
         // Judged on this read, over the keys of the snapshot drawn, before a
         // kept drawing is read or one drawn.
@@ -194,9 +201,20 @@ impl Memory<'_> {
             renderer.name().to_owned(),
             view,
         );
+        // The kept drawings this call takes are admitted before they are
+        // copied, outside the cache's lock (FIX 7653); one the cache changed
+        // meanwhile past that room is drawn again instead.
+        let room = DRAWN
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .held_bytes(&slot, &input.slides);
+        if room > 0 {
+            renderer.admit(len(room))?;
+        }
         let held = DRAWN.lock().unwrap_or_else(PoisonError::into_inner).held(
             &slot,
             &input.slides,
+            room,
             Instant::now(),
         );
         // The rows the answer is drawn from (FIX 5455): the package the deck
@@ -209,7 +227,7 @@ impl Memory<'_> {
                 (count, images, None)
             }
             None => {
-                let (export, assets) = vault.project_preview(&artifact, &projection)?;
+                let (export, assets) = vault.project_preview(&artifact, &projection, renderer)?;
                 let count = Package::open(&export.bytes, vault.docedit_package_limits()?)
                     .ok()
                     .and_then(|package| DeckView::read(&package).ok())
@@ -232,34 +250,32 @@ impl Memory<'_> {
             .copied()
             .filter(|slide| !images.contains_key(slide))
             .collect();
+        // The slides drawn now, and the rows they were drawn from, for the
+        // cache.
+        let mut fresh = None;
         if !missing.is_empty() {
             let (export, assets) = match export {
                 Some(export) => export,
-                None => vault.project_preview(&artifact, &projection)?,
+                None => vault.project_preview(&artifact, &projection, renderer)?,
             };
             let drawn = renderer.render(&export.bytes, &missing)?;
             if drawn.len() != missing.len() {
                 return Err(failed("the renderer drew another number of slides"));
             }
-            let drawn: Vec<(u64, Vec<u8>)> = missing.into_iter().zip(drawn).collect();
             let kept = [projection.rows.as_slice(), assets.as_slice()].concat();
-            DRAWN.lock().unwrap_or_else(PoisonError::into_inner).keep(
-                slot,
-                count,
-                &drawn,
-                kept,
-                Instant::now(),
-            );
+            fresh = Some((missing.clone(), kept));
             listed.extend(assets);
-            images.extend(drawn);
+            images.extend(missing.into_iter().zip(drawn));
         }
         let slides = input
             .slides
             .iter()
             .map(|&slide| {
                 let image = images
-                    .remove(&slide)
+                    .get(&slide)
                     .ok_or_else(|| failed("a named slide was not drawn"))?;
+                // Its base64 is admitted before it is made (FIX 7653).
+                renderer.admit(base64_bytes(image.len()))?;
                 Ok(DeckPreviewSlide {
                     slide,
                     media_type: if image.starts_with(&[0xFF, 0xD8, 0xFF]) {
@@ -268,11 +284,28 @@ impl Memory<'_> {
                         "image/png"
                     }
                     .to_owned(),
-                    image_hash: review_image_key(&image),
-                    content_base64: base64::engine::general_purpose::STANDARD.encode(&image),
+                    image_hash: review_image_key(image),
+                    content_base64: base64::engine::general_purpose::STANDARD.encode(image),
                 })
             })
-            .collect::<MemoryResult<Vec<_>>>()?;
+            .collect::<MemoryResult<Vec<_>>>();
+        // The slides drawn now are kept for a later call, moved into the
+        // cache once the answer is made rather than copied, so keeping them
+        // allocates nothing past what was admitted (FIX 7653).
+        if let Some((drawn, kept)) = fresh {
+            let drawn = drawn
+                .into_iter()
+                .filter_map(|slide| Some((slide, images.remove(&slide)?)))
+                .collect();
+            DRAWN.lock().unwrap_or_else(PoisonError::into_inner).keep(
+                slot,
+                count,
+                drawn,
+                kept,
+                Instant::now(),
+            );
+        }
+        let slides = slides?;
         self.produced_from(listed);
         Ok(DeckPreview {
             frontier: projection.frontier,
@@ -300,12 +333,20 @@ struct Projection {
     /// The keys the deck's lifted texts hold, read in the snapshot the deck
     /// was (FIX 2941).
     lifted: LiftedSources,
+    /// The bytes of the package `package` was read from.
+    source_bytes: u64,
 }
 
 impl Vault {
     /// The deck at its head, or with `fork` that open fork's actual merged
     /// candidate over the head, as [`Vault::pptx_body_fork_review`] reads it.
-    fn deck_projection(&self, artifact: &EntityId, fork: Option<&EntityId>) -> Result<Projection> {
+    /// The package's bytes are admitted to `renderer` (FIX 7653).
+    fn deck_projection(
+        &self,
+        artifact: &EntityId,
+        fork: Option<&EntityId>,
+        renderer: &dyn SlideRenderer,
+    ) -> Result<Projection> {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
@@ -325,6 +366,11 @@ impl Vault {
             (head, body, candidate, lifted)
         };
         let (bytes, rows) = self.deck_source_listing(artifact, &source, body.retained)?;
+        // The package read whole, and the copy its retained form keeps, are
+        // admitted before that copy is made: the read's size is known only
+        // once it is read.
+        let source_bytes = len(bytes.len());
+        renderer.admit(source_bytes.saturating_mul(2))?;
         let package = Package::open(&bytes, self.docedit_package_limits()?)
             .map_err(|_| invalid("the PPTX package could not be read"))?;
         let deck = candidate.unwrap_or(body.deck);
@@ -342,17 +388,20 @@ impl Vault {
             key,
             rows,
             lifted,
+            source_bytes,
         })
     }
 
     /// The export `projection` keys, its live-born pictures' assets read
-    /// now, beside the rows each asset it resolved is (FIX 5455).
+    /// now, beside the rows each asset it resolved is (FIX 5455). Each
+    /// picture's bytes and the export are admitted to `renderer` (FIX 7653).
     fn project_preview(
         &self,
         artifact: &EntityId,
         projection: &Projection,
+        renderer: &dyn SlideRenderer,
     ) -> Result<(ExportOutcome, Vec<EntityId>)> {
-        let (assets, rows) = {
+        let (assets, rows, pictures) = {
             let txn = self.store.env.read_txn()?;
             let listing = ListingAssets {
                 held: VaultAssets {
@@ -360,10 +409,23 @@ impl Vault {
                     txn: &txn,
                 },
                 rows: RefCell::new(Vec::new()),
+                renderer,
+                admitted: Cell::new(0),
+                refused: RefCell::new(None),
             };
             let assets = HeldAssets::resolve(&listing, &[&projection.deck]);
-            (assets, listing.rows.into_inner())
+            // A picture its memory was refused for ends the projection: it
+            // is never projected without it.
+            if let Some(refused) = listing.refused.into_inner() {
+                return Err(refused);
+            }
+            (assets, listing.rows.into_inner(), listing.admitted.get())
         };
+        // The export writes the package's parts and its pictures again: that
+        // much is admitted before it is made, and what it came to past that
+        // once it is.
+        let estimate = projection.source_bytes.saturating_add(pictures);
+        renderer.admit(estimate)?;
         let export = project(
             &projection.deck,
             &projection.package,
@@ -372,19 +434,32 @@ impl Vault {
             &assets,
         )
         .map_err(live)?;
+        let made = len(export.bytes.len());
+        if made > estimate {
+            renderer.admit(made - estimate)?;
+        }
         Ok((export, rows))
     }
 }
 
 /// [`VaultAssets`], listing the rows of each picture asset it resolves: the
 /// image artifact, the version CLAIM and the ASSET, read in its transaction.
-struct ListingAssets<'v, 't> {
+/// Each picture's bytes are admitted to the renderer as soon as they are
+/// read (FIX 7653); the first refusal is kept, and nothing resolves after it.
+struct ListingAssets<'v, 't, 'r> {
     held: VaultAssets<'v, 't>,
     rows: RefCell<Vec<EntityId>>,
+    renderer: &'r dyn SlideRenderer,
+    /// The picture bytes admitted so far.
+    admitted: Cell<u64>,
+    refused: RefCell<Option<Error>>,
 }
 
-impl Assets for ListingAssets<'_, '_> {
+impl Assets for ListingAssets<'_, '_, '_> {
     fn resolve(&self, asset: &AssetRef) -> Option<(AssetRecord, Vec<u8>)> {
+        if self.refused.borrow().is_some() {
+            return None;
+        }
         let resolved = self.held.resolve(asset)?;
         let artifact = EntityId::from_hex(&resolved.0.artifact).ok()?;
         let version = self
@@ -394,6 +469,12 @@ impl Assets for ListingAssets<'_, '_> {
             .ok()??;
         let asset_row =
             crate::blob_artifact::blob_artifact_asset_entity_id(&version.content_hash).ok()?;
+        let bytes = len(resolved.1.len());
+        if let Err(refused) = self.renderer.admit(bytes) {
+            *self.refused.borrow_mut() = Some(refused);
+            return None;
+        }
+        self.admitted.set(self.admitted.get().saturating_add(bytes));
         self.rows
             .borrow_mut()
             .extend([artifact, version.claim_id, asset_row]);
@@ -425,13 +506,28 @@ impl Entry {
 }
 
 impl Drawn {
-    /// The export's slide count, those of `asked` it holds drawn and the
-    /// rows they were drawn from, when it holds the export; entries idle past
-    /// [`DRAWN_IDLE`] go first.
+    /// The bytes of the drawings of `asked` it holds for `slot`, counted
+    /// without copying them, so the copies [`Self::held`] makes are admitted
+    /// first (FIX 7653).
+    fn held_bytes(&self, slot: &Slot, asked: &[u64]) -> usize {
+        self.entries.get(slot).map_or(0, |entry| {
+            asked
+                .iter()
+                .filter_map(|slide| entry.images.get(slide))
+                .map(Vec::len)
+                .fold(0, usize::saturating_add)
+        })
+    }
+
+    /// The export's slide count, those of `asked` it holds drawn that fit in
+    /// `room` bytes, and the rows they were drawn from, when it holds the
+    /// export; entries idle past [`DRAWN_IDLE`] go first. A drawing past
+    /// `room` is left out, to be drawn again.
     fn held(
         &mut self,
         slot: &Slot,
         asked: &[u64],
+        room: usize,
         now: Instant,
     ) -> Option<(u64, BTreeMap<u64, Vec<u8>>, Vec<EntityId>)> {
         let mut freed = 0;
@@ -445,20 +541,26 @@ impl Drawn {
         self.bytes = self.bytes.saturating_sub(freed);
         let entry = self.entries.get_mut(slot)?;
         entry.read_at = now;
+        let mut left = room;
         let images = asked
             .iter()
-            .filter_map(|&slide| Some((slide, entry.images.get(&slide)?.clone())))
+            .filter_map(|&slide| {
+                let image = entry.images.get(&slide)?;
+                left = left.checked_sub(image.len())?;
+                Some((slide, image.clone()))
+            })
             .collect();
         Some((entry.slides, images, entry.rows.iter().copied().collect()))
     }
 
-    /// Keep `drawn` for the export of `slides` slides, beside the rows it was
-    /// drawn from; past [`DRAWN_BYTES`], the least recently read exports go.
+    /// Keep `drawn`, moved in, for the export of `slides` slides, beside the
+    /// rows it was drawn from; past [`DRAWN_BYTES`], the least recently read
+    /// exports go.
     fn keep(
         &mut self,
         slot: Slot,
         slides: u64,
-        drawn: &[(u64, Vec<u8>)],
+        drawn: Vec<(u64, Vec<u8>)>,
         rows: Vec<EntityId>,
         now: Instant,
     ) {
@@ -472,7 +574,7 @@ impl Drawn {
         entry.rows.extend(rows);
         for (slide, image) in drawn {
             self.bytes = self.bytes.saturating_add(image.len());
-            if let Some(old) = entry.images.insert(*slide, image.clone()) {
+            if let Some(old) = entry.images.insert(slide, image) {
                 self.bytes = self.bytes.saturating_sub(old.len());
             }
         }
@@ -490,6 +592,20 @@ impl Drawn {
             }
         }
     }
+}
+
+/// `n` bytes, as a renderer admits them.
+fn len(n: usize) -> u64 {
+    u64::try_from(n).unwrap_or(u64::MAX)
+}
+
+/// The bytes `n` image bytes take as base64: four for each three begun, or
+/// every byte there is when that does not fit.
+fn base64_bytes(n: usize) -> u64 {
+    u64::try_from(n)
+        .ok()
+        .and_then(|n| n.div_ceil(3).checked_mul(4))
+        .unwrap_or(u64::MAX)
 }
 
 /// A lifted deck read by a reader no grant opens it to on this read.
