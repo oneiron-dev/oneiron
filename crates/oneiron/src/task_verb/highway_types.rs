@@ -182,6 +182,7 @@ pub enum TaskCall {
     Accept(TaskAccept),
     Report(TaskReport),
     Status(TaskStatusQuery),
+    Redo(TaskRedo),
 }
 
 /// Post work as a TASK with a typed brief and an explicit assignee.
@@ -211,6 +212,17 @@ pub struct TaskPost {
 #[serde(deny_unknown_fields)]
 pub struct TaskAccept {
     pub task_ref: EntityId,
+    pub intent_key: String,
+}
+
+/// Redo one TASK (FIX 3153): post a new TASK from its current brief and its
+/// assignee, spec, label and parent. The TASK named is never written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRedo {
+    /// The TASK whose content the new one copies.
+    pub task_ref: EntityId,
+    /// The caller's idempotency key: one actor, TASK and key name one redo.
     pub intent_key: String,
 }
 
@@ -464,6 +476,11 @@ pub struct TaskWorkflowStatus {
 pub enum TaskWorkflowOutcome {
     /// Not run yet.
     Pending,
+    /// The strict program was started at `at`, under the try's lease, and
+    /// its end is not recorded yet (FIX 8104). An entry that finds it hands
+    /// the run off as [`TaskWorkflowHandoff::Interrupted`]; it never runs
+    /// the program again.
+    Started { at: u64 },
     /// The program met its postcondition and every TASK check held.
     Done { receipt_ref: EntityId },
     /// The try went on to its planner, for `cause`.
@@ -494,6 +511,9 @@ pub enum TaskWorkflowHandoff {
     /// The library could not be read for `id` at the try's first lease; the
     /// error is in the receipt.
     Unreadable { id: EntityId },
+    /// The strict program was started at an earlier entry and its end was
+    /// never recorded (FIX 8104): what it did on the page is unknown.
+    Interrupted,
 }
 
 impl TaskWorkflowHandoff {
@@ -506,6 +526,7 @@ impl TaskWorkflowHandoff {
             Self::Retired { .. } => "workflow_retired",
             Self::Missing { .. } => "workflow_missing",
             Self::Unreadable { .. } => "workflow_unreadable",
+            Self::Interrupted => "workflow_interrupted",
         }
     }
 }

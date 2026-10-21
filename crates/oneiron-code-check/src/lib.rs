@@ -6,12 +6,16 @@
 //! `checkJs`, strict, ES2022, no DOM or Node globals, no output), and returns
 //! TypeScript's diagnostics in program coordinates.
 //!
-//! Two backends give the same diagnostics on the shared fixtures
-//! (`tests/fixtures/golden.txt`):
+//! Three backends give one output contract:
 //! - [`TscRsWasm`]: tsc-rs, a Rust port of TypeScript 7, as a pinned Wasm
 //!   module run in process on Wasmtime. The default.
+//! - [`TsrsWasm`]: tsrs, oxc's Rust port of TypeScript 7, as a pinned Wasm
+//!   module on the same runner, on trial beside tsc-rs (FIX 8255).
 //! - [`MicrosoftTsc`]: Microsoft's TypeScript 7 as an external process, the
 //!   correctness oracle and the fallback.
+//!
+//! tsc-rs and Microsoft give the same diagnostics on the shared fixtures
+//! (`tests/fixtures/golden.txt`).
 //!
 //! Which one runs is configuration ([`BackendKind`]). Shadow mode is the only
 //! mode that runs a check: the engine records what it found and blocks
@@ -21,10 +25,13 @@ pub mod metrics;
 mod microsoft;
 mod output;
 mod tsc_rs;
+mod tsrs;
+mod wasm;
 
 pub use self::metrics::{CheckMetrics, LatencySummary, MetricsSnapshot, StepThen};
 pub use self::microsoft::{MICROSOFT_TS_VERSION, MicrosoftTsc};
 pub use self::tsc_rs::{TSC_RS_COMMIT, TscRsBudget, TscRsWasm};
+pub use self::tsrs::{TSRS_COMMIT, TSRS_VERSION, TsrsWasm};
 
 use serde::Serialize;
 use std::sync::Arc;
@@ -63,6 +70,8 @@ pub enum BackendKind {
     TscRs,
     /// Microsoft's TypeScript 7 as an external process.
     Microsoft,
+    /// tsrs in process.
+    Tsrs,
 }
 
 impl std::str::FromStr for BackendKind {
@@ -72,6 +81,7 @@ impl std::str::FromStr for BackendKind {
         match text {
             "tsc-rs" => Ok(Self::TscRs),
             "microsoft" => Ok(Self::Microsoft),
+            "tsrs" => Ok(Self::Tsrs),
             _ => Err(CheckConfigError::UnknownBackend),
         }
     }
@@ -149,7 +159,8 @@ pub struct CheckReport {
 /// Why a check gave no report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckFailure {
-    /// Every check slot is in use.
+    /// Every check slot is in use. The in-process backends queue a check
+    /// for a slot until its deadline instead.
     Busy,
     Timeout,
     /// The check outgrew its memory or output bound.
@@ -280,7 +291,7 @@ const ENVELOPE_PREFIX: &str = "(async () => {\n";
 const ENVELOPE_SUFFIX: &str = "\n})()";
 const PROGRAM_FILE: &str = "program.js";
 const PROJECT_FILE: &str = "tsconfig.json";
-/// The command line both backends run in the project's directory.
+/// The command line every backend runs in the project's directory.
 const TSC_ARGS: [&str; 4] = ["-p", PROJECT_FILE, "--pretty", "false"];
 
 /// Every file of one check, by name: the declarations, the program in its

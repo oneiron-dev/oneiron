@@ -134,6 +134,12 @@ impl StepChargeTally {
     pub(super) fn record_usage(&mut self, usage: &LlmUsage) {
         self.units = self.units.saturating_add(usage_units(usage));
     }
+
+    /// Units a scoped agent's own generation spent on the attempt's guard
+    /// (FIX 7508), charged once when its parent stops waiting on it.
+    pub(super) fn record_units(&mut self, units: u64) {
+        self.units = self.units.saturating_add(units);
+    }
 }
 
 /// The units one call's `usage` charges.
