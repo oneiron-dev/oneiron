@@ -72971,7 +72971,7 @@
      "path": "src/beam/comparability.rs",
      "purpose": "Seven independent comparability axes and per-number publication decisions",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -73107,7 +73107,7 @@
      "path": "src/beam/model_scaffold/context.rs",
      "purpose": "Context each answerer arm hands the shared answer call, apart from packs",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -73128,6 +73128,16 @@
      "purpose": "Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/model_scaffold/provenance.rs",
+     "purpose": "Resolved-pin family disclosures; uncertainty and in-family results stay out of the frontier",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -73553,7 +73563,7 @@
      "path": "src/fleet/report.rs",
      "purpose": "Observations, raw latency samples and run provenance, never capacity targets",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -73575,13 +73585,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/fleet/wire.rs",
      "purpose": "Real app-tier WebSocket client using the shipped server protocol version",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -73741,7 +73751,7 @@
      "path": "src/interface_bench/config_types.rs",
      "purpose": "Campaign, task, and report DTOs plus RunSettings",
      "surface": {
-      "crate-vis": 71
+      "crate-vis": 72
      }
     },
     {
@@ -73751,7 +73761,7 @@
      "path": "src/interface_bench/eval_run.rs",
      "purpose": "Smoke, probe, and full execution plus resume validation",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 9
      }
     },
     {
@@ -73762,6 +73772,16 @@
      "purpose": "Campaign #5 interface bench task generation and smoke harness",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/interface_bench/provider.rs",
+     "purpose": "Paid-call admission and settlement on the engine ledger, with deadline-bound 429 waits",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -73879,7 +73899,7 @@
      "path": "src/load/server.rs",
      "purpose": "The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -73899,7 +73919,7 @@
      "path": "src/load/stats.rs",
      "purpose": "Latency summaries: nearest-rank percentiles over completed requests, with failures counted beside them and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -74363,7 +74383,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 41,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -74398,7 +74418,7 @@
      "purpose": "`infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an…"
     },
     "interface_bench": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -74470,7 +74490,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 142,
+   "source_files": 144,
    "test_files": 18
   },
   "oneiron-broker": {
