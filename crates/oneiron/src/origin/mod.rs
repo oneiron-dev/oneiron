@@ -41,4 +41,5 @@ pub(crate) use repo_import::{ImportedCodeRepo, ServedImportSource};
 pub mod residence;
 pub mod secret_manifest;
 pub(crate) mod secret_marks;
+pub(crate) mod secret_projection;
 pub mod tree;

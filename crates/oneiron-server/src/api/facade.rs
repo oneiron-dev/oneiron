@@ -1646,6 +1646,11 @@ impl From<MemoryError> for FacadeApiError {
             | oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => {
                 StatusCode::CONFLICT
             }
+            // FIX 7650: a foreign guest's proposal spool met the host's disk
+            // floor. The server's storage, named, never the caller's request.
+            oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
+                StatusCode::INSUFFICIENT_STORAGE
+            }
             // A paid call its line cannot cover, as a chat turn's is.
             MEMORY_CODE_BUDGET_SPENT => StatusCode::PAYMENT_REQUIRED,
             // A verb hook asked first: accepted, not run, and the body names
