@@ -3301,6 +3301,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.export.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeExportPreviewRequest,
+                >(),
+            ),
+            (
+                "vault.code.export.preview.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeExportFileReadRequest,
+                >(),
+            ),
+            (
                 "vault.code.import",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::CodeRepoImportRequest,
@@ -6918,6 +6930,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.results.read",
     "vault.results.slice",
     "vault.code.export",
+    "vault.code.export.preview",
+    "vault.code.export.preview.read",
     "vault.code.import",
     "vault.code.origin.register",
     "vault.code.origin.mirror.get",
@@ -8551,6 +8565,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.export" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeExportResult,
+        >(),
+        "vault.code.export.preview" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::CodeExportPreviewAnswer,
+        >(),
+        "vault.code.export.preview.read" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::CodeExportFileReadAnswer,
         >(),
         "vault.code.import" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeRepoImportView,
@@ -13834,6 +13854,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.export.preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.export.preview.read" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19544,6 +19578,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.export" => {
             let _input: crate::memory::origin_doors::CodeExportRequest = decode(value.clone())?;
         }
+        "vault.code.export.preview" => {
+            let _input: crate::memory::origin_doors::CodeExportPreviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.export.preview.read" => {
+            let _input: crate::memory::origin_doors::CodeExportFileReadRequest =
+                decode(value.clone())?;
+        }
         "vault.code.import" => {
             let _input: crate::memory::origin_doors::CodeRepoImportRequest = decode(value.clone())?;
         }
@@ -22657,6 +22699,10 @@ pub fn invoke(
         "vault.results.slice" => encode(vault_results_slice(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
+        "vault.code.export.preview" => encode(vault_code_export_preview(memory, decode(value)?)?),
+        "vault.code.export.preview.read" => {
+            encode(vault_code_export_preview_read(memory, decode(value)?)?)
+        }
         "vault.code.import" => encode(vault_code_import(memory, decode(value)?)?),
         "vault.code.repos.get" => encode(vault_code_repos_get(memory, decode(value)?)?),
         "vault.code.forks.get" => encode(vault_code_forks_get(memory, decode(value)?)?),
@@ -28853,6 +28899,24 @@ pub fn vault_code_export(
     input: crate::memory::origin_doors::CodeExportRequest,
 ) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
     memory.code_export_as(&memory.embedded_owner("vault.code.export")?, input)
+}
+pub fn vault_code_export_preview(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeExportPreviewRequest,
+) -> MemoryResult<crate::memory::origin_doors::CodeExportPreviewAnswer> {
+    memory.code_export_preview_as(
+        &memory.code_export_preview_proof("vault.code.export.preview"),
+        input,
+    )
+}
+pub fn vault_code_export_preview_read(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeExportFileReadRequest,
+) -> MemoryResult<crate::memory::origin_doors::CodeExportFileReadAnswer> {
+    memory.code_export_preview_read_as(
+        &memory.code_export_preview_proof("vault.code.export.preview.read"),
+        input,
+    )
 }
 pub fn vault_code_import(
     memory: &Memory<'_>,
