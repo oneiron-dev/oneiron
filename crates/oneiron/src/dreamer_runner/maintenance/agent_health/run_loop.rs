@@ -91,6 +91,7 @@ pub(super) fn run_loop_findings(
                 confession: None,
                 blocked: false,
                 observed_brief: None,
+                silence: None,
             });
         }
     }

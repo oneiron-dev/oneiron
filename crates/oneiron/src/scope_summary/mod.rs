@@ -4,9 +4,12 @@
 //! not the truth list. Merge headers use the normal claim write gate.
 
 mod arc;
+mod arc_completion;
 mod arc_gate;
 mod arc_sources;
 mod arc_validation;
+mod arc_work;
+mod arc_work_store;
 mod codec;
 mod derivation;
 mod doors;
@@ -20,6 +23,11 @@ mod session;
 mod status;
 pub(crate) use arc_gate::{ArcPendingCause, next_arc_due_in_txn, sweep_due_arcs_in_txn};
 pub(crate) use arc_sources::ArcSources;
+pub(crate) use arc_work::{
+    ArcChildPlan, ArcChildRow, ArcLineRef, ArcManifest, ArcMember, ArcPins, ArcRange, ArcReduceRow,
+    ArcStepRef, ArcWorkState, ChildMode, MemberKind, arc_member_kinds, check_manifest,
+    owned_by_parts, result_digest,
+};
 pub use derivation::{
     ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources, SummaryLineSpan,
     SummarySourceVersion,

@@ -74,6 +74,8 @@ mod scope_summary_attempt;
 pub mod selection;
 mod settle;
 mod sieve_attempt;
+mod sieve_decisions;
+mod sieve_ports;
 mod step_charge;
 pub mod strength;
 mod support;
@@ -140,6 +142,11 @@ pub use settle::{
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
     revert_settlement_in_txn, settled_answers_in_txn,
+};
+pub use sieve_ports::{
+    ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, PortFuture,
+    RoleNeighbourhoodExtractionPort, RoleSieveNoveltyPort, SieveNoveltyPort, SieveRungCall,
+    SieveRungOutcome, SieveRungRead, SliceStep,
 };
 pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};

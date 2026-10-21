@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3979 declarations.
+// Census: 1179 code-mode rows (1139 host rows, 40 run rows), 3981 declarations.
 // Replies: 1059 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -111,7 +111,7 @@ declare namespace Sdk {
   type AgentHealthSignal = "loop" | "failed_check_repeat" | "cost_spike" | "long_wait" | "silent" | "duplicate_work" | "unsupported_done" | "misalignment";
   type AgentHealthTone = "struggling" | "off_course" | "concern";
   type AgentHealthConfidence = "high" | "low";
-  type AgentHealthCounter = "results_changed" | "refused_calls" | "queue_wait" | "few_runs" | "environment_cause";
+  type AgentHealthCounter = "results_changed" | "refused_calls" | "queue_wait" | "few_runs" | "environment_cause" | "other_session_active";
   type AgentHealthMove = "note" | "steer" | "budget" | "reassign" | "ask_coach" | "hold";
   type AgentHealthOutcome = "open" | "confirmed" | "dismissed" | "unresolved";
   type HealthBriefPin = { task: EntityId; rev: number; digest: string; observed_at: number };
@@ -125,7 +125,9 @@ declare namespace Sdk {
   type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; observed_brief?: HealthBriefPin | null; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null };
   type HealthReviewReceipt = { receipt: string; outcome: AgentHealthOutcome; by: EntityId; by_owner: boolean; at: number; reviewer: string; dial: number; measured: number; diagnostics: EntityId[]; evidence: EntityId[]; observed_brief?: HealthBriefPin | null; label?: boolean | null; projected: boolean };
   type HealthCauseSource = { source: EntityId; receipt: string; skill?: EntityId | null; label: string; share: number; judge_revision?: string | null; displaced_by?: string | null };
-  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[] };
+  type HealthOtherSession = { attempt: EntityId; generation: number; at: number };
+  type HealthSilenceActivity = { own_call_at?: number | null; own_step_at?: number | null; actor_only_at?: number | null; other_session?: HealthOtherSession | null };
+  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
   type RunTreeFailure = { reason: string };
@@ -2873,7 +2875,7 @@ declare namespace Sdk {
   type PositiveRetireReceipt = { retired: boolean };
   type ModelStepRetryPolicy = { max_attempts: number };
   type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
-  type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
+  type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
   type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased";
@@ -3638,7 +3640,7 @@ declare namespace Sdk {
   type SievePolicyRequest = Record<string, never>;
   type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number };
   type SievePolicySetRequest = { policy: SievePolicy };
-  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; audit_window_instruction: string };
+  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; audit_window_share: number; audit_window_bytes: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string; arc_min_new_statements: number; arc_child_calls_per_wake: number; audit_window_instruction: string };
   type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy };
   type SieveLeaseRequest = { budget_id: string };
   type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };

@@ -1,12 +1,13 @@
 //! The serving side of a mesh organ call: this node's host runs another
-//! owner node's call as its own, and sends the organ's asks back to it.
+//! owner node's call as its own, and sends the organ's asks back to it,
+//! all but a fetch and the organ's memory, which this node answers itself.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::{EntityId, Vault};
 use oneiron_mesh_transport::{MeshConnection, MeshError, MeshFuture, MeshService, MeshStream};
-use oneiron_organ_protocol::{ASK_NET_FETCH, AskCode, AskRefusal};
+use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal};
 use tokio::runtime::Handle;
 
 use super::{
@@ -19,6 +20,7 @@ use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
 use crate::outcome::OrganOutcome;
 use crate::receipt::AskReceipt;
+use crate::resource_memory::MemoryGrow;
 use crate::spec::{LentInput, OrganCall, OrganInput};
 
 /// Serves `oneiron/organ/1`: the owner's other nodes run organ calls on this
@@ -162,12 +164,17 @@ impl OrganService {
         let answers = peer.answers;
         let (outcome, asked) = tokio::task::spawn_blocking(move || {
             let fetch = GuardedFetch;
+            let memory = MemoryGrow;
             let mut handlers = AskHandlers::none();
             for verb in answers {
                 // A fetch runs here, where the organ runs, under this
-                // install's allowlist; every other ask goes back.
+                // install's allowlist; the organ's memory is reserved here,
+                // from this machine's floor and in this call's room, never
+                // forwarded (FIX 7654); every other ask goes back.
                 let handler: &dyn AskHandler = if verb == ASK_NET_FETCH {
                     &fetch
+                } else if verb == ASK_MEMORY_GROW {
+                    &memory
                 } else {
                     &forward
                 };

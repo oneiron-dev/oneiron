@@ -225,6 +225,9 @@ fn plan_children_in_txn(
         attempt.attempt.run_id.as_deref(),
         now,
     )?;
+    // Each spent span names the child that carries its TURN, enqueued now
+    // or standing, never this parent (FIX 7498).
+    let carriers = sieve::consumed_carriers(&child_plans, &outcomes)?;
     let children = outcomes
         .into_iter()
         .map(|outcome| match outcome {
@@ -238,7 +241,15 @@ fn plan_children_in_txn(
         vault, txn, attempt, children, now,
     )?;
     for span in thing_plans.iter().flat_map(|thing| &thing.spans) {
-        sieve::spend_consumed_in_txn(&vault.store, txn, span, attempt.attempt.id, now)?;
+        // A spent span rides with its TURN's thing, and every TURN of a
+        // thing lands in one of its children: a missing carrier is a fault.
+        let carrier = carriers
+            .get(&span.turn)
+            .copied()
+            .ok_or(crate::Error::InvariantViolation(
+                "a spent sieve span's TURN has no carrying child",
+            ))?;
+        sieve::spend_consumed_in_txn(&vault.store, txn, span, carrier, now)?;
     }
     Ok(())
 }
