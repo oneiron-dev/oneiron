@@ -597,7 +597,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
     ) -> Result<DreamerAttemptExecution> {
         // A resident dreams under its own stamp on the model its host lends
         // it (OF-490), and spends its free time for its human so too (FIX
-        // 4453); this Dreamer-bound executor never runs either.
+        // 4453); this Dreamer-bound executor never runs either. Each such
+        // park waits on the host's loan, no owner act: it resumes at the
+        // next pass (FIX 7272).
         if attempt.status.payload.attempt_type
             == crate::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
             || attempt.status.payload.attempt_type
@@ -605,7 +607,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: "resident dreaming needs its host's model".to_owned(),
-                cause: DreamerParkCause::Other,
+                cause: DreamerParkCause::Checkpoint,
             });
         }
         // A TASK realizes on the model and wording its host lends; this
@@ -615,7 +617,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: crate::dreamer_consolidation::TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
-                cause: DreamerParkCause::Other,
+                cause: DreamerParkCause::Checkpoint,
             });
         }
         // A weave lens renders on the model its host lends; this executor
@@ -625,7 +627,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: crate::dreamer_consolidation::WEAVE_LENS_UNLENT_PARK_REASON.to_owned(),
-                cause: DreamerParkCause::Other,
+                cause: DreamerParkCause::Checkpoint,
             });
         }
         if self.actor
@@ -903,6 +905,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             }
             Err(crate::llm::DurableStepError::Engine(error)) => {
                 super::residency::spent_or_deferred(error, ctx.now_ms, charges.units)
+            }
+            // A refused conflict read (`conflict_failed` kept its open
+            // marker) asks again at the next pass, as a refused extraction
+            // does (FIX 7272): it was never memoized.
+            Err(other @ crate::llm::DurableStepError::SpentSchemaValidation { .. }) => {
+                Ok(DreamerAttemptExecution::Park {
+                    reason: other.to_string(),
+                    cause: DreamerParkCause::Checkpoint,
+                })
             }
             Err(other) => Ok(DreamerAttemptExecution::Park {
                 cause: DreamerParkCause::of_step(&other),
