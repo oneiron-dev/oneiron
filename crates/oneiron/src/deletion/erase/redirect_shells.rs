@@ -81,6 +81,12 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
+        // Each shell takes the actor scrub its head's erase runs, so no side
+        // row stamped with a shell's id keeps it (FIX 6709). The head's own
+        // provenance erase stays the one that retires keys.
+        for shell in &shells {
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, shell)?;
+        }
         let mut touched = shells.clone();
         touched.insert(*head);
         changed.extend(self.scrub_identity_op_author_stamps_in_txn(wtxn, &touched)?);
