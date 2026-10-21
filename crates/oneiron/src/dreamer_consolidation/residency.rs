@@ -6,7 +6,7 @@
 
 use super::turn_text::residency_deferred;
 use crate::dreamer_wake::DreamerAttemptExecution;
-use crate::error::Error;
+use crate::error::{Error, Result};
 
 /// Whether `error` is that wait, [`super::turn_text`]'s exact
 /// not-resident refusal, and nothing else.
@@ -22,5 +22,20 @@ pub(super) fn residency_deferral(now_ms: u64, completed_units: u64) -> DreamerAt
         retry_at: now_ms
             .div_ceil(1_000)
             .saturating_add(super::RESIDENCY_RETRY_SECS),
+    }
+}
+
+/// An error an attempt met after its model spend (FIX 6060): the wait
+/// defers, settling the `completed_units` already spent, never failing the
+/// attempt; every other error stays what it was.
+pub(super) fn spent_or_deferred(
+    error: Error,
+    now_ms: u64,
+    completed_units: u64,
+) -> Result<DreamerAttemptExecution> {
+    if waits_on_residency(&error) {
+        Ok(residency_deferral(now_ms, completed_units))
+    } else {
+        Err(error)
     }
 }
