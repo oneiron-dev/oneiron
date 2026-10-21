@@ -115,9 +115,8 @@ fn parse_rows(value: &Value) -> Option<Vec<HostedTtsPolicyRow>> {
     let Value::Array(values) = value else {
         return None;
     };
-    if values.len() > 256 {
-        return None;
-    } // structural decoder bound, not a render limit
+    // Every valid row is kept, however many a trusted policy carries (FIX
+    // 8762): the shape and vocabulary checks below refuse, a count never does.
     let mut rows = Vec::with_capacity(values.len());
     for value in values {
         let Value::Map(fields) = value else {
