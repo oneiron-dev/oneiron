@@ -449,7 +449,7 @@ fn message_words(body: &[u8]) -> Option<(u64, Option<String>, String, bool)> {
 /// them, and nothing bounds the body. `None` when the first read finds no
 /// result this reader may read on the MESSAGE; a page withheld or refused,
 /// or a read that fails or stops moving, marks it unavailable by its code.
-fn whole_result(memory: &Memory<'_>, message: &EntityId) -> Option<SessionResult> {
+pub(super) fn whole_result(memory: &Memory<'_>, message: &EntityId) -> Option<SessionResult> {
     let mut input = serde_json::json!({ "bytes": [0] });
     let mut text = String::new();
     let mut bytes = Vec::new();

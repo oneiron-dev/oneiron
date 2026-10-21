@@ -64,6 +64,11 @@ mod detector_runner;
 mod diagnostic_codec;
 pub mod distillation;
 mod event;
+mod heal_context;
+pub(crate) use heal_context::CauseAncestry;
+pub use heal_context::{
+    HealContextPolicy, HealContextSeed, HealEvidenceContext, HealLink, HealUnavailable,
+};
 mod invariant_canonical;
 pub mod scheduled;
 pub mod served_signals;
