@@ -43,6 +43,10 @@ pub(crate) use self::continuation::{
     PromptInjectApproval, apply_prompt_inject_in_txn, continuation_checkpoint,
     prompt_inject_application,
 };
+mod direct_spawn;
+pub use direct_spawn::{
+    DirectSpawnReceipt, SpawnAskField, SpawnUnapplied, SpawnUnappliedReason, direct_spawn_receipt,
+};
 mod dispatch;
 mod fanout_statement;
 mod healer_context;
