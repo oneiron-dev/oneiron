@@ -13,6 +13,11 @@
 //! - The UID table at [`vault_uids::PATH`], on the tmpfs the image's init
 //!   mounts at its directory: one row binding the UID to the vault at its
 //!   data directory, rebuilt from the host's binding on every cold boot.
+//!
+//! A cold restore's boot (FIX 6584) lays out the same, except that the
+//! data directory is left absent, for the restore to make, and the UID
+//! table's row names it at the held storage's path. An inspection's boot
+//! lays out nothing: it only reads the control directory's record.
 //! - `/run/oneiron` and [`VM_VOICE_DIR`], the engine's socket directories:
 //!   the vault UID's, 0700.
 //!
@@ -42,8 +47,8 @@ const VAULT_ROOT: &str = "/vault";
 const VAULT_DEVICE: &str = "/dev/vdb";
 /// The leaves of [`VM_GUEST_STORAGE_DIR`], [`VM_GUEST_DATA_DIR`],
 /// [`VM_GUEST_KEYS_DIR`] and [`VM_PROVISION_RECORD`].
-const STORAGE_LEAF: &str = "storage";
-const DATA_LEAF: &str = "data";
+pub(super) const STORAGE_LEAF: &str = "storage";
+pub(super) const DATA_LEAF: &str = "data";
 const KEYS_LEAF: &str = "keys";
 const CONTROL_LEAF: &str = "control";
 const RECORD_LEAF: &str = "vm-provision.json";
@@ -205,6 +210,27 @@ pub(super) fn open_control(root: &File) -> Result<File, Refusal> {
     Ok(control)
 }
 
+/// The vault root's control directory when there is one, opened without
+/// making it or changing a mode, and refused unless it is root's.
+pub(super) fn existing_control(root: &File) -> Result<Option<File>, Refusal> {
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let control = match rustix::fs::openat(root, CONTROL_LEAF, flags, Mode::empty()) {
+        Ok(fd) => File::from(fd),
+        Err(Errno::NOENT) => return Ok(None),
+        Err(Errno::LOOP | Errno::NOTDIR) => {
+            return Err(mismatch("/vault/control is not a directory"));
+        }
+        Err(error) => return Err(failed("/vault/control")(error.into())),
+    };
+    let metadata = control
+        .metadata()
+        .map_err(failed("reading /vault/control"))?;
+    if metadata.uid() != 0 {
+        return Err(mismatch("/vault/control is not root-owned"));
+    }
+    Ok(Some(control))
+}
+
 /// Whether the disk already records `record`: `false` when it records none,
 /// refused when it records another binding or its record is not root's
 /// alone.
@@ -310,24 +336,29 @@ fn encrypted_dir(
     Ok(dir)
 }
 
-/// Lays out the encrypted storage, its data directory and the key
-/// directory for `uid` under the key `identifier` names, which the keyring
-/// holds. Every encrypted handle is closed when this returns.
+/// Lays out the encrypted storage, its data directory (`with_data`) and the
+/// key directory for `uid` under the key `identifier` names, which the
+/// keyring holds. Every encrypted handle is closed when this returns.
 pub(super) fn lay_out_storage(
     root: &File,
     uid: u32,
     identifier: &KeyIdentifier,
+    with_data: bool,
 ) -> Result<(), Refusal> {
     let storage = encrypted_dir(root, STORAGE_LEAF, VM_GUEST_STORAGE_DIR, uid, identifier)?;
-    encrypted_dir(&storage, DATA_LEAF, VM_GUEST_DATA_DIR, uid, identifier)?;
+    if with_data {
+        encrypted_dir(&storage, DATA_LEAF, VM_GUEST_DATA_DIR, uid, identifier)?;
+    }
     encrypted_dir(root, KEYS_LEAF, VM_GUEST_KEYS_DIR, uid, identifier)?;
     Ok(())
 }
 
 /// Installs the guest's UID table: one row allocating `uid` to `vault` at
 /// the data directory, root:root [`vault_uids::MODE`], in the root-only
-/// directory the image's init mounted a tmpfs on.
-pub(super) fn install_uid_table(vault: &str, uid: u32) -> Result<(), Refusal> {
+/// directory the image's init mounted a tmpfs on. For a cold restore
+/// (`restoring`) the data directory is not there yet: the row names it
+/// below the storage, whose path is the one checked.
+pub(super) fn install_uid_table(vault: &str, uid: u32, restoring: bool) -> Result<(), Refusal> {
     let table_path = Path::new(vault_uids::PATH);
     let (Some(parent), Some(leaf)) = (
         table_path.parent(),
@@ -337,7 +368,13 @@ pub(super) fn install_uid_table(vault: &str, uid: u32) -> Result<(), Refusal> {
             "the UID table has no directory",
         )));
     };
-    let data_dir = std::fs::canonicalize(VM_GUEST_DATA_DIR).map_err(failed(VM_GUEST_DATA_DIR))?;
+    let data_dir = if restoring {
+        std::fs::canonicalize(VM_GUEST_STORAGE_DIR)
+            .map(|storage| storage.join(DATA_LEAF))
+            .map_err(failed(VM_GUEST_STORAGE_DIR))?
+    } else {
+        std::fs::canonicalize(VM_GUEST_DATA_DIR).map_err(failed(VM_GUEST_DATA_DIR))?
+    };
     if data_dir != Path::new(VM_GUEST_DATA_DIR) {
         return Err(mismatch(format!("{VM_GUEST_DATA_DIR} is not canonical")));
     }

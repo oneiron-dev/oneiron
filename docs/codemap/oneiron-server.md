@@ -692,6 +692,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/remote_embedder.rs` | src | s | 2 struct · 2 crate-vis | EgressPolicy, RemoteEmbedderConfig | Host-configured remote rung and cached per-entity egress decisions |
 | `src/config/self_heal.rs` | src | s | 2 struct · 1 enum · 2 fn · 3 crate-vis | DetectorConfig, DetectorTier, SelfHealConfig | The `[self_heal]` section: the model-graded detectors this deployment runs over its retrieval telemetry… |
 | `src/config/serve_args.rs` | src | m | 1 struct · 1 crate-vis | ServeArgs | CLI surface: `ServeArgs`, its redacting `Debug`, and argv-derived overrides |
+| `src/config/serve_args/debug.rs` | src | s | — | — | `ServeArgs`'s redacting `Debug` |
 | `src/config/server_config.rs` | src | m | 2 struct · 1 enum · 5 fn | IngressAuth, ServeConfig, SyncServerConfig | Resolved server configuration: `SyncServerConfig` and `ServeConfig` |
 | `src/config/skills.rs` | src | s | 1 struct · 1 fn · 1 re-export · 4 crate-vis | SkillsConfig | The `[skills]` section: how the skill-edit gate's live slice is funded at this server, and the skills a… |
 | `src/config/skills/replay_judge.rs` | src | s | 1 struct · 4 fn · 4 crate-vis | ReplayJudgeWording | `[skills.replay_judge]`: the serve replay judge's wording (OF-495, FIX 1091) |
@@ -834,13 +835,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/logging/tests.rs` | test | s | 4 crate-vis | — | — |
 | `src/machine.rs` | src | s | 15 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
 | `src/main.rs` | src | s | — | — | — |
-| `src/managed/args.rs` | src | m | 1 struct · 3 enum · 3 fn · 1 const · 2 crate-vis | ManagedArgs, ManagedError, ManagedStartMode, SettingsRefusal | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
+| `src/managed/args.rs` | src | m | 1 struct · 2 enum · 3 fn · 1 const · 1 re-export · 2 crate-vis | ManagedArgs, ManagedError, SettingsRefusal | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
 | `src/managed/args/policy.rs` | src | m | 1 crate-vis | — | The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every… |
+| `src/managed/args/start_mode.rs` | src | s | 1 enum · 1 crate-vis | ManagedStartMode | How a managed process starts: an ordinary open or a cold restore |
+| `src/managed/args/vm_transport.rs` | src | s | 2 crate-vis | — | A vault VM's cold restore handoff (FIX 6584): `--vm-restore-revision`, which only the image's… |
 | `src/managed/attested_routes.rs` | src | m | 5 crate-vis | — | The routes managed ingress verifies a supervisor's owner attestation on, past the facade, owner and console… |
 | `src/managed/backup_facts.rs` | src | s | 1 crate-vis | — | What a managed vault reports of its backups on every `Ping` (Engine 10-20 rows (a) and (b)): its managed… |
 | `src/managed/container_dirs.rs` | src | s | 1 crate-vis | — | The host directories the supervisor binds for the guests' container CLI (`--container-home` and… |
 | `src/managed/ctl_shed_tests.rs` | test | s | — | — | — |
-| `src/managed/host.rs` | src | s | 8 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
+| `src/managed/host.rs` | src | s | 9 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
 | `src/managed/isolation.rs` | src | m | 14 crate-vis | — | Fail-closed Linux fscrypt and root-owned UID allocation probes |
 | `src/managed/key_sync.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 const · 1 re-export | KeyInvalidation, KeyInvalidationKind | Managed-host wiring for the node account-key path (OF-448, the node half of CROSS-ARCH-0008 section 4, owner… |
 | `src/managed/ledger.rs` | src | m | 2 struct · 10 fn · 1 const · 5 crate-vis | LedgerSnapshot, WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
@@ -861,7 +864,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/relay/hold_guard.rs` | src | s | 5 crate-vis | — | The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x) |
 | `src/managed/relay/installer.rs` | src | s | 1 crate-vis | — | The `host relay` installer (FIX 6826, Engine 10-21) |
 | `src/managed/relay_delete.rs` | src | m | 8 crate-vis | — | The relay locker delete this engine executes (FIX 6826, Engine 10-21) |
-| `src/managed/restore.rs` | src | m | 6 crate-vis | — | The cold managed restore start mode (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md, its… |
+| `src/managed/restore.rs` | src | m | 7 crate-vis | — | The cold managed restore start mode (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md, its… |
 | `src/managed/restore/commit_marker.rs` | src | s | 1 crate-vis | — | The attempt-bound commit marker, written inside the destination once every keep is done (the restore's… |
 | `src/managed/restore/host_holds.rs` | src | s | 2 crate-vis | — | The host-order legal holds a cold restore installs (FIX 1485, FIX 6598) |
 | `src/managed/restore/input.rs` | src | s | 4 crate-vis | — | The restore's two pipes and the plan on the input pipe: each descriptor proven the right end of a pipe… |
@@ -877,15 +880,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/state_serve/read_only.rs` | src | s | 1 crate-vis | — | The reap freeze's whitelist of requests a frozen vault still answers |
 | `src/managed/state_serve/reap.rs` | src | s | 4 fn · 6 crate-vis | — | The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`… |
 | `src/managed/state_serve/reap/host_holds.rs` | src | s | 1 crate-vis | — | The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`, its… |
+| `src/managed/state_serve/refusal.rs` | src | s | 1 crate-vis | — | The body a frozen engine's refusal is served with |
 | `src/managed/state_serve/relay_delete.rs` | src | s | 3 crate-vis | — | The relay delete ctl requests a managed vault answers (FIX 6826): `relay_delete_execute`… |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 7 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
-| `src/managed/vm_guest.rs` | src | s | 7 crate-vis | — | Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer… |
-| `src/managed/vm_host.rs` | src | m | 3 struct · 1 enum · 15 fn | SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun | The microVM adapter's host half: one Firecracker VM per vault |
+| `src/managed/vm_guest.rs` | src | s | 8 crate-vis | — | Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer… |
+| `src/managed/vm_host.rs` | src | m | 2 struct · 1 enum · 14 fn · 2 re-export | SleepOutcome, VaultVm, VaultVmConfig | The microVM adapter's host half: one Firecracker VM per vault |
 | `src/managed/vm_host/provision.rs` | src | s | 2 crate-vis | — | The host's half of a vault VM's provision connection (FIX 6308): on a cold boot, before the credential… |
+| `src/managed/vm_host/restore.rs` | src | m | 3 struct · 3 fn · 2 crate-vis | VaultVmInspect, VmRestoreFds, VmRestoreHostIo | The host's half of a vault VM's restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): every… |
+| `src/managed/vm_host/runner.rs` | src | s | 1 struct · 1 fn | VaultVmRun | `oneiron-server host vm`'s runner: one vault VM behind one unix socket |
 | `src/managed/vm_init.rs` | src | m | 1 fn | — | A vault VM's root bootstrap, `oneiron-vm-init` (FIX 6308): the step between the image's shell init, which… |
 | `src/managed/vm_init/fscrypt.rs` | src | s | 8 crate-vis | — | The fscrypt v2 ioctls a vault VM's root bootstrap needs (`linux/fscrypt.h`): add the vault's key to its… |
-| `src/managed/vm_init/layout.rs` | src | m | 10 crate-vis | — | The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets… |
+| `src/managed/vm_init/layout.rs` | src | m | 13 crate-vis | — | The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets… |
 | `src/managed/vm_init/outbox.rs` | src | s | 4 crate-vis | — | The outbox companion beside the engine (FIX 5235, FIX 5467): the bootstrap starts `oneiron-vm-outbox` as its… |
+| `src/managed/vm_init/restore.rs` | src | m | 9 crate-vis | — | The bootstrap's half of the restore channel (FIX 6584, [`oneiron_vault_contract::vm_restore`]): the boot's… |
 | `src/managed/vm_outbox/endpoint.rs` | src | s | 8 crate-vis | — | The companion's local lifecycle endpoint, `/run/oneiron-outbox/ lifecycle.sock`: a root-owned socket only… |
 | `src/managed/vm_outbox/guest.rs` | src | m | 1 fn | — | `oneiron-vm-outbox`: the vault VM's root outbox companion (FIX 5235, FIX 5467) |
 | `src/managed/vm_outbox/host.rs` | src | s | 2 struct · 4 fn | VmOutboxAttachment, VmOutboxHostRoots | The host's end of a vault VM's outbox carrier: an attachment bound to one VM's guest-initiated socket for… |

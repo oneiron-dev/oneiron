@@ -61,6 +61,9 @@ pub mod vm;
 pub mod vm_outbox;
 /// A vault VM's provision connection: its binding, key frame and reply.
 pub mod vm_provision;
+/// A vault VM's restore channel: its boot mode, stream records and the
+/// commit marker read back (FIX 6584).
+pub mod vm_restore;
 mod wake;
 
 /// The commitment RECURRENCE vocabulary (CMT-2, ONE-1539).
