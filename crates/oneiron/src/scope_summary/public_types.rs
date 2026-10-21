@@ -49,10 +49,16 @@ pub struct SummaryQueued {
     pub coalesced: bool,
 }
 
+/// Names exactly one: a summary declaration's `attempt`, or a sitting by
+/// `session_ref`, whose close queued its summary (FIX 7509). A sitting's
+/// summary is read by that sitting's own actor.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SummaryStatusRequest {
-    pub attempt: String,
+    #[serde(default)]
+    pub attempt: Option<String>,
+    #[serde(default)]
+    pub session_ref: Option<String>,
 }
 
 /// Half-open Unicode scalar offsets, used only to acquire stable cursors.
