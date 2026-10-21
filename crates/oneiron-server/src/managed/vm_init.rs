@@ -15,6 +15,14 @@
 //! reports its own readiness after the unchanged managed gates; nothing here
 //! stands in for either.
 //!
+//! Before all of it the bootstrap asks the host's restore channel for the
+//! boot's mode (FIX 6584, [`restore`]). An ordinary open is all of the
+//! above. A cold restore leaves the data directory for the restore to make,
+//! mounts the restore's source drive when the host attached one, and hands
+//! the engine its two restore pipes, which the bootstrap carries over the
+//! channel. An inspection installs the key, reads the commit marker and
+//! answers, and starts nothing.
+//!
 //! It stays root only to supervise, and to run the outbox companion
 //! `oneiron-vm-outbox` beside the engine ([`outbox`], FIX 5235): started
 //! before the engine, it lays out the outbox and carries it to the host, and
@@ -28,6 +36,7 @@
 mod fscrypt;
 mod layout;
 mod outbox;
+mod restore;
 
 use self::fscrypt::{KeyIdentifier, Removal};
 use anyhow::Context as _;
@@ -39,10 +48,12 @@ use oneiron_vault_contract::vm::{
 use oneiron_vault_contract::vm_provision::{
     VmFscryptKey, VmProvision, VmProvisionFailure, VmProvisionReply,
 };
+use oneiron_vault_contract::vm_restore::VmRestoreBoot;
 use oneiron_vault_contract::{CONTRACT_VERSION, hex};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::os::fd::RawFd;
 use std::os::unix::process::CommandExt;
 use std::process::{ExitCode, ExitStatus, Stdio};
 
@@ -102,12 +113,13 @@ impl InitArgs {
     }
 }
 
-/// A provisioned guest: the held vault root, the installed key's identifier
-/// and the UID the engine runs as.
+/// A provisioned guest: the held vault root, the installed key's identifier,
+/// the UID the engine runs as, and a cold restore's mounted source drive.
 struct Provisioned {
     root: File,
     identifier: KeyIdentifier,
     uid: u32,
+    source: Option<restore::SourceMount>,
 }
 
 /// `oneiron-vm-init`'s whole run. Its exit status is the engine's, or a
@@ -124,9 +136,12 @@ pub fn run_vm_init() -> ExitCode {
 
 fn run() -> anyhow::Result<ExitCode> {
     let args = InitArgs::parse(std::env::args_os().skip(1));
+    // The host names this boot's mode before anything is laid out.
+    let vault = args.as_ref().map_or("", |args| args.vault.as_str());
+    let (boot, restore_channel) = restore::exchange(vault)?;
     let mut channel = connect_blocking(VM_HOST_CID, VM_BOOT_PORT)
         .context("dialling the host's provision connection")?;
-    let provisioned = provision(&mut channel, args.as_ref().map_err(|fault| *fault));
+    let provisioned = provision(&mut channel, args.as_ref().map_err(|fault| *fault), &boot);
     let reply = match &provisioned {
         Ok((frame, _)) => VmProvisionReply::Provisioned {
             revision: frame.revision,
@@ -139,7 +154,7 @@ fn run() -> anyhow::Result<ExitCode> {
         .and_then(|line| channel.write_all(line.as_bytes()).map_err(Into::into))
         .context("answering the host's provision connection");
     drop(channel);
-    let (_, provisioned) = provisioned.map_err(|refusal| {
+    let (frame, mut provisioned) = provisioned.map_err(|refusal| {
         anyhow::anyhow!(
             "provisioning refused ({}): {}",
             refusal.code,
@@ -151,7 +166,23 @@ fn run() -> anyhow::Result<ExitCode> {
         return Err(error);
     }
     let args = args.map_err(anyhow::Error::msg)?;
-    let status = run_engine(&args, provisioned.uid);
+    let status = match boot {
+        VmRestoreBoot::Open => {
+            drop(restore_channel);
+            run_engine(&args, provisioned.uid, None)
+        }
+        VmRestoreBoot::Restore { .. } => run_engine(&args, provisioned.uid, Some(restore_channel)),
+        VmRestoreBoot::InspectMarker { identity } => {
+            let observation =
+                restore::observe(&provisioned.root, &provisioned.identifier, provisioned.uid);
+            let answered =
+                restore::answer_inspection(restore_channel, &frame, identity, observation);
+            remove_key(&provisioned);
+            return answered.map(|()| ExitCode::SUCCESS);
+        }
+    };
+    // Nothing the engine started is left to hold the source drive.
+    drop(provisioned.source.take());
     rustix::fs::sync();
     remove_key(&provisioned);
     let status = status?;
@@ -177,11 +208,13 @@ fn read_line(channel: &mut File) -> anyhow::Result<String> {
 }
 
 /// The provision connection's guest side, up to its answer: the frame and
-/// the key, the binding's checks, the key's installation and the layout. A
-/// refusal after the key went in removes it again.
+/// the key, the binding's checks, the key's installation and the layout
+/// `boot` takes, a cold restore's source drive mounted last. A refusal after
+/// the key went in removes it again.
 fn provision(
     channel: &mut File,
     args: Result<&InitArgs, &'static str>,
+    boot: &VmRestoreBoot,
 ) -> Result<(VmProvision, Provisioned), Refusal> {
     let malformed = |error: anyhow::Error| {
         Refusal::new(
@@ -211,26 +244,48 @@ fn provision(
     }
     let root = layout::open_vault_root()?;
     layout::check_disk(&root, &frame.binding.vault_disk_uuid)?;
-    let control = layout::open_control(&root)?;
+    // An inspection makes nothing on the disk: it reads what is there.
+    let inspecting = matches!(boot, VmRestoreBoot::InspectMarker { .. });
+    let restoring = matches!(boot, VmRestoreBoot::Restore { .. });
+    let control = if inspecting {
+        layout::existing_control(&root)?
+    } else {
+        Some(layout::open_control(&root)?)
+    };
     let record = layout::ProvisionRecord::of(&frame);
-    let recorded = layout::recorded(&control, &record)?;
+    let recorded = match &control {
+        Some(control) => layout::recorded(control, &record)?,
+        None => false,
+    };
     let identifier = install_key(&root, key, &frame.binding.fscrypt_key_identifier)?;
-    let provisioned = Provisioned {
+    let mut provisioned = Provisioned {
         root,
         identifier,
         uid: frame.binding.guest_uid,
+        source: None,
     };
     let uid = provisioned.uid;
-    let laid_out = layout::lay_out_storage(&provisioned.root, uid, &identifier)
-        .and_then(|()| {
-            if recorded {
-                Ok(())
-            } else {
-                layout::write_record(&control, &record)
-            }
-        })
-        .and_then(|()| layout::install_uid_table(&frame.vault, uid))
-        .and_then(|()| layout::own_run_dirs(uid));
+    let laid_out = match &control {
+        Some(control) if !inspecting => {
+            layout::lay_out_storage(&provisioned.root, uid, &identifier, !restoring)
+                .and_then(|()| {
+                    if recorded {
+                        Ok(())
+                    } else {
+                        layout::write_record(control, &record)
+                    }
+                })
+                .and_then(|()| layout::install_uid_table(&frame.vault, uid, restoring))
+                .and_then(|()| layout::own_run_dirs(uid))
+        }
+        _ => Ok(()),
+    };
+    let laid_out = laid_out.and_then(|()| match boot {
+        VmRestoreBoot::Restore {
+            source_device: Some(device),
+        } => restore::SourceMount::mount(*device).map(|mount| provisioned.source = Some(mount)),
+        _ => Ok(()),
+    });
     if let Err(refusal) = laid_out {
         remove_key(&provisioned);
         return Err(refusal);
@@ -274,8 +329,14 @@ fn remove_key(provisioned: &Provisioned) {
 }
 
 /// Starts the outbox companion, then the engine as `uid`, and waits for the
-/// engine; then stops the companion, and ends and reaps what is left.
-fn run_engine(args: &InitArgs, uid: u32) -> anyhow::Result<ExitStatus> {
+/// engine; then stops the companion, and ends and reaps what is left. A cold
+/// restore's engine (`restore_channel`) gets its two restore pipes, and the
+/// restore's last result record goes out before this returns.
+fn run_engine(
+    args: &InitArgs,
+    uid: u32,
+    restore_channel: Option<File>,
+) -> anyhow::Result<ExitStatus> {
     // Whatever the engine leaves behind is reparented here, not to PID 1, so
     // it is reaped before the key goes. Any nonzero argument sets it.
     rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
@@ -286,24 +347,36 @@ fn run_engine(args: &InitArgs, uid: u32) -> anyhow::Result<ExitStatus> {
     } else {
         Vec::new()
     };
-    let status = start_engine(args, uid, &outbox_flags)
-        .and_then(|mut engine| engine.wait().context("waiting for the engine"));
+    let mut restoring = None;
+    let status = match restore_channel {
+        None => start_engine(args, uid, &outbox_flags, &[])
+            .and_then(|mut engine| engine.wait().context("waiting for the engine")),
+        Some(channel) => restore::start(channel, |fds, flags| {
+            start_engine(args, uid, &[&outbox_flags[..], flags].concat(), fds)
+        })
+        .and_then(|started| restoring.insert(started).wait()),
+    };
     // The companion goes first, while the key is in: it may be writing into
     // the encrypted storage. Then everything else, the broker among it.
     if let Some(companion) = companion {
         companion.stop();
     }
     end_leftovers();
+    if let Some(restoring) = restoring {
+        restoring.finish();
+    }
     status
 }
 
-/// The engine as `uid`, with the init's flags and `outbox_flags`.
+/// The engine as `uid`, with the init's flags and `flags`, and `fds` as
+/// `oneiron_spawn::command_with_fds` places them.
 fn start_engine(
     args: &InitArgs,
     uid: u32,
-    outbox_flags: &[OsString],
+    flags: &[OsString],
+    fds: &[(RawFd, RawFd)],
 ) -> anyhow::Result<std::process::Child> {
-    let mut command = oneiron_spawn::command(ENGINE);
+    let mut command = oneiron_spawn::command_with_fds(ENGINE, fds);
     command
         .arg("serve")
         .args(["--managed-by-hypnos", "--vsock-guest", "--contract-version"])
@@ -319,7 +392,7 @@ fn start_engine(
             VM_GUEST_KEYS_DIR,
         ])
         .args(&args.engine_flags)
-        .args(outbox_flags)
+        .args(flags)
         .env_clear()
         .env("PATH", ENGINE_PATH)
         .stdin(Stdio::null());

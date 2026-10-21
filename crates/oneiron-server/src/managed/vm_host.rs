@@ -19,23 +19,31 @@
 //! runs this driver; the guest's UID is the one its provision binding names.
 //! A profile with an `outbox` binds the outbox carrier's attachment before
 //! the VMM starts (FIX 5235, `VmOutboxAttachment`): parked before a
-//! snapshot, opened on each start, drained on a stop.
+//! snapshot, opened on each start, drained on a stop. Every cold boot opens
+//! with the guest's restore channel, which names the boot's mode before
+//! anything is provisioned: an ordinary open, a cold restore of a plan the
+//! supervisor streams in, or an inspection of the disk's restore commit
+//! marker (FIX 6584, [`restore`]).
 
 mod provision;
+mod restore;
+mod runner;
 
+pub use self::restore::{VaultVmInspect, VmRestoreFds, VmRestoreHostIo, inspect_vault_vm};
+pub use self::runner::{VaultVmRun, run_vault_vm};
 use super::listener::bind_unix_socket;
-use super::vault_gates::read_managed_credentials;
 use super::vm_outbox::{VmOutboxAttachment, VmOutboxHostRoots};
 use super::vm_schedule::VmWakeSchedule;
 use oneiron_vault_contract::vm::{
     MAX_VM_FRAME, VM_ARTIFACT_PORT, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT,
-    VM_LEDGER_PORT, VM_OUTBOX_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame,
-    encode_vm_frame, guest_initiated_socket, host_connect_line,
+    VM_LEDGER_PORT, VM_OUTBOX_PORT, VM_RESTORE_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame,
+    decode_vm_frame, encode_vm_frame, guest_initiated_socket, host_connect_line,
 };
 use oneiron_vault_contract::vm_provision::{VmFscryptKey, VmProvisionBinding};
+use oneiron_vault_contract::vm_restore::VmRestoreBoot;
 use oneiron_vault_contract::{
-    CREDENTIALS_LEN, Credentials, CtlRequest, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
-    MAX_CTL_LINE, READY_BYTE, TokenHex, UnixTs, now_ts, valid_vault_name,
+    CREDENTIALS_LEN, Credentials, CtlRequest, CtlResponse, DEK_LEN, MAX_CTL_LINE, READY_BYTE,
+    UnixTs, valid_vault_name,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -43,10 +51,6 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::Stdio,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
     time::{Duration, Instant},
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -113,6 +117,14 @@ pub struct VaultVmConfig {
     /// bound, and the guest keeps its outbox work, deferred.
     #[serde(default)]
     pub outbox: Option<VmOutboxHostRoots>,
+    /// A cold restore's source drive (FIX 6584): a read-only ext4 image the
+    /// supervisor stages with the sealed artifact and its keyless custody
+    /// head, never a secret or unsealed bytes. Only a restore's boot attaches
+    /// it, after the drives above, and the guest mounts it at `/restore`,
+    /// below which the plan names its paths. Without it the plan's sources
+    /// are ones the guest already reads.
+    #[serde(default)]
+    pub restore_source_disk: Option<PathBuf>,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -125,7 +137,8 @@ pub enum SleepOutcome {
     Busy,
     /// RAM is on disk and the VMM is gone. The next start restores it.
     Snapshotted { next_wake: Option<UnixTs> },
-    /// An off-record stretch was open, so the vault stopped instead.
+    /// An off-record stretch was open, or the VM's boot attached a cold
+    /// restore's source drive, so the vault stopped instead.
     Stopped { next_wake: Option<UnixTs> },
 }
 
@@ -139,6 +152,13 @@ pub struct VaultVm {
     config: VaultVmConfig,
     vault: String,
     boot: UnixListener,
+    /// The restore channel's host socket, every cold boot's first dial.
+    restore: UnixListener,
+    /// The running generation's boot attached the restore's source drive,
+    /// so it never takes a RAM snapshot: a snapshot loads its drives again
+    /// from their host paths, and the staged source may be gone by then, so
+    /// a sleep stops it instead.
+    source_attached: bool,
     child: Option<tokio::process::Child>,
     lifecycle: Option<Lifecycle>,
     schedule: VmWakeSchedule,
@@ -146,9 +166,10 @@ pub struct VaultVm {
 }
 
 impl VaultVm {
-    /// Makes the state directory and binds the boot port's host socket, and
-    /// the outbox carrier's when the profile names its roots, all before any
-    /// VMM runs, so a guest never dials an unbound port.
+    /// Makes the state directory and binds the boot port's and the restore
+    /// channel's host sockets, and the outbox carrier's when the profile
+    /// names its roots, all before any VMM runs, so a guest never dials an
+    /// unbound port.
     pub fn prepare(config: VaultVmConfig, vault: String) -> anyhow::Result<Self> {
         anyhow::ensure!(valid_vault_name(&vault), "invalid vault name");
         if let Err(fault) = config.provision.validate() {
@@ -160,6 +181,7 @@ impl VaultVm {
         let schedule = VmWakeSchedule::load(config.state_dir.join("wake-ledger.json"), &vault)?;
         let vsock = config.state_dir.join("vsock.sock");
         let boot = bind_unix_socket(&guest_initiated_socket(&vsock, VM_BOOT_PORT))?;
+        let restore = bind_unix_socket(&guest_initiated_socket(&vsock, VM_RESTORE_PORT))?;
         let outbox = config
             .outbox
             .clone()
@@ -172,6 +194,8 @@ impl VaultVm {
             config,
             vault,
             boot,
+            restore,
+            source_attached: false,
             child: None,
             lifecycle: None,
             schedule,
@@ -293,6 +317,20 @@ impl VaultVm {
         fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<()> {
+        self.boot_vmm(false).await?;
+        // An ordinary boot's restore channel says only that it opens.
+        drop(self.answer_hello(&VmRestoreBoot::Open, timeout).await?);
+        self.provision(fscrypt_key, timeout).await?;
+        let mut stream = self.send_credentials(credentials, timeout).await?;
+        let ready = tokio::time::timeout(timeout, stream.read_u8()).await??;
+        anyhow::ensure!(ready == READY_BYTE, "vault VM sent a wrong ready byte");
+        self.accept_join(timeout).await
+    }
+
+    /// A fresh VMM, its kernel, drives, machine and vsock device set, and
+    /// started. `with_source` attaches the profile's restore source drive
+    /// read-only after the others, when it names one.
+    async fn boot_vmm(&mut self, with_source: bool) -> anyhow::Result<()> {
         self.spawn_vmm().await?;
         let config = &self.config;
         let mut boot_args = config.boot_args.clone();
@@ -349,6 +387,18 @@ impl VaultVm {
             )
             .await?;
         }
+        // After them, `/dev/vdc` or `/dev/vdd` in the guest.
+        if let Some(source) = config.restore_source_disk.as_ref().filter(|_| with_source) {
+            self.api(
+                "PUT",
+                "/drives/restore",
+                json!({
+                    "drive_id": "restore", "path_on_host": source,
+                    "is_root_device": false, "is_read_only": true,
+                }),
+            )
+            .await?;
+        }
         self.api(
             "PUT",
             "/machine-config",
@@ -366,20 +416,23 @@ impl VaultVm {
         )
         .await?;
         self.api("PUT", "/actions", json!({ "action_type": "InstanceStart" }))
-            .await?;
-        self.provision(fscrypt_key, timeout).await?;
+            .await
+    }
 
-        // The credential connection: the frame, a half-close for the guest's
-        // EOF check, then the ready byte back.
+    /// The credential connection: the frame and a half-close for the
+    /// guest's EOF check. The ready byte comes back on the stream returned.
+    async fn send_credentials(
+        &mut self,
+        credentials: &Credentials,
+        timeout: Duration,
+    ) -> anyhow::Result<UnixStream> {
         let (mut stream, _) = tokio::time::timeout(timeout, self.boot.accept()).await??;
         let mut frame = Zeroizing::new([0u8; CREDENTIALS_LEN]);
         frame[..DEK_LEN].copy_from_slice(&credentials.dek);
         frame[DEK_LEN..].copy_from_slice(&credentials.token);
         stream.write_all(&frame[..]).await?;
         stream.shutdown().await?;
-        let ready = tokio::time::timeout(timeout, stream.read_u8()).await??;
-        anyhow::ensure!(ready == READY_BYTE, "vault VM sent a wrong ready byte");
-        self.accept_join(timeout).await
+        Ok(stream)
     }
 
     async fn accept_join(&mut self, timeout: Duration) -> anyhow::Result<()> {
@@ -505,7 +558,7 @@ impl VaultVm {
                 break (next_wake, snapshot_ok);
             }
         };
-        if !snapshot_ok {
+        if !snapshot_ok || self.source_attached {
             self.stop(STOP_GRACE).await?;
             return Ok(SleepOutcome::Stopped { next_wake });
         }
@@ -581,6 +634,7 @@ impl VaultVm {
         }
         self.child = None;
         self.lifecycle = None;
+        self.source_attached = false;
         Ok(())
     }
 
@@ -589,125 +643,6 @@ impl VaultVm {
             let _ = child.kill().await;
         }
         self.lifecycle = None;
+        self.source_attached = false;
     }
-}
-
-/// `oneiron-server host vm`: one vault VM behind one unix socket. It starts
-/// the VM on the first connection or a due wake, proxies HTTP into it, takes
-/// its ledger pushes, and sleeps it after `idle` without traffic.
-pub struct VaultVmRun {
-    pub config: PathBuf,
-    pub vault_name: String,
-    pub listen: PathBuf,
-    pub credentials_fd: std::os::fd::RawFd,
-    /// Carries exactly the vault's 64-byte fscrypt key; read once, and sent
-    /// to the guest on each cold boot.
-    pub fscrypt_key_fd: std::os::fd::RawFd,
-    pub idle: Duration,
-}
-
-async fn take_ledger_push(
-    stream: UnixStream,
-    vault: &str,
-    token: &TokenHex,
-    schedule: &mut VmWakeSchedule,
-) -> anyhow::Result<()> {
-    let (reader, mut writer) = stream.into_split();
-    let mut line = String::new();
-    BufReader::new(reader.take(MAX_CTL_LINE as u64 + 2))
-        .read_line(&mut line)
-        .await?;
-    let update: anyhow::Result<()> = serde_json::from_str(line.trim_end_matches(['\r', '\n']))
-        .map_err(anyhow::Error::from)
-        .and_then(|update: LedgerUpdate| {
-            update.validate()?;
-            anyhow::ensure!(
-                update.vault == vault && update.token.ct_eq(token),
-                "foreign ledger push"
-            );
-            schedule.replace(update.rev, update.entries)
-        });
-    let ack = match &update {
-        Ok(_) => LedgerAck {
-            ok: true,
-            error: None,
-        },
-        Err(error) => LedgerAck {
-            ok: false,
-            error: Some(error.to_string()),
-        },
-    };
-    let mut reply = serde_json::to_string(&ack)?;
-    reply.push('\n');
-    writer.write_all(reply.as_bytes()).await?;
-    update
-}
-
-pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
-    let config: VaultVmConfig = serde_json::from_slice(&std::fs::read(&run.config)?)?;
-    anyhow::ensure!(
-        run.fscrypt_key_fd != run.credentials_fd,
-        "--fscrypt-key-fd and --credentials-fd name one descriptor"
-    );
-    let credentials = read_managed_credentials(run.credentials_fd)?;
-    let fscrypt_key = provision::read_fscrypt_key(run.fscrypt_key_fd)?;
-    let token = TokenHex::from_token(&credentials.token);
-    let mut vm = VaultVm::prepare(config, run.vault_name.clone())?;
-    let front = bind_unix_socket(&run.listen)?;
-    let ledger = bind_unix_socket(&vm.ledger_socket())?;
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let open = Arc::new(AtomicUsize::new(0));
-    let mut last_activity = Instant::now();
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
-    loop {
-        tokio::select! {
-            _ = terminate.recv() => break,
-            accepted = front.accept() => {
-                let (mut client, _) = accepted?;
-                if !vm.is_running() {
-                    vm.start(&credentials, &fscrypt_key, API_TIMEOUT).await?;
-                }
-                last_activity = Instant::now();
-                let mut guest = vm.http().await?;
-                let open = Arc::clone(&open);
-                open.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(async move {
-                    let _ = tokio::io::copy_bidirectional(&mut client, &mut guest).await;
-                    open.fetch_sub(1, Ordering::SeqCst);
-                });
-            }
-            pushed = ledger.accept() => {
-                let (stream, _) = pushed?;
-                if let Err(error) = take_ledger_push(stream, &run.vault_name, &token, &mut vm.schedule).await {
-                    tracing::warn!(%error, "vault VM ledger push refused");
-                }
-            }
-            _ = tick.tick() => {
-                if !vm.is_running() && vm.schedule.has_due(now_ts()) {
-                    vm.start(&credentials, &fscrypt_key, API_TIMEOUT).await?;
-                    last_activity = Instant::now();
-                }
-                if vm.is_running() {
-                    for entry in vm.schedule.due(now_ts()) {
-                        let response = vm.ctl(&CtlRequest::AlarmDue {
-                            id: entry.id.clone(), reason_tag: entry.reason_tag.clone(),
-                        }).await?;
-                        anyhow::ensure!(matches!(response, CtlResponse::Ok { ok: true }), "alarm_due was not acknowledged");
-                        vm.schedule.delivered(&entry)?;
-                        last_activity = Instant::now();
-                    }
-                    if open.load(Ordering::SeqCst) == 0 && last_activity.elapsed() >= run.idle {
-                        match vm.sleep(API_TIMEOUT).await? {
-                            SleepOutcome::Busy => last_activity = Instant::now(),
-                            SleepOutcome::Snapshotted { .. } | SleepOutcome::Stopped { .. } => {}
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if vm.is_running() {
-        vm.stop(STOP_GRACE).await?;
-    }
-    Ok(())
 }

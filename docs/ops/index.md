@@ -35,5 +35,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Load bench](load-bench.md) — `oneiron-bench load` runs the shipped server under synthetic
   load (facade ingest, recall per grade and agent count, fairness, memory) and compares two
   commits' JSON results.
+- [Vault VM restore transport](vault-vm-transport.md) — the restore channel on vsock 1032
+  (FIX 6584): `host vm --restore` and its pipes, the marker inspection's descriptors, the
+  optional `restore_source_disk` at `/restore`, the lost-result decision table and the image
+  manifest's `restore_wire_revision` floor.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);
   per-crate file tables in [`../codemap/`](../codemap/).

@@ -126,6 +126,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     ),
     ("vsock-guest", |args| args.vsock_guest, ArgvUse::Read),
     (
+        "vm-restore-revision",
+        |args| args.vm_restore_revision.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "keystore-dir",
         |args| args.keystore_dir.is_some(),
         ArgvUse::Read,

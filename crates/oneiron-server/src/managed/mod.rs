@@ -83,7 +83,10 @@ mod vm_outbox;
 #[cfg(target_os = "linux")]
 mod vm_schedule;
 #[cfg(target_os = "linux")]
-pub use self::vm_host::{SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun, run_vault_vm};
+pub use self::vm_host::{
+    SleepOutcome, VaultVm, VaultVmConfig, VaultVmInspect, VaultVmRun, VmRestoreFds,
+    VmRestoreHostIo, inspect_vault_vm, run_vault_vm,
+};
 #[cfg(target_os = "linux")]
 pub use self::vm_init::run_vm_init;
 #[cfg(target_os = "linux")]
