@@ -5965,7 +5965,7 @@
      "path": "src/batch/phonetic_apply.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -7699,7 +7699,7 @@
      "path": "src/bm25/config.rs",
      "purpose": "Rank-profile config: field/channel params, formula, recency, defaults",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1
      }
     },
@@ -12478,7 +12478,7 @@
      "path": "src/claim/scoped_read/retrieval_loop.rs",
      "purpose": "Scoped admission shared by the read-only retrieval loop's verbs",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -39855,6 +39855,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/recall/paid/lineage.rs",
+     "purpose": "The rows each rerank document is read from (FIX 7001), kept beside its text so the host's call is sourced…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/recall/presentation.rs",
      "purpose": "—",
      "surface": {
@@ -46135,7 +46145,7 @@
      "path": "src/pipeline/types.rs",
      "purpose": "—",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 36,
       "enum": 5,
       "fn": 15,
@@ -71106,7 +71116,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 249,
+     "files": 250,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71787,7 +71797,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4582,
+   "source_files": 4583,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83981,7 +83991,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 8,
-      "mod": 11,
+      "mod": 12,
       "re-export": 5,
       "struct": 1
      }
@@ -84048,6 +84058,16 @@
       "enum": 3,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/analyzer/vietnamese.rs",
+     "purpose": "Vietnamese analyzer (ARCH-0031 dispatch row \"Vietnamese → Whitespace + NFC + lowercase\", FIX 7780)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -84132,7 +84152,7 @@
    ],
    "modules": {
     "analyzer": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -84162,7 +84182,7 @@
    },
    "over_bar": 0,
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 5
   },
   "oneiron-sandbox-contract": {
