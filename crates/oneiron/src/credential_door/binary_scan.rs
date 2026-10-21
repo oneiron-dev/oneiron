@@ -5,7 +5,10 @@
 //! blob's ORIGINAL bytes and answers a [`ReceiveScanHit`] or none; it never
 //! decodes, converts or rewrites them, so a clean blob keeps its Git object
 //! identity. Clean text (valid UTF-8 with no NUL) is read line by line with
-//! the very detector calls the door made before, byte for byte. Anything
+//! the very detector calls the door made before, byte for byte, and then
+//! whole by the release reader, whose phrase rule spans lines, so a
+//! recovery phrase wrapped across short lines is still seen (FIX 8804).
+//! Anything
 //! else is read twice: by the custody automaton over the raw bytes, which
 //! finds provider keys inside arbitrary byte runs and private-key armor, and
 //! by the shipped release reader, which carries the blocklist, phrase,
@@ -42,9 +45,20 @@ pub(super) fn scan_receive_blob(blob: &PushedBlob) -> DoorResult<Option<ReceiveS
     let text = !blob.content.contains(&0) && std::str::from_utf8(&blob.content).is_ok();
     let (content_kind, reason) = if text {
         // The old admitting path, unchanged: each line, the same detector.
-        let reason = blob
+        // Then the whole text once through the streaming release reader,
+        // which keeps its phrase state across lines (FIX 8804): a scan that
+        // cannot run refuses, as the binary read does.
+        let reason = match blob
             .lines()
-            .find_map(|line| scan_file_content(&blob.path, line));
+            .find_map(|line| scan_file_content(&blob.path, line))
+        {
+            Some(reason) => Some(reason),
+            None => {
+                let mut source = Cursor::new(blob.content.as_slice());
+                scan_file_content_reader(&blob.path, &mut source)
+                    .map_err(|_| scan_failed(&blob.path))?
+            }
+        };
         (ReceiveBlobKind::Text, reason)
     } else {
         (ReceiveBlobKind::Binary, scan_binary_blob(blob)?)

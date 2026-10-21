@@ -238,7 +238,9 @@ pub(crate) fn mcp_credential_memory<'a>(
     actor: oneiron::EntityId,
     class: oneiron::EdgeActorClass,
 ) -> oneiron::memory::Memory<'a> {
-    let memory = credential_memory(vault, auth, actor, class);
+    // An MCP tool call reads repo bytes masked, the owner's credential
+    // included (FIX 8961): the tool is the recipient.
+    let memory = credential_memory(vault, auth, actor, class).for_repo_tool_recipient();
     match auth.and_then(CoreAuth::off_record_session) {
         Some(session) if super::call_receipt::mcp_session_principal(auth, actor).is_some() => {
             memory.in_off_record_session(session)

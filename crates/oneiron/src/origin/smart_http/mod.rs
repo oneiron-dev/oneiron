@@ -98,6 +98,7 @@ mod owner_pins;
 mod paths;
 mod push_admission;
 mod push_paths;
+mod read_projection;
 mod retained_reasons;
 pub(in crate::origin) mod secret_marks;
 mod serve;

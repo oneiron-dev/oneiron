@@ -25,7 +25,7 @@ impl GitWire<'_> {
         Ok(self.checkout_handle_dir(lease)?.join("tree"))
     }
 
-    fn checkout_repo(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<GitWireRepo> {
+    pub(super) fn checkout_repo(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<GitWireRepo> {
         let RepoRef::LocalFolder { path, .. } = &lease.repo_ref else {
             return Err(CheckoutError::Invalid(
                 "checkout repo must be a local folder",
@@ -36,7 +36,11 @@ impl GitWire<'_> {
 
     /// Proves the handle is registered with git and materializes exactly the
     /// pinned commit.
-    fn claim_checkout_handle(&self, repo: &GitWireRepo, handle: &Path) -> CheckoutResult<bool> {
+    pub(super) fn claim_checkout_handle(
+        &self,
+        repo: &GitWireRepo,
+        handle: &Path,
+    ) -> CheckoutResult<bool> {
         if let Some(parent) = handle.parent() {
             fs::create_dir_all(parent).map_err(Error::from)?;
         }
@@ -56,7 +60,7 @@ impl GitWire<'_> {
     }
 }
 
-fn checkout_handle_dir_for(
+pub(super) fn checkout_handle_dir_for(
     process_env: &GitWireProcessEnv,
     repo: &GitWireRepo,
     lease: &CheckoutLeaseAct,
@@ -156,7 +160,7 @@ impl CheckoutRepoOps for GitWire<'_> {
     }
 }
 
-fn verify_checkout_head(
+pub(super) fn verify_checkout_head(
     wire: &GitWire<'_>,
     repo: &GitWireRepo,
     tree: &Path,
@@ -177,7 +181,7 @@ fn verify_checkout_head(
     Ok(())
 }
 
-fn uncertain_inspection() -> CheckoutTeardownInspection {
+pub(super) fn uncertain_inspection() -> CheckoutTeardownInspection {
     CheckoutTeardownInspection {
         observed_head: None,
         dirty: false,

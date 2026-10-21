@@ -23,7 +23,9 @@ use std::collections::BTreeMap;
 
 use heed::RoTxn;
 
+pub(crate) mod claims;
 pub(crate) mod git;
+pub(crate) mod graph_objects;
 pub(crate) mod types;
 
 pub(crate) use self::git::ExactSourceExportProof;

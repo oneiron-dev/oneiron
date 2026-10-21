@@ -89,17 +89,30 @@ impl GitWire<'_> {
         tree: &Path,
         lease: &CheckoutLeaseAct,
     ) -> GitWireResult<()> {
+        if self.checkout_door.is_none() {
+            return Ok(());
+        }
+        let _guard = lock_repository(repo.common_dir())?;
+        self.preflight_checkout_remote(repo)?;
+        self.configure_checkout_remote_named(repo, tree, lease, served_repo_name(repo)?)
+    }
+
+    /// [`Self::configure_checkout_remote`] with the served repository name
+    /// given rather than derived from `repo` (FIX 7608 slice 2b-i): a
+    /// masked copy's checkout lives in the copy store but pushes to its
+    /// canonical store's door name. Same validation and the same
+    /// worktree-local config; the caller holds `repo`'s coordinator and has
+    /// preflighted the served store.
+    pub(super) fn configure_checkout_remote_named(
+        &self,
+        repo: &GitWireRepo,
+        tree: &Path,
+        lease: &CheckoutLeaseAct,
+        repo_name: &str,
+    ) -> GitWireResult<()> {
         let Some(base) = &self.checkout_door else {
             return Ok(());
         };
-        let _guard = lock_repository(repo.common_dir())?;
-        self.preflight_checkout_remote(repo)?;
-        let repo_name = repo
-            .common_dir()
-            .file_name()
-            .and_then(|name| name.to_str())
-            .and_then(|name| name.strip_suffix(".git"))
-            .ok_or_else(|| invalid("door checkout requires a served bare repository"))?;
         crate::origin::smart_http::validate_repo_name(repo_name)?;
         let url = format!(
             "{base}/lease/{}.{}/{repo_name}.git",
@@ -129,4 +142,14 @@ impl GitWire<'_> {
         }
         Ok(())
     }
+}
+
+/// The door name of the served bare store `repo`: its common directory's
+/// name without `.git`.
+pub(super) fn served_repo_name(repo: &GitWireRepo) -> GitWireResult<&str> {
+    repo.common_dir()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(".git"))
+        .ok_or_else(|| invalid("door checkout requires a served bare repository"))
 }

@@ -18,7 +18,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::argv::FrozenGitArgv;
 use super::failure::invalid;
+use super::projected_object::tag_header;
 use super::publish_review::{COMMIT_PAGE, parse_commit_page};
+use super::retained_object::{GitObjectKind, GitRetainedObject};
 use super::{GitOid, GitReviewItem, GitWire, GitWireFailureClass, GitWireOperation, GitWireRepo};
 use crate::error::Result;
 
@@ -57,6 +59,29 @@ pub struct GitPeeledRef {
     pub end: GitRefEnd,
 }
 
+/// One annotated tag on a ref's way to what it names, held whole in a
+/// retained spool (FIX 7608 slice 2b-i): no tag is too large to read, and
+/// none is named by its size alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitRetainedRefTag {
+    /// The tag object.
+    pub tag: GitOid,
+    /// The object it names, and that object's type.
+    pub target: GitOid,
+    pub target_kind: GitObjectKind,
+    /// Its tag name, the stored bytes.
+    pub name: Vec<u8>,
+    /// Its whole stored payload: header, message and any signature.
+    pub payload: GitRetainedObject,
+}
+
+/// One ref tip peeled through retained tag reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitRetainedPeeledRef {
+    pub tags: Vec<GitRetainedRefTag>,
+    pub end: GitRefEnd,
+}
+
 impl GitWire<'_> {
     /// Peels `tip` through every annotated tag (module docs). A chain that
     /// comes back to a tag it already passed is refused as the loop it is;
@@ -87,6 +112,50 @@ impl GitWire<'_> {
                 _ => return Err(invalid("a pushed ref names an object of no known type")),
             };
             return Ok(GitPeeledRef { tags, end });
+        }
+    }
+
+    /// [`Self::peel_ref_tip`] with every tag read whole through a retained
+    /// spool (FIX 7608 slice 2b-i): a tag of any size keeps its whole
+    /// payload and its name's stored bytes. Only a real loop or an object
+    /// the store lacks ends the walk.
+    ///
+    /// # Errors
+    /// A tag loop, a missing object, or a failed read.
+    pub fn peel_ref_tip_retained(
+        &self,
+        repo: &GitWireRepo,
+        tip: &GitOid,
+    ) -> Result<GitRetainedPeeledRef> {
+        let mut tags = Vec::new();
+        let mut passed = HashSet::new();
+        let mut current = tip.clone();
+        loop {
+            let (kind, _) = self
+                .object_kind_and_size(repo, &current)?
+                .ok_or_else(|| invalid("a pushed ref names an object this store does not hold"))?;
+            let end = match kind {
+                GitObjectKind::Commit => GitRefEnd::Commit(current),
+                GitObjectKind::Tree => GitRefEnd::Tree(current),
+                GitObjectKind::Blob => GitRefEnd::Blob(current),
+                GitObjectKind::Tag => {
+                    if !passed.insert(current.clone()) {
+                        return Err(invalid("a pushed ref's tag chain loops"));
+                    }
+                    let payload = self.read_object_to_spool(repo, &current)?;
+                    let (target, target_kind, name) = tag_header(&payload.read_bytes()?)?;
+                    tags.push(GitRetainedRefTag {
+                        tag: current,
+                        target: target.clone(),
+                        target_kind,
+                        name,
+                        payload,
+                    });
+                    current = target;
+                    continue;
+                }
+            };
+            return Ok(GitRetainedPeeledRef { tags, end });
         }
     }
 
@@ -123,6 +192,21 @@ impl GitWire<'_> {
         visit: &mut dyn FnMut(GitReviewItem) -> Result<()>,
     ) -> Result<()> {
         self.diff_trees(repo, &[], tree, None, visit)
+    }
+
+    /// [`Self::for_each_tree_path`] with retained tree reads (FIX 7608
+    /// slice 2b-i): the same walk with no width, depth, output or time
+    /// bound.
+    ///
+    /// # Errors
+    /// A missing tree, a failed read, or `visit`'s own.
+    pub fn for_each_tree_path_retained(
+        &self,
+        repo: &GitWireRepo,
+        tree: &GitOid,
+        visit: &mut dyn FnMut(GitReviewItem) -> Result<()>,
+    ) -> Result<()> {
+        self.diff_trees_retained(repo, tree, None, visit)
     }
 
     /// The tree each of `commits` names; a commit this store does not hold
