@@ -92999,7 +92999,7 @@
      "path": "src/owner/backup/checkpoint_fact.rs",
      "purpose": "Each backup's checkpoint fact beside it (FIX 7327): the signed fact the snapshot's receipt carries (FIX…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
