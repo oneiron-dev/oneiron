@@ -300,7 +300,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | impl Vault | purpose |
 |---|---|---|---|---|---|
 | `beam` | dir | 41 | m | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
-| `cua` | dir | 18 | s | — | Synthetic browser bench: engine outcomes are not oracle passes |
+| `cua` | dir | 18 | m | — | Synthetic browser bench: engine outcomes are not oracle passes |
 | `eval` | file+dir | 3 | m | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `fleet` | dir | 8 | m | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
 | `infer` | dir | 13 | m | — | `infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an… |
