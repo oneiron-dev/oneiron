@@ -89885,7 +89885,7 @@
      "path": "src/idempotency/caller.rs",
      "purpose": "The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
