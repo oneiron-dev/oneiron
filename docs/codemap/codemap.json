@@ -27275,7 +27275,7 @@
      "path": "src/failure_signals/code_fix.rs",
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
-      "const": 4,
+      "const": 1,
       "crate-vis": 11,
       "enum": 9,
       "fn": 3,
@@ -49487,7 +49487,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 5
      }
     },
@@ -49747,16 +49747,17 @@
       "DetectorDecisions",
       "DetectorPolicy",
       "ProposedDiagnostic",
-      "ProposedTier"
+      "ProposedTier",
+      "WindowGrade"
      ],
      "path": "src/self_heal/tiered.rs",
      "purpose": "Model-graded detection over ARCH-0037 runs",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
-      "fn": 4,
-      "struct": 3
+      "fn": 7,
+      "struct": 4
      }
     },
     {
