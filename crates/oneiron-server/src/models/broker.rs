@@ -306,8 +306,9 @@ impl BrokerBackend {
         call_with_key(&self.client, &self.keys, &self.secret, header, body).await
     }
 
-    /// The provider's answer as the adapter reads it.
-    fn answer(&self, outcome: Outcome, body: &[u8]) -> LlmResult<LlmResponse> {
+    /// The provider's answer as the adapter reads it, its model labelled as
+    /// one of the call's configured `wire_model`.
+    fn answer(&self, outcome: Outcome, body: &[u8], wire_model: &str) -> LlmResult<LlmResponse> {
         let (status, headers) = answered(outcome)?;
         let parsed = serde_json::from_slice::<JsonValue>(body);
         if !(200..300).contains(&status) {
@@ -324,7 +325,7 @@ impl BrokerBackend {
         let mut body = parsed.map_err(|_| LlmError::from(RetryableLlmError::ServerError))?;
         match &self.wire {
             Wire::OpenAi(_) => {
-                super::openai::carry_served_model(status, &mut body);
+                super::openai::carry_served_model(status, &mut body, Some(wire_model));
                 parse_openai_chat_response(&body)
             }
             Wire::Anthropic(_) => {
@@ -471,7 +472,7 @@ impl LlmBackend for BrokerBackend {
         Box::pin(async move {
             let (header, body) = self.build(&request, false, lease.id())?;
             let reply = self.send(&header, &body).await?;
-            self.answer(reply.outcome, &reply.body)
+            self.answer(reply.outcome, &reply.body, &header.wire_model)
         })
     }
 

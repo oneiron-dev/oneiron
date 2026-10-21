@@ -11,6 +11,7 @@
 mod assembly;
 pub use assembly::StreamAssembly;
 mod backend;
+mod backend_identity;
 mod bus;
 mod subscribers;
 pub use bus::{LlmEventBus, StreamSubscription, TerminalSink};
@@ -77,6 +78,8 @@ pub use self::cache::{
     CACHE_CALLS_KEY, CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch,
     CacheEvidenceError, CacheIdentity, CacheOutcome, CachePassReport, CachePassUsage, CachePhase,
 };
+// FIX 7895: the answering llama.cpp process's launch alias, read in one place.
+pub use self::backend_identity::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 
 pub use self::backend::{
     BrokerIsolation, BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream,

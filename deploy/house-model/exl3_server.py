@@ -27,13 +27,17 @@ codec this server cannot read is answered 415.
 
 Each reply's `usage` carries the prompt-cache evidence of every Job the
 request ran, read from each Job's final event, with the server's identity and
-the Generator's epoch (`cache_usage.py`, FIX 6567).
+the Generator's epoch (`cache_usage.py`, FIX 6567). The identity's `model` is
+the target's weights manifest digest, when the installed shards match it
+before they load (`--weights-manifest`, FIX 7895); the server starts either
+way. The `model` it returns and lists stays `--model-id`.
 """
 import argparse
 import collections
 import json
 import queue
 import socket
+import sys
 import threading
 import time
 import uuid
@@ -41,6 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import cache_usage
+import weights_manifest
 from body_codec import UnsupportedEncoding, decode_body
 from jinja2 import Environment
 from exllamav3 import Cache, CacheLayer_quant, Config, Generator, Job, LLGuidanceFilter, Model, Tokenizer
@@ -115,6 +120,20 @@ def full_request_pool(context, depth):
     return -(-(context + 1 + depth + CLOSE_ROOM_TOKENS) // PAGE) * PAGE
 
 
+def weights_digest(target_dir, manifest_path):
+    """The target's weights digest: its manifest's, when the installed shards
+    match it. A missing or mismatched manifest leaves the identity without a
+    model digest, with one warning; the server still starts."""
+    if not manifest_path:
+        return None
+    try:
+        return weights_manifest.verify(target_dir, manifest_path)
+    except Exception as error:  # identity never stops the server
+        print(f"WARN WEIGHTS_UNVERIFIED {error}; the cache identity names no model",
+              file=sys.stderr, flush=True)
+        return None
+
+
 def load(args):
     if args.context % PAGE:
         raise ValueError(f"--context must be a multiple of the cache page, {PAGE}")
@@ -132,6 +151,8 @@ def load(args):
     if cache_tokens < floor:
         raise ValueError(f"--cache-tokens must be at least {floor}, so a request the context admits fits alone")
 
+    # The shards are checked before anything loads them.
+    model_digest = weights_digest(args.target_dir, args.weights_manifest)
     target_config = Config.from_directory(args.target_dir)
     target = Model.from_config(target_config, component="text")
     tokenizer = Tokenizer(target_config)
@@ -184,7 +205,8 @@ def load(args):
                         "draft_cache": draft is not None, "cpu_cache_size": 0,
                         "recurrent_cache_size": args.recurrent_cache_gib * 1024**3},
         server_settings={"context": args.context, "draft": draft is not None, "draft_tokens": depth,
-                         "max_in_flight": batch})
+                         "max_in_flight": batch},
+        model_digest=model_digest)
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:
@@ -929,6 +951,9 @@ def serve(args, state):
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--target-dir", required=True, help="the EXL3 4 bpw target model directory")
+    p.add_argument("--weights-manifest", default=None,
+                   help="the target's weights manifest (weights_manifest.py prepare); its digest is the "
+                        "cache identity's model when the installed shards match it")
     p.add_argument("--draft-dir", default="", help="the DFlash2 draft model directory; empty serves without a draft")
     p.add_argument("--draft-tokens", type=int, default=7,
                    help="the draft depth: drafted tokens the target checks per step (owner ruling 2026-10-16: 7)")
