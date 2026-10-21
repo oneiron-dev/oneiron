@@ -51,6 +51,15 @@ credential.
   revision, with the hashes and that floor, before it stages any of the files,
   prepares the VMM or hands over F, C or A, and boots no image before the floor
   for a profile that needs one of them.
+- The guest runtime (FIX 7671) adds two required manifest fields:
+  `vm_guest_runtime_revision` (1 for an image that stages the guests' whole
+  rootless runtime and both image archives, 0 for one built without) and
+  `guest_runtime` (the image's descriptor, `null` exactly at 0). The
+  supervisor writes `/config/browser-runtime` or `/config/desktop-runtime`
+  only for an image at revision 1, each naming the descriptor's guest-local
+  CLI, never a host path. The bootstrap prepares the runtime for the vault UID
+  and passes the engine one `--guest-runtime-fact` on every serving boot; no
+  fact stops the vault.
 
 ## The channel
 

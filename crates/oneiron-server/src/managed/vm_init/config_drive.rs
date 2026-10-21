@@ -11,7 +11,9 @@
 //! A known file that is not there (ENOENT) is a choice not made. One that is
 //! there but cannot be read, is not a regular file, is over the bound or is
 //! not in its form refuses the boot; it is never read as absent. No error
-//! carries a file's bytes.
+//! carries a file's bytes. The guests' two runtime binding files (FIX 7671)
+//! are read through [`read_known`] too, by [`super::guest_runtime`], where
+//! one that does not read is no usable binding and never refuses the boot.
 
 use super::profile::VmManagedProfile;
 use oneiron_vault_contract::vm::{

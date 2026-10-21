@@ -10,8 +10,9 @@
 //! storage, the UID table and the socket directories ([`layout`]). It answers
 //! the host, its copy of the key already wiped, and only then starts the
 //! engine: supplementary groups cleared, then the GID and the UID set to the
-//! binding's, with no environment but `PATH` and no descriptor beyond the
-//! standard three. The engine dials its own credential connection and
+//! binding's, with no environment but `PATH` (and the guests' fence launcher
+//! once their runtime is provisioned) and no descriptor beyond the standard
+//! three. The engine dials its own credential connection and
 //! reports its own readiness after the unchanged managed gates; nothing here
 //! stands in for either.
 //!
@@ -39,6 +40,14 @@
 //! become the engine's own managed-profile flags, the same for an open and a
 //! cold restore.
 //!
+//! A boot that serves then prepares the guests' container runtime for the
+//! vault's UID, while it is root and before anything runs as that UID (FIX
+//! 7671, [`guest_runtime`]): the image's staged runtime checked, the UID's
+//! identity, subordinate IDs, delegated cgroup and container CLI
+//! directories set up, and both guest images in its own store. The engine
+//! gets the one fact that came of it, and the runtime's bindings only when
+//! it is provisioned; no fact refuses the boot.
+//!
 //! It stays root only to supervise, and to run the outbox companion
 //! `oneiron-vm-outbox` beside the engine ([`outbox`], FIX 5235): started
 //! before the engine, it lays out the outbox and carries it to the host, and
@@ -52,6 +61,7 @@
 mod anchor;
 mod config_drive;
 mod fscrypt;
+mod guest_runtime;
 mod layout;
 mod network;
 mod outbox;
@@ -406,11 +416,12 @@ fn remove_key(provisioned: &Provisioned) {
 
 /// Starts the outbox companion, then the engine as `uid`, and waits for the
 /// engine; then stops the companion, and ends and reaps what is left. The
-/// host's custody anchor header is read before either, and the anchor's
-/// credential taken beside the engine. The engine gets the managed
-/// `profile`'s flags, an open's and a cold restore's alike. A cold restore's
-/// engine (`restore_channel`) gets its two restore pipes, and the restore's
-/// last result record goes out before this returns.
+/// guests' container runtime is prepared and the host's custody anchor
+/// header read before either, and the anchor's credential taken beside the
+/// engine. The engine gets the managed `profile`'s flags and the runtime's,
+/// an open's and a cold restore's alike. A cold restore's engine
+/// (`restore_channel`) gets its two restore pipes, and the restore's last
+/// result record goes out before this returns.
 fn run_engine(
     args: &InitArgs,
     uid: u32,
@@ -421,6 +432,8 @@ fn run_engine(
     // it is reaped before the key goes. Any nonzero argument sets it.
     rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
         .context("becoming the engine's subreaper")?;
+    // The key is in and the storage laid out; nothing runs as the UID yet.
+    let runtime = guest_runtime::prepare(uid, args.guest_config_dir.is_some());
     let anchor = anchor::exchange(&args.vault, uid)?;
     let companion = outbox::start(&args.vault, uid, ENGINE_PATH);
     let mut flags = if companion.is_some() {
@@ -430,19 +443,21 @@ fn run_engine(
     };
     flags.extend(anchor.flags());
     flags.extend(profile.engine_flags());
+    flags.extend(runtime.engine_flags());
     let anchor_fds = anchor.fds();
     // A pipe the engine reads that broke before its end comes back here.
     let (lost_sender, lost) = mpsc::channel();
     let mut restoring = None;
     let mut anchored = None;
     let status = match restore_channel {
-        None => start_engine(args, uid, &flags, &anchor_fds).and_then(|mut engine| {
+        None => start_engine(args, uid, &flags, &anchor_fds, &runtime).and_then(|mut engine| {
             anchored = Some(anchor.start(lost_sender)?);
             restore::supervise(&mut engine, &lost)
         }),
         Some(channel) => restore::start(channel, lost_sender.clone(), |fds, restore_flags| {
             let fds = [fds, &anchor_fds[..]].concat();
-            start_engine(args, uid, &[&flags[..], restore_flags].concat(), &fds)
+            let flags = [&flags[..], restore_flags].concat();
+            start_engine(args, uid, &flags, &fds, &runtime)
         })
         .and_then(|started| {
             let restoring = restoring.insert(started);
@@ -465,12 +480,15 @@ fn run_engine(
 }
 
 /// The engine as `uid`, with the init's flags and `flags`, and `fds` as
-/// `oneiron_spawn::command_with_fds` places them.
+/// `oneiron_spawn::command_with_fds` places them. A provisioned guest
+/// `runtime` adds its fence launcher to the environment, and the engine
+/// starts in the cgroup delegated to `uid`.
 fn start_engine(
     args: &InitArgs,
     uid: u32,
     flags: &[OsString],
     fds: &[(RawFd, RawFd)],
+    runtime: &guest_runtime::GuestRuntime,
 ) -> anyhow::Result<std::process::Child> {
     let mut command = oneiron_spawn::command_with_fds(ENGINE, fds);
     command
@@ -492,10 +510,22 @@ fn start_engine(
         .env_clear()
         .env("PATH", ENGINE_PATH)
         .stdin(Stdio::null());
+    if let Some((key, launcher)) = runtime.fence_env() {
+        command.env(key, launcher);
+    }
+    let joins_cgroup = runtime.joins_cgroup();
     // SAFETY: the hook runs in the forked child before exec and calls only
-    // setgroups, setgid and setuid, which are async-signal-safe, then reads
-    // errno; it allocates nothing.
-    unsafe { command.pre_exec(move || drop_privileges(uid)) };
+    // open, write and close (joining the cgroup), setgroups, setgid and
+    // setuid, which are async-signal-safe, then reads errno; it allocates
+    // nothing.
+    unsafe {
+        command.pre_exec(move || {
+            if joins_cgroup {
+                guest_runtime::join_cgroup()?;
+            }
+            drop_privileges(uid)
+        });
+    }
     command.spawn().context("starting the engine")
 }
 
