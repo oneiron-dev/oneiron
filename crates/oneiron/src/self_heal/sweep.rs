@@ -3,10 +3,10 @@
 //! Gate receipts, one tripwire window at a time, and the served-signal
 //! detectors over the stored retrieval runs and call receipts, as the
 //! signed scheduled detector instance. Each accepted firing a closed-form
-//! repair answers gets one bounded repair intent, filed through the
-//! production healer host for the owner to review and counted by the
-//! healer oversight receipts under its diagnostic's id. Nothing here
-//! applies a repair.
+//! repair answers gets one repair intent, every one of them in the same
+//! pass (OF-418 L8), filed through the production healer host for the owner
+//! to review and counted by the healer oversight receipts under its
+//! diagnostic's id. Nothing here applies a repair.
 
 use super::{
     DiagnosticEventClass, RepairActor, RepairOperation, RepairProposal,
@@ -21,9 +21,6 @@ use crate::{ClaimSource, EntityId, Result, Vault};
 pub const TIER1_SWEEP_SCOPE: &str = "vault";
 /// How far back one sweep reads: the nightly cadence.
 const SWEEP_SPAN_SECS: u64 = 86_400;
-/// At most this many repair intents per call, so a storm of firings cannot
-/// flood the owner's review tray.
-const MAX_REPAIRS_PER_SWEEP: usize = 64;
 
 /// What one sweep stored.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -34,9 +31,9 @@ pub struct Tier1Sweep {
 
 impl Vault {
     /// Runs every receipt tripwire over the last day, window by window, then
-    /// files the bounded repairs. Each window reads every Gate receipt it
-    /// holds, never a newest top-N. A manifest that forces tripwires closed
-    /// silences the sweep.
+    /// files every repair its firings ask for. Each window reads every Gate
+    /// receipt it holds, never a newest top-N. A manifest that forces
+    /// tripwires closed silences the sweep.
     pub fn run_tier1_sweep(&self, now: u64) -> Result<Tier1Sweep> {
         let Some(bounds) = self.tripwire_bounds()? else {
             return Ok(Tier1Sweep::default());
@@ -82,9 +79,10 @@ impl Vault {
     /// diagnostic. A consent refusal is the owner's answer, not a
     /// malfunction, drift is the owner's policy to narrow, and a refused MCP
     /// call is the boundary working, so those stay diagnostics. A diagnostic
-    /// already answered is skipped. Each intent filed is counted as proposed
-    /// in the healer oversight receipts under its diagnostic's id, where the
-    /// host's review door settles it.
+    /// already answered is skipped. Every eligible diagnostic is filed in
+    /// this call, however many there are. Each intent filed is counted as
+    /// proposed in the healer oversight receipts under its diagnostic's id,
+    /// where the host's review door settles it.
     pub fn propose_tier1_repairs(
         &self,
         diagnostics: &[EntityId],
@@ -99,13 +97,6 @@ impl Vault {
         let run = format!("tier1:{}", now / SWEEP_SPAN_SECS);
         let mut filed = Vec::new();
         for id in diagnostics {
-            if filed.len() == MAX_REPAIRS_PER_SWEEP {
-                tracing::warn!(
-                    left = diagnostics.len(),
-                    "tier-1 repair intents capped for this sweep"
-                );
-                break;
-            }
             if !self.is_signed_tripwire(id)? {
                 continue;
             }

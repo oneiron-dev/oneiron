@@ -5,8 +5,11 @@
 //! door, aimed at the failure (FIX 2495), and the heal carries it as a
 //! `SkillEdit` repair for the owner to review. The revision is a gated
 //! candidate like any optimizer draft: the Dreamer's optimize pass scores it,
-//! and nothing here admits it. The other routes stay route-only.
+//! and nothing here admits it. A draft that went stale before the heal's
+//! write leaves that heal route-only, saying why (FIX 2497). The other
+//! routes stay route-only.
 use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestEntry, ManifestKind};
+use crate::claim::ClaimApprovalStatus;
 use crate::failure_ladder::{HealerCase, HealerRepairRoute};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::self_heal::blocked_reports::BlockedIssue;
@@ -280,7 +283,10 @@ impl Vault {
 
 /// Lands a drafted revision as a gated candidate in the heal's transaction,
 /// at the id its `SkillEdit` route names as the patch, stamped with the
-/// Coach's `facet` and heal `attempt`. A skipped draft lands nothing.
+/// Coach's `facet` and heal `attempt`. A skipped draft lands nothing. A draft
+/// that went stale between its drafting and this transaction lands nothing
+/// either, and the heal still files, route-only (FIX 2497): `Ok(Some(..))`
+/// is the `repair` value it files in place of the draft's, naming why.
 pub(super) fn land_skill_repair_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -288,7 +294,7 @@ pub(super) fn land_skill_repair_in_txn(
     facet: &str,
     attempt: AttemptId,
     now: u64,
-) -> Result<()> {
+) -> Result<Option<serde_json::Value>> {
     let SkillRepairDraft::Drafted {
         brief,
         desc,
@@ -300,8 +306,15 @@ pub(super) fn land_skill_repair_in_txn(
         ..
     } = draft
     else {
-        return Ok(());
+        return Ok(None);
     };
+    if let Some(why) = stale_in_txn(vault, txn, brief, *resident)? {
+        let route_only = SkillRepairDraft::Skipped {
+            skill: Some(brief.skill),
+            why,
+        };
+        return Ok(Some(route_only.value()));
+    }
     let stamp = SkillRepairStamp {
         actor: *actor,
         facet,
@@ -323,5 +336,45 @@ pub(super) fn land_skill_repair_in_txn(
             end: now,
         },
         now,
-    )
+    )?;
+    Ok(None)
+}
+
+/// Why a draft of `brief`'s target can no longer land, read in the heal's
+/// write transaction, by the optimizer write door's own tests: the target
+/// moved since the draft read it (`target_moved`), or it has an open proposed
+/// revision now (`target_has_open_revision`). `None` while it still lands.
+fn stale_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    brief: &SkillOptimizeBrief,
+    resident: Option<EntityId>,
+) -> Result<Option<&'static str>> {
+    use crate::ports::EntityStoreRead;
+    let Some(target) = vault.get_skill_record_in_txn(txn, &brief.skill)? else {
+        return Ok(Some("target_moved"));
+    };
+    if target.lifecycle_status != SkillLifecycle::Active
+        || target.version != brief.version
+        || target.desc != brief.desc
+        || crate::skill::resident_of(&target)? != resident
+    {
+        return Ok(Some("target_moved"));
+    }
+    for id in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_SKILL, None)?
+    {
+        let Some(other) = vault.get_skill_record_in_txn(txn, &id?)? else {
+            continue;
+        };
+        if other.lifecycle_status == SkillLifecycle::Candidate
+            && other.approval_status == ClaimApprovalStatus::Proposed
+            && other.skill_id == target.skill_id
+            && crate::skill::resident_of(&other)? == resident
+        {
+            return Ok(Some("target_has_open_revision"));
+        }
+    }
+    Ok(None)
 }

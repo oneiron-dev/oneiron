@@ -52,9 +52,6 @@ pub(crate) use self::subject::dispatch_worlds_in;
 use self::subject::{SubjectFailure, blocked_source_failure_in};
 
 pub const CODE_FIX_RECORD_VERSION: u16 = 1;
-pub const CODE_FIX_MAX_NOTE_BYTES: usize = 1024;
-pub const CODE_FIX_MAX_MESSAGES: usize = 32;
-pub const CODE_FIX_MAX_MESSAGE_BYTES: usize = 4096;
 
 /// Sealed records waiting for the host to deliver them, with the worlds each
 /// failure touched (local only). A record stays until the host acks its
@@ -369,6 +366,21 @@ impl Vault {
         if !draft_in_shape(&draft) {
             return withheld(W::Malformed);
         }
+        // Rule 5 (OF-380 L2): the draft goes whole at any length, measured,
+        // never refused or cut for its size.
+        let longest = draft
+            .conversation
+            .iter()
+            .map(|m| m.text.len())
+            .fold(draft.note.len(), usize::max);
+        let _ = self.measure_limit(
+            crate::limit_ask::EngineLimit::MaintenanceTextBytes,
+            longest as u64,
+        );
+        let _ = self.measure_limit(
+            crate::limit_ask::EngineLimit::MaintenanceRowItems,
+            draft.conversation.len() as u64,
+        );
         self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         let Some(subject) = code_fix_subject_in(self, &txn, source)? else {
@@ -680,15 +692,13 @@ fn all_public(fold: &AuthorityFold, worlds: &[EntityId]) -> bool {
         .all(|world| fold.world_privacy(*world).read == EffectiveRead::Everywhere)
 }
 
+/// A note and a conversation, each message with words in it. Its size is no
+/// part of its shape (Rule 5): a long draft is measured, not refused.
 fn draft_in_shape(draft: &InventedExampleDraft) -> bool {
-    let text_ok = |text: &str, max: usize| !text.trim().is_empty() && text.len() <= max;
-    text_ok(&draft.note, CODE_FIX_MAX_NOTE_BYTES)
+    let text_ok = |text: &str| !text.trim().is_empty();
+    text_ok(&draft.note)
         && !draft.conversation.is_empty()
-        && draft.conversation.len() <= CODE_FIX_MAX_MESSAGES
-        && draft
-            .conversation
-            .iter()
-            .all(|m| text_ok(&m.text, CODE_FIX_MAX_MESSAGE_BYTES))
+        && draft.conversation.iter().all(|m| text_ok(&m.text))
 }
 
 /// A candidate id is a host token, never prose: printable ASCII with no

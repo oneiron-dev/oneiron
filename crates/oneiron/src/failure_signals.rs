@@ -20,7 +20,6 @@ pub(crate) mod policy;
 mod verbatim;
 mod witness;
 pub use code_fix::{
-    CODE_FIX_MAX_MESSAGE_BYTES, CODE_FIX_MAX_MESSAGES, CODE_FIX_MAX_NOTE_BYTES,
     CODE_FIX_RECORD_VERSION, CandidateFix, CandidateFixResult, CodeFixExport, CodeFixReplay,
     CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExactReplayRequest, ExportScrubber,
     FailureSource, FixOutcome, InventedExampleDraft, InventedFailureExample, InventedMessage,

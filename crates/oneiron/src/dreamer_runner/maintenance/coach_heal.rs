@@ -241,8 +241,10 @@ impl Vault {
     /// `coach.heal` attempt the escalation woke: the route question over the
     /// case and its verified blocked reports, filed as a proposed heal. A
     /// `skill_edit` heal carries the revision `author` drafts of the case's
-    /// skill, landed as a gated candidate with the heal. A replay returns the
-    /// heal already filed. Returns the proposal.
+    /// skill, landed as a gated candidate with the heal; a draft that went
+    /// stale before the heal's write files the heal route-only, saying why
+    /// (FIX 2497). A replay returns the heal already filed. Returns the
+    /// proposal.
     pub fn run_coach_heal(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -302,7 +304,7 @@ impl Vault {
             )?),
             HealRoute::PromptInject | HealRoute::Environment | HealRoute::Person => None,
         };
-        let value = json!({
+        let mut value = json!({
             "case": case_ref,
             "agent": case.scope.agent_ref,
             "skill": case.scope.skill_ref,
@@ -328,15 +330,17 @@ impl Vault {
             if let Some(settled) = blocked_reports::settled_in_txn(self, &*txn, &key)? {
                 return Ok(settled.proposal);
             }
-            if let Some(repair) = &repair {
-                land_skill_repair_in_txn(
+            if let Some(repair) = &repair
+                && let Some(stale) = land_skill_repair_in_txn(
                     self,
                     txn,
                     repair,
                     COACH_HEAL_ATTEMPT_KIND,
                     attempt.status.attempt.id,
                     now,
-                )?;
+                )?
+            {
+                value["repair"] = stale;
             }
             let proposal = proposals::emit_in_txn(
                 self,
@@ -370,9 +374,10 @@ impl Vault {
     /// is asked which fix its agent needs and filed as a proposed heal. A
     /// `skill_edit` heal carries the revision `author` drafts of the one
     /// skill the report's run loaded, landed as a gated candidate with the
-    /// heal (FIX 2496). A report whose decision failed waits for the next
-    /// run, and its third failure goes to a person. A report whose receipt
-    /// is gone leaves nothing to diagnose and drops.
+    /// heal (FIX 2496), or route-only, saying why, when the draft went stale
+    /// before the heal's write (FIX 2497). A report whose decision failed
+    /// waits for the next run, and its third failure goes to a person. A
+    /// report whose receipt is gone leaves nothing to diagnose and drops.
     pub fn run_coach_issues(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -451,7 +456,7 @@ impl Vault {
             )?),
             HealRoute::PromptInject | HealRoute::Environment | HealRoute::Person => None,
         };
-        let value = json!({
+        let mut value = json!({
             "receipt": receipt.to_hex(),
             "diagnostic": issue.diagnostic.to_hex(),
             "category": issue.category.as_str(),
@@ -467,8 +472,17 @@ impl Vault {
             if blocked_reports::settled_in_txn(self, &*txn, &receipt)?.is_some() {
                 return Ok(false);
             }
-            if let Some(repair) = &repair {
-                land_skill_repair_in_txn(self, txn, repair, COACH_ISSUES_FACET, pass.attempt, now)?;
+            if let Some(repair) = &repair
+                && let Some(stale) = land_skill_repair_in_txn(
+                    self,
+                    txn,
+                    repair,
+                    COACH_ISSUES_FACET,
+                    pass.attempt,
+                    now,
+                )?
+            {
+                value["repair"] = stale;
             }
             let proposal = proposals::emit_in_txn(
                 self,

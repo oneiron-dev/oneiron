@@ -6,7 +6,7 @@
 use super::{
     DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticSourceKind,
     stored_diagnostic_event,
-    tiered::{DetectorDecisions, DetectorPolicy, ProposedDiagnostic},
+    tiered::{DetectorDecisions, DetectorPolicy, ProposedDiagnostic, ProposedTier, WindowGrade},
     validate_token,
 };
 use crate::limit_ask::EngineLimit;
@@ -322,6 +322,23 @@ impl Vault {
         decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
+        let grade = self.open_minted_window_grade(minted, runs)?;
+        self.grade_in_one(grade, decisions)
+    }
+
+    /// [`Self::classify_minted_t2`] over one logical window graded in parts
+    /// (OF-418 L6): the examples are checked once, when it opens, and every
+    /// part asks with them.
+    ///
+    /// # Errors
+    ///
+    /// Reviewed evidence no longer sufficient or changed, a stale or missing
+    /// example, or an invalid window.
+    pub fn open_minted_window_grade<'w>(
+        &self,
+        minted: &'w MintedT2,
+        window: &'w [RetrievalRunRecord],
+    ) -> Result<WindowGrade<'w>> {
         let Some(current) = self.mint_t2(minted.policy.clone())? else {
             return Err(Error::InvalidConfig(
                 "T2 evidence is no longer sufficient".into(),
@@ -333,10 +350,10 @@ impl Vault {
             return Err(Error::InvalidConfig("T2 examples changed".into()));
         }
         self.minted_t2_examples(&current)?;
-        self.classify_prompt_with_examples(
+        self.window_grade(
             &minted.policy,
-            decisions,
-            runs,
+            ProposedTier::PromptClassifier,
+            window,
             (&current.positive_events, &current.negative_events),
         )
     }
