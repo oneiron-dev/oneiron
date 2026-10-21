@@ -391,6 +391,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/call_meta.rs` | src | s | 4 crate-vis | — | What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and… |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | XL | 16 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 6 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
+| `src/api/mcp_gateway/code_mode_verbs/field_writer.rs` | src | s | 3 crate-vis | — | A run's field writer and text check (CUA E6, DESIGN-2 §4 "Field text = A"): the host side of a browser Fill… |
 | `src/api/mcp_gateway/code_mode_verbs/receipt_evidence.rs` | src | s | 2 crate-vis | — | A run's receipt screenshots kept for the caller its guest call came from (FIX 2150) |
 | `src/api/mcp_gateway/code_mode_verbs/secret_custody.rs` | src | s | 2 crate-vis | — | A run's secret custody for its browser and desktop (FIX 8028, OF-560; ARCH-0069): a secret field the run's… |
 | `src/api/mcp_gateway/code_mode_verbs/session_write.rs` | src | s | 1 crate-vis | — | A room write a session-bound code run stages, at this connector's door (WILL L11-01, S01-2a) |
@@ -928,7 +929,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/vm_init/anchor.rs` | src | m | 6 crate-vis | — | The bootstrap's half of a vault VM's custody anchor channels (FIX 6517… |
 | `src/managed/vm_init/config_drive.rs` | src | s | 4 crate-vis | — | The vault VM's config drive as the root bootstrap reads it: only the typed files the contract names below… |
 | `src/managed/vm_init/fscrypt.rs` | src | s | 8 crate-vis | — | The fscrypt v2 ioctls a vault VM's root bootstrap needs (`linux/fscrypt.h`): add the vault's key to its… |
-| `src/managed/vm_init/layout.rs` | src | m | 13 crate-vis | — | The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets… |
+| `src/managed/vm_init/guest_runtime.rs` | src | m | 6 crate-vis | — | The guests' container runtime in a vault VM (FIX 7671, placement A): the root bootstrap's preparation, for… |
+| `src/managed/vm_init/guest_runtime/store.rs` | src | s | 3 crate-vis | — | The vault UID's own image store (FIX 7671): every container CLI call the guest runtime's preparation makes… |
+| `src/managed/vm_init/layout.rs` | src | m | 14 crate-vis | — | The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets… |
 | `src/managed/vm_init/network.rs` | src | s | 3 crate-vis | — | The bootstrap's half of a vault VM's guest network (FIX 6808… |
 | `src/managed/vm_init/network/netlink.rs` | src | m | 7 crate-vis | — | Route netlink as the guest's network setup speaks it: one dump of the links, and the three changes it makes… |
 | `src/managed/vm_init/outbox.rs` | src | s | 4 crate-vis | — | The outbox companion beside the engine (FIX 5235, FIX 5467): the bootstrap starts `oneiron-vm-outbox` as its… |

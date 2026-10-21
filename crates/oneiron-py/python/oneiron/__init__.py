@@ -5493,7 +5493,7 @@ class Oneiron:
             """Zooms into a rectangle of a held image."""
             return json.loads(_translate(lambda: self._client.self_browser_zoom(json.dumps(spec))))
         def batch(self, spec):
-            """Runs one batched program of browser steps for a subgoal in the attached run's browser, type and expect taking a secret by handle; a failing step, or 3 acting steps leaving the page unchanged (no_progress), stops it with a failed_receipt."""
+            """Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt."""
             return json.loads(_translate(lambda: self._client.self_browser_batch(json.dumps(spec))))
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs":
@@ -5511,7 +5511,7 @@ class Oneiron:
             """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
             return json.loads(_translate(lambda: self._client.self_browser_library_find(json.dumps(spec))))
         def propose(self, spec):
-            """Offers a solved run's program to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires what it repairs."""
+            """Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."""
             return json.loads(_translate(lambda: self._client.self_browser_library_propose(json.dumps(spec))))
         def retire(self, spec):
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""
@@ -5520,7 +5520,7 @@ class Oneiron:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
             return json.loads(_translate(lambda: self._client.self_browser_library_retired(json.dumps(spec))))
         def run(self, spec):
-            """Runs a replay library program in the attached run's browser, strict (rules only; a model step asks up at zero tokens) or assisted, per its proof; secret slots take run-bound handles; no_progress hands up; 3 strict misses retire it drift."""
+            """Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift."""
             return json.loads(_translate(lambda: self._client.self_browser_library_run(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:

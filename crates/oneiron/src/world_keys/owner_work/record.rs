@@ -8,10 +8,10 @@ use ed25519_dalek::SigningKey;
 
 use super::{OWNER_WORK_NO_EXECUTOR, OwnerWorkReceipt, OwnerWorkUnassigned};
 use crate::authority::{
-    ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, MAX_PARENTS,
-    OwnerAct, OwnerActKind, OwnerWorkBody, OwnerWorkCancel, OwnerWorkRequest, WorldKeyMode,
-    WorldPrivacyWorkBasis, WrapRecipient, authority_entry_hash, invalid_authority, next_sequence,
-    owner_act_signer_admits, sign_side_entry, stored_authority_row,
+    ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, FrontierSigner,
+    MAX_PARENTS, OwnerAct, OwnerActKind, OwnerWorkBody, OwnerWorkCancel, OwnerWorkRequest,
+    WorldKeyMode, WorldPrivacyWorkBasis, WrapRecipient, authority_entry_hash, invalid_authority,
+    next_sequence, owner_act_signer_admits, sign_side_entry, stored_authority_row,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -242,6 +242,11 @@ impl Vault {
             Ok(executor) => executor,
             Err(why) => return Ok(OwnerWorkReceipt::unassigned(kind, target, why)),
         };
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Install(machine, &signing);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
         // The main-log heads alone (FIX 4987): the settings edit key work
         // follows is a main-log row among them or their ancestors, and the
         // fold judges its basis in the request's parent state
@@ -301,6 +306,11 @@ impl Vault {
         let public_key = signing.verifying_key().to_bytes();
         let seen = OwnerWorkCancel::seen_for(request);
         let act = OwnerAct::by_owner(actor, OwnerActKind::RootRequest, target, surface, seen);
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Install(machine, &signing);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
         let parents = fold.owner_work_parents();
         if parents.len() > MAX_PARENTS {
             return Err(parent_bound(parents.len()));
