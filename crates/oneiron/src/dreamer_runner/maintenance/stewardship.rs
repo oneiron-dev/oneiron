@@ -13,7 +13,7 @@
 //! rule says how long.
 //!
 //! A rule with a draft route also lets the host draft the follow-up through
-//! the representation seam ([`Vault::stewardship_draft_requests`] →
+//! the representation seam ([`Vault::stewardship_draft_page`] →
 //! [`Vault::schedule_stewardship_draft`]). A draft whose rule the owner
 //! edited while it was written is stale, and the host drafts again at once
 //! against the current rule ([`Vault::stewardship_draft_request`], FIX
@@ -50,8 +50,7 @@ const RULES: SideTable<(), StewardshipRules, LegacyJson> =
 /// Reach-outs a host draft was scheduled for, with when.
 const DRAFTED: SideTable<EntityId, u64, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_STEWARDSHIP_DRAFTED);
-/// The newest records about a person one draft cites.
-const DRAFT_EVIDENCE: usize = 8;
+/// Rows one read takes: a traversal unit, never a cap on what is read.
 const READ_CHUNK: usize = 256;
 
 /// The owner's keep-in-touch rules, set whole.
@@ -105,6 +104,18 @@ pub struct StewardshipDraftRequest {
     pub request: RepresentationRequest,
     /// The reach-out's revision the draft is pinned to.
     revision: [u8; 32],
+}
+
+/// One page of [`Vault::stewardship_draft_page`]: the draft requests one
+/// traversal unit of the reach-out index makes, and where the next starts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StewardshipDraftPage {
+    /// The page's standing reach-outs with a draft route and no draft yet,
+    /// in reach-out id order.
+    pub drafts: Vec<StewardshipDraftRequest>,
+    /// The last reach-out this page read, to read the next page after;
+    /// `None` once the index is read to its end.
+    pub next: Option<EntityId>,
 }
 
 /// What scheduling a host's draft came to.
@@ -222,46 +233,45 @@ impl Vault {
         })
     }
 
-    /// Standing reach-outs whose rule has a draft route and no draft yet, at
-    /// most `limit`: each one applied and not reverted, or held for the owner
-    /// and not declined. A reach-out the vault holds no record to cite for
-    /// has nothing to ground a draft in and is left to the owner.
-    pub fn stewardship_draft_requests(&self, limit: usize) -> Result<Vec<StewardshipDraftRequest>> {
+    /// One page of the standing reach-outs whose rule has a draft route and
+    /// no draft yet, read after the reach-out `after`: each one applied and
+    /// not reverted, or held for the owner and not declined. A page is a
+    /// traversal unit, never a cap: the host follows
+    /// [`StewardshipDraftPage::next`] until it is `None`, so every due draft
+    /// is read. A reach-out the vault holds no record to cite for has
+    /// nothing to ground a draft in and is left to the owner.
+    pub fn stewardship_draft_page(&self, after: Option<EntityId>) -> Result<StewardshipDraftPage> {
         let Some(rules) = self.stewardship_rules()? else {
-            return Ok(Vec::new());
+            return Ok(StewardshipDraftPage::default());
         };
         if rules.rules.iter().all(|rule| rule.draft.is_none()) {
-            return Ok(Vec::new());
+            return Ok(StewardshipDraftPage::default());
         }
         let authority = self.dreamer_authority()?.entity_ref();
         let reader = dreamer_reader(self)?;
-        let mut requests = Vec::new();
-        let mut after = None;
-        while requests.len() < limit {
-            let page = {
-                let txn = self.store.env.read_txn()?;
-                crate::claim::claim_ids_for_predicate_page_in_txn(
-                    &self.store,
-                    &txn,
-                    STEWARDSHIP_PREDICATE,
-                    after,
-                    READ_CHUNK,
-                )?
-            };
-            let Some(last) = page.last().copied() else {
-                break;
-            };
-            for id in page {
-                if requests.len() >= limit {
-                    break;
-                }
-                if let Some(request) = draft_request(self, &reader, &rules, authority, id)? {
-                    requests.push(request);
-                }
+        let page = {
+            let txn = self.store.env.read_txn()?;
+            crate::claim::claim_ids_for_predicate_page_in_txn(
+                &self.store,
+                &txn,
+                STEWARDSHIP_PREDICATE,
+                after,
+                READ_CHUNK,
+            )?
+        };
+        // A short page is the index's end.
+        let next = if page.len() < READ_CHUNK {
+            None
+        } else {
+            page.last().copied()
+        };
+        let mut drafts = Vec::new();
+        for id in page {
+            if let Some(request) = draft_request(self, &reader, &rules, authority, id)? {
+                drafts.push(request);
             }
-            after = Some(last);
         }
-        Ok(requests)
+        Ok(StewardshipDraftPage { drafts, next })
     }
 
     /// The draft request the reach-out `proposal` makes now, when it is a
@@ -475,17 +485,16 @@ fn dreamer_reader(vault: &Vault) -> Result<ScopedRead<'_>> {
     ))
 }
 
-/// The newest records about `person` the Dreamer reads and may cite, newest
-/// first, each with when it happened. The Dreamer's own claims are not a
-/// record of the person. With `text_only`, a record whose value is not text
-/// (a `comm.last_touch` head's map, say) is passed over before the newest are
-/// taken: a draft cites text alone, and the representation loader refuses
-/// any other source.
+/// Every record about `person` the Dreamer reads and may cite, newest first,
+/// each with when it happened. The Dreamer's own claims are not a record of
+/// the person. With `text_only`, a record whose value is not text (a
+/// `comm.last_touch` head's map, say) or whose text is blank is passed over:
+/// a draft cites text alone, and the representation loader refuses any other
+/// source.
 fn recent(
     vault: &Vault,
     reader: &ScopedRead<'_>,
     person: EntityId,
-    limit: usize,
     text_only: bool,
 ) -> Result<Vec<(EntityId, u64)>> {
     let ids = vault.claims_for_subject(&person)?;
@@ -504,7 +513,11 @@ fn recent(
                 || body.stale
                 || body.lifecycle != ClaimLifecycleStatus::Active
                 || !claim_evidence_admissible(&body)
-                || (text_only && body.value.as_str().is_none())
+                || (text_only
+                    && body
+                        .value
+                        .as_str()
+                        .is_none_or(|text| text.trim().is_empty()))
                 || !vault.claim_consolidation_eligible(
                     &row.id,
                     crate::gate::ConsolidationReader::RepresentationSource,
@@ -516,7 +529,6 @@ fn recent(
         }
     }
     found.sort_by_key(|&(id, at)| (std::cmp::Reverse(at), id));
-    found.truncate(limit);
     Ok(found)
 }
 
@@ -578,7 +590,8 @@ fn last_touch(
     person: EntityId,
     now: u64,
 ) -> Result<Option<(EntityId, u64)>> {
-    let record = recent(vault, reader, person, 1, false)?.into_iter().next();
+    // The newest record alone: a pick by time, not a cap on what is read.
+    let record = recent(vault, reader, person, false)?.into_iter().next();
     let contact = last_contact(vault, reader, person, now)?;
     Ok(contact.into_iter().chain(record).max_by_key(|&(_, at)| at))
 }
@@ -674,11 +687,13 @@ fn draft_request(
     let Some((person, route)) = draft_route(rules, &body)? else {
         return Ok(None);
     };
-    let evidence: Vec<RepresentationSourceRef> =
-        recent(vault, reader, person, DRAFT_EVIDENCE, true)?
-            .into_iter()
-            .map(|(claim, _)| RepresentationSourceRef { claim })
-            .collect();
+    // Every eligible text record about the person, newest first. One the
+    // route names as voice is cited there: the loader reads a source once.
+    let evidence: Vec<RepresentationSourceRef> = recent(vault, reader, person, true)?
+        .into_iter()
+        .filter(|(claim, _)| !route.voice.iter().any(|voice| voice.claim == *claim))
+        .map(|(claim, _)| RepresentationSourceRef { claim })
+        .collect();
     if evidence.is_empty() {
         return Ok(None);
     }

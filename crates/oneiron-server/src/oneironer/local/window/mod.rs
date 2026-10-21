@@ -7,15 +7,22 @@
 //! production caller builds it.
 //!
 //! A bundle with a character head decodes names in full ([`ner`]).
+//!
+//! A platform worker tags the same window (FIX 6755): it is sent the text
+//! and the current turn's byte range ([`Window::turn_range`]), and its
+//! spans come back through Candle's own containment and offset formula
+//! ([`Window::map_window_spans`]), so no runtime builds a window of its own
+//! ([`platform`]).
 
 use oneiron::memory::extraction::{EncoderInput, EncoderMessage, SpeakerRole};
 use tokenizers::{Encoding, Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
 
 mod ner;
+mod platform;
 
-pub(super) use ner::{
-    CharacterFeatures, Characters, DecodeLayers, Named, ONEIRONER_DECODE_REVISION, decode_ner,
-};
+pub(super) use ner::{CharacterFeatures, Characters, DecodeLayers, Named, decode_ner};
+
+pub(in crate::oneironer) use ner::{CHAR_REFINE_K, CHAR_REFINE_TAU, ONEIRONER_DECODE_REVISION};
 
 pub(super) struct Segment<'a> {
     pub(super) turn: &'a str,
@@ -29,7 +36,7 @@ pub(super) struct Segment<'a> {
     pub(super) source_offset: usize,
 }
 
-pub(super) struct Window<'a> {
+pub(in crate::oneironer) struct Window<'a> {
     pub(super) text: String,
     pub(super) segments: Vec<Segment<'a>>,
     pub(super) encoding: Encoding,
