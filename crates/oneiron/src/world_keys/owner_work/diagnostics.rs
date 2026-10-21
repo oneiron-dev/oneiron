@@ -425,7 +425,8 @@ impl Vault {
             let me = crate::identity::read_machine_id_in_txn(self, &txn)?;
             (asked, me, fold.owner_work_result(&request).is_some())
         };
-        let observation = if me != Some(asked.executor) {
+        // A kit custody request (FIX 6053) names no machine as executor.
+        let observation = if asked.kit_root().is_some() || me != Some(asked.executor) {
             ExecutorObservation::Unavailable
         } else if answered {
             ExecutorObservation::Answered

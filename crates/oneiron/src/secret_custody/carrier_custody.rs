@@ -205,7 +205,9 @@ pub(crate) fn carrier_release_admits(
     }
     let answer = fold.owner_work_result(request);
     match carrier.kind {
-        CustodyKind::CustodyRequestInput => answer.is_none() && counted.executor == requester,
+        CustodyKind::CustodyRequestInput => {
+            counted.kit_root().is_none() && answer.is_none() && counted.executor == requester
+        }
         CustodyKind::CustodyTransition => {
             answer.is_some_and(|answer| !matches!(answer.outcome, OwnerWorkOutcome::Refused { .. }))
                 && recipients.iter().any(|permit| permit.machine == requester)

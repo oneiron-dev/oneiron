@@ -18,6 +18,7 @@
 //! A device-bound, cross-vault or "this device only" record never makes one:
 //! that material stays on the device that holds it.
 
+mod kit_request;
 mod payload;
 mod rebind;
 
@@ -414,6 +415,11 @@ fn request_admits(fold: &AuthorityFold, transition: &CustodyTransition) -> bool 
             let Some(request) = fold.counted_owner_work_request(&transition.request) else {
                 return false;
             };
+            // The owner's kit push names the kit request it recorded (FIX
+            // 6053): no machine executed it.
+            if request.kit_root().is_some() {
+                return kit_request::kit_request_admits(fold, request, transition);
+            }
             let OwnerWorkBody::Custody {
                 change,
                 generation,
@@ -522,7 +528,7 @@ impl Vault {
         let root = seed.public(&vault_id)?;
         let anchor = seed.anchor();
         let transition = self.with_write_txn(|wtxn| {
-            owner.revalidate_as_vault_owner_in_txn(self, wtxn)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, wtxn)?;
             let fold = self.authority_view_readonly_in_txn(wtxn)?;
             if !kit_push_allowed_in_txn(self, wtxn, &fold)? {
                 return Err(Error::InvalidConfig(
@@ -568,8 +574,24 @@ impl Vault {
             } else {
                 keyed
             };
+            // FIX 6053: the push records the custody request it enacts, under
+            // the pinned kit's authority; a fault leaves it as before.
+            let request = if keyed.is_empty() {
+                [0; 32]
+            } else {
+                kit_request::record_kit_request_in_txn(
+                    self,
+                    wtxn,
+                    &fold,
+                    actor,
+                    id,
+                    record.0.rotation_generation,
+                    &permits,
+                    (&anchor, root.id),
+                )
+            };
             let enactment = Enactment {
-                request: [0; 32],
+                request,
                 input: None,
                 permits: &keyed,
             };

@@ -52,6 +52,7 @@ pub use self::cancel::{OP_KIND_OWNER_WORK_CANCEL, OwnerWorkCancel, ROOT_WORK_CAN
 pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value};
 pub use self::custody::{
     CUSTODY_RECIPIENTS_MAX, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange, CustodyRecipientPermit,
+    CustodyRequestAuthority,
 };
 pub use self::result::{
     CustodyRegisterCheck, CustodyUncheckedReason, OwnerWorkOutcome, OwnerWorkRefusal,
@@ -280,12 +281,15 @@ pub enum OwnerWorkBody {
     /// `holder` that executes it, the `generation` it approves, the digest of
     /// its encrypted `input` (none for a rewrap) and the `recipients` the
     /// owner permits; a revoke names none of them and its carrier executes it.
+    /// `authority` says whose say-so carries it (FIX 6053): an install's, or
+    /// the owner's kit's, which no machine carries or executes.
     Custody {
         change: CustodyChange,
         generation: u32,
         input: Option<[u8; 32]>,
         holder: Option<EntityId>,
         recipients: Vec<CustodyRecipientPermit>,
+        authority: CustodyRequestAuthority,
     },
 }
 
@@ -366,6 +370,17 @@ impl OwnerWorkRequest {
             .map_or(self.act.seen, |basis| basis.after)
     }
 
+    /// The pinned root a kit custody request names (FIX 6053): its carrier
+    /// and executor are then no machine, and every reader that would take
+    /// either as one takes this first. `None` for any other request.
+    #[must_use]
+    pub fn kit_root(&self) -> Option<RecoveryRootId> {
+        match &self.work {
+            OwnerWorkBody::Custody { authority, .. } => authority.kit_root(),
+            _ => None,
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         // Key work a settings edit left carries that edit's act, a holder's
         // or an agent's, and asks for Ensure alone (FIX 4704).
@@ -407,10 +422,11 @@ impl OwnerWorkRequest {
             input,
             holder,
             recipients,
+            authority,
             ..
         } = &self.work
         {
-            custody::validate_custody(self, *change, *input, *holder, recipients)?;
+            custody::validate_custody(self, *change, *input, *holder, recipients, *authority)?;
         }
         Ok(())
     }
@@ -478,7 +494,15 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             input,
             holder,
             recipients,
-        } => custody::custody_work_value(*change, *generation, *input, *holder, recipients),
+            authority,
+        } => custody::custody_work_value(
+            *change,
+            *generation,
+            *input,
+            *holder,
+            recipients,
+            *authority,
+        ),
     };
     Value::Map(vec![
         (

@@ -92,6 +92,7 @@ fn rebind_current(
         .into_iter()
         .any(|(hash, request)| {
             hash == transition.request
+                && request.kit_root().is_none()
                 && Some(request.executor) != this
                 && matches!(
                     request.work,

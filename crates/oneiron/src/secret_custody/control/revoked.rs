@@ -87,6 +87,7 @@ impl Vault {
             input: None,
             holder: None,
             recipients: Vec::new(),
+            authority: crate::authority::CustodyRequestAuthority::Install,
         };
         let receipt = self.record_owner_work_for_in_txn(txn, actor, surface, id, seen, work)?;
         let (Some(request), Some(executor)) = (receipt.request_entry(), receipt.executor) else {
