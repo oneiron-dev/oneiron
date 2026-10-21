@@ -111,29 +111,28 @@ impl Drop for SourceMount {
     }
 }
 
-/// A cold restore's engine, its input pipe's hand-back when the input is
-/// lost, and the pump carrying its result to the host.
+/// A cold restore's engine and the pump carrying its result to the host.
 pub(super) struct Restoring {
     engine: Child,
-    lost: mpsc::Receiver<PipeWriter>,
     result: JoinHandle<()>,
 }
 
 /// Makes the restore's two pipes, starts their pumps over `channel`, and
 /// starts the engine through `spawn`, which gets each engine end as an
 /// `(ours, theirs)` pair and the flags that name them. The bootstrap's
-/// copies of the engine's ends are closed once it has started.
+/// copies of the engine's ends are closed once it has started. An input
+/// lost before its end hands its open pipe to `lost`.
 pub(super) fn start(
     channel: File,
+    lost: mpsc::Sender<PipeWriter>,
     spawn: impl FnOnce(&[(RawFd, RawFd)], &[OsString]) -> anyhow::Result<Child>,
 ) -> anyhow::Result<Restoring> {
     let (input_read, input_write) = std::io::pipe()?;
     let (result_read, result_write) = std::io::pipe()?;
     let reader = channel.try_clone()?;
-    let (lost_sender, lost) = mpsc::channel();
     std::thread::Builder::new()
         .name("vm-restore-input".into())
-        .spawn(move || feed(reader, input_write, &lost_sender))?;
+        .spawn(move || feed(reader, input_write, &lost))?;
     let result = std::thread::Builder::new()
         .name("vm-restore-result".into())
         .spawn(move || drain(result_read, channel))?;
@@ -152,36 +151,42 @@ pub(super) fn start(
     drop(result_write);
     Ok(Restoring {
         engine: engine?,
-        lost,
         result,
     })
 }
 
-impl Restoring {
-    /// Waits for the engine. When the input is lost before its end, the
-    /// engine is ended and waited for first, and only then is its input
-    /// pipe let go.
-    pub(super) fn wait(&mut self) -> anyhow::Result<ExitStatus> {
-        loop {
-            match self.lost.recv_timeout(ENGINE_POLL) {
-                Ok(input) => {
-                    let _ = self.engine.kill();
-                    let status = self.engine.wait().context("waiting for the engine");
-                    drop(input);
-                    return status;
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return self.engine.wait().context("waiting for the engine");
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if let Some(status) =
-                        self.engine.try_wait().context("waiting for the engine")?
-                    {
-                        return Ok(status);
-                    }
+/// Waits for `engine`. When a pipe it reads is lost before its end (a
+/// restore's input, or the custody anchor's credential) and handed to
+/// `lost`, the engine is ended and waited for first, and only then is that
+/// pipe let go.
+pub(super) fn supervise(
+    engine: &mut Child,
+    lost: &mpsc::Receiver<PipeWriter>,
+) -> anyhow::Result<ExitStatus> {
+    loop {
+        match lost.recv_timeout(ENGINE_POLL) {
+            Ok(input) => {
+                let _ = engine.kill();
+                let status = engine.wait().context("waiting for the engine");
+                drop(input);
+                return status;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return engine.wait().context("waiting for the engine");
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if let Some(status) = engine.try_wait().context("waiting for the engine")? {
+                    return Ok(status);
                 }
             }
         }
+    }
+}
+
+impl Restoring {
+    /// Waits for the engine ([`supervise`]).
+    pub(super) fn wait(&mut self, lost: &mpsc::Receiver<PipeWriter>) -> anyhow::Result<ExitStatus> {
+        supervise(&mut self.engine, lost)
     }
 
     /// Waits until the result's last record is out, once nothing the

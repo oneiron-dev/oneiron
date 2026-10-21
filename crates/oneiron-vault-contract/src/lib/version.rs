@@ -142,6 +142,31 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// consuming change. An image before the floor, or one whose engine registered
 /// no backup plan, gives no binding, and none is guessed from a backup's file
 /// name. No `Ping` field is added and this version stays 3.
+///
+/// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
+/// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
+/// 1033, their records and the credential payload, `serve`'s
+/// `--vm-anchor-revision`, `--vm-anchor-url` and `--vm-anchor-socket` with a
+/// vault VM engine's `--custody-anchor-credentials-fd`, and `host vm`'s
+/// `--custody-anchor-credentials-fd` and `--custody-anchor-url`) carry a
+/// build floor, at the engine revision they merged in, proven by the image
+/// manifest's required `anchor_wire_revision` 1 and `anchor_proxy_revision`
+/// 1, published together, with no `Ping` field. Every serving cold boot of an
+/// image at or after the floor dials the exchange after its provision
+/// connection, so a host and its image come from the same build: a
+/// supervisor checks both revisions, the manifest's hashes and the merge
+/// floor before it prepares the VMM or hands over the fscrypt key, the
+/// credential frame or the anchor credential, and boots no image before the
+/// floor. The records' fields are all required, their two nullable keys (the
+/// header's `anchor_url` and an accepted reply's `anchor_identity_digest`)
+/// present as `null`: the header's `revision`, `vault`, `anchor_url` and
+/// `has_credentials`; the reply's `state` with its `revision`, `vault` and
+/// `anchor_identity_digest`, or its `code`; the proxy hello's `revision`,
+/// `vault` and `anchor_identity_digest`; and the proxy reply's `state` with
+/// its `revision` or its `code`. No reader of a record without them is kept.
+/// A node's credential, its pipe and its reader are unchanged, and a vault VM
+/// handed no credential keeps its anchor pending, as a node's child does. No
+/// `Ping` field is added and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

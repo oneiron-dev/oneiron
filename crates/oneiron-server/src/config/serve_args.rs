@@ -152,6 +152,26 @@ pub struct ServeArgs {
     #[arg(long = "vm-restore-revision", requires_all = ["vsock_guest", "restore"])]
     pub vm_restore_revision: Option<u32>,
 
+    /// A vault VM's custody anchor handoff (FIX 6517), which only the
+    /// image's `oneiron-vm-init` passes: the revision of the anchor exchange
+    /// its host answered on. With it a `--vsock-guest` start takes
+    /// `--custody-anchor-credentials-fd`, the pipe the bootstrap carries the
+    /// host's credential into, beside `--vm-anchor-url`; without it that
+    /// pipe stays refused.
+    #[arg(long = "vm-anchor-revision", requires = "vsock_guest")]
+    pub vm_anchor_revision: Option<u32>,
+
+    /// The custody anchor URL a vault VM's host bound its boot to, exactly as
+    /// the vault's settings or a restore's plan spell it: the start refuses
+    /// a credential for any other (FIX 6517). Never logged.
+    #[arg(long = "vm-anchor-url", requires_all = ["vm_anchor_revision", "vm_anchor_socket"])]
+    pub vm_anchor_url: Option<String>,
+
+    /// The bootstrap's socket that reaches `--vm-anchor-url`, and nothing
+    /// else, through the host (FIX 6517).
+    #[arg(long = "vm-anchor-socket", requires_all = ["vm_anchor_revision", "vm_anchor_url"])]
+    pub vm_anchor_socket: Option<PathBuf>,
+
     /// This install's key directory, an absolute path outside the vault: where
     /// the this-device-only keystore keeps the machine encryption seed. Managed
     /// mode installs a keystore only from this flag; unmanaged serve reads it

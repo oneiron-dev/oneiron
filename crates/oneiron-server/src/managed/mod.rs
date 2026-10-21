@@ -84,8 +84,8 @@ mod vm_outbox;
 mod vm_schedule;
 #[cfg(target_os = "linux")]
 pub use self::vm_host::{
-    SleepOutcome, VaultVm, VaultVmConfig, VaultVmInspect, VaultVmRun, VmExitWatch, VmRestoreFds,
-    VmRestoreHostIo, inspect_vault_vm, run_vault_vm,
+    SleepOutcome, VaultVm, VaultVmConfig, VaultVmInspect, VaultVmRun, VmAnchorHostIo, VmExitWatch,
+    VmRestoreFds, VmRestoreHostIo, inspect_vault_vm, run_vault_vm,
 };
 #[cfg(target_os = "linux")]
 pub use self::vm_init::run_vm_init;

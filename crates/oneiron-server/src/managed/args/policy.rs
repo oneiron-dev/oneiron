@@ -131,6 +131,21 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     (
+        "vm-anchor-revision",
+        |args| args.vm_anchor_revision.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "vm-anchor-url",
+        |args| args.vm_anchor_url.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "vm-anchor-socket",
+        |args| args.vm_anchor_socket.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "keystore-dir",
         |args| args.keystore_dir.is_some(),
         ArgvUse::Read,

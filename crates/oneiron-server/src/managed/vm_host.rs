@@ -25,13 +25,18 @@
 //! supervisor streams in, or an inspection of the disk's restore commit
 //! marker (FIX 6584, [`restore`]). A running VMM's exit is watched through
 //! a pidfd taken at its spawn, which tasks await beside the driver's other
-//! calls (FIX 7047, [`VmExitWatch`]).
+//! calls (FIX 7047, [`VmExitWatch`]). A boot that serves then reads the
+//! custody anchor's header, and gets the door's owner credential after its
+//! credential frame; each generation's proxy carries the guest's streams to
+//! the one anchor URL the supervisor bound (FIX 6517, [`anchor`]).
 
+mod anchor;
 mod exit;
 mod provision;
 mod restore;
 mod runner;
 
+pub use self::anchor::VmAnchorHostIo;
 pub use self::exit::VmExitWatch;
 pub use self::restore::{VaultVmInspect, VmRestoreFds, VmRestoreHostIo, inspect_vault_vm};
 pub use self::runner::{VaultVmRun, run_vault_vm};
@@ -169,13 +174,15 @@ pub struct VaultVm {
     lifecycle: Option<Lifecycle>,
     schedule: VmWakeSchedule,
     outbox: Option<VmOutboxAttachment>,
+    /// The custody anchor's exchange and proxy, and what they are bound to.
+    anchor: anchor::HostAnchor,
 }
 
 impl VaultVm {
-    /// Makes the state directory and binds the boot port's and the restore
-    /// channel's host sockets, and the outbox carrier's when the profile
-    /// names its roots, all before any VMM runs, so a guest never dials an
-    /// unbound port.
+    /// Makes the state directory and binds the boot port's, the restore
+    /// channel's and the custody anchor's host sockets, and the outbox
+    /// carrier's when the profile names its roots, all before any VMM runs,
+    /// so a guest never dials an unbound port.
     pub fn prepare(config: VaultVmConfig, vault: String) -> anyhow::Result<Self> {
         anyhow::ensure!(valid_vault_name(&vault), "invalid vault name");
         if let Err(fault) = config.provision.validate() {
@@ -188,6 +195,7 @@ impl VaultVm {
         let vsock = config.state_dir.join("vsock.sock");
         let boot = bind_unix_socket(&guest_initiated_socket(&vsock, VM_BOOT_PORT))?;
         let restore = bind_unix_socket(&guest_initiated_socket(&vsock, VM_RESTORE_PORT))?;
+        let anchor = anchor::HostAnchor::bind(&vsock)?;
         let outbox = config
             .outbox
             .clone()
@@ -207,6 +215,7 @@ impl VaultVm {
             lifecycle: None,
             schedule,
             outbox,
+            anchor,
         })
     }
 
@@ -351,7 +360,9 @@ impl VaultVm {
         // An ordinary boot's restore channel says only that it opens.
         drop(self.answer_hello(&VmRestoreBoot::Open, timeout).await?);
         self.provision(fscrypt_key, timeout).await?;
+        let anchor = self.send_anchor_header(timeout).await?;
         let mut stream = self.send_credentials(credentials, timeout).await?;
+        self.deliver_anchor(anchor, timeout).await?;
         let ready = tokio::time::timeout(timeout, stream.read_u8()).await??;
         anyhow::ensure!(ready == READY_BYTE, "vault VM sent a wrong ready byte");
         self.accept_join(timeout).await
@@ -637,6 +648,8 @@ impl VaultVm {
             .await;
         let _ = std::fs::remove_file(&snap);
         loaded?;
+        // The guest's anchor is the one its cold boot was handed.
+        self.serve_anchor_proxy();
         self.accept_join(timeout).await?;
         self.send(&VmHostFrame::Resumed).await?;
         // The memory file backs guest RAM until the VMM exits; unlinking it
@@ -675,6 +688,7 @@ impl VaultVm {
         self.exit = None;
         self.lifecycle = None;
         self.source_attached = false;
+        self.anchor.end_proxy();
         Ok(())
     }
 
@@ -685,5 +699,6 @@ impl VaultVm {
         self.exit = None;
         self.lifecycle = None;
         self.source_attached = false;
+        self.anchor.end_proxy();
     }
 }

@@ -1,11 +1,14 @@
 # Vault VM restore transport
 
 A vault VM (`oneiron-server host vm`) can be cold-restored in its guest, and a
-lost restore result can be settled from its disk (FIX 6584). This page is the
-supervisor's contract: the image floor, the descriptors and who owns them, the
-source drive, and the decision table for a lost result. The wire lives in
-`oneiron_vault_contract::vm_restore`; the native restore it carries is
-`oneiron_vault_contract::restore` and is unchanged.
+lost restore result can be settled from its disk (FIX 6584). Its engine gets the
+custody anchor door's owner credential and reaches the anchor URL through its
+host (FIX 6517). This page is the supervisor's contract: the image floor, the
+descriptors and who owns them, the source drive, the custody anchor channels,
+and the decision table for a lost result. The wire lives in
+`oneiron_vault_contract::vm_restore` and `oneiron_vault_contract::vm_anchor`;
+the native restore it carries is `oneiron_vault_contract::restore` and is
+unchanged, and so is the native anchor credential.
 
 ## Image floor: check it before any secret
 
@@ -20,6 +23,13 @@ source drive, and the decision table for a lost result. The wire lives in
   the merge floor.
 - No older image is booted, and no reader of an image without the field is
   kept. `CONTRACT_VERSION` stays 3, and `Ping` has no field for this.
+- The custody anchor channels (FIX 6517) add two required manifest fields,
+  published together: `anchor_wire_revision: 1` and `anchor_proxy_revision: 1`.
+  Every serving cold boot of an image at or after their floor dials the anchor
+  exchange, vsock port 1031, after its provision connection. The floor is the
+  engine commit that merged FIX 6517's VM half. The supervisor checks both
+  revisions, with the hashes and that floor, before it prepares the VMM or
+  hands over F, C or the anchor credential A.
 
 ## The channel
 
@@ -54,7 +64,8 @@ before it reads anything.
 |---|---|---|
 | Open (today) | `--listen`, `--credentials-fd C`, `--fscrypt-key-fd F` | Reads C, then F. The VM starts on the first connection or a due wake. |
 | Restore | Open's flags plus `--restore --restore-input-fd R --restore-result-fd W` | See the restore order below. |
-| Inspect | `--config`, `--vault-name`, `--fscrypt-key-fd F`, `--restore-marker-identity-fd Q`, `--restore-marker-result-fd S` (no `--listen`, `--credentials-fd` or `--restore`) | Reads F and Q, boots, writes one observation to S, stops the VM and exits. |
+| Inspect | `--config`, `--vault-name`, `--fscrypt-key-fd F`, `--restore-marker-identity-fd Q`, `--restore-marker-result-fd S` (no `--listen`, `--credentials-fd`, `--restore` or anchor flags) | Reads F and Q, boots, writes one observation to S, stops the VM and exits. |
+| Anchor (with Open or Restore) | `--custody-anchor-url URL`, and optionally `--custody-anchor-credentials-fd A`, which needs the URL | Reads A once, after the first cold boot's C went to the guest. See the custody anchor channels below. |
 
 Restore order:
 
@@ -97,6 +108,55 @@ Loss:
   restore goes on, and what it kept stays kept.
 - A failed restore stops the VM and lets the guest's last result records out
   within the stop's grace.
+
+## Custody anchor channels (FIX 6517)
+
+`--custody-anchor-url` is the anchor URL the vault's effective settings bind,
+the restore plan's `custody` URL included, exactly as they spell it. It is not a
+secret, but it is never logged. A is the read end of a pipe carrying the same
+native credential a node's engine reads on `--custody-anchor-credentials-fd`:
+one JSON object, then EOF. A needs the URL. Pass A only for the exact URL it was
+issued for.
+
+The exchange, vsock port 1031, once per serving cold boot (not an inspection):
+
+1. After provisioning, the host sends the header: `revision`, `vault`,
+   `anchor_url` (`null` when no URL was given) and `has_credentials`. The guest
+   reads it before its engine starts.
+2. After the engine's credential frame C, the host sends the payload: a
+   big-endian u32 length, then exactly A's bytes, or a length of 0 when there
+   is no A, then a half-close.
+3. The guest answers `accepted` (with the URL's digest) or `refused` with a
+   closed code. The host waits for that answer before the ready byte.
+   `accepted` means the bytes crossed. It does not mean the vault is ready or
+   that its anchor answered.
+
+The order is R, then C, then A, as for a native start. The header and its
+answer are at most 64 KiB (`MAX_CTL_LINE`), and so is A in a VM; a node's A has
+no bound. The host reads A once, holds it in memory (wiped when dropped), and
+sends it again after each later cold boot's C. A RAM snapshot holds the guest's
+copy, as it holds the data key; a resume runs no second exchange. A is never
+written to the profile, the boot arguments, a drive, the outbox or a log.
+
+The proxy, vsock port 1033: the guest bootstrap serves
+`/run/oneiron/custody-anchor.sock` (the vault UID's, mode 0600) when a URL was
+given. Each stream on it says a hello naming the URL by its BLAKE3 digest. The
+host checks the hello against the boot, dials the URL's host and port (its only
+destination, which may be the host's own 127.0.0.1 relay) and carries bytes
+both ways. It adds no credential and reads nothing. The engine's anchor client
+takes this socket only when its configured base URL is byte for byte the bound
+URL; the URL, its TLS and its host checks are unchanged. The proxy runs with
+each VMM generation and ends with its exit, a stop or a kill, along with every
+stream it carries. A RAM resume starts it again for the same URL.
+
+| Case | Outcome |
+|---|---|
+| No URL and no A | As before: the anchor is unset, or pending when the settings name a URL. |
+| URL, no A | The anchor stays `custody_anchor_pending`. |
+| URL and A, and the vault's effective URL is the same string | The engine reads A with the native reader and calls the door through the proxy. |
+| A, and the vault's effective URL differs | The start is refused (`custody anchor credentials fd rejected`), as for a malformed native A. No byte of A is read. |
+| A malformed header, a short payload, bytes after it, or a wrong vault | The boot is refused. If A was announced, the guest ends its engine before the engine can read an EOF. |
+| The proxy cannot reach the URL's host and port | The call fails as unreachable, and the anchor stays pending. The vault still starts. |
 
 ## Source drive (`restore_source_disk`)
 
@@ -151,9 +211,8 @@ overwrite.
 
 ## Not here yet
 
-- **Custody anchor credentials.** A VM restore whose plan names an HTTP custody
-  anchor gets no anchor credential until the anchor channel lands. It has the
-  same outcome as a native start without one.
+- **Owner anchor credentials.** Which URLs get A, and the owner's own anchor
+  credentials (FIX 6707), stay the supervisor's choice.
 - **Supervisor-side work.** The VM launcher and its lifecycle adapter, source
   image staging and erase inventory, and each generation's ownership, kill and
   reconcile are the supervisor's.

@@ -11,11 +11,15 @@
 //! (`vm_outbox`); the engine only asks it its revision at boot and parks it
 //! around an idle report. A cold restore's start (FIX 6584) dials only its
 //! boot channel at first: its vsock ports and bridges are bound once the
-//! restore is kept, as a node's child binds its sockets only then.
+//! restore is kept, as a node's child binds its sockets only then. The
+//! custody anchor's credential comes on a pipe the bootstrap carries it
+//! into, and is read as a node's child reads it, for the one URL the host
+//! bound (FIX 6517).
 
-use super::args::{ManagedArgs, ManagedStartMode};
+use super::args::{ManagedArgs, ManagedError, ManagedStartMode, VmAnchorHandoff};
 use super::listener::{ServeListener, bind_unix_socket};
 use super::state_serve::{ManagedShutdown, ManagedState};
+use crate::owner::backup::CustodyAnchorCredentials;
 use crate::server::SyncServer;
 use oneiron_vault_contract::host::{Host, HostFuture, HostLimits};
 use oneiron_vault_contract::host_adapters::{
@@ -26,6 +30,7 @@ use oneiron_vault_contract::vm::{
 };
 use oneiron_vault_contract::{Schedule, WakeEntry};
 use std::{
+    os::fd::RawFd,
     path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -47,6 +52,10 @@ pub(super) struct VmGuestHost {
     vm_outbox_revision: Option<u32>,
     /// A cold restore's start whose bridges wait for the keep.
     restoring: bool,
+    /// The bootstrap's custody anchor handoff (FIX 6517).
+    anchor: Option<VmAnchorHandoff>,
+    /// The pipe the bootstrap carries the anchor's credential into.
+    anchor_credentials_fd: Option<RawFd>,
 }
 impl VmGuestHost {
     pub(super) fn new(args: &ManagedArgs, shutdown: ManagedShutdown) -> Self {
@@ -59,6 +68,8 @@ impl VmGuestHost {
             shutdown,
             vm_outbox_revision: super::vm_outbox::companion_revision(),
             restoring: matches!(args.start_mode, ManagedStartMode::Restore { .. }),
+            anchor: args.vm_anchor.clone(),
+            anchor_credentials_fd: args.custody_anchor_credentials_fd,
         }
     }
     /// The outbox carrier's revision, when the image's companion answered at
@@ -68,6 +79,29 @@ impl VmGuestHost {
     }
     pub(super) fn clear_secrets(&mut self) {
         self.inner.0.clear_secrets();
+    }
+    /// The custody anchor door's credential the bootstrap carried over its
+    /// anchor exchange (FIX 6517): read once from its pipe by the native
+    /// reader, and routed through the bootstrap's socket to the URL the host
+    /// bound. `anchor_url` is the vault's effective URL, a restore's plan
+    /// included: a credential bound to another is refused before a byte of
+    /// it is read. Without one the anchor stays pending.
+    pub(super) fn custody_anchor_credentials(
+        &mut self,
+        anchor_url: Option<&str>,
+    ) -> Result<Option<Arc<CustodyAnchorCredentials>>, ManagedError> {
+        let Some(fd) = self.anchor_credentials_fd.take() else {
+            return Ok(None);
+        };
+        let route = self.anchor.as_ref().and_then(VmAnchorHandoff::route);
+        let Some((url, socket)) = route.filter(|(url, _)| anchor_url == Some(*url)) else {
+            return Err(ManagedError::CustodyAnchorCredentialsRejected {
+                reason: "it is for another custody anchor URL than the vault's".into(),
+            });
+        };
+        CustodyAnchorCredentials::read_fd(fd)
+            .map(|credentials| Some(Arc::new(credentials.routed(url, socket))))
+            .map_err(|reason| ManagedError::CustodyAnchorCredentialsRejected { reason })
     }
     pub(super) fn link(&self) -> Option<GuestLink> {
         self.inner.0.link()

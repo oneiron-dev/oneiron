@@ -15,10 +15,12 @@ use super::listener::HYPNOS_LISTEN_FD;
 
 mod policy;
 mod start_mode;
-/// A vault VM's cold restore handoff (FIX 6584).
+/// A vault VM's cold restore and custody anchor handoffs (FIX 6584, FIX
+/// 6517).
 mod vm_transport;
 
 pub use self::start_mode::ManagedStartMode;
+pub(crate) use self::vm_transport::VmAnchorHandoff;
 
 /// Every way managed mode refuses. All of them are typed: a caller can tell a
 /// missing flag from a rejected credential from a real-tenant refusal without
@@ -207,9 +209,12 @@ pub struct ManagedArgs {
     pub credentials_fd: RawFd,
     /// The pipe the custody anchor door's owner credential arrives on
     /// (`--custody-anchor-credentials-fd`), read before storage on each
-    /// start the supervisor hands one. Never in a vault VM, which inherits
-    /// no descriptors.
+    /// start the supervisor hands one. In a vault VM only the bootstrap's,
+    /// beside its anchor handoff (`vm_anchor`).
     pub custody_anchor_credentials_fd: Option<RawFd>,
+    /// A vault VM's custody anchor handoff from its bootstrap (FIX 6517):
+    /// the URL its host bound and the socket that reaches it.
+    pub(crate) vm_anchor: Option<VmAnchorHandoff>,
     /// Whether this start opens its vault or restores it first (`--restore`).
     pub start_mode: ManagedStartMode,
     /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
@@ -361,12 +366,8 @@ impl ManagedArgs {
                 require_fd(args.credentials_fd, "credentials-fd")?,
             )
         };
-        if args.vsock_guest && args.custody_anchor_credentials_fd.is_some() {
-            return Err(ManagedError::ConflictingFlag {
-                flag: "custody-anchor-credentials-fd",
-                reason: VSOCK_NO_PIPE_REASON,
-            });
-        }
+        // A vault VM takes the credential's pipe only from its bootstrap.
+        let vm_anchor = vm_transport::anchor_handoff(args)?;
         let custody_anchor_credentials_fd = args
             .custody_anchor_credentials_fd
             .map(|fd| require_fd(Some(fd), "custody-anchor-credentials-fd"))
@@ -388,6 +389,7 @@ impl ManagedArgs {
             ready_fd,
             credentials_fd,
             custody_anchor_credentials_fd,
+            vm_anchor,
             start_mode,
             vsock_guest: args.vsock_guest,
             keystore_dir: args.keystore_dir.clone(),
@@ -703,7 +705,7 @@ pub(crate) const MANAGED_MAXIMUM_TIER_DEFAULT: bool = false;
 const VSOCK_BOOT_REASON: &str =
     "a vault VM reads its credentials and signals ready over the vsock boot channel";
 
-const VSOCK_NO_PIPE_REASON: &str = "a vault VM inherits no descriptors, and its vsock boot channel carries no custody anchor credentials";
+const VSOCK_NO_PIPE_REASON: &str = "a vault VM takes a custody anchor credential pipe only from its bootstrap's anchor exchange (--vm-anchor-revision)";
 
 fn decode_hex<const N: usize>(value: &str) -> Option<[u8; N]> {
     if value.len() != N * 2 {

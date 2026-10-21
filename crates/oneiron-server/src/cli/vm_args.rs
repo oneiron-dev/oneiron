@@ -2,9 +2,10 @@
 //! socket.
 
 use clap::Args;
+use std::fmt;
 use std::path::PathBuf;
 
-#[derive(Args, Clone, Debug)]
+#[derive(Args, Clone)]
 pub struct HostVmArgs {
     /// JSON VM profile: firecracker, kernel, rootfs, vault_disk, state_dir,
     /// vcpus, mem_mib, the provision binding (guest_uid, derivation_owner,
@@ -53,16 +54,65 @@ pub struct HostVmArgs {
     #[arg(
         long,
         requires = "restore_marker_result_fd",
-        conflicts_with_all = ["listen", "credentials_fd", "restore"]
+        conflicts_with_all = [
+            "listen",
+            "credentials_fd",
+            "restore",
+            "custody_anchor_url",
+            "custody_anchor_credentials_fd",
+        ]
     )]
     pub restore_marker_identity_fd: Option<i32>,
     /// The inspection's answer: inherited descriptor, the write end of a
     /// pipe, taking one `VmRestoreMarkerObservation` JSON object, then EOF.
     #[arg(long, requires = "restore_marker_identity_fd")]
     pub restore_marker_result_fd: Option<i32>,
+    /// The custody anchor URL the vault's effective settings bind, a
+    /// restore's plan included, exactly as they spell it (FIX 6517): every
+    /// serving boot's guest is told it, and the host's anchor proxy reaches
+    /// its host and port and nothing else. It is never logged. An inspection
+    /// takes none.
+    #[arg(long)]
+    pub custody_anchor_url: Option<String>,
+    /// Inherited descriptor, the read end of a pipe, carrying the custody
+    /// anchor door's owner credential for `--custody-anchor-url`, exactly as
+    /// a node's engine takes it: one JSON object, then EOF. It is read once,
+    /// after the first credential frame went to the guest, held in memory
+    /// and handed to the guest after each cold boot's credential frame.
+    #[arg(long, requires = "custody_anchor_url")]
+    pub custody_anchor_credentials_fd: Option<i32>,
     /// Seconds without traffic before the vault sleeps.
     #[arg(long, default_value_t = 300)]
     pub idle_secs: u64,
+}
+
+impl fmt::Debug for HostVmArgs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HostVmArgs")
+            .field("config", &self.config)
+            .field("vault_name", &self.vault_name)
+            .field("listen", &self.listen)
+            .field("credentials_fd", &self.credentials_fd)
+            .field("fscrypt_key_fd", &self.fscrypt_key_fd)
+            .field("restore", &self.restore)
+            .field("restore_input_fd", &self.restore_input_fd)
+            .field("restore_result_fd", &self.restore_result_fd)
+            .field(
+                "restore_marker_identity_fd",
+                &self.restore_marker_identity_fd,
+            )
+            .field("restore_marker_result_fd", &self.restore_marker_result_fd)
+            .field(
+                "custody_anchor_url",
+                &self.custody_anchor_url.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "custody_anchor_credentials_fd",
+                &self.custody_anchor_credentials_fd,
+            )
+            .field("idle_secs", &self.idle_secs)
+            .finish()
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -97,6 +147,8 @@ pub(super) async fn run(args: HostVmArgs) -> anyhow::Result<()> {
         credentials_fd,
         fscrypt_key_fd: args.fscrypt_key_fd,
         restore,
+        custody_anchor_url: args.custody_anchor_url,
+        custody_anchor_credentials_fd: args.custody_anchor_credentials_fd,
         idle: std::time::Duration::from_secs(args.idle_secs),
     })
     .await

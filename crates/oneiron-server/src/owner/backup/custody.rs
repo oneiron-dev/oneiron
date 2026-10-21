@@ -20,6 +20,7 @@
 
 mod anchor_client;
 mod anchor_credentials;
+mod anchor_transport;
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,7 +1,9 @@
 //! `oneiron-server host vm`'s runner: one vault VM behind one unix socket.
 
 use super::provision;
-use super::{API_TIMEOUT, STOP_GRACE, SleepOutcome, VaultVm, VaultVmConfig, VmRestoreFds};
+use super::{
+    API_TIMEOUT, STOP_GRACE, SleepOutcome, VaultVm, VaultVmConfig, VmAnchorHostIo, VmRestoreFds,
+};
 use crate::managed::listener::bind_unix_socket;
 use crate::managed::vault_gates::read_managed_credentials;
 use crate::managed::vm_schedule::VmWakeSchedule;
@@ -23,7 +25,8 @@ use tokio::net::UnixStream;
 /// the VM on the first connection or a due wake, proxies HTTP into it, takes
 /// its ledger pushes, and sleeps it after `idle` without traffic. With
 /// `restore` it starts the VM at once with a cold restore (FIX 6584), and
-/// binds its socket only once the restored vault is ready.
+/// binds its socket only once the restored vault is ready. With a custody
+/// anchor URL it binds every serving boot's anchor to it (FIX 6517).
 pub struct VaultVmRun {
     pub config: PathBuf,
     pub vault_name: String,
@@ -35,6 +38,13 @@ pub struct VaultVmRun {
     /// A cold restore's two pipes (`--restore`); the credential frame then
     /// follows the restore's input.
     pub restore: Option<VmRestoreFds>,
+    /// The anchor URL the vault's effective settings bind, exactly as they
+    /// spell it; never logged (`--custody-anchor-url`).
+    pub custody_anchor_url: Option<String>,
+    /// The pipe the door's owner credential arrives on, which needs the URL
+    /// (`--custody-anchor-credentials-fd`): read once, after the first
+    /// credential frame went to the guest, and held for every later boot.
+    pub custody_anchor_credentials_fd: Option<std::os::fd::RawFd>,
     pub idle: Duration,
 }
 
@@ -81,6 +91,23 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
         run.fscrypt_key_fd != run.credentials_fd,
         "--fscrypt-key-fd and --credentials-fd name one descriptor"
     );
+    // The anchor credential's pipe is proven and taken over before any
+    // descriptor is read, refused when it names another flag's.
+    let mut taken = vec![
+        ("--credentials-fd", run.credentials_fd),
+        ("--fscrypt-key-fd", run.fscrypt_key_fd),
+    ];
+    taken.extend(run.restore.iter().flat_map(|fds| {
+        [
+            ("--restore-input-fd", fds.input_fd),
+            ("--restore-result-fd", fds.result_fd),
+        ]
+    }));
+    let anchor = VmAnchorHostIo::adopt(
+        run.custody_anchor_url,
+        run.custody_anchor_credentials_fd,
+        &taken,
+    )?;
     // A restore's pipes are proven and taken over before any descriptor is
     // read, and its credential frame follows its input: the VM starts on the
     // fscrypt key alone.
@@ -94,6 +121,7 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
     };
     let fscrypt_key = provision::read_fscrypt_key(run.fscrypt_key_fd)?;
     let mut vm = VaultVm::prepare(config, run.vault_name.clone())?;
+    vm.attach_anchor(anchor)?;
     let ledger = bind_unix_socket(&vm.ledger_socket())?;
     let credentials = match (restore, credentials) {
         (Some(io), _) => vm.start_restore(io, &fscrypt_key, API_TIMEOUT).await?,
