@@ -23505,7 +23505,7 @@
       "crate-vis": 7,
       "enum": 6,
       "fn": 12,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 7
      }
     },
@@ -23572,7 +23572,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/call_evidence.rs",
      "purpose": "The call receipts the agent-health review reads, by the attempt each names (OF-568 L4)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -23674,6 +23674,20 @@
      "purpose": "`loop` over an agent run's own calls",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HealthOtherSession",
+      "HealthSilenceActivity"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/silence.rs",
+     "purpose": "`silent` (OF-568 L5, agent-mind §3: \"A task is open, with no streamed receipt, no open wait, no running tool…",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 2
      }
     },
     {
@@ -66399,18 +66413,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostedEgressGuard",
-      "HostedInfrastructureRefusal"
+      "HostedEgressRefusal",
+      "HostedPrivateOrigin"
      ],
      "path": "src/web_fetch/egress.rs",
      "purpose": "The managed (hosted) node's web-fetch egress guard (SCAN C447)",
      "surface": {
-      "const": 1,
-      "crate-vis": 4,
-      "fn": 6,
+      "const": 2,
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -69839,7 +69855,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 125,
+     "files": 126,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70856,7 +70872,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4507,
+   "source_files": 4508,
    "test_files": 902
   },
   "oneiron-android": {
@@ -99139,7 +99155,9 @@
       "HandoverOutput",
       "HealthBriefPin",
       "HealthCauseSource",
+      "HealthOtherSession",
       "HealthReviewReceipt",
+      "HealthSilenceActivity",
       "HeapDropReport",
       "HeldAttempt",
       "HeldFailureSignalBatchView",
@@ -101513,7 +101531,7 @@
      "purpose": "—",
      "surface": {
       "enum": 947,
-      "struct": 2961
+      "struct": 2963
      }
     },
     {
@@ -102358,7 +102376,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lib/version.rs",
