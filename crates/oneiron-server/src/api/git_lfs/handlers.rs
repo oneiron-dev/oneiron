@@ -2,8 +2,9 @@
 
 use super::gate::{LfsAccess, authorize_request, require_lfs_write};
 use super::support::{
-    LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE, declared_size, href_base,
-    lfs_disk_floor, lfs_engine_error, lfs_json_response, lfs_waited_out, now_secs, read_whole,
+    LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE, LfsMarkedRead,
+    declared_size, href_base, lfs_disk_floor, lfs_engine_error, lfs_json_response, lfs_waited_out,
+    now_secs, read_whole,
 };
 use super::wire::{
     LfsAction, LfsBatchObject, LfsBatchOperation, LfsBatchRequest, LfsBatchResponse,
@@ -107,10 +108,16 @@ fn batch_entry(
         .has_lfs_object(oid, object.size)
         .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?;
     // An object a world withheld from the requesting machine keeps is
-    // offered as absent.
+    // offered as absent, and so is a lift-marked one to anyone but the owner
+    // (FIX 2897): an offer spends and asks nothing.
     let offered = stored
-        && !oneiron::sync::chunks::lfs_object_withheld_for(&server.vault, oid, auth.peer())
-            .unwrap_or(true);
+        && !oneiron::sync::chunks::lfs_object_withheld_as(
+            &server.vault,
+            oid,
+            auth.peer(),
+            marked_read(server, auth, oid).is_some(),
+        )
+        .unwrap_or(true);
     let href = format!("{base}/git/{repo}/info/lfs/objects/{}", oid.to_hex());
     match operation {
         LfsBatchOperation::Download if offered => {
@@ -251,9 +258,14 @@ pub(crate) async fn lfs_download(
         return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
     };
     // The machine the request's connection proved: the preflight and every
-    // piece are judged for it (FIX 4937).
+    // piece are judged for it (FIX 4937). A lift-marked object goes to the
+    // owner this request verified, his read judged again for every piece
+    // (FIX 2897).
     let peer = auth.peer();
-    if oneiron::sync::chunks::lfs_object_withheld_for(&server.vault, oid, peer).unwrap_or(true) {
+    let read = marked_read(&server, &auth, oid);
+    if oneiron::sync::chunks::lfs_object_withheld_as(&server.vault, oid, peer, read.is_some())
+        .unwrap_or(true)
+    {
         return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
     }
     // Preflight in the blocking pool preserves the old fail-before-200 contract
@@ -289,7 +301,7 @@ pub(crate) async fn lfs_download(
     }
     let mut response = super::streaming::download(
         Arc::clone(&server.vault),
-        (oid, peer),
+        (oid, peer, read),
         hold,
         server.transfers.idle,
     )
@@ -302,6 +314,21 @@ pub(crate) async fn lfs_download(
         .headers_mut()
         .insert(CONTENT_LENGTH, record.size_bytes.into());
     Ok(response)
+}
+
+/// The owner's read of the lift-marked object `oid`, as `auth` verified him
+/// (FIX 2897): `None` for an unmarked object, which reads exactly as before,
+/// and for any other caller. A basic transfer carries no why, so it builds
+/// no agent's read.
+fn marked_read(
+    server: &SyncServer,
+    auth: &crate::auth::CoreAuth,
+    oid: LfsOid,
+) -> Option<LfsMarkedRead> {
+    if !server.vault.lfs_object_secret_withheld(oid).unwrap_or(true) {
+        return None;
+    }
+    LfsMarkedRead::of(&server.vault, auth, oid, None)
 }
 
 /// A verify body is one `{oid, size}`; this is room for it many times over.

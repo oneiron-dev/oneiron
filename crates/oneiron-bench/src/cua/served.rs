@@ -1,5 +1,5 @@
 //! Shipped binary lifecycle and official MCP stdio. No second engine client.
-use super::{Result, config::Arm, fixture, rows, taskgen::Plan, write_json};
+use super::{Result, browser_setup, config::Arm, fixture, rows, taskgen::Plan, write_json};
 use rand::RngCore;
 use serde_json::{Value, json};
 use std::{
@@ -65,7 +65,7 @@ pub(super) fn isolated(binary: &Path) -> Command {
     command.env("NO_COLOR", "1");
     command
 }
-async fn once(mut command: Command, deadline: Instant, log: &Path) -> Result<()> {
+pub(super) async fn once(mut command: Command, deadline: Instant, log: &Path) -> Result<()> {
     command
         .stdout(fs::File::create(log).map_err(|e| e.to_string())?)
         .stderr(fs::File::create(log.with_extension("stderr")).map_err(|e| e.to_string())?);
@@ -165,6 +165,7 @@ impl Served {
             .map_err(|e| e.to_string())?
             .port();
         let origin = format!("http://127.0.0.1:{port}");
+        browser_setup::bootstrap(binary, &config, &issuer, &origin, dir, browser, deadline).await?;
         let mut serve = isolated(binary);
         serve
             .args([
@@ -213,6 +214,7 @@ impl Served {
             }
             tokio::time::sleep_until((Instant::now() + poll).min(deadline)).await;
         }
+        browser_setup::install(binary, &client, &origin, dir, deadline).await?;
         let mut bridge_cmd = isolated(binary);
         bridge_cmd
             .args([

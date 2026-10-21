@@ -235,6 +235,9 @@ pub(super) async fn campaign(plan_path: &Path, submissions_path: &Path, out: &Pa
             }
         }
     }
+    let mut driver = config.as_ref().ok().map(|config| {
+        FixtureTransport::new(config, &base, &plan.server, out.join("browser-preflight"))
+    });
     for assignment in &assignments {
         if terminal.contains_key(&assignment.cell.id) {
             continue;
@@ -268,13 +271,9 @@ pub(super) async fn campaign(plan_path: &Path, submissions_path: &Path, out: &Pa
             } else if let Err(error) = &config {
                 stop(&mut row, "runtime_config_unavailable", error);
             } else {
-                let config = config.as_ref().map_err(Clone::clone)?;
-                let mut driver = FixtureTransport {
-                    config,
-                    plan: &base,
-                };
+                let driver = driver.as_mut().ok_or("s5_driver_unavailable")?;
                 dispatch(
-                    &mut driver,
+                    driver,
                     assignment,
                     program,
                     &terminal,
@@ -294,7 +293,11 @@ pub(super) async fn campaign(plan_path: &Path, submissions_path: &Path, out: &Pa
         rows::append(&out.join("rows.jsonl"), &row)?;
         terminal.insert(assignment.cell.id.clone(), row);
     }
-    write_summary(out, &assignments, &terminal, &plan_digest, &config_digest)
+    write_summary(out, &assignments, &terminal, &plan_digest, &config_digest)?;
+    if let Some(cause) = driver.as_ref().and_then(|driver| driver.setup_failure()) {
+        return Err(cause.into());
+    }
+    Ok(())
 }
 async fn dispatch<E: Engine>(
     driver: &mut E,

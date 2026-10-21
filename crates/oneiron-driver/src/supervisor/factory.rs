@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, ExtractionPorts, PersonAboutExecutor,
-    RoleBackends, RoleCall, ScopeSummaryExecutor,
+    RoleBackends, RoleCall, ScopeSummaryExecutor, ThingChildHost,
 };
 use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
 use oneiron::dreamer_runner::maintenance::{
@@ -181,6 +181,10 @@ pub struct ConsolidationExecutorFactory {
     /// The host's sieve and child-extraction ports (OF-498a). `None` keeps
     /// whatever `roles` carries, by default the role ports.
     extraction_ports: Option<ExtractionPorts>,
+    /// The host a thing's branch runs its scoped code-mode agent on (FIX
+    /// 7508). `None` keeps every thing branch on the per-slice path, as a
+    /// host with no code runtime does.
+    thing_child: Option<Arc<dyn ThingChildHost>>,
     sink: Box<dyn ConsolidationSink>,
     parallel_sinks: Vec<Box<dyn ConsolidationSink>>,
     /// CMT-3 (ONE-1540). `None` by DEFAULT, and the wrapper is installed
@@ -233,6 +237,7 @@ impl ConsolidationExecutorFactory {
             extraction_egress,
             roles: RoleBackends::default(),
             extraction_ports: None,
+            thing_child: None,
             sink,
             parallel_sinks: Vec::new(),
             commitment_wake_planner: None,
@@ -279,6 +284,15 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_extraction_ports(mut self, ports: ExtractionPorts) -> Self {
         self.extraction_ports = Some(ports);
+        self
+    }
+
+    /// The host a thing's branch runs its scoped code-mode agent on (FIX
+    /// 7508), beside the extraction ports, whatever `with_role_backends`
+    /// carries.
+    #[must_use]
+    pub fn with_thing_child_host(mut self, host: Arc<dyn ThingChildHost>) -> Self {
+        self.thing_child = Some(host);
         self
     }
 
@@ -466,6 +480,10 @@ impl ConsolidationExecutorFactory {
             None => self.roles.clone(),
         }
         .with_follower_window(follower_window);
+        let roles = match &self.thing_child {
+            Some(host) => roles.with_thing_child_host(Arc::clone(host)),
+            None => roles,
+        };
         let mut executors = Vec::new();
         for sink in std::iter::once(&mut self.sink).chain(self.parallel_sinks.iter_mut()) {
             let inner = ConsolidationExecutor {

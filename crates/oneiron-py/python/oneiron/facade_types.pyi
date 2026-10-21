@@ -4,14 +4,15 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1131 facade rows, 3944 declarations.
-Inputs: 1066 of 1131 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1018 of 1131 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1135 facade rows, 3964 declarations.
+Inputs: 1070 of 1135 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1022 of 1135 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
 
+Q = TypeVar("Q")
 T = TypeVar("T")
 
 CommitmentObligorKind = Literal["owner", "agent", "third_party"]
@@ -2310,6 +2311,9 @@ class TaskUpdateReceipt(TypedDict):
     acked: bool
     report: NotRequired[TaskCallReceipt | None]
 class TaskAccept(TypedDict):
+    task_ref: EntityId
+    intent_key: str
+class TaskRedo(TypedDict):
     task_ref: EntityId
     intent_key: str
 WitnessAuthor = Literal["user", "companion", "system"]
@@ -8286,6 +8290,52 @@ class CleanupRunView(TypedDict):
     proposal: NotRequired[EntityId | None]
     archived: list[EntityId]
     digest: NotRequired[EntityId | None]
+class ArchiveDeletePreviewRequest(TypedDict):
+    targets: list[str]
+class ArchiveDeleteExpectation(TypedDict):
+    record_hash: str
+    archive_marker: str
+class ArchiveDeletePreviewRow(TypedDict):
+    record_bytes: int
+    expected: ArchiveDeleteExpectation
+class ArchiveDeleteError(TypedDict):
+    code: str
+    message: str
+    suggestions: list[str]
+class ArchiveDeletePreviewOutcomePreviewed(ArchiveDeletePreviewRow):
+    outcome: Literal["previewed"]
+class ArchiveDeletePreviewOutcomeRefused(TypedDict):
+    outcome: Literal["refused"]
+    error: ArchiveDeleteError
+ArchiveDeletePreviewOutcome = ArchiveDeletePreviewOutcomePreviewed | ArchiveDeletePreviewOutcomeRefused
+class ArchiveDeletePreviewEntry(TypedDict):
+    entity: str
+    result: ArchiveDeletePreviewOutcome
+class ArchiveDeletePreviewView(TypedDict):
+    entries: list[ArchiveDeletePreviewEntry]
+    record_bytes: int
+class ArchiveDeleteItem(TypedDict):
+    entity: str
+    expected: NotRequired[ArchiveDeleteExpectation | None]
+class ArchiveDeleteConfirmRequest(TypedDict):
+    items: list[ArchiveDeleteItem]
+class ArchiveDeleteReceiptView(TypedDict):
+    existed: bool
+    reason: str
+    receipt_ref: NotRequired[str | None]
+    role: str
+    grant_ref: NotRequired[str | None]
+class ArchiveDeleteConfirmOutcomeDeleted(ArchiveDeleteReceiptView):
+    outcome: Literal["deleted"]
+class ArchiveDeleteConfirmOutcomeRefused(TypedDict):
+    outcome: Literal["refused"]
+    error: ArchiveDeleteError
+ArchiveDeleteConfirmOutcome = ArchiveDeleteConfirmOutcomeDeleted | ArchiveDeleteConfirmOutcomeRefused
+class ArchiveDeleteConfirmEntry(TypedDict):
+    entity: str
+    result: ArchiveDeleteConfirmOutcome
+class ArchiveDeleteBatchResult(TypedDict):
+    entries: list[ArchiveDeleteConfirmEntry]
 class UsageRepairListRequest(TypedDict):
     ...
 UndecodableUsageReason = Literal["stored_event_decode_failed"]
@@ -15106,6 +15156,7 @@ class VoiceBankPackPutRequest(TypedDict):
 class VoiceBankPackReceipt(TypedDict):
     voice_id: str
     pack_id: str
+VoiceRefSubjectKind = Literal["person", "designed"]
 class VoiceConsentBasisConversationalNoticeBody(TypedDict):
     notice: str
 class VoiceConsentBasisConversationalNotice(TypedDict):
@@ -15128,7 +15179,8 @@ class VoiceRenderConsentRequest(TypedDict):
     event_id: str
     occurred_at: int
     reach: ModelLocality
-    basis: VoiceConsentBasis
+    subject_kind: NotRequired[VoiceRefSubjectKind]
+    basis: NotRequired[VoiceConsentBasis | None]
     state: VoiceConsentState
 VoiceVendorDeleteStatus = Literal["deleted", "no_clone_wire", "delete_failed", "absent"]
 class VoiceVendorEviction(TypedDict):
@@ -15140,6 +15192,9 @@ class VoiceRenderConsentReceipt(TypedDict):
     state: VoiceConsentState
     reach: ModelLocality
     revision: str
+    event_id: str
+    sequence: int
+    replayed: bool
     evicted: list[VoiceVendorEviction]
 class VoiceTargetProvisionRequest(TypedDict):
     voice_id: str
@@ -15168,6 +15223,7 @@ class VoiceIdentityView(TypedDict):
     version: int
     id: str
     owner: str
+    subject_kind: VoiceRefSubjectKind
     pack_ids: list[str]
 class VoiceClipSummary(TypedDict):
     register: str
@@ -15181,12 +15237,14 @@ class VoicePackSummary(TypedDict):
 class VoiceRenderConsentView(TypedDict):
     event_id: str
     subject: str
+    subject_kind: VoiceRefSubjectKind
     recorded_by: str
     occurred_at: int
     reach: ModelLocality
-    basis: VoiceConsentBasis
+    basis: NotRequired[VoiceConsentBasis | None]
     state: VoiceConsentState
     revision: str
+    sequence: int
 class VoiceTargetCloneView(TypedDict):
     vendor_voice_id: str
     source_packs: list[str]
@@ -15204,6 +15262,15 @@ class VoiceBankInspection(TypedDict):
     packs: list[VoicePackSummary]
     render_consent: NotRequired[VoiceRenderConsentView | None]
     target: VoiceTargetInspection
+class VoiceRenderLineageRequest(TypedDict):
+    voice_id: str
+class VoiceDroppedTargetView(TypedDict):
+    target: str
+    held: VoiceTargetCloneView
+class VoiceRenderEventView(TypedDict):
+    voice_id: str
+    decision: VoiceRenderConsentView
+    dropped: list[VoiceDroppedTargetView]
 AiOperation = Literal["text", "image", "video", "speech", "transcribe", "embed"]
 class AiVideoTicket(TypedDict):
     job: str
@@ -15327,8 +15394,8 @@ class QuestionMedia(TypedDict):
 class ArtifactUnits(TypedDict):
     artifact: str
     selection: ArtifactAskUnits
-class QuestionDefinition(TypedDict):
-    question: DecisionQuestion
+class QuestionDefinition(TypedDict, Generic[Q]):
+    question: Q
     adapter: str
     units: list[str]
     recipe: str
@@ -15345,17 +15412,19 @@ class QuestionDefinition(TypedDict):
     media: NotRequired[QuestionMedia]
     deadline_ms: NotRequired[int | None]
     artifacts: NotRequired[list[ArtifactUnits]]
+DecisionQuestionInput = TypedDict("DecisionQuestionInput", {"text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
+QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
-    definition: QuestionDefinition
+    definition: QuestionDefinitionInput
 class QuestionRecord(TypedDict):
     schema_version: int
     principal: str
-    definition: QuestionDefinition
+    definition: QuestionDefinition[DecisionQuestion]
     created_at: int
 class QuestionEditRequest(TypedDict):
     id: EntityId
     expected_version: int
-    definition: QuestionDefinition
+    definition: QuestionDefinitionInput
 class QuestionPauseRequest(TypedDict):
     id: EntityId
     paused: bool
@@ -18415,6 +18484,9 @@ class WakeRecipePolicy(TypedDict):
     follower_instruction: str
     follower_keyframe_instruction: str
     follower_sizing_bytes_per_token: int
+    thing_child_code_mode: bool
+    thing_child_instruction: str
+    thing_child_input_window_divisor: int
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):

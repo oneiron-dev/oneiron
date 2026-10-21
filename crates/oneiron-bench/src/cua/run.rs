@@ -138,6 +138,17 @@ pub(super) async fn campaign(
     } else {
         None
     };
+    let mut setup_stop: Option<Value> = terminal.values().find_map(|row| {
+        row.harness_stop
+            .as_ref()
+            .filter(|s| {
+                matches!(
+                    s["cause"].as_str(),
+                    Some("browser_pack_unavailable" | "browser_guest_unverified")
+                )
+            })
+            .cloned()
+    });
     for cell in &plan.cells {
         let key = digest(format!("{plan_digest}:{config_digest}:{}", cell.id).as_bytes());
         if terminal.contains_key(&key) {
@@ -178,6 +189,17 @@ pub(super) async fn campaign(
                 "previous trial started without a terminal row; no rerun",
             );
             row.status = "interrupted".into();
+        } else if let Some(cause) = &setup_stop {
+            row.status = if cause["detail"]
+                .as_str()
+                .is_some_and(|s| s.contains("timeout"))
+            {
+                "failed"
+            } else {
+                "blocked"
+            }
+            .into();
+            row.harness_stop = Some(cause.clone());
         } else if let Some(reason) = identity_error {
             rows::blocked(
                 &mut row,
@@ -216,6 +238,16 @@ pub(super) async fn campaign(
                             )
                             .await;
                             if let Err(error) = result {
+                                if row.harness_stop.as_ref().is_some_and(|s| {
+                                    matches!(
+                                        s["cause"].as_str(),
+                                        Some(
+                                            "browser_pack_unavailable" | "browser_guest_unverified"
+                                        )
+                                    )
+                                }) {
+                                    setup_stop = row.harness_stop.clone();
+                                }
                                 if error.starts_with("fixture_transport_unavailable:") {
                                     rows::blocked(
                                         &mut row,
@@ -237,6 +269,13 @@ pub(super) async fn campaign(
             }
         }
         rows::append(&out.join("rows.jsonl"), &row)?;
+    }
+    if let Some(stop) = setup_stop {
+        return Err(format!(
+            "{}:{}",
+            stop["cause"].as_str().unwrap_or("browser_pack_unavailable"),
+            stop["detail"]
+        ));
     }
     Ok(())
 }
@@ -309,7 +348,18 @@ async fn trial(
                 startup_deadline.saturating_duration_since(Instant::now()),
                 Duration::from_millis(config.continuation_poll_ms),
             )
-            .await?,
+            .await
+            .map_err(|detail| {
+                let cause = detail.split(':').next().unwrap_or("run_failed");
+                if matches!(
+                    cause,
+                    "browser_pack_unavailable" | "browser_guest_unverified"
+                ) {
+                    row.harness_stop =
+                        Some(json!({"cause":cause,"detail":detail,"scope":"browser_setup"}));
+                }
+                detail
+            })?,
         );
         setup_ms = started.elapsed().as_secs_f64() * 1000.0;
         let task = fixture::task_packet(cell, &reset)?;
@@ -383,6 +433,13 @@ async fn trial(
     row.measures["setup_ms"] = json!(setup_ms);
     // Retain raw receipts even when final state or the checker is unavailable.
     write_json(&row.evidence.join("engine-receipts.json"), &receipts)?;
+    let (mut observed, engine_stop, browser_stop) = measures::observe(&receipts, &config.engine);
+    // Receipt observations survive a missing snapshot or checker failure.
+    for key in ["elapsed_total_ms", "setup_ms", "candidate_ms"] {
+        observed[key] = row.measures[key].clone();
+    }
+    row.measures = observed;
+    row.engine_stop = engine_stop;
     let state = snapshot?;
     write_json(&row.evidence.join("state.json"), &state)?;
     let events = rows::load_values(&fixture.events)?;
@@ -396,13 +453,14 @@ async fn trial(
         capture_deadline,
     )
     .await?;
-    let (mut observed, engine_stop, browser_stop) = measures::observe(&receipts, &config.engine);
+    let mut observed = row.measures.clone();
     observed["executor_completed"] = completed;
     observed["elapsed_total_ms"] = json!(started.elapsed().as_secs_f64() * 1000.0);
     observed["setup_ms"] = json!(setup_ms);
     observed["candidate_ms"] = json!(candidate_ms);
     observed["drain_checker_ms"] =
         json!(started.elapsed().as_secs_f64() * 1000.0 - setup_ms - candidate_ms);
+    observed["timing_reason"] = Value::Null;
     observed["first_useful"] = measures::first_useful(
         &row.checker,
         &cell.fixture,
@@ -411,6 +469,8 @@ async fn trial(
         captured_seconds,
         config.clock_tolerance_ms,
     );
+    observed["first_useful_ms"] = observed["first_useful"]["ms"].clone();
+    observed["first_useful_reason"] = observed["first_useful"]["reason"].clone();
     observed["observed_distinct_effect_receipts_lower_bound"] =
         json!(measures::observed_effects(&receipts));
     observed["action_cap_overshoot"] =
@@ -425,11 +485,13 @@ async fn trial(
         .filter(|r| r["cell"] == cell.id && r["inference"] == true)
         .collect();
     observed["physical_calls"] = json!(calls.len());
+    observed["physical_calls_reason"] = Value::Null;
     let reserved: u64 = calls
         .iter()
         .filter_map(|r| r["reserved_microusd"].as_u64())
         .sum();
     observed["cash_reservation_usd"] = json!(reserved as f64 / 1_000_000.0);
+    observed["cash_reservation_reason"] = Value::Null;
     observed["campaign_cash_reservation_usd"] = json!(
         ledger
             .lock()
@@ -442,10 +504,14 @@ async fn trial(
         .map_err(|_| "cash_ledger_lock_failed")?
         .blocked(cell.arm == "D");
     if let Some(stop) = provider_stop {
-        row.harness_stop = Some(json!({"cause":stop,"scope":"provider_gate"}));
+        if row.harness_stop.is_none() {
+            row.harness_stop = Some(json!({"cause":stop,"scope":"provider_gate"}));
+        }
+    }
+    if observed["action_cap_overshoot"] == true {
+        observed["action_cap_reason"] = json!("observed_effect_receipts_exceed_cap");
     }
     row.measures = observed;
-    row.engine_stop = engine_stop;
     stopped?;
     fixture_stopped?;
     execution?;

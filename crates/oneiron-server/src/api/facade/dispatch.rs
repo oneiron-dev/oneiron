@@ -2297,6 +2297,40 @@ async fn tasks_accept(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn tasks_redo(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    facade_room_turn_serves(
+        call,
+        "tasks.redo",
+        oneiron::memory::RoomTurnHandle::serves("tasks.redo"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    let (server, owned) = (Arc::clone(server), call.owned());
+    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+        let call = owned.call();
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = facade_invoke(
+            &server,
+            &call,
+            actor,
+            class,
+            "tasks.redo",
+            value,
+            &producers,
+        )?;
+        Ok(FacadeCallOutput::listed(output, &producers))
+    })
+    .await
+    .map_err(|_| FacadeApiError::from(super::host_doors::internal("tasks.redo")))?
+}
 async fn vault_commit_message(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -13787,6 +13821,50 @@ async fn vault_cleanup_run(
         value: facade_hooks_post(server, hooks, output).await?,
         rows: super::host_doors::ListedRows::rows(listed),
     })
+}
+async fn vault_archive_delete_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.archive.delete.preview",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_archive_delete_confirm(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.archive.delete.confirm",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn vault_usage_events_undecodable(
     server: &Arc<SyncServer>,
@@ -26701,6 +26779,37 @@ async fn vault_voices_inspect(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_voices_lineage(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.voices.lineage")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.voices.lineage", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.voices.lineage", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_voices_lineage(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn ai_transcribe(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -35548,6 +35657,7 @@ pub(crate) async fn call_verb(
         "vault.fanout.ack" => vault_fanout_ack(server, call, input).await,
         "tasks.update" => tasks_update(server, call, input).await,
         "tasks.accept" => tasks_accept(server, call, input).await,
+        "tasks.redo" => tasks_redo(server, call, input).await,
         "vault.commit_message" => vault_commit_message(server, call, input).await,
         "vault.begin_message_stream" => vault_begin_message_stream(server, call, input).await,
         "vault.append_to_stream" => vault_append_to_stream(server, call, input).await,
@@ -36107,6 +36217,8 @@ pub(crate) async fn call_verb(
         }
         "vault.roots.requests.cancel" => vault_roots_requests_cancel(server, call, input).await,
         "vault.cleanup.run" => vault_cleanup_run(server, call, input).await,
+        "vault.archive.delete.preview" => vault_archive_delete_preview(server, call, input).await,
+        "vault.archive.delete.confirm" => vault_archive_delete_confirm(server, call, input).await,
         "vault.usage.events.undecodable" => {
             vault_usage_events_undecodable(server, call, input).await
         }
@@ -36714,6 +36826,7 @@ pub(crate) async fn call_verb(
         }
         "vault.voices.targets.evict" => vault_voices_targets_evict(server, call, input).await,
         "vault.voices.inspect" => vault_voices_inspect(server, call, input).await,
+        "vault.voices.lineage" => vault_voices_lineage(server, call, input).await,
         "ai.transcribe" => ai_transcribe(server, call, input).await,
         "ai.embed" => ai_embed(server, call, input).await,
         "ai.video" => ai_video(server, call, input).await,

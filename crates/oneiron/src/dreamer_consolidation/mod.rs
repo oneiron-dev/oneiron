@@ -82,6 +82,7 @@ mod step_charge;
 pub mod strength;
 mod support;
 mod task_realize;
+mod thing_agent;
 mod turn_text;
 mod wake_plan;
 mod watermark;
@@ -153,6 +154,17 @@ pub use sieve_ports::{
 pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
 pub(crate) use task_realize::{seal_task_realize_confession_in_txn, task_realize_confession};
+pub use thing_agent::{
+    THING_CHILD_CHECKPOINT, THING_CHILD_CODE_MODE_OFF, THING_CHILD_HOST_ABSENT,
+    THING_CHILD_LAUNCH_FAILED, THING_CHILD_LOAN_REFUSED, THING_CHILD_LOW_TRUST,
+    THING_CHILD_PARENT_FAILED, THING_CHILD_PARENT_GONE, THING_CHILD_REFUSED,
+    THING_CHILD_RUNTIME_UNBOUND, THING_CHILD_SPAWN_REFUSED, THING_CHILD_TRAPPED,
+    THING_CHILD_UNCOVERED, THING_DECIDE_PORT, THING_EXTRACT_PORT, THING_PORT_INPUT_INVALID,
+    THING_PORT_INPUT_UNKNOWN, THING_SLICE_REFUSED, ThingChildEvent, ThingChildHost,
+    ThingChildLaunch, ThingChildSession, ThingChildSettled, ThingChildStart, ThingDecideInput,
+    ThingDecideOutput, ThingExtractInput, ThingExtractOutput, ThingPortCall, ThingPortReply,
+    ThingPortRequest, ThingProposalRef,
+};
 pub(crate) use turn_text::compaction_span::{
     ConversationSpanRead, conversation_span_text, conversation_span_text_in,
 };
