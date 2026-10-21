@@ -76427,6 +76427,14 @@
   "oneiron-code-check": {
    "files": [
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/backend_screen.rs",
+     "purpose": "Fleet-only, sequential direction screen; no fallback and no default switch",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -76452,7 +76460,7 @@
       "ShadowCheck"
      ],
      "path": "src/lib.rs",
-     "purpose": "An optional type check of code-mode programs before they run",
+     "purpose": "An optional type check of code-mode programs, run beside them",
      "surface": {
       "enum": 4,
       "fn": 6,
@@ -76486,7 +76494,7 @@
       "MicrosoftTsc"
      ],
      "path": "src/microsoft.rs",
-     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is…",
+     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when the…",
      "surface": {
       "const": 1,
       "fn": 1,
@@ -76564,7 +76572,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is…"
+     "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when the…"
     },
     "output": {
      "files": 1,
@@ -76596,8 +76604,8 @@
     }
    },
    "over_bar": 0,
-   "purpose": "An optional type check of code-mode programs before they run",
-   "source_files": 8,
+   "purpose": "An optional type check of code-mode programs, run beside them",
+   "source_files": 9,
    "test_files": 1
   },
   "oneiron-container": {
