@@ -20,7 +20,7 @@ use crate::code_run::{
     SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
     SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult,
     SelfSummarizeCall, SummarizeReply, agent_verb_rows_of, result_cannot, result_card,
-    result_refusal, self_call_inputs,
+    result_refusal, scoped_child_read_refusal, self_call_inputs,
 };
 use crate::code_run::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -650,17 +650,29 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// Whether the run's results stay on this device for its door's caller
     /// now (DEC-0005), by [`Self::result_rows`].
     fn withholds_results(&self) -> Result<bool> {
-        self.withholds_rows(self.result_rows())
+        self.withholds_rows(self.result_rows())?
+            .map_err(|code| Error::InvalidConfig(format!("stored result read refused: {code}")))
     }
 
     /// Whether a result served from `rows` stays on this device for the
-    /// door's caller now.
-    fn withholds_rows(&self, rows: Option<Vec<EntityId>>) -> Result<bool> {
-        self.gated_write
-            .withholds_retained(rows.as_deref())
-            .map_err(|refusal| {
-                Error::InvalidConfig(format!("stored result read refused: {}", refusal.code))
-            })
+    /// door's caller now. A scoped child's door that refuses the read on its
+    /// authority answers that refusal's code (`scoped_child_authority_lapsed`
+    /// or `scoped_child_parent_lease_lost`, FIX 7734), for the read to name;
+    /// any other refusal is an error, as before.
+    fn withholds_rows(
+        &self,
+        rows: Option<Vec<EntityId>>,
+    ) -> Result<std::result::Result<bool, &'static str>> {
+        match self.gated_write.withholds_retained(rows.as_deref()) {
+            Ok(withheld) => Ok(Ok(withheld)),
+            Err(refusal) => match scoped_child_read_refusal(&refusal.code) {
+                Some(code) => Ok(Err(code)),
+                None => Err(Error::InvalidConfig(format!(
+                    "stored result read refused: {}",
+                    refusal.code
+                ))),
+            },
+        }
     }
 
     /// `store(value, name?)`: the value the program just streamed, stored as
@@ -983,8 +995,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             None => own,
             Some(extra) => own.zip(extra).map(|(run, extra)| [run, extra].concat()),
         };
-        if self.withholds_rows(rows.clone())? {
-            return Ok(Err(result_refusal("result_withheld")));
+        match self.withholds_rows(rows.clone())? {
+            Ok(false) => {}
+            Ok(true) => return Ok(Err(result_refusal("result_withheld"))),
+            Err(code) => return Ok(Err(result_refusal(code))),
         }
         if let Some(extra) = &found.rows {
             // Another run's result reaches this one (FIX 6130).

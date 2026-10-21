@@ -58,8 +58,13 @@ pub enum ModelRole {
     /// code-fix drafts and session-end distill. Optional: with no seat of its
     /// own the Coach rides the generative reasoner's.
     Coach,
+    /// The browser planner (CUA E5): the mid planner a browser subgoal's
+    /// next code-mode step runs on once a batch or library run of it ends
+    /// `NEEDS_AGENT`. Optional: with no seat or manifest row of its own the
+    /// step stays on the generative reasoner's. No model is chosen for it.
+    BrowserPlanner,
 }
-pub const MODEL_ROLES: [ModelRole; 17] = [
+pub const MODEL_ROLES: [ModelRole; 18] = [
     ModelRole::RetrievalEmbedder,
     ModelRole::Reranker,
     ModelRole::ExtractionEncoder,
@@ -77,6 +82,7 @@ pub const MODEL_ROLES: [ModelRole; 17] = [
     ModelRole::TtsDeferred,
     ModelRole::LocalVision,
     ModelRole::Coach,
+    ModelRole::BrowserPlanner,
 ];
 impl ModelRole {
     /// A role of the generative family: it generates or rules through the
@@ -93,13 +99,18 @@ impl ModelRole {
                 | Self::DreamerDistilled
                 | Self::ExtractionTeacher
                 | Self::Coach
+                | Self::BrowserPlanner
         )
     }
     /// A role a v2 manifest may leave unbound: a trained checkpoint the owner
-    /// has not bound yet, or the Coach, which falls back to the chat seat.
+    /// has not bound yet, or the Coach or the browser planner, each of which
+    /// falls back to the chat seat.
     #[must_use]
     pub const fn is_optional(self) -> bool {
-        matches!(self, Self::DreamerDistilled | Self::Coach)
+        matches!(
+            self,
+            Self::DreamerDistilled | Self::Coach | Self::BrowserPlanner
+        )
     }
     /// The disposition a row that names none takes: the extraction teacher
     /// is offline, every other role served (ARCH-0036 "one base, two roles").
