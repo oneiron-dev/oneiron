@@ -28,11 +28,18 @@
 //! routed live calls back to routing, and each owner publishes its worker's
 //! calibrated rank under the scheduler lock ([`Dispatcher::publish_rank`]).
 //!
+//! A platform runtime's worker is supervised ([`lifecycle`], FIX 6755 slice
+//! 3): it is measured before it is Ready, leaves Ready the moment its
+//! process ends, idle or not, and is restarted on the same worker after a
+//! backoff. The dispatcher's close reaches every supervised session and
+//! joins its supervisor, so no child process outlives it.
+//!
 //! The dispatcher belongs to its slot, one per server process: no static
 //! holds a worker.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, ExecutionPick, ExtractionWork};
@@ -42,13 +49,16 @@ use super::local::WindowCounter;
 
 mod capacity;
 mod eligibility;
+mod lifecycle;
 mod policy;
 mod worker;
 
-use policy::{BULK_BATCH_CAP, LIVE_BATCH_CAP};
+use policy::LIVE_BATCH_CAP;
 use worker::WorkerState;
 
 pub(crate) use capacity::{Completion, DispatchClaim, pending_cap};
+pub(crate) use lifecycle::{DispatcherHandle, Fault, Lifeline, Restart};
+pub(crate) use policy::BULK_BATCH_CAP;
 pub(crate) use worker::{Worker, WorkerDescriptor, WorkerSpec};
 
 /// Tool name on every failure the dispatcher reports itself.
@@ -88,6 +98,9 @@ struct WorkerHandle {
     busy: bool,
     /// Live calls routed to it, each with the rule that routed it.
     live: VecDeque<(Job, ExecutionPick)>,
+    /// What ends its live session's waits when the dispatcher closes: a
+    /// supervised worker's, set by each session it starts.
+    stop: Option<Box<dyn Fn() + Send>>,
 }
 
 /// Everything the scheduler lock holds.
@@ -186,6 +199,8 @@ pub(super) struct Shared {
     live_room: Notify,
     /// Bulk room was given back: an async bulk claim may have room.
     bulk_room: Notify,
+    /// Every supervised worker's thread, joined when the dispatcher closes.
+    supervisors: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Shared {
@@ -250,8 +265,24 @@ impl Shared {
     /// and replies kept; every queued call no worker that can run it is
     /// ready or coming for is answered: no worker is left to run it.
     pub(super) fn settle(&self, index: usize, state: WorkerState, why: Option<&str>) {
+        self.settle_if(index, state, why, |_| true);
+    }
+
+    /// [`Self::settle`], only when `wanted` holds of the scheduler under the
+    /// same lock: whether it moved. However many threads see one crash, it
+    /// moves the worker once.
+    fn settle_if(
+        &self,
+        index: usize,
+        state: WorkerState,
+        why: Option<&str>,
+        wanted: impl FnOnce(&Scheduler) -> bool,
+    ) -> bool {
         let (engine, stranded) = {
             let mut scheduler = self.lock();
+            if !wanted(&scheduler) {
+                return false;
+            }
             scheduler.workers[index].state = state;
             if state != WorkerState::Ready {
                 scheduler.reroute(index);
@@ -270,6 +301,7 @@ impl Shared {
             self.room_freed(stranded.iter().map(|job| job.work));
             unrun(stranded, NO_WORKER);
         }
+        true
     }
 
     /// Publishes worker `index`'s rank under the scheduler lock: routing and
@@ -335,6 +367,7 @@ impl Dispatcher {
                 room: Condvar::new(),
                 live_room: Notify::new(),
                 bulk_room: Notify::new(),
+                supervisors: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -344,34 +377,7 @@ impl Dispatcher {
     /// slow starts after the listener binds, and the workers already ready
     /// serve meanwhile.
     pub(crate) fn add(&self, spec: WorkerSpec) -> anyhow::Result<WorkerId> {
-        let descriptor = spec.descriptor().clone();
-        let engine = descriptor.engine();
-        let index = {
-            let mut scheduler = self.shared.lock();
-            scheduler.workers.push(WorkerHandle {
-                descriptor,
-                rank: UNRANKED,
-                batch: spec.batch().max(1),
-                state: WorkerState::Loading,
-                busy: false,
-                live: VecDeque::new(),
-            });
-            scheduler.workers.len() - 1
-        };
-        let shared = Arc::clone(&self.shared);
-        let spawned = std::thread::Builder::new()
-            .name(format!("oneironer {engine}"))
-            .spawn(move || worker::serve(&shared, index, spec));
-        match spawned {
-            // The thread outlives this handle and ends when the dispatcher
-            // closes.
-            Ok(_detached) => Ok(WorkerId(index)),
-            Err(error) => {
-                let why = Some("its thread did not start");
-                self.shared.settle(index, WorkerState::Failed, why);
-                Err(error.into())
-            }
-        }
+        add(&self.shared, spec)
     }
 
     /// Publishes `worker`'s calibrated rank, 0 preferred, under the
@@ -402,21 +408,84 @@ impl Dispatcher {
     }
 }
 
+/// [`Dispatcher::add`] on `shared`, for the dispatcher or a handle of it
+/// (`lifecycle::DispatcherHandle`). The thread starts under the scheduler
+/// lock, so a close that follows sees every supervisor it must join; a
+/// closed dispatcher adds none.
+fn add(shared: &Arc<Shared>, spec: WorkerSpec) -> anyhow::Result<WorkerId> {
+    let descriptor = spec.descriptor().clone();
+    let engine = descriptor.engine();
+    let supervised = spec.supervised();
+    let mut scheduler = shared.lock();
+    anyhow::ensure!(!scheduler.closed, "the oneironer dispatcher closed");
+    scheduler.workers.push(WorkerHandle {
+        descriptor,
+        rank: UNRANKED,
+        batch: spec.batch().max(1),
+        state: WorkerState::Loading,
+        busy: false,
+        live: VecDeque::new(),
+        stop: None,
+    });
+    let index = scheduler.workers.len() - 1;
+    let thread_shared = Arc::clone(shared);
+    let spawned = std::thread::Builder::new()
+        .name(format!("oneironer {engine}"))
+        .spawn(move || worker::start(&thread_shared, index, spec));
+    match spawned {
+        Ok(thread) => {
+            // An unsupervised thread outlives its handle and ends when the
+            // dispatcher closes.
+            if supervised {
+                shared.supervisors().push(thread);
+            }
+            Ok(WorkerId(index))
+        }
+        Err(error) => {
+            drop(scheduler);
+            let why = Some("its thread did not start");
+            shared.settle(index, WorkerState::Failed, why);
+            Err(error.into())
+        }
+    }
+}
+
+impl Shared {
+    fn supervisors(&self) -> MutexGuard<'_, Vec<JoinHandle<()>>> {
+        self.supervisors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 impl Drop for Dispatcher {
     /// Closes: each worker's thread ends after the unit it runs, and every
     /// call still queued is answered, so no completion a claim outlived the
     /// dispatcher with waits for good. A call submitted later is answered at
-    /// once.
+    /// once. Each supervised session's wait is stopped, and its supervisor
+    /// joined once it has shut its process down and reaped it.
     fn drop(&mut self) {
-        let queued = {
+        let (queued, stops) = {
             let mut scheduler = self.shared.lock();
             scheduler.closed = true;
-            scheduler.drain_queued()
+            let stops: Vec<_> = scheduler
+                .workers
+                .iter_mut()
+                .filter_map(|worker| worker.stop.take())
+                .collect();
+            (scheduler.drain_queued(), stops)
         };
         self.shared.work.notify_all();
+        for stop in stops {
+            stop();
+        }
         if !queued.is_empty() {
             self.shared.room_freed(queued.iter().map(|job| job.work));
             unrun(queued, "the oneironer dispatcher closed");
+        }
+        let supervisors = std::mem::take(&mut *self.shared.supervisors());
+        for supervisor in supervisors {
+            let _ = supervisor.join();
         }
     }
 }

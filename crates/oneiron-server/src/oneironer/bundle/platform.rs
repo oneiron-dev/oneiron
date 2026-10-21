@@ -102,8 +102,46 @@ pub(crate) struct MlxPlatform {
 #[serde(deny_unknown_fields)]
 struct Launch {
     program: String,
-    #[expect(dead_code, reason = "the MLX adapter reads it (FIX 6755 slice 3)")]
     args: Vec<String>,
+}
+
+impl MlxPlatform {
+    /// The worker archive, extracted beside itself.
+    pub(crate) const fn worker(&self) -> &Artifact {
+        &self.worker
+    }
+
+    /// The `major.minor` macOS release it runs from.
+    pub(crate) fn min_os(&self) -> &str {
+        &self.min_os
+    }
+
+    /// The worker version its handshake must name.
+    pub(crate) fn version(&self) -> &str {
+        &self.version
+    }
+
+    /// The full SHA-256 of the worker's locked requirements, as its
+    /// handshake must name it.
+    pub(crate) fn lock_sha256(&self) -> &str {
+        &self.lock_sha256
+    }
+
+    /// The wire it speaks.
+    pub(crate) fn protocol(&self) -> &str {
+        &self.protocol
+    }
+
+    /// The longest window it is qualified for, tokens with specials.
+    pub(crate) const fn max_window_tokens(&self) -> usize {
+        self.max_window_tokens
+    }
+
+    /// Its program, a relative path of plain names inside its extraction,
+    /// and the arguments it starts with before the engine's own.
+    pub(crate) fn launch(&self) -> (&str, &[String]) {
+        (&self.launch.program, &self.launch.args)
+    }
 }
 
 impl Platform {

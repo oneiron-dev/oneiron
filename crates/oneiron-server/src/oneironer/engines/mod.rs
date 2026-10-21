@@ -25,6 +25,11 @@
 //! qualify on Candle here, and neither is recorded as anything else. Each
 //! Candle engine's window is the configured `max_input_tokens`, and its row
 //! is timed on every case it holds.
+//!
+//! A platform runtime is admitted beside the baseline after the slot is
+//! built, in the background ([`admission`], FIX 6755 slice 3): on a Mac, the
+//! bundle's managed MLX worker, once its installation verifies
+//! ([`candidate`]) and its answers clear the reference here.
 
 use std::path::Path;
 
@@ -34,12 +39,15 @@ use super::local::LocalTagger;
 use crate::config::oneironer::OneironerRuntime;
 use crate::config::{EmbedderDevice, OneironerConfig};
 
+mod admission;
 mod calibration;
+mod candidate;
 mod rows;
 
 use calibration::{Reference, Timing, measure, prefers};
 use rows::{RowKey, WindowRules, build_id, os_build, read_rows, rows_path, write_rows};
 
+pub(crate) use admission::Admission;
 pub(crate) use rows::Row;
 
 /// One runtime on one device.
