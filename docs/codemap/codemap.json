@@ -81452,7 +81452,7 @@
      "path": "src/budget.rs",
      "purpose": "One admission budget for every organ: threads, memory, in-flight calls",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "fn": 1,
       "struct": 1
      }
@@ -81511,7 +81511,7 @@
      "purpose": "The organ host: install, call, unload, revoke",
      "surface": {
       "crate-vis": 1,
-      "fn": 15,
+      "fn": 16,
       "re-export": 1,
       "struct": 1
      }
@@ -81559,7 +81559,7 @@
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
       "mod": 2,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -81598,7 +81598,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OrganService"
@@ -81672,6 +81672,23 @@
      "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FloorRefusal",
+      "MachineFloor",
+      "MemoryGrow"
+     ],
+     "path": "src/resource_memory.rs",
+     "purpose": "`memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -81968,6 +81985,13 @@
      "layout": "file",
      "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…"
     },
+    "resource_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to…"
+    },
     "route": {
      "files": 1,
      "impl_vault": false,
@@ -82013,7 +82037,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 31,
+   "source_files": 32,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -82038,8 +82062,23 @@
      "path": "src/lib.rs",
      "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
-      "mod": 3,
-      "re-export": 6
+      "mod": 4,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryAnswer",
+      "MemoryAsk"
+     ],
+     "path": "src/memory.rs",
+     "purpose": "The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -82192,6 +82231,13 @@
      "layout": "file",
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…"
     },
+    "memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it…"
+    },
     "region": {
      "files": 1,
      "impl_vault": false,
@@ -82237,7 +82283,7 @@
    },
    "over_bar": 0,
    "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 2
   },
   "oneiron-py": {
@@ -83205,7 +83251,27 @@
      "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
      "surface": {
       "mod": 2,
-      "re-export": 5
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AdmittedBytes",
+      "SealMemory",
+      "SealMemoryProvider",
+      "SealMemoryRefusal"
+     ],
+     "path": "src/memory.rs",
+     "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)",
+     "surface": {
+      "crate-vis": 14,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2,
+      "trait": 1,
+      "type": 1
      }
     },
     {
@@ -83320,9 +83386,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/decode.rs",
-     "purpose": "Strict loads with every stream decoded whole (Rule 5)",
+     "purpose": "Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -83750,6 +83816,13 @@
      "layout": "file",
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
+    "memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)"
+    },
     "native": {
      "files": 44,
      "impl_vault": false,
@@ -83767,7 +83840,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 47,
+   "source_files": 48,
    "test_files": 12
   },
   "oneiron-server": {
@@ -92613,7 +92686,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
