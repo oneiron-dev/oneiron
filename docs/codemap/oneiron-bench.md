@@ -28,7 +28,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/chroma/tests/support.rs` | test | s | — | — | — |
 | `src/beam/citations.rs` | src | m | 4 crate-vis | — | Evidence-backed per-number citations |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
-| `src/beam/comparability.rs` | src | s | 9 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
+| `src/beam/comparability.rs` | src | s | 10 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
 | `src/beam/corpus_clock.rs` | src | s | 1 crate-vis | — | Dataset valid-time admission |
 | `src/beam/edit_path.rs` | src | s | 6 crate-vis | — | Five edit-task shapes with an independent tests-plus-contract oracle |
 | `src/beam/edit_path/tests.rs` | test | s | — | — | — |
@@ -42,9 +42,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/mod.rs` | src | s | 6 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
 | `src/beam/model.rs` | src | s | 21 crate-vis | — | Fixture, manifest, and arm input types |
 | `src/beam/model_scaffold.rs` | src | m | 12 crate-vis | — | Shared measured answerer scaffold |
-| `src/beam/model_scaffold/context.rs` | src | s | 4 crate-vis | — | Context each answerer arm hands the shared answer call, apart from packs |
+| `src/beam/model_scaffold/context.rs` | src | s | 6 crate-vis | — | Context each answerer arm hands the shared answer call, apart from packs |
 | `src/beam/model_scaffold/offline.rs` | src | s | 4 crate-vis | — | Stage-aware offline accounting for the measured scaffold |
 | `src/beam/model_scaffold/paired.rs` | src | s | 7 crate-vis | — | Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A) |
+| `src/beam/model_scaffold/provenance.rs` | src | s | 4 crate-vis | — | Resolved-pin family disclosures; uncertainty and in-family results stay out of the frontier |
 | `src/beam/model_scaffold/tests.rs` | test | m | — | — | — |
 | `src/beam/model_usage.rs` | src | s | 4 crate-vis | — | Provider usage, priced by an explicit model-and-revision price table |
 | `src/beam/nuggets.rs` | src | s | 8 crate-vis | — | D9 dual-column scorer |
@@ -87,10 +88,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/fleet/configuration.rs` | src | s | 3 crate-vis | — | Explicit fleet workload and host settings; smoke cannot masquerade as fleet scale |
 | `src/fleet/mod.rs` | src | s | 1 crate-vis | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
 | `src/fleet/optimization.rs` | src | s | 4 crate-vis | — | Paired full recompute versus persisted depth-five resume, with identical output checks |
-| `src/fleet/report.rs` | src | s | 9 crate-vis | — | Observations, raw latency samples and run provenance, never capacity targets |
+| `src/fleet/report.rs` | src | s | 10 crate-vis | — | Observations, raw latency samples and run provenance, never capacity targets |
 | `src/fleet/scaling.rs` | src | s | 3 crate-vis | — | Isolated persisted-residual miss cost as graph cardinality grows |
 | `src/fleet/tests.rs` | test | s | — | — | Small falsification fixtures; smoke is never accepted as a fleet baseline |
-| `src/fleet/wire.rs` | src | s | 7 crate-vis | — | Real app-tier WebSocket client using the shipped server protocol version |
+| `src/fleet/wire.rs` | src | m | 8 crate-vis | — | Real app-tier WebSocket client using the shipped server protocol version |
 | `src/fleet/workload.rs` | src | m | 2 crate-vis | — | Closed-loop authenticated fleet traffic against one real loopback server and vault |
 | `src/infer/args.rs` | src | s | 9 crate-vis | — | `infer run` and `infer summarize` flags, parsed by hand like the other subcommands: every flag takes one… |
 | `src/infer/arms.rs` | src | s | 5 crate-vis | — | The two production paths a call takes, each an `LlmBackend` the measurement loop drives the same way |
@@ -106,9 +107,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/infer/vram.rs` | src | s | 9 crate-vis | — | GPU memory, sampled: one `nvidia-smi -lms` child streams `memory.used, memory.total, name, uuid` for one… |
 | `src/infer/workers.rs` | src | m | 5 crate-vis | — | The measured session's calls: `--concurrency` worker tasks on one arm, one backend and one meter, all driven… |
 | `src/interface_bench/cli_and_pinned_config.rs` | src | m | 14 crate-vis | — | Subcommand dispatch and pinned-model config parsing |
-| `src/interface_bench/config_types.rs` | src | m | 71 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |
-| `src/interface_bench/eval_run.rs` | src | m | 13 crate-vis | — | Smoke, probe, and full execution plus resume validation |
+| `src/interface_bench/config_types.rs` | src | m | 72 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |
+| `src/interface_bench/eval_run.rs` | src | m | 9 crate-vis | — | Smoke, probe, and full execution plus resume validation |
 | `src/interface_bench/mod.rs` | src | s | 3 crate-vis | — | Campaign #5 interface bench task generation and smoke harness |
+| `src/interface_bench/provider.rs` | src | s | 1 crate-vis | — | Paid-call admission and settlement on the engine ledger, with deadline-bound 429 waits |
 | `src/interface_bench/reports_and_fixture_helpers.rs` | src | m | 19 crate-vis | — | Row aggregation and report tables |
 | `src/interface_bench/taskgen.rs` | src | m | 5 crate-vis | — | Fixture and task generation plus atomic JSON writers |
 | `src/interface_bench/tests_a.rs` | src | s | 2 crate-vis | — | Taskgen, config, and memo tests |
@@ -120,9 +122,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/load/mod.rs` | src | m | 2 crate-vis | — | `load` subcommand — the engine's load bench on the shipped server binary |
 | `src/load/phases.rs` | src | m | 13 crate-vis | — | The measured cells: ingest by one and by many callers, recall at each grade and agent count, the mixed and… |
 | `src/load/report.rs` | src | m | 10 crate-vis | — | The result file, and `load compare`, which reads two of them |
-| `src/load/server.rs` | src | m | 20 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
+| `src/load/server.rs` | src | m | 21 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
 | `src/load/startup.rs` | src | s | 1 crate-vis | — | `load startup`: the server's memory while the shipped local embedding model loads, which is where its… |
-| `src/load/stats.rs` | src | s | 3 crate-vis | — | Latency summaries: nearest-rank percentiles over completed requests, with failures counted beside them and… |
+| `src/load/stats.rs` | src | s | 4 crate-vis | — | Latency summaries: nearest-rank percentiles over completed requests, with failures counted beside them and… |
 | `src/main.rs` | src | m | — | — | oneiron-bench — benchmark harness skeleton |
 | `src/oneironer_shadow.rs` | src | m | 1 crate-vis | — | Checkpoint-backed NER shadow proof beside an indexed fixture turn |
 | `src/perf/acceptance.rs` | src | m | 14 crate-vis | — | ONE-1579 acceptance evidence: structured support for the five ONE-1578 lifecycle knobs, and the exact… |

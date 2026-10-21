@@ -19,7 +19,6 @@ use crate::conversation_dag::{
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::{Memory, MemoryError};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
@@ -841,13 +840,12 @@ impl Vault {
     pub fn sub_sessions(&self, turn: &EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
         conversation_of(&self.store, &txn, turn)?;
-        let sessions = edge_ids(
+        let sessions = crate::conversation_dag::counted_edge_ids(
             &self.store,
             &txn,
             turn,
             EdgeKind::SpawnedBy,
             true,
-            MAX_ANCESTOR_DEPTH,
         )?;
         let mut result = Vec::new();
         for id in sessions {
