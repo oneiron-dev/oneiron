@@ -172,11 +172,24 @@ impl Agent {
         )?)
     }
 
+    pub(super) async fn witness(
+        &mut self,
+        round: usize,
+        body: Value,
+    ) -> Result<oneiron::memory::WitnessReceipt> {
+        let reply = tokio::time::timeout(
+            self.timeout,
+            self.rpc_inner(2 * round as u64 + 1, "vault.witness", body),
+        )
+        .await??;
+        Ok(serde_json::from_value(reply)?)
+    }
+
     pub(super) async fn recall(&mut self, round: usize, query: &str) -> Result<()> {
         let pack = tokio::time::timeout(
             self.timeout,
             self.rpc_inner(
-                round as u64 + 1,
+                2 * round as u64 + 2,
                 "vault.recall",
                 json!({"query":query,"effort":"light","limit":10}),
             ),
