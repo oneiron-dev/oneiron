@@ -499,22 +499,41 @@ impl LocalCustody<'_> {
     /// `id`'s entry, minting it only while unpublished. A damaged entry is
     /// never treated as absent; only an unpublished temporary is discarded.
     pub(crate) fn get_or_create(&self, id: &CustodyId) -> Result<CustodySecret> {
+        self.get_or_mint(id).map(|(secret, _)| secret)
+    }
+
+    /// [`Self::get_or_create`], its Mint journaled whether it minted the
+    /// entry or found it (KS-6): an entry an earlier call published before
+    /// its Mint failed to append, or its writer aborted, is journaled here,
+    /// before any row sealed under it commits. Every reader of the log takes
+    /// a Mint as a set member, so one journaled again only moves the log on.
+    /// A retired id is refused, never minted again; a found key is kept.
+    pub(crate) fn get_or_create_journaled(&self, id: &CustodyId) -> Result<CustodySecret> {
+        let (secret, minted) = self.get_or_mint(id)?;
+        if !minted {
+            self.journal_entry(&super::log::LogEntry::Mint(id.clone()))?;
+        }
+        Ok(secret)
+    }
+
+    /// `id`'s entry and whether this call minted and journaled it.
+    fn get_or_mint(&self, id: &CustodyId) -> Result<(CustodySecret, bool)> {
         let kind = id.kind();
         let (dir, directory) = self.prepare(id)?;
         let path = dir.join(entry_name(id.generation()));
         if exists(&path)? {
-            return self.read(id);
+            return Ok((self.read(id)?, false));
         }
         let secret = CustodySecret::random(kind.secret_len());
         let published = write_entry(&dir, &path, id.generation(), secret.expose(), kind)?;
         platform::sync_held(&directory, &dir)?;
         if !published {
-            return self.read(id);
+            return Ok((self.read(id)?, false));
         }
         // KS-4: the mint is journaled, synced, before a row sealed under it
         // may commit.
         self.journal_entry(&super::log::LogEntry::Mint(id.clone()))?;
-        Ok(secret)
+        Ok((secret, true))
     }
 
     /// Destroys precisely `id`: its marker is synced, then its entry is

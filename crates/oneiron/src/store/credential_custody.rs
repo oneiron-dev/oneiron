@@ -114,7 +114,10 @@ impl Store {
     /// binding pinned in the same transaction: published, synced and its
     /// Mint journaled before the row sealed under it commits. The writer
     /// keeps the finisher from every entry, so no custody guard is taken. A
-    /// retry of an uncommitted writer finds the entry it published.
+    /// retry of an uncommitted writer finds the entry it published and keeps
+    /// its key, its Mint journaled again before this row commits, so no
+    /// sealed row ever stands on an unjournaled key; a retired id is never
+    /// minted again.
     ///
     /// # Errors
     /// An archived vault, whose custody is its replacement's; a retired
@@ -133,7 +136,7 @@ impl Store {
         let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
         copy_leaf(
             CustodyKind::CredentialValue,
-            custody.get_or_create(&id)?.expose(),
+            custody.get_or_create_journaled(&id)?.expose(),
         )
     }
 
