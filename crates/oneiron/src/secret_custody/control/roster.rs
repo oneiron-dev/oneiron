@@ -152,8 +152,9 @@ impl Vault {
     /// that generation. Its permits are the standing ones, with each added
     /// machine's fresh permit in place of one whose key changed, however
     /// many (FIX 7951: never skipped; its writer measures them). A transition whose pieces
-    /// are not all here yet waits for them: its standing set is not whole,
-    /// and the next pass judges it again.
+    /// are not all here yet, or do not carry its whole set
+    /// ([`CustodyPieces::whole`]), waits for them: its standing set is not
+    /// whole, and the next pass judges it again.
     fn rewrap_due_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -165,7 +166,7 @@ impl Vault {
         let held = pieces.lead();
         if held.status == SecretCustodyStatus::Revoked
             || fold.custody_revoked(&held.id)
-            || !pieces.complete()
+            || !pieces.whole()
         {
             return Ok(None);
         }

@@ -14,7 +14,8 @@
 //! request bound`): it signs the commitment to the request's complete
 //! permitted set, its own place in the pieces and the first permit it
 //! carries, under the frame floors kept here (the `u16` count, the 4 MiB
-//! decode bound). No total recipient count is refused.
+//! decode bound on the content a carrier held before pieces, the piece
+//! fields beside it). No total recipient count is refused.
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use getrandom::SysRng;
@@ -40,9 +41,16 @@ const DIGEST_DOMAIN: &[u8] = b"oneiron/custody-transition-digest/v3";
 const VALUE_EPOCH: u64 = 1;
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
-/// The largest carrier (one piece) a door writes or a receiver decodes: the
-/// codec's frame floor, never a recipient cap.
-pub(crate) const MAX_TRANSITION_BYTES: usize = 4 << 20;
+/// The codec's frame floor on a carrier's content as it was before pieces,
+/// never a recipient cap: what a single sealed value may fill.
+const MAX_TRANSITION_BYTES: usize = 4 << 20;
+/// What a carrier's place among its transition's pieces adds: the set
+/// commitment, its piece, the piece count and its first permit. They ride
+/// outside [`MAX_TRANSITION_BYTES`], so no sealed value has less room than
+/// before pieces.
+const PIECE_FIELD_BYTES: usize = 32 + 4 + 4 + 4;
+/// The largest carrier (one piece) a door writes or a receiver decodes.
+pub(super) const MAX_CARRIER_BYTES: usize = MAX_TRANSITION_BYTES + PIECE_FIELD_BYTES;
 /// The most sealed values one piece carries: its count is two bytes.
 pub(super) const MAX_PIECE_VALUES: usize = u16::MAX as usize;
 
@@ -105,7 +113,7 @@ impl CustodyTransition {
     /// Decodes carrier bytes strictly: every length exact, nothing after the
     /// signature. Decoding proves nothing; [`Self::verify`] does.
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > MAX_TRANSITION_BYTES {
+        if bytes.len() > MAX_CARRIER_BYTES {
             return Err(malformed());
         }
         let mut read = Reader(bytes);

@@ -590,11 +590,10 @@ pub(super) fn main_log_heads(
 /// that await a result (a root request the owner cancelled or a newer one
 /// superseded awaits none, FIX 5583): what a new profile revision lists as
 /// seen, every one of them (FIX 7911: an observed act is never left out, so
-/// a removal never retires it; only an act a removal raced counts stricter).
-pub(super) fn live_edits_by(
-    fold: &AuthorityFold,
-    machine: EntityId,
-) -> BTreeSet<AuthorityEntryHash> {
+/// a removal never retires it; only an act a removal raced counts stricter),
+/// in the order the codec's old clip took them, for the revision that still
+/// needs it ([`super::act_standing::acknowledged_by_in_txn`]).
+pub(super) fn live_edits_by(fold: &AuthorityFold, machine: EntityId) -> Vec<AuthorityEntryHash> {
     fold.worlds
         .values()
         .flat_map(|world| world.live.iter())

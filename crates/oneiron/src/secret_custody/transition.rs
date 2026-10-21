@@ -31,6 +31,8 @@ use oneiron_crypto::HybridPublicKey;
 
 use self::payload::{ValueBinding, seal_value, status_byte, unsigned};
 pub(crate) use self::pieces::{CustodyPieces, custody_row_key, parse_custody_row_key};
+#[cfg(feature = "sync")]
+pub(crate) use self::pieces::{completed_custody_groups_in_txn, keep_custody_piece_in_txn};
 use super::codec::encode_secret_custody_body;
 use super::doors::bind_synced_name_in_txn;
 use super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
@@ -677,9 +679,10 @@ pub(crate) enum CustodyApplied {
     Unadmitted,
 }
 
-/// Writes a verified `transition` into this vault's custody, with `value` the
-/// one this machine opened from it. The transition is checked again against
-/// this transaction's own fold first. A generation never goes back, a
+/// Writes the transition `group` carries whole into this vault's custody,
+/// with `value` the one this machine opened from it, never from a piece
+/// alone. The group is checked again against this transaction's own fold
+/// first ([`CustodyPieces::verify`]). A generation never goes back, a
 /// revoked record never comes back, and a record this vault keeps local
 /// never takes a peer's transition. A rewrap at the generation and status
 /// held changes the bindings alone, by its request (CALLS
@@ -695,10 +698,11 @@ pub(crate) enum CustodyApplied {
 pub(crate) fn apply_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    transition: &CustodyTransition,
+    group: &CustodyPieces,
     value: Option<&[u8]>,
     at: u64,
 ) -> Result<CustodyApplied> {
+    let transition = group.lead();
     if transition.status != SecretCustodyStatus::Revoked
         && super::control::custody_revoked_in_txn(vault, wtxn, &transition.id)?
     {
@@ -706,7 +710,7 @@ pub(crate) fn apply_custody_transition_in_txn(
         return Ok(CustodyApplied::Refused);
     }
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-    if transition.verify(&fold).is_err() {
+    if group.verify(&fold).is_err() {
         return Ok(CustodyApplied::Unadmitted);
     }
     let mut record = transition.record()?;

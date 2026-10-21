@@ -2,7 +2,8 @@
 //! bound`, Engine 10-22 02:2x; FIX 7906, 7951, 7952). A custody change
 //! permits any number of recipients, and the transition that enacts it
 //! carries the complete permitted set in pieces, each one carrier within the
-//! codec's own floors: at most [`MAX_TRANSITION_BYTES`] encoded and at most
+//! codec's own floors: at most [`MAX_CARRIER_BYTES`] encoded (the 4 MiB a
+//! carrier held before pieces, its piece fields beside it) and at most
 //! [`MAX_PIECE_VALUES`] sealed values. No total recipient count is refused.
 //!
 //! Every piece signs the commitment to the request's complete set
@@ -13,13 +14,20 @@
 //! signs and verifies every piece before it keeps any, and keeps and relays
 //! them together; a relay keeps the pieces it has received, the rest owed,
 //! and never a partial set in place of the whole.
+//!
+//! One group verifier, [`CustodyPieces::whole`], decides whether pieces are
+//! the whole transition: the executor publishes, a receiver applies, the
+//! roster plans from and a restored row serves only such a group. A piece
+//! alone has no custody effect.
 
 use ed25519_dalek::{Signer, SigningKey};
 
 use super::super::types::SecretCustodyStatus;
-use super::payload::{MAX_PIECE_VALUES, MAX_TRANSITION_BYTES};
+use super::payload::{MAX_CARRIER_BYTES, MAX_PIECE_VALUES};
 use super::{CustodyTransition, refused};
-use crate::authority::{AuthorityEntryHash, CustodyRecipientPermit, custody_recipient_set};
+use crate::authority::{
+    AuthorityEntryHash, AuthorityFold, CustodyRecipientPermit, custody_recipient_set,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -138,7 +146,7 @@ pub(super) fn sign_pieces(
     for (permit, envelope) in sealed {
         let frame = VALUE_FRAME_BYTES + envelope.len();
         if !current.is_empty()
-            && (size + frame > MAX_TRANSITION_BYTES || current.len() == MAX_PIECE_VALUES)
+            && (size + frame > MAX_CARRIER_BYTES || current.len() == MAX_PIECE_VALUES)
         {
             groups.push(std::mem::take(&mut current));
             size = base;
@@ -163,7 +171,7 @@ pub(super) fn sign_pieces(
             ..template.clone()
         };
         piece.signature = signing.sign(&piece.transcript(vault_id)).to_bytes();
-        if piece.encode().len() > MAX_TRANSITION_BYTES {
+        if piece.encode().len() > MAX_CARRIER_BYTES {
             return Err(refused("one sealed value outgrows a custody carrier"));
         }
         piece.verify_signed(vault_id)?;
@@ -172,7 +180,13 @@ pub(super) fn sign_pieces(
             .ok_or_else(|| refused("the custody transition has too many recipients"))?;
         signed.push(piece);
     }
-    Ok(CustodyPieces(signed))
+    let signed = CustodyPieces(signed);
+    if !signed.whole() {
+        return Err(refused(
+            "the custody transition's pieces do not carry its whole set",
+        ));
+    }
+    Ok(signed)
 }
 
 /// The pieces this vault keeps of one record's transition, ascending by
@@ -205,13 +219,59 @@ impl CustodyPieces {
         self.0.iter().flat_map(CustodyTransition::permits)
     }
 
-    /// Whether every piece of the transition is kept: only then is its set
+    /// The one group verifier: whether these are every piece of one
+    /// transition, its places `0..pieces` once each and in order, each
+    /// piece's permits starting where the piece before it ended, with no gap
+    /// and no overlap, and all their permits, joined, ascending by machine
+    /// and exactly the set every piece commits to. Only then is its set
     /// whole here.
-    pub(crate) fn complete(&self) -> bool {
-        usize::try_from(self.lead().pieces).is_ok_and(|pieces| pieces == self.0.len())
-            && (0_u32..)
-                .zip(&self.0)
-                .all(|(place, piece)| piece.piece == place)
+    pub(crate) fn whole(&self) -> bool {
+        let lead = self.lead();
+        if usize::try_from(lead.pieces).ok() != Some(self.0.len()) {
+            return false;
+        }
+        let mut next = 0_usize;
+        for (place, piece) in (0_u32..).zip(&self.0) {
+            if piece.piece != place
+                || !piece.same_transition(lead)
+                || usize::try_from(piece.first).ok() != Some(next)
+            {
+                return false;
+            }
+            next = next.saturating_add(piece.sealed.len());
+        }
+        let permits: Vec<CustodyRecipientPermit> = self.permits().copied().collect();
+        permits
+            .windows(2)
+            .all(|pair| pair[0].machine < pair[1].machine)
+            && custody_recipient_set(&permits) == lead.set
+    }
+
+    /// Whether these pieces stand under `fold` as one transition: whole
+    /// ([`Self::whole`]), and each piece standing on the request it enacts
+    /// as its own run of the request's permits
+    /// ([`CustodyTransition::verify`]), so together they carry exactly the
+    /// request's permitted set. Only such a group has custody effects.
+    pub(crate) fn verify(&self, fold: &AuthorityFold) -> Result<()> {
+        if !self.whole() {
+            return Err(refused("its pieces are not one whole transition"));
+        }
+        self.0.iter().try_for_each(|piece| piece.verify(fold))
+    }
+
+    /// The value sealed to `machine`, opened from whichever piece carries
+    /// it ([`CustodyTransition::open_value`]).
+    #[cfg(feature = "sync")]
+    pub(crate) fn open_value(
+        &self,
+        vault_id: &[u8; 32],
+        machine: EntityId,
+        secret: &oneiron_crypto::HybridSecretKey,
+    ) -> Option<zeroize::Zeroizing<Vec<u8>>> {
+        self.0
+            .iter()
+            .find(|piece| piece.permits().any(|permit| permit.machine == machine))?
+            .open_value(vault_id, machine, secret)
     }
 
     /// The digest an executor's output binding keeps of these pieces.
@@ -221,6 +281,16 @@ impl CustodyPieces {
             hasher.update(&piece.digest());
         }
         *hasher.finalize().as_bytes()
+    }
+
+    /// Joins `piece` of the same transition in its place, unless that place
+    /// is kept already.
+    #[cfg(feature = "sync")]
+    fn join(&mut self, piece: &CustodyTransition) {
+        if !self.0.iter().any(|held| held.piece == piece.piece) {
+            self.0.push(piece.clone());
+            self.0.sort_unstable_by_key(|held| held.piece);
+        }
     }
 
     /// These pieces with `piece` of the same transition joined, or `None`
@@ -266,4 +336,60 @@ impl CustodyPieces {
             .all(|pair| pair[0].piece < pair[1].piece && pair[0].same_transition(&pair[1]));
         (rest.is_empty() && !pieces.is_empty() && ordered).then_some(Self(pieces))
     }
+}
+
+/// The groups `arrived`, pieces this vault judged standing, make with the
+/// pieces of the same transition it keeps: each one whole
+/// ([`CustodyPieces::whole`]). A group still missing a piece is left out:
+/// its pieces are kept, the rest owed, and nothing it carries applies.
+#[cfg(feature = "sync")]
+pub(crate) fn completed_custody_groups_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    arrived: &[CustodyTransition],
+) -> Result<Vec<CustodyPieces>> {
+    let mut groups: Vec<CustodyPieces> = Vec::new();
+    for piece in arrived {
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group.lead().same_transition(piece))
+        {
+            group.join(piece);
+            continue;
+        }
+        let held = super::TRANSITIONS
+            .get(&vault.store, txn, &crate::side_table::HexId(piece.id))?
+            .and_then(|held| CustodyPieces::decode(&held))
+            .filter(|held| held.lead().same_transition(piece));
+        let mut group = held.unwrap_or_else(|| CustodyPieces(Vec::new()));
+        group.join(piece);
+        groups.push(group);
+    }
+    groups.retain(CustodyPieces::whole);
+    Ok(groups)
+}
+
+/// Keeps `piece`, judged standing as it arrived, beside the pieces of its
+/// transition this vault holds, before any custody effect
+/// ([`super::remember_custody_transition_in_txn`]). A live piece of a secret
+/// an admitted revoke ended settles that revoke here and is not kept, nor is
+/// one that no longer stands on `fold`, this transaction's (WILL L04 row
+/// 04). Returns whether it kept it.
+#[cfg(feature = "sync")]
+pub(crate) fn keep_custody_piece_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    fold: &AuthorityFold,
+    piece: &CustodyTransition,
+) -> Result<bool> {
+    if piece.status != SecretCustodyStatus::Revoked
+        && super::super::control::custody_revoked_in_txn(vault, wtxn, &piece.id)?
+    {
+        super::super::control::settle_revoked_in_txn(vault, wtxn, &piece.id, piece.signed_at)?;
+        return Ok(false);
+    }
+    if piece.verify(fold).is_err() {
+        return Ok(false);
+    }
+    super::remember_custody_transition_in_txn(vault, wtxn, piece)
 }
