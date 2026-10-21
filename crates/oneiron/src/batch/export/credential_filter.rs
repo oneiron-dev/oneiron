@@ -193,7 +193,7 @@ impl Vault {
         let exported: std::collections::BTreeSet<EntityId> = ids.iter().copied().collect();
         let mut records = Vec::new();
         let mut nulled = false;
-        let mut thread_roots = std::collections::BTreeSet::new();
+        let mut thread_roots = crate::workspace_roster::ExportThreadRoots::default();
         for id in ids {
             if whole_vault_export_excludes_entity(self, id)? {
                 continue;
@@ -310,6 +310,9 @@ impl Vault {
         };
         let json = serde_json::to_vec(&bundle)
             .map_err(|_| Error::InvariantViolation("entity export JSON encode failed"))?;
+        if scope == ExportScope::WholeVault {
+            thread_roots.capture_in(&self.store.read(), &txn);
+        }
         drop(txn);
         // The whole vault's copy is the owner's, in its export audit (FIX 6427).
         if scope == ExportScope::WholeVault {

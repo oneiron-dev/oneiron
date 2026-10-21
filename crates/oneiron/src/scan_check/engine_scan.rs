@@ -135,11 +135,19 @@ pub enum EngineScan {
     TaskAuthorityFactEdges,
     /// Every TASK row one person's open-ask read walks, for one person.
     OpenAskTaskRows,
+    /// One record's edges of one kind, one way, which an audience, ancestry
+    /// or enumeration read outside a DAG walk reads whole.
+    AudienceEdgeRows,
+    /// The records a room lookup walks up from one record.
+    RoomAncestryRecords,
+    /// The records one private-thread walk reaches from one record: its
+    /// places and the sources of its words.
+    PrivateThreadAncestryRecords,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 56] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -193,6 +201,9 @@ impl EngineScan {
         Self::DagWalkRecords,
         Self::TaskAuthorityFactEdges,
         Self::OpenAskTaskRows,
+        Self::AudienceEdgeRows,
+        Self::RoomAncestryRecords,
+        Self::PrivateThreadAncestryRecords,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -260,6 +271,9 @@ impl EngineScan {
             Self::DagWalkRecords => "dag_walk_records",
             Self::TaskAuthorityFactEdges => "task_authority_fact_edges",
             Self::OpenAskTaskRows => "open_ask_task_rows",
+            Self::AudienceEdgeRows => "audience_edge_rows",
+            Self::RoomAncestryRecords => "room_ancestry_records",
+            Self::PrivateThreadAncestryRecords => "private_thread_ancestry_records",
         }
     }
 
@@ -268,7 +282,11 @@ impl EngineScan {
     pub(super) const fn default_threshold(self) -> u64 {
         match self {
             Self::ClaimVadIncidentEdges | Self::TaskAuthorityFactEdges => 100_000,
-            Self::RoomRosterMembers | Self::DagWalkRecords => 10_000,
+            Self::RoomRosterMembers
+            | Self::DagWalkRecords
+            | Self::AudienceEdgeRows
+            | Self::RoomAncestryRecords
+            | Self::PrivateThreadAncestryRecords => 10_000,
             Self::RetrievalRunRows => 1024,
             Self::CallReceiptRows => 8192,
             Self::BlockedRunReports => 128,
@@ -331,6 +349,9 @@ impl EngineScan {
             Self::DagWalkRecords => 78,
             Self::TaskAuthorityFactEdges => 79,
             Self::OpenAskTaskRows => 80,
+            Self::AudienceEdgeRows => 81,
+            Self::RoomAncestryRecords => 82,
+            Self::PrivateThreadAncestryRecords => 83,
         }]
     }
 }
