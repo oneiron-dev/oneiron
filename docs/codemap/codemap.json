@@ -22779,7 +22779,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health.rs",
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
-      "const": 12,
+      "const": 15,
       "crate-vis": 5,
       "enum": 6,
       "fn": 12,
@@ -27642,7 +27642,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Tier1Observation"
@@ -27650,7 +27650,7 @@
      "path": "src/failure_signals/witness.rs",
      "purpose": "Vault-local, non-serializable producer observations",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1
      }
@@ -49996,6 +49996,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/consent_depth.rs",
+     "purpose": "Whole-tray consent queue depth (ARCH-0066 §4, \"consent-storm queue depth\"; OF-298)",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ConsentDeniedDetector"
      ],
@@ -50182,7 +50193,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 8,
       "re-export": 11
      }
@@ -50358,7 +50369,7 @@
      "path": "src/self_heal/tier1_source.rs",
      "purpose": "Producer-owned, vault-local source proofs over the existing base ledgers",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -50411,7 +50422,7 @@
      "purpose": "Closed-form T1 projections",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 10,
       "struct": 6
      }
@@ -68514,7 +68525,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68859,7 +68870,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4348,
+   "source_files": 4349,
    "test_files": 902
   },
   "oneiron-android": {
