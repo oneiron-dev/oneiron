@@ -167,6 +167,26 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// A node's credential, its pipe and its reader are unchanged, and a vault VM
 /// handed no credential keeps its anchor pending, as a node's child does. No
 /// `Ping` field is added and this version stays 3.
+///
+/// VM guest network (FIX 6808): a vault VM's one NIC, the VM profile's
+/// `network` ([`VmTapAttachment`](crate::vm::VmTapAttachment): `tap_name` and
+/// `guest_mac`) and the config drive's `/config/network.json`
+/// ([`VmGuestNetworkConfig`](crate::vm::VmGuestNetworkConfig): `guest_mac`,
+/// `guest_ipv4`, `prefix_len`, `gateway` and `dns_servers`), with
+/// `oneiron-vm-init`'s `--guest-config-dir`, carries a build floor, at the
+/// engine revision it merged in, proven by the image manifest's required
+/// `vm_network_revision` 1, with no `Ping` field. Every key is required: the
+/// profile's `network` is present as `null` for a VM with no NIC, and both
+/// objects refuse a missing or an unknown key, with no reader of a profile or
+/// a file without them kept. A host library before the floor refuses a
+/// profile that names `network` and one at or after it refuses a profile
+/// that does not, so profiles move with the host library, and an image
+/// before the floor sets up no NIC: a supervisor checks the manifest's
+/// revision, its hashes and the merge floor before it prepares the VMM or
+/// hands over the fscrypt key or any credential, and boots no image before
+/// the floor with a NIC planned. The TAP, its rules and every name and
+/// address are the supervisor's; the engine defaults none. No `Ping` field is
+/// added and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

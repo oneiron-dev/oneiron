@@ -6,16 +6,19 @@ device. The code-run guest's recipe (scripts/microvm/build.py) is untouched;
 this one reuses its pinning, ELF and kernel-archive checks.
 
   kernel      the vault kernel from a SHA256-pinned Linux source archive and
-              this directory's kernel.config (fscrypt v2, keyring, vsock)
+              this directory's kernel.config (fscrypt v2, keyring, vsock,
+              virtio-net)
   rootfs      /sbin/oneiron-vault-init, the same-build /usr/bin/oneiron-server,
               /usr/bin/oneiron-broker, /usr/bin/oneiron-vm-init and
               /usr/bin/oneiron-vm-outbox (the outbox carrier's companion), the
-              shell tools the init runs and their explicit library closure
+              shell tools the init runs and their explicit library closure, and
+              the empty /etc/resolv.conf the guest network's resolver covers
   vault-disk  an empty ext4 vault disk with its encrypt feature and a fixed
               UUID: the vault_disk_uuid of the VM profile's provision binding
   manifest    every artifact's SHA256 and the engine revision, for the host's
               image pin (the provision prelude's, the outbox carrier's with its
-              backup-label registration, and the restore channel's build floor)
+              backup-label registration, the restore channel's, the custody
+              anchor channels' and the guest network's build floors)
 """
 from __future__ import annotations
 
@@ -62,6 +65,14 @@ RESTORE_WIRE_REVISION = 1
 # anchor's credential only to an image whose manifest names both.
 ANCHOR_WIRE_REVISION = 1
 ANCHOR_PROXY_REVISION = 1
+# The guest network's revision (oneiron_vault_contract::vm::VM_NETWORK_REVISION,
+# FIX 6808): this image sets up the one NIC a host attaches, IPv4 only, from
+# the config drive's network.json, so a host attaches one only to an image
+# whose manifest names it.
+VM_NETWORK_REVISION = 1
+# The resolver file's mountpoint: empty and 0644 in the image, and covered by
+# oneiron-vm-init's bind mount when the guest's network plan names nameservers.
+RESOLV_CONF = "etc/resolv.conf"
 
 
 def build_kernel(args):
@@ -142,11 +153,14 @@ def build_rootfs(args):
         shutil.copyfile(source, stage / "bin" / name)
     for destination, source in libraries.items():
         shutil.copyfile(source, stage / destination)
+    (stage / RESOLV_CONF).write_bytes(b"")
     entries = [stage, *sorted(stage.rglob("*"))]
     for path in entries:
         # Directories, ELF files and the init script all need search or exec.
         path.chmod(0o755)
         os.utime(path, (args.epoch, args.epoch))
+    # The resolver mountpoint is read, never run.
+    (stage / RESOLV_CONF).chmod(0o644)
     inventory = {str(path.relative_to(stage)): microvm.sha256(path) for path in entries if path.is_file()}
     seed = hashlib.sha256(json.dumps(inventory, sort_keys=True).encode()).hexdigest()
     fs_uuid = str(uuid.UUID(seed[:32]))
@@ -206,6 +220,7 @@ def make_manifest(args):
                    "restore_wire_revision": RESTORE_WIRE_REVISION,
                    "anchor_wire_revision": ANCHOR_WIRE_REVISION,
                    "anchor_proxy_revision": ANCHOR_PROXY_REVISION,
+                   "vm_network_revision": VM_NETWORK_REVISION,
                    "artifacts": artifacts, "rootfs_files": receipt["files"]},
                   stream, indent=2, sort_keys=True)
         stream.write("\n")

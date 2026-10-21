@@ -17,7 +17,9 @@
 # from the host over vsock port 1030, and once it is ready oneiron-vm-init
 # adds the engine's escrow, e-sign and training outbox flags and the escrow
 # recipients the host sent. It stops the companion when the engine exits,
-# before it removes the key.
+# before it removes the key. Given --guest-config-dir, it reads the config
+# drive's typed files itself before the key goes in, and sets up the one NIC
+# the host attached when the drive's network.json plans it (FIX 6808).
 set -eu
 mount -t proc proc /proc
 mount -t sysfs sys /sys
@@ -60,8 +62,12 @@ fi
 # files its paths name sit beside it or under /vault/storage/data (the
 # contract's VM_GUEST_CONFIG_DIR and VM_GUEST_DATA_DIR, the --data-dir that
 # oneiron-vm-init passes).
+guest_config_dir=""
 if [ "$config" = "1" ]; then
   mount -t ext4 -o ro,noatime /dev/vdc /config
+  # Only once the drive is mounted: oneiron-vm-init reads its typed files
+  # (the contract's VM_GUEST_NETWORK_FILE) and never passes this flag on.
+  guest_config_dir=/config
   if [ -f /config/settings.toml ]; then
     set -- "$@" --settings-file /config/settings.toml
   fi
@@ -100,7 +106,8 @@ fi
 # engine bridges onto these paths. oneiron-vm-init refuses the boot when the
 # host's binding names another vault or owner than these boot arguments, and
 # itself passes the engine its vault, owner, --data-dir and --keystore-dir.
-/usr/bin/oneiron-vm-init --vault-name "$vault" --derivation-owner "$owner" -- \
+/usr/bin/oneiron-vm-init --vault-name "$vault" --derivation-owner "$owner" \
+  ${guest_config_dir:+--guest-config-dir "$guest_config_dir"} -- \
   --voice-socket /run/oneiron/voice/voice.sock \
   --http-socket /run/oneiron/http.sock \
   --ctl-socket /run/oneiron/ctl.sock \

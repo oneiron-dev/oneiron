@@ -28,10 +28,13 @@
 //! calls (FIX 7047, [`VmExitWatch`]). A boot that serves then reads the
 //! custody anchor's header, and gets the door's owner credential after its
 //! credential frame; each generation's proxy carries the guest's streams to
-//! the one anchor URL the supervisor bound (FIX 6517, [`anchor`]).
+//! the one anchor URL the supervisor bound (FIX 6517, [`anchor`]). A profile
+//! with a `network` has the supervisor's TAP attached as the guest's one NIC
+//! on every boot, before the instance starts (FIX 6808, [`network`]).
 
 mod anchor;
 mod exit;
+mod network;
 mod provision;
 mod restore;
 mod runner;
@@ -46,7 +49,7 @@ use super::vm_schedule::VmWakeSchedule;
 use oneiron_vault_contract::vm::{
     MAX_VM_FRAME, VM_ARTIFACT_PORT, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT,
     VM_LEDGER_PORT, VM_OUTBOX_PORT, VM_RESTORE_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame,
-    decode_vm_frame, encode_vm_frame, guest_initiated_socket, host_connect_line,
+    VmTapAttachment, decode_vm_frame, encode_vm_frame, guest_initiated_socket, host_connect_line,
 };
 use oneiron_vault_contract::vm_provision::{VmFscryptKey, VmProvisionBinding};
 use oneiron_vault_contract::vm_restore::VmRestoreBoot;
@@ -134,6 +137,13 @@ pub struct VaultVmConfig {
     /// are ones the guest already reads.
     #[serde(default)]
     pub restore_source_disk: Option<PathBuf>,
+    /// The guest's one NIC (FIX 6808, [`network`]): the TAP the supervisor
+    /// made and ruled for this vault, and the MAC the guest's NIC takes on
+    /// it, attached on every boot. It needs `config_disk`, whose
+    /// `network.json` gives the guest the same plan's addresses. Required:
+    /// `null` for a VM with no network.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub network: Option<VmTapAttachment>,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -182,13 +192,15 @@ impl VaultVm {
     /// Makes the state directory and binds the boot port's, the restore
     /// channel's and the custody anchor's host sockets, and the outbox
     /// carrier's when the profile names its roots, all before any VMM runs,
-    /// so a guest never dials an unbound port.
+    /// so a guest never dials an unbound port. A profile not in its form is
+    /// refused before any of it.
     pub fn prepare(config: VaultVmConfig, vault: String) -> anyhow::Result<Self> {
         anyhow::ensure!(valid_vault_name(&vault), "invalid vault name");
         if let Err(fault) = config.provision.validate() {
             anyhow::bail!("the VM profile's provision binding: {fault}");
         }
         crate::web_client::parse_allowed_origins(&config.allowed_origins)?;
+        network::validate(&config)?;
         std::fs::create_dir_all(&config.state_dir)?;
         std::fs::set_permissions(&config.state_dir, std::fs::Permissions::from_mode(0o700))?;
         let schedule = VmWakeSchedule::load(config.state_dir.join("wake-ledger.json"), &vault)?;
@@ -368,9 +380,9 @@ impl VaultVm {
         self.accept_join(timeout).await
     }
 
-    /// A fresh VMM, its kernel, drives, machine and vsock device set, and
-    /// started. `with_source` attaches the profile's restore source drive
-    /// read-only after the others, when it names one.
+    /// A fresh VMM, its kernel, drives, machine and vsock device and the
+    /// profile's NIC set, and started. `with_source` attaches the profile's
+    /// restore source drive read-only after the others, when it names one.
     async fn boot_vmm(&mut self, with_source: bool) -> anyhow::Result<()> {
         self.spawn_vmm().await?;
         let config = &self.config;
@@ -456,6 +468,7 @@ impl VaultVm {
             }),
         )
         .await?;
+        self.attach_network().await?;
         self.api("PUT", "/actions", json!({ "action_type": "InstanceStart" }))
             .await
     }

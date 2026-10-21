@@ -29,6 +29,13 @@
 //! its streams to the anchor URL the host bound, through a socket of the
 //! engine's own (FIX 6517, [`anchor`]).
 //!
+//! A boot that serves reads its config drive's typed files once, before the
+//! key goes in ([`config_drive`]), when the image's init mounted the drive
+//! and said so (`--guest-config-dir`, never passed on to the engine). When
+//! they plan a network, the bootstrap sets up the NIC the host attached
+//! while it is still root, before the key and before any engine or companion
+//! (FIX 6808, [`network`]); a setup that fails refuses the provisioning.
+//!
 //! It stays root only to supervise, and to run the outbox companion
 //! `oneiron-vm-outbox` beside the engine ([`outbox`], FIX 5235): started
 //! before the engine, it lays out the outbox and carries it to the host, and
@@ -40,17 +47,20 @@
 //! off.
 
 mod anchor;
+mod config_drive;
 mod fscrypt;
 mod layout;
+mod network;
 mod outbox;
 mod restore;
 
+use self::config_drive::VmGuestConfig;
 use self::fscrypt::{KeyIdentifier, Removal};
 use anyhow::Context as _;
 use oneiron_vault_contract::host_adapters::connect_blocking;
 use oneiron_vault_contract::vm::{
-    MAX_VM_FRAME, VM_BOOT_PORT, VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR, VM_HOST_CID, decode_vm_frame,
-    encode_vm_frame,
+    MAX_VM_FRAME, VM_BOOT_PORT, VM_GUEST_CONFIG_DIR, VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR,
+    VM_HOST_CID, decode_vm_frame, encode_vm_frame,
 };
 use oneiron_vault_contract::vm_provision::{
     VmFscryptKey, VmProvision, VmProvisionFailure, VmProvisionReply,
@@ -62,6 +72,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::RawFd;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{ExitCode, ExitStatus, Stdio};
 use std::sync::mpsc;
 
@@ -71,10 +82,12 @@ const ENGINE: &str = "/usr/bin/oneiron-server";
 /// gives it too.
 const ENGINE_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 
-/// Why provisioning was refused, as the host is told it.
+/// Why provisioning was refused, as the host is told it, and the typed
+/// error behind it when there is one, which the bootstrap's own report keeps.
 struct Refusal {
     code: VmProvisionFailure,
     detail: String,
+    source: Option<anyhow::Error>,
 }
 
 impl Refusal {
@@ -82,22 +95,38 @@ impl Refusal {
         Self {
             code,
             detail: detail.into(),
+            source: None,
+        }
+    }
+
+    /// A refusal for `error`: the host is told what it and its causes say,
+    /// and the error itself is kept.
+    fn caused(code: VmProvisionFailure, error: impl Into<anyhow::Error>) -> Self {
+        let source = error.into();
+        Self {
+            code,
+            detail: format!("{source:#}"),
+            source: Some(source),
         }
     }
 }
 
 /// What the image's init passes: the vault and the derivation owner its boot
-/// arguments name, then `--` and the engine flags the bootstrap does not own
-/// (its sockets, its settings and its supervisor's bindings).
+/// arguments name, the config drive's mountpoint when it mounted the drive,
+/// then `--` and the engine flags the bootstrap does not own (its sockets,
+/// its settings and its supervisor's bindings).
 struct InitArgs {
     vault: String,
     owner: String,
+    /// [`VM_GUEST_CONFIG_DIR`], the only one taken, whose typed files the
+    /// bootstrap reads itself; the engine is never passed it.
+    guest_config_dir: Option<PathBuf>,
     engine_flags: Vec<OsString>,
 }
 
 impl InitArgs {
     fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Self, &'static str> {
-        let (mut vault, mut owner) = (None, None);
+        let (mut vault, mut owner, mut guest_config_dir) = (None, None, None);
         loop {
             let Some(flag) = args.next() else {
                 return Err("no -- before the engine's flags");
@@ -106,6 +135,13 @@ impl InitArgs {
                 Some("--") => break,
                 Some("--vault-name") => &mut vault,
                 Some("--derivation-owner") => &mut owner,
+                Some("--guest-config-dir") => {
+                    if args.next().is_none_or(|dir| dir != VM_GUEST_CONFIG_DIR) {
+                        return Err("a --guest-config-dir that is not /config");
+                    }
+                    guest_config_dir = Some(PathBuf::from(VM_GUEST_CONFIG_DIR));
+                    continue;
+                }
                 _ => return Err("an argument oneiron-vm-init does not take"),
             };
             *slot = args.next().and_then(|value| value.into_string().ok());
@@ -114,6 +150,7 @@ impl InitArgs {
             (Some(vault), Some(owner)) => Ok(Self {
                 vault,
                 owner,
+                guest_config_dir,
                 engine_flags: args.collect(),
             }),
             _ => Err("no --vault-name or no --derivation-owner"),
@@ -163,11 +200,12 @@ fn run() -> anyhow::Result<ExitCode> {
         .context("answering the host's provision connection");
     drop(channel);
     let (frame, mut provisioned) = provisioned.map_err(|refusal| {
-        anyhow::anyhow!(
-            "provisioning refused ({}): {}",
-            refusal.code,
-            refusal.detail
-        )
+        let refused = format!("provisioning refused ({})", refusal.code);
+        match refusal.source {
+            // The typed error says the detail itself, with its causes.
+            Some(source) => source.context(refused),
+            None => anyhow::anyhow!("{refused}: {}", refusal.detail),
+        }
     })?;
     if let Err(error) = answered {
         remove_key(&provisioned);
@@ -216,9 +254,10 @@ fn read_line(channel: &mut File) -> anyhow::Result<String> {
 }
 
 /// The provision connection's guest side, up to its answer: the frame and
-/// the key, the binding's checks, the key's installation and the layout
-/// `boot` takes, a cold restore's source drive mounted last. A refusal after
-/// the key went in removes it again.
+/// the key, the binding's checks, a serving boot's config drive and network,
+/// the key's installation and the layout `boot` takes, a cold restore's
+/// source drive mounted last. A refusal after the key went in removes it
+/// again.
 fn provision(
     channel: &mut File,
     args: Result<&InitArgs, &'static str>,
@@ -255,6 +294,17 @@ fn provision(
     // An inspection makes nothing on the disk: it reads what is there.
     let inspecting = matches!(boot, VmRestoreBoot::InspectMarker { .. });
     let restoring = matches!(boot, VmRestoreBoot::Restore { .. });
+    // A boot that serves reads its config drive's typed files once and sets
+    // up the network they plan while root, before the key goes in and before
+    // anything is made on the disk. An inspection does neither.
+    if !inspecting {
+        let failed = VmProvisionFailure::ProvisionFailed;
+        let guest = VmGuestConfig::load(args.guest_config_dir.is_some())
+            .map_err(|error| Refusal::caused(failed, error))?;
+        if let Some(plan) = &guest.network {
+            network::configure(plan).map_err(|error| Refusal::caused(failed, error))?;
+        }
+    }
     let control = if inspecting {
         layout::existing_control(&root)?
     } else {

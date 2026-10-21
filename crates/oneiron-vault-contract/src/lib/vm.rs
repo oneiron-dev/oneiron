@@ -25,13 +25,19 @@
 //! provision connection and the engine, a serving boot's bootstrap dials the
 //! custody anchor exchange ([`VM_ANCHOR_PORT`], [`crate::vm_anchor`]), and
 //! each stream to the vault's custody anchor door leaves through
-//! [`VM_ANCHOR_PROXY_PORT`].
+//! [`VM_ANCHOR_PROXY_PORT`]. A supervisor may also attach one NIC for the
+//! guest's outbound IPv4 (FIX 6808, [`VmTapAttachment`] and
+//! [`VmGuestNetworkConfig`]); every host surface stays on vsock.
 //!
 //! The provision connection rides contract version 3 with a build floor, the
 //! first engine revision that ships `oneiron-vm-init`: a host speaks it only
 //! to an image built at or after that floor, which the image manifest pins.
 //! An older image's engine would read the provision frame as its credential
 //! frame and refuse it, so it never starts.
+
+mod network;
+
+pub use self::network::{VmGuestNetworkConfig, VmTapAttachment, parse_vm_guest_mac};
 
 use crate::UnixTs;
 use serde::{Deserialize, Serialize};
@@ -76,6 +82,18 @@ pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// supervisor maps a guest owner path below it onto the vault's own config
 /// directory (`crate::settings_paths`).
 pub const VM_GUEST_CONFIG_DIR: &str = "/config";
+/// The guest's view of its network plan on the config drive (FIX 6808,
+/// [`VmGuestNetworkConfig`]): one JSON object, read whole by the root
+/// bootstrap before the vault's key goes in. Without it the guest sets up no
+/// NIC.
+pub const VM_GUEST_NETWORK_FILE: &str = "/config/network.json";
+/// The guest network's revision (FIX 6808): an image that sets up the NIC a
+/// host attaches names it as its manifest's `vm_network_revision`. Revision 1
+/// is IPv4 only.
+pub const VM_NETWORK_REVISION: u32 = 1;
+/// The longest typed file the root bootstrap reads whole from the config
+/// drive: a bound on one file's codec, not on what it configures.
+pub const MAX_VM_CONFIG_FILE_BYTES: usize = 16384;
 /// The vault's fscrypt v2 storage on its own disk: owned by the vault's UID,
 /// mode 0700, encrypted under the provisioned key. It holds the data
 /// directory and the engine's siblings of it (backups, rehearsals).

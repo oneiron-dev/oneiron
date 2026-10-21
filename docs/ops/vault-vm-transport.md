@@ -3,12 +3,14 @@
 A vault VM (`oneiron-server host vm`) can be cold-restored in its guest, and a
 lost restore result can be settled from its disk (FIX 6584). Its engine gets the
 custody anchor door's owner credential and reaches the anchor URL through its
-host (FIX 6517). This page is the supervisor's contract: the image floor, the
-descriptors and who owns them, the source drive, the custody anchor channels,
-and the decision table for a lost result. The wire lives in
-`oneiron_vault_contract::vm_restore` and `oneiron_vault_contract::vm_anchor`;
-the native restore it carries is `oneiron_vault_contract::restore` and is
-unchanged, and so is the native anchor credential.
+host (FIX 6517). Its guest can have one NIC for outbound IPv4 (FIX 6808). This
+page is the supervisor's contract: the image floor, the descriptors and who owns
+them, the source drive, the custody anchor channels, the guest network, and the
+decision table for a lost result. The wire lives in
+`oneiron_vault_contract::vm_restore` and `oneiron_vault_contract::vm_anchor`,
+and the network's two views in `oneiron_vault_contract::vm`; the native restore
+it carries is `oneiron_vault_contract::restore` and is unchanged, and so is the
+native anchor credential.
 
 ## Image floor: check it before any secret
 
@@ -30,6 +32,16 @@ unchanged, and so is the native anchor credential.
   engine commit that merged FIX 6517's VM half. The supervisor checks both
   revisions, with the hashes and that floor, before it prepares the VMM or
   hands over F, C or the anchor credential A.
+- The guest network (FIX 6808) adds a required manifest field,
+  `vm_network_revision: 1`. Its floor is the engine commit that merged FIX
+  6808's engine half. An image before it sets up no NIC. The supervisor checks
+  the revision, with the hashes and that floor, before it prepares a VMM whose
+  profile plans a NIC or hands over F, C or A, and boots no image before the
+  floor with a NIC planned.
+- At that floor the profile's `network` key is required: `null` for a VM with
+  no NIC. A host library before the floor refuses a profile that names
+  `network`, and one at or after it refuses a profile without it, so profiles
+  change with the host library.
 
 ## The channel
 
@@ -165,7 +177,9 @@ stream it carries. A RAM resume starts it again for the same URL.
 - The image holds only the sealed artifact and its keyless custody head. It
   never holds a secret, an unsealed backup or a credential.
 - The host attaches it only on a restore's boot, after the root, vault and
-  config drives: `/dev/vdc` without a config drive, `/dev/vdd` with one.
+  config drives: `/dev/vdc` without a config drive, `/dev/vdd` with one. A
+  profile with a `network` always has a config drive, so its source drive is
+  `/dev/vdd`.
 - The guest mounts it at `/restore` with `ro,nosuid,nodev,noexec`, and unmounts
   it when the engine ends.
 - Make its files readable by the vault's guest UID, and author the plan's
@@ -182,6 +196,95 @@ Snapshots:
   is a generation whose boot attached the source drive: a sleep stops it
   instead. Firecracker reloads drives from their host paths when it loads a
   snapshot, and the staged source may be gone by then.
+- A generation with a NIC sleeps and snapshots as usual. Loading the snapshot
+  opens the same TAP by its name again, and a resume runs no second network
+  setup in the guest. So keep the TAP, its MAC, its rules and the config drive
+  as they are while a snapshot is published. A changed network plan needs a
+  cold boot: drop the published snapshot first.
+
+## Guest network (FIX 6808)
+
+A vault VM can have one NIC, for the guest's outbound IPv4: mesh relays and
+peers, model endpoints, connector endpoints. It adds no public ingress, port
+forward, bridge or listener. Every host surface (HTTP, ctl, the ledger,
+artifacts, voice, the outbox, restore and the anchor channels) stays on vsock.
+
+The supervisor owns the host side, and the engine owns none of it:
+
+- One TAP per vault, made, up and given its gateway address before the VMM
+  starts, and openable by the VMM's identity.
+- IPv4 forwarding from that TAP only out of the operator's egress interface,
+  masquerade there, and only established or related traffic back. Drop new,
+  invalid and other inbound forwarding to the TAP, the host's own new
+  connections to the guest, traffic between TAPs, and all IPv6 on the TAP.
+- Every name and address: the TAP's name, the MAC, the guest's address and
+  prefix, the gateway and the nameservers. The engine has no default for any
+  of them, and it never runs `ip` or `nft` or changes a host sysctl.
+
+The supervisor writes one plan as two views, under the lock it builds the
+config drive with. The MAC is the same string in both.
+
+- The VM profile's `network` (`vm::VmTapAttachment`), or `null`:
+
+  ```json
+  {"tap_name": "ovm61000", "guest_mac": "02:00:00:00:ee:48"}
+  ```
+
+- The config drive's `network.json`, the guest's `/config/network.json`
+  (`vm::VM_GUEST_NETWORK_FILE`, `vm::VmGuestNetworkConfig`), one JSON object of
+  exactly these keys:
+
+  ```json
+  {"guest_mac":"02:00:00:00:00:01","guest_ipv4":"10.247.0.2","prefix_len":30,"gateway":"10.247.0.1","dns_servers":[]}
+  ```
+
+  The values are examples. An empty `dns_servers` gives the guest no resolver,
+  so plan DNS before anything the vault reaches by name. Ordinary JSON
+  whitespace is fine; an unknown, repeated or missing key, a wrong type or
+  bytes after the object refuse the boot. The file is at most 16384 bytes
+  (`vm::MAX_VM_CONFIG_FILE_BYTES`).
+
+Both views are checked by the contract's `validate`:
+
+- The MAC is six two-digit hex octets in either case, joined by `:`, unicast
+  and not all zero.
+- The TAP name is 1 to 15 bytes of printable ASCII, with no `/` or `:`, and
+  neither `.` nor `..`.
+- The prefix length is 1 to 31. The guest address and the gateway are unicast
+  (not `0.0.0.0`, broadcast, multicast or loopback), differ, share the prefix,
+  and below a /31 are neither its network nor its broadcast address.
+- Each nameserver is unicast and not loopback: the guest's loopback has no
+  resolver.
+
+On the host, `VaultVm::prepare` refuses a `network` not in its form, or one
+without a `config_disk`, before anything is made. Every boot (an open, a
+restore and an inspection) then sends `PUT /network-interfaces/vault-egress`
+with `{"iface_id": "vault-egress", "host_dev_name": <tap_name>, "guest_mac":
+<guest_mac>}` after the vsock device and before `InstanceStart`.
+
+In the guest, the image's init passes `oneiron-vm-init --guest-config-dir
+/config` once the config drive is mounted. On a boot that serves, not an
+inspection, the bootstrap reads `network.json` whole, then, still root and
+before the vault's key goes in or any engine or companion starts:
+
+1. It finds the one link whose MAC is the plan's. None, or more than one,
+   refuses the boot.
+2. It turns IPv6 off on that link, then brings loopback and the link up.
+3. It gives the link the plan's address and prefix, and adds the default route
+   through the gateway. The kernel's answer to each step is checked.
+4. With nameservers, it writes them to `/run/oneiron-net/resolv.conf` and
+   bind-mounts that over the image's empty `/etc/resolv.conf`.
+
+A `network.json` that is not there means no NIC setup: an attached NIC stays
+down. One that cannot be read, is not a regular file, is over its bound or is
+malformed, or a step that fails, refuses the provisioning as `provision_failed`
+with the step named (link, address, route or DNS). Readiness means the guest
+set up what it was told. It does not prove that the operator's egress, DNS,
+relays or providers answer.
+
+A NIC does not replace the custody anchor proxy. The host's loopback is not the
+guest's, so an anchor URL on the host's `127.0.0.1` relay still goes through
+1033.
 
 ## Lost result: decision table
 
@@ -216,3 +319,5 @@ overwrite.
 - **Supervisor-side work.** The VM launcher and its lifecycle adapter, source
   image staging and erase inventory, and each generation's ownership, kill and
   reconcile are the supervisor's.
+- **Host network.** The TAP, its rules, DNS sourcing, operator relays and the
+  network's activation are the supervisor's (FIX 6808's host half).
