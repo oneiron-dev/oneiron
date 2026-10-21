@@ -148,12 +148,11 @@ impl VoiceServingRows {
                 }
                 "vault" if vault.is_none() => vault = Some(VoiceServingLimits::decode(value)?),
                 "holders" if holders.is_none() => {
+                    // Every holder override is kept, however many (FIX
+                    // 8773); each still meets its shape and duplicate checks.
                     let Value::Array(rows) = value else {
                         return None;
                     };
-                    if rows.len() > 256 {
-                        return None;
-                    }
                     let mut parsed = Vec::with_capacity(rows.len());
                     for row in rows {
                         let Value::Map(fields) = row else {
