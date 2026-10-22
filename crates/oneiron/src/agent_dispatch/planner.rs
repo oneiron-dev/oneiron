@@ -22,6 +22,7 @@
 //! recorded on the receipt, so the ladder is scored from receipts like any
 //! skill.
 
+mod budget_resolution;
 mod measured;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,6 +48,7 @@ use super::team_shape::{CoordinationPattern, TEAM_SHAPE_LESSONS, TeamShape};
 use super::types::{CareLevel, SpawnNeed, SpawnOverride};
 use super::widen_record::invalid;
 
+pub(super) use self::budget_resolution::launch_budget;
 pub use self::measured::{MeasuredRate, PatternCandidate};
 
 /// One rung of the planner ladder. Cheap rungs handle the easy cases; the
@@ -135,20 +137,6 @@ impl PlanBudget {
             (Some(cap), Some(available)) => Some(cap.min(available)),
             (cap, None) => cap,
             (None, available) => available,
-        }
-    }
-
-    /// A budget seed or pin on the spawn only ever narrows the cap.
-    fn narrowed(self, need: &SpawnNeed) -> Self {
-        match &need.budget_cap_units {
-            Some(over) => {
-                let asked = *over.value();
-                Self {
-                    cap_units: Some(self.cap_units.map_or(asked, |cap| cap.min(asked))),
-                    available_units: self.available_units,
-                }
-            }
-            None => self,
         }
     }
 }
@@ -494,6 +482,7 @@ fn quote(
     let bonus = seed_bonus(&need.pattern, &shape.pattern, runs)
         + seed_bonus(&need.model, &seat.model, runs)
         + seed_bonus(&need.width, &shape.width, runs);
+    let budget = budget.resolved_for(need, shape.width, seat.expected);
     ShapeQuote {
         candidate: candidate_token(&shape, &seat.model, skill),
         shape,
@@ -518,7 +507,7 @@ pub(super) fn ranked_quotes(
     if evidence.models.is_empty() {
         return Err(invalid("planner has no available models"));
     }
-    let budget = evidence.budget.narrowed(need);
+    let budget = evidence.budget;
     let seatable = seatable_models(need, &evidence.models)?;
     let pinned_pattern = need.pinned_pattern();
     let mut quotes = Vec::new();
@@ -725,7 +714,9 @@ fn fit_to_budget(
     care: CareLevel,
     rung: PlannerRung,
 ) -> (TeamPlan, Vec<String>) {
-    let budget = evidence.budget.narrowed(need);
+    let budget = evidence
+        .budget
+        .resolved_for(need, chosen.shape.width, chosen.envelope.per_agent);
     let mut why = Vec::new();
     let plan = |shape: TeamShape,
                 seat: (&ModelId, EntityId, ExpectedSpend),

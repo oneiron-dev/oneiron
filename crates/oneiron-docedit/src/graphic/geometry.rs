@@ -6,6 +6,7 @@ use super::path::{self, Affine, P, Seg, Subpath};
 use super::{EMU_PER_PX, Frame, PathSpec, Preset, Pt, Refused, Segment, ratio};
 use crate::design_plan::Rect;
 use crate::ooxml::Node;
+use crate::resource::{Resources, bytes_of};
 
 /// The longest viewBox side, in px: every coordinate inside fits an i32 EMU.
 pub(super) const MAX_PX: f64 = 100_000.0;
@@ -304,6 +305,16 @@ pub(super) fn custom(
     Ok((frame, specs))
 }
 
+/// The points [`points_of`] collects, counted without collecting them.
+fn point_count(segment: &Segment) -> usize {
+    match segment {
+        Segment::MoveTo(_) | Segment::LineTo(_) => 1,
+        Segment::CubicTo(..) => 3,
+        Segment::QuadTo(..) => 2,
+        Segment::Close => 0,
+    }
+}
+
 fn points_of(segment: &Segment) -> Vec<Pt> {
     match *segment {
         Segment::MoveTo(p) | Segment::LineTo(p) => vec![p],
@@ -317,8 +328,15 @@ fn points_of(segment: &Segment) -> Vec<Pt> {
 /// polygon has winding one inside and zero outside. A convex control polygon
 /// keeps each curve inside its own hull and the hulls apart, so the curved
 /// outline is simple too. Anything else is refused, whatever rule it
-/// declares, so the output never depends on DrawingML's fill rule.
-pub(super) fn one_outline(segments: &[Segment], limit: usize) -> Result<bool, Refused> {
+/// declares, so the output never depends on DrawingML's fill rule. The
+/// outline's point count is an observation (FIX 8574): its points are
+/// reserved before they are collected, and the quadratic proof stops only
+/// at the caller's deadline, never as a fill-rule refusal.
+pub(super) fn one_outline(segments: &[Segment], resources: &Resources) -> Result<bool, Refused> {
+    let count = segments.iter().map(point_count).sum();
+    let _hold = resources
+        .reserve(bytes_of::<Pt>(count))
+        .map_err(Refused::Resource)?;
     let mut points: Vec<Pt> = segments.iter().flat_map(points_of).collect();
     let curved = segments
         .iter()
@@ -327,33 +345,31 @@ pub(super) fn one_outline(segments: &[Segment], limit: usize) -> Result<bool, Re
     if points.len() > 1 && points.first() == points.last() {
         points.pop();
     }
-    if points.len() > limit {
-        return Err(Refused::Limit);
-    }
     if points.len() < 3 {
         return Ok(true);
     }
-    Ok(simple(&points) && (!curved || convex(&points)))
+    Ok(simple(&points, resources)? && (!curved || convex(&points)))
 }
 
-fn simple(points: &[Pt]) -> bool {
+fn simple(points: &[Pt], resources: &Resources) -> Result<bool, Refused> {
     let n = points.len();
     let edge = |i: usize| (points[i], points[(i + 1) % n]);
     for i in 0..n {
+        resources.checkpoint().map_err(Refused::Resource)?;
         for j in i + 1..n {
             let ((a, b), (c, d)) = (edge(i), edge(j));
             if j == i + 1 || (i == 0 && j == n - 1) {
                 // Neighbours share a vertex; they may not fold back on it.
                 let (shared, p, q) = if j == i + 1 { (b, a, d) } else { (a, b, c) };
                 if cross(shared, p, q) == 0 && dot(shared, p, q) > 0 {
-                    return false;
+                    return Ok(false);
                 }
             } else if crosses(a, b, c, d) {
-                return false;
+                return Ok(false);
             }
         }
     }
-    true
+    Ok(true)
 }
 
 /// Every turn the same way; with `simple`, a convex polygon.

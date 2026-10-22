@@ -5,6 +5,7 @@
 //! ZIP central-directory reader and copy-through writer. All source records
 //! remain owned by the package; only checked edits and added parts change output.
 use super::{Error, Result, XmlLimits, xml};
+use crate::resource::{Resources, wide};
 
 mod open;
 mod parts;
@@ -21,17 +22,21 @@ const CENTRAL: u32 = 0x0201_4b50;
 const EOCD: u32 = 0x0605_4b50;
 
 /// Caller-selected limits, checked before decompression and again after it.
+/// The entry count and the XML counts are observations, not refusals: the
+/// package's memory is reserved through its [`Resources`] (FIX 8574, 8598).
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// Maximum source ZIP bytes.
     pub archive_bytes: usize,
-    /// Maximum number of entries.
+    /// The entries a caller expects: an observation. Only the ZIP32 codec
+    /// bounds the count (65,535 is its ZIP64 sentinel).
     pub entries: usize,
     /// Maximum expanded bytes per entry.
     pub part_bytes: usize,
     /// Maximum total expanded bytes.
     pub expanded_bytes: usize,
-    /// Maximum XML depth and parser nodes at both the signature and edit doors.
+    /// XML depth and nodes a caller expects at the signature and edit doors:
+    /// observations, never a refusal.
     pub xml: XmlLimits,
 }
 
@@ -88,6 +93,9 @@ pub struct Package {
     limits: Limits,
     editability: Editability,
     added: Vec<Added>,
+    /// The operation's port: every later read, edit, copy and export
+    /// reserves its memory through it.
+    resources: Resources,
 }
 
 impl Package {
@@ -99,17 +107,23 @@ impl Package {
     /// A copy that takes checked edits whatever this package's editability,
     /// to evaluate a transaction's candidate only (FIX 8579): its caller
     /// accepts the result only when the export is this archive byte for
-    /// byte, so a signed or uninspectable package is never changed.
-    pub(crate) fn scratch(&self) -> Self {
-        let mut copy = self.clone();
+    /// byte, so a signed or uninspectable package is never changed. The
+    /// copy's own memory is reserved before it is made.
+    pub(crate) fn scratch(&self) -> Result<Self> {
+        let mut copy = self.copy()?;
         copy.editability = Editability::Unsigned;
-        copy
+        Ok(copy)
     }
 
-    /// The limits this package was opened under; derived readers of its
-    /// parts use the same XML ceilings.
+    /// The limits this package was opened under.
     pub fn limits(&self) -> Limits {
         self.limits
+    }
+
+    /// The operation's resource port this package was opened with; derived
+    /// readers of its parts reserve through the same one.
+    pub fn resources(&self) -> &Resources {
+        &self.resources
     }
 
     /// Part names in central-directory order, including unreachable parts
@@ -168,7 +182,7 @@ impl Package {
                 .checked_sub(other_size)
                 .ok_or(Error::Edit("edited package size limit"))?,
         );
-        let part = xml::ValidatedXmlPart::parse(&old, self.limits.xml)?;
+        let part = xml::ValidatedXmlPart::parse(&old, &self.resources)?;
         let new = part.replace_text(path, expected, value, budget)?.0;
         self.commit_replacement(index, old, new)
     }
@@ -190,7 +204,7 @@ impl Package {
         if value.len() > self.limits.part_bytes {
             return Err(Error::Edit("edited part size limit"));
         }
-        xml::ValidatedXmlPart::parse(&value, self.limits.xml)?;
+        xml::ValidatedXmlPart::parse(&value, &self.resources)?;
         self.commit_replacement(index, old, value)
     }
 
@@ -309,8 +323,22 @@ impl Package {
                 .iter()
                 .all(|entry| entry.replacement.is_none() && !entry.removed)
         {
+            let _hold = self.resources.reserve(wide(self.source.len()))?;
             return Ok(self.source.to_vec());
         }
+        // The output, each replacement's compressed copy and every added
+        // record, reserved before any is allocated.
+        let replaced = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.replacement.as_ref())
+            .fold(0usize, |sum, data| sum.saturating_add(data.len()));
+        let added = self.added_archive_bytes()?;
+        let _hold = self.resources.reserve(
+            wide(self.source.len())
+                .saturating_add(wide(replaced).saturating_mul(2))
+                .saturating_add(wide(added)),
+        )?;
         let mut out = Vec::with_capacity(self.source.len());
         let mut offsets = vec![0u32; self.entries.len()];
         let mut order: Vec<usize> = (0..self.entries.len()).collect();
