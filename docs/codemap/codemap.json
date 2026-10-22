@@ -16436,7 +16436,7 @@
      "path": "src/codebase/secret_projection.rs",
      "purpose": "A snapshot file as a masked reader reads it (FIX 7608 slice 2a)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -33498,7 +33498,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GraphFsReference"
@@ -40985,13 +40985,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/repo_secret_reads/reveal.rs",
      "purpose": "A Memory handle's per-file repo read that may ask for real bytes (FIX 7608 slice 2b-ii-A, GAP-B / FIX 8960)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -44813,7 +44813,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -53354,7 +53354,7 @@
       "crate-vis": 21,
       "enum": 5,
       "fn": 3,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 6
      }
     },
@@ -53389,7 +53389,8 @@
      "path": "src/secret_custody/reveal/file.rs",
      "purpose": "An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): \"Agent with a…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 4,
+      "re-export": 1
      }
     },
     {
@@ -53405,11 +53406,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "RepoFileRevealScope"
+     ],
      "path": "src/secret_custody/reveal/file/repo.rs",
      "purpose": "An agent's real-byte read of one marked repo file (FIX 7608 slice 2b-ii-A, GAP-B / FIX 8960; ARCH-0069…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 22,
+      "enum": 1
      }
     },
     {
@@ -53419,7 +53423,7 @@
      "path": "src/secret_custody/reveal/owner.rs",
      "purpose": "The owner's doors: the asks and receipts, the answer to one ask, and the owner's own read of a value",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -92860,7 +92864,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/secret_reveal_routes.rs",
