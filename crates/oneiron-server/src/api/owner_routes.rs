@@ -43,6 +43,7 @@ mod backup_setting_routes;
 mod browser_takeover_routes;
 mod budget_hold_routes;
 mod checkpoint_policy_routes;
+mod cleanup_decide;
 mod commitment_routes;
 mod concern_routes;
 mod conflict_routes;
@@ -130,6 +131,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/cleanup/reject", post(reject_cleanup))
         .route("/cleanup/restore", post(restore_archived))
         .route("/cleanup/revert-run", post(revert_cleanup_run))
+        .route("/cleanup/review", post(cleanup_decide::review_proposal))
+        .route("/cleanup/decide", post(cleanup_decide::decide_proposal))
         .route("/notes/tombstones", get(note_tombstone_review))
         .route("/notes/tombstones/accept", post(accept_note_tombstone))
         .route("/notes/tombstones/decline", post(decline_note_tombstone))

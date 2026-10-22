@@ -11,7 +11,9 @@
 //!
 //! An attempt the payload erase rewrote (FIX 7076, FIX 7502) is not erased:
 //! its run's snapshot entry moves to the rewritten bytes, as its mark does,
-//! so the run still reverts it and no hash of the erased text stays.
+//! so the run still reverts it and no hash of the erased text stays. A
+//! binding that named other bytes, an entry already stale before the erase
+//! or a stale mark it recorded, is scrubbed to nil, never rebound (FIX 7615).
 //!
 //! A row these walks meet that does not read as a map is deleted by its key
 //! and counted, and a listing slot that does not read is left erased: the
@@ -28,7 +30,8 @@ use super::person_provenance::EXTRACTION_PERSON;
 use super::run_record::{KEY_REVERT, KEY_SNAPSHOT, RUN};
 use super::run_snapshot::{KEY_AFTER, KEY_BEFORE, KEY_ENTRIES, KEY_REVISION};
 use super::{
-    CleanupKind, KEY_ARCHIVED, KEY_CANDIDATES, KEY_ENTITY, KEY_KIND, KEY_SKIPPED, encode_row, field,
+    CleanupKind, KEY_ARCHIVED, KEY_CANDIDATES, KEY_ENTITY, KEY_KIND, KEY_REJECTED, KEY_SKIPPED,
+    encode_row, field,
 };
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
@@ -89,6 +92,7 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &Entity
     walk(store, txn, DIGEST, &mut unreadable, |row, slots| {
         let mut changed = erase_slots(row, KEY_ARCHIVED, named, slots);
         changed |= erase_slots(row, KEY_SKIPPED, named, slots);
+        changed |= erase_slots(row, KEY_REJECTED, named, slots);
         changed
     })?;
     walk(store, txn, RUN, &mut unreadable, |row, slots| {
@@ -110,8 +114,10 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &Entity
 /// after) to the rewritten bytes, as the attempt's mark moves (FIX 7076, FIX
 /// 7502): an entry that bound the row as it stood takes the new revision,
 /// and each of its marks that bound those bytes binds the new ones. The run
-/// still reverts the attempt, and no hash of the erased text stays. An entry
-/// that bound other bytes, and every other slot, stays as it is.
+/// still reverts the attempt, and no hash of the erased text stays. Every
+/// other binding of that attempt's entries, a revision or mark naming older
+/// bytes, is scrubbed to nil (FIX 7615); the entry keeps its id, kind and
+/// place. Every other slot stays as it is.
 ///
 /// # Errors
 ///
@@ -143,7 +149,7 @@ pub(crate) fn erase_attempt_references_in_txn(
         };
         let mut changed = false;
         for entry in entries {
-            changed |= move_entry(entry, &moves);
+            changed |= scrub_entry(entry, &moves);
         }
         changed
     })?;
@@ -220,10 +226,11 @@ fn erase_slots(
     changed
 }
 
-/// Moves `entry` to the rewritten bytes of the attempt it names, when that
-/// attempt is in `moves` and the entry bound its row as it stood; `true`
-/// when it moved.
-fn move_entry(entry: &mut Value, moves: &BTreeMap<[u8; 16], (Revision, Revision)>) -> bool {
+/// Scrubs `entry` when the attempt it names is in `moves`: each binding of
+/// the row as it stood (`bound`) moves to the rewritten bytes, and every
+/// other revision or mark, naming bytes the row held before, goes to nil,
+/// never rebound (FIX 7615). A nil binding stays nil. `true` when it changed.
+fn scrub_entry(entry: &mut Value, moves: &BTreeMap<[u8; 16], (Revision, Revision)>) -> bool {
     let Slot::Names(id) = slot(entry) else {
         return false;
     };
@@ -235,24 +242,27 @@ fn move_entry(entry: &mut Value, moves: &BTreeMap<[u8; 16], (Revision, Revision)
     };
     if field(parts, KEY_KIND).and_then(Value::as_str)
         != Some(CleanupKind::CompletedAttempt.as_str())
-        || field(parts, KEY_REVISION).and_then(Value::as_slice) != Some(bound.as_slice())
     {
         return false;
     }
+    let mut changed = false;
     for (key, value) in parts {
-        match key.as_str() {
-            Some(KEY_REVISION) => *value = Value::Binary(revision.to_vec()),
-            Some(KEY_BEFORE | KEY_AFTER) => {
-                if let Some(moved) = value
-                    .as_slice()
-                    .and_then(CleanupMark::decode)
-                    .and_then(|mark| mark.moved(bound, revision))
-                {
-                    *value = Value::Binary(moved.encode());
-                }
-            }
-            _ => {}
+        let scrubbed = match key.as_str() {
+            Some(KEY_REVISION) => match value.as_slice() {
+                Some(held) if held == bound.as_slice() => Value::Binary(revision.to_vec()),
+                _ => Value::Nil,
+            },
+            Some(KEY_BEFORE | KEY_AFTER) => value
+                .as_slice()
+                .and_then(CleanupMark::decode)
+                .and_then(|mark| mark.moved(bound, revision))
+                .map_or(Value::Nil, |moved| Value::Binary(moved.encode())),
+            _ => continue,
+        };
+        if *value != scrubbed {
+            *value = scrubbed;
+            changed = true;
         }
     }
-    true
+    changed
 }

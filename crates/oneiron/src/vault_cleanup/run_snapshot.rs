@@ -45,14 +45,18 @@ pub struct CleanupSnapshotEntry {
     /// The arm that archived it.
     pub kind: CleanupKind,
     /// BLAKE3 of the stored bytes it hid: the encoded record, or the
-    /// attempt's queue row. The archive keeps those bytes.
-    pub revision: [u8; 32],
+    /// attempt's queue row. The archive keeps those bytes. `None` is a
+    /// binding an erase scrubbed: the attempt's row had changed since the
+    /// run, so the hash named bytes the erase reached (FIX 7615).
+    pub revision: Option<[u8; 32]>,
     /// The mark in force before: none for a record, whose archive door
-    /// refuses a marked row; none, or a stale mark, for an attempt.
+    /// refuses a marked row; none, or a stale mark, for an attempt. `None`
+    /// reads as none, or scrubbed by an erase (FIX 7615).
     pub before: Option<Vec<u8>>,
     /// The exact mark the archive wrote: a record's 25-byte `ac:` value, or
-    /// an attempt's 48-byte run mark.
-    pub after: Vec<u8>,
+    /// an attempt's 48-byte run mark. `None` is a binding an erase scrubbed,
+    /// as `revision` (FIX 7615).
+    pub after: Option<Vec<u8>>,
 }
 
 /// What one cleanup run archived, taken in the transaction that archived it.
@@ -136,13 +140,18 @@ fn decode_run(attempt: AttemptId, raw: &[u8]) -> Result<Option<CleanupRunRecord>
 }
 
 /// Records `snapshot` on `run`'s RUN row in the archive's own transaction.
-/// The row's report keys stay as the run wrote them.
+/// The row's report keys stay as the run wrote them. A decision that
+/// archived nothing records no snapshot (FIX 7519): the row's snapshot stays
+/// Nil and `runs` does not list it, while its report and digest stand.
 pub(super) fn record_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     run: &AttemptId,
     snapshot: &CleanupRunSnapshot,
 ) -> Result<()> {
+    if snapshot.entries.is_empty() {
+        return Ok(());
+    }
     run_record::set_field_in_txn(vault, txn, run, KEY_SNAPSHOT, encode_snapshot(snapshot))?;
     Ok(())
 }
@@ -150,7 +159,9 @@ pub(super) fn record_in_txn(
 /// Records an accepted proposal's snapshot on the RUN row of the run that
 /// opened it. A run that left no row gets the propose-first report it would
 /// have written. A row that does not read stays as it is and the archive
-/// still stands; the review names that run as unreadable.
+/// still stands; the review names that run as unreadable. An accept that
+/// archived nothing still leaves that row, with no snapshot (FIX 7519): its
+/// revert answers with no entries, as before.
 pub(super) fn record_accept_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -204,13 +215,18 @@ fn encode_entry(entry: &CleanupSnapshotEntry) -> Value {
         (Value::from(KEY_KIND), Value::from(entry.kind.as_str())),
         (
             Value::from(KEY_REVISION),
-            Value::Binary(entry.revision.to_vec()),
+            entry
+                .revision
+                .map_or(Value::Nil, |revision| Value::Binary(revision.to_vec())),
         ),
         (
             Value::from(KEY_BEFORE),
             entry.before.clone().map_or(Value::Nil, Value::Binary),
         ),
-        (Value::from(KEY_AFTER), Value::Binary(entry.after.clone())),
+        (
+            Value::from(KEY_AFTER),
+            entry.after.clone().map_or(Value::Nil, Value::Binary),
+        ),
     ])
 }
 
@@ -254,15 +270,18 @@ fn decode_entry(row: &Value) -> Option<CleanupSnapshotEntry> {
         kind: field(parts, KEY_KIND)
             .and_then(Value::as_str)
             .and_then(CleanupKind::parse)?,
-        revision: field(parts, KEY_REVISION)
-            .and_then(Value::as_slice)?
-            .try_into()
-            .ok()?,
+        revision: match field(parts, KEY_REVISION)? {
+            Value::Nil => None,
+            value => Some(value.as_slice()?.try_into().ok()?),
+        },
         before: match field(parts, KEY_BEFORE)? {
             Value::Nil => None,
             value => Some(value.as_slice()?.to_vec()),
         },
-        after: field(parts, KEY_AFTER).and_then(Value::as_slice)?.to_vec(),
+        after: match field(parts, KEY_AFTER)? {
+            Value::Nil => None,
+            value => Some(value.as_slice()?.to_vec()),
+        },
     })
 }
 

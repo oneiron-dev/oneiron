@@ -65,22 +65,34 @@ pub(super) fn note_is_past_retention(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    Ok(
+        note_retention_in_txn(vault, txn, id)?.is_some_and(|(days, learned_at)| {
+            vault.now_recorded_at().saturating_sub(learned_at) > u64::from(days) * DAY_SECS
+        }),
+    )
+}
+
+/// The days `id`'s NOTE kind, or its own override, keeps it, beside when it
+/// was learned; none for a durable or session-sealed NOTE, a zero period, or
+/// a row that does not read as a NOTE.
+pub(super) fn note_retention_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(u32, u64)>> {
     let Some(row) = crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, id)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     let Ok(note) = crate::note::decode_note_body_in_txn(&vault.store, txn, &row.body) else {
-        return Ok(false);
+        return Ok(None);
     };
     let kind =
         crate::note::note_defaults_in_txn(&vault.store, txn, id, note.kind.as_str().as_ref())?;
     let (crate::note::RetentionDefault::ArchiveAfterDays, Some(days)) =
         (kind.retention, kind.archive_after_days)
     else {
-        return Ok(false);
+        return Ok(None);
     };
-    if days == 0 {
-        return Ok(false);
-    }
-    Ok(vault.now_recorded_at().saturating_sub(row.learned_at) > u64::from(days) * DAY_SECS)
+    Ok((days != 0).then_some((days, row.learned_at)))
 }

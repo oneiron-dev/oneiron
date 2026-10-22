@@ -2879,6 +2879,12 @@ class Oneiron:
         def run(self, spec):
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
             return json.loads(_translate(lambda: self._client.vault_cleanup_run(json.dumps(spec))))
+        def review(self, spec):
+            """The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts."""
+            return json.loads(_translate(lambda: self._client.vault_cleanup_review(json.dumps(spec))))
+        def decide(self, spec):
+            """The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected."""
+            return json.loads(_translate(lambda: self._client.vault_cleanup_decide(json.dumps(spec))))
     class _VaultArchiveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

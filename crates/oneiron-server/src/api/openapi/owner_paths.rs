@@ -167,6 +167,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/cleanup/review",
+        summary: "Review one open cleanup proposal per item with full disclosure (FIX 1758): `proposal` (32 hex). Every slot answers in proposal order, an erased one too: its `state` (`eligible`, `changed`, `gone`, `unreadable` or `erased`), entity and kind, the 64-hex revision of its stored bytes, the arm's `evidence` read now, what `accept` does (`archive`, reversible by restore or run revert; `skip`; `nothing`; or `fails`, so reject that slot to decide the rest) and its full `content` through the owner's own reads (a completed attempt's whole stored row). `counts` covers all five kinds and erased slots. Nothing is truncated or stored. The review's `revision` can bind a decision. A proposal no longer open is changed.",
+        row: Some("vault.cleanup.review"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/cleanup/decide",
+        summary: "Decide one open cleanup proposal per item in one complete verdict (FIX 1758): `proposal`, `choices` with exactly one `accept` or `reject` for every slot the review lists (by `slot`), and an optional `expected_revision` that binds the decision to that review. Accepted slots are re-checked and archived as a whole accept does; rejected slots are left as they are, unpinned, and recorded as rejected on the decision's one digest. A verdict that accepts nothing records no digest, as a reject. Answers each slot's outcome (`archived`, `skipped`, `rejected` or `erased`) and the digest. A verdict that is not one choice per slot is invalid; a changed review or a proposal no longer open is changed. `/cleanup/accept` and `/cleanup/reject` still decide a whole proposal.",
+        row: Some("vault.cleanup.decide"),
+    },
+    OwnerRoute {
         method: "get",
         path: "/coach/code-fixes",
         summary: "The Coach's code-fix work, newest first (at most 256).",

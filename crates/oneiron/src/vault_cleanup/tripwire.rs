@@ -52,7 +52,7 @@ pub fn claim_source_is_machine_minted(source: ClaimSource) -> bool {
 /// graph. The list is deliberately WIDE and checked in BOTH directions: every
 /// kind added here can only ever REFUSE to archive, so being generous costs
 /// nothing but a few rows left alone.
-const SUMMARY_MEMBER_EDGE_KINDS: [EdgeKind; 7] = [
+pub(super) const SUMMARY_MEMBER_EDGE_KINDS: [EdgeKind; 7] = [
     EdgeKind::PartOf,
     EdgeKind::DerivedFrom,
     EdgeKind::About,
@@ -208,7 +208,7 @@ fn has_live_claim(vault: &Vault, rtxn: &heed::RoTxn<'_>, subject: &EntityId) -> 
 /// `MAX_EDGE_QUERY_RESULTS` and raise `IndexOverflow` past it, which would
 /// turn "this summary has far too many members to be empty" into a failed
 /// cron pass. Asking only whether the first row exists cannot overflow.
-fn has_any_edge_in_txn(
+pub(super) fn has_any_edge_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     direction: EdgeDirection,
@@ -372,6 +372,7 @@ pub(super) fn run_cleanup_candidates_in_txn(
                 at: now,
                 archived: live_slots(applied.archived),
                 skipped: live_slots(applied.skipped),
+                rejected: Vec::new(),
             };
             put_digest_in_txn(vault, wtxn, &digest)?;
             run_snapshot::record_in_txn(
@@ -461,9 +462,9 @@ pub(super) fn apply_archives_in_txn(
             entries.push(CleanupSnapshotEntry {
                 entity: candidate.entity,
                 kind: candidate.kind,
-                revision,
+                revision: Some(revision),
                 before: None,
-                after: tombstone.encode().to_vec(),
+                after: Some(tombstone.encode().to_vec()),
             });
         } else {
             skipped.push(candidate.entity);

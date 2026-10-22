@@ -55,6 +55,10 @@ pub(super) const KEY_ARCHIVED: &str = "archived";
 
 pub(super) const KEY_SKIPPED: &str = "skipped";
 
+/// The digest key of the slots a mixed decision rejected; absent on every
+/// other digest.
+pub(super) const KEY_REJECTED: &str = "rejected";
+
 pub(super) const KEY_AT: &str = "at";
 
 /// Receipt field names. Strings, because the receipt family's field ABI is
@@ -73,6 +77,14 @@ pub const FIELD_CLEANUP_SKIPPED_COUNT: &str = "cleanup_skipped_count";
 pub const FIELD_CLEANUP_ARCHIVED_IDS: &str = "cleanup_archived_ids";
 
 pub const FIELD_CLEANUP_SKIPPED_IDS: &str = "cleanup_skipped_ids";
+
+/// How many candidates the owner rejected in a mixed decision; present only
+/// when he rejected one.
+pub const FIELD_CLEANUP_REJECTED_COUNT: &str = "cleanup_rejected_count";
+
+/// The ids the owner rejected in a mixed decision, comma-joined; present
+/// only when he rejected one.
+pub const FIELD_CLEANUP_REJECTED_IDS: &str = "cleanup_rejected_ids";
 
 pub const FIELD_CLEANUP_PROPOSAL: &str = "cleanup_proposal";
 
@@ -280,6 +292,10 @@ pub struct CleanupDigest {
     /// longer empty. The stale-candidate guard's audit trail. `None` as in
     /// `archived`.
     pub skipped: Vec<Option<EntityId>>,
+    /// Candidates the owner rejected in a mixed per-item decision: nothing
+    /// was looked up or archived for them, and none is pinned (FIX 1758).
+    /// Empty for every other decision. `None` as in `archived`.
+    pub rejected: Vec<Option<EntityId>>,
 }
 
 /// What one cron pass did.

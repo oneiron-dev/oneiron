@@ -4,11 +4,11 @@ use super::{
     CLEANUP_PHASE, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupPosture,
     CleanupProposal, DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION, FIELD_CLEANUP_ARCHIVED_COUNT,
     FIELD_CLEANUP_ARCHIVED_IDS, FIELD_CLEANUP_DECISION, FIELD_CLEANUP_PHASE, FIELD_CLEANUP_POSTURE,
-    FIELD_CLEANUP_PROPOSAL, FIELD_CLEANUP_SKIPPED_COUNT, FIELD_CLEANUP_SKIPPED_IDS,
-    FIELD_CLEANUP_TOMBSTONE_REASON, KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES,
-    KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_KIND, KEY_POSTURE, KEY_PROPOSAL,
-    KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION,
-    VAULT_CLEANUP_ACTOR, VAULT_CLEANUP_RECEIPT_PREFIX,
+    FIELD_CLEANUP_PROPOSAL, FIELD_CLEANUP_REJECTED_COUNT, FIELD_CLEANUP_REJECTED_IDS,
+    FIELD_CLEANUP_SKIPPED_COUNT, FIELD_CLEANUP_SKIPPED_IDS, FIELD_CLEANUP_TOMBSTONE_REASON,
+    KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES, KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY,
+    KEY_KIND, KEY_POSTURE, KEY_PROPOSAL, KEY_REJECTED, KEY_SCHEMA_VERSION, KEY_SKIPPED,
+    PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION, VAULT_CLEANUP_ACTOR, VAULT_CLEANUP_RECEIPT_PREFIX,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -199,7 +199,7 @@ pub(super) fn put_digest_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     digest: &CleanupDigest,
 ) -> Result<()> {
-    let row = Value::Map(vec![
+    let mut row = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(DIGEST_SCHEMA_VERSION),
@@ -227,8 +227,12 @@ pub(super) fn put_digest_in_txn(
         (Value::from(KEY_AT), Value::from(digest.at)),
         (Value::from(KEY_ARCHIVED), id_value_list(&digest.archived)),
         (Value::from(KEY_SKIPPED), id_value_list(&digest.skipped)),
-    ]);
-    let encoded = encode_row(&row, DIGEST_ROW_LABEL)?;
+    ];
+    // Only a mixed decision rejects: every other digest keeps its row shape.
+    if !digest.rejected.is_empty() {
+        row.push((Value::from(KEY_REJECTED), id_value_list(&digest.rejected)));
+    }
+    let encoded = encode_row(&Value::Map(row), DIGEST_ROW_LABEL)?;
     DIGEST.put(&vault.store, wtxn, &digest.id, &encoded)?;
     // The decision is pending digest work: the deadline re-reads after commit.
     crate::batch::queue_proactivity_change(vault, wtxn);
@@ -275,6 +279,10 @@ pub(super) fn decode_digest(id: EntityId, raw: &[u8]) -> Result<CleanupDigest> {
             .ok_or(Error::CorruptedIndex(DIGEST_ROW_LABEL))?,
         archived: id_list(&entries, KEY_ARCHIVED, DIGEST_ROW_LABEL)?,
         skipped: id_list(&entries, KEY_SKIPPED, DIGEST_ROW_LABEL)?,
+        rejected: match field(&entries, KEY_REJECTED) {
+            None => Vec::new(),
+            Some(_) => id_list(&entries, KEY_REJECTED, DIGEST_ROW_LABEL)?,
+        },
     })
 }
 
@@ -410,6 +418,16 @@ fn cleanup_digest_receipt(digest: &CleanupDigest) -> ReceiptRecord {
     ]);
     if let Some(proposal) = digest.proposal {
         fields.insert(FIELD_CLEANUP_PROPOSAL.to_owned(), proposal.to_hex());
+    }
+    if !digest.rejected.is_empty() {
+        fields.insert(
+            FIELD_CLEANUP_REJECTED_COUNT.to_owned(),
+            digest.rejected.len().to_string(),
+        );
+        fields.insert(
+            FIELD_CLEANUP_REJECTED_IDS.to_owned(),
+            join_ids(&digest.rejected),
+        );
     }
     ReceiptRecord {
         receipt_id: format!("{VAULT_CLEANUP_RECEIPT_PREFIX}{}", digest.id.to_hex()),

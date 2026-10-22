@@ -1,7 +1,9 @@
 //! Cleanup review (ARCH-0073): the archive proposals the cleanup job opened,
 //! the digests of what cleanup archived, the runs that archived and what each
 //! held before, the job's posture and the done-task retention dial, bringing
-//! an archived record back, and reverting a whole run (OF-449).
+//! an archived record back, and reverting a whole run (OF-449). One open
+//! proposal also reviews slot by slot, with each slot's evidence and full
+//! content, and decides per item in one complete verdict (FIX 1758).
 //!
 //! The job proposes first while ARCH-0066's integrity teeth are open: nothing
 //! is archived until the owner accepts, and the engine refuses the automatic
@@ -11,10 +13,12 @@
 
 use oneiron::attempt_queue::AttemptId;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::{Memory, MemoryError};
 use oneiron::vault_cleanup::{
-    self, ArchivedEntity, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
-    CleanupRevertEntry, CleanupRevertReason, CleanupRunRecord, CleanupRunRevert,
-    CleanupRunRevertAnswer, CleanupSnapshotEntry,
+    self, ArchivedEntity, CleanupDecideRequest, CleanupDecideView, CleanupDigest, CleanupKind,
+    CleanupPosture, CleanupProposal, CleanupRevertEntry, CleanupRevertReason, CleanupReviewRequest,
+    CleanupReviewView, CleanupRunRecord, CleanupRunRevert, CleanupRunRevertAnswer,
+    CleanupSnapshotEntry,
 };
 use oneiron::{EntityId, ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
@@ -75,12 +79,16 @@ pub(crate) struct RunEntry {
     pub(crate) entity: String,
     pub(crate) kind: &'static str,
     /// BLAKE3 of the stored bytes the run hid (64 hex). The archive keeps
-    /// them; a revert lifts the mark and writes no body.
-    pub(crate) revision: String,
-    /// The mark in force before the run, hex; null when there was none.
+    /// them; a revert lifts the mark and writes no body. Null when an erase
+    /// scrubbed this binding: the attempt changed after the run, and the
+    /// erase reached the bytes it named (FIX 7615).
+    pub(crate) revision: Option<String>,
+    /// The mark in force before the run, hex; null when there was none, or
+    /// when an erase scrubbed it (FIX 7615).
     pub(crate) before: Option<String>,
-    /// The exact mark the run wrote, hex.
-    pub(crate) after: String,
+    /// The exact mark the run wrote, hex; null when an erase scrubbed it, as
+    /// `revision` (FIX 7615).
+    pub(crate) after: Option<String>,
 }
 
 /// A run's revert, as stored.
@@ -183,6 +191,11 @@ pub(crate) struct Digest {
     /// Candidates the accept found no longer empty, so left alone;
     /// `"erased"` as in `archived`.
     pub(crate) skipped: Vec<String>,
+    /// Candidates the owner rejected in a per-item decision (FIX 1758):
+    /// left alone and not pinned; `"erased"` as in `archived`. Absent when
+    /// there were none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) rejected: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -281,6 +294,29 @@ pub(crate) fn reject(vault: &Vault, owner: &AuthenticatedOwner, proposal: &str) 
         .map_err(|error| proposal_gone(error, proposal))
 }
 
+/// Reviews one open proposal slot by slot (FIX 1758): each slot's evidence,
+/// state, revision and what accepting it does, and its full content through
+/// `memory`, the owner's own reads.
+pub(crate) fn review_proposal(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    request: &CleanupReviewRequest,
+) -> OwnerResult<CleanupReviewView> {
+    vault_cleanup::review_cleanup_proposal_as(memory, owner, request).map_err(per_item_refusal)
+}
+
+/// Decides one open proposal slot by slot in one complete verdict (FIX
+/// 1758).
+pub(crate) fn decide(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    request: &CleanupDecideRequest,
+) -> OwnerResult<CleanupDecideView> {
+    vault
+        .decide_cleanup_proposal_as(owner, request)
+        .map_err(per_item_refusal)
+}
+
 pub(crate) fn configure(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -363,6 +399,19 @@ pub(crate) fn revert_run(
     }
 }
 
+/// A per-item door's typed answer, as the owner surface gives it: a verdict
+/// that is not one choice per slot is invalid; a proposal no longer open, or
+/// a review that changed since its revision, is changed.
+fn per_item_refusal(error: MemoryError) -> OwnerError {
+    match error.code.as_str() {
+        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
+        oneiron::memory::MEMORY_CODE_INVALID_STATE | oneiron::memory::MEMORY_CODE_NOT_FOUND => {
+            OwnerError::Changed(error.message)
+        }
+        _ => OwnerError::Refused(error.message),
+    }
+}
+
 fn proposal_gone(error: oneiron::Error, proposal: &str) -> OwnerError {
     match error.kind() {
         ErrorKind::VaultCleanupProposalNotFound => OwnerError::Changed(format!(
@@ -406,6 +455,7 @@ fn digest(row: &CleanupDigest) -> Digest {
         at: rfc3339_secs(row.at),
         archived: slot_hexes(&row.archived),
         skipped: slot_hexes(&row.skipped),
+        rejected: slot_hexes(&row.rejected),
     }
 }
 
@@ -440,9 +490,9 @@ fn run_entry(entry: &CleanupSnapshotEntry) -> RunEntry {
     RunEntry {
         entity: entry.entity.to_hex(),
         kind: entry.kind.as_str(),
-        revision: bytes_hex(&entry.revision),
+        revision: entry.revision.map(|revision| bytes_hex(&revision)),
         before: entry.before.as_deref().map(bytes_hex),
-        after: bytes_hex(&entry.after),
+        after: entry.after.as_deref().map(bytes_hex),
     }
 }
 

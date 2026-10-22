@@ -58,6 +58,10 @@
 //! entity and archives only the ones still empty; a candidate that gained a
 //! live claim between proposal and accept is SKIPPED, and the skip is on the
 //! run's digest receipt. Rejecting archives nothing and leaves no receipt.
+//! The owner may also review a proposal slot by slot, with each slot's
+//! evidence and full content, and decide it per item in one complete verdict
+//! ([`review_cleanup_proposal_as`], [`Vault::decide_cleanup_proposal_as`];
+//! FIX 1758): what he rejects is recorded as rejected, never as skipped.
 //!
 //! [`CleanupPosture::AutoWithDigest`] is the post-teeth path, built now and
 //! reachable only by an owner flipping the `vault_meta` posture flag. It
@@ -101,8 +105,11 @@ mod erase;
 mod marks;
 mod owner_doors;
 mod person_provenance;
+mod proposal_review;
 mod proposals_archive;
 mod retention;
+mod review_types;
+mod review_view;
 mod rollout;
 mod run_record;
 mod run_revert;
@@ -117,13 +124,21 @@ pub use self::cleanup_types::{
     CleanupDigest, CleanupImpactPreview, CleanupKind, CleanupPosture, CleanupProposal,
     CleanupRunReport, FIELD_CLEANUP_ARCHIVED_COUNT, FIELD_CLEANUP_ARCHIVED_IDS,
     FIELD_CLEANUP_DECISION, FIELD_CLEANUP_PHASE, FIELD_CLEANUP_POSTURE, FIELD_CLEANUP_PROPOSAL,
-    FIELD_CLEANUP_SKIPPED_COUNT, FIELD_CLEANUP_SKIPPED_IDS, FIELD_CLEANUP_TOMBSTONE_REASON,
-    VAULT_CLEANUP_ACTOR, VAULT_CLEANUP_POSTURE_KEY, VAULT_CLEANUP_RECEIPT_PREFIX,
+    FIELD_CLEANUP_REJECTED_COUNT, FIELD_CLEANUP_REJECTED_IDS, FIELD_CLEANUP_SKIPPED_COUNT,
+    FIELD_CLEANUP_SKIPPED_IDS, FIELD_CLEANUP_TOMBSTONE_REASON, VAULT_CLEANUP_ACTOR,
+    VAULT_CLEANUP_POSTURE_KEY, VAULT_CLEANUP_RECEIPT_PREFIX,
 };
 pub use self::codec_receipts::{cleanup_digests, is_vault_cleanup_receipt};
 pub use self::proposals_archive::{
     accept_cleanup_proposal, cleanup_proposal, cleanup_proposals, reject_cleanup_proposal,
 };
+pub use self::review_types::{
+    CleanupAcceptEffect, CleanupDecideRequest, CleanupDecideView, CleanupItemChoice,
+    CleanupItemDecision, CleanupItemOutcome, CleanupItemResult, CleanupItemState,
+    CleanupReviewContent, CleanupReviewCounts, CleanupReviewEvidence, CleanupReviewItem,
+    CleanupReviewRequest, CleanupReviewView,
+};
+pub use self::review_view::review_cleanup_proposal_as;
 pub use self::run_revert::{
     CleanupRevertEntry, CleanupRevertOutcome, CleanupRevertReason, CleanupRunRevert,
     CleanupRunRevertAnswer,
@@ -144,7 +159,7 @@ pub(crate) use visibility::is_archived_in_txn;
 
 use self::cleanup_types::{
     DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION, KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES,
-    KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_KIND, KEY_POSTURE, KEY_PROPOSAL,
+    KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_KIND, KEY_POSTURE, KEY_PROPOSAL, KEY_REJECTED,
     KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION, live_slots,
 };
 use self::codec_receipts::{

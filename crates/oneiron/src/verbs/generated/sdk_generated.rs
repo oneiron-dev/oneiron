@@ -2418,6 +2418,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.cleanup.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::vault_cleanup::CleanupReviewRequest,
+                >(),
+            ),
+            (
+                "vault.cleanup.decide",
+                crate::code_run::vault_read::request_schema::<
+                    crate::vault_cleanup::CleanupDecideRequest,
+                >(),
+            ),
+            (
                 "vault.archive.delete.preview",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::ArchiveDeletePreviewRequest,
@@ -6984,6 +6996,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.reserve_exploration",
     "vault.research.budget",
     "vault.cleanup.run",
+    "vault.cleanup.review",
+    "vault.cleanup.decide",
     "vault.archive.delete.preview",
     "vault.archive.delete.confirm",
     "vault.usage.events.undecodable",
@@ -8448,6 +8462,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
         >(),
+        "vault.cleanup.review" => {
+            crate::code_run::vault_read::request_schema::<crate::vault_cleanup::CleanupReviewView>()
+        }
+        "vault.cleanup.decide" => {
+            crate::code_run::vault_read::request_schema::<crate::vault_cleanup::CleanupDecideView>()
+        }
         "vault.archive.delete.preview" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ArchiveDeletePreviewView>()
         }
@@ -13089,6 +13109,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.cleanup.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cleanup.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cleanup.decide" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19478,6 +19512,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.cleanup.run" => {
             let _input: crate::vault_cleanup::surface::CleanupRunRequest = decode(value.clone())?;
         }
+        "vault.cleanup.review" => {
+            let _input: crate::vault_cleanup::CleanupReviewRequest = decode(value.clone())?;
+        }
+        "vault.cleanup.decide" => {
+            let _input: crate::vault_cleanup::CleanupDecideRequest = decode(value.clone())?;
+        }
         "vault.archive.delete.preview" => {
             let _input: crate::memory::ArchiveDeletePreviewRequest = decode(value.clone())?;
         }
@@ -22950,6 +22990,8 @@ pub fn invoke(
             encode(vault_roots_requests_cancel(memory, decode(value)?)?)
         }
         "vault.cleanup.run" => encode(vault_cleanup_run(memory, decode(value)?)?),
+        "vault.cleanup.review" => encode(vault_cleanup_review(memory, decode(value)?)?),
+        "vault.cleanup.decide" => encode(vault_cleanup_decide(memory, decode(value)?)?),
         "vault.archive.delete.preview" => {
             encode(vault_archive_delete_preview(memory, decode(value)?)?)
         }
@@ -28255,6 +28297,24 @@ pub fn vault_cleanup_run(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_cleanup_review(
+    memory: &Memory<'_>,
+    input: crate::vault_cleanup::CleanupReviewRequest,
+) -> MemoryResult<crate::vault_cleanup::CleanupReviewView> {
+    crate::vault_cleanup::review_cleanup_proposal_as(
+        memory,
+        &memory.embedded_owner("vault.cleanup.review")?,
+        &input,
+    )
+}
+pub fn vault_cleanup_decide(
+    memory: &Memory<'_>,
+    input: crate::vault_cleanup::CleanupDecideRequest,
+) -> MemoryResult<crate::vault_cleanup::CleanupDecideView> {
+    memory
+        .vault()
+        .decide_cleanup_proposal_as(&memory.embedded_owner("vault.cleanup.decide")?, &input)
 }
 pub fn vault_archive_delete_preview(
     memory: &Memory<'_>,

@@ -208,6 +208,8 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.authority.handoff_alarms.acknowledge"
         | "vault.records.erase_sweep"
         | "vault.cleanup.run"
+        | "vault.cleanup.review"
+        | "vault.cleanup.decide"
         | "vault.entities.mention"
         | "vault.people.create"
         | "vault.entities.look_before_mint"

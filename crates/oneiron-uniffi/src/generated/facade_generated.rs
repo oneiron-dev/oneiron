@@ -2261,6 +2261,16 @@ export_facade! {
     let output = client.vault_cleanup_run(&input)?;
     crate::codec::lift_record("vault.cleanup.run", &output)
 };
+"vault.cleanup.review" => fn vault_cleanup_review(&self, input: CleanupReviewRequest) -> CleanupReviewView = |client| {
+    let input: oneiron::vault_cleanup::CleanupReviewRequest = crate::codec::lower_record("vault.cleanup.review", input)?;
+    let output = client.vault_cleanup_review(&input)?;
+    crate::codec::lift_record("vault.cleanup.review", &output)
+};
+"vault.cleanup.decide" => fn vault_cleanup_decide(&self, input: CleanupDecideRequest) -> CleanupDecideView = |client| {
+    let input: oneiron::vault_cleanup::CleanupDecideRequest = crate::codec::lower_record("vault.cleanup.decide", input)?;
+    let output = client.vault_cleanup_decide(&input)?;
+    crate::codec::lift_record("vault.cleanup.decide", &output)
+};
 "vault.archive.delete.preview" => fn vault_archive_delete_preview(&self, input: ArchiveDeletePreviewRequest) -> ArchiveDeletePreviewView = |client| {
     let input: oneiron::memory::ArchiveDeletePreviewRequest = crate::codec::lower_record("vault.archive.delete.preview", input)?;
     let output = client.vault_archive_delete_preview(&input)?;
