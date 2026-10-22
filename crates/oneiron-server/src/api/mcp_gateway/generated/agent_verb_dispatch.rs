@@ -505,6 +505,11 @@ fn mcp_agent_verb_input(
         "vault.support_grants.mint" => a.spec.clone().ok_or_else(invalid),
         "vault.support_grants.list" => a.spec.clone().ok_or_else(invalid),
         "vault.support_grants.revoke" => a.spec.clone().ok_or_else(invalid),
+        "vault.files.sources.attach" => a.spec.clone().ok_or_else(invalid),
+        "vault.files.sources.rescan" => a.spec.clone().ok_or_else(invalid),
+        "vault.files.sources.detach" => a.spec.clone().ok_or_else(invalid),
+        "vault.files.sources.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.files.sources.files" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.mode" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.open" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.index" => a.spec.clone().ok_or_else(invalid),
@@ -2572,6 +2577,21 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.support_grants.revoke" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.files.sources.attach" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.files.sources.rescan" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.files.sources.detach" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.files.sources.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.files.sources.files" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.residence.mode" => {
@@ -10604,6 +10624,80 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_support_grants_revoke(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.files.sources.attach" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.files.sources.attach", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::FilesSourceAttachRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_files_sources_attach(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.files.sources.rescan" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.files.sources.rescan", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::FilesSourceRescanRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_files_sources_rescan(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.files.sources.detach" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.files.sources.detach", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::FilesSourceDetachRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_files_sources_detach(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.files.sources.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.files.sources.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::FilesSourceListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_files_sources_list(server, auth, input).await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.files.sources.files" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.files.sources.files", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::FilesSourceFilesRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_files_sources_files(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));

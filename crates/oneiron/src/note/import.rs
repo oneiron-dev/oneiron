@@ -289,6 +289,7 @@ impl Vault {
                 txn,
                 owner_actor,
                 &batch.folder,
+                None,
                 &batch.notes,
                 kinds,
                 &ids,
@@ -310,6 +311,8 @@ impl Vault {
     /// the folder's import MACHINE wrote them, for `importer`: an approved
     /// batch, or the new files of an attached folder (OF-554). Each note's
     /// author is that MACHINE and its birth is Stated, the file's own text.
+    /// A Files source's notes are born in its `world` (FIX 6942), in the
+    /// same write as the note, so no reader ever sees one outside it.
     /// Returns how many links landed.
     ///
     /// # Errors
@@ -321,6 +324,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         importer: EntityId,
         folder: &str,
+        world: Option<EntityId>,
         notes: &[ImportedNote],
         kinds: Vec<super::NoteKind>,
         ids: &[EntityId],
@@ -369,24 +373,26 @@ impl Vault {
                 markdown: note.markdown.clone(),
                 source_revision_ref: revision(folder, &note.path, &note.markdown),
             })?;
-            content.apply_batch(
-                self.batch_in()
-                    .put_authored_note(
-                        id,
-                        &author,
-                        TimeRange {
-                            start: note.written_at,
-                            end: note.written_at,
-                        },
-                        at,
-                        &body,
-                    )
-                    .edge(id, EdgeKind::AuthoredBy, &author, 1.0)
-                    .made_by(
-                        id,
-                        RowBirth::written(actor, MadeByClass::Stated, "note.import", &[], &[], at),
-                    ),
-            )?;
+            let mut birth = self
+                .batch_in()
+                .put_authored_note(
+                    id,
+                    &author,
+                    TimeRange {
+                        start: note.written_at,
+                        end: note.written_at,
+                    },
+                    at,
+                    &body,
+                )
+                .edge(id, EdgeKind::AuthoredBy, &author, 1.0);
+            if let Some(world) = &world {
+                birth = birth.edge(id, EdgeKind::InWorld, world, 1.0);
+            }
+            content.apply_batch(birth.made_by(
+                id,
+                RowBirth::written(actor, MadeByClass::Stated, "note.import", &[], &[], at),
+            ))?;
             content.update_note(*id, |txn| {
                 let doc = super::document_store::load(self, txn, *id)?;
                 if let Some(title) = &note.title {

@@ -1164,6 +1164,21 @@ impl OneironClient {
                 "vault.support_grants.revoke" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SupportGrantRevokeAnswer,
                 >(client, verb, &input),
+                "vault.files.sources.attach" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FilesSourceAttachAnswer,
+                >(client, verb, &input),
+                "vault.files.sources.rescan" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FilesRescanAnswer,
+                >(client, verb, &input),
+                "vault.files.sources.detach" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FilesSourceDetachAnswer,
+                >(client, verb, &input),
+                "vault.files.sources.list" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FilesSourceList,
+                >(client, verb, &input),
+                "vault.files.sources.files" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FilesSourceFiles,
+                >(client, verb, &input),
                 "vault.residence.mode" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ResidenceModeAnswer,
                 >(client, verb, &input),
@@ -8140,6 +8155,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.support_grants.revoke", value)
+    }
+    pub fn vault_files_sources_attach(
+        &self,
+        input: &oneiron::task_verb::sdk::FilesSourceAttachRequest,
+    ) -> Result<oneiron::task_verb::sdk::FilesSourceAttachAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.files.sources.attach", value)
+    }
+    pub fn vault_files_sources_rescan(
+        &self,
+        input: &oneiron::task_verb::sdk::FilesSourceRescanRequest,
+    ) -> Result<oneiron::task_verb::sdk::FilesRescanAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.files.sources.rescan", value)
+    }
+    pub fn vault_files_sources_detach(
+        &self,
+        input: &oneiron::task_verb::sdk::FilesSourceDetachRequest,
+    ) -> Result<oneiron::task_verb::sdk::FilesSourceDetachAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.files.sources.detach", value)
+    }
+    pub fn vault_files_sources_list(
+        &self,
+        input: &oneiron::task_verb::sdk::FilesSourceListRequest,
+    ) -> Result<oneiron::task_verb::sdk::FilesSourceList, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.files.sources.list", value)
+    }
+    pub fn vault_files_sources_files(
+        &self,
+        input: &oneiron::task_verb::sdk::FilesSourceFilesRequest,
+    ) -> Result<oneiron::task_verb::sdk::FilesSourceFiles, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.files.sources.files", value)
     }
     pub fn vault_residence_mode(
         &self,
