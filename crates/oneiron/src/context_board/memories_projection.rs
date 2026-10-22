@@ -13,9 +13,10 @@ use crate::registry::{
 
 /// Builds the MEMORIES section from an already assembled pack.
 ///
-/// Rows are sorted by slot, source, descending score, and entity id before slot
-/// budgets are applied. That order is independent of `HashMap` iteration and
-/// remains stable when retrieval returns equal-score rows.
+/// Rows are sorted by tier, constraint class, slot, source, descending score,
+/// and entity id before slot budgets are applied. That order is independent
+/// of `HashMap` iteration and remains stable when retrieval returns
+/// equal-score rows.
 ///
 /// The HTTP board uses this same projection and shared frame renderer.
 #[must_use]
@@ -155,7 +156,26 @@ fn memory_row(entity: &ContextEntity, source: MemorySource) -> MemoryRow {
         hook: None,
         source_revision: entity.source_revision_ref.map(crate::vault::RevisionRef),
         question: None,
+        fiction: false,
+        constraint: entity.entity_type == ENTITY_TYPE_CLAIM
+            && entity
+                .fields
+                .as_ref()
+                .and_then(|fields| fields.get("pred"))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(constraint_predicate),
     }
+}
+
+/// Predicate namespaces whose claims are constraints: `boundary.*`, the
+/// user's constraints and limits (DEC-0001 §4.3).
+const CONSTRAINT_PREDICATE_NAMESPACES: [&str; 1] = ["boundary"];
+
+/// Whether `predicate` names a claim in a constraint namespace.
+pub(super) fn constraint_predicate(predicate: &str) -> bool {
+    predicate
+        .split_once('.')
+        .is_some_and(|(namespace, _)| CONSTRAINT_PREDICATE_NAMESPACES.contains(&namespace))
 }
 
 pub(super) fn memory_asset_ref(
@@ -177,9 +197,15 @@ pub(super) fn memory_slot(entity_type: u8) -> MemorySlot {
     }
 }
 
+/// The board sort law (ARCH-0067, FIX 7983): tier first, then the
+/// constraint namespaces contiguous at the top of the pinned and snippet
+/// blocks alike, then the remaining slot, source, score and id keys. No
+/// domain descriptor supplies a severity rank, so none orders here, and no
+/// boundary severity exists.
 fn memory_row_order(left: &MemoryRow, right: &MemoryRow) -> std::cmp::Ordering {
     (left.tier != MemoryTier::Pinned)
         .cmp(&(right.tier != MemoryTier::Pinned))
+        .then_with(|| right.constraint.cmp(&left.constraint))
         .then_with(|| left.slot.sort_rank().cmp(&right.slot.sort_rank()))
         .then_with(|| left.source.sort_rank().cmp(&right.source.sort_rank()))
         .then_with(|| right.score.total_cmp(&left.score))

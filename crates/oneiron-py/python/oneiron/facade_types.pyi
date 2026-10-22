@@ -15044,7 +15044,7 @@ class ContextPackBudgetControls(TypedDict):
     retrieval: NotRequired[ContextPackRetrievalBudgetControls | None]
 class AiReplyCompanion(TypedDict):
     person_ref: NotRequired[str | None]
-    persona_ref: NotRequired[str | None]
+    counterpart_person_ref: NotRequired[str | None]
     expression: NotRequired[str | None]
 class AiReplyStanding(TypedDict):
     world_ref: NotRequired[str | None]

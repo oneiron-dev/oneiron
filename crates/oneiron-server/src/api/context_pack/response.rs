@@ -294,7 +294,7 @@ pub(crate) async fn run_context_pack_builder(
         .flat_map(|companion| {
             [
                 companion.person_ref.as_deref(),
-                companion.persona_ref.as_deref(),
+                companion.counterpart_person_ref.as_deref(),
             ]
         })
         .flatten()
@@ -362,7 +362,10 @@ pub(crate) async fn run_context_pack_builder(
     let mut pin_narrowing = Vec::new();
     let (section, cursor) = match memories.as_ref() {
         Some(request) => {
-            let mut section = projected_memories;
+            // FIX 8142: `memories.enabled=false` drops only the optional
+            // projection; the mandatory pins still assemble.
+            let mut section = projected_memories
+                .or_else(|| Some(oneiron::MemoriesSection::pins_only(assembly.clone())));
             if let Some(section) = &mut section {
                 pin_narrowing = section
                     .include_pinned_refs_with_disclosure(
@@ -392,6 +395,9 @@ pub(crate) async fn run_context_pack_builder(
                         .map_err(|error| core_engine_error("hook pin read failed", error))?,
                 );
             }
+            let section = section.filter(|section| {
+                request.memory_board_budget.is_some() || !section.rows.is_empty()
+            });
             let (cursor, observed) = advance_memories_cursor(
                 server,
                 &request.session_scope_id,

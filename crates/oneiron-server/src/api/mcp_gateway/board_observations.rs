@@ -122,7 +122,7 @@ pub(super) async fn ride(
     let frame = changed
         .ride(Some(frame))
         .expect("rider preserves an existing frame");
-    let frame = ride_capabilities(frame, hits, &observations)?;
+    let frame = ride_capabilities(frame, hits, &observations, &server.vault)?;
     delivered(server, actor, &changed, false, frame.epoch).await;
     let rows = crate::device_local::changed_line_rows(&changed).collect();
     Ok(Some((frame, rows)))
@@ -132,10 +132,12 @@ fn ride_capabilities(
     mut frame: BoardStreamFrame,
     hits: &[CapabilityHit],
     observations: &SessionReadSet,
+    vault: &oneiron::Vault,
 ) -> Result<BoardStreamFrame, McpGatewayError> {
     // Skills and agent definitions the channel found share SKILLS `found`
-    // (PEOPLE, ARCH-0067: the AGENTS section is gone).
-    let skills = SkillsSection::project(hits, observations);
+    // (PEOPLE, ARCH-0067: the AGENTS section is gone), by short handle.
+    let skills = SkillsSection::project(hits, observations, vault)
+        .map_err(|error| mcp_engine_error("board skills failed", error))?;
     let sections = [skills.board_section().map_err(mcp_board_frame_error)?];
     let header = BoardBlockHeader {
         epoch: frame.epoch,

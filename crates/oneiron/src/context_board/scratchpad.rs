@@ -39,10 +39,8 @@ pub const SCRATCHPAD_LINE_MAX_BYTES: usize = MAX_BOARD_ROW_BYTES / 4;
 /// Longest session id a pad is keyed by: the board cursor's session bound.
 const SESSION_MAX_BYTES: usize = 256;
 
-/// The newest lines the board shows in full.
+/// The newest unpinned lines the board shows in full.
 const NEWEST_FULL: usize = 8;
-/// Older pinned lines the board shows in full; earlier pins fold.
-const PINNED_FULL: usize = 16;
 /// Older lines the board folds to their first words; the rest are counted.
 const FOLDED_SHOWN: usize = 16;
 /// The words an older line folds to.
@@ -292,9 +290,10 @@ fn fold_row(line: &PadLine<'_>) -> String {
     )
 }
 
-/// Pinned and newest lines in full, older lines folded to their first words
-/// and the rest counted as `older: +N`. The reader line is the section's
-/// pinned floor: the agent always sees who can read its pad.
+/// Every pinned line in full in the section's never-shed floor, beside the
+/// reader line, so the agent always sees who can read its pad and what it
+/// pinned (FIX 8146). Of the unpinned lines, the newest show in full, older
+/// ones fold to their first words and the rest count as `older: +N`.
 fn pad_section(
     pad: EntityId,
     text: &str,
@@ -305,27 +304,25 @@ fn pad_section(
         .filter(|line| !line.trim().is_empty())
         .map(parse_line)
         .collect();
-    let newest = lines.len().saturating_sub(NEWEST_FULL);
-    let mut pinned: Vec<usize> = (0..newest).filter(|&index| lines[index].pin).collect();
-    let pinned = pinned.split_off(pinned.len().saturating_sub(PINNED_FULL));
-    let older: Vec<usize> = (0..newest)
-        .filter(|index| !pinned.contains(index))
-        .collect();
-    let hidden = older.len().saturating_sub(FOLDED_SHOWN);
+    let mut floor = vec![readers];
+    floor.extend(
+        lines
+            .iter()
+            .filter(|line| line.pin)
+            .map(|line| full_row("pin", line)),
+    );
+    let unpinned: Vec<&PadLine<'_>> = lines.iter().filter(|line| !line.pin).collect();
+    let newest = unpinned.len().saturating_sub(NEWEST_FULL);
+    let hidden = newest.saturating_sub(FOLDED_SHOWN);
     let mut rows = vec![format!("pad: {} lines: {}", pad.to_hex(), lines.len())];
-    rows.extend(pinned.iter().map(|&index| full_row("pin", &lines[index])));
     if hidden > 0 {
         rows.push(format!("older: +{hidden}"));
     }
-    rows.extend(older[hidden..].iter().map(|&index| fold_row(&lines[index])));
-    rows.extend(
-        lines[newest..]
-            .iter()
-            .map(|line| full_row(if line.pin { "pin" } else { "line" }, line)),
-    );
+    rows.extend(unpinned[hidden..newest].iter().map(|line| fold_row(line)));
+    rows.extend(unpinned[newest..].iter().map(|line| full_row("line", line)));
     BoardSection::new(
         "SCRATCHPAD",
-        vec![readers],
+        floor,
         rows,
         vec![format!("count: {}", lines.len())],
         SectionPolicy {

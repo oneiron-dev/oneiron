@@ -122,6 +122,7 @@ impl MemoriesSection {
         if pinned {
             self.refinish();
         }
+        self.fence_fiction_worlds(reader)?;
         Ok(receipts)
     }
 
@@ -148,7 +149,7 @@ impl MemoriesSection {
         let mut shares = BTreeMap::<String, HookShare>::new();
         for row in &self.rows {
             let share = shares
-                .entry(memories_section_name(row.world.as_deref()))
+                .entry(memories_section_name(row.world.as_deref(), row.fiction))
                 .or_default();
             share.rows.extend(EntityId::from_hex(&row.id).ok());
             share.blocks.extend(
