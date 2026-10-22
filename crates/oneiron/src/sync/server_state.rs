@@ -108,10 +108,17 @@ pub fn persist_admitted_window_update(
 pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Vec<u8>> {
     let state = crate::sync::window::export_scrubbed_window_snapshot(vault, key, doc)?;
     let vv = doc_version_vector(doc);
+    // Its pads persist by reference where custody here holds them (FIX 7107).
+    let persisted = crate::sync::window::persisted_window_pads(vault, key, &state, None);
 
     vault.with_write_txn_grouped(|wtxn| {
         vault.fence_published_deletes_in_txn(wtxn, key.as_str(), doc)?;
-        WINDOW_SNAPSHOT.put(&vault.store, wtxn, &key.as_str().to_owned(), &state)?;
+        WINDOW_SNAPSHOT.put(
+            &vault.store,
+            wtxn,
+            &key.as_str().to_owned(),
+            &persisted.to_vec(),
+        )?;
         WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv)?;
         WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
         Ok(())

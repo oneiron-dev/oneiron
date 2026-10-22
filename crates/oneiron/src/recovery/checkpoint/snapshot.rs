@@ -148,6 +148,12 @@ impl Vault {
                     // current custody, which a restore takes it from (KS-5,
                     // FIX 5686 part 2).
                     reference
+                } else if let Some(projected) =
+                    super::window_pad_refs::image_window_pads(self, entry.name, key, value)
+                {
+                    // So does a window snapshot's, where custody here holds
+                    // its pads (FIX 7107).
+                    projected
                 } else {
                     value.to_vec()
                 };

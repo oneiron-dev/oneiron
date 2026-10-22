@@ -19,6 +19,7 @@
 //! and no ready is claimed for a pad not installed here.
 
 mod inflate;
+mod persist;
 
 use std::collections::BTreeSet;
 
@@ -37,6 +38,9 @@ use crate::world_keys::{
     WindowPadProjection, WrapRecipient, project_window_pad_refs, row_pad_in_txn,
     world_pad_recipients_in_txn,
 };
+
+pub use self::persist::persisted_window_pads;
+pub(super) use self::persist::window_row_holds;
 
 /// What becomes of an envelope's capsule that did not arrive whole or did
 /// not install (CALLS: WINDOW_PAD_PART_REPAIR, lead 10-22 14:3x).
