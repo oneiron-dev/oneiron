@@ -23,7 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/envelope/hybrid.rs` | src | s | 3 crate-vis | — | The `kem-x25519-mlkem1024-v1` capsule: ML-KEM-1024 (FIPS 203) and X25519 (RFC 7748) combined with the… |
 | `src/envelope/hybrid/tests.rs` | test | s | — | — | Every combiner input reaches the output: changing any one of them alone changes the wrap secret (the… |
 | `src/envelope/mod.rs` | src | m | 2 struct · 4 enum · 4 fn · 2 const · 1 re-export · 3 crate-vis | Envelope, Header, Kdf, Purpose, WrapParams, WrapType | The sealed envelope: its typed header, the canonical encoding and the strict parser |
-| `src/envelope/seal.rs` | src | m | 2 struct · 2 enum · 2 fn · 1 crate-vis | OpenKey, OpenPolicy, SealKey, SealParams | Sealing and opening, and the one key schedule every wrap type shares: |
+| `src/envelope/seal.rs` | src | m | 2 struct · 2 enum · 4 fn · 1 crate-vis | OpenKey, OpenPolicy, SealKey, SealParams | Sealing and opening, and the one key schedule every wrap type shares: |
 | `src/envelope/seal/tests.rs` | test | s | — | — | The HKDF key schedule's stack wipe (RustCrypto/meta#38): the bare schedule leaves its secrets below its… |
 | `src/error.rs` | src | s | 1 enum · 1 type | Error | The one error type |
 | `src/keys.rs` | src | m | 6 struct · 11 fn · 11 const · 11 crate-vis | Argon2Cost, HybridPublicKey, HybridSecretKey, Kek, Passphrase, RecoverySecret | Key material types |

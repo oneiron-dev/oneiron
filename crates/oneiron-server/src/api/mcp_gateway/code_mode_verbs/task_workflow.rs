@@ -90,6 +90,7 @@ pub(crate) fn preflight_task_workflow(
         args: args.clone(),
         base: None,
         mode: Some(LibraryRunMode::Strict),
+        secret_args: BTreeMap::new(),
     };
     let input = match serde_json::to_value(input) {
         Ok(input) => input,
