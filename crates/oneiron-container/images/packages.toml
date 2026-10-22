@@ -11,8 +11,9 @@
 # (an external source compiled there too, offline, from its pinned archive and
 # its own Cargo store), `files` (pinned repo files), `payloads` (pinned
 # downloads), `launchers` (a two-line /bin/sh exec of a pinned runtime on a
-# pinned entry), `trees`, `links`, `dirs`, `owners` (explicit ownership rules)
-# and `image` (the OCI run config).
+# pinned entry), `trees`, `links`, `dirs`, `empty_files` (an empty regular
+# file, never a link: a mountpoint a boot covers with a file bind mount),
+# `owners` (explicit ownership rules) and `image` (the OCI run config).
 # mkosi always installs Debian's essential set and base-files; a list names
 # only what comes on top.
 schema = 1
@@ -105,12 +106,12 @@ entrypoint = ["/usr/local/bin/oneiron-guest", "--container"]
 [variants.vault]
 # The vault is its own trust domain: no guest plumbing, its own PID 1.
 plumbing = false
-# sh, cat, head and sync come with the essential set; mount and umount here.
-packages = ["mount"]
-unresolved = [
-  "reboot: deploy/firecracker/oneiron-vault-init runs `reboot -f`; no Debian package for it without an init system is chosen yet",
-  "the empty 0644 resolver mountpoint deploy/firecracker/build.py stages",
-]
+# The init's tools (deploy/firecracker/build.py TOOLS): sh, cat, head and sync
+# come with the essential set; mount and umount with `mount`; `reboot -f` is
+# busybox's reboot applet, which with -f makes the reboot call itself, no init
+# system asked (FIX 8978). One link, not `busybox --install`, and no setuid.
+packages = ["busybox", "mount"]
+links = [{ path = "/usr/bin/reboot", target = "/usr/bin/busybox" }]
 files = [{ pin = "vault-init", dest = "/usr/sbin/oneiron-vault-init", mode = "0755" }]
 dirs = [
   { path = "/vault" },
@@ -118,6 +119,10 @@ dirs = [
   { path = "/restore" },
   { path = "/etc/oneiron" },
 ]
+# The resolver mountpoint: the guest network writes its nameservers to a
+# runtime file and bind-mounts that file over this empty one
+# (crates/oneiron-server/src/managed/vm_init/network.rs), as build.py stages it.
+empty_files = [{ path = "/etc/resolv.conf", mode = "0644" }]
 native = [
   { package = "oneiron-server", bin = "oneiron-server", dest = "/usr/bin/oneiron-server" },
   { package = "oneiron-server", bin = "oneiron-broker", dest = "/usr/bin/oneiron-broker" },
