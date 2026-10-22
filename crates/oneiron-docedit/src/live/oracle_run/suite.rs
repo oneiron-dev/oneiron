@@ -234,5 +234,6 @@ fn noop_case(
         lane,
         checks: owed,
         baseline: &deck.defects,
+        origin: &deck.bytes,
     })
 }
