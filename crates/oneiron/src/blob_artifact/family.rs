@@ -10,8 +10,9 @@ use crate::Vault;
 use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::lens::RecordRef;
 use crate::provenance::made_by::MadeBy;
-use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CODE_ARTIFACT};
+use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT};
 
 use super::born_from::BornFromSource;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
@@ -80,6 +81,9 @@ pub struct ArtifactVersionView {
     pub export_media_type: String,
     pub made_by: MadeBy,
     pub born_from: Vec<BornFromSource>,
+    /// The version's `blob.version` LEDGER claim as a typed record ref
+    /// (OF-063), built from its id with no read.
+    pub claim: RecordRef,
 }
 
 impl From<&BlobArtifactVersion> for ArtifactVersionView {
@@ -96,6 +100,7 @@ impl From<&BlobArtifactVersion> for ArtifactVersionView {
             export_media_type: version.export_media_type.clone(),
             made_by: version.made_by.clone(),
             born_from: BornFromSource::of_version(version),
+            claim: RecordRef::from_id(ENTITY_TYPE_CLAIM, &version.claim_id, None),
         }
     }
 }

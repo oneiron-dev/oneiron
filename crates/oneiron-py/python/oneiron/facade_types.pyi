@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1142 facade rows, 4008 declarations.
-Inputs: 1076 of 1142 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1028 of 1142 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 110; unread shapes: 0.
+Census: 1147 facade rows, 4046 declarations.
+Inputs: 1082 of 1147 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1033 of 1147 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2411,11 +2411,16 @@ class StreamFinalityReasonIdleTimeout(TypedDict):
 class StreamFinalityReasonCustom(TypedDict):
     custom: str
 StreamFinalityReason = Literal["explicit_finalize", "idle_timeout30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
+IncompleteReason = Literal["terminal_disagreement"]
 class FinishReasonOtherBody(TypedDict):
     name: str
 class FinishReasonOther(TypedDict):
     other: FinishReasonOtherBody
-FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther
+class FinishReasonIncompleteBody(TypedDict):
+    reason: IncompleteReason
+class FinishReasonIncomplete(TypedDict):
+    incomplete: FinishReasonIncompleteBody
+FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther | FinishReasonIncomplete
 class MessageStreamReceipt(TypedDict):
     message_id: EntityId
     actor: EntityId
@@ -5663,6 +5668,121 @@ class ConnectorSlateNarrowView(TypedDict):
     settings: dict[str, SlateDisposition]
     facets: NotRequired[list[str] | None]
     narrows: dict[str, SlateHolderNarrow]
+ConnectorScopeOutcome = Literal["approved_untouched", "approved_amended", "rejected"]
+class ConnectorScopeOutcomeRequest(TypedDict):
+    signal_ref: str
+    linked_ruling: str
+    outcome: ConnectorScopeOutcome
+class ConnectorScopeExceedEndpointBody(TypedDict):
+    requested: str
+class ConnectorScopeExceedEndpoint(TypedDict):
+    endpoint: ConnectorScopeExceedEndpointBody
+class ConnectorScopeExceedPayloadClassBody(TypedDict):
+    requested: DataClass
+    ceiling: DataClass
+class ConnectorScopeExceedPayloadClass(TypedDict):
+    payload_class: ConnectorScopeExceedPayloadClassBody
+class ConnectorScopeExceedToolDataClassBody(TypedDict):
+    requested: str
+class ConnectorScopeExceedToolDataClass(TypedDict):
+    tool_data_class: ConnectorScopeExceedToolDataClassBody
+ConnectorScopeExceed = ConnectorScopeExceedEndpoint | ConnectorScopeExceedPayloadClass | ConnectorScopeExceedToolDataClass
+class ConnectorScopeSignalView(TypedDict):
+    signal_ref: str
+    call_ref: str
+    connector: str
+    tool: str
+    key_ref: str
+    grant_id: str
+    actor: str
+    exceed: ConnectorScopeExceed
+    observed_at: int
+    ruling: NotRequired[ConnectorScopeOutcome | None]
+    proposal_ref: NotRequired[str | None]
+class ConnectorScopeOutcomeView(TypedDict):
+    signal: ConnectorScopeSignalView
+    untouched_streak: int
+    amended: int
+    rejected: int
+    proposal_ref: NotRequired[str | None]
+class ConnectorSlateRevisionOffersRequest(TypedDict):
+    connector: NotRequired[str | None]
+class ConnectorSlateRevisionCauseViewManifestDrift(TypedDict):
+    kind: Literal["manifest_drift"]
+class ConnectorSlateRevisionCauseViewScopeExceed(TypedDict):
+    kind: Literal["scope_exceed"]
+    signal_ref: str
+    key_ref: str
+    actor: str
+    generation: str
+    tool: str
+    exceed: ConnectorScopeExceed
+class ConnectorSlateRevisionCauseViewCredentialIssuerChanged(TypedDict):
+    kind: Literal["credential_issuer_changed"]
+    binding_ref: str
+    expected_generation: int
+    old_issuer: str
+    new_issuer: str
+    proposed_credential_ref: str
+    dependent_rows: list[str]
+ConnectorSlateRevisionCauseView = ConnectorSlateRevisionCauseViewManifestDrift | ConnectorSlateRevisionCauseViewScopeExceed | ConnectorSlateRevisionCauseViewCredentialIssuerChanged
+class ConnectorSlateRevisionOfferView(TypedDict):
+    proposal_ref: NotRequired[str | None]
+    proposal_revision: NotRequired[int | None]
+    prior_ref: NotRequired[str | None]
+    connector: str
+    reask: list[str]
+    cause: ConnectorSlateRevisionCauseView
+class ConnectorSlateRevisionOffersView(TypedDict):
+    offers: list[ConnectorSlateRevisionOfferView]
+ConnectorRevisionDeferral = Literal["not_now", "manual_pinned", "unpin"]
+class ConnectorSlateRevisionDeferRequest(TypedDict):
+    signal_ref: str
+    deferral: ConnectorRevisionDeferral
+class ConnectorRevisionSnoozeViewSurfacing(TypedDict):
+    state: Literal["surfacing"]
+class ConnectorRevisionSnoozeViewSnoozed(TypedDict):
+    state: Literal["snoozed"]
+    count: int
+    next_eligible_at: int
+class ConnectorRevisionSnoozeViewManualPinned(TypedDict):
+    state: Literal["manual_pinned"]
+ConnectorRevisionSnoozeView = ConnectorRevisionSnoozeViewSurfacing | ConnectorRevisionSnoozeViewSnoozed | ConnectorRevisionSnoozeViewManualPinned
+class ConnectorSlateRevisionAcceptRequest(TypedDict):
+    slate_ref: str
+    expected_revision: int
+class ConnectorRevisionGrantView(TypedDict):
+    tool: str
+    grant_id: str
+    key_id: str
+    key_connector: str
+class ConnectorSlateRevisionAcceptedView(TypedDict):
+    slate_ref: str
+    revision: int
+    cause: ConnectorSlateRevisionCauseView
+    grants: list[ConnectorRevisionGrantView]
+class ConnectorBindingDependentView(TypedDict):
+    key_ref: str
+    tool: NotRequired[str | None]
+class ConnectorIssuerReaskRequest(TypedDict):
+    connector: str
+    slot: str
+    issuer: str
+    credential_ref: str
+    expected_generation: int
+    dependents: NotRequired[list[ConnectorBindingDependentView]]
+    witness: str
+class ConnectorCredentialBindingView(TypedDict):
+    binding_ref: str
+    connector: str
+    slot: str
+    issuer: str
+    credential_ref: str
+    generation: int
+    dependents: list[ConnectorBindingDependentView]
+    changed_to: NotRequired[str | None]
+    change_state: NotRequired[str | None]
+    proposal_ref: NotRequired[str | None]
 class ChannelSubscriptionRequest(TypedDict):
     agent: str
     channel: str
@@ -10124,6 +10244,7 @@ class ArtifactVersionView(TypedDict):
     export_media_type: str
     made_by: MadeBy
     born_from: list[BornFromSource]
+    claim: RecordRef
 class ArtifactView(TypedDict):
     artifact_id: EntityId
     kind: ArtifactKind
@@ -12534,12 +12655,16 @@ class BornFromArtifact(TypedDict):
     artifact_id: EntityId
     version: int
     at: int
+    artifact: RecordRef
+    claim: RecordRef
 class BornFromView(TypedDict):
     born: list[EntityId]
+    born_records: list[RecordRef]
     versions: list[BornFromArtifact]
 PendingProposalKind = Literal["edit", "output"]
 class PendingProposalView(TypedDict):
     artifact_id: EntityId
+    artifact: RecordRef
     proposal_ref: str
     kind: PendingProposalKind
     base_version: NotRequired[int | None]
@@ -12567,8 +12692,13 @@ class ProposalSettleRequest(TypedDict):
     reason: NotRequired[str | None]
 class ReleasedWait(TypedDict):
     released: bool
+class PptxCommentTarget(TypedDict):
+    slide: int
+    slide_creation_id: NotRequired[int | None]
+    shape_creation_id: NotRequired[str | None]
+    shape_fingerprint: NotRequired[list[int] | None]
 class SlideReviewUnitInput(TypedDict):
-    target: Any
+    target: PptxCommentTarget
     review_image: NotRequired[str | None]
     review_image_ref: NotRequired[str | None]
     renderer: str
@@ -12588,25 +12718,134 @@ class AnswerContractPoint(TypedDict):
     kind: Literal["point"]
 AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox | AnswerContractPoint
 DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
+class PptxAuthor(TypedDict):
+    guid: str
+    name: str
+class SlideReviewLabels(TypedDict):
+    yes: str
+    no: str
+    low: str
+    middle: str
+    high: str
 class SlideReviewSubmit(TypedDict):
     artifact_ref: str
     run_ref: str
     units: list[SlideReviewUnitInput]
     question: DecisionQuestion
-    author: Any
-    labels: Any
-    reversibility: NotRequired[Any | None]
+    author: PptxAuthor
+    labels: SlideReviewLabels
+    reversibility: NotRequired[Reversibility | None]
     evidence_refs: NotRequired[list[str]]
     unit_budget_ms: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
-    made_by: NotRequired[Any | None]
+    made_by: NotRequired[MadeBy | None]
+class ShapeReviewAnchor(TypedDict):
+    node_part: str
+    node_index: int
+    shape_id: NotRequired[int | None]
+    fingerprint: list[int]
+class SlideReviewAnchor(TypedDict):
+    slide_part: str
+    sld_id: int
+    slide_fingerprint: list[int]
+    render_fingerprint: list[int]
+    shape: NotRequired[ShapeReviewAnchor | None]
+class SlideLocation(TypedDict):
+    slide_width: int
+    slide_height: int
+    left: int
+    top: int
+    right: int
+    bottom: int
+BandMode = Literal["shadow", "enforce"]
+class ImageRef(TypedDict):
+    evidence: EvidenceVersion
+    hash: list[int]
+    media_type: str
+    width: int
+    height: int
+    frame: NotRequired[PixelRegion | None]
+class SpeechSpan(TypedDict):
+    start_ms: int
+    end_ms: int
+class SourceSpan(TypedDict):
+    source_start_ms: int
+    source_end_ms: int
+    pack_start_ms: int
+    pack_end_ms: int
+class SpeakerTrack(TypedDict):
+    start_ms: int
+    end_ms: int
+    speaker_cluster: str
+class AudioRef(TypedDict):
+    evidence: EvidenceVersion
+    media_type: str
+    duration_ms: int
+    window: SpeechSpan
+    source_spans: NotRequired[list[SourceSpan]]
+    speakers: NotRequired[list[SpeakerTrack]]
+class DecisionMediaRefImage(TypedDict):
+    image: ImageRef
+class DecisionMediaRefAudio(TypedDict):
+    audio: AudioRef
+DecisionMediaRef = DecisionMediaRefImage | DecisionMediaRefAudio
+MediaServed = Literal["full", "no_image_reader", "audio_unsupported", "no_audio_reader"]
+class DecisionMedia(TypedDict):
+    name: str
+    reference: DecisionMediaRef
+    served: MediaServed
+class SlideJudgment(TypedDict):
+    thread_id: EntityId
+    target: PptxCommentTarget
+    anchor: SlideReviewAnchor
+    decision: TypedDecision
+    answer_contract: AnswerContract
+    presence: NotRequired[TypedDecision | None]
+    location: NotRequired[SlideLocation | None]
+    band_mode: BandMode
+    renderer: str
+    frontier: list[int]
+    media: NotRequired[list[DecisionMedia]]
+    render_hash: list[int]
+    evidence_hash: list[int]
+    judged_version: NotRequired[int | None]
+    comment: str
+    labels: SlideReviewLabels
+class PptxCommentActionAddBody(TypedDict):
+    target: PptxCommentTarget
+    text: str
+class PptxCommentActionAdd(TypedDict):
+    add: PptxCommentActionAddBody
+class PptxCommentActionReplyBody(TypedDict):
+    text: str
+class PptxCommentActionReply(TypedDict):
+    reply: PptxCommentActionReplyBody
+class PptxCommentActionResolveBody(TypedDict):
+    resolved: bool
+class PptxCommentActionResolve(TypedDict):
+    resolve: PptxCommentActionResolveBody
+PptxCommentAction = PptxCommentActionAdd | PptxCommentActionReply | PptxCommentActionResolve
+class PptxCommentPatch(TypedDict):
+    asked_by: str
+    answered_by: str
+    author: PptxAuthor
+    thread_id: str
+    comment_id: str
+    at: int
+    action: PptxCommentAction
+class SlideAbstention(TypedDict):
+    target: PptxCommentTarget
+    decision: NotRequired[TypedDecision | None]
+SlideUnitRefusalReason = Literal["MissingShape", "AmbiguousShape", "TargetChanged", "UnresolvedGeometry", "EvidenceBudget", "UnreadableImage"]
 class SlideUnitRefused(TypedDict):
-    target: Any
-    reason: str
-    offer: NotRequired[Any | None]
+    target: PptxCommentTarget
+    reason: SlideUnitRefusalReason
+    offer: NotRequired[PptxCommentTarget | None]
 class SlideReviewOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
-    abstained: list[Any]
+    judgments: list[SlideJudgment]
+    comments: list[PptxCommentPatch]
+    abstained: list[SlideAbstention]
     refused: list[SlideUnitRefused]
 class FolderItemInput(TypedDict):
     artifact_ref: str
@@ -13385,7 +13624,7 @@ class NativeOutputRequest(TypedDict):
     media_type: str
     content_base64: str
     report: NotRequired[Any]
-    made_by: NotRequired[Any | None]
+    made_by: NotRequired[MadeBy | None]
 class VersionReconciliation(TypedDict):
     base_version: int
     kept_head: ArtifactVersionView
@@ -15574,7 +15813,6 @@ class DecisionBandReadRequest(TypedDict):
     question: DecisionQuestion
     reversibility: Reversibility
     seed: DecisionBand
-BandMode = Literal["shadow", "enforce"]
 class LearnedBand(TypedDict):
     band: DecisionBand
     version: int
