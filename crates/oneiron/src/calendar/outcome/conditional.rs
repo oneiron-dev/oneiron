@@ -1,3 +1,7 @@
+//! Conditional calendar event outcome writes.
+//! Entry: `record_event_outcome_in_txn`.
+//! Defines its own items.
+
 use super::*;
 
 pub(super) fn record_event_outcome_in_txn(

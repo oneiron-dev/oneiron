@@ -1,3 +1,7 @@
+//! Skill hub import, update and dependency doors.
+//! Entry: `Vault::sync_skill_from_hub`.
+//! Defines its own items.
+
 use rmpv::Value;
 
 use crate::Vault;
@@ -433,39 +437,7 @@ impl Vault {
             self.dependency_advisories(content_hash, &inventory, query, learned_at)?;
         let mut wtxn = self.store.env.write_txn()?;
         let current = self.read_skill_record_in_txn(&wtxn, entity)?;
-        if current.source != ClaimSource::Imported
-            || package.record.source != ClaimSource::Imported
-            || current.skill_id != package.record.skill_id
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "hub sync package must match an imported skill",
-            )));
-        }
-        if package
-            .record
-            .content_hash
-            .is_some_and(|declared| declared != content_hash)
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "package content hash does not match its canonical file tree",
-            )));
-        }
-        // A content-hash pin binds the ref's identity on every sync path, not only under the
-        // frozen policy (mirrors the import door at import_skill_from_hub_with_id).
-        if let HubPin::ContentHash(pinned) = &hub_ref.pin
-            && SkillContentHash::parse_hex(pinned)? != content_hash
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "content-hash-pinned ref drifted",
-            )));
-        }
-        if sync_policy == HubSyncPolicy::ContentHashFrozen
-            && !matches!(&hub_ref.pin, HubPin::ContentHash(_))
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "content-hash-frozen policy requires a content_hash pin",
-            )));
-        }
+        validate_sync_package(&current, package, hub_ref, content_hash, sync_policy)?;
         if !sync_policy.allows_automatic_update() {
             return Ok(HubSyncDisposition::RefusedByPolicy);
         }
@@ -569,24 +541,7 @@ impl Vault {
             return Ok(HubSyncDisposition::RefusedByPolicy);
         }
 
-        let mut updated = package.record.clone();
-        // Hub sync mutates content fields; canonical approval/lifecycle state stays local.
-        updated.approval_status = current.approval_status;
-        updated.lifecycle_status = current.lifecycle_status;
-        // ONE-1448: `governance_tier` is the THIRD state axis — `skill.rs`'s
-        // `skill_content_changed` normalizes it away beside the first two, and
-        // it is the OWNER's axis in the same way they are. The mark says what
-        // the local automated edit loop may do WITH these instructions, never
-        // what the instructions ARE, so upstream has nothing to say about it:
-        // taking it from the package would let a revision that merely omits
-        // the key (the wire elides an absent mark) delete an owner's Identity
-        // mark, and an unmarked record carrying a hub-provenance alias then
-        // resolves to `LegacyStandard`
-        // ([`crate::skill_optimize::skill_governance_tier`]) — i.e. straight
-        // back into the loop the mark existed to keep it out of. The owner
-        // moves this axis through the ordinary update door; sync never does.
-        updated.governance_tier = current.governance_tier;
-        updated.content_hash = Some(content_hash);
+        let mut updated = local_sync_record(package, &current, content_hash);
         self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
         self.write_admitted_capability_surface_in_txn(&mut wtxn, entity, &package.capabilities)?;
         if content_hash_changed {
@@ -665,4 +620,77 @@ impl Vault {
         )
         .map(HubDependencyResolution::Materialized)
     }
+}
+
+/// The identity, content-hash and pin checks a hub sync package must pass
+/// before its sync policy is consulted.
+fn validate_sync_package(
+    current: &crate::skill::SkillRecord,
+    package: &HubPackage,
+    hub_ref: &HubRef,
+    content_hash: SkillContentHash,
+    sync_policy: HubSyncPolicy,
+) -> Result<()> {
+    if current.source != ClaimSource::Imported
+        || package.record.source != ClaimSource::Imported
+        || current.skill_id != package.record.skill_id
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "hub sync package must match an imported skill",
+        )));
+    }
+    if package
+        .record
+        .content_hash
+        .is_some_and(|declared| declared != content_hash)
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "package content hash does not match its canonical file tree",
+        )));
+    }
+    // A content-hash pin binds the ref's identity on every sync path, not only under the
+    // frozen policy (mirrors the import door at import_skill_from_hub_with_id).
+    if let HubPin::ContentHash(pinned) = &hub_ref.pin
+        && SkillContentHash::parse_hex(pinned)? != content_hash
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "content-hash-pinned ref drifted",
+        )));
+    }
+    if sync_policy == HubSyncPolicy::ContentHashFrozen
+        && !matches!(&hub_ref.pin, HubPin::ContentHash(_))
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "content-hash-frozen policy requires a content_hash pin",
+        )));
+    }
+    Ok(())
+}
+
+/// The package record a hub sync writes, with the local approval, lifecycle
+/// and governance axes kept from `current`.
+fn local_sync_record(
+    package: &HubPackage,
+    current: &crate::skill::SkillRecord,
+    content_hash: SkillContentHash,
+) -> crate::skill::SkillRecord {
+    let mut updated = package.record.clone();
+    // Hub sync mutates content fields; canonical approval/lifecycle state stays local.
+    updated.approval_status = current.approval_status;
+    updated.lifecycle_status = current.lifecycle_status;
+    // ONE-1448: `governance_tier` is the THIRD state axis — `skill.rs`'s
+    // `skill_content_changed` normalizes it away beside the first two, and
+    // it is the OWNER's axis in the same way they are. The mark says what
+    // the local automated edit loop may do WITH these instructions, never
+    // what the instructions ARE, so upstream has nothing to say about it:
+    // taking it from the package would let a revision that merely omits
+    // the key (the wire elides an absent mark) delete an owner's Identity
+    // mark, and an unmarked record carrying a hub-provenance alias then
+    // resolves to `LegacyStandard`
+    // ([`crate::skill_optimize::skill_governance_tier`]) — i.e. straight
+    // back into the loop the mark existed to keep it out of. The owner
+    // moves this axis through the ordinary update door; sync never does.
+    updated.governance_tier = current.governance_tier;
+    updated.content_hash = Some(content_hash);
+    updated
 }

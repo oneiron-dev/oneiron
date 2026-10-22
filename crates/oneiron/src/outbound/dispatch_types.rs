@@ -1,3 +1,7 @@
+//! Outbound dispatch inputs and outcomes.
+//! Entry: `OutboundDispatchRequest`.
+//! Defines its own items.
+
 use std::collections::BTreeMap;
 
 use super::OutboundDeliveryWindowDecision;

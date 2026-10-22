@@ -1,3 +1,7 @@
+//! Emergency reschedule state and home-authority reads.
+//! Entry: `verify_owner_home_in`.
+//! Defines its own items.
+
 use super::*;
 use crate::ports::EntityStoreRead;
 

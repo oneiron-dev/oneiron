@@ -1,3 +1,7 @@
+//! Connector key index keys and transaction primitives.
+//! Entry: `ConnectorIndexKey`.
+//! Defines its own items.
+
 use crate::ports::EntityStoreRead;
 use sha2::Digest;
 use std::io::Cursor;

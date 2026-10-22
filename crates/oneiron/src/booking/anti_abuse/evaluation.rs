@@ -1,3 +1,7 @@
+//! Pure booking abuse evaluation over one request's facts.
+//! Entry: `BookingRequestFacts`.
+//! Defines its own items.
+
 use std::num::{NonZeroU32, NonZeroU64};
 
 use super::rules::{BookingAntiAbuseRule, BookingAntiAbuseRuleRow};

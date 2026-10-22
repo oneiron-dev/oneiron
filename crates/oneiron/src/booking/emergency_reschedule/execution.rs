@@ -1,3 +1,7 @@
+//! Emergency reschedule effect delivery.
+//! Entry: `execute_emergency_plan`.
+//! Defines its own items.
+
 use super::*;
 
 /// Commits locally on the home node, then consumes the real CAL outcome and

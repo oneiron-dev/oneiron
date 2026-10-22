@@ -1,3 +1,7 @@
+//! Skill provenance and capability indexes.
+//! Entry: `PREDICATE_SKILL_HUB_PROVENANCE`.
+//! Defines its own items.
+
 use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
 

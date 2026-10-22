@@ -28,6 +28,10 @@
 //! job ([`CAL_RRULE_ROUTE`]); a second parser vendored here is precisely the
 //! fork the shared vocabulary exists to prevent, so the arm returns
 //! [`ScheduleError::RruleNotImplemented`] and names the route instead.
+//!
+//! Glossary: this [`Schedule`] is the commitment recurrence (when an obligation
+//! falls due). It is not the wake `Schedule` of `oneiron_vault_contract::wake`,
+//! which says when the driver wakes.
 
 mod due;
 mod payload;

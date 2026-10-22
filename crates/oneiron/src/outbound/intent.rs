@@ -1,3 +1,7 @@
+//! Outbound intent wire vocabulary.
+//! Entry: `OutboundIntent`.
+//! Defines its own items.
+
 use serde::{Deserialize, Serialize};
 
 pub use crate::dreamer_runner::maintenance::identity::MentionProvenance;

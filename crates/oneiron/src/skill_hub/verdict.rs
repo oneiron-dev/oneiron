@@ -1,3 +1,7 @@
+//! Skill scan verdict admission.
+//! Entry: `PREDICATE_SKILL_SCAN_VERDICT`.
+//! Defines its own items.
+
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use rmpv::Value;
