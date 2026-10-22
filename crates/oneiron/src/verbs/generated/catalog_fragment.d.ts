@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4187 declarations.
+// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4189 declarations.
 // Replies: 1085 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
@@ -222,7 +222,9 @@ declare namespace Sdk {
   type ShapeApprovalDependencies = { digest: string };
   type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState; approval?: ShapeApprovalDependencies | null };
   type ShapeApplyRun = { run_id: string; root: string; items: string[] };
-  type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean; run: ShapeApplyRun };
+  type ShapeLearningSetting = { on: boolean; revision: string; act?: string | null };
+  type ShapeLearningOutcome = { requested: boolean; written: boolean; ignored: boolean; resulting?: ShapeLearningSetting | null; reason?: string | null };
+  type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean; run: ShapeApplyRun; conversation_learning?: ShapeLearningOutcome | null };
   type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
   type ShapePresetMember = { member: string; role?: ShapeMemberRole | null };
   type ShapePresetPick = { preset: ShapePreset; vault_id: string; members?: ShapePresetMember[] };
@@ -233,7 +235,7 @@ declare namespace Sdk {
   type ShapeReach = { facts: ShapeReachFact[] };
   type ShapePlanReach = { before: ShapeReach; after: ShapeReach; unresolved: string[]; line: string };
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
-  type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
+  type ShapeApplyRequest = { plan: ShapePlan; approve?: number[]; conversation_learning?: boolean | null };
   type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null; from_project?: string | null; to_project?: string | null };
   type WitnessReceipt = { turn_short_id: string; message_short_ids: string[]; receipt_ref: string; turn?: RecordRef | null; messages?: RecordRef[] };
   type MessagePersonReceipt = { room: string; receipt: WitnessReceipt };
