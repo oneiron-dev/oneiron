@@ -548,7 +548,7 @@ fn source_key(source: &EntityId, digest_key: &[u8]) -> Vec<u8> {
 
 /// One saved period's row in `txn`, copied out.
 fn digest_row_in(store: &Store, txn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Option<Vec<u8>>> {
-    Ok(store.vault_meta.get(txn, key)?.map(<[u8]>::to_vec))
+    Ok(store.vault_meta.get(txn, key)?.map(|raw| raw.to_vec()))
 }
 
 /// Writes one saved period's row.
