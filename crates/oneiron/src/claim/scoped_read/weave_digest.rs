@@ -24,6 +24,8 @@ use crate::{EdgeKind, EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+// An in-Grant agent's ack of an owner's due notice (FIX 5778).
+mod acknowledgements;
 // The owner's digest settings and the Coach's changes to them (FIX 5495).
 mod changes;
 mod coach;
