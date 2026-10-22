@@ -24,7 +24,7 @@
 
 #![allow(
     dead_code,
-    reason = "FIX 7608 slice 2b-i: preparation only; slice 2b-ii is the first caller"
+    reason = "FIX 7608: the exact-source proof and some accessors wait for later slices"
 )]
 
 use std::path::PathBuf;
@@ -160,6 +160,14 @@ impl RepoGitProjection {
         self.lifetime
     }
 
+    /// The canonical store the copy stands for.
+    pub(crate) fn store_id(&self) -> Option<EntityId> {
+        match &self.graph.record {
+            RepoProjectionRecord::Graph { store_id, .. } => Some(*store_id),
+            _ => None,
+        }
+    }
+
     /// Each root's copy whose bytes differ from its original's (FIX 7608
     /// 2b-ii): the copy commits a received push's old tip and incoming
     /// history are classified against. An identity root names none.
@@ -253,7 +261,9 @@ pub(crate) fn materialize_masked_git_graph(
     let Some(inputs) = projection_inputs(vault, canonical, roots)? else {
         return Ok(None);
     };
-    if let Some(standing) = standing_projection(vault, wire, &inputs, roots)? {
+    if let Some(standing) =
+        standing_projection(vault, wire, &inputs.graph, inputs.store_id, roots)?
+    {
         return Ok(Some(standing));
     }
     let dir = graph_dir(vault, inputs.store_id, inputs.graph.graph)?;
@@ -294,7 +304,7 @@ pub(crate) fn load_repo_git_projection(
     roots: &RepoGitProjectionRoots,
 ) -> Result<Option<RepoGitProjection>> {
     match projection_inputs(vault, canonical, roots)? {
-        Some(inputs) => standing_projection(vault, wire, &inputs, roots),
+        Some(inputs) => standing_projection(vault, wire, &inputs.graph, inputs.store_id, roots),
         None => Ok(None),
     }
 }
@@ -325,19 +335,97 @@ pub(crate) fn admit_repo_git_projection_in_txn(
     Ok(facts.ids()? == *marks)
 }
 
+/// The masked copy the graph record `graph` names, reopened from its own
+/// record (its roots and the marks it was made under) and admitted afresh
+/// (FIX 7608 2b-ii-B2): a lease's or an ingress's copy, which today's
+/// Published roots may no longer key. `None` when its record or its store
+/// no longer stands, or the readable marks moved.
+///
+/// # Errors
+/// A store failure, or a record that does not decode.
+pub(crate) fn reopen_repo_git_projection(
+    vault: &Vault,
+    wire: &GitWire<'_>,
+    graph: &EntityId,
+) -> Result<Option<RepoGitProjection>> {
+    let claim = {
+        let txn = vault.store.env.read_txn()?;
+        RepoProjectionClaim::load_graph_in_txn(vault, &txn, graph)?
+    };
+    let Some(claim) = claim else {
+        return Ok(None);
+    };
+    let RepoProjectionRecord::Graph {
+        store_id,
+        roots,
+        private_root,
+        ..
+    } = &claim.record
+    else {
+        return Ok(None);
+    };
+    let published = roots
+        .iter()
+        .map(|(name, original)| Ok((GitRefName::parse_full(name.clone())?, original.clone())))
+        .collect::<Result<Vec<_>>>()?;
+    let roots = RepoGitProjectionRoots::new(published, private_root.clone())?;
+    standing_projection(vault, wire, &claim, *store_id, &roots)
+}
+
+/// The private ingress directory of the copy `graph` of the canonical store
+/// `store_id` (FIX 7608 2b-ii-B2): beside its copies, one per copy, kept
+/// while a push it received is pending.
+///
+/// # Errors
+/// A directory that cannot be made.
+pub(crate) fn projection_ingress_dir(
+    vault: &Vault,
+    store_id: EntityId,
+    graph: EntityId,
+) -> Result<PathBuf> {
+    Ok(projection_ingress_root(vault, store_id)?.join(graph.to_hex()))
+}
+
+/// The directory every private ingress of the canonical store `store_id`
+/// lives under.
+///
+/// # Errors
+/// A directory that cannot be made.
+pub(crate) fn projection_ingress_root(vault: &Vault, store_id: EntityId) -> Result<PathBuf> {
+    Ok(repo_secret_projection_root(vault)?
+        .join(store_id.to_hex())
+        .join(PROJECTION_INGRESS_DIR))
+}
+
+/// The directory a store's private ingresses live under, beside its copies.
+const PROJECTION_INGRESS_DIR: &str = "ingress";
+
+/// The directory of the copy `graph` of the canonical store `store_id`.
+///
+/// # Errors
+/// A directory that cannot be made.
+pub(crate) fn projection_graph_dir(
+    vault: &Vault,
+    store_id: EntityId,
+    graph: EntityId,
+) -> Result<PathBuf> {
+    graph_dir(vault, store_id, graph)
+}
+
 fn standing_projection(
     vault: &Vault,
     wire: &GitWire<'_>,
-    inputs: &ProjectionInputs,
+    graph: &RepoProjectionClaim,
+    store_id: EntityId,
     roots: &RepoGitProjectionRoots,
 ) -> Result<Option<RepoGitProjection>> {
     {
         let txn = vault.store.env.read_txn()?;
-        if RepoProjectionClaim::load_graph_in_txn(vault, &txn, &inputs.graph.graph)?.is_none() {
+        if RepoProjectionClaim::load_graph_in_txn(vault, &txn, &graph.graph)?.is_none() {
             return Ok(None);
         }
     }
-    let dir = graph_dir(vault, inputs.store_id, inputs.graph.graph)?;
+    let dir = graph_dir(vault, store_id, graph.graph)?;
     let Some(copy_store) = wire.existing_projection_store(&dir)? else {
         return Ok(None);
     };
@@ -368,7 +456,7 @@ fn standing_projection(
         refs.push((seen.name, original.clone(), copy));
     }
     let projection = RepoGitProjection {
-        graph: inputs.graph.clone(),
+        graph: graph.clone(),
         store_root: copy_store.repo_root().to_path_buf(),
         refs,
         private_root,

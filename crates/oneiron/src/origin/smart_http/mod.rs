@@ -132,6 +132,7 @@ pub use self::paths::{
 };
 pub use self::push_admission::{admit_receive_pack, serve_bounded_as};
 pub use self::recipient_serve::{RepoGitReadContext, serve_bounded_for_recipient};
+pub(crate) use self::recipient_serve::store_holds_readable_marks_in_txn;
 pub use self::secret_marks::ReceiveSecretMarks;
 pub use self::serve::{
     ServeReport, ServeSink, push_queue_key, serve, serve_bounded, serve_bounded_with_authority,
