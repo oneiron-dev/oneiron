@@ -1599,13 +1599,13 @@ export type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[];
 /** `oneiron::claim::scoped_read::weave_serve::WeaveReportRequest` */
 export type WeaveReportRequest = { sections: WeaveSectionInput[] }
 /** `oneiron::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveDiscoveryView` */
-export type WeaveSieveDiscoveryView = { start: number; end: number; kind: string; confidence: number }
+export type WeaveSieveDiscoveryView = { start?: number | null; end?: number | null; kind: string; confidence: number; discovery_ref: string; unlocated?: string | null; quote?: string | null }
 /** `oneiron::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveFindingView` */
 export type WeaveSieveFindingView = { expectation: string; window_ref: string; turn_ref: string; source_ref: string; start: number; end: number; discovered: WeaveSieveDiscoveryView[]; agrees: boolean; audited_at: number }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveItemView` */
 export type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard; draft_erased?: boolean } | { item: "sieve_audit"; attempt_ref: string; span_ref: string; turn_ref: string; source_ref: string; expected_kind: string; actual_kind: string; expected_entity_ref?: string | null; actual_entity_ref?: string | null; novel: boolean; confidence: number; agrees: boolean; audited_at: number } | { item: "sieve_window_audit"; attempt_ref: string; finding: WeaveSieveFindingView } | { item: "loop_decision"; decision_ref: string; created_at: number; family: string; kind: string; outcome: string; reason_codes: string[]; redacted: boolean; claim_ref?: string | null; actor_ref?: string | null; evidence_refs: string[] }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveSieveScoreView` */
-export type WeaveSieveScoreView = { sampled: number; agreeing: number }
+export type WeaveSieveScoreView = { sampled: number; agreeing: number; discoveries: number }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveSectionView` */
 export type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[]; sieve_score?: WeaveSieveScoreView | null }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveReportView` */
