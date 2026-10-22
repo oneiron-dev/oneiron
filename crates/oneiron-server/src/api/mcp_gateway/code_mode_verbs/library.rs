@@ -3,6 +3,8 @@
 //! The code_mode_verbs root defines `VaultLibrary`; `oneiron::browser_library` owns the records.
 
 use super::*;
+use oneiron::browser_library::FiledScope;
+use oneiron_browser::program_origin;
 
 pub(super) fn library_failed(error: oneiron::Error) -> BrowserError {
     BrowserError::Library(error.to_string())
@@ -52,6 +54,13 @@ impl WorkflowLibrary for VaultLibrary {
             .server
             .decision_host()
             .placement_decisions(self.by, &deadline);
+        // The program covers its caller's solved group at its origin (CUA
+        // E8a).
+        let filed_scope = self
+            .scope
+            .clone()
+            .zip(program_origin(program))
+            .map(|(scope, origin)| FiledScope { scope, origin });
         let filing = file_workflow(
             &self.server.vault,
             self.by,
@@ -61,6 +70,7 @@ impl WorkflowLibrary for VaultLibrary {
             self.server.vault.now_recorded_at(),
             Some(&decisions),
             supersedes,
+            filed_scope,
         )
         .map_err(library_failed)?;
         Ok(match filing {
