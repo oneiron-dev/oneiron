@@ -7,6 +7,8 @@ mod idle;
 pub(crate) use idle::drop_vector_state;
 mod pending_index;
 mod phonetic;
+mod repo_projection;
+pub(crate) use repo_projection::refresh_repo_revision_projection_in_txn;
 pub(crate) use pending_index::{
     defer_index_inputs, drop_staged_index_fields, drop_staged_vectors, staged_index_fields,
     staged_live_index_fields,

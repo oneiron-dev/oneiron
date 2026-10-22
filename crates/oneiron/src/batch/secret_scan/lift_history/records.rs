@@ -164,7 +164,17 @@ fn remark_file(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId, bytes: &[u8]) 
         return Ok(false);
     };
     let kept = KeptValues::for_records_in_txn(&vault.store, txn, [*id])?;
-    remark_known_file_in_txn(&vault.store, txn, id, bytes, &known, &kept)
+    let added = remark_known_file_in_txn(&vault.store, txn, id, bytes, &known, &kept)?;
+    // New spans on a repo blob refresh the index copies it derives, in this
+    // writer (FIX 7608 slice 3).
+    if added {
+        crate::origin::secret_projection::index::refresh_repo_index_projection_in_txn(
+            vault,
+            txn,
+            &[*blake3::hash(bytes).as_bytes()],
+        )?;
+    }
+    Ok(added)
 }
 
 /// Reads record `key` again in the writer's transaction and writes it again
