@@ -22975,9 +22975,19 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 17,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/decisions/identity_choice.rs",
+     "purpose": "The one final identity choice (FIX 8693)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -23011,11 +23021,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction/corrections.rs",
-     "purpose": "The typed pack that decides which listed claim each extracted candidate corrects: one question per candidate…",
+     "purpose": "The typed pack that decides which listed claim each extracted candidate corrects: per candidate, one…",
      "surface": {
       "crate-vis": 3
      }
@@ -23051,7 +23061,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/merge_resolution.rs",
@@ -23875,7 +23885,7 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 4,
       "struct": 8
@@ -23885,10 +23895,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/settle/decision_pages.rs",
+     "purpose": "A parked conflict's settlement in pages (Rule 5, FIX 7636, FIX 7637)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/settle/decision_projection.rs",
      "purpose": "A parked conflict's settlement ask as the ladder reads it (FIX 7506 P2): each stored member and retained…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
@@ -75206,7 +75226,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 133,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76265,7 +76285,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4971,
+   "source_files": 4973,
    "test_files": 902
   },
   "oneiron-android": {
@@ -86472,7 +86492,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OpenAiResponsesChain",
@@ -86484,8 +86504,48 @@
      "purpose": "Responses protocol mapping for held sockets: one turn's create frame, the chain a socket keeps, and event…",
      "surface": {
       "const": 2,
-      "fn": 23,
+      "re-export": 3,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/responses/chain.rs",
+     "purpose": "Responses socket-chain operations and item digests",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/responses/output.rs",
+     "purpose": "Response output parsing and socket event inspection",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/responses/stream.rs",
+     "purpose": "Responses stream accumulation and polling",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/responses/turn.rs",
+     "purpose": "Turn construction and input-message mapping",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -86544,16 +86604,16 @@
    ],
    "modules": {
     "lib": {
-     "files": 11,
+     "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam"
     }
    },
-   "over_bar": 1,
+   "over_bar": 0,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
-   "source_files": 10,
+   "source_files": 14,
    "test_files": 1
   },
   "oneiron-llm-own-server": {
@@ -87063,7 +87123,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/budget/mod.rs",
-     "purpose": "—",
+     "purpose": "Budget admission and settlement surface",
      "surface": {
       "re-export": 5
      }
@@ -87090,7 +87150,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/budget/settlement.rs",
-     "purpose": "—",
+     "purpose": "Budget lease settlement",
      "surface": {
       "crate-vis": 1,
       "fn": 2
@@ -91518,13 +91578,33 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat.rs",
      "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/admission.rs",
+     "purpose": "Chat turn admission and setup",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/answer.rs",
+     "purpose": "Chat answer opening and request construction",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -91551,10 +91631,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/ai/chat/delivery.rs",
+     "purpose": "Chat response delivery and producer driving",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/ai/chat/hook_ask.rs",
      "purpose": "The hook pause a chat turn's retry resumes (FIX 5526): the ask handle a hook's Pending gave, named in…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/hooks.rs",
+     "purpose": "Chat generation and witness hook boundaries",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -102214,7 +102314,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MediaRow",
@@ -102224,9 +102324,20 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 24,
-      "fn": 17,
+      "crate-vis": 5,
+      "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/bindings.rs",
+     "purpose": "Media voice bindings, clone queries and retry hints",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 3
      }
     },
     {
@@ -102237,6 +102348,27 @@
      "purpose": "A media rung's backend with its replies' bytes held (FIX 8615): each of its calls (an answer, a job's…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/calls.rs",
+     "purpose": "Media calls, public job operations and runtime cleanup",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/construction.rs",
+     "purpose": "Media runtime construction and transport adapters",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -102267,6 +102399,17 @@
      "purpose": "A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/options.rs",
+     "purpose": "Media seat queries and model option rows",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 7
      }
     },
     {
@@ -105359,7 +105502,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 552,
+     "files": 556,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -105681,7 +105824,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 75,
+     "files": 79,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -105821,9 +105964,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 38,
+   "over_bar": 36,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1222,
+   "source_files": 1230,
    "test_files": 182
   },
   "oneiron-spawn": {

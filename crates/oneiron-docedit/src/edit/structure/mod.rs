@@ -565,7 +565,7 @@ fn delete_shape(
             .map(|&at| (tree.nodes[at].span.clone(), Vec::new()))
             .collect(),
     )?;
-    let kept = XmlTree::parse(&out, next.limits().xml)?;
+    let kept = XmlTree::parse(&out, next.resources())?;
     let used: Vec<&str> = kept
         .nodes
         .iter()
@@ -661,7 +661,7 @@ fn reparent(
     )?;
     let edits = transform::write(&bytes, &tree, shape.node.index, shape.kind, &xfrm)?;
     let written = xml::splice(&bytes, edits)?;
-    let tree = XmlTree::parse(&written, next.limits().xml)?;
+    let tree = XmlTree::parse(&written, next.resources())?;
     let at = check::find_shape(&tree, id).ok_or(EditRefusal::Missing("shape"))?;
     let container = match parent {
         None => shape_tree(&tree)?,
