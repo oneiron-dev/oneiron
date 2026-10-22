@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use super::advertise::AdvertisedRefGate;
 use super::exchange_idle::Progress;
+use super::recipient_serve::RepoGitReadContext;
 use super::serve::ServeSink;
 use super::serve_cmd::ServeCommand;
 use crate::Vault;
@@ -122,4 +123,29 @@ pub(crate) fn prepare_projected_read_backend(
         copy_dir: projection.store_root().clone(),
         witness: FrozenPublishedWitness { repo_id, refs },
     }))
+}
+
+/// [`prepare_projected_read_backend`] for the recipient `read` names (FIX
+/// 7608 2b-ii): `None` for an exact recipient, who keeps the canonical
+/// exchange; a masked one gets the copy's frozen read backend, and the
+/// same `None` when the copy no longer stands.
+///
+/// # Errors
+/// As [`prepare_projected_read_backend`].
+#[allow(
+    dead_code,
+    reason = "FIX 7608 2b-ii-A: the Git read selection calls it in 2b-ii-B"
+)]
+pub(crate) fn prepare_recipient_read_backend(
+    vault: &Vault,
+    wire: &GitWire<'_>,
+    canonical: &GitWireRepo,
+    projection: &RepoGitProjection,
+    project_root: &Path,
+    read: &RepoGitReadContext,
+) -> Result<Option<RepoGitBackend>> {
+    if !read.reads_masked() {
+        return Ok(None);
+    }
+    prepare_projected_read_backend(vault, wire, canonical, projection, project_root)
 }
