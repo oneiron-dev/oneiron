@@ -187,7 +187,9 @@ impl SyncServer {
     /// work itself, on a task held in the housekeeping passes from before
     /// this can yield, so the host's stop waits for them (FIX 9538). The tick
     /// still waits for them to end before it goes on. A tick the gate refuses,
-    /// or one after the host began stopping, starts none.
+    /// or one after the host began stopping, starts none and drops nothing:
+    /// each walk keeps its row and the stages their headers, so the next
+    /// admitted tick, or the next start, runs them.
     async fn finish_dependent_walks_once(self: &Arc<Self>, admit: &HousekeepingAdmission) {
         #[cfg(test)]
         self.housekeeping_passes.note_tick_step("dependent walks");
