@@ -39,6 +39,18 @@ pub trait BrowserGuestStarter: Send {
     /// once at attach, and the state a switch holds while it carries it;
     /// apart from every driver's live-handle charge.
     fn state_charge(&self) -> Box<dyn HandleRetention>;
+
+    /// Hears, once, how a switch target's attach on `engine` ended (FIX
+    /// 8092): its manifest once its driver attached, or the attach's
+    /// refusal. A status record only: nothing waits on it, and it refuses
+    /// nothing. The default hears nothing.
+    fn observe_attach(
+        &mut self,
+        engine: BrowserEngine,
+        attached: Result<&SessionManifest, &BrowserError>,
+    ) {
+        let _ = (engine, attached);
+    }
 }
 
 /// The engine group of a session: what one engine switch replaces whole.
