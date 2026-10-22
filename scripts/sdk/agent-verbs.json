@@ -7124,7 +7124,7 @@
     },
     {
       "name": "vault.legal_holds.lift_and_erase",
-      "description": "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them.",
+      "description": "The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records.",
       "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
