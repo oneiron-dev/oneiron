@@ -289,7 +289,27 @@ impl Vault {
         run_root: Option<&EntityId>,
         proposal: Option<&EntityId>,
     ) -> Result<OfficeBodyFork> {
-        self.with_write_txn_grouped(|wtxn| match source(&self.store, wtxn, artifact)?.kind {
+        self.with_write_txn_grouped(|wtxn| {
+            self.open_office_body_fork_in_txn(wtxn, artifact, actor, run_root, None, proposal)
+        })
+    }
+
+    /// [`Self::open_office_body_fork`] in `wtxn`, the writer that commits
+    /// the fork, from `origin`: the try a host bound the opening surface to,
+    /// proved in this same writer (FIX 3551). A DOCX or XLSX member's
+    /// run-and-children scope matches that try alone; `run_root`, the run
+    /// the caller names, is kept as its label. With no origin the fork
+    /// belongs to no run.
+    pub(crate) fn open_office_body_fork_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact: &EntityId,
+        actor: WriteActor,
+        run_root: Option<&EntityId>,
+        origin: Option<crate::attempt_queue::AttemptId>,
+        proposal: Option<&EntityId>,
+    ) -> Result<OfficeBodyFork> {
+        match source(&self.store, wtxn, artifact)?.kind {
             OfficeBodyKind::Pptx if proposal.is_some() => Err(invalid(
                 "a deck fork joins no proposal; its run's approve scope covers it",
             )),
@@ -297,12 +317,12 @@ impl Vault {
             kind => {
                 let record =
                     open_typed_body_fork_in_txn(self, wtxn, artifact, kind.schema(), actor)?;
-                consent::join_in_txn(&self.store, wtxn, &record, run_root, proposal)?;
+                consent::join_in_txn(&self.store, wtxn, &record, run_root, origin, proposal)?;
                 let mut fork = fork_view(record);
                 fork.run_root = run_root.copied();
                 Ok(fork)
             }
-        })
+        }
     }
 
     pub fn office_body_fork(

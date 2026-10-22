@@ -33,8 +33,10 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::attempt_queue::AttemptId;
 use crate::typed_body::{
-    BodyActor, TypedBodyFork, discard_typed_body_fork_in_txn, merge_admitted_typed_body_fork_in_txn,
+    BodyActor, TypedBodyFork, discard_admitted_typed_body_fork_in_txn,
+    merge_admitted_typed_body_fork_in_txn,
 };
 use crate::write_envelope::WriteActor;
 
@@ -42,7 +44,6 @@ use crate::write_envelope::WriteActor;
 /// an artifact without a person's word.
 pub const OFFICE_BODY_EDIT_CLASS: &str = "entity.office.edit";
 const OFFICE_MERGE_OPERATION: &str = "office.body.merge";
-const MAX_PROPOSAL_MEMBERS: usize = 64;
 const MAX_REASON_BYTES: usize = 1024;
 
 /// Each proposal, by artifact and proposal id.
@@ -100,8 +101,15 @@ pub struct MemberAnswer {
 pub struct ProposalMember {
     pub fork: EntityId,
     pub opener: BodyActor,
-    /// The run the fork was opened in, which a run-and-children scope names.
+    /// The run its opener named when it opened the fork: a label, never
+    /// what a scope matches (FIX 3551).
     pub run_root: Option<EntityId>,
+    /// The try the fork was opened from, which the host bound the opening
+    /// surface to and the opening transaction proved live (FIX 3551): what a
+    /// run-and-children scope names. `None` for an owner's or a direct
+    /// opening, which belongs to no run.
+    #[serde(default)]
+    pub origin: Option<AttemptId>,
     pub verdict: MemberVerdict,
     pub answer: Option<MemberAnswer>,
 }
@@ -194,6 +202,30 @@ impl MergeAdmission {
     }
 }
 
+/// One rejected member's letting go: what only a settlement constructs,
+/// after a person outside the opener's lineage answered it and its reviewed
+/// head held, and what [`discard_admitted_typed_body_fork_in_txn`] takes in
+/// place of its opener check (FIX 10016).
+pub(crate) struct DiscardAdmission {
+    artifact: EntityId,
+    fork: EntityId,
+    caller: EntityId,
+}
+
+impl DiscardAdmission {
+    pub(crate) const fn artifact(&self) -> &EntityId {
+        &self.artifact
+    }
+
+    pub(crate) const fn fork(&self) -> &EntityId {
+        &self.fork
+    }
+
+    pub(crate) const fn caller(&self) -> &EntityId {
+        &self.caller
+    }
+}
+
 impl Vault {
     /// One office proposal on `artifact`.
     pub fn office_body_proposal(
@@ -277,18 +309,21 @@ impl Vault {
 }
 
 /// Registers a just-opened DOCX or XLSX fork in `proposal`, or in a proposal
-/// of its own under its id.
+/// of its own under its id, with `origin`, the try its opening transaction
+/// proved. A proposal holds every fork that joins it (FIX 9991).
 pub(super) fn join_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     fork: &TypedBodyFork,
     run_root: Option<&EntityId>,
+    origin: Option<AttemptId>,
     proposal: Option<&EntityId>,
 ) -> Result<()> {
     let member = ProposalMember {
         fork: fork.fork,
         opener: fork.opener,
         run_root: run_root.copied(),
+        origin,
         verdict: MemberVerdict::Waiting,
         answer: None,
     };
@@ -312,9 +347,6 @@ pub(super) fn join_in_txn(
                 .ok_or_else(|| invalid("no such proposal on this artifact"))?;
             if record.settlement.is_some() {
                 return Err(invalid("the proposal is settled; open a new one"));
-            }
-            if record.members.len() >= MAX_PROPOSAL_MEMBERS {
-                return Err(invalid("a proposal holds at most 64 forks"));
             }
             record.members.push(member);
             record
@@ -413,9 +445,6 @@ pub(super) fn settle_in_txn(
     if record.settlement.is_some() {
         return Err(invalid("the proposal is settled"));
     }
-    if request.reviewed.len() > MAX_PROPOSAL_MEMBERS {
-        return Err(invalid("a proposal holds at most 64 forks"));
-    }
     let reason = match request.reason.map(str::trim) {
         Some(reason) if reason.is_empty() || reason.len() > MAX_REASON_BYTES => {
             return Err(invalid("a settlement reason is 1 to 1024 bytes"));
@@ -471,7 +500,14 @@ pub(super) fn settle_in_txn(
                     ));
                 }
                 let fork = member.fork;
-                discard_typed_body_fork_in_txn(vault, wtxn, artifact, &fork, actor)?;
+                let admission = DiscardAdmission {
+                    artifact: *artifact,
+                    fork,
+                    caller,
+                };
+                discard_admitted_typed_body_fork_in_txn(
+                    vault, wtxn, artifact, &fork, actor, &admission,
+                )?;
                 let member = &mut record.members[index];
                 member.verdict = MemberVerdict::Rejected;
                 member.answer = Some(MemberAnswer {
@@ -588,9 +624,11 @@ fn covers(scope: &ApproveScope, header: &ProposalHeader, member: &ProposalMember
     let named = |id: &EntityId, reference: &str| id.to_hex().eq_ignore_ascii_case(reference.trim());
     match scope {
         ApproveScope::ThisActor(actor) => member.opener.id().is_some_and(|id| named(&id, actor)),
-        ApproveScope::ThisRunAndChildren(run) => {
-            member.run_root.is_some_and(|root| named(&root, run))
-        }
+        // The stamped try, never a run a caller named (FIX 3551).
+        ApproveScope::ThisRunAndChildren(run) => member.origin.is_some_and(|origin| {
+            crate::entity_id::bytes_to_hex_lower(origin.as_bytes())
+                .eq_ignore_ascii_case(run.trim())
+        }),
         ApproveScope::OneItem(proposal) => named(&header.proposal, proposal),
     }
 }
