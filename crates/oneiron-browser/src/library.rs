@@ -411,6 +411,19 @@ pub fn site_of(url: &str) -> Option<String> {
     (!host.is_empty() && !host.contains("{{")).then(|| host.to_ascii_lowercase())
 }
 
+/// The origin (scheme, host and port) of the page `program` opens first,
+/// parsed as a draft parses its span's (CUA E8a): the origin of the solved
+/// group its filing covers. None when its first step opens no such page.
+#[cfg(feature = "driver")]
+#[must_use]
+pub fn program_origin(program: &WorkflowProgram) -> Option<String> {
+    let Some(BatchStep::Open { url }) = program.steps.first() else {
+        return None;
+    };
+    let origin = url::Url::parse(url).ok()?.origin();
+    origin.is_tuple().then(|| origin.ascii_serialization())
+}
+
 fn slot_name(name: &str) -> bool {
     name.starts_with(|c: char| c.is_ascii_lowercase())
         && name

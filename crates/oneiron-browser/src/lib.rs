@@ -70,8 +70,6 @@ pub use field::{
     FieldWritten, NoWriter, TextCheck, TextCheckReply, TextProvenance, TextReference, TextSource,
     TextVerdict,
 };
-#[cfg(feature = "driver")]
-pub use library::filled_checks;
 pub use library::{
     AdmissionRefusal, Admitted, DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput,
     DraftPage, DraftStep, FiledWorkflow, LibraryCard, LibraryFindInput, LibraryFindOutput,
@@ -82,6 +80,8 @@ pub use library::{
     WorkflowProof, WorkflowSeed, default_mode, draft_from_steps, effective_mode, model_free,
     site_of, validate_replay_args,
 };
+#[cfg(feature = "driver")]
+pub use library::{filled_checks, program_origin};
 pub use observation::{
     HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound, is_live_handle,
 };
