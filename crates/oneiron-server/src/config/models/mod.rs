@@ -21,6 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use oneiron::ModelLocality;
 use oneiron::llm::manifest::ModelRole;
 use oneiron_code_check::{BackendKind, CheckMode, DEFAULT_INPUT_BYTES};
 use serde::Deserialize;
@@ -390,8 +391,13 @@ const DEFAULT_PASS_BUDGET_UNITS: u64 = 400_000;
 const DEFAULT_TURN_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_RETRY_BACKOFF_SECS: u64 = 30;
-pub(crate) const DEFAULT_RAW_BUDGET_UNITS: u64 = 10_000_000;
-const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = 10_000_000;
+/// An omitted process-lifetime meter (`models.raw_budget_units`,
+/// `models.code_mode.budget_units`, `models.media.budget_units`) is uncapped
+/// (FIX 9482): the type's maximum, which no spend reaches. A configured value
+/// keeps its cap.
+pub(crate) const UNCAPPED_LIFETIME_UNITS: u64 = u64::MAX;
+pub(crate) const DEFAULT_RAW_BUDGET_UNITS: u64 = UNCAPPED_LIFETIME_UNITS;
+const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = UNCAPPED_LIFETIME_UNITS;
 /// Two scorings of a 50-candidate block at about 300 tokens a candidate.
 const DEFAULT_RERANK_BUDGET_UNITS: u64 = 32_000;
 const DEFAULT_HISTORY_TURNS: usize = 24;
@@ -778,5 +784,13 @@ impl ModelsConfig {
             .get(&role)
             .map(Vec::as_slice)
             .filter(|ladder| !ladder.is_empty())
+    }
+
+    /// Whether a rung at `locality` may serve `role`: a role whose work never
+    /// leaves the device (`leave_device = "never"`) takes no third-party rung,
+    /// first or as a fallback. The owner's own server and this device serve it.
+    #[must_use]
+    pub(crate) fn role_permits(&self, role: ModelRole, locality: ModelLocality) -> bool {
+        !(self.stays_on_device.contains(&role) && locality == ModelLocality::ThirdParty)
     }
 }

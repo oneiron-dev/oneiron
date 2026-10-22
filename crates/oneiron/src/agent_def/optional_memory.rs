@@ -13,7 +13,7 @@ use std::num::NonZeroU64;
 use rmpv::Value;
 
 use super::decode::validate_text_field;
-use super::types::{AGENT_MAX_LIST_ENTRIES, AGENT_REF_KEY_MAX_BYTES};
+use super::types::AGENT_REF_KEY_MAX_BYTES;
 use crate::context_pack::FieldProfile;
 use crate::error::{ArtifactError, Error, Result};
 
@@ -174,9 +174,9 @@ pub(super) fn decode_optional_memory_profile(value: &Value) -> Result<OptionalMe
         let Value::Map(rows) = value else {
             return Err(invalid("optional_memory families must be a map"));
         };
-        if rows.is_empty() || rows.len() > AGENT_MAX_LIST_ENTRIES {
+        if rows.is_empty() {
             return Err(invalid(
-                "optional_memory families must hold 1 to 64 entries (elide it when empty)",
+                "optional_memory families must hold at least one entry (elide it when empty)",
             ));
         }
         let mut previous: Option<&str> = None;

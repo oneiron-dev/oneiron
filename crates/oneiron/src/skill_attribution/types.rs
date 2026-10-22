@@ -387,8 +387,10 @@ pub enum DeviationCause {
 pub struct OutcomeEvidence {
     /// RS1 receipt id of the attempt's terminal receipt.
     pub receipt_ref: String,
-    /// The executing actor (agent, human, peer, connector — §4 r1).
-    pub actor: EntityId,
+    /// The executing actor (agent, human, peer, connector — §4 r1); `None`
+    /// once that actor is erased (FIX 8988): the row keeps its outcome and
+    /// names no one.
+    pub actor: Option<EntityId>,
     /// The SKILL entity implicated by the attempt's pack manifest, when one is.
     pub skill: Option<EntityId>,
     pub outcome: AttemptOutcome,
@@ -415,7 +417,7 @@ impl OutcomeEvidence {
     ) -> Self {
         Self {
             receipt_ref: receipt_ref.into(),
-            actor,
+            actor: Some(actor),
             skill: None,
             outcome,
             followed_skill: None,
@@ -462,8 +464,9 @@ pub struct AttributionJudgment {
     pub sequence: u64,
     pub verdict: AttributionVerdict,
     /// SKILL entity for `SkillDefect`/`Discovery`, ACTOR entity for
-    /// `ExecutionLapse` — the routing decision, made concrete.
-    pub subject: EntityId,
+    /// `ExecutionLapse` — the routing decision, made concrete. `None` once
+    /// that actor is erased (FIX 8988): the verdict stays and charges no one.
+    pub subject: Option<EntityId>,
     /// RS1 receipt ids this verdict rests on (trace-or-derivation).
     pub evidence_receipts: Vec<String>,
     pub at: u64,

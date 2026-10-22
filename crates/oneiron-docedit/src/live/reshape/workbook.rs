@@ -120,7 +120,9 @@ pub(super) fn in_place(
         .flatten()
         .ok_or(RebuildReason::Unreadable)?;
     let limits = package.limits();
-    let book = read_xlsx_cells(&source, limits).map_err(|_| RebuildReason::Projection)?;
+    let resources = package.resources().clone();
+    let book =
+        read_xlsx_cells(&source, limits, &resources).map_err(|_| RebuildReason::Projection)?;
     let mut plan = Plan::new(&book, tree)?;
     let wants: Vec<Want<'_>> = wanted
         .data
@@ -193,7 +195,7 @@ pub(super) fn in_place(
     let bytes = if changes.is_empty() {
         None
     } else {
-        let projected = project_xlsx(&source, &changes, limits)
+        let projected = project_xlsx(&source, &changes, limits, &resources)
             .map_err(|_| RebuildReason::Projection)?
             .bytes;
         let formulas = book
@@ -205,7 +207,7 @@ pub(super) fn in_place(
             notes.push(Conversion::WorkbookRecalcDeferred {
                 part: part.to_owned(),
             });
-            mark_full_calc(&projected, limits).map_err(|_| RebuildReason::Projection)?
+            mark_full_calc(&projected, limits, &resources).map_err(|_| RebuildReason::Projection)?
         } else {
             projected
         })

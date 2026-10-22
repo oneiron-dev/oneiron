@@ -59,12 +59,14 @@ mod evidence;
 mod filter;
 mod lifecycle;
 mod membership;
+mod memo_lifetime;
 mod memory_watch;
 mod pack_drift;
 mod receipts;
 mod storage;
 mod support;
 mod sweep;
+mod value_fingerprint;
 
 /// Private-encoding unit tests: memo-key canonicalization, malformed-row
 /// rejection, and the pure predicates the evaluator composes. Public
@@ -100,6 +102,7 @@ pub use self::membership::{
     MembershipWritePlan, commit_membership_plan, derived_member_value, membership_events,
     next_membership_epoch,
 };
+pub(crate) use self::memo_lifetime::{erase_memos_for_source_in_txn, memo_carriage, memo_owners};
 pub use self::memory_watch::{MemoryWatch, memory_watch, memory_watches, set_memory_watch};
 pub use self::pack_drift::{
     PackDrift, PackDriftRepair, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,

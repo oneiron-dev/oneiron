@@ -9,7 +9,7 @@ use oneiron::blob_artifact::esign::EsignSealerError;
 use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;
 
-use oneiron_organ_protocol::{ASK_NET_FETCH, ByteBuf};
+use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, ByteBuf};
 
 use super::{ASK_IDENTITY, ASK_SIGN, HostedSealer};
 use crate::handlers::AskHandlers;
@@ -146,16 +146,21 @@ fn measure_frames(vault: &Vault, measure: &CallMeasure) {
 
 /// Asks the seal's ask rows what one seal call asked, by its receipt
 /// lines: the identity, signatures and fetches, all of them, and the
-/// answer bytes it was lent. None of them was refused for its count.
+/// answer bytes it was lent. None of them was refused for its count. Its
+/// memory asks, the organ reserving its own buffers, are resource control:
+/// they have a row of their own, and neither the functional asks nor their
+/// answer bytes count them (FIX 8453).
 pub(super) fn measure_asks(vault: &Vault, asked: &[AskReceipt]) {
     let count = |verb: &str| asked.iter().filter(|line| line.verb == verb).count() as u64;
-    let lent = asked.iter().map(|line| line.answer_len).sum::<u64>();
+    let functional = || asked.iter().filter(|line| line.verb != ASK_MEMORY_GROW);
+    let lent = functional().map(|line| line.answer_len).sum::<u64>();
     for (row, measured) in [
         (EngineLimit::SealIdentityAsks, count(ASK_IDENTITY)),
         (EngineLimit::SealSignAsks, count(ASK_SIGN)),
         (EngineLimit::SealFetchAsks, count(ASK_NET_FETCH)),
-        (EngineLimit::SealAsks, asked.len() as u64),
+        (EngineLimit::SealAsks, functional().count() as u64),
         (EngineLimit::SealAnswerBytes, lent),
+        (EngineLimit::SealMemoryAsks, count(ASK_MEMORY_GROW)),
     ] {
         vault.measure_limit(row, measured);
     }
