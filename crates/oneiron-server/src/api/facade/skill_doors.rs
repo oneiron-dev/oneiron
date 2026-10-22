@@ -380,6 +380,7 @@ impl SkillRefiner for HostSkillRefiner<'_> {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         let (ladder, run) = crate::api::llm::admit(self.server, self.auth, &mut request)
             .map_err(|response| failed(&format!("inference refused ({})", response.status())))?;

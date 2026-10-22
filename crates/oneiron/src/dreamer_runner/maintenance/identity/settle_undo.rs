@@ -16,20 +16,32 @@
 //! listed as left alone. Once the mention links as it did before, the
 //! question goes to the owner, as the revert of "keep them separate for
 //! now" does.
+//!
+//! An erase reaches the inverse too (FIX 8707): it takes the copy of the
+//! ask, a provisional entity's row or a hint's words that came from the
+//! erased turn or message, and keeps the content-free anchors, so the rest
+//! still reverts. The revert puts nothing back whose mention, span text or
+//! entity no longer stands as the settle saw it, and lists it as left alone.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use super::super::applied::{self, MaintenanceInverse, MaintenanceRevert, MaintenanceTarget};
+use super::erase::{
+    SourceAnchor, anchor_in_txn, anchor_reads_in_txn, ask_anchor_in_txn, span_reads_in_txn,
+};
+use super::hints::{self, HINTS, StoredIdentityHint};
 use super::{
-    ASKS, Answer, HINTS, IDENTITY_RECHECK_FACET, IdentityAsk, IdentityHint, apply_in_txn, ask_key,
-    escalate_in_txn, evidence, invalid, key_hex,
+    ASKS, Answer, IDENTITY_RECHECK_FACET, IdentityAsk, apply_in_txn, ask_key, escalate_in_txn,
+    evidence, invalid, key_hex,
 };
 use crate::claim::ClaimSource;
 use crate::identity_topology::TopologySeal;
 use crate::ports::EntityStoreRead;
 use crate::tagging::{MentionLink, ProvisionalEntity};
 use crate::{ClaimLifecycleStatus, EntityId, Result, Vault, WriteActor};
+
+mod erase;
 
 /// The hint row's name in a revert's settings list.
 const HINT_ROW: &str = "identity_hint";
@@ -59,23 +71,38 @@ impl MentionChange {
 #[serde(deny_unknown_fields)]
 pub(in crate::dreamer_runner::maintenance) struct SettleInverse {
     /// The ask the settle answered, as it stood: the owner's question once
-    /// the revert puts the mention back.
-    ask: IdentityAsk,
+    /// the revert puts the mention back. None once an erase reached its
+    /// mention.
+    ask: Option<IdentityAsk>,
+    /// Where the ask's mention is, without its text.
+    source: SourceAnchor,
     /// The entity the mention was settled as.
     entity: EntityId,
     settled_at: u64,
     /// Each saved span whose link the settle changed.
     mentions: Vec<MentionChange>,
     /// Each provisional entity the mention named, as it stood before.
-    provisionals: Vec<(EntityId, ProvisionalEntity)>,
+    provisionals: Vec<HeldProvisional>,
     /// The name's context hint for `entity` before (none: unsaved) and after.
-    hint_before: Option<IdentityHint>,
-    hint_after: Option<IdentityHint>,
+    hint_before: Option<StoredIdentityHint>,
+    hint_after: Option<StoredIdentityHint>,
     /// The person a someone-new answer confirmed, when it confirmed one.
     confirmed: Option<EntityId>,
     /// Each distinct assertion a someone-new answer made, at its revision
     /// then.
     distinct: Vec<(EntityId, [u8; 32])>,
+}
+
+/// A provisional entity a settle may retire, as it stood before.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HeldProvisional {
+    id: EntityId,
+    /// The span in its origin turn its name was read from, when one read it.
+    source: Option<SourceAnchor>,
+    /// Its row; none once an erase reached the entity, its origin turn or
+    /// that span.
+    entity: Option<ProvisionalEntity>,
 }
 
 /// The heads the ask's candidates resolve to now: who a someone-new answer
@@ -114,16 +141,8 @@ fn hint_in_txn(
     txn: &heed::RoTxn<'_>,
     ask: &IdentityAsk,
     entity: EntityId,
-) -> Result<Option<IdentityHint>> {
-    HINTS.get(&vault.store, txn, &hint_key(ask, entity))
-}
-
-fn hint_key(ask: &IdentityAsk, entity: EntityId) -> ([u8; 1], [u8; 32], EntityId) {
-    (
-        [ask.kind],
-        crate::ingest::identity_hint_digest(&ask.name),
-        entity,
-    )
+) -> Result<Option<StoredIdentityHint>> {
+    HINTS.get(&vault.store, txn, &hints::hint_key(ask, entity))
 }
 
 /// Settles `ask`'s mention as `answer` for the Dreamer, as an ask's settle
@@ -138,6 +157,7 @@ pub(super) fn settle_in_txn(
     now: u64,
 ) -> Result<EntityId> {
     let key = ask_key(&ask.turn, &ask.message, ask.start, ask.end);
+    let source = ask_anchor_in_txn(vault, txn, ask)?;
     let settled =
         vault.saved_mention_link_in_txn(txn, &ask.turn, (&ask.message, ask.start, ask.end))?;
     // Every span the settle may change: the mention, and each span naming a
@@ -157,12 +177,24 @@ pub(super) fn settle_in_txn(
         let Some(entity) = crate::tagging::provisional_in_txn(&vault.store, txn, &id)? else {
             continue;
         };
+        // The span in its origin turn its name reads from: a revert holds
+        // the entity again only while that span still reads so.
+        let mut origin = None;
         for (turn, mention) in vault.mentions_naming_in_txn(txn, &id)? {
-            spans
-                .entry((turn, mention.message, mention.start, mention.end))
-                .or_insert(mention.link);
+            let span = (turn, mention.message, mention.start, mention.end);
+            if origin.is_none()
+                && turn == entity.origin
+                && span_reads_in_txn(vault, txn, span, &entity.name)?
+            {
+                origin = Some(anchor_in_txn(vault, txn, span)?);
+            }
+            spans.entry(span).or_insert(mention.link);
         }
-        provisionals.push((id, entity));
+        provisionals.push(HeldProvisional {
+            id,
+            source: origin,
+            entity: Some(entity),
+        });
     }
     let hinted = match answer {
         Answer::Is(chosen) => Some(chosen),
@@ -216,7 +248,8 @@ pub(super) fn settle_in_txn(
         && EntityStoreRead::port_entity_present(&vault.store, txn, &entity)?)
     .then_some(entity);
     let inverse = SettleInverse {
-        ask: ask.clone(),
+        ask: Some(ask.clone()),
+        source,
         entity,
         settled_at: now,
         mentions,
@@ -240,13 +273,15 @@ pub(super) fn settle_in_txn(
 }
 
 /// The owner's revert of one automatic settle, as `owner`: each provisional
-/// entity it retired is held again while its id is free, each span it
-/// changed goes back where it still links as the settle left it (a held
-/// entity's origin turn first), a held entity no restored span names goes
-/// again, the hint and the resolution go back where they still hold what the
-/// settle saved, and each distinct assertion it made is retracted where it
-/// stands at its revision then. Once the mention links as before and no ask
-/// is open on it, the ask goes to the owner as today's question.
+/// entity it retired is held again while its id is free and its name's span
+/// reads as it did, each span it changed goes back where it still links as
+/// the settle left it and it, its message and the entities it linked stand
+/// (a held entity's origin turn first), a held entity no restored span names
+/// goes again, the hint and the resolution go back where they still hold
+/// what the settle saved, and each distinct assertion it made is retracted
+/// where it stands at its revision then. Once the mention links as before,
+/// still reads as it did and no ask is open on it, the ask goes to the owner
+/// as today's question. What an erase took is listed as left alone.
 pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -259,9 +294,19 @@ pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
         return Err(invalid("the revert names no ask"));
     };
     let mut held = Vec::new();
-    for (id, entity) in &inverse.provisionals {
-        if vault.rehold_provisional_in_txn(txn, id, entity)? {
-            held.push((*id, entity.origin));
+    for each in &inverse.provisionals {
+        // A row an erase took, or whose name no longer reads as it did, is
+        // not held again (FIX 8707).
+        let Some(entity) = &each.entity else {
+            out.left_alone.push(each.id.to_hex());
+            continue;
+        };
+        if !erase::provisional_reads_in_txn(vault, txn, each, entity)? {
+            out.left_alone.push(each.id.to_hex());
+            continue;
+        }
+        if vault.rehold_provisional_in_txn(txn, &each.id, entity)? {
+            held.push((each.id, entity.origin));
         }
     }
     let mut changes: Vec<&MentionChange> = inverse.mentions.iter().collect();
@@ -269,7 +314,9 @@ pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
     let mut settled_back = false;
     for change in changes {
         let span = (&change.message, change.start, change.end);
-        let back = if change.before == change.after {
+        let back = if !erase::change_stands_in_txn(vault, txn, change)? {
+            false
+        } else if change.before == change.after {
             vault
                 .saved_mention_link_in_txn(txn, &change.turn, span)?
                 .as_ref()
@@ -289,25 +336,43 @@ pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
             out.restored.push(*id);
         }
     }
-    let hint = hint_key(&inverse.ask, inverse.entity);
-    if HINTS.get(&vault.store, txn, &hint)? == inverse.hint_after {
-        match &inverse.hint_before {
-            Some(before) => HINTS.put(&vault.store, txn, &hint, before)?,
-            None => {
-                HINTS.delete(&vault.store, txn, &hint)?;
+    // An erase that reached the ask's mention, or the entity, took the
+    // settle's words out of the row and both copies: nothing is left to put
+    // back. A word whose mention was deleted since is not put back.
+    let hint = inverse
+        .ask
+        .as_ref()
+        .filter(|_| inverse.hint_before.is_some() || inverse.hint_after.is_some())
+        .map(|ask| hints::hint_key(ask, inverse.entity));
+    let stands = match &hint {
+        Some(hint) => HINTS.get(&vault.store, txn, hint)? == inverse.hint_after,
+        None => false,
+    };
+    match hint.filter(|_| stands) {
+        Some(hint) => {
+            let before = match &inverse.hint_before {
+                Some(before) => hints::standing_in_txn(&vault.store, txn, before)?,
+                None => None,
+            };
+            match before {
+                Some(before) => HINTS.put(&vault.store, txn, &hint, &before)?,
+                None => {
+                    HINTS.delete(&vault.store, txn, &hint)?;
+                }
             }
+            out.settings.push(HINT_ROW.to_owned());
         }
-        out.settings.push(HINT_ROW.to_owned());
-    } else {
-        out.left_alone.push(HINT_ROW.to_owned());
+        None => out.left_alone.push(HINT_ROW.to_owned()),
     }
-    evidence::clear_settle_resolution_in_txn(
-        vault,
-        txn,
-        &inverse.ask,
-        inverse.entity,
-        inverse.settled_at,
-    )?;
+    if let Some(ask) = &inverse.ask {
+        evidence::clear_settle_resolution_in_txn(
+            vault,
+            txn,
+            ask,
+            inverse.entity,
+            inverse.settled_at,
+        )?;
+    }
     for (claim, revision) in &inverse.distinct {
         let stands = vault
             .get_claim_in_txn(&*txn, claim)?
@@ -323,12 +388,22 @@ pub(in crate::dreamer_runner::maintenance) fn revert_settle_in_txn(
         out.left_alone.push(person.to_hex());
     }
     if settled_back && !ASKS.contains(&vault.store, &*txn, &key)? {
-        let ask = IdentityAsk {
-            kept_separate_at: None,
-            ..inverse.ask.clone()
+        // The question goes back only while its mention reads as it did.
+        let reads = match &inverse.ask {
+            Some(ask) => anchor_reads_in_txn(vault, txn, &inverse.source, &ask.name)?,
+            None => false,
         };
-        escalate_in_txn(vault, txn, &key, ask, now)?;
-        out.asked.push(key_hex(&key));
+        match inverse.ask.as_ref().filter(|_| reads) {
+            Some(ask) => {
+                let ask = IdentityAsk {
+                    kept_separate_at: None,
+                    ..ask.clone()
+                };
+                escalate_in_txn(vault, txn, &key, ask, now)?;
+                out.asked.push(key_hex(&key));
+            }
+            None => out.left_alone.push(key_hex(&key)),
+        }
     }
     Ok(())
 }
