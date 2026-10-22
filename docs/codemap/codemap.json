@@ -1942,16 +1942,34 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ArtifactPublicationFrame",
       "ArtifactPublicationOutcome"
      ],
      "path": "src/artifact_hosting/publication_sync.rs",
      "purpose": "Publication sync: a pinned channel pointer, with the rows that make its export servable, reaches the sync…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/publication_sync/parts.rs",
+     "purpose": "Bounded publication parts (FIX 9575)",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/publication_sync/parts/receive.rs",
+     "purpose": "The sync server's half of publication parts (FIX 9575): each part kept in order under the owner's live…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -1973,6 +1991,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/serving_blob.rs",
+     "purpose": "The serving presentation of a published blob version (FIX 1195)",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -7842,7 +7870,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 24,
+      "crate-vis": 23,
       "fn": 8,
       "re-export": 1,
       "struct": 2
@@ -19415,6 +19443,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/paging.rs",
+     "purpose": "Opaque continuation cursors for Context Board pages",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -19529,6 +19567,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ApprovedPluginIdentity",
       "AuthorityLaneRef",
       "PluginInstallExecutor",
       "PluginInstallSource",
@@ -19546,8 +19585,8 @@
      "purpose": "Versioned section-manifest schema, verb allowlist, and install traits",
      "surface": {
       "const": 1,
-      "fn": 4,
-      "struct": 8,
+      "fn": 7,
+      "struct": 9,
       "trait": 4
      }
     },
@@ -19558,7 +19597,23 @@
      "path": "src/context_board/plugin/mod.rs",
      "purpose": "Plugin-section seam — the typed section manifest, its gated admission, the live registry projection, and the…",
      "surface": {
-      "re-export": 10
+      "re-export": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BoardBlockPage",
+      "PluginProposalPage",
+      "PluginSectionSnapshotPage"
+     ],
+     "path": "src/context_board/plugin/pages.rs",
+     "purpose": "Paged plugin reads: the pending-proposal list and the page shapes the durable block reads answer with",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -19573,7 +19628,7 @@
      "purpose": "Pure plugin renderers and the pending-proposal section",
      "surface": {
       "const": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -19590,7 +19645,7 @@
      "purpose": "Durable actor-scoped state for admitted Context Board plugin blocks",
      "surface": {
       "enum": 2,
-      "fn": 3,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -41646,8 +41701,18 @@
      "purpose": "Plugin Context Board sections (DOOR-112, e2e BOARD-07): the typed `vault.packs.sections.*` doors over the…",
      "surface": {
       "enum": 3,
-      "fn": 7,
+      "fn": 6,
       "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/plugin_sections/pages.rs",
+     "purpose": "`vault.packs.sections.list`: one page of pending proposals through the engine's single paged proposal walk…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -52084,6 +52149,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BackupHoldVisibility",
       "BackupHolds",
       "HostOrderHolds"
      ],
@@ -52091,7 +52157,8 @@
      "purpose": "Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that…",
      "surface": {
       "crate-vis": 3,
-      "fn": 7,
+      "enum": 1,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -62250,9 +62317,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/artifacts.rs",
-     "purpose": "Pinned artifact publications on the owner lane: each owed one goes out once the NOTE session binds, and…",
+     "purpose": "Pinned artifact publications on the owner lane: each owed one goes out in bounded parts once the NOTE…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -62710,7 +62777,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/connection/node_batch.rs",
-     "purpose": "One bounded node proposal batch per sync tick",
+     "purpose": "One bounded node proposal batch per sync tick, then at most one owed artifact publication part as its own…",
      "surface": {
       "crate-vis": 2
      }
@@ -74605,7 +74672,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 10,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -74920,7 +74987,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -75403,7 +75470,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 272,
+     "files": 273,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76091,7 +76158,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4958,
+   "source_files": 4964,
    "test_files": 902
   },
   "oneiron-android": {
@@ -100617,7 +100684,7 @@
      "path": "src/managed/relay/deferred_delete.rs",
      "purpose": "Locker deletes a host hold guard defers (FIX 1488, Engine 10-20 20:3x)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -100627,7 +100694,7 @@
      "path": "src/managed/relay/hold_guard.rs",
      "purpose": "The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -100641,6 +100708,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/overwrite.rs",
+     "purpose": "A guarded room's upload over an object it holds (FIX 1283, FIX 9499)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -100648,6 +100725,16 @@
      "purpose": "The relay locker delete this engine executes (FIX 6826, Engine 10-21)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay_delete/generation.rs",
+     "purpose": "The names a relay delete claims and puts back (FIX 6826, FIX 1283)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -105379,7 +105466,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 84,
+     "files": 86,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -105542,7 +105629,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1214,
+   "source_files": 1216,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -110449,6 +110536,7 @@
      "kind": "src",
      "notable": [
       "RelayDeleteExecuteWire",
+      "RelayDeleteGeneration",
       "RelayDeleteIoKind",
       "RelayDeleteRechecksRequest",
       "RelayDeleteRechecksWire",
@@ -110456,6 +110544,7 @@
       "RelayDeleteStage",
       "RelayDeleteState",
       "RelayDeleteUnknown",
+      "RelayHoldVisibility",
       "RelayLockerBindRequest",
       "RelayLockerBindWire",
       "RelayLockerRefusal"
@@ -110465,8 +110554,8 @@
      "surface": {
       "const": 2,
       "crate-vis": 1,
-      "enum": 7,
-      "fn": 17,
+      "enum": 9,
+      "fn": 18,
       "struct": 4
      }
     },
