@@ -437,7 +437,8 @@ cold_boot = "helper ready <= 2 s; compilation timed separately"
 ram = "32 GiB memory / 16 GiB scratch retained (crates/oneiron-server/src/config/merge_queue.rs:23-36)"
 
 [variants.checker.outputs."linux/amd64"]
-state = "built-candidate"
+state = "boot-proved"
+note = "L11-A acceptance smoke: kel, 2026-10-22 12:5x JST, OCI container run (--network none, uid 10001, --memory 18g), image sha256:51fe794a2173f0b5a02292f418d1b4fbbd8d5b1f3b2ff7b332f62fe67f88267b (kel's store id; this output's manifest digest). Legs: image id, contents (cargo/rustc 1.96.1, rustfmt, clippy, no rustup), helper hash, source copy, and an offline `cargo check --locked --workspace --all-features` from a cp -a scratch copy of the normalized store, rc=0 in 620 s. Peak RAM not sampled. Firecracker not measured."
 builder_commit = "0684edada9a3c57aa27e697b79e34ec21dcc0046"
 engine_commit = "95afa460192b5a4f8382edc9bf2903cdc5f8bee5"
 host = "kelly"

@@ -328,7 +328,7 @@ payload budgets.
 |---|---|---|---|---|---|---|---|
 | base | built-candidate | 37.1 MiB (38,901,760) | 105.9 MiB (110,999,048) | <= 256 MiB: within | 224.0 MiB (234,881,024) | 131.3 MiB | 2.14 GiB |
 | browser | boot-proved (OCI, Lightpanda) | 362.6 MiB (380,180,480) | 1,014.8 MiB (1,064,102,555) | <= 2 GiB: within | 1.17 GiB (1,258,291,200) | 1.05 GiB | 2.11 GiB |
-| checker | built-candidate | 994.0 MiB (1,042,298,880) | 2.70 GiB (2,896,004,908) | 2-8 GiB provisional: within | 3.19 GiB (3,422,552,064) | 2.99 GiB | 2.00 GiB |
+| checker | boot-proved (OCI, offline check) | 994.0 MiB (1,042,298,880) | 2.70 GiB (2,896,004,908) | 2-8 GiB provisional: within | 3.19 GiB (3,422,552,064) | 2.99 GiB | 2.00 GiB |
 
 - **base and browser** have the same `rootfs.tar`, layer and ext4 bytes as
   run b6. Their OCI ids are new only because the builder-commit label is
@@ -339,8 +339,16 @@ payload budgets.
   this output's byte for byte. The smoke ran Lightpanda only and sampled a
   Docker MemUsage peak of 11,303,649 bytes. Chromium, Firecracker and cold
   boot were not measured. The output's `note` says exactly this.
-- **The checker is new bytes** (store normalization, the capability xattr)
-  and stays `built-candidate` until its own re-smoke.
+- **The checker is new bytes** (store normalization, the capability xattr),
+  proved by their own smoke. L11-A's acceptance smoke ran f1's image on kel
+  (12:5x JST) as an OCI container with `--network none`, uid 10001 and
+  `--memory 18g`. Its five legs: the image id, the contents (cargo and
+  rustc 1.96.1, rustfmt, clippy, no rustup), the helper hash, the source
+  copy, and an offline `cargo check --locked --workspace --all-features`.
+  The check ran from a `cp -a` scratch copy of the normalized store and
+  returned rc=0 in 620 s, so the store normalization leaves a store cargo
+  resolves offline. Peak RAM was not sampled, and Firecracker was not
+  measured.
 - **All three fit the 4 GiB Firecracker rootfs cap**, the checker by about
   0.81 GiB. On top of the Debian closure, the checker's payload holds:
   - about 0.60 GiB of Rust toolchain (rustc, cargo, rust-std, rustfmt and
@@ -354,7 +362,8 @@ payload budgets.
   The store grows with `Cargo.lock`, so the cap's margin shrinks as
   dependencies are added. The cap does not move here.
 - Writable and snapshot bytes are unmeasured. The guest's peak RAM is
-  measured only for the browser's Lightpanda leg, above.
+  measured only for the browser's Lightpanda leg, above; the checker's
+  smoke stayed under its 18 GiB limit unsampled.
 - The whole build job's cgroup peak, anonymous memory plus page cache, was
   15.4 GiB on kel (16,586,764,288 bytes, run f1) and 12.3 GiB on bel
   (13,168,214,016 bytes, run f2), under a 16 GiB booking. kel and bel cap a
@@ -470,7 +479,7 @@ acceptance host: archive sha256 `5d900355867e…`, loaded id
 f1's outputs stayed on kel, loaded into its containerd-store docker:
 - the browser: archive sha256 `71dfd70f06ac…`, manifest
   `sha256:afeac611ec30…`, config `sha256:7e6fee8804c1…`;
-- the checker, for L11-A's re-smoke: archive sha256 `27446d5730f7…`, manifest
+- the checker, smoked there by L11-A: archive sha256 `27446d5730f7…`, manifest
   `sha256:51fe794a2173…`, config `sha256:3980a4fd96a6…`, from engine
   commit `95afa460192b…`. Its `gst-ptp-helper` reads
   `cap_net_bind_service,cap_net_admin,cap_sys_nice=ep` under `getcap` in the
