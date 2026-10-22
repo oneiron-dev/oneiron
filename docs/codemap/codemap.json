@@ -1761,6 +1761,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/recovery/scoped.rs",
+     "purpose": "The Unattached list and its reattach offers for a narrowed reader (FIX 8063): every thread, snapshot, held…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -1783,7 +1793,7 @@
      "path": "src/anchored_annotation/threads.rs",
      "purpose": "Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 8
      }
     },
@@ -7707,6 +7717,7 @@
      "path": "src/blob_artifact/verbs.rs",
      "purpose": "The artifact family's agent verbs (`vault.artifacts.*`, OF-511): one typed door per contract verb for every…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 17,
       "struct": 21
@@ -7729,7 +7740,7 @@
      "path": "src/blob_artifact/version_rows.rs",
      "purpose": "The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -12302,7 +12313,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 41,
       "enum": 1,
       "fn": 10,
       "struct": 1
@@ -12398,7 +12409,8 @@
      "path": "src/claim/scoped_read/facet_gate.rs",
      "purpose": "A credential narrowed to some facets, and a room with a facet set, limit what this lane reads, by the one…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -19180,8 +19192,18 @@
      "path": "src/context_board/room_verbs.rs",
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/room_verbs/ceiling.rs",
+     "purpose": "The one ceiling construction a room and each of its threads share (ARCH-0067 §8, OF-529, FIX 1599), run…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -21635,7 +21657,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -27906,7 +27928,32 @@
       "crate-vis": 8,
       "enum": 1,
       "fn": 8,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MadeByReader"
+     ],
+     "path": "src/edit_settle/pending/admission.rs",
+     "purpose": "Who may name and who may read a waiting proposal's sources",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/pending/output_settle.rs",
+     "purpose": "The ledger record a native output's Keep or Discard writes",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36946,7 +36993,7 @@
      "path": "src/llm/decision/questions/refresh.rs",
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 9,
       "struct": 2
      }
@@ -46380,7 +46427,7 @@
      "purpose": "Named (agent, world) standing blocks compiled from gated persona claims",
      "surface": {
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 4
      }
     },
@@ -71867,7 +71914,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -72189,7 +72236,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -72371,7 +72418,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 12,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73353,7 +73400,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4724,
+   "source_files": 4728,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88655,7 +88702,7 @@
      "path": "src/api/context_board/cursor.rs",
      "purpose": "Server-owned MEMORIES cursors and session read sets, keyed by principal and session",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -88745,7 +88792,7 @@
      "path": "src/api/context_board/session.rs",
      "purpose": "Actor-bound session observations shared by core reads and board rendering",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -88775,7 +88822,7 @@
      "path": "src/api/context_pack/audience.rs",
      "purpose": "The audience an assembly reads for: the room a request names, and the caller's read narrowed to that room's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -97403,7 +97450,7 @@
      "path": "src/mcp/registry.rs",
      "purpose": "MCP connector actor registry: cursors, board epochs, and stream proxy",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 22,
       "struct": 1
      }
@@ -97923,6 +97970,46 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/models/native_exl3/buffer.rs",
+     "purpose": "A native call's input region: the conversation's bytes copied once into an immutable shared region…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/native_exl3/mod.rs",
+     "purpose": "The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/native_exl3/transport.rs",
+     "purpose": "One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/native_exl3/wire.rs",
+     "purpose": "Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "OfferEndpoint",
       "ServedOffer"
@@ -98171,13 +98258,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
@@ -99523,7 +99610,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -101107,7 +101194,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 60,
+     "files": 64,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -101249,7 +101336,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1104,
+   "source_files": 1108,
    "test_files": 182
   },
   "oneiron-spawn": {
