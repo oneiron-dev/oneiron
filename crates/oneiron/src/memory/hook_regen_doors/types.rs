@@ -1,3 +1,7 @@
+//! Hook regeneration binding, adoption and view records.
+//! `HookRegenBindingRequest` is the first of its records.
+//! These are local definitions; `crate::runtime_hooks` defines the `HookRegenRecord` they project.
+
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;

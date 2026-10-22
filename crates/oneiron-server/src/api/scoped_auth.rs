@@ -241,6 +241,14 @@ pub(crate) fn mcp_credential_memory<'a>(
     // An MCP tool call reads repo bytes masked, the owner's credential
     // included (FIX 8961): the tool is the recipient.
     let memory = credential_memory(vault, auth, actor, class).for_repo_tool_recipient();
+    // A verified agent credential is the recipient the host proved (FIX
+    // 8960): its per-file reads that say why may ask the owner for a marked
+    // file's real bytes. The owner's own identity is never offered as one.
+    let memory = if auth.is_some() && class == oneiron::EdgeActorClass::Agent {
+        memory.for_repo_reveal_recipient(oneiron::memory::RepoRevealRecipient::proven_agent(actor))
+    } else {
+        memory
+    };
     match auth.and_then(CoreAuth::off_record_session) {
         Some(session) if super::call_receipt::mcp_session_principal(auth, actor).is_some() => {
             memory.in_off_record_session(session)

@@ -13,6 +13,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DECK_DESIGN_SPEC, CONTENT),
     (&t::DECK_OUTLINE_KEEP, CONTENT),
     (&t::DELETION_ROW_FENCE_BACKFILLED, CONTENT),
+    (&t::DELETION_CORRUPT_CAPTURE, LIVE),
     (&t::DERIVATION_OWNER, LIVE),
     (&t::DIARY_READ_LOG, LIVE),
     (&t::DIARY_READ_REQUEST, LIVE),

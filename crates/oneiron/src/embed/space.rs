@@ -277,6 +277,10 @@ impl SetupActor {
 pub(crate) enum SetupDoor<'a> {
     /// The owner's request, with its credential-bound proof.
     Owner(&'a AuthenticatedOwner),
+    /// The owner's request for a move's check (FIX 8982): its proof is checked again as the
+    /// check concludes, but the reading, not the owner, decides, so its rows are a system
+    /// move's.
+    OwnerCheck(&'a AuthenticatedOwner),
     /// A startup seed or an engine-driven move.
     System,
 }
@@ -286,14 +290,14 @@ impl SetupDoor<'_> {
     pub(crate) fn actor(self) -> SetupActor {
         match self {
             Self::Owner(_) => SetupActor::Owner,
-            Self::System => SetupActor::System,
+            Self::OwnerCheck(_) | Self::System => SetupActor::System,
         }
     }
 
     /// The owner's proof, checked again in the committing `txn` after any hook or blocking
     /// work before it: a revocation that commits first changes nothing. The engine passes.
     pub(crate) fn admit_in_txn(self, vault: &Vault, txn: &RoTxn<'_>) -> Result<()> {
-        if let Self::Owner(owner) = self {
+        if let Self::Owner(owner) | Self::OwnerCheck(owner) = self {
             owner.revalidate_in_txn(vault, txn)?;
         }
         Ok(())

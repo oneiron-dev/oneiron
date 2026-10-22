@@ -170,6 +170,12 @@ fn llm_code(error: &LlmError) -> &'static str {
     }
 }
 
+/// `key` in an answer's provider metadata `raw`, or beneath the ladder's
+/// receipt when one is stamped.
+fn answer_meta<'a>(raw: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    raw.get(key).or_else(|| raw.get("usage")?.get(key))
+}
+
 /// One declared space's embedder: the `ai.embed` rung its id pins, on the
 /// server's media runtime.
 pub(crate) struct RuntimeMediaEmbedder {
@@ -576,14 +582,19 @@ impl RuntimeMediaEmbedder {
     /// The device and runtime that computed one answer (FIX 7796): the mark
     /// its endpoint reported in the answer's provider metadata (beneath the
     /// ladder's receipt when one is stamped), held to the text endpoint's
-    /// rule; otherwise a remote mark naming the rung's model, since the
-    /// endpoint did not say which device ran it.
+    /// rule; otherwise a remote mark, since the endpoint did not say which
+    /// device ran it. That mark names `<model>@<endpoint>` as the text
+    /// endpoint's does when the media client says where it sent the call
+    /// (FIX 8984), and the rung's model when it does not.
     fn answer_mark(&self, raw: &serde_json::Value) -> EmbeddingProvenance {
-        raw.get("provenance")
-            .or_else(|| raw.get("usage")?.get("provenance"))
+        answer_meta(raw, "provenance")
             .and_then(crate::embedder::reported_mark)
             .unwrap_or_else(|| {
-                EmbeddingProvenance::new(EmbeddingDevice::Remote, self.model.as_str())
+                let runtime = answer_meta(raw, "remote_runtime")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|runtime| !runtime.is_empty())
+                    .unwrap_or(self.model.as_str());
+                EmbeddingProvenance::new(EmbeddingDevice::Remote, runtime)
             })
     }
 

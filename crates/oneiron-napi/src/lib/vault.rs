@@ -6,10 +6,10 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oneiron::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EdgeActorClass, EntityId,
-    Memory, RawEntityPut, RepoRef, TimeRange, Vault, VaultConfig, authority::MachineDeviceClass,
-    parse_actor_key,
+    Memory, RawEntityPut, RepoRef, TimeRange, Vault, VaultConfig, parse_actor_key,
 };
 
+pub(crate) use super::boundary::host_device_class;
 use super::boundary::{
     DEFAULT_NAPI_SEARCH_LIMIT, entity_ids_to_buffers, parse_created_at, parse_edge_kind,
     parse_entity_id, parse_search_limit, parse_u8, read_bounded_array, read_codebase_snapshot,
@@ -49,21 +49,6 @@ fn refuse_unserved_media(media: Option<NapiRecallMedia>) -> napi::Result<()> {
         CONTEXT_PACK_MEDIA_UNSERVED,
         &["Pack media through a server that serves the space's rung under [models.media.embed]."],
     )))
-}
-
-/// The class a host declares on a raw open (FIX 3833; CALLS:
-/// HOST_OPEN_DEVICE_CLASS = ExplicitHostInput): `"computer"`, the generic
-/// default when omitted, or `"phone"`. Never read off the operating system.
-pub(crate) fn host_device_class(
-    device_class: Option<&str>,
-) -> std::result::Result<MachineDeviceClass, String> {
-    match device_class {
-        None | Some("computer") => Ok(MachineDeviceClass::Computer),
-        Some("phone") => Ok(MachineDeviceClass::Phone),
-        Some(other) => Err(format!(
-            "unknown deviceClass {other:?}; pass \"computer\" or \"phone\""
-        )),
-    }
 }
 
 /// What a bound vault says to a write it has no caller-bound door for

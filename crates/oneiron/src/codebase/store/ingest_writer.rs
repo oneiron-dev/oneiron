@@ -181,21 +181,7 @@ impl Vault {
         }
         check_hosted_media_hash_matches(&project_id, &blobs, hash_match_provider)?;
 
-        let files = blobs
-            .iter()
-            .map(|blob| {
-                Ok(
-                    CodebaseFileEntry::new(blob.path.clone(), blob.content_hash, blob.size_bytes)
-                        .with_mode(blob.mode),
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let snapshot = CodebaseSnapshot::new(
-            project_id,
-            repo_ref.clone(),
-            Some(commit_hash.clone()),
-            files,
-        )?;
+        let snapshot = Self::build_ingest_snapshot(project_id, &repo_ref, &commit_hash, &blobs)?;
         // The read pass is useful for early quarantine but does not authorize
         // any writes: a declaration can arrive after it releases its snapshot.
         scan_codebase_snapshot_metadata(&snapshot)?;
@@ -225,6 +211,60 @@ impl Vault {
         // The final writer view decides every derived write, not merely the
         // manifest. A registration committed between passes excludes its blob
         // from ASSET, CODE_SYMBOL and snapshot in one transaction.
+        self.commit_ingest_snapshot(
+            &snapshot,
+            &blobs,
+            &repo_ref,
+            &commit_hash,
+            occurred,
+            learned_at,
+            &contents,
+            admit,
+        )
+    }
+
+    /// The first-pass snapshot of the import: an entry for every kept blob.
+    fn build_ingest_snapshot(
+        project_id: String,
+        repo_ref: &RepoRef,
+        commit_hash: &str,
+        blobs: &[RepoIngestBlob],
+    ) -> Result<CodebaseSnapshot> {
+        let files = blobs
+            .iter()
+            .map(|blob| {
+                Ok(
+                    CodebaseFileEntry::new(blob.path.clone(), blob.content_hash, blob.size_bytes)
+                        .with_mode(blob.mode),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let snapshot = CodebaseSnapshot::new(
+            project_id,
+            repo_ref.clone(),
+            Some(commit_hash.to_owned()),
+            files,
+        )?;
+        Ok(snapshot)
+    }
+
+    /// The final writer of the import: its admission first, then custody,
+    /// reclaim and every derived row, in one grouped transaction.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the final writer takes the first pass as it stood"
+    )]
+    fn commit_ingest_snapshot<R>(
+        &self,
+        snapshot: &CodebaseSnapshot,
+        blobs: &[RepoIngestBlob],
+        repo_ref: &RepoRef,
+        commit_hash: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+        contents: &dyn Fn(&str) -> Option<Vec<u8>>,
+        admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<RepoIngestResult, R>> {
         self.with_write_txn_grouped(|wtxn| {
             // A run's admission is judged again in this final writer, before
             // any row is put; a refusal writes nothing.
@@ -232,7 +272,7 @@ impl Vault {
                 return Ok(Err(refused));
             }
             let (files, custody_report) =
-                self.apply_custody_to_snapshot(wtxn, &snapshot, &contents)?;
+                self.apply_custody_to_snapshot(wtxn, snapshot, contents)?;
             let filtered_snapshot = CodebaseSnapshot::new(
                 snapshot.project_id.clone(),
                 snapshot.repo_ref.clone(),
@@ -257,7 +297,7 @@ impl Vault {
             let reclaimable = reclaimable_asset_hashes(
                 self,
                 wtxn,
-                &snapshot,
+                snapshot,
                 &custody_report,
                 &retained_hashes,
                 &excluded_hashes,
@@ -271,7 +311,7 @@ impl Vault {
             let code_body = crate::code_artifact::encode_code_artifact_body(&code_body)?;
 
             let mut batch = self.batch_in();
-            for blob in &blobs {
+            for blob in blobs {
                 if retained_paths.contains(blob.path.as_str()) {
                     let asset_id = codebase_asset_entity_id(&blob.content_hash)?;
                     batch = batch.put(
@@ -321,7 +361,7 @@ impl Vault {
             // Symbol rows first, then every edge a working batch at a time.
             let symbol_graph = prepare_code_symbol_graph(
                 repo_ref.clone(),
-                Some(commit_hash.clone()),
+                Some(commit_hash.to_owned()),
                 symbol_sources,
             )?;
             self.put_prepared_code_symbol_graph_in_txn(

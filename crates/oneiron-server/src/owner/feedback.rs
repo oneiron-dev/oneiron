@@ -25,7 +25,7 @@ use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::feedback::{
     FEEDBACK_APPROVE_ONCE_ACTION, FeedbackApprovalScope, FeedbackBundle, FeedbackCategory,
-    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, FeedbackProposal,
+    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, FeedbackProposal, ReportTextSendBinding,
     RetainedFeedbackPreview, UnredactedFeedback, feedback_approval_card, prepare_feedback_preview,
 };
 use oneiron::genui::{
@@ -179,6 +179,7 @@ pub(crate) fn send(
         proposal: request.proposal.clone(),
     });
     let source = source_digest(&built).map_err(feedback_error)?;
+    // The owner's own bundle quotes no report: it carries no report binding.
     send_previewed(
         vault,
         host,
@@ -187,6 +188,7 @@ pub(crate) fn send(
         &request.digest,
         &request.approval,
         request.previewed_at,
+        None,
     )
 }
 
@@ -195,7 +197,13 @@ pub(crate) fn send(
 /// be this owner's, for this route, built from the bundle `source` digests
 /// ([`source_digest`]) and unexpired; the approval and preview age are
 /// rechecked here, and the send is admitted under the owner's proof in the
-/// transaction that admits it.
+/// transaction that admits it. A bundle quoting a report's text carries
+/// `report_text`, and leaves only while the owner's disclosure of that text
+/// still stands just before the transport runs (FIX 8747).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one previewed send: its owner, preview binding and report text binding"
+)]
 pub(crate) fn send_previewed(
     vault: &Vault,
     host: &FeedbackHost,
@@ -204,6 +212,7 @@ pub(crate) fn send_previewed(
     digest: &str,
     approval: &str,
     previewed_at: u64,
+    report_text: Option<&ReportTextSendBinding>,
 ) -> OwnerResult<Sent> {
     let principal_ref = owner.revalidate_principal_ref(vault)?;
     let expired = || OwnerError::Changed("the preview has expired; preview it again".to_owned());
@@ -263,6 +272,7 @@ pub(crate) fn send_previewed(
         preview,
         &evaluation,
         owner,
+        report_text,
         now,
     )
     .map_err(|error| match error {

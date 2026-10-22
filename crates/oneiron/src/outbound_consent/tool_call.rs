@@ -1,6 +1,6 @@
 //! Resolve header parameters once and freeze them with the consent-visible tool call.
 //! Header parameters form an independent grant class, not a sensitivity rank.
-use super::{FrozenMcpPayload, ScopedMcpCallContext};
+use super::{DataClass, FrozenMcpPayload, ScopedMcpCallContext};
 use crate::outbound_intent_ledger::OutboundToolDescriptor;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -344,11 +344,14 @@ pub fn prepare_tool_call(
         destructive_hint,
         replay,
     } = descriptor;
-    reject_unresolved(schema)?;
-    let properties = schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .ok_or_else(invalid_schema)?;
+    super::tool_schema::reject_unresolved(schema)?;
+    // A schema with no root `properties` (`{"type":"object"}`) names none: an
+    // empty map, the arguments still checked against the whole schema (FIX 8811).
+    let none = serde_json::Map::new();
+    let properties = match schema.get("properties") {
+        Some(properties) => properties.as_object().ok_or_else(invalid_schema)?,
+        None => &none,
+    };
     let args = arguments.as_object().ok_or_else(invalid_schema)?;
     let declares_preview = properties
         .get("dry_run")
@@ -380,24 +383,15 @@ pub fn prepare_tool_call(
             Value::Bool(mutation == MutationIntent::Preview),
         );
     }
-    super::tool_schema::validate(
-        schema,
-        &serde_json::to_value(&body).map_err(|_| invalid_schema())?,
-        &call.tool,
-    )?;
+    let checked = serde_json::to_value(&body).map_err(|_| invalid_schema())?;
+    super::tool_schema::validate(schema, &checked, &call.tool)?;
     let mut headers = BTreeMap::new();
     let mut requirements = Vec::new();
-    for (parameter, property) in properties {
-        let Some(annotation) = property.get("x-mcp-header") else {
-            continue;
-        };
-        let name = match annotation {
-            Value::Bool(true) => parameter.as_str(),
-            Value::String(name) => name.as_str(),
-            Value::Bool(false) => continue,
-            _ => return Err(invalid_schema()),
-        };
-        let name = canonical_header(name)?;
+    for (parameter, names) in declared_headers(schema, &checked, &call.tool)? {
+        let names = names
+            .into_iter()
+            .map(canonical_header)
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
         if destructive_hint && parameter == "dry_run" {
             return Err(invalid_schema());
         }
@@ -408,16 +402,28 @@ pub fn prepare_tool_call(
         if !value.bytes().all(|c| c == b'\t' || (32..=126).contains(&c)) {
             return Err(invalid_schema());
         }
-        if headers.insert(name.clone(), value.to_owned()).is_some() {
-            return Err(invalid_schema());
+        // Each header the parameter is named under carries it, each under its
+        // own header grant; one header two values would need refuses.
+        for name in names {
+            if headers
+                .insert(name.clone(), value.to_owned())
+                .is_some_and(|before| before != value)
+            {
+                return Err(invalid_schema());
+            }
+            requirements.push(HeaderGrantRequirement {
+                parameter: parameter.to_owned(),
+                header: name,
+                data_class: ToolGrantDataClass::XMcpHeader,
+            });
         }
-        requirements.push(HeaderGrantRequirement {
-            parameter: parameter.clone(),
-            header: name,
-            data_class: ToolGrantDataClass::XMcpHeader,
-        });
     }
     requirements.sort_by(|a, b| a.parameter.cmp(&b.parameter));
+    // The frozen content's own class raises the tool's (FIX 8807): every
+    // check of this call, its retries' too, reads the class frozen here.
+    let mut call = call;
+    let sent = serde_json::json!([&body, &headers]);
+    call.payload_data_class = call.payload_data_class.max(content_data_class(&sent));
     let preview = destructive_hint && mutation == MutationIntent::Preview;
     if destructive_hint && declares_preview {
         body.insert("dry_run".into(), Value::Bool(preview));
@@ -508,24 +514,60 @@ impl crate::Vault {
 pub(super) fn invalid_schema() -> Error {
     Error::InvalidConfig("tool schema or resolved header parameters are invalid".into())
 }
-fn reject_unresolved(value: &Value) -> Result<()> {
-    match value {
-        Value::Object(map) => {
-            if ["$ref", "allOf"].iter().any(|key| map.contains_key(*key)) {
-                return Err(invalid_schema());
-            }
-            for child in map.values() {
-                reject_unresolved(child)?;
-            }
+
+/// Each `x-mcp-header` parameter `schema` declares where `value` meets it,
+/// with every header name it names there: its own for `true`, the given one
+/// for a string. A branch's annotation counts as the root's does, and a
+/// parameter two branches name differently goes under each name (FIX
+/// 8810); `false` declares none, and any other annotation refuses.
+fn declared_headers<'a>(
+    schema: &'a Value,
+    value: &Value,
+    tool: &str,
+) -> Result<BTreeMap<&'a str, std::collections::BTreeSet<&'a str>>> {
+    let mut declared: BTreeMap<&str, std::collections::BTreeSet<&str>> = BTreeMap::new();
+    for properties in super::tool_schema::applicable_properties(schema, Some((value, tool)))? {
+        for (parameter, property) in properties {
+            let name = match property.get("x-mcp-header") {
+                None | Some(Value::Bool(false)) => continue,
+                Some(Value::Bool(true)) => parameter.as_str(),
+                Some(Value::String(name)) => name.as_str(),
+                Some(_) => return Err(invalid_schema()),
+            };
+            declared.entry(parameter.as_str()).or_default().insert(name);
         }
-        Value::Array(items) => {
-            for child in items {
-                reject_unresolved(child)?;
-            }
-        }
-        _ => {}
     }
-    Ok(())
+    Ok(declared)
+}
+
+/// The class `content` shows by itself (FIX 8807): `Secret` when the shared
+/// release check finds a credential or secret in it, read on a copy;
+/// otherwise the lowest, so the tool's slate class (its trusted provenance)
+/// stands. Nothing here classifies personal content.
+pub(super) fn content_data_class(content: &Value) -> DataClass {
+    if crate::batch::export::redact_credentials(&mut content.clone()) {
+        DataClass::Secret
+    } else {
+        DataClass::Public
+    }
+}
+
+/// The parameters an `x-mcp-header` annotation in `schema` can send as
+/// headers, sorted: those in the root `properties` and in every branch a
+/// call may meet (FIX 8810), as [`prepare_tool_call`] extracts them.
+pub fn header_parameters(schema: &Value) -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for properties in super::tool_schema::applicable_properties(schema, None).unwrap_or_default() {
+        for (parameter, property) in properties {
+            if matches!(
+                property.get("x-mcp-header"),
+                Some(Value::Bool(true) | Value::String(_))
+            ) {
+                names.insert(parameter.clone());
+            }
+        }
+    }
+    names.into_iter().collect()
 }
 fn canonical_header(name: &str) -> Result<String> {
     if name.is_empty()

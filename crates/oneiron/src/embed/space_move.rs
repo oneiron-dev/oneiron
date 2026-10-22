@@ -769,6 +769,33 @@ impl Vault {
         candidate: &str,
         encoder: &dyn SpaceProbeEncoder,
     ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
+        self.check_space_move_listing_by(candidate, encoder, SetupDoor::System)
+    }
+
+    /// [`Self::check_space_move_listing`] at the owner's request (FIX 8982): the owner's proof
+    /// is checked again in the write that records the reading and acts on it. The reading
+    /// still decides, as a scheduled check's does; a swap it makes is not the owner's yes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::check_space_move`]; the owner-auth refusal when the owner's proof no longer
+    /// holds as the check concludes.
+    pub fn check_space_move_listing_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        candidate: &str,
+        encoder: &dyn SpaceProbeEncoder,
+    ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
+        self.check_space_move_listing_by(candidate, encoder, SetupDoor::OwnerCheck(owner))
+    }
+
+    /// The check, its conclusion written through `by`.
+    fn check_space_move_listing_by(
+        &self,
+        candidate: &str,
+        encoder: &dyn SpaceProbeEncoder,
+        by: SetupDoor<'_>,
+    ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
         let (moving, candidate_space, incumbent_space, probes, versions) = {
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
@@ -974,7 +1001,7 @@ impl Vault {
         let checked_at = check.checked_at;
         rows.sort_unstable();
         rows.dedup();
-        let outcome = self.conclude_space_move(candidate, Some(check), SetupDoor::System)?;
+        let outcome = self.conclude_space_move(candidate, Some(check), by)?;
         let retests: Vec<ProbeRetest> = runs
             .iter()
             .map(|run| ProbeRetest {
@@ -1221,7 +1248,8 @@ impl Vault {
     /// owner's yes, binds the candidate for every moving kind; a worse one closes the move and
     /// drops the candidate's rows; an unknown one leaves the move open. The owner's yes names
     /// the owner on the slot rows it binds, and its proof is checked again in this write
-    /// (FIX 8200); a check's rows are a system move's (FIX 6697).
+    /// (FIX 8200); a check's rows are a system move's (FIX 6697), with the owner's proof checked
+    /// again here when the owner asked for the check (FIX 8982).
     fn conclude_space_move(
         &self,
         candidate: &str,

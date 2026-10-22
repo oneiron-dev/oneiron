@@ -74,6 +74,21 @@ pub enum Conversion {
     /// These series left a bubble plot; their bubble sizes are not drawn
     /// and went.
     BubbleSizesDropped { series: Vec<String> },
+    /// The nth stock plot draws no series for these prices: they stay
+    /// empty, no value made up (Engine ruling 10-22).
+    StockRolesMissing { nth: u32, roles: Vec<String> },
+    /// These series found no price in their stock plot, which has a series
+    /// for each: they are drawn as lines on its axes, nothing dropped
+    /// (Engine ruling 10-22).
+    StockSeriesToLine { series: Vec<String> },
+    /// The surface series' heights stand on one category set of `count`
+    /// points, joined by point identity (by place for a series drawing its
+    /// points by index): a point a series holds no value for is a missing
+    /// height, never zero.
+    SurfaceAligned { count: usize },
+    /// The nth of-pie plot's custom split lost `count` point(s) the set its
+    /// first series draws no longer holds.
+    SplitPointsDropped { nth: u32, count: usize },
     /// A title or label linked to a cell keeps its text, unlinked.
     TitleLinkDropped,
     /// This many SmartArt nodes' text was written into the data part and
@@ -199,6 +214,10 @@ fn family_name(kind: ChartKind) -> &'static str {
         ChartKind::Pie3D => "3D pie",
         ChartKind::Area3D => "3D area",
         ChartKind::Bubble => "bubble",
+        ChartKind::Stock => "stock",
+        ChartKind::Surface => "surface",
+        ChartKind::Surface3D => "3D surface",
+        ChartKind::OfPie => "of-pie",
     }
 }
 
@@ -279,6 +298,22 @@ impl Conversion {
             Self::BubbleSizesDropped { series } => format!(
                 "bubble sizes dropped from series {}: they are no longer drawn as bubbles",
                 series.join(", ")
+            ),
+            Self::StockRolesMissing { nth, roles } => format!(
+                "stock plot {} draws no series for {}: left empty",
+                nth + 1,
+                roles.join(", ")
+            ),
+            Self::StockSeriesToLine { series } => format!(
+                "series {} drawn as lines on the stock plot's axes: it has a series for each price",
+                series.join(", ")
+            ),
+            Self::SurfaceAligned { count } => format!(
+                "surface series aligned on one set of {count} categories; a height a series lacks stays missing"
+            ),
+            Self::SplitPointsDropped { nth, count } => format!(
+                "of-pie plot {} drops {count} custom split point(s) its categories no longer hold",
+                nth + 1
             ),
             Self::TitleLinkDropped => {
                 "a title linked to a cell keeps its text, unlinked".to_owned()

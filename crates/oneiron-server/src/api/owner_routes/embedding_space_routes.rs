@@ -38,7 +38,7 @@ use super::{OwnerReply, blocking, hooked_owner, owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row};
-use crate::server::SyncServer;
+use crate::server::{MediaEmbedRefusal, SyncServer};
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -353,7 +353,7 @@ async fn check_move(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceCandidateRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let runtime = tokio::runtime::Handle::current();
     // Dropping the timed-out future detaches the blocking task; it runs on.
@@ -366,7 +366,7 @@ async fn check_move(
                 "vault.embedding_spaces.move_check",
                 request,
                 |request: EmbeddingSpaceCandidateRequest| {
-                    check_space_move(&server, &runtime, &request.candidate)
+                    check_space_move(&server, &runtime, &owner, &request.candidate)
                 },
             )
         }),
@@ -382,10 +382,13 @@ async fn check_move(
     }))
 }
 
-/// The move on `candidate`, checked now.
+/// The move on `candidate`, checked now. The owner's proof is checked again
+/// as the check concludes (FIX 8982); a proof that no longer holds answers as
+/// the owner door does.
 fn check_space_move(
     server: &SyncServer,
     runtime: &tokio::runtime::Handle,
+    owner: &AuthenticatedOwner,
     candidate: &str,
 ) -> OwnerResult<MoveChecked> {
     let moving = server
@@ -394,7 +397,12 @@ fn check_space_move(
         .into_iter()
         .find(|moving| moving.candidate == candidate)
         .ok_or_else(|| OwnerError::NotFound("embedding space move", candidate.to_owned()))?;
-    let outcome = server.check_space_move(runtime, &moving).map_err(invalid)?;
+    let (outcome, _) = server
+        .check_space_move_listing(runtime, &moving, Some(owner))
+        .map_err(|refusal| match refusal {
+            MediaEmbedRefusal::Vault(error) => space_refused(error),
+            refusal => invalid(refusal),
+        })?;
     Ok(match outcome {
         SpaceMoveOutcome::Filling => MoveChecked {
             outcome: "filling",

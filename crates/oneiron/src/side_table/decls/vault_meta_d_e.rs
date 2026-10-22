@@ -21,6 +21,10 @@ side_tables! {
     /// Marker that the one-time row-deletion-fence backfill from applied soft-delete markers has
     /// run. Key: ().
     DELETION_ROW_FENCE_BACKFILLED: VaultMeta b"deletion.row_fence.v1.backfilled" Raw;
+    /// FIX 7800: an owner-selected corrupt CLAIM's audited capture exception until its hard
+    /// erase commits its receipt and sweep: the exact header seen, the signed repair event and
+    /// whether a SoftErase has scrubbed the body since. No content. Key: id16 (claim).
+    DELETION_CORRUPT_CAPTURE: VaultMeta b"deletion:corrupt_capture:" Named;
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw;
