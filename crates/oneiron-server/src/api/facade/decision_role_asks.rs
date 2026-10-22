@@ -48,7 +48,12 @@ async fn asks(
         let asks = server.vault.decision_asks_held_by(actor).map_err(engine)?;
         // FIX 8174: of the asks at a role the principal holds, the ones the
         // credential's own lane reads whole, at its destination.
-        Ok(lane_reads_each(&server.vault, &auth, asks, decision_ask_refs)?)
+        Ok(lane_reads_each(
+            &server.vault,
+            &auth,
+            asks,
+            decision_ask_refs,
+        )?)
     })
     .await
     .map_err(|_| internal())??;
@@ -59,7 +64,11 @@ async fn asks(
 /// work it decides. The person it is for is the role chain's, which the role
 /// check already answers.
 pub(crate) fn decision_ask_refs(ask: &DecisionAsk) -> Vec<oneiron::EntityId> {
-    ask.evidence.iter().copied().chain(ask.correlation).collect()
+    ask.evidence
+        .iter()
+        .copied()
+        .chain(ask.correlation)
+        .collect()
 }
 
 /// `POST /v1/core/decisions/asks/answer`: a role holder's answer to one ask,

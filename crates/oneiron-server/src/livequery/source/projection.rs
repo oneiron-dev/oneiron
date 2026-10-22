@@ -470,7 +470,9 @@ fn view_result(
     mut narrowing: oneiron::claim::ScopedReadReceipt,
 ) -> ViewResult {
     narrowing.suppressed_count = 0;
-    narrowing.narrowed_axes.retain(|axis| axis != "row_authority");
+    narrowing
+        .narrowed_axes
+        .retain(|axis| axis != "row_authority");
     narrowing.record_axes();
     ViewResult { items, narrowing }
 }

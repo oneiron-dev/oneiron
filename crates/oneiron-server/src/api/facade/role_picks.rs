@@ -60,7 +60,12 @@ async fn asks(
         let asks = skill_tradeoff_asks_for(&server.vault, &actor).map_err(engine)?;
         // FIX 8162: of the asks the reached-role check picked, the ones the
         // credential's own lane reads whole, at its destination.
-        Ok(lane_reads_each(&server.vault, &auth, asks, tradeoff_ask_refs)?)
+        Ok(lane_reads_each(
+            &server.vault,
+            &auth,
+            asks,
+            tradeoff_ask_refs,
+        )?)
     })
     .await
     .map_err(|_| internal())??;
