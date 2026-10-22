@@ -31822,7 +31822,7 @@ pub struct HookRegenAdoptRequest {
     pub candidate_hash: String,
 }
 
-/// `oneiron::artifact_hosting::ArtifactPointerChannel`.
+/// `oneiron::artifact_hosting::vocabulary::ArtifactPointerChannel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ArtifactPointerChannel {
     #[serde(rename = "published")]
@@ -31831,7 +31831,7 @@ pub enum ArtifactPointerChannel {
     Preview,
 }
 
-/// `oneiron::artifact_hosting::ArtifactExportRef`.
+/// `oneiron::artifact_hosting::vocabulary::ArtifactExportRef`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ArtifactExportRef {
     #[serde(rename = "ForkHash")]
@@ -31883,7 +31883,7 @@ pub struct ArtifactPublishApproval {
     pub effect_digest: String,
 }
 
-/// `oneiron::artifact_hosting::ArtifactPublishVerbStatus`.
+/// `oneiron::artifact_hosting::vocabulary::ArtifactPublishVerbStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ArtifactPublishVerbStatus {
     #[serde(rename = "proposed")]
@@ -31892,7 +31892,7 @@ pub enum ArtifactPublishVerbStatus {
     Published,
 }
 
-/// `oneiron::artifact_hosting::ArtifactPointer`.
+/// `oneiron::artifact_hosting::vocabulary::ArtifactPointer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ArtifactPointer {
     #[serde(rename = "artifact")]
