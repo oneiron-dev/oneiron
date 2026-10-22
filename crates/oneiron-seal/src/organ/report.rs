@@ -1,7 +1,8 @@
 //! A verdict as the engine reads it: the native report's coarse fields, its
 //! full JSON, and the revision classification the engine admits a sealed
 //! PDF on (OF-415, C032). The classification is taken from the native
-//! report itself, never from its JSON.
+//! report itself, never from its JSON. The JSON's bytes are counted, and
+//! reserved, before its buffer is made (FIX 6195).
 
 use oneiron_organ_protocol::seal::{
     SealByteRangeEvidence, SealCheckVerdict, SealModificationLevel, SealModifications,
@@ -33,10 +34,21 @@ pub(super) struct Verdict {
 
 impl Verdict {
     /// The verdict of `report`, the verification of `pdf` when this side
-    /// holds it: without the bytes, nothing is classified through.
-    pub(super) fn of(report: &VerifyReport, pdf: Option<&[u8]>) -> Result<Self, OrganError> {
-        let json = serde_json::to_vec(report)
-            .map_err(|err| OrganError::new(ErrorCode::Internal, format!("report: {err}")))?;
+    /// holds it: without the bytes, nothing is classified through. `reserve`
+    /// holds the JSON's bytes before they are allocated.
+    pub(super) fn of(
+        report: &VerifyReport,
+        pdf: Option<&[u8]>,
+        reserve: &dyn Fn(u64) -> Result<(), OrganError>,
+    ) -> Result<Self, OrganError> {
+        let failed = |err: &dyn std::fmt::Display| {
+            OrganError::new(ErrorCode::Internal, format!("report: {err}"))
+        };
+        let mut count = Count(0);
+        serde_json::to_writer(&mut count, report).map_err(|err| failed(&err))?;
+        reserve(count.0)?;
+        let mut json = Vec::with_capacity(usize::try_from(count.0).unwrap_or(0));
+        serde_json::to_writer(&mut json, report).map_err(|err| failed(&err))?;
         Ok(Self {
             verdict: report.verdict(),
             reasons: report.reasons(),
@@ -45,6 +57,20 @@ impl Verdict {
             report_json: ByteBuf::from(json),
             classification: classification(report, pdf),
         })
+    }
+}
+
+/// Bytes written, counted with nothing kept.
+struct Count(u64);
+
+impl std::io::Write for Count {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(bytes.len() as u64);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
