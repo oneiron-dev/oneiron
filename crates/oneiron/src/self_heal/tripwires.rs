@@ -13,6 +13,13 @@ use crate::{
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+mod policy;
+pub(crate) use policy::{ManifestTripwireBounds, TripwireBoundsOrigin};
+pub use policy::{
+    ResolvedTripwireBounds, TripwireBound, TripwireBoundOrigin, TripwirePolicyReceipt,
+    TripwirePolicySource,
+};
+
 pub(super) fn draft(
     id: &str,
     class: DiagnosticEventClass,
@@ -420,24 +427,14 @@ impl DreamerRunFacts {
     }
 }
 impl Vault {
-    /// The resolved tripwire policy. Each of its three count thresholds past
-    /// `limits.tripwire_threshold` asks whether everything is okay, and the
-    /// tripwires run at it.
+    /// The resolved tripwire policy's bounds, as
+    /// [`Vault::resolved_tripwire_bounds`] resolves them. Each of its three
+    /// count thresholds past `limits.tripwire_threshold` asks whether
+    /// everything is okay, and the tripwires run at it.
     pub fn tripwire_bounds(&self) -> Result<Option<TripwireBounds>> {
-        let txn = self.store.env.read_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
-        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
-            return Ok(None);
-        }
-        let bounds = policy.diagnostic_bounds.unwrap_or_default();
-        for threshold in [
-            bounds.consent_depth,
-            bounds.actor_writes,
-            bounds.retrieval_regressions,
-        ] {
-            let _ = self.measure_limit(EngineLimit::TripwireThreshold, threshold);
-        }
-        Ok(Some(bounds))
+        Ok(self
+            .resolved_tripwire_bounds()?
+            .map(|resolved| resolved.bounds))
     }
     /// Read the stored ARCH-0037 records, never caller-authored telemetry labels.
     /// Every stored run is read and every miss among them observed: past
@@ -450,7 +447,7 @@ impl Vault {
             .filter_map(DiagnosticObservation::from_retrieval_run)
             .collect();
         let _ = self.measure_limit(EngineLimit::DetectorObservations, observations.len() as u64);
-        let ids = run(self, scope, observations, &[&RetrievalMissDetector])?;
+        let ids = run(self, scope, observations, &[&RetrievalMissDetector], None)?;
         self.capture_tier1_point_producer(&ids)?;
         Ok(ids)
     }
@@ -463,11 +460,24 @@ impl Vault {
         query: ReceiptQuery,
         end: u64,
     ) -> Result<Vec<EntityId>> {
+        let Some(policy) = self.resolved_tripwire_bounds()? else {
+            return Ok(vec![]);
+        };
+        self.run_receipt_tripwires_under(scope, query, end, &policy)
+    }
+    /// [`Self::run_receipt_tripwires`] under a pass's one resolved policy.
+    pub(crate) fn run_receipt_tripwires_under(
+        &self,
+        scope: &str,
+        query: ReceiptQuery,
+        end: u64,
+        policy: &ResolvedTripwireBounds,
+    ) -> Result<Vec<EntityId>> {
         let receipts = self.receipts(ReceiptQuery {
             limit: usize::MAX,
             ..query
         })?;
-        self.project_receipt_tripwires(scope, &receipts, end)
+        self.project_receipt_tripwires_under(scope, &receipts, end, policy)
     }
     /// Projects a scoped receipt slice whole; also used by receipt adapters.
     pub fn project_receipt_tripwires(
@@ -476,9 +486,22 @@ impl Vault {
         receipts: &[ReceiptRecord],
         end: u64,
     ) -> Result<Vec<EntityId>> {
-        let Some(bounds) = self.tripwire_bounds()? else {
+        let Some(policy) = self.resolved_tripwire_bounds()? else {
             return Ok(vec![]);
         };
+        self.project_receipt_tripwires_under(scope, receipts, end, &policy)
+    }
+    /// [`Self::project_receipt_tripwires`] under a pass's one resolved
+    /// policy: its bounds drive every detector, and its receipt is signed
+    /// with every run.
+    fn project_receipt_tripwires_under(
+        &self,
+        scope: &str,
+        receipts: &[ReceiptRecord],
+        end: u64,
+        policy: &ResolvedTripwireBounds,
+    ) -> Result<Vec<EntityId>> {
+        let bounds = policy.bounds;
         // Every receipt is projected: past `limits.detector_receipt_rows` the
         // window asks and reads on.
         let _ = self.measure_limit(EngineLimit::DetectorReceiptRows, receipts.len() as u64);
@@ -527,6 +550,7 @@ impl Vault {
                     window_end: end,
                 },
             ],
+            Some(&policy.receipt),
         )?;
         // Drift counts only writes whose manifest criticality rose from the recorded baseline.
         let txn = self.store.env.read_txn()?;
@@ -571,6 +595,7 @@ impl Vault {
                     window_end: end,
                     actor,
                 }],
+                Some(&policy.receipt),
             )?);
         }
         ids.sort();
@@ -596,6 +621,7 @@ impl Vault {
                 .filter_map(DreamerRunFacts::observation)
                 .collect(),
             &[&DreamerDegenerateDetector, &SilentConversationDetector],
+            None,
         )
     }
 }
@@ -609,6 +635,7 @@ pub(super) fn run(
     scope: &str,
     mut observations: Vec<DiagnosticObservation>,
     detectors: &[&dyn DeterministicDetector],
+    policy: Option<&TripwirePolicyReceipt>,
 ) -> Result<Vec<EntityId>> {
     observations.sort_by_key(DiagnosticObservation::order_key);
     observations.dedup();
@@ -616,17 +643,20 @@ pub(super) fn run(
         scope_ref: scope,
         observations: &observations,
     };
-    signed(vault, &input, detectors)
+    signed(vault, &input, detectors, policy)
 }
 
 /// Signs the run as [`TIER1_DETECTOR_INSTANCE`] and accepts it, so every
-/// stored tier-1 diagnostic has a verified signed run behind it.
+/// stored tier-1 diagnostic has a verified signed run behind it. A run that
+/// read the tripwire policy signs the pass's `policy` receipt with it.
 pub(super) fn signed(
     vault: &Vault,
     input: &DiagnosticWorkingSet<'_>,
     detectors: &[&dyn DeterministicDetector],
+    policy: Option<&TripwirePolicyReceipt>,
 ) -> Result<Vec<EntityId>> {
-    let run = vault.sign_detector_run(TIER1_DETECTOR_INSTANCE, input, detectors)?;
+    let run =
+        vault.sign_detector_run_with_policy(TIER1_DETECTOR_INSTANCE, input, detectors, policy)?;
     vault.accept_signed_detector_run(&run)
 }
 

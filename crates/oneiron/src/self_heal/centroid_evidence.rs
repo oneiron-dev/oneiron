@@ -1,5 +1,6 @@
 //! Immutable, content-addressed centroid inputs beside vault-local telemetry.
-//! Current vectors can change; replay never consults them.
+//! Current vectors can change; replay never consults them. A source's erase
+//! reaches every snapshot that copied it ([`erase`], FIX 10094).
 use super::{
     DiagnosticSourceKind,
     distillation::{MintedExample, centroid_labels},
@@ -14,6 +15,10 @@ use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
 use serde::{Deserialize, Serialize};
+
+mod erase;
+pub(crate) use erase::erase_centroid_source_in_txn;
+pub(super) use erase::run_sources;
 
 const EVIDENCE: SideTable<[u8; 32], CentroidEvidence, Named> =
     SideTable::new(&side_table::SELF_HEAL_CENTROID_EVIDENCE);
@@ -77,6 +82,7 @@ pub struct CentroidReplay {
 
 /// Read-time custody of the immutable centroid inputs used by a tier-1
 /// observation. The producer performs the full replay check before minting.
+/// A snapshot with an erased source is not live.
 pub(crate) fn snapshot_live_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -92,7 +98,9 @@ pub(crate) fn snapshot_live_in_txn(
         rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
     let canonical = rmp_serde::to_vec_named(&evidence)
         .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
-    Ok(evidence.version == 1 && raw == canonical)
+    Ok(evidence.version == 1
+        && raw == canonical
+        && erase::erased_source_in_txn(store, txn, &evidence.sources())?.is_none())
 }
 
 /// A T2a corpus's revision (FIX 2078): its threshold, then each label, by id, with its vector.
@@ -225,7 +233,12 @@ impl Vault {
         let bytes = rmp_serde::to_vec_named(&snapshot)
             .map_err(|_| Error::InvariantViolation("centroid evidence encode"))?;
         let hash = *blake3::hash(&bytes).as_bytes();
-        self.with_write_txn_grouped(|txn| {
+        // A source erased since its vector was read is not copied: the
+        // snapshot is not stored and no finding cites it (FIX 10094).
+        let stored = self.with_write_txn_grouped(|txn| {
+            if erase::erased_source_in_txn(&self.store, txn, &snapshot.sources())?.is_some() {
+                return Ok(false);
+            }
             if let Some(prior) = EVIDENCE.get_bytes(&self.store, txn, &hash)? {
                 if prior != bytes {
                     return Err(Error::CorruptedIndex("centroid evidence collision"));
@@ -233,8 +246,11 @@ impl Vault {
             } else {
                 EVIDENCE.put(&self.store, txn, &hash, &snapshot)?;
             }
-            Ok(())
+            Ok(true)
         })?;
+        if !stored {
+            return Ok(None);
+        }
         let mut refs = vec![EntityId::from_bytes(run.run_id.as_bytes())?, candidate];
         refs.extend(labeled.iter().copied());
         refs.sort();
@@ -342,7 +358,10 @@ impl Vault {
 
     /// Reconstructs the exact inputs used by a stored centroid finding.
     /// Missing or modified historical evidence is an error, never a fallback to
-    /// today's vectors. This cannot sign or authorize a T1 detector run.
+    /// today's vectors. This cannot sign or authorize a T1 detector run. A
+    /// source erased since the snapshot makes the replay unavailable
+    /// (FIX 10094): `EntityNotFound`, the erased inputs never read, whether
+    /// the erase already dropped the snapshot or not.
     pub fn replay_centroid_finding(&self, event_id: &EntityId) -> Result<CentroidReplay> {
         let event = self.reviewed_diagnostic(event_id)?;
         if event.source != DiagnosticSourceKind::RetrievalTelemetry
@@ -351,9 +370,27 @@ impl Vault {
             return Err(Error::InvalidConfig("not a centroid finding".into()));
         }
         let txn = self.store.env.read_txn()?;
-        let raw = EVIDENCE
-            .get_bytes(&self.store, &txn, &event.replay.content_hash)?
-            .ok_or(Error::CorruptedIndex("centroid evidence missing"))?;
+        let Some(raw) = EVIDENCE.get_bytes(&self.store, &txn, &event.replay.content_hash)? else {
+            // Dropped by a source's erase, or never kept.
+            let mut sources: std::collections::BTreeSet<[u8; 16]> = event
+                .evidence_refs
+                .iter()
+                .map(|id| *id.as_bytes())
+                .collect();
+            if let Some(Ok(run)) = event.replay.run_ref.as_deref().map(EntityId::from_hex) {
+                let run = crate::store::RetrievalRunId::from_bytes(*run.as_bytes());
+                if let Some(run) = self.store.retrieval_run_in_txn(&txn, run)? {
+                    sources.extend(erase::run_sources(&run));
+                }
+            }
+            return Err(
+                if erase::erased_source_in_txn(&self.store, &txn, &sources)?.is_some() {
+                    Error::EntityNotFound
+                } else {
+                    Error::CorruptedIndex("centroid evidence missing")
+                },
+            );
+        };
         if *blake3::hash(&raw).as_bytes() != event.replay.content_hash {
             return Err(Error::CorruptedIndex("centroid evidence hash"));
         }
@@ -363,6 +400,9 @@ impl Vault {
             .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
         if evidence.version != 1 || raw != canonical {
             return Err(Error::CorruptedIndex("centroid evidence canonical form"));
+        }
+        if erase::erased_source_in_txn(&self.store, &txn, &evidence.sources())?.is_some() {
+            return Err(Error::EntityNotFound);
         }
         let mut refs = vec![
             EntityId::from_bytes(evidence.run.run_id.as_bytes())?,

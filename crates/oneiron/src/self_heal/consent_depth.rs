@@ -5,7 +5,7 @@
 //! Coach and the owner: it never answers a consent, never limits a proposal
 //! and files no repair.
 
-use super::tripwires::{TripwireBounds, draft, observation};
+use super::tripwires::{ResolvedTripwireBounds, TripwireBounds, draft, observation};
 use super::{
     DeterministicDetector, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation,
     DiagnosticSourceKind, DiagnosticWorkingSet,
@@ -131,9 +131,21 @@ impl Vault {
     /// again from base; one that does not stays a diagnostic only. Returns
     /// the diagnostics stored.
     pub fn run_pending_consent_depth(&self, scope: &str, now: u64) -> Result<Vec<EntityId>> {
-        let Some(bounds) = self.tripwire_bounds()? else {
+        let Some(policy) = self.resolved_tripwire_bounds()? else {
             return Ok(vec![]);
         };
+        self.run_pending_consent_depth_under(scope, now, &policy)
+    }
+
+    /// [`Self::run_pending_consent_depth`] under a pass's one resolved
+    /// tripwire policy, whose receipt the run signs.
+    pub(crate) fn run_pending_consent_depth_under(
+        &self,
+        scope: &str,
+        now: u64,
+        policy: &ResolvedTripwireBounds,
+    ) -> Result<Vec<EntityId>> {
+        let bounds = policy.bounds;
         let snapshot = ConsentQueueSnapshot::read(self, now)?;
         let observations = snapshot.observations();
         let _ = self.measure_limit(EngineLimit::DetectorObservations, observations.len() as u64);
@@ -145,6 +157,7 @@ impl Vault {
                 bounds,
                 snapshot_at: snapshot.snapshot_at,
             }],
+            Some(&policy.receipt),
         )?;
         self.capture_tier1_consent_queue(&ids, scope, &snapshot, bounds)?;
         Ok(ids)

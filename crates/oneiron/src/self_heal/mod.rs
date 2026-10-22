@@ -57,6 +57,7 @@ mod centroid_evidence;
 pub(crate) mod consent_depth;
 mod consent_detector;
 pub mod tripwires;
+pub(crate) use centroid_evidence::erase_centroid_source_in_txn;
 pub use centroid_evidence::{CentroidCorpus, CentroidReplay, DETECTOR_CENTROID_MIN_SIMILARITY};
 pub use consent_detector::ConsentDeniedDetector;
 
