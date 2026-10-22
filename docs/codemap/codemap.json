@@ -49433,6 +49433,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "PromptLayout",
       "PromptRecompileStamp",
       "ResolvedPrompt",
       "SessionPromptAssembly",
@@ -49442,8 +49443,9 @@
      "path": "src/prompt.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
-      "fn": 6,
+      "const": 6,
+      "enum": 1,
+      "fn": 8,
       "struct": 5
      }
     },
@@ -89108,13 +89110,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/resident_craft.rs",
      "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
