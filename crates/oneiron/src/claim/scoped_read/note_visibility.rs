@@ -1,6 +1,7 @@
 //! Actor and class checks for private NOTE bodies in scoped reads.
 
 use super::*;
+use crate::federation::record_scope::note_world;
 
 impl ScopedRead<'_> {
     /// Scoped actor keys are asserted by a trusted host, not bearer secrets.
@@ -41,6 +42,15 @@ impl ScopedRead<'_> {
         let Ok(body) = crate::note::decode_note_body_in_txn(&self.vault.store, txn, bytes) else {
             return Ok(false);
         };
+        // A NOTE placed in worlds reads, on every path below, only where the
+        // asked worlds, the credential's and the Grant's hold one of them
+        // (FIX-LIST 9433). The vault's owner is not held to it.
+        let ceiling = self.actor_key.world_ceiling();
+        let held = [&ceiling.worlds, &grant.unwrap_or(&ceiling).worlds];
+        let worlds = note_world::note_worlds_in(&self.store_read(), txn, *id);
+        if self.actor_key.vault_owner_ref().is_none() && !worlds.readable_at(&held) {
+            return Ok(false);
+        }
         // A take reads as its kind's relationship scope unless it overrides
         // that, so it has no shortcut past an owner-only override.
         if crate::note::note_explicit_only_in_txn(&self.vault.store, txn, id, &body)? {
@@ -90,15 +100,15 @@ impl ScopedRead<'_> {
         else {
             return Ok(false);
         };
-        Ok(match grant {
-            None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
-            Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
-                policy,
-                &self.actor_key,
-                &scope,
-                Some(grant),
-            ),
-        })
+        // Judged under the proof, and under each Grant alone, at one world
+        // it is in that every ceiling there holds (FIX-LIST 9433).
+        Ok(crate::gate::scoped_read_note_allowed(
+            policy,
+            &self.actor_key,
+            &scope,
+            grant.or(self.actor_key.authority_scope()),
+            (&worlds, &held[..]),
+        ))
     }
 }
 

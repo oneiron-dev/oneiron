@@ -2,7 +2,8 @@
 //!
 //! Unstamped rows are never selected. Debug is an explicit read-only view, not
 //! a wildcard selector. A body edit inherits its birth scope; a facet move
-//! requires a new record, never a restamp of the same id.
+//! requires a new record, never a restamp of the same id. A NOTE's world
+//! alone is read from its live `InWorld` edges at every read (`note_world`).
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject};
@@ -19,6 +20,7 @@ use std::collections::BTreeSet;
 mod asset_body;
 pub(crate) mod asset_text;
 mod export;
+pub(crate) mod note_world;
 #[cfg(test)]
 mod tests;
 
@@ -181,7 +183,9 @@ pub(crate) fn stamp_put(
         // Content is mutable. The type, facet and authority position are NOT.
         // A changed facet/sensitivity/world/audience is a fork with a new id.
         let kept = prior.birth_facet == *facet.as_bytes()
-            && (prior.scope == scope || settled_at_birth(kind, &prior.scope, &scope));
+            && (prior.scope == scope
+                || settled_at_birth(kind, &prior.scope, &scope)
+                || note_world::live_world_kept(kind, &prior.scope, &scope));
         if prior.version != 2 || prior.kind != kind || !(kept || writer_settled(&prior, &scope)) {
             return Err(Error::InvalidClaimBody("record scope restamp refused"));
         }
@@ -225,7 +229,9 @@ fn derived_position(
         let Some(facet) = birth_facet(store, txn, id)? else {
             return Ok(None);
         };
-        (default_stamp(kind, facet), facet)
+        let birth = default_stamp(kind, facet);
+        let scope = note_world::note_position(store, txn, id, kind, birth);
+        (scope, facet)
     } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
         // A text born from its sources sits under their facet; one born
         // unplaced keeps its own (`asset_text`). A stamp added later is
@@ -715,7 +721,8 @@ fn stored_scope(
     if facet.is_none_or(|facet| stamp.birth_facet != *facet.as_bytes()) {
         return Ok(None);
     }
-    Ok(Some(stamp.scope))
+    let scope = note_world::note_position(store, txn, id, kind, stamp.scope);
+    Ok(Some(scope))
 }
 /// The world the stored row `id` of `kind`, with body `data`, sits in: what
 /// every read that checks a world asks. A CLAIM, key pad or key wrap names its own; a
@@ -723,10 +730,12 @@ fn stored_scope(
 /// and a SUMMARY
 /// where `settle_epoch_birth` settled it, whatever its body reads now; an
 /// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
-/// where its birth stamp says; every other record, and any
+/// where its birth stamp says; a NOTE where its live `InWorld` edges place
+/// it (`note_world`); every other record, and any
 /// other SUMMARY, is base reality (`Some(None)`). `None` where the row cannot
 /// prove its world (an erased CLAIM, a TASK or epoch SUMMARY whose stamp is
-/// gone or was never settled), which a read narrowed on worlds keeps out.
+/// gone or was never settled, a NOTE in no single world), which a read
+/// narrowed on worlds keeps out.
 pub(crate) fn record_world_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -751,6 +760,9 @@ pub(crate) fn record_world_in(
                 crate::authority::AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),
                 _ => None,
             }));
+    }
+    if kind == crate::registry::ENTITY_TYPE_NOTE {
+        return Ok(note_world::note_worlds_in(store, txn, id).world());
     }
     let summary = kind == crate::registry::ENTITY_TYPE_SUMMARY;
     if kind != crate::registry::ENTITY_TYPE_TASK && !summary {
@@ -887,7 +899,8 @@ pub(crate) fn scope_for_blob(
     }
     if carries_birth_stamp(h.entity_type) {
         return Ok(birth_facet(store, txn, id)?.map(|facet| {
-            let mut scope = default_stamp(h.entity_type, facet);
+            let birth = default_stamp(h.entity_type, facet);
+            let mut scope = note_world::note_position(store, txn, id, h.entity_type, birth);
             scope.verbs = singleton("read".to_owned());
             scope
         }));
@@ -1076,11 +1089,12 @@ impl Vault {
                 )
             };
             let withdrawn = !crate::ports::raw_readable_in_txn(&self.store, &txn, &id, &raw)?;
+            let door = [selector, slip, channel];
             let allowed = !withdrawn
-                && scope
-                    .as_ref()
-                    .is_some_and(|scope| admits(scope, selector, slip, channel, "read"))
-                && fences_pass([selector, slip, channel])?;
+                && scope.as_ref().is_some_and(|scope| {
+                    note_world::admits_at(&self.store, &txn, id, h.entity_type, scope, door, "read")
+                })
+                && fences_pass(door)?;
             if !allowed && view == ScopeView::Normal {
                 continue;
             }
@@ -1124,6 +1138,7 @@ impl Vault {
             h.entity_type,
             &raw[ENTITY_METADATA_HEADER_LEN..],
             |source, row| {
+                let door = [selector, slip, channel];
                 Ok(disclosure_scope_for_stored_row(
                     &self.store,
                     txn,
@@ -1131,8 +1146,17 @@ impl Vault {
                     row.entity_type,
                     &row.body,
                 )?
-                .is_some_and(|scope| admits(&scope, selector, slip, channel, verb))
-                    && crate::authority::row_causal_admitted(self, txn, source, &row.encode())?)
+                .is_some_and(|scope| {
+                    note_world::admits_at(
+                        &self.store,
+                        txn,
+                        *source,
+                        row.entity_type,
+                        &scope,
+                        door,
+                        verb,
+                    )
+                }) && crate::authority::row_causal_admitted(self, txn, source, &row.encode())?)
             },
         )
     }
@@ -1180,7 +1204,15 @@ impl Vault {
                 let h = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("record header"))?;
                 if let Some(scope) = stored_scope(&self.store, txn, id, h.entity_type)?
-                    && admits(&scope, selector, slip, channel, "delete")
+                    && note_world::admits_at(
+                        &self.store,
+                        txn,
+                        id,
+                        h.entity_type,
+                        &scope,
+                        [selector, slip, channel],
+                        "delete",
+                    )
                 {
                     ids.push(id);
                 }
