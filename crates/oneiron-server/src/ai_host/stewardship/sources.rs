@@ -5,7 +5,7 @@
 //! again right before the send; a destination that may receive no evidence
 //! or no voice is passed over, and the call goes on down the ladder. The
 //! draft is scheduled as the offer that answered read it: with the evidence
-//! it was sent.
+//! and the voice samples it was sent (FIX 9447).
 
 use std::sync::{Mutex, PoisonError};
 
@@ -80,9 +80,10 @@ impl<'a> DraftSources<'a> {
         }
     }
 
-    /// The draft as the offer that answered read it: its evidence narrowed
-    /// to what that offer was sent. Its voice stays the one the owner's
-    /// rule names, whole. `None` when no offer was sent anything.
+    /// The draft as the offer that answered read it: its evidence and its
+    /// voice narrowed to what that offer was sent, so its voice provenance
+    /// names only the samples it received (FIX 9447). `None` when no offer
+    /// was sent anything.
     pub(super) fn served(self) -> Option<StewardshipDraftRequest> {
         let sent = self
             .sent
@@ -90,6 +91,7 @@ impl<'a> DraftSources<'a> {
             .unwrap_or_else(PoisonError::into_inner)?;
         let mut served = self.draft.clone();
         served.request.evidence = sent.context.request.evidence;
+        served.request.voice = sent.context.request.voice;
         Some(served)
     }
 

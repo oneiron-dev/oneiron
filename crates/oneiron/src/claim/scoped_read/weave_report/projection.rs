@@ -309,8 +309,8 @@ impl ScopedRead<'_> {
                         && weave_card_admitted(self.vault, txn, &card, id)?
                     {
                         items.push(WeaveItem::AgentHealth {
+                            draft_erased: card.coach_draft_erased(),
                             card,
-                            draft_erased: false,
                         });
                     }
                 }

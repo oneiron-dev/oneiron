@@ -57,12 +57,14 @@ mod check_repeat;
 mod delivery;
 mod duplicate;
 mod environment;
+mod erase;
 mod loaded;
 mod moves;
 mod outcomes;
 mod rollups;
 mod run_loop;
 mod silence;
+mod sources;
 mod targeted;
 mod trend;
 mod trend_output;
@@ -78,6 +80,7 @@ pub use ask::{
 pub use brief::{HealthBriefPin, HealthObservedBrief};
 pub(crate) use delivery::agent_health_inbox_items;
 pub use environment::HealthCauseSource;
+pub(crate) use erase::{erase_actor_sources_in_txn, erase_sources_in_txn};
 pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 pub use moves::{
     ConcernMove, ConcernMoveBasis, ConcernMoveLink, ConcernMoveOutcome, ConcernMoveReceipt,

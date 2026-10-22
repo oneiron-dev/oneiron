@@ -472,6 +472,9 @@ class AgentHealthCoachAnswer(TypedDict):
     at: int
     pads: AgentHealthPadRead
     draft: NotRequired[AgentHealthCoachDraft | None]
+    source_rows: NotRequired[list[EntityId] | None]
+    source_rows_complete: NotRequired[bool | None]
+    draft_erased: NotRequired[bool | None]
 AgentHealthApplicationState = Literal["pending", "admitted", "rejected"]
 class AgentHealthCoachApplication(TypedDict):
     by: EntityId

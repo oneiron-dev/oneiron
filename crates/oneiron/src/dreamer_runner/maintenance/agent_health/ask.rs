@@ -16,9 +16,11 @@ use serde::{Deserialize, Serialize};
 
 use super::apply::{AgentHealthApplicationState, AgentHealthCoachApplication};
 use super::brief::{HealthBriefPin, HealthObservedBrief, observed_brief_in};
+use super::erase::any_gone_in_txn;
 use super::loaded::{
     AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills_sourced,
 };
+use super::sources::known_source_rows;
 use super::{
     AgentHealthCard, AgentHealthMove, CARDS, ConcernMoveOutcome, card_ref, parse_card_ref,
 };
@@ -63,6 +65,19 @@ pub struct AgentHealthCoachAnswer {
     pub pads: AgentHealthPadRead,
     /// `None` when no model seat served the Coach or its answer did not parse.
     pub draft: Option<AgentHealthCoachDraft>,
+    /// Every row the Coach's brief is known to have read, frozen when the
+    /// answer landed (FIX 9220): the agent and its TASK, the skills its run
+    /// loaded and that run, the observed brief's TASK or the CLAIM its text
+    /// came from, the pad read's row and each pad. `None` for an answer that
+    /// predates recorded provenance: unknown.
+    pub source_rows: Option<Vec<EntityId>>,
+    /// `Some(false)` while the brief also read numbers that name no row, so
+    /// `source_rows` is not every row it read; `None` when not recorded.
+    pub source_rows_complete: Option<bool>,
+    /// `Some(true)` once an erase of a row the draft was written from
+    /// cleared its diagnosis and proposal (FIX 9221); its route and target
+    /// stay. `Some(false)` on a fresh answer.
+    pub draft_erased: Option<bool>,
 }
 
 /// The Coach's sealed-pad read for one ask. A held or refused read leaves the
@@ -154,7 +169,8 @@ fn hex(id: crate::attempt_queue::AttemptId) -> String {
 
 /// Queues the Coach's answer, unless an ask on the same evidence stands: one
 /// still waiting, or one the Coach drafted on the card's newest DIAGNOSTIC.
-/// An answer with no draft (no seat served the Coach) may be asked again. An
+/// An answer with no draft (no seat served the Coach) may be asked again, as
+/// may one whose draft text an erase cleared (FIX 9221). An
 /// ask whose approved edit waits on the gate stands whatever the evidence, so
 /// the approval keeps its candidate.
 pub(super) fn ask_coach_in_txn(
@@ -175,7 +191,11 @@ pub(super) fn ask_coach_in_txn(
         applying
             || match &ask.answer {
                 None => true,
-                Some(answer) => answer.draft.is_some() && ask.diagnostic == newest,
+                Some(answer) => {
+                    answer.draft.is_some()
+                        && answer.draft_erased != Some(true)
+                        && ask.diagnostic == newest
+                }
             }
     }) {
         return Ok(ConcernMoveOutcome::AskCoach {
@@ -255,7 +275,9 @@ impl Vault {
     /// the TASK and the agent's sealed pads, read as the Coach, go to the
     /// host's model, and its draft lands on the card, a skill edit bound to
     /// the loaded revision it replaces. An ask a newer one replaced, or one
-    /// already answered, is left as it is.
+    /// already answered, is left as it is. The answer keeps the rows its
+    /// brief is known to have read (FIX 9220); one of them erased since the
+    /// read lands the answer without its draft's text (FIX 9221).
     ///
     /// # Errors
     ///
@@ -282,7 +304,7 @@ impl Vault {
                 .as_ref()
                 .is_some_and(|ask| ask.attempt == mine && ask.answer.is_none())
         };
-        let (card, task, observed_brief) = {
+        let (card, task, (observed_brief, brief_rows)) = {
             let rtxn = self.store.env.read_txn()?;
             let Some(card) = CARDS.get(&self.store, &rtxn, &key)? else {
                 return Ok(());
@@ -335,11 +357,18 @@ impl Vault {
         };
         // The card's numbers are review state merged across passes, naming no
         // rows they were counted from: the brief stays unknown until they do
-        // (FIX 6997). Its skills, TASK and the pads read are known.
+        // (FIX 6997). Its skills, TASK and the pads read are known, and are
+        // kept on the answer before that fold loses them (FIX 9220).
         let card_rows: Option<Vec<EntityId>> = None;
-        let pad_rows = entries.iter().map(|pad| pad.id).collect();
+        let pad_rows: Vec<EntityId> = entries.iter().map(|pad| pad.id).collect();
+        let known = known_source_rows(
+            &card,
+            &pads,
+            [&skill_rows, &task_rows, &brief_rows, &pad_rows],
+        );
         let source_rows =
             union_source_rows([card_rows, Some(skill_rows), Some(task_rows), Some(pad_rows)]);
+        let complete = source_rows.is_some();
         // A failed call still lands a draftless answer, so the ask may be
         // asked again, and the attempt fails with the error.
         let brief = CoachHealthBrief {
@@ -364,12 +393,22 @@ impl Vault {
             if !waiting(&card) {
                 return Ok(());
             }
+            // A row the draft was written from erased since it was read: the
+            // answer lands, its draft's text does not (FIX 9221).
+            let gone = any_gone_in_txn(&self.store, txn, &known)?;
             if let Some(ask) = card.coach.as_mut() {
-                ask.answer = Some(AgentHealthCoachAnswer {
+                let mut answer = AgentHealthCoachAnswer {
                     at: now,
                     pads,
                     draft,
-                });
+                    source_rows: Some(known),
+                    source_rows_complete: Some(complete),
+                    draft_erased: Some(false),
+                };
+                if gone {
+                    answer.erase_draft_text();
+                }
+                ask.answer = Some(answer);
             }
             card.updated_at = now;
             CARDS.put(&self.store, txn, &key, &card)?;

@@ -630,14 +630,22 @@ impl StewardshipDraftRequest {
             || self.request.voice != stale.request.voice
     }
 
-    /// Whether `route`, in rules set by `owner`, still drafts this request.
+    /// Whether `route`, in rules set by `owner`, still drafts this request:
+    /// its voice is some of the route's, at least one, as a draft written
+    /// over the voice samples one model was sent records only those (FIX
+    /// 9447).
     fn drafted_by(&self, owner: EntityId, route: &StewardshipDraftRoute) -> bool {
         self.request.owner == owner
             && self.instruction == route.instruction
             && self.request.verb == route.verb
             && self.request.channel == route.channel
             && self.request.target == route.target
-            && self.request.voice == route.voice
+            && !self.request.voice.is_empty()
+            && self
+                .request
+                .voice
+                .iter()
+                .all(|voice| route.voice.contains(voice))
     }
 }
 

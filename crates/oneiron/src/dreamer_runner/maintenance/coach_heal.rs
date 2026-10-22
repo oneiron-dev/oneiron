@@ -252,11 +252,12 @@ impl DreamerRunnerStore<'_> {
 
     /// The successor of a settled `coach.issues` attempt, queued ready in the
     /// commit that settles it, so no crash between the two strands a report
-    /// (FIX 1554): when a report landed while the attempt held its lease and
-    /// reports still wait, one Issues run is queued, the settled attempt its
-    /// parent (FIX 6937), lineage only. The mark goes either way. An attempt
-    /// with no mark, as every other attempt is, queues nothing. A waiting
-    /// model issue keeps the successor as a waiting report does (OF-418 L3).
+    /// (FIX 1554): when a wake landed while the attempt held its lease, one
+    /// Issues run is queued, the settled attempt its parent (FIX 6937),
+    /// lineage only, and the mark goes with it. A wake that brought only
+    /// evidence for a filed issue's reconciliation is kept too, even with no
+    /// report or issue waiting (FIX 7343). An attempt with no mark, as every
+    /// other attempt is, queues nothing.
     pub(crate) fn redrive_coach_issues_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -275,9 +276,6 @@ impl DreamerRunnerStore<'_> {
             return Ok(());
         }
         REDRIVE.delete(&vault.store, txn, &settled.id)?;
-        if !issue_work::any_pending_in_txn(vault, &*txn)? {
-            return Ok(());
-        }
         // No run: a run's skill-edit cycle cap would bind the successor's
         // drafts together with the settled run's (`proven_cycle`), so it keeps
         // its own cycle, as before.

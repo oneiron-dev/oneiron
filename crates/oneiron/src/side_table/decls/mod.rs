@@ -74,7 +74,8 @@ macro_rules! side_references {
 }
 
 include!("sync_state.rs");
-include!("vault_meta_a_c.rs");
+include!("vault_meta_a_b.rs");
+include!("vault_meta_c.rs");
 include!("vault_meta_d_e.rs");
 include!("vault_meta_f_l.rs");
 include!("vault_meta_m_r.rs");
@@ -229,9 +230,10 @@ pub(crate) fn declared_overlaps(db: SideDb, prefix: &[u8]) -> bool {
 }
 
 /// The files in byte order of their prefixes: `sync_state`, then `vault_meta` by leading byte.
-static PARTS: [&[&SideTableDecl]; 7] = [
+static PARTS: [&[&SideTableDecl]; 8] = [
     SYNC_STATE,
-    VAULT_META_A_C,
+    VAULT_META_A_B,
+    VAULT_META_C,
     VAULT_META_D_E,
     VAULT_META_F_L,
     VAULT_META_M_R,

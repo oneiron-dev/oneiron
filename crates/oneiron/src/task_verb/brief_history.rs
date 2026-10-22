@@ -19,7 +19,8 @@ use super::wire_encode::canonical_bytes;
 const HISTORY_PAGE: usize = 256;
 
 /// The brief `task` held at revision `rev` with digest `digest` (64 hex), as
-/// the settled `tasks.brief` CLAIM that landed it says, read in `txn`: an
+/// the settled `tasks.brief` CLAIM that landed it says, read in `txn`, with
+/// that CLAIM's id, the row a copy of the brief was read from: an
 /// approved revision of `task` proposed against `rev - 1` whose brief
 /// digests to `digest`. Of two such CLAIMs (one revision approved on two
 /// replicas) the lowest CLAIM id answers. Only that exact revision is a hit:
@@ -34,7 +35,7 @@ pub(crate) fn settled_brief_in(
     task: EntityId,
     rev: u32,
     digest: &str,
-) -> Result<Option<QueueTaskBrief>> {
+) -> Result<Option<(QueueTaskBrief, EntityId)>> {
     let Some(digest) = decode_hex::<32>(digest) else {
         return Ok(None);
     };
@@ -58,7 +59,7 @@ pub(crate) fn settled_brief_in(
         for id in page {
             count.row();
             if let Some(brief) = landed_revision_in(vault, txn, id, task, rev, &digest) {
-                break 'pages Some(brief);
+                break 'pages Some((brief, id));
             }
         }
         if exhausted {
