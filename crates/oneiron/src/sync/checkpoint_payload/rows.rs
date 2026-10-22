@@ -2,7 +2,8 @@
 //! codec: a thin-residence item's cached blob and document, a pending text
 //! edit, a pending NOTE request and the sync queue's rows. The Loro bytes
 //! of a window's snapshot and updates, and of a queued window update, are
-//! KS7-3b's. A cached document's and a pending edit's are their entity
+//! split a window at a time ([`super::operations`]); one row alone stays
+//! unclassified. A cached document's and a pending edit's are their entity
 //! document's history, whose stamps only that document's own split takes
 //! out, so each stays under the vault-wide seal, named with its entity.
 

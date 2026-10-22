@@ -12,7 +12,7 @@
 use super::decode;
 use crate::store::checkpoint_payload::rows::OwnerRef;
 use crate::sync::carrier_parts::is_part_key;
-use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified};
+use crate::sync::checkpoint_payload::{Holder, KeyClass, Placement, SyncUnclassified};
 
 /// A message document's snapshot: Loro history with its stamps.
 const SNAPSHOT_STAMPS: &str =
@@ -30,5 +30,17 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
             joined: Some(SyncUnclassified::ActorSplit(SNAPSHOT_STAMPS)),
         },
         _ => Placement::unclassified(None, SyncUnclassified::Undecodable),
+    }
+}
+
+/// What a message document map key spells: its message's id, or a part's
+/// digest.
+pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
+    if is_part_key(key) {
+        KeyClass::Digest
+    } else if crate::EntityId::from_hex(key).is_ok_and(|message| message.to_hex() == key) {
+        KeyClass::Opaque
+    } else {
+        KeyClass::Payload
     }
 }

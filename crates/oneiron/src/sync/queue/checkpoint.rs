@@ -1,8 +1,9 @@
 //! The sync queue's rows in a checkpoint (KS7-3a), read with the queue's own
-//! key and value codecs. A queued window update's Loro bytes are KS7-3b's,
-//! so it stays under the vault-wide seal, named, at its own sequence. Its
-//! delete-bearing marker is structure beside it, so the pair keeps its
-//! confirmed-clear rule. A quarantine record holds hashes, lengths and a
+//! key and value codecs. A queued window update's Loro bytes are split with
+//! its window's (KS7-3b, [`queued_update`]), and put back at its own
+//! sequence ([`queued_row`]); placed alone it stays under the vault-wide
+//! seal, named. Its delete-bearing marker is structure beside it, so the
+//! pair keeps its confirmed-clear rule. A quarantine record holds hashes, lengths and a
 //! reason, never the rejected bytes, and a counter is a number: both are
 //! structure. Any other row of the database (the deletion sweep's jobs) is
 //! no sync family's, and stays as it is.
@@ -12,7 +13,11 @@
 )]
 
 use super::UPDATE_PREFIX;
-use super::codec::{decode_delete_bearing_key, validate_update_row};
+use super::codec::{
+    decode_delete_bearing_key, decode_update_key, decode_update_value_parts, encode_update_value,
+    validate_update_row,
+};
+use crate::error::Result;
 use crate::sync::QuarantineRecord;
 use crate::sync::checkpoint_payload::{Placement, SyncUnclassified};
 
@@ -56,4 +61,20 @@ pub(in crate::sync) fn place(key: &[u8], value: &[u8]) -> Placement {
         return structure();
     }
     Placement::unclassified(None, SyncUnclassified::NoOwner)
+}
+
+/// A queued window update's sequence, window and Loro bytes, when `key`
+/// and `value` read as one.
+pub(in crate::sync) fn queued_update<'v>(
+    key: &[u8],
+    value: &'v [u8],
+) -> Option<(u64, &'v str, &'v [u8])> {
+    let seq = decode_update_key(key).ok()?;
+    let (window, update) = decode_update_value_parts(value).ok()?;
+    Some((seq, window, update))
+}
+
+/// The queue row's value that carries `update` for `window` again.
+pub(in crate::sync) fn queued_row(window: &str, update: &[u8]) -> Result<Vec<u8>> {
+    encode_update_value(window, update)
 }

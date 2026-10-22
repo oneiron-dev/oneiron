@@ -9,10 +9,10 @@
 )]
 
 use super::INPUT_ROW_PREFIX;
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::secret_custody::{CustodyTransition, RelayedInput};
 use crate::store::checkpoint_payload::rows::OtherClient;
-use crate::sync::checkpoint_payload::{Placement, SyncUnclassified};
+use crate::sync::checkpoint_payload::{KeyClass, Placement, SyncUnclassified};
 
 /// Where the value under `key` in the custody map goes.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
@@ -27,5 +27,29 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
         Placement::Dispatched(OtherClient::Credential)
     } else {
         Placement::unclassified(None, SyncUnclassified::Undecodable)
+    }
+}
+
+/// What a custody map key spells: a transition's record id and the place
+/// of its piece, or a protected input's digest.
+pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
+    if key.starts_with(INPUT_ROW_PREFIX) {
+        return KeyClass::Digest;
+    }
+    let (id, piece) = match key.split_once('.') {
+        Some((id, piece)) => (id, Some(piece)),
+        None => (key, None),
+    };
+    let named = EntityId::from_hex(id).is_ok_and(|parsed| parsed.to_hex() == id);
+    let placed = piece.is_none_or(|piece| {
+        piece.len() == 8
+            && piece
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    });
+    if named && placed {
+        KeyClass::Opaque
+    } else {
+        KeyClass::Payload
     }
 }

@@ -15,29 +15,46 @@
 //! atoms that opened ([`OpenedSyncAtoms`]): a row whose holders were all
 //! erased or did not open goes, and only it; no missing leaf refuses.
 //!
-//! KS7-3a places every non-Loro row ([`rows`]) and leaves a window's
-//! snapshot and updates and a queued window update unclassified for
-//! KS7-3b's Loro root and operation projection
-//! ([`SyncUnclassified::PendingLoroProjection`]). The typed owner dispatch of
-//! each window root map ([`root_entry`]) and the historical part-holder
-//! index ([`PartHolders`]) are what that projection drives. Nothing calls
-//! this before KS7-5, and nothing reaches it while CHECKPOINT_PAYLOADS_ENABLED
-//! is false.
+//! KS7-3a places every non-Loro row ([`rows`]). A window's snapshot and
+//! updates and a queued window update, placed one row at a time, stay
+//! unclassified ([`SyncUnclassified::PendingLoroProjection`]): one row
+//! cannot carry the outer skeleton its split needs.
+//!
+//! KS7-3b splits them a window at a time ([`project_checkpoint_windows`]),
+//! over the vendored root-map checkpoint (`loro::checkpoint`). Each value
+//! and the operation history around it go apart: the values become atoms,
+//! one copy per rightful holder ([`AtomHome`], FIX 9128), each actor a value
+//! names split out under the actor's own entity tree (FIX 9127); the history
+//! stays in a payload-free outer skeleton ([`LoroCarrier`]).
+//! [`restore_checkpoint_windows`] joins each carrier from the copies that
+//! opened, erases the values none did and proves the join before any row is
+//! put back. A window the vendored capture or the families' codecs cannot
+//! split stays under the vault-wide seal, named. Nothing calls either before
+//! KS7-5, and nothing reaches them while CHECKPOINT_PAYLOADS_ENABLED is false.
 #![allow(
     dead_code,
-    reason = "KS7-3b and KS7-5 drive these; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
+    reason = "KS7-5 drives these; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
+mod frame;
+mod operations;
 mod owners;
 mod parts;
+mod restore;
 mod rows;
 
-#[allow(unused_imports, reason = "KS7-3b's Loro projection drives them")]
+use loro::IdSpan;
+use loro::checkpoint::Skeleton;
+
+#[allow(unused_imports, reason = "KS7-5 drives them")]
 pub(crate) use self::owners::root_entry;
-#[allow(unused_imports, reason = "KS7-3b's Loro projection drives them")]
+#[allow(unused_imports, reason = "KS7-5 drives them")]
 pub(crate) use self::parts::PartHolders;
+use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, RowDb, RowLocator};
+use crate::store::checkpoint_payload::rows::{
+    ActorPart, OtherClient, OwnerRef, RoundTripPolicy, RowDb, RowLocator,
+};
 use crate::sync::carrier_parts::Parts;
 
 /// The mixed sync families a capture hands the projection.
@@ -92,8 +109,8 @@ impl<'a> CapturedSyncRows<'a> {
 /// vault-wide seal, named on the capture receipt. Never an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SyncUnclassified {
-    /// A window's Loro history, which KS7-3b's root and operation
-    /// projection splits.
+    /// A window's Loro row placed alone: only its window's projection
+    /// ([`project_checkpoint_windows`]) splits it.
     PendingLoroProjection,
     /// Its key or value does not read with its family's own codec.
     Undecodable,
@@ -133,6 +150,12 @@ pub(crate) enum Placement {
     /// Whole, one copy under each holder: shared holders each hold their
     /// own atom, never one guessed owner for all.
     Owned(Vec<Holder>),
+    /// A window value naming actors (FIX 9127): each holder's copy holds
+    /// its family's no-one form, and each actor is split out beside it.
+    Split {
+        holders: Vec<Holder>,
+        split: ValueSplit,
+    },
     /// Ids, markers and metadata with no payload of its own, kept as it is
     /// and dropped with an owner it depends on.
     Structure { dependencies: Vec<OwnerRef> },
@@ -166,6 +189,39 @@ impl Placement {
     pub(crate) fn owned(owner: OwnerRef, dependencies: Vec<OwnerRef>) -> Self {
         Self::Owned(vec![Holder::new(owner, dependencies)])
     }
+
+    /// Under `holders`, as `split` leaves it; whole when it names no one.
+    pub(crate) fn split(holders: Vec<Holder>, split: ValueSplit) -> Self {
+        if split.actors.is_empty() {
+            Self::Owned(holders)
+        } else {
+            Self::Split { holders, split }
+        }
+    }
+}
+
+/// A window value with the actors it names taken out (FIX 9127): its
+/// family's no-one form, and each actor at the family's field for it. A
+/// field names its place in the value, never the actor. The family's fill
+/// ([`owners::root_fill`]) puts each opened actor back and decides what a
+/// field whose actor did not open leaves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ValueSplit {
+    pub(crate) no_one: Vec<u8>,
+    pub(crate) actors: Vec<(String, EntityId)>,
+}
+
+/// What a window map key spells. The vendored capture keeps every key it
+/// admits plaintext in the outer skeleton, which outlives an erase, so only
+/// opaque ids and schema names may stand there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeyClass {
+    /// Opaque ids and fixed schema names only.
+    Opaque,
+    /// A digest of the value it carries.
+    Digest,
+    /// Anything else: payload.
+    Payload,
 }
 
 /// Where an entity's own bytes go, by its kind, as KS7-2's registry places
@@ -189,19 +245,109 @@ pub(crate) trait SyncPayloadOwners {
     fn entity_kind(&self, entity_type: u8) -> KindPlacement;
 }
 
-/// One atom a holder holds: the whole native row, exact, and the owners it
-/// holds only while they do.
+/// One atom a holder holds: the whole native row, exact, or one copy of a
+/// window value in its no-one form, and the owners it holds only while they
+/// do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SyncAtom {
     pub(crate) at: RowLocator,
     pub(crate) value: Vec<u8>,
     pub(crate) dependencies: Vec<OwnerRef>,
+    /// Each actor the value names, sealed under that actor's own entity
+    /// tree and naming this copy (FIX 9127); empty for a whole row.
+    pub(crate) actors: Vec<ActorPart>,
 }
 
 /// An emitted atom's capture-local ordinal: never an owner, a key or a
 /// digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct AtomRef(pub(crate) u32);
+
+/// Where one copy of a window value goes (KS7-3b).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AtomHome {
+    /// Sealed under this owner.
+    Owner(OwnerRef),
+    /// Kept under the image's outer seal as structure, dropped with an
+    /// owner it depends on.
+    Structure,
+    /// Another custody client's, handed to it as it stands.
+    Client(OtherClient),
+}
+
+/// How the rows a Loro carrier puts back cut its joined history.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LoroSlice {
+    /// The whole joined document, as a snapshot: a window's `d:w:` row.
+    Snapshot,
+    /// An update's exact operation spans, in (peer, counter) order: a
+    /// pending `u:w:` row, or a queued `q:` row rewrapped at its sequence.
+    Updates(Vec<IdSpan>),
+}
+
+/// One captured row a Loro carrier puts back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LoroRow {
+    pub(crate) at: RowLocator,
+    pub(crate) carrier: SyncCarrier,
+    pub(crate) slice: LoroSlice,
+}
+
+/// One copy of a value: where it rests and the ordinal `emit` gave it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SlotCopy {
+    pub(crate) at: RowLocator,
+    pub(crate) atom: AtomRef,
+}
+
+/// One skeleton slot, by its vendored atom id: a copy per rightful holder,
+/// never merged by owner (FIX 9128), and the fields of the actors its value
+/// names (FIX 9127).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LoroSlot {
+    pub(crate) copies: Vec<SlotCopy>,
+    pub(crate) holes: Vec<String>,
+}
+
+/// One window's split Loro rows (KS7-3b): the payload-free outer skeleton
+/// KS7-5 keeps under the image's outer seal. `skeleton` is the vendored
+/// one: root names, plaintext keys, versions and the operation history, its
+/// values atom ids. `slots` follows its slots in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LoroCarrier {
+    pub(crate) window: String,
+    pub(crate) skeleton: Skeleton,
+    pub(crate) rows: Vec<LoroRow>,
+    pub(crate) slots: Vec<LoroSlot>,
+}
+
+/// What a window projection left of the capture's Loro rows: the carriers
+/// it split, and every Loro row it left whole, named. A row in neither is
+/// not a Loro row, and the row projection ([`project_checkpoint_sync`])
+/// places it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WindowProjection {
+    pub(crate) carriers: Vec<LoroCarrier>,
+    pub(crate) unclassified: Vec<SkeletonRow>,
+}
+
+/// How a window's split must give its rows back (FIX 6072, Engine R1): the
+/// joined bytes are a new encoding of the stored history, proved from the
+/// vendored join's report, the rows' slices and the all-open actor fill.
+pub(crate) const WINDOW_ROUND_TRIP: RoundTripPolicy = RoundTripPolicy::HistoryEquivalent;
+
+/// What one carrier's join proved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LoroVerdict {
+    pub(crate) window: String,
+    /// The vendored join's report: the joined bytes hold the skeleton's
+    /// history with the values that opened.
+    pub(crate) equivalent: bool,
+    /// Every value and actor opened, so the history is the captured one;
+    /// otherwise it is the captured one with what did not open erased.
+    pub(crate) lossless: bool,
+    pub(crate) policy: RoundTripPolicy,
+}
 
 /// How a projection placed one captured row. No variant holds payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,6 +394,13 @@ pub(crate) enum OpenedAtom<'a> {
 /// missing owner leaf is an answer, never a refusal.
 pub(crate) trait OpenedSyncAtoms {
     fn atom(&self, atom: AtomRef) -> OpenedAtom<'_>;
+
+    /// The actor parts of `atom` whose actors opened (FIX 9127). None by
+    /// default: a field no opened part fills keeps its family's no-one
+    /// form, and no actor is taken from anywhere else.
+    fn actor_parts(&self, _atom: AtomRef) -> Vec<&ActorPart> {
+        Vec::new()
+    }
 }
 
 /// What a restore of the sync rows puts back.
@@ -256,11 +409,13 @@ pub(crate) struct SyncRestoreRows {
     /// Native rows, each checked with its family's codec, for the
     /// restore-only sink.
     pub(crate) rows: Vec<(RowLocator, Vec<u8>)>,
-    /// The rows that go: no holder's copy opened.
+    /// The rows that go: no holder's copy opened. For a window, each copy
+    /// of a value that went.
     pub(crate) dropped: Vec<RowLocator>,
-    /// The window markers (`fr:w:`, `hfs:w:`) the restored rows need: none
-    /// until KS7-3b puts a window back.
+    /// The window markers (`fr:w:`, `hfs:w:`) the restored windows need.
     pub(crate) markers: Vec<(RowLocator, Vec<u8>)>,
+    /// What each window carrier's join proved.
+    pub(crate) verdicts: Vec<LoroVerdict>,
 }
 
 /// Places every row of `rows` (KS7-3a): each sealed row's atoms go to
@@ -282,6 +437,7 @@ pub(crate) fn project_checkpoint_sync(
                         at: at.clone(),
                         value: row.value.to_vec(),
                         dependencies: holder.dependencies,
+                        actors: Vec::new(),
                     };
                     copies.push(emit(holder.owner, atom)?);
                 }
@@ -292,12 +448,15 @@ pub(crate) fn project_checkpoint_sync(
             Placement::Unclassified { owner, reason } => {
                 SkeletonRow::Unclassified { at, owner, reason }
             }
-            // A captured row is never a window value's manifest or part.
-            Placement::Manifest { .. } | Placement::Part => SkeletonRow::Unclassified {
-                at,
-                owner: None,
-                reason: SyncUnclassified::Undecodable,
-            },
+            // A captured row is never a window value's manifest, part or
+            // split.
+            Placement::Manifest { .. } | Placement::Part | Placement::Split { .. } => {
+                SkeletonRow::Unclassified {
+                    at,
+                    owner: None,
+                    reason: SyncUnclassified::Undecodable,
+                }
+            }
         };
         skeleton.rows.push(placed);
     }
@@ -330,4 +489,30 @@ pub(crate) fn restore_checkpoint_sync(
         }
     }
     Ok(restored)
+}
+
+/// Splits the Loro rows of `rows` (KS7-3b) a window at a time: a window's
+/// snapshot alone, and its pending and queued updates over that snapshot.
+/// Each value's copies go to `emit`, one per rightful holder, only once the
+/// window's capture, its codecs' splits and its all-open join all proved;
+/// a window that does not stays whole, named, with nothing emitted for it.
+/// Only `emit`'s own error stops it.
+pub(crate) fn project_checkpoint_windows(
+    rows: &CapturedSyncRows<'_>,
+    owners: &dyn SyncPayloadOwners,
+    emit: &mut dyn FnMut(AtomHome, SyncAtom) -> Result<AtomRef>,
+) -> Result<WindowProjection> {
+    self::operations::project(&rows.rows, owners, emit)
+}
+
+/// Puts each of `carriers`' rows back (KS7-3b), each carrier joined from
+/// the copies `opened` holds: a value goes only when none of its copies
+/// opened, an actor that did not open leaves its family's no-one form, and
+/// the vendored join proves the history before any row is returned. A
+/// missing leaf never refuses; an opened copy that does not read does.
+pub(crate) fn restore_checkpoint_windows(
+    carriers: &[LoroCarrier],
+    opened: &dyn OpenedSyncAtoms,
+) -> Result<SyncRestoreRows> {
+    self::restore::restore(carriers, opened)
 }
