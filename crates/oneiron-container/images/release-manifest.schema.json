@@ -162,7 +162,9 @@
         "vm_anchor_wire_revision",
         "vm_anchor_proxy_revision",
         "vm_network_revision",
-        "vm_managed_profile_revision"
+        "vm_managed_profile_revision",
+        "vm_trusted_organ_builds_revision",
+        "vm_guest_runtime_revision"
       ],
       "properties": {
         "contract_version": {
@@ -188,6 +190,18 @@
         },
         "vm_managed_profile_revision": {
           "$ref": "#/$defs/u32"
+        },
+        "vm_trusted_organ_builds_revision": {
+          "description": "The revision of the image init's trusted-organ-builds capability, or 0 for an image without it. Factual metadata: no admission or boot gate reads it.",
+          "$ref": "#/$defs/u32"
+        },
+        "vm_guest_runtime_revision": {
+          "description": "The guest runtime the image stages, measured from the built image: 1 when it holds the whole runtime and its descriptor, 0 when it holds none. Never a source constant. Factual metadata: no admission or boot gate reads it.",
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
         }
       }
     },
@@ -377,7 +391,15 @@
       ],
       "properties": {
         "oci": {
-          "$ref": "#/$defs/oci"
+          "description": "The OCI form, or null only for a standalone Firecracker vault image, which ships its rootfs and its kernel image and no OCI archive; every builder output names its real OCI form.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/oci"
+            }
+          ]
         },
         "rootfs_ext4": {
           "$ref": "#/$defs/file"

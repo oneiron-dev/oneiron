@@ -5,8 +5,9 @@
 //! override. `changed_parts` is the write set an export would actually carry,
 //! for a caller's independent comparison with the parts its operation was
 //! allowed to touch.
-use super::{Added, Editability, Error, Limits, Package, Result, as_u32, check_limits};
+use super::{Added, Editability, Entry, Error, Limits, Package, Result, as_u32, check_limits};
 use crate::ooxml::{CONTENT_TYPES, PACKAGE_RELATIONSHIPS, XmlTree, escape_text};
+use crate::resource::{Dimension, Resources, bytes_of, wide};
 use crate::retained_opc::xml;
 use flate2::{Compression, write::DeflateEncoder};
 use std::collections::BTreeSet;
@@ -33,7 +34,17 @@ pub struct Relationship {
 }
 
 impl Added {
-    fn new(name: &str, data: Vec<u8>) -> Result<Self> {
+    /// A new part, its compressed copy reserved through `resources` before
+    /// it is allocated (FIX 8598): deflate's stored-block worst case, past
+    /// the bytes themselves.
+    fn new(name: &str, data: Vec<u8>, resources: &Resources) -> Result<Self> {
+        // An estimate: no compressed byte is measured before it is written.
+        let _hold = resources.reserve_estimate(
+            wide(data.len())
+                .saturating_add(wide(data.len() / 1024))
+                .saturating_add(64),
+            0,
+        )?;
         let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
         encoder
             .write_all(&data)
@@ -85,8 +96,9 @@ impl Added {
 
 impl Package {
     /// A new, empty package holding only `[Content_Types].xml` (with the
-    /// `rels` and `xml` defaults), under the same limits as an opened one.
-    pub fn create(limits: Limits) -> Result<Self> {
+    /// `rels` and `xml` defaults), under the same limits as an opened one,
+    /// reserving its memory through `resources` as an opened one does.
+    pub fn create(limits: Limits, resources: &Resources) -> Result<Self> {
         check_limits(limits)?;
         let mut eocd = vec![0; 22];
         eocd[..4].copy_from_slice(&super::EOCD.to_le_bytes());
@@ -97,7 +109,8 @@ impl Package {
             eocd: 0,
             limits,
             editability: Editability::Unsigned,
-            added: vec![Added::new(TYPES, SEED_TYPES.to_vec())?],
+            added: vec![Added::new(TYPES, SEED_TYPES.to_vec(), resources)?],
+            resources: resources.clone(),
         };
         package.check_budgets()?;
         Ok(package)
@@ -140,8 +153,8 @@ impl Package {
         let rels = rels_name(source);
         let current = self.part(&rels)?;
         let bytes = current.clone().unwrap_or_else(|| SEED_RELS.to_vec());
-        let tree = XmlTree::parse(&bytes, self.limits.xml)
-            .map_err(|_| Error::Edit("relationship part unreadable"))?;
+        let tree = XmlTree::parse(&bytes, &self.resources)
+            .map_err(|error| Error::of_xml(error, Error::Edit("relationship part unreadable")))?;
         tree.root(PACKAGE_RELATIONSHIPS, "Relationships")
             .map_err(|_| Error::Edit("relationship part unreadable"))?;
         let next = tree
@@ -195,8 +208,8 @@ impl Package {
             let bytes = package
                 .part(TYPES)?
                 .ok_or(Error::Edit("content types missing"))?;
-            let tree = XmlTree::parse(&bytes, package.limits.xml)
-                .map_err(|_| Error::Edit("content types unreadable"))?;
+            let tree = XmlTree::parse(&bytes, &package.resources)
+                .map_err(|error| Error::of_xml(error, Error::Edit("content types unreadable")))?;
             tree.root(CONTENT_TYPES, "Types")
                 .map_err(|_| Error::Edit("content types unreadable"))?;
             let used: BTreeSet<String> = package
@@ -254,8 +267,8 @@ impl Package {
         let bytes = self
             .part(&rels)?
             .ok_or(Error::Edit("relationship part missing"))?;
-        let tree = XmlTree::parse(&bytes, self.limits.xml)
-            .map_err(|_| Error::Edit("relationship part unreadable"))?;
+        let tree = XmlTree::parse(&bytes, &self.resources)
+            .map_err(|error| Error::of_xml(error, Error::Edit("relationship part unreadable")))?;
         tree.root(PACKAGE_RELATIONSHIPS, "Relationships")
             .map_err(|_| Error::Edit("relationship part unreadable"))?;
         let span = tree
@@ -275,8 +288,8 @@ impl Package {
     /// cloned part keeps its relationship ids, which [`Package::relate`]
     /// would mint afresh.
     pub(crate) fn add_relationship_part(&mut self, source: &str, value: Vec<u8>) -> Result<()> {
-        let tree = XmlTree::parse(&value, self.limits.xml)
-            .map_err(|_| Error::Edit("relationship part unreadable"))?;
+        let tree = XmlTree::parse(&value, &self.resources)
+            .map_err(|error| Error::of_xml(error, Error::Edit("relationship part unreadable")))?;
         tree.root(PACKAGE_RELATIONSHIPS, "Relationships")
             .map_err(|_| Error::Edit("relationship part unreadable"))?;
         let rels = rels_name(source);
@@ -289,8 +302,9 @@ impl Package {
         let Some(bytes) = self.part(&rels_name(source))? else {
             return Ok(Vec::new());
         };
-        let tree = XmlTree::parse(&bytes, self.limits.xml)
-            .map_err(|_| Error::Invalid("relationship part unreadable"))?;
+        let tree = XmlTree::parse(&bytes, &self.resources).map_err(|error| {
+            Error::of_xml(error, Error::Invalid("relationship part unreadable"))
+        })?;
         tree.root(PACKAGE_RELATIONSHIPS, "Relationships")
             .map_err(|_| Error::Invalid("relationship part unreadable"))?;
         tree.children(0)
@@ -319,7 +333,7 @@ impl Package {
     /// Replace a part that is itself an OPC package (an embedded workbook).
     /// The new bytes must open under this package's limits.
     pub fn replace_nested_package(&mut self, name: &str, value: Vec<u8>) -> Result<()> {
-        Package::open(&value, self.limits)?;
+        Package::open(&value, self.limits, &self.resources)?;
         self.transact(|package| package.write_metadata(name, value))
     }
 
@@ -382,8 +396,39 @@ impl Package {
     }
 
     pub(super) fn rewrite_added(&mut self, name: &str, value: Vec<u8>) -> Result<()> {
-        xml::ValidatedXmlPart::parse(&value, self.limits.xml)?;
+        xml::ValidatedXmlPart::parse(&value, &self.resources)?;
         self.transact(|package| package.write_metadata(name, value))
+    }
+
+    /// A copy of this package, its own memory (the entry index and names,
+    /// the replacements and the added parts; the source is shared) reserved
+    /// through the package's port before it is allocated.
+    pub(crate) fn copy(&self) -> Result<Self> {
+        let index =
+            self.entries
+                .iter()
+                .fold(bytes_of::<Entry>(self.entries.len()), |sum, entry| {
+                    sum.saturating_add(wide(
+                        entry
+                            .name
+                            .len()
+                            .saturating_add(entry.replacement.as_ref().map_or(0, Vec::len)),
+                    ))
+                });
+        let bytes = self
+            .added
+            .iter()
+            .fold(index, |sum, part| {
+                sum.saturating_add(wide(
+                    part.name
+                        .len()
+                        .saturating_add(part.data.len())
+                        .saturating_add(part.deflated.len()),
+                ))
+            })
+            .saturating_add(bytes_of::<Added>(self.added.len()));
+        let _hold = self.resources.reserve(bytes)?;
+        Ok(self.clone())
     }
 
     /// Run `edit` on a copy and keep it only when every budget still holds;
@@ -392,7 +437,7 @@ impl Package {
         if self.editability != Editability::Unsigned {
             return Err(Error::Edit("signed or unsupported metadata is read-only"));
         }
-        let mut next = self.clone();
+        let mut next = self.copy()?;
         let value = edit(&mut next)?;
         next.check_budgets()?;
         *self = next;
@@ -423,10 +468,10 @@ impl Package {
             return Err(Error::Edit("unsafe or duplicate part name"));
         }
         if lower.ends_with(".xml") || lower.ends_with(".rels") {
-            xml::ValidatedXmlPart::parse(&value, self.limits.xml)?;
+            xml::ValidatedXmlPart::parse(&value, &self.resources)?;
         }
         self.declare(name, content_type)?;
-        self.added.push(Added::new(name, value)?);
+        self.added.push(Added::new(name, value, &self.resources)?);
         Ok(())
     }
 
@@ -436,8 +481,8 @@ impl Package {
         let bytes = self
             .part(TYPES)?
             .ok_or(Error::Edit("content types missing"))?;
-        let tree = XmlTree::parse(&bytes, self.limits.xml)
-            .map_err(|_| Error::Edit("content types unreadable"))?;
+        let tree = XmlTree::parse(&bytes, &self.resources)
+            .map_err(|error| Error::of_xml(error, Error::Edit("content types unreadable")))?;
         tree.root(CONTENT_TYPES, "Types")
             .map_err(|_| Error::Edit("content types unreadable"))?;
         let part_name = format!("/{name}");
@@ -481,10 +526,10 @@ impl Package {
     /// Install bytes for an existing retained or added part.
     fn write_metadata(&mut self, name: &str, value: Vec<u8>) -> Result<()> {
         if name.to_ascii_lowercase().ends_with(".xml") || name.ends_with(".rels") {
-            xml::ValidatedXmlPart::parse(&value, self.limits.xml)?;
+            xml::ValidatedXmlPart::parse(&value, &self.resources)?;
         }
         if let Some(part) = self.added.iter_mut().find(|part| part.name == name) {
-            *part = Added::new(name, value)?;
+            *part = Added::new(name, value, &self.resources)?;
             return Ok(());
         }
         let index = self
@@ -519,8 +564,8 @@ impl Package {
         let bytes = self
             .part(TYPES)?
             .ok_or(Error::Edit("content types missing"))?;
-        let tree = XmlTree::parse(&bytes, self.limits.xml)
-            .map_err(|_| Error::Edit("content types unreadable"))?;
+        let tree = XmlTree::parse(&bytes, &self.resources)
+            .map_err(|error| Error::of_xml(error, Error::Edit("content types unreadable")))?;
         tree.root(CONTENT_TYPES, "Types")
             .map_err(|_| Error::Edit("content types unreadable"))?;
         let part_name = format!("/{name}");
@@ -540,17 +585,26 @@ impl Package {
         self.write_metadata(TYPES, value)
     }
 
+    /// The byte budgets and the ZIP32 codec's entry bound. The configured
+    /// entry count is an observation (FIX 8598): only 65,535, the codec's
+    /// ZIP64 sentinel, ends an edit.
     fn check_budgets(&self) -> Result<()> {
         let count = self.entries.iter().filter(|entry| !entry.removed).count() + self.added.len();
-        if count > self.limits.entries || count >= usize::from(u16::MAX) {
-            return Err(Error::Edit("entry limit"));
+        // 65,535 in classic ZIP's count is its ZIP64 sentinel.
+        let most = usize::from(u16::MAX) - 1;
+        if count > most {
+            return Err(Error::capacity_hit(Dimension::ZipEntries, count, most));
         }
-        if self
+        if let Some(part) = self
             .added
             .iter()
-            .any(|part| part.data.len() > self.limits.part_bytes)
+            .find(|part| part.data.len() > self.limits.part_bytes)
         {
-            return Err(Error::Edit("edited part size limit"));
+            return Err(Error::capacity_hit(
+                Dimension::PartBytes,
+                part.data.len(),
+                self.limits.part_bytes,
+            ));
         }
         let total = self
             .entries
@@ -566,7 +620,11 @@ impl Package {
                 .ok_or(Error::Edit("edited package size overflow"))
             })?;
         if total > self.limits.expanded_bytes {
-            return Err(Error::Edit("edited package size limit"));
+            return Err(Error::capacity_hit(
+                Dimension::ExpandedBytes,
+                total,
+                self.limits.expanded_bytes,
+            ));
         }
         self.check_export_size(usize::MAX, None)
     }

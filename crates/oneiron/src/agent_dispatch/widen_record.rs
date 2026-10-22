@@ -346,9 +346,25 @@ pub(crate) fn unlanded_widens_by_parent_since(
 #[serde(deny_unknown_fields)]
 pub(super) struct SliceOverride {
     pub proposal_id: String,
-    pub board: AttemptId,
-    pub owner: String,
+    /// The immediate board above the widened parent; `None` for a root
+    /// Owner's act on a parent with no board above (FIX 9565).
+    pub board: Option<AttemptId>,
+    /// Who answered as the board: a PERSON for a root Owner, the board's
+    /// AGENT_DEF for its own leased agent.
+    pub actor: String,
+    /// What authorized the act, replayed live at every read of the slice.
+    pub proof: BoardProof,
     pub spec: ContextSpec,
+}
+
+/// What authorized a landed board act (FIX 9565).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum BoardProof {
+    /// A revalidated root Owner of this vault.
+    RootOwner,
+    /// The board attempt's own agent, under its live host lease.
+    ParentAgent,
 }
 
 pub(super) fn validate_proposal_id(id: &str) -> Result<()> {

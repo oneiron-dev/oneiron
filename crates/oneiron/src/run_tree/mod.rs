@@ -10,7 +10,7 @@ mod consent;
 mod render;
 mod signal;
 pub(crate) use render::effective_parent;
-pub(crate) use signal::validate_signal_rows;
+pub(crate) use signal::{SignalIntent, validate_signal_rows};
 mod types;
 
 pub use self::a2a::project_attempt_to_a2a;

@@ -160,10 +160,15 @@ impl VaultVm {
     /// Refuses a restore or an inspection while a VM runs, or while a RAM
     /// snapshot is published: that generation may resume, and its RAM's
     /// view of the disk would not survive another boot of it.
-    fn cold_only(&self) -> anyhow::Result<()> {
+    async fn cold_only(&mut self) -> anyhow::Result<()> {
         anyhow::ensure!(!self.is_running(), "the vault VM is already running");
+        // A bound custody's snapshot reads only unlocked (FIX 9497); one
+        // that does not unlock refuses the boot and keeps the snapshot.
+        self.unlock_for_start().await?;
+        let published = self.has_snapshot();
+        self.evict_after_reap().await;
         anyhow::ensure!(
-            !self.has_snapshot(),
+            !published,
             "the vault VM has a RAM snapshot published; resume it rather than boot its disk again"
         );
         Ok(())
@@ -207,7 +212,7 @@ impl VaultVm {
         fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<Credentials> {
-        self.cold_only()?;
+        self.cold_only().await?;
         let input = pipe::Receiver::from_owned_fd(io.input)?;
         let result = pipe::Sender::from_owned_fd(io.result)?;
         if let Some(outbox) = &self.outbox {
@@ -294,7 +299,7 @@ impl VaultVm {
         fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<VmRestoreMarkerObservation> {
-        self.cold_only()?;
+        self.cold_only().await?;
         let observed = self.inspect(identity, fscrypt_key, timeout).await;
         let _ = self.stop(STOP_GRACE).await;
         observed
@@ -332,31 +337,32 @@ impl VaultVm {
     }
 }
 
-/// `restoring`, ended early by the VMM's exit when `exit` watches it: the
-/// exit drops the restore, and with it C's read. With no watch, or one that
-/// fails, the restore runs on as it does with none.
-async fn until_exit(
-    restoring: impl Future<Output = anyhow::Result<Credentials>>,
+/// `booting`, a restore or a cold boot past its VMM's start, ended early by
+/// the VMM's exit when `exit` watches it: the exit drops the boot, and with
+/// it a supervisor pipe's read (FIX 9501). With no watch, or one that fails,
+/// the boot runs on as it does with none.
+pub(super) async fn until_exit<T>(
+    booting: impl Future<Output = anyhow::Result<T>>,
     exit: Option<VmExitWatch>,
-) -> anyhow::Result<Credentials> {
-    let mut restoring = std::pin::pin!(restoring);
+) -> anyhow::Result<T> {
+    let mut booting = std::pin::pin!(booting);
     if let Some(exit) = exit {
         tokio::select! {
             biased;
-            restored = &mut restoring => return restored,
+            booted = &mut booting => return booted,
             exited = exit.wait() => match exited {
                 Ok(status) => {
-                    anyhow::bail!("the vault VM's VMM exited before its restore ended ({status})")
+                    anyhow::bail!("the vault VM's VMM exited before its boot ended ({status})")
                 }
                 Err(error) => tracing::warn!(
                     reason = "vm_exit_unread",
                     %error,
-                    "the vault VM's exit watch failed; its restore runs on without it"
+                    "the vault VM's exit watch failed; its boot runs on without it"
                 ),
             },
         }
     }
-    restoring.await
+    booting.await
 }
 
 /// One control record's body.

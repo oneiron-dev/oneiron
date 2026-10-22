@@ -155,6 +155,11 @@ pub(super) fn run_bound(
     // Held to its list, the binding is frozen on the row and noted in the
     // agent's diary before any pack loads (FIX 7720, 7726).
     let planned = pin.map(|pin| pin.bind(vault, &status.attempt, actor, run_id, &mut config));
+    // FIX 1876: a run no seat bore and no plan bound is stamped with the
+    // model its settled config runs on, before any pack loads.
+    if model_seat.is_none() && planned.is_none() {
+        super::attribution::stamp_seatless_executor(vault, &status.attempt, &config);
+    }
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
     // continued run's task, its source's fork, already holds it there.

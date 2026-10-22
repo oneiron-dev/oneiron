@@ -171,11 +171,35 @@ pub enum EngineScan {
     /// One loaded NOTE document's authorship entries (once refused past
     /// 4096).
     NoteDocumentAuthorshipRows,
+    /// One agent definition's entries in one composition list (skills,
+    /// connectors, MCPs, models, verbatim pins or optional-memory
+    /// families), at its put (once refused past 64).
+    AgentDefinitionListEntries,
+    /// The SKILL rows one agent birth's source scan reads (once refused past
+    /// 100,000).
+    AgentBirthSkillRows,
+    /// The ClaimOf edges one agent birth's source scan reads (once refused
+    /// past 100,000).
+    AgentBirthClaimOfRows,
+    /// The spend scopes one ancestry walk reads (once refused past 256).
+    SpendAncestorScopes,
+    /// The attempt rows one spend retry lookup reads (once refused past
+    /// 1,024).
+    SpendRetryAttempts,
+    /// The attempt rows one kind listing reads, counted before its kind
+    /// filter (once refused past 100,000).
+    AttemptKindRows,
+    /// The longest actor one attempt row's events and cancel receipts carry,
+    /// in bytes (once refused past 128).
+    AttemptEventActorBytes,
+    /// The longest note one attempt row's events carry, in bytes (once
+    /// refused past 2048).
+    AttemptEventNoteBytes,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 68] = [
+    pub const ALL: [Self; 76] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -244,6 +268,14 @@ impl EngineScan {
         Self::NoteDocumentBytes,
         Self::NoteDocumentPinRows,
         Self::NoteDocumentAuthorshipRows,
+        Self::AgentDefinitionListEntries,
+        Self::AgentBirthSkillRows,
+        Self::AgentBirthClaimOfRows,
+        Self::SpendAncestorScopes,
+        Self::SpendRetryAttempts,
+        Self::AttemptKindRows,
+        Self::AttemptEventActorBytes,
+        Self::AttemptEventNoteBytes,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -326,6 +358,14 @@ impl EngineScan {
             Self::NoteDocumentBytes => "note_document_bytes",
             Self::NoteDocumentPinRows => "note_document_pin_rows",
             Self::NoteDocumentAuthorshipRows => "note_document_authorship_rows",
+            Self::AgentDefinitionListEntries => "agent_definition_list_entries",
+            Self::AgentBirthSkillRows => "agent_birth_skill_rows",
+            Self::AgentBirthClaimOfRows => "agent_birth_claim_of_rows",
+            Self::SpendAncestorScopes => "spend_ancestor_scopes",
+            Self::SpendRetryAttempts => "spend_retry_attempts",
+            Self::AttemptKindRows => "attempt_kind_rows",
+            Self::AttemptEventActorBytes => "attempt_event_actor_bytes",
+            Self::AttemptEventNoteBytes => "attempt_event_note_bytes",
         }
     }
 
@@ -356,6 +396,13 @@ impl EngineScan {
             Self::NoteDocumentBytes => 1_048_576,
             Self::NoteDocumentPinRows => 256,
             Self::NoteDocumentAuthorshipRows => 4096,
+            Self::AgentDefinitionListEntries => 64,
+            Self::AgentBirthSkillRows | Self::AgentBirthClaimOfRows => 100_000,
+            Self::SpendAncestorScopes => 256,
+            Self::SpendRetryAttempts => 1024,
+            Self::AttemptKindRows => 100_000,
+            Self::AttemptEventActorBytes => 128,
+            Self::AttemptEventNoteBytes => 2048,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -430,6 +477,14 @@ impl EngineScan {
             Self::NoteDocumentBytes => 93,
             Self::NoteDocumentPinRows => 94,
             Self::NoteDocumentAuthorshipRows => 95,
+            Self::AgentDefinitionListEntries => 96,
+            Self::AgentBirthSkillRows => 97,
+            Self::AgentBirthClaimOfRows => 98,
+            Self::SpendAncestorScopes => 99,
+            Self::SpendRetryAttempts => 100,
+            Self::AttemptKindRows => 101,
+            Self::AttemptEventActorBytes => 102,
+            Self::AttemptEventNoteBytes => 103,
         }]
     }
 }

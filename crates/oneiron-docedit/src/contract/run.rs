@@ -24,6 +24,7 @@ use crate::graphic::{AssetRecord, GraphicLimits, Origin};
 use crate::pptx_comments::{
     PptxError, SlideMints, comment_patch, guid, inspect_pptx, unknown_anchor_threads,
 };
+use crate::resource::Resources;
 use crate::retained_opc::{self, Package};
 use crate::xlsx_body::{XlsxBodyError, mark_full_calc, project_xlsx, read_xlsx_cells};
 use crate::{
@@ -34,10 +35,19 @@ use std::collections::BTreeMap;
 use stemma::runtime::{ErrorCode as DocxCode, RuntimeError};
 
 pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, ContractError> {
+    // The host's port, or, served without one, the measuring port.
+    let resources = ports
+        .resources
+        .cloned()
+        .unwrap_or_else(Resources::measuring);
+    let resources = &resources;
     match op {
         Op::Describe => Ok(Done::reply(Reply::Described(super::describe()))),
+        // The DOCX arms read and parse within the operation's port (FIX 8570).
         Op::DocxRead(args) => {
-            let blocks = read_docx_blocks(input(inputs, args.document)?, args.limits.archive())
+            let document = input(inputs, args.document)?;
+            let blocks = resources
+                .docx(|| read_docx_blocks(document, args.limits.archive()))
                 .map_err(docedit)?;
             Ok(Done::reply(Reply::DocxBlocks { blocks }))
         }
@@ -45,8 +55,9 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
             let document = input(inputs, args.document)?;
             let prepared =
                 prepare_revision_transaction(&args.transaction.to_string()).map_err(docedit)?;
-            let (bytes, notes) =
-                revise_with_notes(document, &prepared, args.limits.archive()).map_err(docedit)?;
+            let (bytes, notes) = resources
+                .docx(|| revise_with_notes(document, &prepared, args.limits.archive()))
+                .map_err(docedit)?;
             let transaction = serde_json::from_str(&prepared).map_err(internal)?;
             Ok(Done::with(
                 Reply::DocxRevised {
@@ -61,25 +72,28 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
             if let Some(transaction) = &args.transaction {
                 validate_revision_transaction(&transaction.to_string()).map_err(docedit)?;
             }
-            validate_blocking_with_limits(document, args.limits.archive()).map_err(runtime)?;
+            resources
+                .docx(|| validate_blocking_with_limits(document, args.limits.archive()))
+                .map_err(runtime)?;
             Ok(Done::reply(Reply::Checked))
         }
         Op::DocxProject(args) => {
-            let bytes = project_docx(
-                input(inputs, args.source)?,
-                &args.changes,
-                &args.revision,
-                args.limits.archive(),
-            )
-            .map_err(docedit)?;
+            let source = input(inputs, args.source)?;
+            let bytes = resources
+                .docx(|| project_docx(source, &args.changes, &args.revision, args.limits.archive()))
+                .map_err(docedit)?;
             Ok(Done::with(
                 Reply::Written,
                 Output::new("document", DOCX_MEDIA_TYPE, bytes),
             ))
         }
         Op::XlsxRead(args) => {
-            let book = read_xlsx_cells(input(inputs, args.workbook)?, args.limits.package())
-                .map_err(xlsx)?;
+            let book = read_xlsx_cells(
+                input(inputs, args.workbook)?,
+                args.limits.package(),
+                resources,
+            )
+            .map_err(xlsx)?;
             Ok(Done::reply(Reply::XlsxBook { book }))
         }
         Op::XlsxProject(args) => {
@@ -87,6 +101,7 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
                 input(inputs, args.source)?,
                 &args.changes,
                 args.limits.package(),
+                resources,
             )
             .map_err(xlsx)?;
             Ok(Done::with(
@@ -97,8 +112,12 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
             ))
         }
         Op::XlsxMarkFullCalc(args) => {
-            let bytes = mark_full_calc(input(inputs, args.workbook)?, args.limits.package())
-                .map_err(xlsx)?;
+            let bytes = mark_full_calc(
+                input(inputs, args.workbook)?,
+                args.limits.package(),
+                resources,
+            )
+            .map_err(xlsx)?;
             Ok(Done::with(
                 Reply::Written,
                 Output::new("workbook", XLSX_MEDIA_TYPE, bytes),
@@ -128,17 +147,18 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
         }
         Op::DeckRead(args) => {
             let package =
-                Package::open(input(inputs, args.deck)?, args.limits.package()).map_err(package)?;
+                Package::open(input(inputs, args.deck)?, args.limits.package(), resources)
+                    .map_err(package)?;
             let view = DeckView::read(&package).map_err(deck_error)?;
             Ok(Done::reply(Reply::Deck(read_deck(&package, &view)?)))
         }
-        Op::DeckTransaction(args) => deck_transaction(args, inputs),
-        Op::DeckCreate(args) => deck_create(args, inputs),
-        Op::PptxComments(args) => pptx_comments(args, inputs),
+        Op::DeckTransaction(args) => deck_transaction(args, inputs, resources),
+        Op::DeckCreate(args) => deck_create(args, inputs, resources),
+        Op::PptxComments(args) => pptx_comments(args, inputs, resources),
         Op::PptxCommentsInspect(args) => {
             let deck = input(inputs, args.deck)?;
-            let inspection = inspect_pptx(deck, &args.limits).map_err(pptx)?;
-            let unknown = unknown_anchor_threads(deck, &args.limits).map_err(pptx)?;
+            let inspection = inspect_pptx(deck, &args.limits, resources).map_err(pptx)?;
+            let unknown = unknown_anchor_threads(deck, &args.limits, resources).map_err(pptx)?;
             Ok(Done::reply(Reply::PptxCommentsInspected {
                 slides: inspection.slides,
                 signature_parts: inspection.signature_parts,
@@ -148,7 +168,11 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
     }
 }
 
-fn pptx_comments(args: &PptxCommentsArgs, inputs: &[&[u8]]) -> Result<Done, ContractError> {
+fn pptx_comments(
+    args: &PptxCommentsArgs,
+    inputs: &[&[u8]],
+    resources: &Resources,
+) -> Result<Done, ContractError> {
     let base = input(inputs, args.deck)?;
     let replay: Option<Vec<(u64, u32)>> = args
         .slide_creation_ids
@@ -159,7 +183,7 @@ fn pptx_comments(args: &PptxCommentsArgs, inputs: &[&[u8]]) -> Result<Done, Cont
         Some(ids) => SlideMints::Replay(ids),
         None => SlideMints::Draw(&seed),
     };
-    let effects = comment_patch(base, &args.edits, mints, &args.limits).map_err(pptx)?;
+    let effects = comment_patch(base, &args.edits, mints, &args.limits, resources).map_err(pptx)?;
     Ok(Done::with(
         Reply::PptxComments {
             touched_parts: effects.touched_parts.into_iter().collect(),
@@ -298,7 +322,11 @@ fn media(media: AssetMedia) -> MediaType {
     }
 }
 
-fn deck_transaction(args: &DeckTransactionArgs, inputs: &[&[u8]]) -> Result<Done, ContractError> {
+fn deck_transaction(
+    args: &DeckTransactionArgs,
+    inputs: &[&[u8]],
+    resources: &Resources,
+) -> Result<Done, ContractError> {
     let base = input(inputs, args.deck)?;
     let transaction =
         DeckTransaction::parse(&args.transaction.to_string()).map_err(transaction_error)?;
@@ -309,8 +337,14 @@ fn deck_transaction(args: &DeckTransactionArgs, inputs: &[&[u8]]) -> Result<Done
             .map(|asset| Ok((asset, input(inputs, asset.input)?)))
             .collect::<Result<_, ContractError>>()?,
     };
-    let (bytes, report) = run_transaction(base, &transaction, args.limits.package(), &assets)
-        .map_err(transaction_error)?;
+    let (bytes, report) = run_transaction(
+        base,
+        &transaction,
+        args.limits.package(),
+        &assets,
+        resources,
+    )
+    .map_err(transaction_error)?;
     Ok(Done::with(
         Reply::DeckTransaction {
             report: serde_json::to_value(&report).map_err(internal)?,
@@ -319,7 +353,11 @@ fn deck_transaction(args: &DeckTransactionArgs, inputs: &[&[u8]]) -> Result<Done
     ))
 }
 
-fn deck_create(args: &DeckCreateArgs, inputs: &[&[u8]]) -> Result<Done, ContractError> {
+fn deck_create(
+    args: &DeckCreateArgs,
+    inputs: &[&[u8]],
+    resources: &Resources,
+) -> Result<Done, ContractError> {
     let bytes = input(inputs, args.brief.input)?;
     let content_hash = match &args.brief.kept_hash {
         Some(hex) => {
@@ -335,7 +373,8 @@ fn deck_create(args: &DeckCreateArgs, inputs: &[&[u8]]) -> Result<Done, Contract
         bytes,
     };
     let limits = args.limits.package();
-    let template = Package::open(input(inputs, args.template)?, limits).map_err(package)?;
+    let template =
+        Package::open(input(inputs, args.template)?, limits, resources).map_err(package)?;
     let mut fonts = FontBook::new();
     for font in &args.fonts {
         fonts
@@ -407,7 +446,10 @@ fn deck_create(args: &DeckCreateArgs, inputs: &[&[u8]]) -> Result<Done, Contract
                 figure: &args.names.figure,
                 sheet: &args.names.sheet,
             },
-            limits: GraphicLimits::default(),
+            // The host's graphic ceilings, when it set them (FIX 5355).
+            limits: args
+                .graphics
+                .map_or_else(GraphicLimits::default, super::GraphicSettings::graphic),
         },
     )
     .map_err(emit_error)?;
@@ -459,6 +501,12 @@ fn docedit(error: DoceditError) -> ContractError {
 }
 
 fn runtime(error: RuntimeError) -> ContractError {
+    if let Some(refusal) = crate::docx_resource(&error) {
+        return ContractError::resource(refusal);
+    }
+    if let Some(hit) = crate::docx_capacity(&error) {
+        return ContractError::capacity(hit);
+    }
     let code = match error.code {
         DocxCode::StaleEdit => ErrorCode::Stale,
         DocxCode::InvalidDocx | DocxCode::InvalidSnapshot => ErrorCode::InvalidDocument,
@@ -472,15 +520,32 @@ fn package_code(error: &retained_opc::Error) -> ErrorCode {
     match error {
         retained_opc::Error::Invalid(_) => ErrorCode::InvalidDocument,
         retained_opc::Error::Edit(_) => ErrorCode::Refused,
+        retained_opc::Error::Resource(refusal) => ContractError::resource(*refusal).code,
+        retained_opc::Error::Capacity(_) => ErrorCode::CapacityExceeded,
     }
 }
 
 fn package(error: retained_opc::Error) -> ContractError {
+    if let Some(refusal) = error.resource() {
+        return ContractError::resource(refusal);
+    }
+    if let Some(hit) = error.capacity() {
+        return ContractError::capacity(hit);
+    }
     ContractError::new(package_code(&error), error.to_string())
+}
+
+/// The ceiling a wrapped package error passed, when it did (FIX 5354).
+fn package_capacity(error: Option<&retained_opc::Error>) -> Option<ContractError> {
+    error
+        .and_then(retained_opc::Error::capacity)
+        .map(ContractError::capacity)
 }
 
 fn pptx(error: PptxError) -> ContractError {
     let code = match error {
+        PptxError::Resource(refusal) => return ContractError::resource(refusal),
+        PptxError::Capacity(hit) => return ContractError::capacity(hit),
         PptxError::InvalidPackage | PptxError::InvalidXml | PptxError::InvalidReference => {
             ErrorCode::InvalidDocument
         }
@@ -500,10 +565,28 @@ fn pptx(error: PptxError) -> ContractError {
 }
 
 fn deck_error(error: DeckError) -> ContractError {
+    if let Some(refusal) = error.resource() {
+        return ContractError::resource(refusal);
+    }
+    if let Some(capacity) = package_capacity(match &error {
+        DeckError::Package(error) => Some(error),
+        _ => None,
+    }) {
+        return capacity;
+    }
     ContractError::new(ErrorCode::InvalidDocument, error.to_string())
 }
 
 fn xlsx(error: XlsxBodyError) -> ContractError {
+    if let Some(refusal) = error.resource() {
+        return ContractError::resource(refusal);
+    }
+    if let Some(capacity) = package_capacity(match &error {
+        XlsxBodyError::Package(error) => Some(error),
+        _ => None,
+    }) {
+        return capacity;
+    }
     let code = match &error {
         XlsxBodyError::Package(error) => package_code(error),
         XlsxBodyError::Xml(_) => ErrorCode::InvalidDocument,
@@ -513,6 +596,15 @@ fn xlsx(error: XlsxBodyError) -> ContractError {
 }
 
 fn transaction_error(error: TransactionError) -> ContractError {
+    if let Some(refusal) = error.resource() {
+        return ContractError::resource(refusal);
+    }
+    if let Some(capacity) = package_capacity(match &error {
+        TransactionError::Package(error) => Some(error),
+        _ => None,
+    }) {
+        return capacity;
+    }
     let code = match &error {
         TransactionError::Invalid(_) => ErrorCode::BadRequest,
         TransactionError::BaseChanged
@@ -541,6 +633,15 @@ fn compile(error: CompileError) -> ContractError {
 }
 
 fn emit_error(error: EmitError) -> ContractError {
+    if let Some(refusal) = error.resource() {
+        return ContractError::resource(refusal);
+    }
+    if let Some(capacity) = package_capacity(match &error {
+        EmitError::Package(error) => Some(error),
+        _ => None,
+    }) {
+        return capacity;
+    }
     let code = match &error {
         EmitError::Plan(error) => return compile(error.clone()),
         EmitError::MissingAsset(_) => ErrorCode::BadRequest,

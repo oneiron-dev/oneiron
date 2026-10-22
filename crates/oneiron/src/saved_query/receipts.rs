@@ -51,11 +51,15 @@ pub struct SavedQueryEvaluation {
 /// The evaluator's memo write, under a current definition and current owner read.
 /// A provider await may not carry a superseded definition or a revoked read
 /// into a later write. The memo still pins the evidence actually judged.
+///
+/// Nor may it carry erased evidence (FIX 10089): a source deleted or erased
+/// during the await fences the write in this same transaction, and `false`
+/// says no memo was kept, so no explanation outlives its source.
 pub(super) fn put_evaluated_memo(
     evaluator: &SavedQueryEvaluator<'_>,
     request: &EvaluationRequest<'_>,
     row: &VerdictMemoRow,
-) -> Result<()> {
+) -> Result<bool> {
     let vault = evaluator.vault;
     let kind = saved_query_type_byte(vault)?;
     let lane = evaluator.owner_lane(&request.definition.scope)?;
@@ -72,7 +76,12 @@ pub(super) fn put_evaluated_memo(
                 "saved query owner read changed during evaluation",
             ));
         }
+        for source in row.source_refs.iter().flatten() {
+            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, source)?.is_live() {
+                return Ok(false);
+            }
+        }
         MEMOS.put(&vault.store, txn, &row.key, row)?;
-        Ok(())
+        Ok(true)
     })
 }

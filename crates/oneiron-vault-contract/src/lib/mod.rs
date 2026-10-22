@@ -33,6 +33,8 @@ pub mod esign_delivery;
 pub mod host;
 pub mod host_adapters;
 mod ledger;
+/// The wake ledger's report in bounded pages (FIX 9549).
+mod ledger_pages;
 mod limits;
 mod managed_backup;
 mod managed_holder;
@@ -97,8 +99,12 @@ pub use self::ctl::{
     TRAINING_PURGE_UNSENT, TrainingPurgeState, TrainingPurgeStateWire,
 };
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
+pub use self::ledger_pages::{
+    LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport, LedgerReportAssembly,
+    LedgerReportHead,
+};
 pub use self::limits::{
-    CREDENTIALS_LEN, DEK_LEN, MAX_CTL_LINE, MAX_LEDGER_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID,
+    CREDENTIALS_LEN, DEK_LEN, MAX_CTL_LINE, MAX_LEDGER_PAGE_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID,
     READY_BYTE, TOKEN_LEN,
 };
 pub use self::managed_backup::{

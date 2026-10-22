@@ -8791,7 +8791,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::memory::code_run_doors::CodeRunModelHealCountView,
         >(),
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
-            Option<crate::code_run::ProgramStepFeedback>,
+            Option<crate::code_run::ProgramStepFeedbackRelease>,
         >(),
         "vault.code.waits.resolve" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_wait_doors::CodeWaitReceiptView,
@@ -29659,7 +29659,7 @@ pub fn vault_code_model_heal_count(
 pub fn vault_code_type_diagnostics(
     memory: &Memory<'_>,
     input: crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest,
-) -> MemoryResult<Option<crate::code_run::ProgramStepFeedback>> {
+) -> MemoryResult<Option<crate::code_run::ProgramStepFeedbackRelease>> {
     memory.code_run_type_diagnostics_as(
         &memory.embedded_owner("vault.code.type_diagnostics")?,
         input,
@@ -34205,4 +34205,446 @@ pub fn self_skills_call(
     input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::SkillCallInput>,
 ) -> MemoryResult<serde_json::Value> {
     crate::task_verb::sdk::host_only(memory, "self.skills.call", &input)
+}
+/// The record-ref check `verb`'s engine fn runs before its call, run alone
+/// (FIX 1210): a door that refused one of its refs before reaching the fn
+/// receipts that refusal as the fn would have. Its own checks of the input
+/// run first, as in the fn; no engine call runs. A verb whose door checks
+/// no readable ref checks nothing.
+pub fn receipt_declared_refs(
+    memory: &Memory<'_>,
+    verb: &str,
+    value: serde_json::Value,
+) -> MemoryResult<()> {
+    match verb {
+        "cancel" => {
+            let input: TaskRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "cancel",
+                &input,
+                &["/task_ref"],
+            )?;
+        }
+        "tasks.update" => {
+            let input: TaskUpdateRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "tasks.update",
+                &input,
+                &["/task_ref"],
+            )?;
+        }
+        "tasks.accept" => {
+            let input: crate::task_verb::TaskAccept = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "tasks.accept",
+                &input,
+                &["/task_ref"],
+            )?;
+        }
+        "vault.tagging.status" => {
+            let input: crate::tagging::TaggingTurnRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.tagging.status",
+                &input,
+                &["/turn_ref"],
+            )?;
+        }
+        "vault.tagging.tags" => {
+            let input: crate::tagging::TaggingTurnRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.tagging.tags",
+                &input,
+                &["/turn_ref"],
+            )?;
+        }
+        "vault.tagging.history" => {
+            let input: crate::tagging::TaggingTurnRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.tagging.history",
+                &input,
+                &["/turn_ref"],
+            )?;
+        }
+        "vault.artifacts.units" => {
+            let input: crate::anchored_annotation::ArtifactUnitsRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.units",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.anchors.pin" => {
+            let input: crate::anchored_annotation::AnnotationPinRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.anchors.pin",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.threads.open" => {
+            let input: crate::anchored_annotation::AnnotationThreadOpenRequest = decode(value)?;
+            let _unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+                memory,
+                "vault.artifacts.threads.open",
+                &input,
+                &["/text"],
+            )?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.threads.open",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.threads.comment" => {
+            let input: crate::anchored_annotation::AnnotationCommentRequest = decode(value)?;
+            let _unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+                memory,
+                "vault.artifacts.threads.comment",
+                &input,
+                &["/text"],
+            )?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.threads.comment",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.threads.read" => {
+            let input: crate::anchored_annotation::AnnotationThreadRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.threads.read",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.threads.list" => {
+            let input: crate::blob_artifact::ArtifactRefRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.threads.list",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.threads.assign" => {
+            let input: crate::anchored_annotation::AnnotationAssignRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.threads.assign",
+                &input,
+                &["/artifact_ref", "/assignee_ref"],
+            )?;
+        }
+        "vault.artifacts.threads.state" => {
+            let input: crate::anchored_annotation::AnnotationStateRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.threads.state",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.inspect_deck" => {
+            let input: crate::blob_artifact::DeckInspectRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.inspect_deck",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.calendar.transcript.ingest" => {
+            let input: crate::calendar::transcript::TranscriptFileDropInput = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.calendar.transcript.ingest",
+                &input,
+                &["/source_blob_ref"],
+            )?;
+        }
+        "vault.artifacts.body.import" => {
+            let input: crate::office_body::OfficeBodyImportRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.import",
+                &input,
+                &[
+                    "/artifact_ref",
+                    "/made_by/inputs/*/row",
+                    "/made_by/trigger/task",
+                    "/made_by/trigger/ask",
+                    "/made_by/trigger/skill",
+                ],
+            )?;
+        }
+        "vault.artifacts.body.head" => {
+            let input: crate::office_body::OfficeBodyArtifactRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.head",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.body.read" => {
+            let input: crate::office_body::OfficeBodyReadRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.read",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.body.commits" => {
+            let input: crate::office_body::OfficeBodyCommitsRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.commits",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.body.edit" => {
+            let input: crate::office_body::OfficeBodyEditRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.edit",
+                &input,
+                &[
+                    "/artifact_ref",
+                    "/made_by/inputs/*/row",
+                    "/made_by/trigger/task",
+                    "/made_by/trigger/ask",
+                    "/made_by/trigger/skill",
+                ],
+            )?;
+        }
+        "vault.artifacts.body.fork.open" => {
+            let input: crate::office_body::OfficeBodyForkOpenRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.fork.open",
+                &input,
+                &["/artifact_ref", "/run_root_ref", "/proposal_ref"],
+            )?;
+        }
+        "vault.artifacts.body.fork.edit" => {
+            let input: crate::office_body::OfficeBodyForkEditRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.fork.edit",
+                &input,
+                &[
+                    "/artifact_ref",
+                    "/fork_ref",
+                    "/made_by/inputs/*/row",
+                    "/made_by/trigger/task",
+                    "/made_by/trigger/ask",
+                    "/made_by/trigger/skill",
+                ],
+            )?;
+        }
+        "vault.artifacts.body.fork.diff" => {
+            let input: crate::office_body::OfficeBodyForkRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.fork.diff",
+                &input,
+                &["/artifact_ref", "/fork_ref"],
+            )?;
+        }
+        "vault.artifacts.body.fork.merge" => {
+            let input: crate::office_body::OfficeBodyForkMergeRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.fork.merge",
+                &input,
+                &["/artifact_ref", "/fork_ref"],
+            )?;
+        }
+        "vault.artifacts.body.fork.discard" => {
+            let input: crate::office_body::OfficeBodyForkRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.fork.discard",
+                &input,
+                &["/artifact_ref", "/fork_ref"],
+            )?;
+        }
+        "vault.artifacts.body.proposal.read" => {
+            let input: crate::office_body::OfficeBodyProposalRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.proposal.read",
+                &input,
+                &["/artifact_ref", "/proposal_ref"],
+            )?;
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            let input: crate::office_body::OfficeBodyProposalSettleRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.proposal.settle",
+                &input,
+                &["/artifact_ref", "/proposal_ref", "/reviewed/*/fork_ref"],
+            )?;
+        }
+        "vault.artifacts.body.export" => {
+            let input: crate::office_body::OfficeBodyExportVerbRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.export",
+                &input,
+                &[
+                    "/artifact_ref",
+                    "/made_by/inputs/*/row",
+                    "/made_by/trigger/task",
+                    "/made_by/trigger/ask",
+                    "/made_by/trigger/skill",
+                ],
+            )?;
+        }
+        "vault.artifacts.body.preview" => {
+            let input: crate::office_body::OfficeBodyPreviewRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.preview",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.artifacts.body.deck.review" => {
+            let input: crate::office_body::OfficeBodyForkRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.deck.review",
+                &input,
+                &["/artifact_ref", "/fork_ref"],
+            )?;
+        }
+        "vault.artifacts.body.deck.merge" => {
+            let input: crate::office_body::DeckForkMergeRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.deck.merge",
+                &input,
+                &["/artifact_ref", "/fork_ref"],
+            )?;
+        }
+        "vault.artifacts.body.deck.export" => {
+            let input: crate::office_body::DeckExportRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.artifacts.body.deck.export",
+                &input,
+                &["/artifact_ref"],
+            )?;
+        }
+        "vault.notes.from_entity" => {
+            let input: CreateNoteFromEntityRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.notes.from_entity",
+                &input,
+                &["/source_ref"],
+            )?;
+        }
+        "vault.notes.fork" => {
+            let input: crate::note::NoteForkRequest = decode(value)?;
+            let _unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+                memory,
+                "vault.notes.fork",
+                &input,
+                &["/edit/text"],
+            )?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.notes.fork",
+                &input,
+                &["/note_ref"],
+            )?;
+        }
+        "vault.notes.edit" => {
+            let input: EditNoteRequest = decode(value)?;
+            let _unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+                memory,
+                "vault.notes.edit",
+                &input,
+                &["/edit/text"],
+            )?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.notes.edit",
+                &input,
+                &["/note_ref"],
+            )?;
+        }
+        "vault.notes.seal" => {
+            let input: crate::note::NoteRefRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.notes.seal",
+                &input,
+                &["/note_ref"],
+            )?;
+        }
+        "vault.notes.lifecycle" => {
+            let input: crate::note::NoteRefRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.notes.lifecycle",
+                &input,
+                &["/note_ref"],
+            )?;
+        }
+        "vault.notes.set_overrides" => {
+            let input: crate::note::SetNoteOverridesRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.notes.set_overrides",
+                &input,
+                &["/note_ref"],
+            )?;
+        }
+        "vault.notes.defaults" => {
+            let input: crate::note::NoteRefRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.notes.defaults",
+                &input,
+                &["/note_ref"],
+            )?;
+        }
+        "vault.tasks.linear.mapping" => {
+            let input: crate::linear_sync::LinearMappingRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.tasks.linear.mapping",
+                &input,
+                &["/task_ref"],
+            )?;
+        }
+        "vault.tasks.linear.provenance" => {
+            let input: crate::linear_sync::LinearProvenanceRequest = decode(value)?;
+            crate::gate::record_references::admit_row_references(
+                memory,
+                "vault.tasks.linear.provenance",
+                &input,
+                &["/task_ref"],
+            )?;
+        }
+        _ => {}
+    }
+    Ok(())
 }

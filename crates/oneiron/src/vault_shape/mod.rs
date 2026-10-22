@@ -16,6 +16,7 @@
 //! own; it says what should be true, never a new way of making it true.
 
 mod apply;
+mod approval;
 mod card;
 mod channel;
 mod connector_reach;
@@ -30,10 +31,12 @@ mod retire;
 mod run;
 mod seed;
 mod skill;
+mod visibility;
 
 pub use apply::{
     ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
 };
+pub use approval::ShapeApprovalDependencies;
 pub use card::ShapeCard;
 pub use channel::{
     ShapeChannelBinding, ShapeChannelCustody, ShapeChannelFulfillment, ShapeChannelProvision,
@@ -57,8 +60,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Most rows one seed may carry.
-pub const SHAPE_SEED_MAX_ROWS: usize = 4096;
 /// Longest name, id or reference a row may carry, in bytes.
 pub const SHAPE_NAME_MAX_BYTES: usize = 256;
 
@@ -352,18 +353,15 @@ pub struct ShapeSeed {
 }
 
 impl ShapeSeed {
-    /// Refuses a seed a plan cannot read as one statement: too many rows, an
-    /// empty or oversized name, or two rows about the same structure.
+    /// Refuses a seed a plan cannot read as one statement: an empty or
+    /// oversized name, a malformed reference, or two rows about the same
+    /// structure. How many rows it carries is never a fault (FIX 10197):
+    /// every row is planned and applied.
     ///
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] naming the first fault.
     pub fn validate(&self) -> Result<()> {
-        if self.rows.len() > SHAPE_SEED_MAX_ROWS {
-            return Err(invalid(format!(
-                "a seed carries at most {SHAPE_SEED_MAX_ROWS} rows"
-            )));
-        }
         let mut seen = BTreeSet::new();
         for row in &self.rows {
             if let ShapeRow::Member { member: person, .. } | ShapeRow::Facet { person, .. } = row
