@@ -50,7 +50,7 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
         let participants = readers
             .into_iter()
             .map(|reader| AgentInboxParticipant {
-                identity_ref: reader,
+                identity_ref: Some(reader),
                 actor_ref: reader,
             })
             .collect();
@@ -59,7 +59,7 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
             item_id: format!("concern:{}", &card_ref[CARD_REF_PREFIX.len()..]),
             kind: AgentInboxItemKind::Concern,
             thread_ref: None,
-            identity_ref: card.subject,
+            identity_ref: Some(card.subject),
             actor_ref: card.subject,
             facet_ref: None,
             participants,
@@ -73,6 +73,8 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
                 tone: card.tone,
             }),
             diary_review: None,
+            sender: None,
+            widening: None,
         });
     }
     Ok(items)

@@ -534,11 +534,11 @@ impl Vault {
                 item_id: handle.clone(),
                 kind: AgentInboxItemKind::CoordinationUpdate,
                 thread_ref: None,
-                identity_ref: agent,
+                identity_ref: Some(agent),
                 actor_ref: agent,
                 facet_ref: None,
                 participants: vec![AgentInboxParticipant {
-                    identity_ref: agent,
+                    identity_ref: Some(agent),
                     actor_ref: agent,
                 }],
                 impact: InboxImpact(REVIEW_INBOX_IMPACT),
@@ -552,6 +552,8 @@ impl Vault {
                     reader_class: row.reader_class,
                     reason: row.reason,
                 }),
+                sender: None,
+                widening: None,
             });
         }
         Ok(items)

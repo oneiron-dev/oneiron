@@ -43,6 +43,8 @@ pub enum InboxLensKind {
     WaitingOnYou,
     CoordinationUpdate,
     Concern,
+    /// A digest addressed to the reader alone (FIX 1261).
+    Digest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -60,7 +62,9 @@ pub struct InboxLensRow {
     pub pile: InboxLensPile,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_ref: Option<String>,
-    pub identity: String,
+    /// The receiving identity; absent on a row the vault itself sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
     pub actor: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub facet: Option<String>,
@@ -75,11 +79,20 @@ pub struct InboxLensRow {
     pub concern: Option<InboxLensConcern>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diary_review: Option<InboxLensDiaryReview>,
+    /// Who the row is from, as 32 hex: the author of its newest inbound
+    /// message with admitted provenance (FIX 9745); absent where none has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender: Option<String>,
+    /// The widening a comm widen ask asks for (FIX 3901).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub widening: Option<crate::context_board::ConsultWidening>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxLensParticipant {
-    pub identity: String,
+    /// The receiving identity; absent on a row the vault itself sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
     pub actor: String,
 }
 
@@ -107,23 +120,26 @@ impl From<AgentInboxLensItem> for InboxLensRow {
                 AgentInboxItemKind::ApprovalRequired => InboxLensKind::WaitingOnYou,
                 AgentInboxItemKind::CoordinationUpdate => InboxLensKind::CoordinationUpdate,
                 AgentInboxItemKind::Concern => InboxLensKind::Concern,
+                AgentInboxItemKind::Digest => InboxLensKind::Digest,
             },
             pile: match item.kind {
                 AgentInboxItemKind::Conversation => InboxLensPile::Conversations,
                 AgentInboxItemKind::ApprovalRequired | AgentInboxItemKind::Concern => {
                     InboxLensPile::WaitingOnYou
                 }
-                AgentInboxItemKind::CoordinationUpdate => InboxLensPile::Updates,
+                AgentInboxItemKind::CoordinationUpdate | AgentInboxItemKind::Digest => {
+                    InboxLensPile::Updates
+                }
             },
             thread_ref: item.thread_ref,
-            identity: item.identity_ref.to_hex(),
+            identity: item.identity_ref.map(|id| id.to_hex()),
             actor: item.actor_ref.to_hex(),
             facet: item.facet_ref.map(|id| id.to_hex()),
             participants: item
                 .participants
                 .into_iter()
                 .map(|p| InboxLensParticipant {
-                    identity: p.identity_ref.to_hex(),
+                    identity: p.identity_ref.map(|id| id.to_hex()),
                     actor: p.actor_ref.to_hex(),
                 })
                 .collect(),
@@ -142,6 +158,8 @@ impl From<AgentInboxLensItem> for InboxLensRow {
                 reader_class: r.reader_class,
                 reason: r.reason,
             }),
+            sender: item.sender.map(|id| id.to_hex()),
+            widening: item.widening,
         }
     }
 }
@@ -151,10 +169,13 @@ fn entity(reference: &str) -> MemoryResult<EntityId> {
         .map_err(|_| MemoryError::bad_request("inbox filters name 32-hex entity ids"))
 }
 
+/// One lens page. `reader` reads the page: an actor's digests join only the
+/// slice of the actor that reads it.
 fn page(
     vault: &Vault,
     input: &InboxLensRequest,
     actor: Option<EntityId>,
+    reader: EntityId,
 ) -> MemoryResult<InboxLensPage> {
     let before = match (input.before_impact, input.before_at, &input.before_id) {
         (Some(impact), Some(at), Some(id)) => Some((InboxImpact(impact), at, id.clone())),
@@ -168,7 +189,9 @@ fn page(
     let identity = input.identity.as_deref().map(entity).transpose()?;
     let limit = input.limit.unwrap_or(50).min(200);
     let items = match actor {
-        Some(actor) => vault.agent_identity_inbox_slice(actor, identity, limit, before)?,
+        Some(actor) => {
+            vault.agent_identity_inbox_slice(actor, identity, limit, before, actor == reader)?
+        }
         None => vault.agent_inbox_lens(AgentInboxLensQuery {
             identity_ref: identity,
             limit,
@@ -214,7 +237,7 @@ impl Memory<'_> {
                 "an inbox reader cannot select another actor",
             ));
         }
-        page(self.vault(), input, Some(self.actor()))
+        page(self.vault(), input, Some(self.actor()), self.actor())
     }
 
     /// The owner's existing cross-identity lens, including an optional
@@ -234,6 +257,7 @@ impl Memory<'_> {
             self.vault(),
             input,
             input.agent.as_deref().map(entity).transpose()?,
+            self.actor(),
         )
     }
 

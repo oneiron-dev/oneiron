@@ -518,6 +518,35 @@ impl Vault {
             .map(drop)
     }
 
+    /// Where `owner`'s change `change` stands for a tap on its notice
+    /// (FIX 5629): `Pending` while it waits for his answer; `Applied` or
+    /// `Accepted` while its undo would restore, the settings still as it
+    /// left them; `None` for a change settled past any tap or none of his.
+    /// A read in `txn`: it settles nothing, and the answer and undo doors
+    /// judge the change again when tapped.
+    pub(crate) fn weave_digest_setting_change_tap_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
+        change: EntityId,
+    ) -> Result<Option<Status>> {
+        let Some(stored) = CHANGES.get(&self.store, txn, &(owner, change))? else {
+            return Ok(None);
+        };
+        match stored.status {
+            Status::Pending => Ok(Some(Status::Pending)),
+            Status::Applied | Status::Accepted => {
+                let generation = settings_row_in_txn(&self.store, txn, owner)?.generation;
+                let current = owner_wire_in_txn(&self.store, txn, owner)?.is_some_and(|wire| {
+                    stored.after_generation == Some(generation)
+                        && settings_of(&wire) == stored.after
+                });
+                Ok(current.then_some(stored.status))
+            }
+            Status::Declined | Status::Superseded | Status::Undone => Ok(None),
+        }
+    }
+
     /// The owner's own digest settings changes, newest first (FIX 5495).
     pub fn weave_digest_setting_changes(
         &self,

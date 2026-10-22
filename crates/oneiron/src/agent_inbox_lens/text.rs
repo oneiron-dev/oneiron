@@ -68,10 +68,12 @@ impl Vault {
             {
                 continue;
             }
-            let Some(payload_ref) = item.payload_ref.as_deref() else {
+            let (Some(payload_ref), Some(identity_ref)) =
+                (item.payload_ref.as_deref(), item.identity_ref)
+            else {
                 continue;
             };
-            if !read.is_ref_readable_with_policy_in(&rtxn, &policy, &item.identity_ref)? {
+            if !read.is_ref_readable_with_policy_in(&rtxn, &policy, &identity_ref)? {
                 continue;
             }
             // The channel is the identity's own head (OF-272), not a field
@@ -79,7 +81,7 @@ impl Vault {
             let Some(facts) = crate::channel_identity::channel_identity_facts_in_txn(
                 &self.store,
                 &rtxn,
-                &item.identity_ref,
+                &identity_ref,
             )?
             else {
                 continue;
@@ -91,7 +93,7 @@ impl Vault {
                 item.item_id.clone(),
                 ResolvedInboxText {
                     item_id: item.item_id.clone(),
-                    identity_ref: item.identity_ref,
+                    identity_ref,
                     source: InboxTextSource::ProviderEvent {
                         channel: facts.channel,
                         payload_ref: payload_ref.to_owned(),
