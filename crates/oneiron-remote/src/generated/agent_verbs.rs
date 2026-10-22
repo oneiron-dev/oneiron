@@ -1919,7 +1919,7 @@ impl OneironClient {
                     oneiron::memory::code_run_doors::CodeRunModelHealCountView,
                 >(client, verb, &input),
                 "vault.code.type_diagnostics" => remote_agent_verb_output::<
-                    Option<oneiron::code_run::ProgramStepFeedback>,
+                    Option<oneiron::code_run::ProgramStepFeedbackRelease>,
                 >(client, verb, &input),
                 "vault.code.waits.resolve" => remote_agent_verb_output::<
                     oneiron::memory::code_wait_doors::CodeWaitReceiptView,
@@ -11132,7 +11132,7 @@ impl OneironClient {
     pub fn vault_code_type_diagnostics(
         &self,
         input: &oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest,
-    ) -> Result<Option<oneiron::code_run::ProgramStepFeedback>, MemoryError> {
+    ) -> Result<Option<oneiron::code_run::ProgramStepFeedbackRelease>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
