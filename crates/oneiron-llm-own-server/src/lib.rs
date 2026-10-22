@@ -1,6 +1,8 @@
 //! Own-server LlmBackend. Transport belongs to oneiron-remote; policy stays above the trait.
 //! [`mesh`] is the transport to a model on another of the owner's nodes (OF-575 MESH).
+mod emitted;
 pub mod mesh;
+use emitted::Emitted;
 pub use mesh::{
     COST_DECLARED, CatalogRefresh, DEFAULT_STAGING_BYTES, LLM_ALPN, LlmMeshHandler, LlmMeshService,
     LlmNodes, MESH_PEER, MeshLlmTransport, MeshPeerProof, MeshPeerTransport, StagingBudget,
@@ -111,6 +113,8 @@ impl<T: OwnServerTransport> LlmBackend for OwnServerBackend<T> {
         Ok(oneiron::LlmStream::new(CheckedStream {
             source: self.transport.stream(request, lease)?,
             parts: BTreeMap::new(),
+            emitted: Emitted::default(),
+            ended: false,
         }))
     }
 }
@@ -164,6 +168,11 @@ enum StreamPart {
 struct CheckedStream<'a> {
     source: oneiron::LlmStream<'a>,
     parts: BTreeMap<String, StreamPart>,
+    /// What the stream has shown its caller (FIX 8617).
+    emitted: Emitted,
+    /// The stream ended on a terminal of its own making: the source is not
+    /// read again.
+    ended: bool,
 }
 impl CheckedStream<'_> {
     fn start(&mut self, id: &str, part: StreamPart) -> oneiron::LlmResult<()> {
@@ -272,21 +281,52 @@ impl CheckedStream<'_> {
             Event::ToolResultStart { .. }
             | Event::ToolResultDelta { .. }
             | Event::ToolResultEnd { .. } => true,
-            Event::Done {
-                message,
-                finish_reason,
-                ..
-            } => {
-                validate_terminal(message, finish_reason)?;
-                *finish_reason != oneiron::FinishReason::Cancelled
-                    && self.parts.values().any(|part| *part != StreamPart::Closed)
-            }
+            // A terminal is checked whole, against what was shown
+            // ([`Self::terminal`]).
+            Event::Done { .. } => false,
         };
         if invalid {
             Err(FatalLlmError::InvalidRequest.into())
         } else {
             Ok(())
         }
+    }
+}
+impl CheckedStream<'_> {
+    /// The stream's terminal, checked. Once content was shown, a terminal
+    /// whose message disagrees with it does not replace it, refuse it or
+    /// send it again (FIX 8617): the shown output is the answer, with the
+    /// provider's usage as reported, and it ends
+    /// [`oneiron::FinishReason::Incomplete`]. A terminal-only answer, with
+    /// nothing shown first, is held to its own checks alone, as is a
+    /// cancelled one.
+    fn terminal(
+        &mut self,
+        message: oneiron::LlmMessage,
+        usage: oneiron::LlmUsage,
+        finish_reason: oneiron::FinishReason,
+    ) -> oneiron::LlmResult<oneiron::LlmStreamEvent> {
+        let cancelled = finish_reason == oneiron::FinishReason::Cancelled;
+        let open = !cancelled && self.parts.values().any(|part| *part != StreamPart::Closed);
+        if !open && !cancelled && !self.emitted.is_empty() && !self.emitted.agrees(&message) {
+            self.ended = true;
+            return Ok(oneiron::LlmStreamEvent::Done {
+                message: self.emitted.message(),
+                usage,
+                finish_reason: oneiron::FinishReason::Incomplete {
+                    reason: oneiron::IncompleteReason::TerminalDisagreement,
+                },
+            });
+        }
+        validate_terminal(&message, &finish_reason)?;
+        if open {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        Ok(oneiron::LlmStreamEvent::Done {
+            message,
+            usage,
+            finish_reason,
+        })
     }
 }
 impl futures_core::Stream for CheckedStream<'_> {
@@ -297,13 +337,22 @@ impl futures_core::Stream for CheckedStream<'_> {
     ) -> std::task::Poll<Option<Self::Item>> {
         use std::task::Poll;
         let this = self.get_mut();
+        if this.ended {
+            return Poll::Ready(None);
+        }
         match std::pin::Pin::new(&mut this.source).poll_next(cx) {
-            Poll::Ready(Some(Ok(event))) => {
-                if let Err(error) = this.validate_event(&event) {
-                    return Poll::Ready(Some(Err(error)));
+            Poll::Ready(Some(Ok(oneiron::LlmStreamEvent::Done {
+                message,
+                usage,
+                finish_reason,
+            }))) => Poll::Ready(Some(this.terminal(message, usage, finish_reason))),
+            Poll::Ready(Some(Ok(event))) => match this.validate_event(&event) {
+                Ok(()) => {
+                    this.emitted.note(&event);
+                    Poll::Ready(Some(Ok(event)))
                 }
-                Poll::Ready(Some(Ok(event)))
-            }
+                Err(error) => Poll::Ready(Some(Err(error))),
+            },
             result => result,
         }
     }
