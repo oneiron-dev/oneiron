@@ -211,7 +211,7 @@ export type AgentHealthSkillTarget = { skill: string; version: string }
 /** `oneiron::dreamer_runner::maintenance::agent_health::ask::AgentHealthCoachDraft` */
 export type AgentHealthCoachDraft = { route: AgentHealthCoachRoute; diagnosis: string; proposal: string; target?: AgentHealthSkillTarget | null }
 /** `oneiron::dreamer_runner::maintenance::agent_health::ask::AgentHealthCoachAnswer` */
-export type AgentHealthCoachAnswer = { at: number; pads: AgentHealthPadRead; draft?: AgentHealthCoachDraft | null }
+export type AgentHealthCoachAnswer = { at: number; pads: AgentHealthPadRead; draft?: AgentHealthCoachDraft | null; source_rows?: EntityId[] | null; source_rows_complete?: boolean | null; draft_erased?: boolean | null }
 /** `oneiron::dreamer_runner::maintenance::agent_health::apply::AgentHealthApplicationState` */
 export type AgentHealthApplicationState = "pending" | "admitted" | "rejected"
 /** `oneiron::dreamer_runner::maintenance::agent_health::apply::AgentHealthCoachApplication` */

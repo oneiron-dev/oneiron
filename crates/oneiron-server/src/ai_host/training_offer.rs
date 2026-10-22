@@ -45,6 +45,7 @@ use crate::usage::SeatUsage;
 
 mod check;
 mod cost;
+mod draft;
 mod pilot;
 mod sources;
 mod unverifiable;
@@ -230,15 +231,14 @@ pub(super) fn draft(
             // No seat took the call: the next night asks again.
             return Ok(());
         };
-        let Some(mut draft) =
+        let Some(draft) =
             parse_answer(&text).and_then(|answer| brief.draft(answer, offer_skill.clone(), now))
         else {
             continue;
         };
-        pilot::ground(vault, &mut draft)?;
-        // The offer also reads the pilots it grounds on (FIX 7021): its set
-        // after ground, `None` when any grounding pilot's measurement set is
-        // unknown.
+        // The offer also reads the pilots its options were grounded on, each
+        // its own option's exact pilot from the brief (FIX 7021, 9469): its
+        // set, `None` when any such pilot's measurement set is unknown.
         let grounded = draft.source_rows.clone();
         record_read(vault, attempt.id, grounded, &mut read_set_lost);
         match vault.run_coach_training_offer(admitted, draft, now) {
@@ -287,6 +287,10 @@ struct Choice {
     destination: ComputeDestination,
     evidence_refs: Vec<String>,
     data: serde_json::Value,
+    /// The latest pilot of exactly this option for the seat's incumbent: its
+    /// whole candidate and its destination (FIX 9469). `None` when none
+    /// matched.
+    pilot: Option<oneiron::skill_optimize::offer_pilot::OfferPilot>,
 }
 
 /// Everything one seat's offer is drafted from.
@@ -395,6 +399,7 @@ impl Brief {
                         },
                     },
                     evidence_refs: Vec::new(),
+                    pilot: None,
                     data: serde_json::json!({
                         "kind": "switch",
                         "model": row.catalog.model.as_str(),
@@ -465,6 +470,7 @@ impl Brief {
                 estimate: false,
                 destination: destination.clone(),
                 evidence_refs: vec![recipe_ref.clone()],
+                pilot: None,
                 data: serde_json::json!({
                     "kind": "train",
                     "base": base.model,
@@ -607,95 +613,6 @@ impl Brief {
             "eval_cohort": self.cohort_data,
             "earlier_offers": self.prior,
             "your_offer_record": self.record,
-        })
-    }
-
-    /// The offer the Coach's answer names, or `None` for no offer: it named
-    /// none, named no option given, or repeats an offer without saying what
-    /// changed.
-    fn draft(
-        mut self,
-        answer: AnswerWire,
-        offer_skill: (EntityId, String),
-        now: u64,
-    ) -> Option<TrainingOfferDraft> {
-        let chosen = answer.offer?;
-        let index = self.choices.iter().position(|choice| choice.id == chosen)?;
-        let what_changed = answer
-            .what_changed
-            .as_deref()
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(str::to_owned);
-        if self.previous.is_some() && what_changed.is_none() {
-            return None;
-        }
-        let choice = self.choices.remove(index);
-        let note = if choice.estimate {
-            ESTIMATE_NOTE
-        } else {
-            PRICING_NOTE
-        };
-        let cost = |monthly: Option<f64>, one_off: Option<f64>| OfferCost {
-            currency: CATALOG_CURRENCY.to_owned(),
-            monthly_before: self.baseline_monthly,
-            monthly_after: monthly,
-            one_off,
-            payback_months: payback(self.baseline_monthly, monthly, one_off),
-        };
-        let baseline = OfferOption {
-            label: format!("keep {}", self.incumbent.model),
-            model: self.incumbent.clone(),
-            // Keeping the seat costs nothing once.
-            cost: cost(self.baseline_monthly, Some(0.0)),
-            score: None,
-            evidence_refs: Vec::new(),
-        };
-        let alternatives = self
-            .choices
-            .iter()
-            .map(|other| OfferOption {
-                label: other.label.clone(),
-                model: other.pin.clone(),
-                cost: cost(other.monthly, None),
-                score: None,
-                evidence_refs: other.evidence_refs.clone(),
-            })
-            .collect();
-        // The risk line carries the price note after the Coach's words.
-        let risk = answer
-            .risk
-            .as_deref()
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map_or_else(|| note.to_owned(), |risk| format!("{risk} {note}"));
-        let mut evidence = self.evidence;
-        evidence.losses = answer
-            .losses
-            .iter()
-            .map(|loss| loss.trim())
-            .filter(|loss| !loss.is_empty())
-            .map(str::to_owned)
-            .collect();
-        evidence.risk = Some(risk);
-        // The offer skill whose body the Coach ran on this brief.
-        let mut sources = self.sources;
-        sources.row(offer_skill.0);
-        Some(TrainingOfferDraft {
-            seat: self.seat,
-            offer_skill: Some(offer_skill),
-            incumbent: self.incumbent,
-            candidate: choice.candidate,
-            baseline,
-            alternatives,
-            workload: self.workload,
-            cost: cost(choice.monthly, None),
-            evidence,
-            destination: choice.destination,
-            previous: self.previous,
-            what_changed: self.previous.and(what_changed),
-            check_at: now.saturating_add(CHECK_AFTER_SECS),
-            source_rows: sources.rows(),
         })
     }
 }
