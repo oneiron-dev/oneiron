@@ -5770,6 +5770,81 @@
       "openapi": true
     },
     {
+      "name": "vault.files.sources.attach",
+      "description": "The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current.",
+      "input": "crate::task_verb::sdk::FilesSourceAttachRequest",
+      "output": "crate::task_verb::sdk::FilesSourceAttachAnswer",
+      "call": "crate::task_verb::sdk::attach_files_source_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.files.sources.rescan",
+      "description": "The owner rescans one Files source now, or every one: new files land, changed files supersede, files with no text are held by name, missing files retract.",
+      "input": "crate::task_verb::sdk::FilesSourceRescanRequest",
+      "output": "crate::task_verb::sdk::FilesRescanAnswer",
+      "call": "crate::task_verb::sdk::rescan_files_sources_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.files.sources.detach",
+      "description": "The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay.",
+      "input": "crate::task_verb::sdk::FilesSourceDetachRequest",
+      "output": "crate::task_verb::sdk::FilesSourceDetachAnswer",
+      "call": "crate::task_verb::sdk::detach_files_source_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.files.sources.list",
+      "description": "The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts.",
+      "input": "crate::task_verb::sdk::FilesSourceListRequest",
+      "output": "crate::task_verb::sdk::FilesSourceList",
+      "call": "crate::task_verb::sdk::list_files_sources_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.files.sources.files",
+      "description": "The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates.",
+      "input": "crate::task_verb::sdk::FilesSourceFilesRequest",
+      "output": "crate::task_verb::sdk::FilesSourceFiles",
+      "call": "crate::task_verb::sdk::files_source_files_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.residence.mode",
       "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceModeRequest",

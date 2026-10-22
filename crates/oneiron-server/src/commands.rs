@@ -105,6 +105,8 @@ struct ConfigFiles {
     settings_file: Option<PathBuf>,
 }
 
+mod files;
+pub use files::files;
 mod history_import;
 mod init;
 pub use init::init;

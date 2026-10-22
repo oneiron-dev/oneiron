@@ -399,6 +399,11 @@ vaultGuestsMintSlip(input: unknown): unknown
 vaultSupportGrantsMint(input: unknown): unknown
 vaultSupportGrantsList(input: unknown): unknown
 vaultSupportGrantsRevoke(input: unknown): unknown
+vaultFilesSourcesAttach(input: unknown): unknown
+vaultFilesSourcesRescan(input: unknown): unknown
+vaultFilesSourcesDetach(input: unknown): unknown
+vaultFilesSourcesList(input: unknown): unknown
+vaultFilesSourcesFiles(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown

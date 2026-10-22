@@ -23,10 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::ImportSourceArgs;
 use crate::config::{ServeConfig, resolve_serve_config};
-
-/// How far below the given path a history walk looks. A Claude Code subagent
-/// log sits four below `~/.claude/projects`.
-const MAX_WALK_DEPTH: usize = 6;
+use crate::files_intake::{ImportWarning, hard_linked};
 
 /// The most a zipped export's `conversations.json` unzips to: the codec's
 /// bound, so a small zip cannot inflate without limit (rule 5 keeps a codec
@@ -62,23 +59,6 @@ struct Files {
     /// Each warning, reported beside the counts.
     #[serde(skip)]
     warnings: Vec<ImportWarning>,
-}
-
-/// What an import passed over or crossed, and why; the rest of it landed.
-#[derive(Serialize)]
-#[serde(tag = "warning", rename_all = "snake_case")]
-enum ImportWarning {
-    /// Files with another name (a hard link), never read: that name can be
-    /// outside the folder. Counted, not named, as a notes import's stdout
-    /// names no note.
-    HardLinked { files: usize },
-    /// A folder past one of its `[limits]` rows: read and imported whole
-    /// all the same, and the row asks whether everything is okay (OF-520).
-    LimitCrossed {
-        row: &'static str,
-        limit: u64,
-        observed: u64,
-    },
 }
 
 #[derive(Serialize, Default)]
@@ -543,9 +523,7 @@ impl Decoded {
 pub(super) mod notes;
 
 #[cfg(unix)]
-mod confined;
-#[cfg(unix)]
-use confined::{open_in, walk_logs, walk_notes};
+use crate::files_intake::confined::{self, open_in, walk_logs};
 #[cfg(unix)]
 pub(super) mod queue;
 
@@ -723,14 +701,6 @@ fn walk_logs(
 }
 
 #[cfg(not(unix))]
-fn walk_notes(
-    path: &Path,
-    _visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    anyhow::bail!("importing a folder ({}) needs a unix host", path.display())
-}
-
-#[cfg(not(unix))]
 fn open_in(dir: &Path, name: &str) -> anyhow::Result<Option<File>> {
     let path = dir.join(name);
     Ok(std::fs::symlink_metadata(&path)
@@ -738,18 +708,6 @@ fn open_in(dir: &Path, name: &str) -> anyhow::Result<Option<File>> {
         .filter(std::fs::Metadata::is_file)
         .map(|_| File::open(&path))
         .transpose()?)
-}
-
-/// Whether the open file has another name (a hard link). A walk passes over
-/// such a file: the other name may be outside the folder it was given.
-#[cfg(unix)]
-fn hard_linked(metadata: &std::fs::Metadata) -> bool {
-    std::os::unix::fs::MetadataExt::nlink(metadata) > 1
-}
-
-#[cfg(not(unix))]
-fn hard_linked(_metadata: &std::fs::Metadata) -> bool {
-    false
 }
 
 /// An export's conversations: the zip, its `conversations.json`, or the

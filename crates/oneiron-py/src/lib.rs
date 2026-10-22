@@ -3578,6 +3578,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_files_sources_attach(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.attach")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.attach", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_files_sources_rescan(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.rescan")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.rescan", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_files_sources_detach(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.detach")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.detach", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_files_sources_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_files_sources_files(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.files")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.files", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_residence_mode(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.residence.mode")?;
         let output = py

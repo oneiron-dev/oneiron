@@ -1402,6 +1402,20 @@ export class Oneiron {
       /** The owner revokes one support grant; what support already read is not recalled. */
       revoke: (input: Facade.SupportGrantRevokeRequest): Facade.SupportGrantRevokeAnswer => this.#call(() => this.#client.vaultSupportGrantsRevoke(input) as Facade.SupportGrantRevokeAnswer),
     },
+    files: {
+      sources: {
+        /** The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current. */
+        attach: (input: Facade.FilesSourceAttachRequest): Facade.FilesSourceAttachAnswer => this.#call(() => this.#client.vaultFilesSourcesAttach(input) as Facade.FilesSourceAttachAnswer),
+        /** The owner rescans one Files source now, or every one: new files land, changed files supersede, files with no text are held by name, missing files retract. */
+        rescan: (input: Facade.FilesSourceRescanRequest): Facade.FilesRescanAnswer => this.#call(() => this.#client.vaultFilesSourcesRescan(input) as Facade.FilesRescanAnswer),
+        /** The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay. */
+        detach: (input: Facade.FilesSourceDetachRequest): Facade.FilesSourceDetachAnswer => this.#call(() => this.#client.vaultFilesSourcesDetach(input) as Facade.FilesSourceDetachAnswer),
+        /** The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts. */
+        list: (input: Facade.FilesSourceListRequest): Facade.FilesSourceList => this.#call(() => this.#client.vaultFilesSourcesList(input) as Facade.FilesSourceList),
+        /** The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates. */
+        files: (input: Facade.FilesSourceFilesRequest): Facade.FilesSourceFiles => this.#call(() => this.#client.vaultFilesSourcesFiles(input) as Facade.FilesSourceFiles),
+      },
+    },
     residence: {
       /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
       mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeAnswer => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeAnswer),
