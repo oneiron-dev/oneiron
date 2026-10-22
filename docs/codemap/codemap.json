@@ -6120,7 +6120,7 @@
      "path": "src/batch/put_apply/claim_admission.rs",
      "purpose": "Claim-body and immutable-ledger admission before any put side effect",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -6170,7 +6170,7 @@
      "path": "src/batch/put_apply/put_entity_update.rs",
      "purpose": "SKILL body validators shared by the put and update arms",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -12553,6 +12553,16 @@
      "surface": {
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/residence_page.rs",
+     "purpose": "The home's paged residence search (FIX 8865): one ranked text list as deep as a device's whole request, past…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -20891,7 +20901,7 @@
      "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2
      }
     },
@@ -21218,7 +21228,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "re-export": 11
      }
     },
@@ -31639,6 +31649,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/residence_budgets.rs",
+     "purpose": "Residence-operation budgets as editable policy (FIX 8750, FIX 8783)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -31706,7 +31726,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 52
+      "crate-vis": 50
      }
     },
     {
@@ -46388,6 +46408,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/residence_page.rs",
+     "purpose": "The residence page mode (FIX 8865): a home's paged residence search ranks its text channel as deep as the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -57113,7 +57143,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "OfferSwitchReceipt",
@@ -59894,6 +59924,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/residence/bundle/entries.rs",
+     "purpose": "The home's list of the generations it keeps, newest first by the order it committed them in (FIX 8885)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/client/residence/bundle/publication.rs",
      "purpose": "The owner's ask to publish the vault's sealed bundle (WILL L04 row 03), run by the install his counted…",
      "surface": {
@@ -59907,7 +59947,7 @@
      "path": "src/sync/client/residence/bundle/sweep.rs",
      "purpose": "Erase's sweep of every pad object the home keeps (FIX 922): each world whose keys were destroyed here leaves…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -59992,6 +60032,16 @@
      "purpose": "The pads of a promoted window's world (FIX 3789)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/search.rs",
+     "purpose": "A home search for more hits than one page carries (FIX 8865): the device keeps the caller's whole count and…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -61126,7 +61176,7 @@
       "const": 2,
       "crate-vis": 12,
       "fn": 14,
-      "re-export": 18,
+      "re-export": 19,
       "struct": 2
      }
     },
@@ -61147,15 +61197,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AuthorityAppendProgress",
       "AuthorityCheckpointPart",
       "AuthorityPageImport"
      ],
      "path": "src/sync/residence/authority_tail.rs",
      "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
      "surface": {
-      "const": 2,
-      "fn": 8,
-      "struct": 2
+      "const": 3,
+      "fn": 9,
+      "struct": 3
      }
     },
     {
@@ -61190,6 +61241,16 @@
       "crate-vis": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/bundle/order.rs",
+     "purpose": "The order the home committed its generations in (FIX 8885)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -61397,6 +61458,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResidenceSearchCursor"
+     ],
+     "path": "src/sync/residence/search.rs",
+     "purpose": "A residence search served in pages (FIX 8865)",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -61413,7 +61488,6 @@
      "path": "src/sync/residence_operation_budgets.rs",
      "purpose": "Resolved holder-side residence operation budgets",
      "surface": {
-      "const": 1,
       "fn": 1,
       "struct": 1
      }
@@ -70060,6 +70134,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/bundle/holder_policy.rs",
+     "purpose": "A holder's sealed-copy setting, apart from the section a world rides in (FIX 8886): one rule for a private…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71661,7 +71745,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 89,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72102,7 +72186,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 147,
+     "files": 148,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72417,7 +72501,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 64,
+     "files": 65,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72788,7 +72872,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 236,
+     "files": 240,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72977,7 +73061,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72993,7 +73077,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4692,
+   "source_files": 4700,
    "test_files": 902
   },
   "oneiron-android": {
@@ -95586,6 +95670,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/residence/pages.rs",
+     "purpose": "A residence search served in pages (FIX 8865): a search for more hits than one page carries is never refused…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -100518,7 +100612,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -100702,7 +100796,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1099,
+   "source_files": 1100,
    "test_files": 182
   },
   "oneiron-spawn": {
