@@ -166,8 +166,10 @@ pub fn program_run(
     let mut withheld = Vec::new();
     let definition = withhold_definition(program.definition, &readable, &mut withheld);
     let (queue, held) = queue_and_held(current, status);
+    // The cursor moves past the page's last step, an erased one too, so a
+    // page of erased steps alone still moves on (FIX 9391).
     let next_cursor = if page.more {
-        page.steps.last().map(|(step, _)| step.to_hex())
+        page.last.map(|step| step.to_hex())
     } else {
         None
     };
@@ -189,6 +191,7 @@ pub fn program_run(
             .into_iter()
             .map(|(step, row)| step_view(step, row))
             .collect(),
+        erased_steps: page.erased.iter().map(EntityId::to_hex).collect(),
         undecodable_steps: page.undecodable,
         next_cursor,
         withheld,

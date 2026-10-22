@@ -31,7 +31,8 @@ pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime};
 pub use body::{
-    HookBodyRun, HookBodyRuntime, HookBudgetOverrun, HookRunContext, HookVerdict, HookVerdictCall,
+    HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookRunContext, HookVerdict,
+    HookVerdictCall,
 };
 pub use grant::HookGrant;
 pub use host::{BudgetHit, HOST_BUDGET_HIT};

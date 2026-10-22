@@ -224,6 +224,27 @@ impl DreamerRunnerStore<'_> {
         Ok(resumed)
     }
 
+    /// Whether any program is held for want of a host (FIX 9467): the one
+    /// program hold whose return (a run that can now be configured or
+    /// seated) no committed change signals, so a bound host keeps rechecking
+    /// on its timer while one waits. Every other hold the host monitors
+    /// returns on a committed change, which signals attempt observers.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn programs_held_for_host(&self) -> Result<bool> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        Ok(PARKED
+            .scan(&self.vault.store, &rtxn)?
+            .into_iter()
+            .any(|(_, park)| {
+                park.park_owner == PROGRAM_PARK_OWNER
+                    && park.cause == DreamerParkCause::Other
+                    && ProgramHold::of_reason(&park.reason) == Some(ProgramHold::Unbound)
+            }))
+    }
+
     /// Transaction-composable [`Self::resume_returned_program_holds`]: the
     /// holds whose cause has returned at `wtxn`'s revision, each resumed in a
     /// savepoint of the caller's writer, which commits them with its own
