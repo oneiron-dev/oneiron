@@ -96,6 +96,16 @@ impl Package {
         self.editability
     }
 
+    /// A copy that takes checked edits whatever this package's editability,
+    /// to evaluate a transaction's candidate only (FIX 8579): its caller
+    /// accepts the result only when the export is this archive byte for
+    /// byte, so a signed or uninspectable package is never changed.
+    pub(crate) fn scratch(&self) -> Self {
+        let mut copy = self.clone();
+        copy.editability = Editability::Unsigned;
+        copy
+    }
+
     /// The limits this package was opened under; derived readers of its
     /// parts use the same XML ceilings.
     pub fn limits(&self) -> Limits {

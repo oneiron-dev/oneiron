@@ -634,6 +634,7 @@ impl Child {
             tools: Vec::new(),
             params: std::collections::BTreeMap::new(),
             provider_options: std::collections::BTreeMap::new(),
+            host_segments: None,
         };
         if let Some(seat) = &seat {
             seat.bind(&mut request);

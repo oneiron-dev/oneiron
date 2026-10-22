@@ -47,7 +47,13 @@ pub(super) fn broken_run(
     let properties = xml::child(tree, run, A, "rPr").map_or_else(String::new, |r_pr| {
         String::from_utf8_lossy(&bytes[tree.nodes[r_pr].span.clone()]).into_owned()
     });
-    let line_break = soft_break(xml::prefix(&tree.nodes[run]), &properties);
+    // The break is the run's sibling: it carries the bindings the run's own
+    // tag makes, so its copy of the properties binds as the run's (FIX 8584).
+    let line_break = soft_break(
+        xml::prefix(&tree.nodes[run]),
+        &xml::own_bindings(bytes, &tree.nodes[run]),
+        &properties,
+    );
     let mut out = Vec::new();
     for (at, piece) in text.split(BREAK).enumerate() {
         if at > 0 {
@@ -60,13 +66,15 @@ pub(super) fn broken_run(
     Ok(out)
 }
 
-/// An `a:br` carrying `properties`, an `a:rPr` element or nothing.
-fn soft_break(prefix: &str, properties: &str) -> String {
+/// An `a:br` carrying `properties`, an `a:rPr` element or nothing, with
+/// `bindings` (namespace declarations, each led by a space) on its tag for
+/// properties copied from another scope.
+fn soft_break(prefix: &str, bindings: &str, properties: &str) -> String {
     let br = xml::qualify(prefix, "br");
     if properties.is_empty() {
         format!("<{br}/>")
     } else {
-        format!("<{br}>{properties}</{br}>")
+        format!("<{br}{bindings}>{properties}</{br}>")
     }
 }
 
@@ -94,7 +102,7 @@ pub(super) fn new_run(bytes: &[u8], tree: &XmlTree, paragraph: &Paragraph, text:
             renamed(bytes, &tree.nodes[end], &xml::qualify(prefix, "rPr"))
         });
     let (r, t) = (xml::qualify(prefix, "r"), xml::qualify(prefix, "t"));
-    broken(text, &soft_break(prefix, &properties), |piece| {
+    broken(text, &soft_break(prefix, "", &properties), |piece| {
         format!("<{r}>{properties}<{t}>{}</{t}></{r}>", escape_text(piece))
     })
 }
@@ -149,6 +157,10 @@ pub(super) fn insert_paragraphs(
     Ok((position..position, out.into_bytes()))
 }
 
+/// A new paragraph beside `template`, its sibling: the template's own
+/// namespace bindings go on the new paragraph, and the bindings of the run
+/// whose properties it copies on each new run and break, so every copied
+/// property binds as it did (FIX 8584).
 fn paragraph_like(bytes: &[u8], tree: &XmlTree, template: &Paragraph, text: &str) -> String {
     let node = &tree.nodes[template.node];
     let prefix = xml::prefix(node);
@@ -157,26 +169,36 @@ fn paragraph_like(bytes: &[u8], tree: &XmlTree, template: &Paragraph, text: &str
             String::from_utf8_lossy(&bytes[tree.nodes[at].span.clone()]).into_owned()
         })
     };
-    let run_properties = template
+    let (run_bindings, run_properties) = template
         .items
         .iter()
         .find(|item| item.kind == Kind::Run)
-        .and_then(|item| xml::child(tree, item.node, A, "rPr"))
-        .map(|at| String::from_utf8_lossy(&bytes[tree.nodes[at].span.clone()]).into_owned())
+        .and_then(|item| {
+            xml::child(tree, item.node, A, "rPr").map(|at| {
+                (
+                    xml::own_bindings(bytes, &tree.nodes[item.node]),
+                    String::from_utf8_lossy(&bytes[tree.nodes[at].span.clone()]).into_owned(),
+                )
+            })
+        })
         .or_else(|| {
-            xml::child(tree, template.node, A, "endParaRPr")
-                .map(|at| renamed(bytes, &tree.nodes[at], &xml::qualify(prefix, "rPr")))
+            xml::child(tree, template.node, A, "endParaRPr").map(|at| {
+                let properties = renamed(bytes, &tree.nodes[at], &xml::qualify(prefix, "rPr"));
+                (String::new(), properties)
+            })
         })
         .unwrap_or_default();
     let (r, t) = (xml::qualify(prefix, "r"), xml::qualify(prefix, "t"));
-    let run = broken(text, &soft_break(prefix, &run_properties), |piece| {
+    let line_break = soft_break(prefix, &run_bindings, &run_properties);
+    let run = broken(text, &line_break, |piece| {
         format!(
-            "<{r}>{run_properties}<{t}>{}</{t}></{r}>",
+            "<{r}{run_bindings}>{run_properties}<{t}>{}</{t}></{r}>",
             escape_text(piece)
         )
     });
     format!(
-        "<{p}>{}{run}{}</{p}>",
+        "<{p}{}>{}{run}{}</{p}>",
+        xml::own_bindings(bytes, node),
         element("pPr"),
         element("endParaRPr"),
         p = xml::qualify(prefix, "p"),
@@ -185,7 +207,7 @@ fn paragraph_like(bytes: &[u8], tree: &XmlTree, template: &Paragraph, text: &str
 
 fn bare_paragraph(prefix: &str, text: &str) -> String {
     let p = xml::qualify(prefix, "p");
-    let runs = broken(text, &soft_break(prefix, ""), |piece| {
+    let runs = broken(text, &soft_break(prefix, "", ""), |piece| {
         bare_runs(prefix, piece)
     });
     format!("<{p}>{runs}</{p}>")

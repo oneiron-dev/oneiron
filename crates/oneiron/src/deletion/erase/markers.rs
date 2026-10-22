@@ -213,12 +213,9 @@ impl Vault {
             return Ok(true);
         }
 
+        // A decision owed a held scrub (GATE_DECISION_PENDING_SCRUB) is the due pass's to settle.
         if crate::note::erase::scope_exists(self, txn, id)?
-            || (!ledger_clear
-                && !self
-                    .store
-                    .verify_claim_erasure_by_scan_in_txn(txn, id.as_bytes())?
-                    .is_empty())
+            || (!ledger_clear && self.store.claim_decisions_left_to_scrub_in_txn(txn, id)?)
         {
             return Ok(true);
         }

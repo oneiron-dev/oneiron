@@ -3,7 +3,10 @@
 //! every date or name it finds there, zero or more. Each one cites the
 //! window by its call label and a quote, and the call's quote binder binds
 //! its exact bytes (FIX 7506); an empty list is a negative label, a full
-//! answer. A flagged span's audit runs as before, in the rung loop.
+//! answer. A quote the window holds nowhere or more than once keeps its
+//! discovery as an unlocated one, with no offsets (FIX 7901); the reply's
+//! other discoveries land as they bind. A flagged span's audit runs as
+//! before, in the rung loop.
 
 use std::collections::BTreeMap;
 
@@ -18,7 +21,8 @@ use super::{SIEVE_FALLBACK, label_text};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::sieve::{self, WindowAuditInput, WindowOutcome, WindowRead};
 use crate::dreamer_wake::{
-    DreamerAttemptExecution, SieveAuditDiscovery, SieveAuditWindow, SpanKind, WakeAttemptContext,
+    DreamerAttemptExecution, SieveAuditDiscovery, SieveAuditWindow, SieveUnlocatedCause,
+    SieveUnlocatedDiscovery, SpanKind, WakeAttemptContext,
 };
 use crate::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext, DurableStepError,
@@ -152,6 +156,7 @@ impl ConsolidationExecutor<'_> {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         labels.bind_request(&mut request, None);
         request =
@@ -183,7 +188,8 @@ impl ConsolidationExecutor<'_> {
         let check_text = evidence.text.clone();
         // A fallback whose park would resume as a Retry is refused inside the
         // step, never memoized, so the Retry asks again (FIX 7431); so is a
-        // finding whose quotes do not bind.
+        // finding outside its contract. A quote that binds no one place is
+        // inside it (FIX 7901).
         let check = move |response: &LlmResponse| {
             if retry_fallback(response) {
                 return Err(SIEVE_FALLBACK.to_owned());
@@ -251,12 +257,13 @@ impl ConsolidationExecutor<'_> {
             source: window.source,
             text: &evidence.text,
         };
-        let discovered = match decode_finding(&response, &shown, &window) {
-            Ok(discovered) => discovered,
+        let (discovered, unlocated) = match decode_finding(&response, &shown, &window) {
+            Ok(found) => found,
             Err(reason) => return Ok(charges.park_for(&reason, DreamerParkCause::Retry)),
         };
         let outcome = WindowOutcome {
             discovered,
+            unlocated,
             completed_units: charges.units,
             step_hashes: charges.step_hashes.clone(),
             at: ctx.now_ms / 1_000,
@@ -291,33 +298,50 @@ fn window_labels(window: &SieveAuditWindow) -> CallLabelMap {
     labels
 }
 
+/// A window finding as the engine keeps it: the spans it located, and the
+/// ones its quotes locate no one place (FIX 7901).
+type Found = (Vec<SieveAuditDiscovery>, Vec<SieveUnlocatedDiscovery>);
+
 /// `response`'s finding, each span bound through the call's quote binder to
-/// its exact bytes of the window's source. A label the call did not show, a
-/// quote the window holds nowhere or more than once, or a confidence past
-/// 100 is outside the contract; an empty list is a finding.
+/// its exact bytes of the window's source. A quote the window holds nowhere
+/// or more than once keeps its span unlocated, with no offsets. A label the
+/// call did not show, an empty quote or a confidence past 100 is outside
+/// the contract; an empty list is a finding.
 fn decode_finding(
     response: &LlmResponse,
     shown: &WindowShown<'_>,
     window: &SieveAuditWindow,
-) -> std::result::Result<Vec<SieveAuditDiscovery>, String> {
+) -> std::result::Result<Found, String> {
     let finding: WireFinding = serde_json::from_str(reply_text(response).trim())
         .map_err(|_| "invalid sieve window finding JSON".to_owned())?;
-    finding
-        .discovered
-        .iter()
-        .map(|found| {
-            if found.confidence > 100 {
-                return Err("sieve window finding confidence outside contract".to_owned());
-            }
-            match bind_quote(shown.named(&found.source), &found.quote) {
-                QuoteBinding::Bound { start, end, .. } => Ok(SieveAuditDiscovery {
+    let mut located = Vec::new();
+    let mut unlocated = Vec::new();
+    for found in &finding.discovered {
+        if found.confidence > 100 {
+            return Err("sieve window finding confidence outside contract".to_owned());
+        }
+        let cause = match bind_quote(shown.named(&found.source), &found.quote) {
+            QuoteBinding::Bound { start, end, .. } => {
+                located.push(SieveAuditDiscovery {
                     start: window.start.saturating_add(start as u64),
                     end: window.start.saturating_add(end as u64),
                     kind: found.kind,
                     confidence: found.confidence,
-                }),
-                fault => Err(fault.name().to_owned()),
+                });
+                continue;
             }
-        })
-        .collect()
+            QuoteBinding::QuoteNotFound => SieveUnlocatedCause::QuoteNotFound,
+            QuoteBinding::QuoteAmbiguous => SieveUnlocatedCause::QuoteAmbiguous,
+            fault @ (QuoteBinding::EmptyQuote | QuoteBinding::UnknownSourceLabel) => {
+                return Err(fault.name().to_owned());
+            }
+        };
+        unlocated.push(SieveUnlocatedDiscovery {
+            kind: found.kind,
+            confidence: found.confidence,
+            cause,
+            quote: found.quote.clone(),
+        });
+    }
+    Ok((located, unlocated))
 }
