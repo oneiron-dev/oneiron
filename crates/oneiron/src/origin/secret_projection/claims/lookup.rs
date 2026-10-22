@@ -208,7 +208,11 @@ impl RepoProjectionClaim {
     ///
     /// # Errors
     /// A store failure, a record that does not decode, or `visit`'s.
-    pub(crate) fn for_each_graph_in_txn<F>(vault: &Vault, txn: &RoTxn<'_>, mut visit: F) -> Result<()>
+    pub(crate) fn for_each_graph_in_txn<F>(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        mut visit: F,
+    ) -> Result<()>
     where
         F: FnMut(&Self) -> Result<()>,
     {

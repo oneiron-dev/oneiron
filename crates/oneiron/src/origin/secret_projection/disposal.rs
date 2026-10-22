@@ -74,8 +74,7 @@ fn collect_unowned(vault: &Vault) -> Result<usize> {
     let retiring = {
         let txn = vault.store.env.read_txn()?;
         let readable =
-            RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?
-                .ids()?;
+            RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?.ids()?;
         let mut retiring = Vec::new();
         RepoProjectionClaim::for_each_graph_in_txn(vault, &txn, |graph| {
             let RepoProjectionRecord::Graph {
@@ -118,12 +117,11 @@ fn owned_in_txn(vault: &Vault, txn: &RoTxn<'_>, graph: &EntityId) -> Result<bool
         let Some(id) = checkout_id(&checkout) else {
             continue;
         };
-        let lease = load_act_in_txn(vault, txn, id).map_err(|_| {
-            crate::error::Error::CorruptedIndex("a checkout lease does not decode")
-        })?;
-        if lease.is_some_and(|lease| {
-            lease.epoch == epoch && lease.state != CheckoutLeaseState::Settled
-        }) {
+        let lease = load_act_in_txn(vault, txn, id)
+            .map_err(|_| crate::error::Error::CorruptedIndex("a checkout lease does not decode"))?;
+        if lease
+            .is_some_and(|lease| lease.epoch == epoch && lease.state != CheckoutLeaseState::Settled)
+        {
             return Ok(true);
         }
     }

@@ -96,8 +96,8 @@ mod landing_lfs;
 mod maintain;
 mod owner_pins;
 mod paths;
-mod push_admission;
 mod projected_serve;
+mod push_admission;
 mod push_paths;
 pub(crate) mod push_projection;
 mod read_projection;
@@ -132,8 +132,8 @@ pub use self::paths::{
     validate_repo_name,
 };
 pub use self::push_admission::{admit_receive_pack, serve_bounded_as};
-pub use self::recipient_serve::{RepoGitReadContext, serve_bounded_for_recipient};
 pub(crate) use self::recipient_serve::store_holds_readable_marks_in_txn;
+pub use self::recipient_serve::{RepoGitReadContext, serve_bounded_for_recipient};
 pub use self::secret_marks::ReceiveSecretMarks;
 pub use self::serve::{
     ServeReport, ServeSink, push_queue_key, serve, serve_bounded, serve_bounded_with_authority,

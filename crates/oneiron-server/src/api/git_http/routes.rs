@@ -89,7 +89,15 @@ pub(crate) async fn git_info_refs(
     let name = repo_name(&repo).to_owned();
     let request = advertisement_request(&name, service, remote_user(&auth));
     let read = git_read_context_of(&auth);
-    run_serve(server, name, request, Body::empty(), push_caller(&auth), read).await
+    run_serve(
+        server,
+        name,
+        request,
+        Body::empty(),
+        push_caller(&auth),
+        read,
+    )
+    .await
 }
 
 /// The advertisement invocation this route hands to the serving plane.
@@ -209,7 +217,15 @@ async fn lease_info_refs(
         .query_string
         .push_str(&format!("&checkout-lease={lease}"));
     let read = git_read_context_of(&auth);
-    run_serve(server, name, request, Body::empty(), push_caller(&auth), read).await
+    run_serve(
+        server,
+        name,
+        request,
+        Body::empty(),
+        push_caller(&auth),
+        read,
+    )
+    .await
 }
 
 async fn lease_upload_pack(

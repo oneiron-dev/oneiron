@@ -106,8 +106,9 @@ impl ProjectedExchange {
             &ingress.root,
         )?;
         let at = stamp.admitted_at();
-        let id = vault
-            .with_write_txn_grouped(|wtxn| bind_projection_ingress_in_txn(vault, wtxn, &proof, at))?;
+        let id = vault.with_write_txn_grouped(|wtxn| {
+            bind_projection_ingress_in_txn(vault, wtxn, &proof, at)
+        })?;
         stamp.ingress_proof = Some(id);
         Ok(())
     }
@@ -141,9 +142,11 @@ pub(super) fn select_projected_exchange(
     let lease = admitted_lease(vault, request, repo_dir)?;
     let projection = match &lease {
         Some(lease) => match retained_projected_checkout(vault, store, lease)? {
-            Some(bound) => Some(reopen_repo_git_projection(vault, &wire, &bound.graph)?.ok_or_else(
-                || serve_failed("the checkout's masked copy no longer stands; bind it again"),
-            )?),
+            Some(bound) => Some(
+                reopen_repo_git_projection(vault, &wire, &bound.graph)?.ok_or_else(|| {
+                    serve_failed("the checkout's masked copy no longer stands; bind it again")
+                })?,
+            ),
             None => current_projection(vault, &wire, &canonical, store, Some(lease_pin(lease)?))?,
         },
         None => current_projection(vault, &wire, &canonical, store, None)?,
@@ -193,7 +196,9 @@ fn admitted_lease(
 
 fn lease_pin(lease: &CheckoutLeaseAct) -> Result<GitOid> {
     let crate::codebase::RepoRef::LocalFolder { commit, .. } = &lease.repo_ref else {
-        return Err(serve_failed("a checkout lease's repo must be a local folder"));
+        return Err(serve_failed(
+            "a checkout lease's repo must be a local folder",
+        ));
     };
     GitOid::parse_hex(commit.clone())
 }

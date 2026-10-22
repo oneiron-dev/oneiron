@@ -23,10 +23,10 @@ use std::path::Path;
 use heed::RoTxn;
 
 use super::super::door::DoorAdmissionStamp;
-use super::super::landing::ReceivePackAttribution;
 use super::super::evidence::{
     RECEIVE_PACK_OUTCOME_PREDICATE, receive_pack_field, receive_pack_provenance_refused,
 };
+use super::super::landing::ReceivePackAttribution;
 use super::super::paths::origin_repo_dir;
 use super::super::push_projection::recovery::recover_projection_ingress;
 use super::super::push_projection::{
@@ -74,8 +74,10 @@ impl Vault {
             if proof.ingress_store() != identity {
                 return Ok(None);
             }
-            Ok(validate_projection_ingress_in_txn(self, txn, &proof, stamp)?
-                .then(|| proof.canonical_store()))
+            Ok(
+                validate_projection_ingress_in_txn(self, txn, &proof, stamp)?
+                    .then(|| proof.canonical_store()),
+            )
         })();
         match validated {
             Ok(store) => store,
@@ -127,7 +129,10 @@ impl Vault {
         let push = stamp.push.as_ref().ok_or_else(|| {
             receive_pack_provenance_refused("a projection-bound push names no admitted push")
         })?;
-        Ok(unpinned_repo_ref(&origin_repo_dir(self, push.served_name())?))
+        Ok(unpinned_repo_ref(&origin_repo_dir(
+            self,
+            push.served_name(),
+        )?))
     }
 
     /// The accepted stamp of `operation` on the physical store at `root`,

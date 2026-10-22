@@ -457,7 +457,9 @@ fn identity_part(record: &RepoProjectionRecord) -> Value {
             Value::from(forward.operation.to_hex()),
             Value::from(forward.ref_name.as_str()),
         ]),
-        RepoProjectionRecord::Checkout(checkout) => checkout_key(&checkout.checkout, checkout.epoch),
+        RepoProjectionRecord::Checkout(checkout) => {
+            checkout_key(&checkout.checkout, checkout.epoch)
+        }
         RepoProjectionRecord::IngressStore(ingress) => ingress_store_key(&ingress.ingress_store),
     }
 }
@@ -473,7 +475,10 @@ fn checkout_key(checkout: &str, epoch: u64) -> Value {
 
 /// The identity an ingress store's record id is derived from.
 fn ingress_store_key(ingress_store: &str) -> Value {
-    Value::Array(vec![Value::from("ingress_store"), Value::from(ingress_store)])
+    Value::Array(vec![
+        Value::from("ingress_store"),
+        Value::from(ingress_store),
+    ])
 }
 
 fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str, Value)> {

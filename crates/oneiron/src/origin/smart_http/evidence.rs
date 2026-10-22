@@ -305,32 +305,32 @@ impl Vault {
         let actor = EntityId::from_hex(stamp.principal_ref())
             .map_err(|_| receive_pack_provenance_refused("principal is not an entity id"))?;
         let mut fields = vec![
-                ("schema_version", Value::from(1)),
-                ("operation_id", Value::from(stamp.operation_id.to_hex())),
-                ("actor_id", Value::from(actor.to_hex())),
-                (
-                    "repo_root",
-                    Value::from(path_arg(&repo_dir.canonicalize()?)?),
-                ),
-                ("operation", Value::from("git-receive-pack")),
-                ("method", Value::from(stamp.method())),
-                (
-                    "credential_presented",
-                    Value::from(stamp.credential_fingerprint().is_some()),
-                ),
-                ("door_seam", Value::from(door_seam)),
-                ("effector", Value::from(DOOR_RECEIVE_PACK_EFFECTOR)),
-                ("effector_check", Value::from(effector_check)),
-                ("admitted_at", Value::from(stamp.admitted_at())),
-                (
-                    "origin_authority",
-                    OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
-                ),
-                // What the push decision admitted it under (G1-PUSH).
-                (
-                    "git_push",
-                    GitPushStamp::evidence_value(stamp.push.as_ref()),
-                ),
+            ("schema_version", Value::from(1)),
+            ("operation_id", Value::from(stamp.operation_id.to_hex())),
+            ("actor_id", Value::from(actor.to_hex())),
+            (
+                "repo_root",
+                Value::from(path_arg(&repo_dir.canonicalize()?)?),
+            ),
+            ("operation", Value::from("git-receive-pack")),
+            ("method", Value::from(stamp.method())),
+            (
+                "credential_presented",
+                Value::from(stamp.credential_fingerprint().is_some()),
+            ),
+            ("door_seam", Value::from(door_seam)),
+            ("effector", Value::from(DOOR_RECEIVE_PACK_EFFECTOR)),
+            ("effector_check", Value::from(effector_check)),
+            ("admitted_at", Value::from(stamp.admitted_at())),
+            (
+                "origin_authority",
+                OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
+            ),
+            // What the push decision admitted it under (G1-PUSH).
+            (
+                "git_push",
+                GitPushStamp::evidence_value(stamp.push.as_ref()),
+            ),
         ];
         // Only a projection-bound push names the proof it is received under
         // (FIX 7608 2b-ii-B2); every other admission's bytes are as before.

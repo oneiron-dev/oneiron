@@ -261,8 +261,7 @@ pub(crate) fn materialize_masked_git_graph(
     let Some(inputs) = projection_inputs(vault, canonical, roots)? else {
         return Ok(None);
     };
-    if let Some(standing) =
-        standing_projection(vault, wire, &inputs.graph, inputs.store_id, roots)?
+    if let Some(standing) = standing_projection(vault, wire, &inputs.graph, inputs.store_id, roots)?
     {
         return Ok(Some(standing));
     }

@@ -14,9 +14,7 @@
 use std::path::PathBuf;
 
 use super::claims::{RepoProjectionCheckout, RepoProjectionClaim, RepoProjectionRecord};
-use super::git::{
-    RepoGitProjectionRoots, materialize_masked_git_graph, projection_graph_dir,
-};
+use super::git::{RepoGitProjectionRoots, materialize_masked_git_graph, projection_graph_dir};
 use crate::Vault;
 use crate::checkout::lease::CheckoutLeaseAct;
 use crate::entity_id::EntityId;
