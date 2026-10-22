@@ -493,6 +493,7 @@ fn request(model: &str, text: &str) -> LlmRequest {
         tools: Vec::new(),
         params: Default::default(),
         provider_options: Default::default(),
+        host_segments: None,
     }
 }
 

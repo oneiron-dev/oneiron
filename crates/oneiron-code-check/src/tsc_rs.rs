@@ -4,7 +4,7 @@
 
 use crate::wasm::{self, Abi, Host, WasmCheck};
 use crate::{
-    BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, DEFAULT_OUTPUT_BYTES,
+    BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, DEFAULT_INPUT_BYTES,
     DEFAULT_WALL_TIME,
 };
 use std::time::Duration;
@@ -35,7 +35,10 @@ const ABI: Abi = Abi {
 pub struct TscRsBudget {
     pub wall_time: Duration,
     pub memory_bytes: usize,
-    pub output_bytes: usize,
+    /// The most declaration and program text one check takes; past it the
+    /// check fails as invalid input (`models.code_mode.check.max_input_bytes`).
+    /// What the check prints has no bound of its own.
+    pub input_bytes: usize,
     /// Checks that may run at once; another waits its turn, in arrival
     /// order, until its deadline.
     pub concurrent: usize,
@@ -46,7 +49,7 @@ impl Default for TscRsBudget {
         Self {
             wall_time: DEFAULT_WALL_TIME,
             memory_bytes: 1 << 30,
-            output_bytes: DEFAULT_OUTPUT_BYTES,
+            input_bytes: DEFAULT_INPUT_BYTES,
             concurrent: 2,
         }
     }
@@ -77,8 +80,10 @@ impl CodeCheck for TscRsWasm {
     }
 
     fn check(&self, input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
-        let (exited, peak) = self.0.check(input)?;
-        exited.report(self.backend(), Some(peak))
+        match self.0.check(input) {
+            Ok((exited, peak)) => exited.report(self.backend(), Some(peak)),
+            Err(stopped) => stopped.report(self.backend(), None),
+        }
     }
 }
 

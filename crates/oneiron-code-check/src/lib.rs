@@ -1,10 +1,12 @@
-//! An optional type check of code-mode programs, run beside them.
+//! A type check of code-mode programs, run beside them as feedback.
 //!
-//! A code-mode program is plain JavaScript that the guest runs as the body of
-//! an async function. A check type-checks it against the declarations the
-//! executor prompt teaches, the way `tsc` checks JavaScript (`allowJs`,
-//! `checkJs`, strict, ES2022, no DOM or Node globals, no output), and returns
-//! TypeScript's diagnostics in program coordinates.
+//! A code-mode program is JavaScript, or TypeScript the host prepares into
+//! JavaScript, that the guest runs as the body of an async function. A check
+//! type-checks the program as its author wrote it, against the declarations
+//! the executor prompt teaches: JavaScript the way `tsc` checks JavaScript
+//! (`allowJs`, `checkJs`), a TypeScript original as TypeScript, both strict,
+//! ES2022, with no DOM or Node globals and no output. It returns every
+//! TypeScript diagnostic, whole, in program coordinates.
 //!
 //! Three backends give one output contract:
 //! - [`TsrsWasm`]: tsrs, oxc's Rust port of TypeScript 7, as a pinned Wasm
@@ -19,9 +21,10 @@
 //! tsc-rs and Microsoft give the same diagnostics on the shared fixtures
 //! (`tests/fixtures/golden.txt`).
 //!
-//! Which one runs is configuration ([`BackendKind`]). Shadow mode is the only
-//! mode that runs a check: the engine records what it found and blocks
-//! nothing. `enforce` is a reserved name ([`CheckMode`]).
+//! Which one runs is configuration ([`BackendKind`]). Feedback mode is the
+//! only mode that runs a check: what it found goes back to the agent with
+//! its step, and nothing waits on it or is refused for it. `enforce` is a
+//! reserved name ([`CheckMode`]).
 
 pub mod metrics;
 mod microsoft;
@@ -42,12 +45,13 @@ use std::time::Duration;
 /// What the engine does with a program's check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CheckMode {
-    /// No check runs.
-    #[default]
+    /// No check runs: each step's type feedback answers unavailable.
     Off,
-    /// Every program is checked; its diagnostics are recorded and nothing is
-    /// blocked.
-    Shadow,
+    /// Every program is checked beside its run, the default: its diagnostics
+    /// go back to the agent with the step, and nothing waits on the check or
+    /// is refused for it.
+    #[default]
+    Feedback,
 }
 
 impl std::str::FromStr for CheckMode {
@@ -56,7 +60,7 @@ impl std::str::FromStr for CheckMode {
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         match text {
             "off" => Ok(Self::Off),
-            "shadow" => Ok(Self::Shadow),
+            "feedback" => Ok(Self::Feedback),
             // Reserved: refusing a program on its check waits for an owner ruling.
             "enforce" => Err(CheckConfigError::EnforceReserved),
             _ => Err(CheckConfigError::UnknownMode),
@@ -107,12 +111,43 @@ pub struct Declaration<'a> {
     pub text: &'a str,
 }
 
-/// One check: a program as the model wrote it, and the declarations its run
-/// serves.
+/// The language a program is checked as: the language its run was prepared
+/// from, never a guess at its text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProgramLanguage {
+    /// Checked as `program.js` under `checkJs`, JSDoc types included.
+    #[default]
+    JavaScript,
+    /// A TypeScript original, checked as written as `program.ts`.
+    TypeScript,
+}
+
+impl ProgramLanguage {
+    /// The file the program is checked as.
+    #[must_use]
+    pub const fn file(self) -> &'static str {
+        match self {
+            Self::JavaScript => "program.js",
+            Self::TypeScript => "program.ts",
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::JavaScript => "javascript",
+            Self::TypeScript => "typescript",
+        }
+    }
+}
+
+/// One check: a program as the model wrote it, the language its run was
+/// prepared from, and the declarations its run serves.
 #[derive(Debug, Clone, Copy)]
 pub struct CheckInput<'a> {
     pub declarations: &'a [Declaration<'a>],
     pub program: &'a str,
+    pub language: ProgramLanguage,
 }
 
 /// The checker that answered, and what pins it.
@@ -125,8 +160,8 @@ pub struct BackendId {
 /// One TypeScript diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
-    /// `program.js`, a declaration file, or none for a diagnostic about the
-    /// whole check.
+    /// `program.js` or `program.ts`, a declaration file, or none for a
+    /// diagnostic about the whole check.
     pub file: Option<String>,
     /// 1-based, in the program as written (0 is the guest's async envelope).
     /// Declaration files keep their own lines.
@@ -149,13 +184,17 @@ impl Diagnostic {
     }
 }
 
-/// A finished check.
+/// A check's report: every diagnostic it printed, each message whole.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckReport {
     pub backend: BackendId,
     pub diagnostics: Vec<Diagnostic>,
     /// The largest linear memory the check grew to, when the backend can see it.
     pub peak_memory_bytes: Option<u64>,
+    /// `None` for a check that finished. A check that stopped after it
+    /// printed whole diagnostics is a partial report of them, with the
+    /// failure that stopped it: never a complete one.
+    pub incomplete: Option<CheckFailure>,
 }
 
 /// Why a check gave no report.
@@ -165,11 +204,13 @@ pub enum CheckFailure {
     /// for a slot until its deadline instead.
     Busy,
     Timeout,
-    /// The check outgrew its memory or output bound.
+    /// The check outgrew its memory bound.
     OverBudget,
     /// The checker trapped, panicked or exited abnormally.
     Crashed,
     UnreadableOutput,
+    /// The program, or its declarations, past what one check takes, or a
+    /// declaration file the project cannot name.
     InvalidInput,
     /// The checker does not check a program like this one.
     Unsupported,
@@ -224,8 +265,8 @@ pub trait CodeCheck: Send + Sync {
     }
 }
 
-/// Runs `then` when `first` gives no report, whatever the failure: a busy
-/// first checker could not check either.
+/// Runs `then` when `first` gives no complete report, whatever the failure:
+/// a busy first checker could not check either.
 pub struct Fallback {
     first: Box<dyn CodeCheck>,
     then: Box<dyn CodeCheck>,
@@ -247,26 +288,30 @@ impl CodeCheck for Fallback {
         self.check_attributed(input).1
     }
 
-    /// When `then` fails too, the failure is `then`'s own, under its name.
+    /// When `then` fails too, the failure is `then`'s own, under its name,
+    /// unless only `first` printed a partial report: that report stands.
     fn check_attributed(
         &self,
         input: &CheckInput<'_>,
     ) -> (BackendId, Result<CheckReport, CheckFailure>) {
         match self.first.check_attributed(input) {
-            (backend, Ok(report)) => (backend, Ok(report)),
-            (_, Err(_)) => self.then.check_attributed(input),
+            (backend, Ok(report)) if report.incomplete.is_none() => (backend, Ok(report)),
+            first => match self.then.check_attributed(input) {
+                (_, Err(_)) if first.1.is_ok() => first,
+                then => then,
+            },
         }
     }
 }
 
-/// Shadow mode as the engine holds it: the checker, and the counts of what
-/// its checks found.
-pub struct ShadowCheck {
+/// Feedback mode as the engine holds it: the checker, and the counts of
+/// what its checks found.
+pub struct FeedbackCheck {
     checker: Arc<dyn CodeCheck>,
     metrics: CheckMetrics,
 }
 
-impl ShadowCheck {
+impl FeedbackCheck {
     #[must_use]
     pub fn new(checker: Arc<dyn CodeCheck>) -> Self {
         Self {
@@ -291,14 +336,23 @@ impl ShadowCheck {
 /// check as they run.
 const ENVELOPE_PREFIX: &str = "(async () => {\n";
 const ENVELOPE_SUFFIX: &str = "\n})()";
-const PROGRAM_FILE: &str = "program.js";
+/// The files a program is checked as, one per [`ProgramLanguage`].
+const PROGRAM_FILES: [&str; 2] = [
+    ProgramLanguage::JavaScript.file(),
+    ProgramLanguage::TypeScript.file(),
+];
 const PROJECT_FILE: &str = "tsconfig.json";
 /// The command line every backend runs in the project's directory.
 const TSC_ARGS: [&str; 4] = ["-p", PROJECT_FILE, "--pretty", "false"];
 
 /// Every file of one check, by name: the declarations, the program in its
-/// envelope, and the project that lists them.
-fn project_files(input: &CheckInput<'_>) -> Result<Vec<(String, Vec<u8>)>, CheckFailure> {
+/// envelope as the file of its language, and the project that lists them.
+/// Past `input_bytes` of program and declarations, the check fails as
+/// invalid input: the run never waits on it or is refused for it.
+fn project_files(
+    input: &CheckInput<'_>,
+    input_bytes: usize,
+) -> Result<Vec<(String, Vec<u8>)>, CheckFailure> {
     if input.declarations.len() > MAX_DECLARATIONS
         || input
             .declarations
@@ -312,7 +366,7 @@ fn project_files(input: &CheckInput<'_>) -> Result<Vec<(String, Vec<u8>)>, Check
         .iter()
         .map(|declaration| declaration.text.len())
         .try_fold(input.program.len(), usize::checked_add);
-    if size.is_none_or(|size| size > DEFAULT_INPUT_BYTES) {
+    if size.is_none_or(|size| size > input_bytes) {
         return Err(CheckFailure::InvalidInput);
     }
     let mut names = Vec::with_capacity(input.declarations.len() + 1);
@@ -331,12 +385,14 @@ fn project_files(input: &CheckInput<'_>) -> Result<Vec<(String, Vec<u8>)>, Check
             declaration.text.as_bytes().to_vec(),
         ));
     }
-    names.push(PROGRAM_FILE);
+    let program = input.language.file();
+    names.push(program);
     files.push((
-        PROGRAM_FILE.to_owned(),
+        program.to_owned(),
         format!("{ENVELOPE_PREFIX}{}{ENVELOPE_SUFFIX}", input.program).into_bytes(),
     ));
-    // JavaScript checked as written: strict, ES2022 with no DOM or Node
+    // The program checked as written, JavaScript under `checkJs` and a
+    // TypeScript original as TypeScript: strict, ES2022 with no DOM or Node
     // globals, and no output. The program is these files alone: an import
     // adds no file, so a native checker reads nothing else it names.
     let project = serde_json::json!({
@@ -368,16 +424,25 @@ struct Exited {
 impl Exited {
     /// The run's report. tsc exits 0 clean, and 1 or 2 with diagnostics; a
     /// crash (an unrecovered Go panic also exits 2) tells its story on stderr
-    /// or prints no diagnostic.
+    /// or prints no diagnostic. A crash or unreadable text after whole
+    /// diagnostics keeps them, as a partial report.
     fn report(
         self,
         backend: BackendId,
         peak_memory_bytes: Option<u64>,
     ) -> Result<CheckReport, CheckFailure> {
         if self.stderr || !(0..=2).contains(&self.status) {
-            return Err(CheckFailure::Crashed);
+            return partial(
+                backend,
+                peak_memory_bytes,
+                CheckFailure::Crashed,
+                &self.stdout,
+            );
         }
-        let diagnostics = output::diagnostics(&self.stdout)?;
+        let diagnostics = match output::diagnostics(&self.stdout) {
+            Ok(diagnostics) => diagnostics,
+            Err(failure) => return partial(backend, peak_memory_bytes, failure, &self.stdout),
+        };
         if self.status != 0 && diagnostics.is_empty() {
             return Err(CheckFailure::Crashed);
         }
@@ -385,19 +450,67 @@ impl Exited {
             backend,
             diagnostics,
             peak_memory_bytes,
+            incomplete: None,
         })
     }
 }
 
-/// The most declaration and program text one check takes.
-const DEFAULT_INPUT_BYTES: usize = 4 << 20;
+/// A run of tsc that stopped before it ended: why, and everything it had
+/// printed by then.
+pub(crate) struct Stopped {
+    pub(crate) failure: CheckFailure,
+    pub(crate) stdout: Vec<u8>,
+}
+
+impl From<CheckFailure> for Stopped {
+    fn from(failure: CheckFailure) -> Self {
+        Self {
+            failure,
+            stdout: Vec::new(),
+        }
+    }
+}
+
+impl Stopped {
+    /// The whole diagnostics the run printed before it stopped, as a partial
+    /// report; its failure alone when it printed none.
+    fn report(
+        self,
+        backend: BackendId,
+        peak_memory_bytes: Option<u64>,
+    ) -> Result<CheckReport, CheckFailure> {
+        partial(backend, peak_memory_bytes, self.failure, &self.stdout)
+    }
+}
+
+/// What a check that `failure` stopped had printed: its whole diagnostics as
+/// a partial report, or the failure when it printed none.
+fn partial(
+    backend: BackendId,
+    peak_memory_bytes: Option<u64>,
+    failure: CheckFailure,
+    stdout: &[u8],
+) -> Result<CheckReport, CheckFailure> {
+    let diagnostics = output::partial_diagnostics(stdout);
+    if diagnostics.is_empty() {
+        return Err(failure);
+    }
+    Ok(CheckReport {
+        backend,
+        diagnostics,
+        peak_memory_bytes,
+        incomplete: Some(failure),
+    })
+}
+
+/// The most declaration and program text one check takes by default
+/// (`models.code_mode.check.max_input_bytes`).
+pub const DEFAULT_INPUT_BYTES: usize = 4 << 20;
 /// The most declaration files one check takes, and the longest name.
 const MAX_DECLARATIONS: usize = 16;
 const MAX_NAME_BYTES: usize = 64;
 /// How long a check may take before it is abandoned.
 const DEFAULT_WALL_TIME: Duration = Duration::from_secs(10);
-/// The most diagnostic text a check may print.
-const DEFAULT_OUTPUT_BYTES: usize = 1 << 20;
 
 #[cfg(test)]
 mod tests {

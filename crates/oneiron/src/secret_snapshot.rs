@@ -181,7 +181,7 @@ fn relative_declaration_matches(path: &str, declared: &str) -> bool {
 
 /// A value-free proposal to move a detected file secret into the vault.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SecretLiftProposal {
+pub struct SnapshotSecretLiftProposal {
     pub path: String,
     pub detector_reason: String,
     pub suggested_secret_name: String,
@@ -193,7 +193,7 @@ pub struct SecretLiftProposal {
 pub struct SnapshotCustodyReport {
     pub excluded_secret_paths: Vec<String>,
     pub quarantined_paths: Vec<String>,
-    pub proposals: Vec<SecretLiftProposal>,
+    pub proposals: Vec<SnapshotSecretLiftProposal>,
 }
 
 /// The side table's declared codec is `Raw`, not `Named`: the put/get/delete call sites in
@@ -245,7 +245,7 @@ impl Vault {
             }
             if let Some(reason) = secret_scan::scan_file_content(&entry.path, &bytes) {
                 report.quarantined_paths.push(entry.path.clone());
-                report.proposals.push(SecretLiftProposal {
+                report.proposals.push(SnapshotSecretLiftProposal {
                     path: entry.path.clone(),
                     detector_reason: reason.to_owned(),
                     suggested_secret_name: suggested_secret_name(&entry.path),

@@ -147,6 +147,7 @@ impl PolicyClassifyPrompt {
             tools: Vec::new(),
             params,
             provider_options,
+            host_segments: None,
         }
     }
 

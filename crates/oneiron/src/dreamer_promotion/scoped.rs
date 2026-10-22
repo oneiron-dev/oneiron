@@ -81,6 +81,7 @@ pub fn promote_scoped_consolidation(
             }
             Err(error) => {
                 log_rejected(run, index, "attach_evidence", Some(error.kind()));
+                outcome.rejected_kinds.push((head, error.kind()));
                 outcome.rejected.push((head, error.to_string()));
             }
         }
@@ -160,11 +161,15 @@ pub fn promote_scoped_consolidation(
                     .rejected
                     .push((id, "scoped promotion was not Auto".into()));
             }
-            // The promotion door's refusal keeps its text for the outcome;
-            // the log takes the kind of the engine error behind it, when one
-            // refused it (FIX 7271), and never the text.
+            // The promotion door's refusal keeps its text for the outcome
+            // and its kind beside it (FIX 9429); the log takes the kind of
+            // the engine error behind it, when one refused it (FIX 7271),
+            // and never the text.
             Err(rejection) => {
                 log_rejected(run, index, "promote", rejection.kind);
+                if let Some(kind) = rejection.kind {
+                    outcome.rejected_kinds.push((id, kind));
+                }
                 outcome.rejected.push((id, rejection.reason));
             }
         }
