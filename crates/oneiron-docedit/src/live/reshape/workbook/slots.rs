@@ -206,11 +206,11 @@ impl Plan<'_> {
                 let down = self.down_of(&at.line, None);
                 let cells = first.levels.first().map_or(&[][..], Vec::as_slice);
                 match at.line.fit(cells.len(), down)? {
-                    Some(line) if self.holds(&line, cells) => {
+                    Some(line) if self.holds(&line, cells, first.numeric) => {
                         self.take(&line, cells, first.numeric, &at.line)?;
                         refs.first = Some(line.formula());
                     }
-                    Some(line) => x = Some((line, at.line.clone(), cells)),
+                    Some(line) => x = Some((line, at.line.clone(), cells, first.numeric)),
                     None => {}
                 }
             }
@@ -238,7 +238,7 @@ impl Plan<'_> {
         };
         let mut lines = vec![line];
         lines.extend(name.clone());
-        lines.extend(x.as_ref().map(|(line, _, _)| line.clone()));
+        lines.extend(x.as_ref().map(|(line, _, _, _)| line.clone()));
         lines.extend(size.as_ref().map(|(line, _)| line.clone()));
         let mut moved = self.room(&lines, down)?.into_iter();
         let Some(values) = moved.next() else {
@@ -250,8 +250,8 @@ impl Plan<'_> {
             self.take(&line, &[Cell::Text(want.name.to_owned())], false, like)?;
             refs.name = Some(line.formula());
         }
-        if let (Some((_, like, cells)), Some(line)) = (&x, moved.next()) {
-            self.take(&line, cells, true, like)?;
+        if let (Some((_, like, cells, numeric)), Some(line)) = (&x, moved.next()) {
+            self.take(&line, cells, *numeric, like)?;
             refs.first = Some(line.formula());
         }
         if let (Some((_, like)), Some(cells), Some(line)) = (&size, want.size, moved.next()) {

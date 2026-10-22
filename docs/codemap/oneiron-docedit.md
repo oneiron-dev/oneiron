@@ -80,7 +80,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/deck_export/table.rs` | src | s | 3 crate-vis | — | A table at export, by row and column identity: a bound table's grid rewritten where its rows, columns or… |
 | `src/live/diagram.rs` | src | m | 3 crate-vis | — | SmartArt structure (OF-510, FIX 3697): nodes added, removed, re-levelled or moved, as PowerPoint's text pane… |
 | `src/live/held.rs` | src | m | 13 crate-vis | — | What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a… |
-| `src/live/held/chart.rs` | src | m | 14 crate-vis | — | A chart frame's data as the live model holds it: its chart part, its plots in document order, and each… |
+| `src/live/held/chart.rs` | src | m | 15 crate-vis | — | A chart frame's data as the live model holds it: its chart part, its plots in document order, and each… |
 | `src/live/held/chart/families.rs` | src | s | 4 crate-vis | — | A chart part's family settings as the live model holds them (OF-510, FIX 3493 D9b): each plot's settings… |
 | `src/live/held/chart/special.rs` | src | s | 7 crate-vis | — | A chart part's stock, surface and of-pie settings as the live model holds them (OF-510, FIX 3493 D9c): each… |
 | `src/live/held/table.rs` | src | s | 6 crate-vis | — | A retained table as the live model reads it (ARCH-0077: a table keeps its `a:tbl`, `a:tblGrid`, row heights… |
@@ -103,7 +103,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/pptx.rs` | src | XL | 23 struct · 7 enum · 27 fn · 3 re-export · 8 crate-vis | ApproveScope, AttributionIndex, ChangeKind, Conflict, ConnectorEnd, DeckDiff, DeckFork, DeckNode +22 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
 | `src/live/pptx/chart.rs` | src | m | 2 struct · 4 enum · 2 fn · 3 re-export · 5 crate-vis | ChartEdit, ChartKind, ChartSeries, ChartSource, SeriesBinding, SeriesField | A live chart's model (ARCH-0077, "One deck, one document": "Ordered category and series ids over one… |
 | `src/live/pptx/chart/categories.rs` | src | m | 2 struct · 1 enum · 7 fn · 14 crate-vis | CategoryField, ChartCategories, ChartCategory | A chart's categories (ARCH-0077 :597, "Chart categories and series \| Ordered ids over one canonical dataset |
-| `src/live/pptx/chart/families.rs` | src | m | 2 struct · 4 enum · 3 fn · 8 crate-vis | BarDirection, BarShape, ChartPlot, ChartView, PlotGrouping, SizeRepresents | A live chart's families and their settings (OF-510, FIX 3493 D9b): which families draw x values (scatter and… |
+| `src/live/pptx/chart/families.rs` | src | m | 2 struct · 4 enum · 3 fn · 9 crate-vis | BarDirection, BarShape, ChartPlot, ChartView, PlotGrouping, SizeRepresents | A live chart's families and their settings (OF-510, FIX 3493 D9b): which families draw x values (scatter and… |
 | `src/live/pptx/chart/special.rs` | src | s | 2 struct · 3 enum · 12 crate-vis | OfPieType, SplitType, StockOrder, StockRoles, SurfaceBand | A live chart's stock, surface and of-pie settings (OF-510, FIX 3493 D9c), held on each plot's own… |
 | `src/live/pptx/chart_ops.rs` | src | m | 8 crate-vis | — | Chart edits applied by series and category identity; a whole chart written over the chart a node holds… |
 | `src/live/pptx/chart_ops/categories.rs` | src | s | 4 crate-vis | — | Category edits applied by point identity, a whole set written over the one a chart or series holds lowered… |
@@ -117,17 +117,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/reshape/families.rs` | src | m | 9 crate-vis | — | A rewritten chart's plots and 3D view (OF-510, FIX 3493 D9b): a kept plot with its series replaced and only… |
 | `src/live/reshape/layout.rs` | src | m | 18 crate-vis | — | How a rewritten chart's live series take its held ones (OF-510, FIX 3492): the plots Change Chart Type lays… |
 | `src/live/reshape/points.rs` | src | s | 4 crate-vis | — | A rewritten chart's category points (OF-510, FIX 3493): a multi-level category slot written from its levels… |
-| `src/live/reshape/retained.rs` | src | s | 2 crate-vis | — | A surviving series written over its own retained XML (OF-510, FIX 8594), in its own plot or moved to… |
+| `src/live/reshape/retained.rs` | src | s | 3 crate-vis | — | A surviving series written over its own retained XML (OF-510, FIX 8594), in its own plot or moved to… |
+| `src/live/reshape/retype.rs` | src | s | 3 crate-vis | — | Data labels and point formatting retyped to a new family (OF-510, FIX 9276, 9275): a data label position… |
 | `src/live/reshape/series.rs` | src | s | 2 crate-vis | — | A new series' format (OF-510, FIX 3493) |
-| `src/live/reshape/special.rs` | src | m | 8 crate-vis | — | A rewritten chart's stock, surface and of-pie plots (OF-510, FIX 3493 D9c): the compound settings a plot… |
+| `src/live/reshape/special.rs` | src | m | 9 crate-vis | — | A rewritten chart's stock, surface and of-pie plots (OF-510, FIX 3493 D9c): the compound settings a plot… |
 | `src/live/reshape/table.rs` | src | m | 1 crate-vis | — | A written table's grid rewritten at export by row and column identity (OF-510) |
 | `src/live/reshape/workbook.rs` | src | m | 4 crate-vis | — | A rewritten chart's own embedded workbook, edited in place (OF-510, FIX 3493) |
 | `src/live/reshape/workbook/range.rs` | src | s | 11 crate-vis | — | A chart reference's cells as the workbook edit reads them: a direct one-row or one-column range on one… |
 | `src/live/reshape/workbook/slots.rs` | src | s | 3 crate-vis | — | A rewritten chart's held and new series planned into its own workbook: each sequence at its own cells, a… |
 | `src/live/svg_fallback.rs` | src | s | 4 crate-vis | — | A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster… |
-| `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 5 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
+| `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 6 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/chart/cache.rs` | src | s | 1 crate-vis | — | A series cache written in place (FIX 7987): only the points whose values the write changes, and the count… |
 | `src/native_patch/chart/categories.rs` | src | s | 7 crate-vis | — | Multi-level categories (`c:multiLvlStrRef`, FIX 3493): a hierarchy's cache read level by level, leaf first… |
+| `src/native_patch/chart/placeholder.rs` | src | s | 1 crate-vis | — | A stock plot's placeholder series (OF-510, FIX 9374): a `c:ser` of a `c:stockChart` holding neither… |
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 4 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes; a cell a merge… |
 | `src/native_patch/tests.rs` | test | m | — | — | — |
