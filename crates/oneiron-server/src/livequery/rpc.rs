@@ -220,7 +220,12 @@ fn saved(answer: &Answer) -> Option<InvocationOutcome> {
         Err(refusal) => Saving::Refused(refusal),
     };
     let body = serde_json::to_value(saving).ok()?;
-    Some(InvocationOutcome { status: 200, body })
+    // The send door judges the saved rows again for each waiter (DEC-0005).
+    Some(InvocationOutcome {
+        status: 200,
+        body,
+        release: None,
+    })
 }
 
 /// The first call's answer, taken again by a call that waited on it. Its

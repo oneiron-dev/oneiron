@@ -64,6 +64,14 @@ pub(crate) trait LiveQuerySource: Send + Sync {
     fn withholds(&self, _pushes: &[Push]) -> Result<bool, AppError> {
         Ok(false)
     }
+    /// Whether every row a retained push's result was derived from still
+    /// reads for this source's caller now: its credential, its grants and
+    /// the row's liveness, judged again at resume (FIX 9493). A retained push
+    /// one of whose rows no longer reads is not sent again: the resume falls
+    /// to a gap and a fresh scoped snapshot, on any destination.
+    fn readmits(&self, _pushes: &[Push]) -> Result<bool, AppError> {
+        Ok(true)
+    }
     /// Retained, authority-scoped pushes outside the delivery ring.
     fn replay(
         &self,

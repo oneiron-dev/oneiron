@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, Weak};
 
 mod projection;
+mod readmit;
 
 pub(super) struct BoundSource {
     server: Weak<SyncServer>,

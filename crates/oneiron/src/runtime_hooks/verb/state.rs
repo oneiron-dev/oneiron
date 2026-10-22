@@ -322,6 +322,27 @@ impl VerbHookState {
 pub struct InvocationOutcome {
     pub status: u16,
     pub body: serde_json::Value,
+    /// What the door kept to release the answer again for each waiter
+    /// (FIX 7914, FIX 8212): `None` for a reply it keeps nothing beside, a
+    /// refusal among them, which is sent again as it is.
+    pub release: Option<InvocationRelease>,
+}
+
+/// An answer as its door kept it beside the reply it sent (FIX 7914, FIX
+/// 8212): the machine the first caller's connection proved, the answer
+/// before its destination release, and the rows it was derived from. A
+/// waiter's reply is released from it again, for the waiter's own
+/// destination and authority, and the call never runs a second time. The
+/// destination sits beside the claim, never in the call's identity, so a
+/// waiter toward another machine waits on the same call.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InvocationRelease {
+    /// The verified machine identity of the first caller's connection.
+    pub peer: crate::authority::PeerMachine,
+    /// The answer before any destination release judged it.
+    pub value: serde_json::Value,
+    /// The rows its producers listed; `None` when one of them listed none.
+    pub rows: Option<Vec<EntityId>>,
 }
 
 /// One claimed invocation: the call it names, and its reply once it ends.

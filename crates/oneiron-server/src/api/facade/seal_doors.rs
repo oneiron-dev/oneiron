@@ -69,34 +69,63 @@ pub(crate) async fn vault_seal_audit(
     .await
 }
 
+/// `vault.seal.receipt`: the stored receipt, listing every row its content
+/// was derived from (FIX 8164): its subject, the attempt's TASK and result,
+/// and the rows its producers recorded its inputs read from. The facade's
+/// release judges it by them right before it is sent.
 pub(crate) async fn vault_seal_receipt(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SealAttemptRequest,
 ) -> Listed<Option<SealReceiptView>> {
-    as_owner(
+    let (answer, rows) = as_owner(
         server,
         auth,
         "vault.seal.receipt",
-        move |server, owner| doors::receipt_as_owner(server.vault(), owner, &input),
-        |view| view.as_ref().map_or_else(Vec::new, receipt_rows),
+        move |server, owner| doors::receipt_sourced_as_owner(server.vault(), owner, &input),
+        |(_, rows)| rows.clone(),
     )
-    .await
+    .await;
+    (answer.map(|(view, _)| view), rows)
 }
 
+/// `vault.seal.pending`: the pending checks whose attempts the caller's
+/// destination admits (FIX 8164). A check whose attempt's content was
+/// derived from a row a world withheld from there keeps is left out, and so
+/// out of the count; one whose sources are unknown stays. On this device
+/// every check stays. It lists the kept checks' rows, which the facade's
+/// release judges again right before it is sent.
 pub(crate) async fn vault_seal_pending(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SealPendingRequest,
 ) -> Listed<Vec<SealCheckRequest>> {
-    as_owner(
+    let (answer, _) = as_owner(
         server,
         auth,
         "vault.seal.pending",
-        move |server, owner| doors::pending_as_owner(server.vault(), owner, &input),
+        move |server, owner| doors::pending_sourced_as_owner(server.vault(), owner, &input),
         |_| Vec::new(),
     )
-    .await
+    .await;
+    let destination = auth.destination();
+    let mut listed = Vec::new();
+    let answer = answer.map(|sourced| {
+        sourced
+            .into_iter()
+            .filter_map(|(request, rows)| {
+                let value = serde_json::to_value(&request).unwrap_or_default();
+                if super::known_denied_rows(server.vault(), &destination, &rows, &value) {
+                    return None;
+                }
+                listed.extend(rows);
+                Some(request)
+            })
+            .collect::<Vec<_>>()
+    });
+    listed.sort_unstable();
+    listed.dedup();
+    (answer, listed)
 }
 
 pub(crate) async fn vault_seal_run(

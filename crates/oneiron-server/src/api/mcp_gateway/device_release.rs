@@ -72,6 +72,9 @@ pub(super) fn mcp_release_result(
     continued: bool,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
+    // A claimed call keeps the result it is about to judge, for the calls
+    // waiting on it (FIX 7914).
+    super::claimed_release::record(&result, Some(rows));
     let refused = |hold: ReleaseHold| {
         if continued {
             mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
@@ -281,6 +284,9 @@ pub(super) fn mcp_release_listed(
     continued: bool,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
+    if rows.is_none() {
+        super::claimed_release::record(&result, None);
+    }
     match rows {
         Some(rows) => mcp_release_result(server, actor, rows, continued, result),
         None if !actor.destination().is_off_device() => Ok(result),

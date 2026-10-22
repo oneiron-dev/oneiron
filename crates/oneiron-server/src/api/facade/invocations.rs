@@ -53,7 +53,21 @@ pub(super) async fn facade_invocation_claim(
                 .await;
             finish_door_claim(claim, response).await
         }
-        DoorClaim::Answered(outcome) => door_replay(outcome),
+        DoorClaim::Answered(outcome) => {
+            // The waiter's credential is judged again once the wait is over,
+            // before a reply is its (FIX 8212): a revoked or expired one gets
+            // the refusal it gets anywhere.
+            let auth = match CoreAuth::from_request_parts(&mut parts, &server).await {
+                Ok(auth) if auth.credential_is_live(server.vault()) => auth,
+                Ok(_) => {
+                    return crate::error::EnvelopedApiError::from(ApiError::unauthorized())
+                        .into_response();
+                }
+                Err(refused) => return refused.into_response(),
+            };
+            let verb = parts.uri.path().trim_start_matches('/');
+            door_replay_for(server.vault(), &auth, verb, outcome)
+        }
         DoorClaim::InFlight => FacadeApiError::new(
             StatusCode::CONFLICT,
             INVOCATION_IN_FLIGHT,
@@ -149,17 +163,22 @@ pub(crate) fn invocation_body(
 }
 
 /// Sends `response` as the claimed call's reply, saving it for each request
-/// waiting on the same call. A body that is not JSON is sent as it is and
+/// waiting on the same call, beside what its route kept to release it again
+/// ([`FacadeReleased`], FIX 8212): the answer before its release, its rows
+/// and its caller's machine. A body that is not JSON is sent as it is and
 /// saved for none of them.
 pub(crate) async fn finish_door_claim(claim: InvocationClaim, response: Response) -> Response {
-    let (head, body) = response.into_parts();
+    let (mut head, body) = response.into_parts();
+    let released = head.extensions.remove::<FacadeReleased>();
     let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    if let Ok(body) = serde_json::from_slice(&bytes) {
+    if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+        let release = released.map(|released| released.kept(&body));
         claim.finish(InvocationOutcome {
             status: head.status.as_u16(),
             body,
+            release,
         });
     }
     Response::from_parts(head, Body::from(bytes))
@@ -169,4 +188,22 @@ pub(crate) async fn finish_door_claim(claim: InvocationClaim, response: Response
 pub(crate) fn door_replay(outcome: InvocationOutcome) -> Response {
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (status, Json(outcome.body)).into_response()
+}
+
+/// [`door_replay`] for a facade waiter `auth` on verb `verb` (FIX 8212): an
+/// answer its route kept is released again for this waiter's credential and
+/// destination ([`replayed_value`]), never run again; a reply kept with
+/// nothing beside it, a refusal among them, is sent as it was.
+fn door_replay_for(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    verb: &str,
+    outcome: InvocationOutcome,
+) -> Response {
+    let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let body = match outcome.release {
+        Some(release) => replayed_value(vault, auth, verb, release),
+        None => outcome.body,
+    };
+    (status, Json(body)).into_response()
 }

@@ -8,6 +8,7 @@ mod board_observations;
 mod board_setup;
 mod booking_call;
 mod call_meta;
+mod claimed_release;
 mod code_mode_verbs;
 mod device_release;
 mod envelope;
