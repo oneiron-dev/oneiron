@@ -48,7 +48,8 @@ fn source_rows(entries: &[(Value, Value)]) -> Result<Option<Vec<EntityId>>> {
     }
     let mut raw = Vec::new();
     rmpv::encode::write_value(&mut raw, value).map_err(|_| corrupt())?;
-    rmp_serde::from_slice(&raw).map(Some).map_err(|_| corrupt())
+    let rows: Vec<EntityId> = rmp_serde::from_slice(&raw).map_err(|_| corrupt())?;
+    Ok(Some(rows))
 }
 
 /// Sets the source rows `entries` name to `rows`, a set they already held.
