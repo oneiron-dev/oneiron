@@ -120,6 +120,8 @@ pub use oneiron_model::llm::{
     SessionRestored, SessionSuffixCommit, SessionSuffixStaged, SessionTarget, SourceRevision,
     TokenDigest, TrustFence, VaultRef, message_digest, role_name,
 };
+// FIX 3416: the typed records a reply cited or created, which its host alone fills.
+pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,

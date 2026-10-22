@@ -220,6 +220,8 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
             .get("usage")
             .map_or_else(LlmUsage::zero, parse_openai_usage),
         finish_reason,
+        // A provider's reply asserts no record: its host alone does (FIX 3416).
+        reply_assertions: Default::default(),
     })
 }
 

@@ -337,7 +337,7 @@ pub(crate) async fn context_board_hydrate(
     // (another principal's claims), so every caller reads an empty inventory.
     let session = empty_session_prefix();
     let notifications = pending_notifications(&server, &read, caller)?;
-    let unprocessed = pending_unprocessed_items(&server, caller);
+    let unprocessed = pending_unprocessed_items(&read)?;
     let budget = standing.as_ref().map_or_else(
         || current_hydration_budget(&server),
         |prefix| {

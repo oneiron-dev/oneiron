@@ -56,6 +56,7 @@ pub use label_read::{
 };
 mod model_id;
 mod protocol;
+mod reply_assertions;
 mod safeguard;
 mod segments;
 mod session;
@@ -119,6 +120,8 @@ pub use self::protocol::{
     ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
 };
+// FIX 3416: the typed records a reply cited or created, which its host alone fills.
+pub use self::reply_assertions::{ReplyAssertionRecord, ReplyAssertions};
 pub use self::safeguard::{
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, SafeguardModelBinding,
     SafeguardModelBindingError,
