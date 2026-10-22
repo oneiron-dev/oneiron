@@ -13542,7 +13542,7 @@
       "description": "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call.",
       "input": "crate::task_verb::sdk::VoiceRenderLineageRequest",
       "output": "Vec<crate::task_verb::sdk::VoiceRenderEventView>",
-      "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.lineage\", &input)?",
+      "call": "crate::task_verb::sdk::read_voice_render_lineage(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",

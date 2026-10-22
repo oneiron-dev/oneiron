@@ -31476,7 +31476,7 @@ pub fn vault_voices_lineage(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::VoiceRenderLineageRequest,
 ) -> MemoryResult<Vec<crate::task_verb::sdk::VoiceRenderEventView>> {
-    crate::task_verb::sdk::host_only(memory, "vault.voices.lineage", &input)
+    crate::task_verb::sdk::read_voice_render_lineage(memory, input)
 }
 pub fn ai_transcribe(
     memory: &Memory<'_>,

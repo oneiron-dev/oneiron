@@ -49213,6 +49213,8 @@ pub enum ArtifactAskStanding {
     },
     #[serde(rename = "closed")]
     Closed,
+    #[serde(rename = "failed")]
+    Failed,
 }
 
 /// `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskRecord`.
@@ -49239,6 +49241,12 @@ pub struct ArtifactAskRecord {
     pub ask_id: Option<String>,
     #[serde(rename = "failed", default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<String>,
+    #[serde(
+        rename = "parent_proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_proposal_ref: Option<String>,
 }
 
 /// `oneiron::receipt::questions::QuestionAnswer`.
