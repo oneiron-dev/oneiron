@@ -56,6 +56,7 @@ use super::validate::{
     validate_endpoint, validate_execution_budget, validate_exhaust,
 };
 use super::work_binding::{RunnerWorkBinding, SpentCapture, note_spent_hop_in_txn};
+use super::work_resume::moved_on_in_txn;
 use crate::error::ArtifactError;
 /// Resolves an endpoint config into a concrete host-owned backend.
 ///
@@ -395,7 +396,8 @@ where
     /// `skipped_seats`; a stamped seat is judged, and dispatched, on its
     /// stamp (FIX 5104). InternalModels hands the work
     /// back to the Dreamer's own model roles. A bound work's record notes
-    /// each hop. A replay finds the same capture and the same child.
+    /// each hop. A replay finds the same capture and the same child, or
+    /// where a bound work that has since moved on stands.
     ///
     /// # Errors
     ///
@@ -425,6 +427,11 @@ where
         let now = capture.now;
         self.vault.try_with_write_txn_grouped(|wtxn| {
             let receipt = self.capture_terminal_exhaust_in_txn(wtxn, capture)?;
+            // A replayed spend of a bound work that moved past it (FIX 7450)
+            // writes nothing more and names where the work stands.
+            if let Some(route) = moved_on_in_txn(self.vault, wtxn, &receipt, spent.as_ref())? {
+                return Ok(route);
+            }
             record_seat_quota_in_txn(self.vault, wtxn, ran, &receipt.attempt, spent.as_ref())?;
             let Some(spent) = spent else {
                 return Ok(SeatRoute::Settled(receipt));

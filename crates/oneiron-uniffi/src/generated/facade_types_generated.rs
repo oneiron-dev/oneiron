@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1136 facade rows, 3958 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1088.
+// UniFFI census: 1138 facade rows, 3967 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1090.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -6495,6 +6495,136 @@ pub enum RsiTopUp {
         #[serde(rename = "units")]
         units: u64,
     },
+}
+
+/// `oneiron::dispatch_byoa::seat::SeatAuth`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SeatAuth {
+    #[serde(rename = "vendor_login")]
+    VendorLogin,
+    #[serde(rename = "api_key")]
+    ApiKey,
+}
+
+/// `oneiron::dispatch_byoa::seat::RunnerSeat`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunnerSeat {
+    #[serde(rename = "runner")]
+    pub runner: String,
+    #[serde(rename = "auth")]
+    pub auth: SeatAuth,
+    #[serde(rename = "egress_profile_ref")]
+    pub egress_profile_ref: String,
+    #[serde(
+        rename = "credential_handles",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub credential_handles: Option<Vec<String>>,
+}
+
+/// `oneiron::dispatch_byoa::owner_doors::RunnerSeatQuotasRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerSeatQuotasRequest {
+    #[serde(rename = "seats")]
+    pub seats: Vec<RunnerSeat>,
+}
+
+/// `oneiron_model::llm::error::SpentKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SpentKind {
+    #[serde(rename = "window")]
+    Window,
+    #[serde(rename = "credit")]
+    Credit,
+}
+
+/// `oneiron::dispatch_byoa::seat::SeatSpent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SeatSpent {
+    #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<SpentKind>,
+    #[serde(
+        rename = "retry_after",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub retry_after: Option<u64>,
+    #[serde(rename = "resets_at")]
+    pub resets_at: Vec<u64>,
+}
+
+/// `oneiron::dispatch_byoa::seat_quota::RunnerSeatQuota`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunnerSeatQuota {
+    #[serde(rename = "seat")]
+    pub seat: u64,
+    #[serde(rename = "runner")]
+    pub runner: String,
+    #[serde(rename = "spent", default, skip_serializing_if = "Option::is_none")]
+    pub spent: Option<SeatSpent>,
+    #[serde(
+        rename = "observed_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observed_at: Option<u64>,
+    #[serde(rename = "back_at", default, skip_serializing_if = "Option::is_none")]
+    pub back_at: Option<u64>,
+    #[serde(rename = "available")]
+    pub available: bool,
+    #[serde(
+        rename = "last_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_capture: Option<String>,
+    #[serde(
+        rename = "topped_up_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub topped_up_at: Option<u64>,
+}
+
+/// `oneiron::dispatch_byoa::owner_doors::RunnerSeatQuotasView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunnerSeatQuotasView {
+    #[serde(rename = "quotas")]
+    pub quotas: Vec<RunnerSeatQuota>,
+}
+
+/// `oneiron::dispatch_byoa::owner_doors::RunnerSeatCreditTopUpRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerSeatCreditTopUpRequest {
+    #[serde(rename = "seat")]
+    pub seat: RunnerSeat,
+    #[serde(rename = "expected_spent_attempt")]
+    pub expected_spent_attempt: String,
+}
+
+/// `oneiron::dispatch_byoa::owner_doors::RunnerSeatTopUpEffect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunnerSeatTopUpEffect {
+    #[serde(rename = "cleared")]
+    Cleared,
+    #[serde(rename = "already_clear")]
+    AlreadyClear,
+    #[serde(rename = "observation_changed")]
+    ObservationChanged,
+    #[serde(rename = "not_credit")]
+    NotCredit,
+}
+
+/// `oneiron::dispatch_byoa::owner_doors::RunnerSeatTopUpReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunnerSeatTopUpReceipt {
+    #[serde(rename = "effect")]
+    pub effect: RunnerSeatTopUpEffect,
+    #[serde(rename = "quota")]
+    pub quota: RunnerSeatQuota,
 }
 
 /// `oneiron::verbs::fanout_launch::FanoutLaunchRuling`.
@@ -45176,15 +45306,6 @@ pub enum ModelStepFailureClass {
     DeadlineHardCut,
     #[serde(rename = "engine")]
     Engine,
-}
-
-/// `oneiron_model::llm::error::SpentKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum SpentKind {
-    #[serde(rename = "window")]
-    Window,
-    #[serde(rename = "credit")]
-    Credit,
 }
 
 /// `oneiron_model::llm::error::RetryableLlmError`.

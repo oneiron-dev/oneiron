@@ -220,6 +220,11 @@ pub enum SeatPassedOver {
     /// A CLI seat, and the work's original request record is erased or
     /// unreadable, or none was kept (FIX 7449): the seat has no task to run.
     TaskUnreadable,
+    /// A CLI seat whose argv cannot carry the work's task: a control
+    /// character in it, or too many entries (FIX 7505). Only an ordered
+    /// search passes a seat over for this; an explicit seat keeps its
+    /// refusal.
+    CliArgvShape,
 }
 
 impl std::fmt::Display for SeatPassedOver {
@@ -232,6 +237,9 @@ impl std::fmt::Display for SeatPassedOver {
             }
             Self::TaskUnreadable => f.write_str(
                 "the work's task record is erased or unreadable, so this CLI seat has no task",
+            ),
+            Self::CliArgvShape => f.write_str(
+                "this CLI seat's argv cannot carry the work's task (a control character or too many entries)",
             ),
         }
     }
@@ -264,7 +272,7 @@ pub fn skipped_seats_note(skipped: &[SkippedRunnerSeat]) -> String {
 }
 
 /// How a seat signs in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SeatAuth {
     /// The person's own sign-in, held by the official CLI on the runtime it
@@ -275,7 +283,7 @@ pub enum SeatAuth {
 }
 
 /// One owner-chosen seat: a registered runner and how it signs in.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunnerSeat {
     /// A runner name the registry resolves ("claude-code", "codex", …).
     pub runner: String,
@@ -284,6 +292,7 @@ pub struct RunnerSeat {
     pub egress_profile_ref: String,
     /// Custody handles of an API-key seat. Empty for a login seat.
     #[serde(default, with = "super::connector::credential_handle_vec_wire")]
+    #[schemars(with = "Vec<String>")]
     pub credential_handles: Vec<SandboxCredentialHandle>,
 }
 
@@ -383,7 +392,7 @@ pub struct RunnerWork {
 
 /// A spent seat: a rate limit (no kind), or a spent usage window or credit,
 /// with the waits its refusal named.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SeatSpent {
     pub kind: Option<SpentKind>,
     pub retry_after: Option<u64>,

@@ -7,14 +7,19 @@
 //! and never copied (FIX 7449). Where that record is erased or unreadable,
 //! or none was kept, the CLI seat is passed over and named and the work
 //! goes on to the next seat. A seat the quota view shows spent and not yet
-//! back is passed over and named too (FIX 7453).
+//! back is passed over and named too (FIX 7453), and so is a CLI seat whose
+//! argv cannot carry the task (FIX 7505).
+//!
+//! The same search serves an explicit resume of a work a spend parked
+//! (`work_resume`, FIX 7450): it starts where the caller says, the spent
+//! seat included, where the automatic hand-off starts past it.
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::checkout::CheckoutId;
 use crate::entity_id::bytes_to_hex_lower;
 
-use super::connector::{ByoaAttemptPayload, ByoaConnectorSpec};
+use super::connector::{ByoaAttemptPayload, ByoaConnectorSpec, ByoaDispatchOutcome};
 use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher, ByoaEnqueue};
 use super::error::{ByoaResult, ERR_EXECUTION_CHECKOUT, invalid};
 use super::exhaust::{ByoaEgressPort, ByoaTerminalReceipt, decode_byoa_record};
@@ -24,6 +29,7 @@ use super::seat::{
     RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeat, RunnerSeatPolicy, SeatPassedOver, SeatRoute, SeatSpent,
     SkippedRunnerSeat, runner_task,
 };
+use super::seat_candidate::runner_seat_candidate;
 use super::seat_quota::seat_quotas_in_txn;
 use super::staged_input::{
     StagedInputPin, carry_staged_input, staged_input_readable_in_txn, staged_job_pointer,
@@ -35,7 +41,7 @@ use super::work_binding::{
 /// What a spent attempt hands its next seat: the task a CLI seat runs, read
 /// from its record, the checkout a successor starts from, the custody it
 /// claims from, the staged job, and the binding the successor carries on.
-struct HandOff {
+pub(super) struct HandOff {
     task: Option<String>,
     base: CheckoutId,
     repo: Option<ByoaRepoBinding>,
@@ -50,7 +56,7 @@ impl HandOff {
     /// unreadable, or none was kept: its CLI seats are passed over. So it is
     /// when the spent attempt is that record and an erase left it no task
     /// (FIX 7502): the work goes on to its next seat, never parked for it.
-    fn of(
+    pub(super) fn of(
         vault: &Vault,
         rtxn: &heed::RoTxn<'_>,
         spent: &AttemptRecord,
@@ -169,6 +175,26 @@ fn passed_over(index: usize, seat: &RunnerSeat, reason: SeatPassedOver) -> Skipp
     }
 }
 
+/// Where a search for a spent work's successor starts in the owner's order,
+/// whether it tries that seat alone (an explicit seat, spent or not, whose
+/// connector keeps its own refusal), and the vault's time.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SeatSearch {
+    pub(super) from: usize,
+    pub(super) only: bool,
+    pub(super) now: u64,
+}
+
+/// What a successor search found: the seat that took the work and its
+/// dispatch, else whether a spent seat was passed over and when the first
+/// one is back; and each seat passed over, with why, in the owner's order.
+pub(super) struct Successor {
+    pub(super) took: Option<(usize, ByoaDispatchOutcome)>,
+    pub(super) skipped: Vec<SkippedRunnerSeat>,
+    pub(super) spent_seen: bool,
+    pub(super) back_at: Option<u64>,
+}
+
 impl<B, E> ByoaDispatcher<'_, B, E>
 where
     B: ByoEndpointBackendFactory,
@@ -204,30 +230,96 @@ where
         let Some(hand) = HandOff::of(vault, wtxn, &receipt.attempt, payload)? else {
             return Ok(park(receipt, spent, now));
         };
-        let quotas = seat_quotas_in_txn(vault, wtxn, policy, now)?;
-        let parent = *receipt.attempt.id.as_bytes();
-        for (index, next) in policy.seats.iter().enumerate().skip(seat + 1) {
+        let search = SeatSearch {
+            from: seat + 1,
+            only: false,
+            now,
+        };
+        let found =
+            self.successor_in_txn(wtxn, registry, policy, &receipt.attempt, &hand, search)?;
+        receipt.skipped_seats.extend(found.skipped);
+        Ok(match found.took {
+            Some((seat, outcome)) => SeatRoute::NextSeat {
+                receipt,
+                spent,
+                seat,
+                outcome,
+            },
+            None => park(receipt, spent, now),
+        })
+    }
+
+    /// The successor search of a spent attempt's work (OF-137): from
+    /// `search.from` in the owner's order, the first seat this runtime may
+    /// run takes the work as a child of `spent`, on a fresh checkout claimed
+    /// from the work's custody, under a dedupe key of the spent attempt and
+    /// the seat, so a replay finds the child it dispatched. Passed over and
+    /// named: a seat the quota view shows spent and not yet back, a CLI seat
+    /// whose argv cannot carry the task (FIX 7505) or that has no readable
+    /// task, and a seat a hosted-only bound keeps off this runtime. An
+    /// explicit seat (`search.only`) is tried whatever its quota, and its
+    /// connector keeps its refusal.
+    ///
+    /// # Errors
+    /// An unknown runner, a custody claim or a dispatch the store refuses.
+    pub(super) fn successor_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        registry: &ProviderAdapterRegistry,
+        policy: &RunnerSeatPolicy,
+        spent: &AttemptRecord,
+        hand: &HandOff,
+        search: SeatSearch,
+    ) -> ByoaResult<Successor> {
+        let vault = self.vault();
+        let SeatSearch { from, only, now } = search;
+        let quotas = if only {
+            Vec::new()
+        } else {
+            seat_quotas_in_txn(vault, wtxn, policy, now)?
+        };
+        let parent = *spent.id.as_bytes();
+        let tried = if only { 1 } else { policy.seats.len() };
+        let mut found = Successor {
+            took: None,
+            skipped: Vec::new(),
+            spent_seen: false,
+            back_at: None,
+        };
+        for (index, next) in policy.seats.iter().enumerate().skip(from).take(tried) {
             if let Some(quota) = quotas.get(index).filter(|quota| !quota.available) {
+                found.spent_seen = true;
+                found.back_at = match (found.back_at, quota.back_at) {
+                    (Some(first), Some(back)) => Some(first.min(back)),
+                    (first, back) => first.or(back),
+                };
                 let reason = SeatPassedOver::Spent {
                     back_at: quota.back_at,
                 };
-                receipt.skipped_seats.push(passed_over(index, next, reason));
+                found.skipped.push(passed_over(index, next, reason));
                 continue;
             }
-            let checkout =
-                successor_checkout(receipt.attempt.id, hand.base, hand.repo.as_ref(), index)?;
+            let checkout = successor_checkout(spent.id, hand.base, hand.repo.as_ref(), index)?;
             let task = hand.task.clone().unwrap_or_default();
-            let connector = next.connector(registry, task, checkout)?;
+            let connector = if only {
+                next.connector(registry, task, checkout)?
+            } else if let Some(connector) = runner_seat_candidate(next, registry, task, checkout)? {
+                connector
+            } else {
+                let reason = SeatPassedOver::CliArgvShape;
+                found.skipped.push(passed_over(index, next, reason));
+                continue;
+            };
             if hand.task.is_none() && matches!(connector, ByoaConnectorSpec::CliSandbox(_)) {
                 let reason = SeatPassedOver::TaskUnreadable;
-                receipt.skipped_seats.push(passed_over(index, next, reason));
+                found.skipped.push(passed_over(index, next, reason));
                 continue;
             }
             let connector = carry_staged_input(connector, hand.staged.as_ref());
             let context = registry.resolve(&next.runner)?.placement_context();
             if let Some(bound) = self.seat_bound(next.logs_in(), &connector, context)? {
                 let reason = SeatPassedOver::Hosted(bound);
-                receipt.skipped_seats.push(passed_over(index, next, reason));
+                found.skipped.push(passed_over(index, next, reason));
                 continue;
             }
             claim_successor_in_txn(vault, wtxn, hand.repo.as_ref(), checkout, now)?;
@@ -236,9 +328,9 @@ where
                 ByoaEnqueue {
                     user_login: next.logs_in(),
                     connector,
-                    task_ref: receipt.attempt.task_ref.clone(),
+                    task_ref: spent.task_ref.clone(),
                     parent_attempt: Some(parent),
-                    run_id: receipt.attempt.run_id.clone(),
+                    run_id: spent.run_id.clone(),
                     dedupe_key: Some(format!(
                         "{RUNNER_SEAT_DEDUPE_PREFIX}{}:{index}",
                         bytes_to_hex_lower(&parent)
@@ -250,15 +342,11 @@ where
             )?;
             if let Some(work) = &hand.work {
                 let attempt = outcome.status().attempt.id;
-                note_next_hop_in_txn(vault, wtxn, work, attempt, index, now)?;
+                note_next_hop_in_txn(vault, wtxn, work, spent.id, attempt, index, now)?;
             }
-            return Ok(SeatRoute::NextSeat {
-                receipt,
-                spent,
-                seat: index,
-                outcome,
-            });
+            found.took = Some((index, outcome));
+            return Ok(found);
         }
-        Ok(park(receipt, spent, now))
+        Ok(found)
     }
 }

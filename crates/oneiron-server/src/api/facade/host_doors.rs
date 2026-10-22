@@ -150,6 +150,7 @@ pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
 pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
+pub(crate) use super::runner_seat_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::learning_doors::*;
 pub(crate) use super::seal_doors::*;
@@ -1713,6 +1714,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.rsi.top_up"
         | "vault.budgets.rsi.hold"
         | "vault.budgets.rsi.hold.resume"
+        | "vault.runners.seats.quotas"
+        | "vault.runners.seats.top_up"
         | "vault.research.evaluate_split"
         | "vault.research.create_child"
         | "vault.evals.inventory"

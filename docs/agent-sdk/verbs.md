@@ -79,6 +79,8 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.rsi.top_up`
 - `vault.budgets.rsi.hold`
 - `vault.budgets.rsi.hold.resume`
+- `vault.runners.seats.quotas`
+- `vault.runners.seats.top_up`
 - `vault.fanout.resume`
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`

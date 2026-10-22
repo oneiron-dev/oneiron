@@ -15,7 +15,8 @@
 //!
 //! The binding's hops (which attempt carries the work on which seat, and
 //! the spend that stopped it there) are versions of the binding's own
-//! record ([`super::record`]). [`runner_work_outcome`] reads its head.
+//! record ([`super::record`]). [`runner_work_outcome`] reads its head, and
+//! a work a spend parked is resumed by an explicit act (`work_resume`).
 
 use serde::{Deserialize, Serialize};
 
@@ -31,15 +32,16 @@ use super::connector::{BYOA_ATTEMPT_KIND, ByoaConnectorSpec};
 use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher, ByoaEnqueue};
 use super::error::ByoaResult;
 use super::exhaust::{
-    ByoaEgressPort, ByoaTerminalDisposition, ByoaTerminalReceipt, decode_byoa_exhaust,
-    decode_byoa_record, parse_byoa_result_ref,
+    ByoaEgressPort, ByoaTerminalDisposition, ByoaTerminalReceipt, decode_byoa_record,
 };
 use super::provider::ProviderAdapterRegistry;
 use super::record::{append_record_in_txn, head_record};
 use super::repo_binding::{ByoaRepoBinding, repo_stale_lease_reason};
 use super::seat::{RunnerSeatPolicy, SeatPassedOver, SeatSpent, SkippedRunnerSeat};
+use super::seat_candidate::runner_seat_candidate;
 use super::seat_quota::seat_quotas_in_txn;
 use super::staged_input::{StagedInputPin, carry_staged_input};
+use super::work_usage::captured_usage;
 
 /// Domain a binding id is derived under.
 const RUNNER_WORK_BINDING_DOMAIN: &[u8] = b"oneiron:byoa-runner-work-binding:v1";
@@ -231,8 +233,11 @@ pub struct RunnerWorkTerminal {
     pub spent: Option<SeatSpent>,
     /// When that seat is back; `None` while it waits for the owner.
     pub back_at: Option<u64>,
-    /// The provider usage a completed endpoint run's transcript names.
-    /// `None` for a CLI or MCP run, which reports none here.
+    /// The provider usage this attempt's own capture reports, however it
+    /// ended (FIX 7452): an endpoint's or MCP host's normalized usage, or
+    /// the runner CLI's own final summary. `None` when its capture names
+    /// none in a shape read here; never a measured zero, and never another
+    /// seat's.
     pub usage: Option<LlmUsage>,
     /// The attempt's captured exhaust (`blob-artifact:<id>@<version>`).
     pub exhaust_ref: Option<AttemptResultRef>,
@@ -256,17 +261,11 @@ pub enum RunnerWorkOutcome {
 /// One hop of a bound work: the attempt carrying it, on which seat, and the
 /// spend that kept it there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct RunnerWorkHop {
-    attempt: [u8; 16],
-    seat: u64,
-    spent: Option<SeatSpent>,
-    observed_at: u64,
-}
-
-/// The part of an endpoint run's transcript that names its usage.
-#[derive(Deserialize)]
-struct TranscriptUsage {
-    usage: LlmUsage,
+pub(super) struct RunnerWorkHop {
+    pub(super) attempt: [u8; 16],
+    pub(super) seat: u64,
+    pub(super) spent: Option<SeatSpent>,
+    pub(super) observed_at: u64,
 }
 
 /// A spent attempt's capture as the route hands it to the next seat.
@@ -281,11 +280,16 @@ pub(super) struct SpentCapture {
     pub(super) now: u64,
 }
 
-fn seat_index(seat: u64) -> usize {
+/// A hop's seat as an index in the owner's order.
+pub(super) fn seat_index(seat: u64) -> usize {
     usize::try_from(seat).unwrap_or(usize::MAX)
 }
 
-fn head_hop(
+/// The hop `binding`'s record holds now, if it holds one.
+///
+/// # Errors
+/// A record that does not decode; a store failure.
+pub(super) fn head_hop(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     binding: RunnerWorkBindingId,
@@ -293,16 +297,22 @@ fn head_hop(
     head_record(vault, rtxn, &binding.0)
 }
 
-/// Appends `hop` to `binding`'s record. A replay names the hop the head
-/// already holds and appends nothing.
+/// Appends `hop` to `binding`'s record when its head names `from`: the
+/// attempt that ran (its spend) or the spent attempt that handed the work
+/// on (its next hop); none for a first hop. A replay names the hop the head
+/// already holds and appends nothing; so does a hop from an attempt the
+/// work has moved past (a later hop, or a resume, FIX 7450), which never
+/// takes the head back.
 fn append_hop_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     binding: RunnerWorkBindingId,
+    from: Option<[u8; 16]>,
     hop: &RunnerWorkHop,
 ) -> ByoaResult<()> {
     if head_hop(vault, wtxn, binding)?.is_some_and(|head| {
-        head.attempt == hop.attempt && head.spent.is_some() == hop.spent.is_some()
+        let replay = head.attempt == hop.attempt && head.spent.is_some() == hop.spent.is_some();
+        replay || Some(head.attempt) != from
     }) {
         return Ok(());
     }
@@ -336,6 +346,7 @@ pub(super) fn note_spent_hop_in_txn(
         vault,
         wtxn,
         RunnerWorkBindingId::from_bytes(work.binding)?,
+        Some(*receipt.attempt.id.as_bytes()),
         &RunnerWorkHop {
             attempt: *receipt.attempt.id.as_bytes(),
             seat: seat as u64,
@@ -345,7 +356,8 @@ pub(super) fn note_spent_hop_in_txn(
     )
 }
 
-/// Notes, on bound work's record, that `attempt` on `seat` carries it now.
+/// Notes, on bound work's record, that `attempt` on `seat` carries it now,
+/// handed on from the spent attempt `from`.
 ///
 /// # Errors
 /// A binding id that does not decode; a store failure.
@@ -353,6 +365,7 @@ pub(super) fn note_next_hop_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     work: &RunnerWorkBinding,
+    from: AttemptId,
     attempt: AttemptId,
     seat: usize,
     now: u64,
@@ -361,6 +374,7 @@ pub(super) fn note_next_hop_in_txn(
         vault,
         wtxn,
         RunnerWorkBindingId::from_bytes(work.binding)?,
+        Some(*from.as_bytes()),
         &RunnerWorkHop {
             attempt: *attempt.as_bytes(),
             seat: seat as u64,
@@ -382,8 +396,9 @@ where
     /// them again, and a second bind of the same parent and step returns
     /// where the work stands without dispatching again. With
     /// [`RunnerSeatChoice::NextSeat`] a seat a hosted-only bound keeps off
-    /// this runtime is passed over and named, and a spent seat is passed
-    /// over and named until it is back (FIX 7453).
+    /// this runtime is passed over and named, a spent seat is passed over
+    /// and named until it is back (FIX 7453), and so is a CLI seat whose
+    /// argv cannot carry the task (FIX 7505).
     ///
     /// # Errors
     ///
@@ -437,7 +452,21 @@ where
                 });
                 continue;
             }
-            let connector = seat.connector(registry, request.task.clone(), request.checkout_id)?;
+            let task = request.task.clone();
+            let connector = if only {
+                seat.connector(registry, task, request.checkout_id)?
+            } else if let Some(connector) =
+                runner_seat_candidate(seat, registry, task, request.checkout_id)?
+            {
+                connector
+            } else {
+                skipped.push(SkippedRunnerSeat {
+                    seat: index,
+                    runner: seat.runner.clone(),
+                    reason: SeatPassedOver::CliArgvShape,
+                });
+                continue;
+            };
             // A first seat that drops the task leaves the staged job as the
             // work's original request record; a CLI one's own argv is, named
             // at its hand-off (FIX 7449).
@@ -483,6 +512,7 @@ where
                 vault,
                 wtxn,
                 binding,
+                None,
                 &RunnerWorkHop {
                     attempt: *attempt.as_bytes(),
                     seat: index as u64,
@@ -507,16 +537,17 @@ where
 
 /// Where the bound work `binding` stands (OF-137): its attempt still
 /// running, its last attempt's end, or gone. A read: it settles nothing, and
-/// every read of one end carries the same `step_hash`.
+/// every read of one end carries the same `step_hash`. An ended attempt's
+/// usage is read from its own capture; a capture that does not resolve
+/// reads as no usage.
 ///
 /// # Errors
-/// A record or payload that does not decode; a completed endpoint run's
-/// capture that does not resolve; a store failure.
+/// A record or payload that does not decode; a store failure.
 pub fn runner_work_outcome(
     vault: &Vault,
     binding: RunnerWorkBindingId,
 ) -> ByoaResult<RunnerWorkOutcome> {
-    let (mut terminal, endpoint) = {
+    let (mut terminal, connector) = {
         let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
         let Some(head) = head_hop(vault, &rtxn, binding)? else {
             return Ok(RunnerWorkOutcome::Gone);
@@ -529,10 +560,7 @@ pub fn runner_work_outcome(
         let Some(status) = terminal_status(record.state) else {
             return Ok(RunnerWorkOutcome::Pending { attempt, seat });
         };
-        let endpoint = matches!(
-            decode_byoa_record(&record)?.connector,
-            ByoaConnectorSpec::Endpoint(_)
-        );
+        let connector = decode_byoa_record(&record)?.connector;
         let error = match status {
             _ if head.spent.is_some() => Some(RunnerWorkErrorKind::SeatSpent),
             ByoaTerminalDisposition::Completed => None,
@@ -560,11 +588,12 @@ pub fn runner_work_outcome(
             step_hash: step_hash(binding, attempt, record.result_ref.as_ref()),
             exhaust_ref: record.result_ref,
         };
-        (terminal, endpoint)
+        (terminal, connector)
     };
-    if endpoint && terminal.status == ByoaTerminalDisposition::Completed {
-        terminal.usage = transcript_usage(vault, terminal.exhaust_ref.as_ref())?;
-    }
+    terminal.usage = terminal
+        .exhaust_ref
+        .as_ref()
+        .and_then(|exhaust| captured_usage(vault, &connector, exhaust));
     Ok(RunnerWorkOutcome::Terminal(Box::new(terminal)))
 }
 
@@ -590,22 +619,4 @@ fn step_hash(
         hasher.update(exhaust.as_str().as_bytes());
     }
     *hasher.finalize().as_bytes()
-}
-
-/// The usage a completed endpoint run's transcript names, read from its
-/// capture. `None` when its transcript names none.
-fn transcript_usage(
-    vault: &Vault,
-    exhaust: Option<&AttemptResultRef>,
-) -> ByoaResult<Option<LlmUsage>> {
-    let Some(exhaust) = exhaust else {
-        return Ok(None);
-    };
-    let (artifact_id, version) = parse_byoa_result_ref(exhaust)?;
-    let (_, _, captured) = decode_byoa_exhaust(vault, &artifact_id, version)?;
-    Ok(captured.transcript.and_then(|transcript| {
-        serde_json::from_reader::<_, TranscriptUsage>(transcript.reader())
-            .ok()
-            .map(|read| read.usage)
-    }))
 }

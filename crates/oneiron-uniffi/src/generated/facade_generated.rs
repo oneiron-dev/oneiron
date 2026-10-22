@@ -363,6 +363,16 @@ export_facade! {
     let output = client.vault_budgets_rsi_hold_resume(&input)?;
     crate::codec::lift_record("vault.budgets.rsi.hold.resume", &output)
 };
+"vault.runners.seats.quotas" => fn vault_runners_seats_quotas(&self, input: RunnerSeatQuotasRequest) -> RunnerSeatQuotasView = |client| {
+    let input: oneiron::dispatch_byoa::RunnerSeatQuotasRequest = crate::codec::lower_record("vault.runners.seats.quotas", input)?;
+    let output = client.vault_runners_seats_quotas(&input)?;
+    crate::codec::lift_record("vault.runners.seats.quotas", &output)
+};
+"vault.runners.seats.top_up" => fn vault_runners_seats_top_up(&self, input: RunnerSeatCreditTopUpRequest) -> RunnerSeatTopUpReceipt = |client| {
+    let input: oneiron::dispatch_byoa::RunnerSeatCreditTopUpRequest = crate::codec::lower_record("vault.runners.seats.top_up", input)?;
+    let output = client.vault_runners_seats_top_up(&input)?;
+    crate::codec::lift_record("vault.runners.seats.top_up", &output)
+};
 "vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
     let output = client.vault_fanout_resume(&input)?;

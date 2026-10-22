@@ -477,6 +477,8 @@ class Oneiron:
         def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
         @property
         def budgets(self) -> "Oneiron._VaultBudgetsVerbs": ...
+        @property
+        def runners(self) -> "Oneiron._VaultRunnersVerbs": ...
         def commit_message(self, spec: Facade.CommitMessageRequest) -> Facade.WitnessReceipt:
             """Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."""
         def begin_message_stream(self, spec: Facade.BeginMessageStreamRequest) -> Facade.MessageStreamHandle:
@@ -886,6 +888,14 @@ class Oneiron:
             """The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."""
         def resume(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
             """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
+    class _VaultRunnersVerbs:
+        @property
+        def seats(self) -> "Oneiron._VaultRunnersSeatsVerbs": ...
+    class _VaultRunnersSeatsVerbs:
+        def quotas(self, spec: Facade.RunnerSeatQuotasRequest) -> Facade.RunnerSeatQuotasView:
+            """The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."""
+        def top_up(self, spec: Facade.RunnerSeatCreditTopUpRequest) -> Facade.RunnerSeatTopUpReceipt:
+            """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
