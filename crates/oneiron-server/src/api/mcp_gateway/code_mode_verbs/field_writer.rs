@@ -67,16 +67,19 @@ impl RunFieldWriter {
     /// agent's run, with the payer it bills), else on code mode's own meter,
     /// the one a run's executor steps spend on, with no payer. A host with
     /// neither has no writer for the call.
+    /// A caller whose door bound no line bills `payer`, the attached live
+    /// run's, where it has one (FIX 8902).
     pub(super) fn new(
         server: &Arc<SyncServer>,
         runtime: &tokio::runtime::Handle,
         asker: &VerdictAsker,
+        payer: Option<oneiron::llm::run_admission::PayerPerson>,
     ) -> Self {
         let line = match asker {
             VerdictAsker::Agent(_, Some(line)) => Some(line.clone()),
             VerdictAsker::Agent(_, None)
             | VerdictAsker::Connector(_)
-            | VerdictAsker::Credential(..) => host_line(server),
+            | VerdictAsker::Credential(..) => host_line(server, payer),
         };
         Self {
             server: Arc::clone(server),
@@ -86,8 +89,12 @@ impl RunFieldWriter {
     }
 }
 
-/// Code mode's own meter, as a run of the field writer with no payer.
-fn host_line(server: &SyncServer) -> Option<RunAdmission> {
+/// Code mode's own meter, as a run of the field writer billing `payer`:
+/// the attached live run's, else none.
+fn host_line(
+    server: &SyncServer,
+    payer: Option<oneiron::llm::run_admission::PayerPerson>,
+) -> Option<RunAdmission> {
     let meter = server
         .code_execution_host()?
         .engine_native()?
@@ -97,7 +104,7 @@ fn host_line(server: &SyncServer) -> Option<RunAdmission> {
         server
             .ai
             .model_runtime()
-            .funded_run(FIELD_WRITER_RUN, meter, None),
+            .funded_run(FIELD_WRITER_RUN, meter, payer),
     )
 }
 

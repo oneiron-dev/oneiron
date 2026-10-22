@@ -137,6 +137,17 @@ fn grants_policy(vault: &oneiron::Vault) -> SendPolicy {
     policy
 }
 
+/// A receipt as the host's log shows it (FIX 9267): its act projected to
+/// its verb and locator, never the literal a type typed, the option a
+/// select picked, or a Fill's texts. The answer keeps the receipt whole.
+fn logged_receipt(receipt: &Value) -> Value {
+    let mut logged = receipt.clone();
+    if let Some(action) = logged.get_mut("action").and_then(Value::as_object_mut) {
+        action.retain(|key, _| matches!(key.as_str(), "action" | "locator"));
+    }
+    logged
+}
+
 /// The vault's grants, read again at each classified browser send (FIX
 /// 4613): a grant revoked during the run covers no later send.
 struct VaultPressGrants(Arc<oneiron::Vault>);
@@ -355,6 +366,7 @@ impl RunDesktop {
         decider: LadderDecider,
         writer: ReceiptWriter,
         secrets: Arc<dyn SecretCustody>,
+        fields: RunFieldWriter,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -376,6 +388,8 @@ impl RunDesktop {
             driver.set_policy(self.guest.policy.clone());
         }
         driver.set_decider(Box::new(decider));
+        // A Fill's writer (FIX 8899): role-bound calls on the caller's run.
+        driver.set_field_writer(Box::new(fields));
         driver.set_receipt_sink(Box::new(writer));
         driver.set_secret_custody(secrets);
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
@@ -409,6 +423,7 @@ impl RunGuests {
             browser,
             desktop: RunDesktop::new(server, run_id),
             refused: browser_guest::KeptRefusal::default(),
+            payer: None,
         }
     }
 
@@ -420,7 +435,19 @@ impl RunGuests {
             browser,
             desktop: None,
             refused: browser_guest::KeptRefusal::default(),
+            payer: None,
         }
+    }
+
+    /// The same, billing `payer`, the attached live run's (FIX 8902), for a
+    /// call whose door bound no line: its Fill writer bills that payer.
+    #[must_use]
+    pub(crate) fn with_payer(
+        mut self,
+        payer: Option<oneiron::llm::run_admission::PayerPerson>,
+    ) -> Self {
+        self.payer = payer;
+        self
     }
 
     /// The words the run's newest browser call was refused with, for
@@ -528,8 +555,11 @@ impl RunGuests {
         };
         let called = match (&self.desktop, &self.browser) {
             (Some(run), _) if desktop => {
+                // A desktop Fill's writer, as a browser's (FIX 8899).
+                let fields =
+                    RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());
                 let input = call.input.clone();
-                run.call(call.verb, input, decider, writer, secrets)
+                run.call(call.verb, input, decider, writer, secrets, fields)
             }
             (_, Some(run)) if !desktop => {
                 let library = VaultLibrary {
@@ -537,7 +567,8 @@ impl RunGuests {
                     by,
                 };
                 let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets);
-                let fields = RunFieldWriter::new(server, runtime, &decider.asker);
+                let fields =
+                    RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());
                 let input = call.input.clone();
                 run.call(call.verb, input, decider, library, writer, fresh, fields)
             }
@@ -547,11 +578,15 @@ impl RunGuests {
             Ok(output) => output,
             Err(error) => return Ok(Err(browser_guest::refusal_words(&error))),
         };
-        // An effect's answer carries its receipt, naming the page it acted on.
+        // An effect's answer carries its receipt, naming the page it acted
+        // on. The log shows each receipt's act by its verb and locator only,
+        // never a typed literal or a picked option (FIX 9267).
         if let Some(receipt) = output.get("receipt") {
+            let receipt = logged_receipt(receipt);
             tracing::info!(verb, ?receipt, "browser effect receipt");
         }
-        if let Some(receipts) = output.get("receipts") {
+        if let Some(receipts) = output.get("receipts").and_then(Value::as_array) {
+            let receipts: Vec<Value> = receipts.iter().map(logged_receipt).collect();
             tracing::info!(verb, ?receipts, "browser batch receipts");
         }
         // CUA E5: how a batch or library run ended reaches the run's browser
