@@ -308,13 +308,6 @@ pub(super) fn rows(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<CatalogRow>> {
     Ok(out)
 }
 
-/// Takes the row `id` out of the catalog in `wtxn`: from the commit on, no
-/// open finds it. The body file and the custody entry go after the commit.
-/// `true` when a row was there.
-pub(super) fn retire_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &SnapshotId) -> Result<bool> {
-    CATALOG.delete(store, wtxn, id)
-}
-
 /// The rows an erase of `id` takes: every row whose dependency set names
 /// it, whose set is not precise or that does not decode, and every other
 /// row of each conversation those reach.
@@ -347,16 +340,19 @@ fn erased_rows(rows: &[CatalogRow], id: &EntityId) -> Vec<SnapshotId> {
 /// The erase of `id` takes every snapshot it reaches (FIX 10466), in the
 /// erase's own transaction at both delete doors: every row whose
 /// dependency set names it, whose set is not precise, or that does not
-/// decode, and the rest of each conversation those reach. Bodies, custody
-/// entries and live copies go after the commit.
+/// decode, and the rest of each conversation those reach; each key's
+/// retirement is staged with its row's delete. Bodies, custody entries and
+/// live copies go after the commit.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub(crate) fn erase_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    // Inside the erase's writer: a publish waiting behind it sees the move.
+    store.inference_snapshots.erased();
     let rows = rows(store, &*wtxn)?;
     for key in erased_rows(&rows, id) {
-        retire_in_txn(store, wtxn, &key)?;
+        super::store::retire_in_txn(store, wtxn, &key)?;
     }
     Ok(())
 }

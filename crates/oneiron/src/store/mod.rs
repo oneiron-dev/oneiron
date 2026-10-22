@@ -228,10 +228,6 @@ pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
 pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
 pub use handle::*;
-#[allow(
-    unused_imports,
-    reason = "the snapshot store sizes its wrapped keys with this once it lands"
-)]
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
 pub use key_custody::protocol as custody_protocol;

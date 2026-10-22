@@ -10,11 +10,14 @@
 //! id. [`SnapshotRuntime`] is the host's port to the process that holds
 //! plaintext state: a vault lock waits for its release before the key goes.
 //! The [`retention`] ledger keeps each vault inside its owner's disk budget.
+//! The store ([`crate::Vault::publish_inference_snapshot`] and its siblings)
+//! keeps each body in a file of its own and its wrapped key in custody.
 
 mod catalog;
 mod lifecycle;
 pub mod retention;
 mod seal;
+mod store;
 
 pub use self::catalog::{
     SNAPSHOT_RECORD_SCHEMA, SnapshotClass, SnapshotCompatibility, SnapshotDependencies, SnapshotId,
@@ -27,3 +30,4 @@ pub use self::lifecycle::{
     SnapshotRuntime, SnapshotWorkerAbort,
 };
 pub use self::seal::{SealedSnapshot, WrappedSnapshotKey, open_snapshot, seal_snapshot};
+pub use self::store::{SnapshotPublish, SnapshotReconcile};

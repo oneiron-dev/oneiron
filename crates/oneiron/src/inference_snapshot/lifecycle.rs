@@ -13,7 +13,8 @@
 //! [`LOCK_RELEASE_MARGIN`] is recorded timed out, and the key goes anyway.
 //! With no runtime attached the gate closes, the reservations in flight
 //! drop and the key goes at once: this crate keeps no plaintext snapshot
-//! buffer past a call. An unlock opens a new generation; it makes nothing
+//! buffer past a call, and a read whose admission a lock closed returns
+//! none. An unlock opens a new generation; it makes nothing
 //! ready, and the sealed catalog stays through both.
 //!
 //! The port is a boxed future: this crate names no server, and no executor
@@ -124,6 +125,10 @@ pub(crate) struct SnapshotLifecycle {
     gate: Mutex<Gate>,
     runtime: RwLock<Option<Arc<dyn SnapshotRuntime>>>,
     ledger: Ledger,
+    /// Held from a body file's write to its row's commit, and by every
+    /// sweep of the body files, so a sweep never takes a body whose row is
+    /// about to commit.
+    files: Mutex<()>,
 }
 
 #[derive(Debug)]
@@ -159,6 +164,10 @@ impl SnapshotLifecycle {
         &self.ledger
     }
 
+    pub(super) fn files(&self) -> MutexGuard<'_, ()> {
+        self.files.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Closes the gate: the generation it closed admits nothing again.
     fn close(&self) -> u64 {
         let mut gate = self.gate();
@@ -192,7 +201,10 @@ impl SnapshotLifecycle {
             && gate.erase_generation == admission.erase_generation
     }
 
-    fn erased(&self) {
+    /// Moves the erase generation: no admission granted before holds. An
+    /// erase does this inside its own transaction, so a publish whose
+    /// writer waits behind it sees it.
+    pub(super) fn erased(&self) {
         let mut gate = self.gate();
         gate.erase_generation = gate.erase_generation.wrapping_add(1);
     }

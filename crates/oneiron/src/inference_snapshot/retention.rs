@@ -284,7 +284,7 @@ impl SnapshotLedger<'_> {
         let mut evicted = 0_u64;
         for (id, record) in rows {
             let Some(record) = record else {
-                catalog::retire_in_txn(store, &mut wtxn, &id)?;
+                super::store::retire_in_txn(store, &mut wtxn, &id)?;
                 evicted += 1;
                 continue;
             };
@@ -307,7 +307,7 @@ impl SnapshotLedger<'_> {
                 break;
             };
             let victim = candidates.swap_remove(index);
-            catalog::retire_in_txn(store, &mut wtxn, &victim.id)?;
+            super::store::retire_in_txn(store, &mut wtxn, &victim.id)?;
             kept = kept.saturating_sub(victim.bytes);
             evicted += 1;
         }

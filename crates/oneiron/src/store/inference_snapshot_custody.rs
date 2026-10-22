@@ -9,6 +9,8 @@
 //! worker, so the kind reads host-side; a missing key means a cold
 //! recompute, never a failed restore.
 
+use std::path::PathBuf;
+
 use heed::RwTxn;
 use zeroize::Zeroizing;
 
@@ -24,6 +26,9 @@ use crate::store::key_custody::{
 /// wrapped snapshot key, version ‖ nonce ‖ sealed key and tag.
 pub(crate) const INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES: usize = 61;
 
+/// The directory under the vault root that sealed snapshot bodies live in.
+const SNAPSHOT_BODY_DIR: &str = "inference-snapshots";
+
 /// `catalog_id`'s wrapped-key subject in `binding`'s custody.
 fn snapshot_subject(binding: &CustodyBinding, catalog_id: &[u8; 16]) -> Result<CustodySubject> {
     binding.subject(CustodyKind::InferenceSnapshot, catalog_id)
@@ -36,6 +41,12 @@ fn copy_wrapped(secret: &CustodySecret) -> Result<WrappedSnapshotKey> {
 }
 
 impl Store {
+    /// This vault's sealed snapshot body directory, `inference-snapshots/`
+    /// under the root it opened at: sealed bodies only, never a key.
+    pub(crate) fn inference_snapshot_dir(&self) -> PathBuf {
+        self.owner._registered_path.path.join(SNAPSHOT_BODY_DIR)
+    }
+
     /// Writes `wrapped`'s 61 bytes as snapshot `catalog_id`'s key in `wtxn`,
     /// the binding pinned in the same transaction: published, synced and its
     /// Mint journaled before the catalog row sealed under it commits, so a
@@ -47,10 +58,6 @@ impl Store {
     /// # Errors
     /// An archived vault, whose custody is its replacement's; a retired id,
     /// which is never minted again; custody faults.
-    #[allow(
-        dead_code,
-        reason = "the snapshot store publishes snapshot keys through this once it lands"
-    )]
     pub(crate) fn publish_inference_snapshot_key_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -79,10 +86,6 @@ impl Store {
     ///
     /// # Errors
     /// A damaged entry, and custody and storage faults.
-    #[allow(
-        dead_code,
-        reason = "the snapshot store reads snapshot keys through this once it lands"
-    )]
     pub(crate) fn read_inference_snapshot_key(
         &self,
         catalog_id: &[u8; 16],
@@ -112,10 +115,6 @@ impl Store {
     ///
     /// # Errors
     /// Custody and storage faults.
-    #[allow(
-        dead_code,
-        reason = "the snapshot store stages snapshot key retirement through this once it lands"
-    )]
     pub(crate) fn stage_inference_snapshot_retirement_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -154,10 +153,6 @@ impl Store {
     /// # Errors
     /// An archived vault with a retirement standing, an intent of another
     /// cause, and custody faults.
-    #[allow(
-        dead_code,
-        reason = "startup and housekeeping finish snapshot key retirements once the store lands"
-    )]
     pub(crate) fn finish_inference_snapshot_retirements(&self) -> Result<()> {
         self.finish_custody_retirements(CustodyKind::InferenceSnapshot, |_, intent| {
             if intent.cause == RetireCause::Erase {
