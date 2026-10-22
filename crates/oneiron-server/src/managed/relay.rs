@@ -34,6 +34,7 @@ mod ctl_hold_guard;
 mod deferred_delete;
 pub(super) mod hold_guard;
 mod installer;
+mod overwrite;
 
 use self::deferred_delete::HeldDeletes;
 use self::hold_guard::RelayDeleteHoldGuard;
@@ -251,19 +252,15 @@ async fn write(
         file.write_all(&bytes).await?;
         file.sync_all().await?;
         drop(file);
-        // With a hold guard, the rename waits out a delete or a replay, and
-        // supersedes a deferred delete of the object it replaces.
-        let _serial = match &room.held {
-            Some(held) => Some(held.serialize().await),
-            None => None,
-        };
+        // With a hold guard, the install waits out a delete or a replay of
+        // current intents, keeps the generation it replaces (FIX 1283), and
+        // supersedes a deferred delete of the object.
+        if let Some(held) = &room.held {
+            return held.install(temporary.clone(), object.clone()).await;
+        }
         tokio::fs::rename(&temporary, &path).await?;
         let directory = tokio::fs::File::open(&room.objects).await?;
-        directory.sync_all().await?;
-        if let Some(held) = &room.held {
-            held.superseded(&object).await;
-        }
-        Ok::<(), std::io::Error>(())
+        directory.sync_all().await
     }
     .await;
     if result.is_err() {
@@ -369,7 +366,13 @@ pub(crate) async fn run_relay_with_hold_guard(
         Some(guard) => {
             Some(HeldDeletes::start(guard, &config.vault_id, &directory, objects.clone()).await?)
         }
-        None => None,
+        None => {
+            tracing::info!(
+                vault = %config.vault_id,
+                "plain relay room: no host-order hold coverage; PUT overwrite and DELETE use standalone behavior"
+            );
+            None
+        }
     };
     let room = Arc::new(RelayRoom {
         vault: config.vault_id.clone(),

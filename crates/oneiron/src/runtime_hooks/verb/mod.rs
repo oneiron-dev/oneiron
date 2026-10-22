@@ -42,7 +42,9 @@ pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
 pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
-pub use state::{InvocationClaim, InvocationEntry, InvocationOutcome, InvocationWait};
+pub use state::{
+    InvocationClaim, InvocationEntry, InvocationOutcome, InvocationRelease, InvocationWait,
+};
 pub(crate) use storage::{
     HookRecordsKept, RoomHookCall, SessionHookKey, SessionHooks, VerbHookStorage,
 };

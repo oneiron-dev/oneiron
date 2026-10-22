@@ -406,7 +406,17 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
+        // An anchor whose rows no longer read for this caller is no place
+        // to resume from: the resume takes a gap and a fresh snapshot
+        // (FIX 9493).
+        if !self.anchor_readmitted(&state.journal, view, channel, cursor)? {
+            return Ok(None);
+        }
         super::history::History::replay(&state.journal, view, channel, cursor)
+    }
+
+    fn readmits(&self, pushes: &[subscriptions::Push]) -> Result<bool, AppError> {
+        self.readmitted(pushes)
     }
 
     fn withholds(&self, pushes: &[subscriptions::Push]) -> Result<bool, AppError> {
