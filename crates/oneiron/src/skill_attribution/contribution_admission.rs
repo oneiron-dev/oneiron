@@ -42,6 +42,10 @@ pub enum UnmatchedReason {
     /// The run's outcome and target already hold the final measurement of
     /// another pair; this one is kept beside it.
     Conflicting,
+    /// What would measure it could not be read or minted in this write (the
+    /// credit's effective used chain, or the check's own id); the fault is
+    /// logged, and the pair may be measured when it is submitted again.
+    Unread,
 }
 
 /// One submitted pair the kept forks did not prove, with why.
@@ -140,68 +144,95 @@ fn proved_in_txn(
     experiment: &Experiment<'_>,
     pair: &ContributionPair,
 ) -> Result<std::result::Result<ContributionCheck, Vec<UnmatchedReason>>> {
-    let Some(candidate) = credited_candidate_in_txn(vault, txn, skill, experiment.target(), pair)?
-    else {
-        return Ok(Err(vec![UnmatchedReason::NoCredit]));
+    let candidate = match credited_candidate_in_txn(vault, txn, skill, experiment.target(), pair)? {
+        Ok(candidate) => candidate,
+        Err(reason) => return Ok(Err(vec![reason])),
     };
-    Ok(
-        match matched_contribution_facts_in_txn(
-            vault,
-            txn,
-            &candidate,
-            &pair.with_skill,
-            &pair.without_skill,
-        )? {
-            Ok(facts) => Ok(ContributionCheck {
-                // A fresh opaque id, kept with the measurement: no id the
-                // check names derives it, so none confirms it once erased.
-                receipt: format!(
-                    "contribution:{}",
-                    crate::entity_id::bytes_to_hex_lower(&vault.store.clock.ulid()?)
-                ),
-                contributed: contributed(facts.with_skill_passed, facts.without_skill_passed),
-            }),
-            Err(mismatches) => Err(mismatches.into_iter().map(UnmatchedReason::Forks).collect()),
-        },
-    )
+    let facts = match matched_contribution_facts_in_txn(
+        vault,
+        txn,
+        &candidate,
+        &pair.with_skill,
+        &pair.without_skill,
+    )? {
+        Ok(facts) => facts,
+        Err(mismatches) => {
+            return Ok(Err(mismatches
+                .into_iter()
+                .map(UnmatchedReason::Forks)
+                .collect()));
+        }
+    };
+    // A fresh opaque id, kept with the measurement: no id the check names
+    // derives it, so none confirms it once erased.
+    let id = match vault.store.clock.ulid() {
+        Ok(id) => id,
+        Err(error) => {
+            unread(&error);
+            return Ok(Err(vec![UnmatchedReason::Unread]));
+        }
+    };
+    Ok(Ok(ContributionCheck {
+        receipt: format!("contribution:{}", crate::entity_id::bytes_to_hex_lower(&id)),
+        contributed: contributed(facts.with_skill_passed, facts.without_skill_passed),
+    }))
+}
+
+fn unread(error: &crate::Error) {
+    tracing::warn!(
+        kind = ?error.kind(),
+        %error,
+        "a contribution pair could not be measured in this write; it is kept unmatched"
+    );
 }
 
 /// The candidate the run's credited outcome makes of `pair`: its outcome,
 /// axis, goal revision and anchor resolved from the stored credit, never
-/// taken from the caller. `None` when no credit names them, or an erase
-/// cleared its attribution; for a used edge, also when the credit's
-/// effective used chain does not hold the edge or `skill` is not the run's
-/// pattern.
+/// taken from the caller. [`UnmatchedReason::NoCredit`] when no credit names
+/// them, or an erase cleared its attribution; for a used edge, also when the
+/// credit's effective used chain does not hold the edge or `skill` is not
+/// the run's pattern, and [`UnmatchedReason::Unread`] when that chain could
+/// not be read.
 fn credited_candidate_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: EntityId,
     target: ContributionTarget,
     pair: &ContributionPair,
-) -> Result<Option<ContributionCandidate>> {
+) -> Result<std::result::Result<ContributionCandidate, UnmatchedReason>> {
     let key = receipt_id(&pair.attempt_receipt, &pair.outcome_receipt, &pair.axis);
     let Some(credit) = CREDIT_RECEIPT.get(&vault.store, txn, &key)? else {
-        return Ok(None);
+        return Ok(Err(UnmatchedReason::NoCredit));
     };
     let Some(attribution) = credit.attribution.clone() else {
-        return Ok(None);
+        return Ok(Err(UnmatchedReason::NoCredit));
     };
     if credit.goal_revision != pair.goal_revision || credit.anchor != pair.anchor {
-        return Ok(None);
+        return Ok(Err(UnmatchedReason::NoCredit));
     }
     if let ContributionTarget::UsedEdge { derived, source } = target {
-        let fields =
-            super::credit_join::effective_fields_in_txn(vault, txn, &credit, attribution.clone())?;
+        let fields = match super::credit_join::effective_fields_in_txn(
+            vault,
+            txn,
+            &credit,
+            attribution.clone(),
+        ) {
+            Ok(fields) => fields,
+            Err(error) => {
+                unread(&error);
+                return Ok(Err(UnmatchedReason::Unread));
+            }
+        };
         if skill != attribution.pattern
             || !fields
                 .used_edges
                 .iter()
                 .any(|edge| edge.derived == derived && edge.source == source)
         {
-            return Ok(None);
+            return Ok(Err(UnmatchedReason::NoCredit));
         }
     }
-    Ok(Some(ContributionCandidate {
+    Ok(Ok(ContributionCandidate {
         attempt_receipt: credit.attempt_receipt,
         outcome_receipt: credit.outcome_receipt,
         skill,

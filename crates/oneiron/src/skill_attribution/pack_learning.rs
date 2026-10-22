@@ -204,11 +204,28 @@ fn project(
             direct.insert(fields.pattern, true);
         }
         let direct_subjects: Vec<_> = direct.keys().copied().map(Some).collect();
-        let decay = credit_decay_in_txn(vault, txn, &fields)?;
-        let shares = if outcome.succeeded {
-            credit_shares_in_txn(vault, txn, &fields, &direct_subjects, decay)?
+        // Shares are due on a success someone won, which reads the decay as
+        // it always has. Any other outcome reads it best effort, only to
+        // freeze it for a later reconciliation (FIX 10107).
+        let shares_due = outcome.succeeded && !direct_subjects.is_empty();
+        let decay = if shares_due {
+            Some(credit_decay_in_txn(vault, txn, &fields)?)
         } else {
-            Vec::new()
+            credit_decay_in_txn(vault, txn, &fields)
+                .inspect_err(|error| {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        %error,
+                        "an outcome's credit_decay was not read; a reconciliation reads it then"
+                    );
+                })
+                .ok()
+        };
+        let shares = match decay {
+            Some(decay) if shares_due => {
+                credit_shares_in_txn(vault, txn, &fields, &direct_subjects, decay)?
+            }
+            _ => Vec::new(),
         };
         let credit = LateCreditReceipt {
             receipt_id: key.clone(),
@@ -241,7 +258,9 @@ fn project(
         // sealing an empty result before attribution has caught up.
         if !credit.direct_subjects.is_empty() || !evidence.is_empty() {
             CREDIT_RECEIPT.put(&vault.store, txn, &key, &credit)?;
-            seal_decay_in_txn(&vault.store, txn, &key, decay)?;
+            if let Some(decay) = decay {
+                seal_decay_in_txn(&vault.store, txn, &key, decay);
+            }
         }
         Ok(credit)
     })

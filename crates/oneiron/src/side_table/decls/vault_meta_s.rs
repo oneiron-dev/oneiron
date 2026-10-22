@@ -367,7 +367,8 @@ side_tables! {
     /// and late landed uses the effective credit joins (each end nil once erased), its direct
     /// subjects and shares with their used chains, and when. Key: string (the credit receipt id
     /// "\0" "decay", or "\0" a zero-padded index); an erase moves an adjustment naming the erased
-    /// entity to "erased" "\0" a fresh ULID.
+    /// entity to "erased" "\0" a fresh ULID, and where the base receipt's run or outcome reference
+    /// spells it, also drops the adjustment's base links and the frozen decay.
     SKILL_ATTRIBUTION_CREDIT_ADJUSTMENT: VaultMeta b"skill_attribution:credit_adjustment:v1:" Named Engine
         => crate::skill_attribution::erase_credit_adjustments_in_txn;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().

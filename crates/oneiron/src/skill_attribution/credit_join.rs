@@ -111,22 +111,39 @@ fn chain_in_txn(
 
 /// Freezes `decay`, the `credit_decay` the original projection of the
 /// sealed receipt `base` resolved, beside it in the projection's `wtxn`.
+/// Capture-only: a freeze that fails is dropped in its savepoint with a WARN,
+/// the projection stands, and a later reconciliation reads the decay then
+/// ([`frozen_decay_in_txn`]).
+pub(super) fn seal_decay_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>, base: &str, decay: f64) {
+    let key = format!("{base}\0{DECAY}");
+    if let Err(error) = super::derivation_witness::in_savepoint(store, wtxn, |txn| {
+        ADJUSTMENT.put(store, txn, &key, &CreditJoinRow::Decay(decay))
+    }) {
+        tracing::warn!(
+            kind = ?error.kind(),
+            %error,
+            "an outcome's credit_decay was not frozen; a reconciliation reads it then"
+        );
+    }
+}
+
+/// The direct subjects `credit` stands with now: its latest adjustment's,
+/// else the sealed receipt's own.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(super) fn seal_decay_in_txn(
+pub(super) fn latest_direct_in_txn(
     store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    base: &str,
-    decay: f64,
-) -> Result<()> {
-    ADJUSTMENT.put(
-        store,
-        wtxn,
-        &format!("{base}\0{DECAY}"),
-        &CreditJoinRow::Decay(decay),
-    )
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+) -> Result<Vec<Option<EntityId>>> {
+    Ok(chain_in_txn(store, txn, &credit.receipt_id)?
+        .pop()
+        .map_or_else(
+            || credit.direct_subjects.clone(),
+            |(_, last)| last.direct_subjects,
+        ))
 }
 
 /// The decay `credit` was projected under: the frozen one, or, for a
@@ -395,7 +412,10 @@ fn reconcile_in_txn(
             crate::learning::record_evidence_in_txn(vault, txn, &cell, &evidence, now)?;
         }
     }
-    for subject in before.keys().filter(|subject| !after.contains_key(subject)) {
+    for subject in before
+        .keys()
+        .filter(|subject| !after.contains_key(*subject))
+    {
         let cell = credit_cell(&fields, &credit.axis, *subject);
         crate::learning::evidence::withdraw_evidence_in_txn(
             vault,
@@ -478,11 +498,8 @@ pub(super) fn credit_roots_in_txn(
         return Ok(BTreeSet::new());
     };
     let fields = effective_fields_in_txn(vault, txn, credit, sealed)?;
-    let chain = chain_in_txn(&vault.store, txn, &credit.receipt_id)?;
-    let direct = chain
-        .last()
-        .map_or(&credit.direct_subjects, |(_, last)| &last.direct_subjects);
-    Ok(origins(&fields, direct)
+    let direct = latest_direct_in_txn(&vault.store, txn, credit)?;
+    Ok(origins(&fields, &direct)
         .into_iter()
         .chain(fields.output)
         .collect())
@@ -533,12 +550,18 @@ fn warn_unreconciled(error: &crate::Error) {
     );
 }
 
-/// Keeps every adjustment naming erased `entity` in erased form (FIX 8988):
-/// a direct subject, share subject or landed end it names reads `None`, a
-/// chain it is on or whose origin it is reads as erased, and the row moves
-/// from its key to `erased` NUL a fresh ULID that no id it held derives. It
-/// keeps its base, checks, weights and time. A row that no longer decodes is
-/// deleted and counted.
+/// Keeps every row naming erased `entity` in erased form (FIX 8988).
+///
+/// - An adjustment clears a direct subject, share subject or landed end it
+///   names, and a chain it is on or whose origin it is, and moves from its
+///   key to `erased` NUL a fresh ULID that no id it held derives. It keeps
+///   its checks (opaque ids), weights and time.
+/// - A row whose sealed receipt's run or outcome reference spells the
+///   entity's id has a key and links derived from them: an adjustment there
+///   also drops its base, its previous link and its own id for opaque erased
+///   ones and moves as above, and the frozen decay there goes.
+///
+/// A row that no longer decodes is deleted and counted.
 ///
 /// # Errors
 ///
@@ -548,11 +571,34 @@ pub(crate) fn erase_credit_adjustments_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<()> {
+    let spelled = entity.to_hex().to_ascii_lowercase();
+    let mut bases: BTreeMap<String, bool> = BTreeMap::new();
     for (key, row) in super::skill_erase::erase_scan_in_txn(vault, wtxn, ADJUSTMENT)? {
-        let CreditJoinRow::Adjustment(mut adjustment) = row else {
-            continue;
+        let base = match &row {
+            CreditJoinRow::Decay(_) => key.rsplit_once('\0').map(|(base, _)| base.to_owned()),
+            CreditJoinRow::Adjustment(adjustment) => Some(adjustment.base.clone()),
         };
-        let mut named = false;
+        let base_named = match base {
+            Some(base) => match bases.get(&base) {
+                Some(named) => *named,
+                None => {
+                    let named = base_names_in_txn(&vault.store, wtxn, &base, &spelled)?;
+                    bases.insert(base, named);
+                    named
+                }
+            },
+            None => false,
+        };
+        let mut adjustment = match row {
+            CreditJoinRow::Decay(_) => {
+                if base_named {
+                    ADJUSTMENT.delete(&vault.store, wtxn, &key)?;
+                }
+                continue;
+            }
+            CreditJoinRow::Adjustment(adjustment) => adjustment,
+        };
+        let mut named = base_named;
         for subject in &mut adjustment.direct_subjects {
             if *subject == Some(*entity) {
                 *subject = None;
@@ -572,6 +618,11 @@ pub(crate) fn erase_credit_adjustments_in_txn(
             continue;
         }
         let fresh = crate::entity_id::bytes_to_hex_lower(&vault.store.clock.ulid()?);
+        if base_named {
+            adjustment.receipt_id = format!("erased:{fresh}");
+            adjustment.base = "erased".to_owned();
+            adjustment.previous = None;
+        }
         ADJUSTMENT.delete(&vault.store, wtxn, &key)?;
         let moved = format!("erased\0{fresh}");
         ADJUSTMENT.put(
@@ -582,4 +633,20 @@ pub(crate) fn erase_credit_adjustments_in_txn(
         )?;
     }
     Ok(())
+}
+
+/// Whether the sealed receipt `base`'s run or outcome reference spells
+/// `spelled`, an id's lowercase hex, without regard to case.
+fn base_names_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    base: &str,
+    spelled: &str,
+) -> Result<bool> {
+    let credit = CREDIT_RECEIPT.get(store, txn, &base.to_owned())?;
+    Ok(credit.is_some_and(|credit| {
+        [&credit.attempt_receipt, &credit.outcome_receipt]
+            .iter()
+            .any(|text| text.to_ascii_lowercase().contains(spelled))
+    }))
 }

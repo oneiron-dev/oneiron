@@ -148,34 +148,61 @@ pub(super) fn followed_in_txn(
         .collect())
 }
 
-/// Whether `skill` can earn a direct win on `credit`: a followed skill on a
-/// successful outcome, or the team pattern once someone else won. A credit
-/// whose attribution an erase cleared joins nothing (FIX 8988).
-pub(super) fn joins(credit: &LateCreditReceipt, followed: bool, skill: EntityId) -> bool {
+/// Whether `skill` can earn a direct win on `credit`, whose subjects won it
+/// directly are `direct` as it stands now: a followed skill on a successful
+/// outcome, or the team pattern once someone else won. A credit whose
+/// attribution an erase cleared joins nothing (FIX 8988).
+fn joins(
+    credit: &LateCreditReceipt,
+    direct: &[Option<EntityId>],
+    followed: bool,
+    skill: EntityId,
+) -> bool {
     let Some(attribution) = &credit.attribution else {
         return false;
     };
     credit.succeeded
-        && !credit.direct_subjects.contains(&Some(skill))
+        && !direct.contains(&Some(skill))
         && if skill == attribution.pattern {
-            !credit.direct_subjects.is_empty()
+            !direct.is_empty()
         } else {
             followed
         }
 }
 
-/// Every target a check could measure on `credit`, with the skill whose
-/// goal axis scores it: each loaded skill the run followed to success and
-/// the team pattern, then, once someone won directly, each used edge of its
-/// effective attribution no check has measured, scored by the pattern.
+/// The subjects that won `credit` directly as it stands now, its latest
+/// adjustment's (FIX 3241), read best effort: a read that fails keeps the
+/// sealed receipt's, with a WARN.
+fn direct_now_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+) -> Vec<Option<EntityId>> {
+    super::credit_join::latest_direct_in_txn(&vault.store, txn, credit).unwrap_or_else(|error| {
+        tracing::warn!(
+            kind = ?error.kind(),
+            %error,
+            "a credit's adjustments were not read; its sealed direct wins stand"
+        );
+        credit.direct_subjects.clone()
+    })
+}
+
+/// Every target a check could measure on `credit`, whose direct winners are
+/// `direct`, with the skill whose goal axis scores it: each loaded skill the
+/// run followed to success and the team pattern, then, once someone won
+/// directly, each used edge of its effective attribution no check has
+/// measured, scored by the pattern. The edges are read best effort: a read
+/// that fails offers the loaded skills alone, with a WARN.
 fn targets_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     credit: &LateCreditReceipt,
+    direct: &[Option<EntityId>],
     followed: Option<&BTreeSet<EntityId>>,
-) -> Result<BTreeMap<ContributionTarget, EntityId>> {
+) -> BTreeMap<ContributionTarget, EntityId> {
     let Some(attribution) = &credit.attribution else {
-        return Ok(BTreeMap::new());
+        return BTreeMap::new();
     };
     let mut out: BTreeMap<_, _> = followed
         .into_iter()
@@ -184,16 +211,23 @@ fn targets_in_txn(
         .chain([attribution.pattern])
         .map(|skill| (ContributionTarget::LoadedSkill(skill), skill))
         .collect();
-    if credit.succeeded && !credit.direct_subjects.is_empty() {
-        let fields =
-            super::credit_join::effective_fields_in_txn(vault, txn, credit, attribution.clone())?;
-        out.extend(
-            unchecked_edges(&fields)
-                .into_iter()
-                .map(|target| (target, attribution.pattern)),
-        );
+    if credit.succeeded && !direct.is_empty() {
+        match super::credit_join::effective_fields_in_txn(vault, txn, credit, attribution.clone()) {
+            Ok(fields) => out.extend(
+                unchecked_edges(&fields)
+                    .into_iter()
+                    .map(|target| (target, attribution.pattern)),
+            ),
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    %error,
+                    "a credit's used edges were not read; its loaded skills are still offered"
+                );
+            }
+        }
     }
-    Ok(out)
+    out
 }
 
 /// Up to `limit` credited runs' targets a check should measure, in credit
@@ -225,7 +259,9 @@ pub fn contribution_check_candidates_after(
     let after = match after {
         Some((key, target)) => match CREDIT_RECEIPT.get(&vault.store, &rtxn, key)? {
             Some(credit) => {
-                targets_in_txn(vault, &rtxn, &credit, followed.get(&credit.attempt_receipt))?
+                let direct = direct_now_in_txn(vault, &rtxn, &credit);
+                let followed = followed.get(&credit.attempt_receipt);
+                targets_in_txn(vault, &rtxn, &credit, &direct, followed)
                     .contains_key(target)
                     .then_some((key, *target))
             }
@@ -244,7 +280,8 @@ pub fn contribution_check_candidates_after(
         let Some(attribution) = &credit.attribution else {
             continue;
         };
-        for (target, skill) in targets_in_txn(vault, &rtxn, &credit, run_followed)? {
+        let direct = direct_now_in_txn(vault, &rtxn, &credit);
+        for (target, skill) in targets_in_txn(vault, &rtxn, &credit, &direct, run_followed) {
             if after.is_some_and(|(at, last)| *at == key && target <= last) {
                 continue;
             }
@@ -262,6 +299,7 @@ pub fn contribution_check_candidates_after(
             let eligible = match target {
                 ContributionTarget::LoadedSkill(skill) => joins(
                     &credit,
+                    &direct,
                     run_followed.is_some_and(|skills| skills.contains(&skill)),
                     skill,
                 ),
