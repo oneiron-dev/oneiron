@@ -20,9 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::codec::{RECORD, settlement_key_parts};
 use super::receipts::{already_settled, settlement_receipt_record};
-use super::records::{
-    SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome, SettlementRecord,
-};
+use super::records::{SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome};
 use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::{
@@ -39,6 +37,11 @@ use crate::provenance::made_by::MadeBy;
 use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
+
+mod admission;
+mod output_settle;
+pub use admission::MadeByReader;
+use output_settle::output_record;
 
 /// Key: id16 + hash32 (blake3 of the proposal ref), as the settlement ledger.
 pub(super) const PENDING: SideTable<(EntityId, [u8; 32]), PendingRow, Named> =
@@ -140,6 +143,9 @@ pub enum PendingProposalKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PendingProposalView {
     pub artifact_id: EntityId,
+    /// The artifact as a typed record ref (OF-063), built from its id with
+    /// no read.
+    pub artifact: crate::lens::RecordRef,
     pub proposal_ref: String,
     pub kind: PendingProposalKind,
     pub base_version: Option<u64>,
@@ -187,6 +193,11 @@ impl PendingRow {
         };
         PendingProposalView {
             artifact_id,
+            artifact: crate::lens::RecordRef::from_id(
+                crate::registry::ENTITY_TYPE_BLOB_ARTIFACT,
+                &artifact_id,
+                None,
+            ),
             proposal_ref: self.proposal_ref.clone(),
             kind: match self.body {
                 PendingBody::Edit { .. } => PendingProposalKind::Edit,
@@ -292,22 +303,26 @@ impl Vault {
     /// Holds an edit proposal beside its artifact until a Keep or Discard
     /// names it by its ref. A rejected or already settled proposal, or a ref
     /// already waiting, is refused. `made_by` is the envelope Keep gives the
-    /// version; its trigger is checked when the version lands.
+    /// version; a named one is admitted under `reader` as it is retained
+    /// (FIX 1229, [`MadeByReader`]), and its trigger is checked again when
+    /// the version lands.
     pub fn retain_edit_proposal(
         &self,
         artifact_id: &EntityId,
         proposal: &EditProposal,
         made_by: Option<&MadeBy>,
+        reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
         let row = edit_pending_row(proposal, made_by, actor, retained_at)?;
-        self.put_pending(artifact_id, &row)
+        self.put_pending(artifact_id, &row, reader)
     }
 
     /// [`Self::retain_edit_proposal`] in the caller's own write transaction, for a
     /// writer that commits the proposal beside rows of its own (a standing question's
-    /// ask and its stamp, FIX 2337).
+    /// ask and its stamp, FIX 2337). No read reaches this rail, so a named made_by
+    /// that names any row but its writer is refused (FIX 1229).
     pub(crate) fn retain_edit_proposal_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -317,21 +332,24 @@ impl Vault {
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
+        admission::retention_lane(artifact_id, made_by, actor.entity_ref(), None)?;
         let row = edit_pending_row(proposal, made_by, actor, retained_at)?;
         self.put_pending_in_txn(wtxn, artifact_id, &row)?;
         Ok(row.view(*artifact_id))
     }
 
     /// Offers one native organ result to an artifact as a waiting proposal,
-    /// pinned to the head it was made against (none for a new artifact).
+    /// pinned to the head it was made against (none for a new artifact). Its
+    /// named made_by is admitted under `reader` (FIX 1229).
     pub fn propose_native_output(
         &self,
         artifact_id: &EntityId,
         output: &NativeOutput,
+        reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
-        self.propose_output(artifact_id, output, actor, retained_at, None)
+        self.propose_output(artifact_id, output, reader, (actor, retained_at), None)
     }
 
     /// Offers a deck export as a waiting proposal pinned to `base`, the
@@ -341,19 +359,26 @@ impl Vault {
         &self,
         artifact_id: &EntityId,
         output: &NativeOutput,
+        reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         base: (u64, [u8; 32]),
         hold: DeckExportHold,
     ) -> Result<PendingProposalView> {
-        self.propose_output(artifact_id, output, actor, retained_at, Some((base, hold)))
+        self.propose_output(
+            artifact_id,
+            output,
+            reader,
+            (actor, retained_at),
+            Some((base, hold)),
+        )
     }
 
     fn propose_output(
         &self,
         artifact_id: &EntityId,
         output: &NativeOutput,
-        actor: WriteActor,
-        retained_at: u64,
+        reader: Option<MadeByReader<'_>>,
+        (actor, retained_at): (WriteActor, u64),
         deck: Option<((u64, [u8; 32]), DeckExportHold)>,
     ) -> Result<PendingProposalView> {
         let body = self
@@ -404,7 +429,7 @@ impl Vault {
                 report,
             },
         };
-        self.put_pending(artifact_id, &row)
+        self.put_pending(artifact_id, &row, reader)
     }
 
     /// The proposals waiting beside one artifact, oldest ref hash first.
@@ -635,8 +660,22 @@ impl Vault {
         })
     }
 
-    fn put_pending(&self, artifact_id: &EntityId, row: &PendingRow) -> Result<PendingProposalView> {
-        self.with_write_txn_grouped(|wtxn| self.put_pending_in_txn(wtxn, artifact_id, row))?;
+    fn put_pending(
+        &self,
+        artifact_id: &EntityId,
+        row: &PendingRow,
+        reader: Option<MadeByReader<'_>>,
+    ) -> Result<PendingProposalView> {
+        let lane =
+            admission::retention_lane(artifact_id, row.made_by.as_ref(), row.retained_by, reader)?;
+        self.with_write_txn_grouped(|wtxn| {
+            // A named envelope is admitted in the transaction that keeps it
+            // (FIX 1229).
+            if let (Some(lane), Some(made_by)) = (&lane, &row.made_by) {
+                admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
+            }
+            self.put_pending_in_txn(wtxn, artifact_id, row)
+        })?;
         Ok(row.view(*artifact_id))
     }
 
@@ -684,44 +723,6 @@ impl Vault {
     fn drop_pending(&self, artifact_id: &EntityId, proposal_ref: &str) -> Result<()> {
         let key = settlement_key_parts(artifact_id, proposal_ref);
         self.with_write_txn_grouped(|wtxn| PENDING.delete(&self.store, wtxn, &key).map(|_| ()))
-    }
-}
-
-/// The ledger record of a native output's settle: `version` the version it
-/// became, `replaced` the head that version replaced.
-fn output_record(
-    row: &PendingRow,
-    outcome: SettleOutcomeKind,
-    (consent, actor): (&SettleConsent, WriteActor),
-    settled_at: u64,
-    (version, replaced): (
-        Option<&crate::blob_artifact::BlobArtifactVersion>,
-        Option<u64>,
-    ),
-) -> SettlementRecord {
-    let report = match &row.body {
-        PendingBody::Output { report, .. } => report.as_bytes(),
-        PendingBody::Edit { manifest, .. } => manifest.as_slice(),
-    };
-    SettlementRecord {
-        proposal_ref: row.proposal_ref.clone(),
-        outcome,
-        settled_at,
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        brief_ref: consent.brief_ref().map(str::to_owned),
-        before_version: version.and(replaced),
-        version: version.map(|version| version.version),
-        content_hash: version.map(|version| version.content_hash),
-        manifest_ref: version.map(|_| *blake3::hash(report).as_bytes()),
-        manifest_ops: 0,
-        pptx_slide_creation_id_mints: Vec::new(),
-        pptx_review_identities: Vec::new(),
-        pptx_judgments: Vec::new(),
-        docx_judgments: Vec::new(),
-        anchors: Vec::new(),
-        reason: None,
-        sheet_answers: None,
-        deck: None,
     }
 }
 

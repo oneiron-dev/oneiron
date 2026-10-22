@@ -54,6 +54,8 @@ mod ladder;
 pub(crate) mod launch_price;
 mod llama_identity;
 mod media;
+#[cfg(unix)]
+mod native_exl3;
 mod offer;
 mod openai;
 pub(crate) mod outbound_wait;
@@ -87,7 +89,9 @@ pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::MeshRoutes;
 pub use hosted_speech::HostedCloner;
-pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
+pub(crate) use http::{
+    codec_token, encode_request_body, install_media_reply_line, mark_cloud_node,
+};
 pub use ladder::OfferLadder;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
@@ -695,15 +699,27 @@ fn build_provider(
                 .transpose()?;
             // Only an own server reads the host's solo marker (INF 1).
             let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
-            let chat = OpenAiCompatBackend::new(
-                OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo),
-                openai::OpenAiHttp {
-                    http,
-                    cap: output_cap(provider),
-                    response_format: provider.response_format,
-                    identities: Arc::clone(identities),
-                },
-            );
+            let config = OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo);
+            let transport = openai::OpenAiHttp {
+                http,
+                cap: output_cap(provider),
+                response_format: provider.response_format,
+                identities: Arc::clone(identities),
+            };
+            // A provider a managed EXL3 worker of this process is bound to
+            // calls that worker over its native socket (DESIGN-V2 §8); every
+            // other call, and every other provider, stays on HTTP as before.
+            #[cfg(unix)]
+            let native = native_exl3::NativeExl3Transport::bind(name, sockets.is_some(), transport);
+            #[cfg(unix)]
+            let transport = match native {
+                Ok(native) => {
+                    let chat = OpenAiCompatBackend::new(config, native);
+                    return Ok(Some(Arc::new(chat)));
+                }
+                Err(transport) => transport,
+            };
+            let chat = OpenAiCompatBackend::new(config, transport);
             // A provider that serves Responses over a socket holds one by
             // default (ARCH-0081 §5); its chat HTTP path is the fallback.
             match sockets {

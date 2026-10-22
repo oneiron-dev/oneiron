@@ -39,8 +39,8 @@ pub use room::{
     RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
 };
 pub(crate) use room_verbs::{
-    off_room_reader_clearance_in, room_ceiling_in, room_clearance_in, room_reader_in,
-    room_roster_in, thread_ceiling_in, thread_reader_in,
+    off_room_reader_clearance_in, room_ceiling_in, room_clearance_in, room_facets_axis_in,
+    room_reader_in, room_roster_in, thread_ceiling_in, thread_reader_in,
 };
 pub use worlds::{WorldPresence, WorldsSection, world_set_scope};
 mod frame;

@@ -11,10 +11,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `src/emitted.rs` | src | s | 5 crate-vis | — | What a checked stream has already shown its caller (FIX 8617): each part in the order it started, its text… |
 | `src/lib.rs` | src | m | 1 struct · 4 fn · 1 mod · 2 re-export | OwnServerBackend | Own-server LlmBackend |
 | `src/mesh/catalog.rs` | src | s | 1 struct · 1 fn · 2 const · 3 crate-vis | CatalogRefresh | Which models a node offers the owner's other nodes, and the row a node writes for each one it hears of (FIX… |
 | `src/mesh/client.rs` | src | m | 4 struct · 1 trait · 6 fn | LlmNodes, MeshLlmTransport, MeshPeerProof, MeshPeerTransport, VaultLlmNodes | The asking side: the first of the owner's nodes that takes the call runs it; with none, the call waits and… |
-| `src/mesh/mod.rs` | src | s | 1 const · 3 re-export | — | Models on the owner's other nodes (OF-575, owner ruling MESH: "a phone uses the MacBook's model") |
-| `src/mesh/serve.rs` | src | s | 1 struct · 1 trait · 2 fn | LlmMeshHandler, LlmMeshService | The serving side: the node that has the model runs another owner node's call under its own admission, and… |
+| `src/mesh/mod.rs` | src | s | 1 const · 4 re-export | — | Models on the owner's other nodes (OF-575, owner ruling MESH: "a phone uses the MacBook's model") |
+| `src/mesh/pump.rs` | src | s | 11 crate-vis | — | The asking side's stream pump (FIX 8619): a mesh stream's events go to its caller one handoff at a time |
+| `src/mesh/serve.rs` | src | m | 1 struct · 1 trait · 2 fn | LlmMeshHandler, LlmMeshService | The serving side: the node that has the model runs another owner node's call under its own admission, and… |
+| `src/mesh/staging.rs` | src | m | 1 struct · 1 fn · 1 const · 14 crate-vis | StagingBudget | The bytes the model mesh holds for calls (FIX 8618, FIX 8619): bodies a connection stages either way… |
 | `src/tests.rs` | test | m | — | — | — |
 | `tests/remote_transport.rs` | test | s | — | — | Own-server conformance through the shipped HTTP transport, not a trait-only fake |

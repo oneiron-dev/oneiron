@@ -26,8 +26,12 @@ use std::collections::BTreeSet;
 // The owner's digest settings and the Coach's changes to them (FIX 5495).
 mod changes;
 mod coach;
+// The rows a saved period's copies depend on, for its erase index (FIX 8672).
+mod dependencies;
 // A saved period's loop-decision rows: carrier, erase index, recheck (OF-499 A2).
 mod loop_decisions;
+// A hard delete inside a saved period: rows rewritten, not the period (FIX 7693).
+mod rewrite;
 mod settings;
 pub use changes::WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER;
 pub use coach::WeaveDigestSettingsDrafter;
@@ -314,6 +318,8 @@ enum WireItem {
     },
     AgentHealth {
         card: crate::dreamer_runner::maintenance::agent_health::AgentHealthCard,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        draft_erased: bool,
     },
     SieveAudit {
         attempt: crate::attempt_queue::AttemptId,
@@ -372,10 +378,13 @@ impl WireDigest {
                                         dreamed_at: *dreamed_at,
                                         entries: *entries,
                                     },
-                                    WeaveItem::AgentHealth { card } => {
-                                        WireItem::AgentHealth { card: card.clone() }
+                                    WeaveItem::AgentHealth { card, draft_erased } => {
+                                        WireItem::AgentHealth {
+                                            card: card.clone(),
+                                            draft_erased: *draft_erased,
+                                        }
                                     }
-                                    WeaveItem::SieveAudit { attempt, audit } => {
+                                    WeaveItem::SieveAudit { attempt, audit, .. } => {
                                         WireItem::SieveAudit {
                                             attempt: *attempt,
                                             audit: audit.clone(),
@@ -451,11 +460,15 @@ impl WireDigest {
                                             dreamed_at,
                                             entries,
                                         },
-                                        WireItem::AgentHealth { card } => {
-                                            WeaveItem::AgentHealth { card }
+                                        WireItem::AgentHealth { card, draft_erased } => {
+                                            WeaveItem::AgentHealth { card, draft_erased }
                                         }
                                         WireItem::SieveAudit { attempt, audit } => {
-                                            WeaveItem::SieveAudit { attempt, audit }
+                                            WeaveItem::SieveAudit {
+                                                attempt,
+                                                audit,
+                                                redacted: Vec::new(),
+                                            }
                                         }
                                         WireItem::LoopDecision(row) => row.into_item(),
                                     })
@@ -471,8 +484,8 @@ impl WireDigest {
 
 /// Include the copied claim and every typed reference carried by its saved
 /// projection. This is an index over byte carriers, not a read authorization.
-/// A loop row's refs join only the erase index
-/// (`loop_decisions::indexed_sources`), never the period's gates.
+/// A loop row's refs and a card's draft sources join only the erase index
+/// (`dependencies::indexed_sources`), never the period's gates.
 fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
     let mut sources = BTreeSet::new();
     for section in &report.sections {
@@ -511,7 +524,8 @@ fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
                 // body, and no diary entry's id or text.
                 WeaveItem::DreamProgress { .. } => {}
                 // A card is a side-table row, not a record: a saved period
-                // reads the current card again before it serves one.
+                // reads the current card again before it serves one. Its
+                // draft's sources index it apart (`dependencies`).
                 WeaveItem::AgentHealth { .. } => {}
                 // An audit is a side-table row too, read again the same way;
                 // the rows it stands on are records.
@@ -519,7 +533,7 @@ fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
                     sources.extend(super::weave_report::sieve_score::sieve_audit_rows(audit));
                 }
                 // A loop row's refs index its period for erasure apart
-                // (`loop_decisions::indexed_sources`): the row is rechecked
+                // (`dependencies::indexed_sources`): the row is rechecked
                 // whole on its own, so its refs never gate the period.
                 WeaveItem::LoopDecision { .. } => {}
             }
@@ -532,9 +546,44 @@ fn source_key(source: &EntityId, digest_key: &[u8]) -> Vec<u8> {
     [SOURCE_PREFIX, source.as_bytes(), digest_key].concat()
 }
 
+/// One saved period's row in `txn`, copied out.
+fn digest_row_in(store: &Store, txn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    Ok(store.vault_meta.get(txn, key)?.map(|raw| raw.to_vec()))
+}
+
+/// Writes one saved period's row.
+fn put_digest_row_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8],
+    bytes: &[u8],
+) -> Result<()> {
+    store.vault_meta.put(txn, key, bytes)?;
+    Ok(())
+}
+
+/// Sets (`indexed`) or clears `source`'s entry in one period's erase index.
+fn index_source_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    source: &EntityId,
+    digest_key: &[u8],
+    indexed: bool,
+) -> Result<()> {
+    let key = source_key(source, digest_key);
+    if indexed {
+        store.vault_meta.put(txn, &key, &[])?;
+    } else {
+        store.vault_meta.delete(txn, &key)?;
+    }
+    Ok(())
+}
+
 /// A hard delete cannot leave a copied report body in vault metadata. This
 /// source-prefix index is populated in the same transaction as publication,
-/// and invalidated by the common deletion door in its erasure transaction.
+/// and invalidated by the common deletion door in its erasure transaction:
+/// a period the source gates goes whole, any other only loses the rows'
+/// copies of it (`rewrite.rs`, FIX 7693, 8672).
 /// A deleted reader's own rows go too: its saved periods (a resident's carry
 /// its dreaming counters, which index no source), its schedule and its kept
 /// live render. So do the wrong labels that name it, as reader or target.
@@ -558,7 +607,7 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
         {
             return Err(Error::CorruptedIndex("weave digest source index"));
         }
-        erase_weave_digest_in_txn(store, txn, digest_key)?;
+        rewrite::erase_source_in_period_in_txn(store, txn, digest_key, source)?;
         store.vault_meta.delete(txn, &index_key)?;
     }
     for reader in [
@@ -588,17 +637,15 @@ fn erase_weave_digest_in_txn(
     txn: &mut heed::RwTxn<'_>,
     digest_key: &[u8],
 ) -> Result<()> {
-    if let Some(raw) = store.vault_meta.get(&*txn, digest_key)? {
+    if let Some(raw) = digest_row_in(store, txn, digest_key)? {
         // Even an undecodable saved row is deleted. If it cannot be
         // decoded, orphan index keys contain references but no body bytes.
         if let Ok(wire) = serde_json::from_slice::<WireDigest>(&raw)
             && let Ok(report) = wire.into_report()
-            && let Ok(sources) = loop_decisions::indexed_sources(&report.value)
+            && let Ok(sources) = dependencies::indexed_sources(&report.value)
         {
             for other in sources {
-                store
-                    .vault_meta
-                    .delete(txn, &source_key(&other, digest_key))?;
+                index_source_in_txn(store, txn, &other, digest_key, false)?;
             }
         }
         store.vault_meta.delete(txn, digest_key)?;
@@ -955,7 +1002,7 @@ impl Vault {
                     return Ok(None);
                 }
                 let read = self.scoped_read(key);
-                let txn = self.store.env.read_txn()?;
+                let txn = read.grant_read_txn()?;
                 return read.saved_weave_digest_in_txn(&txn, reader, scheduled_for, None);
             }
         };
@@ -1117,7 +1164,8 @@ impl ScopedRead<'_> {
         if self.session_view.is_some() {
             return Err(invalid());
         }
-        let txn = self.vault.store.env.read_txn()?;
+        // Its grants judge at the refreshed persisted clock (FIX 8671).
+        let txn = self.grant_read_txn()?;
         let id = match reader {
             WeaveReader::Person(id) | WeaveReader::Agent(id) => {
                 if self.actor_key.actor_ref() != id.to_hex() {
@@ -1270,7 +1318,7 @@ impl ScopedRead<'_> {
                     // A saved card stays its audience's: it must still exist,
                     // and the reader must still be one of its recipients or a
                     // live owner.
-                    WeaveItem::AgentHealth { card } => {
+                    WeaveItem::AgentHealth { card, .. } => {
                         match crate::dreamer_runner::maintenance::agent_health::agent_health_card_in_txn(
                             self.vault,
                             txn,
@@ -1285,7 +1333,7 @@ impl ScopedRead<'_> {
                     }
                     // A saved audit serves while its own row reads exactly
                     // as saved: a newer sample moves no older period.
-                    WeaveItem::SieveAudit { attempt, audit }
+                    WeaveItem::SieveAudit { attempt, audit, .. }
                         if !super::weave_report::sieve_score::sieve_audit_unchanged_in(
                             &self.vault.store,
                             txn,
@@ -1302,6 +1350,7 @@ impl ScopedRead<'_> {
         // Each loop row is rechecked on its own: one that no longer reads as
         // saved is withheld alone, never the period (OF-499 A2).
         self.recheck_saved_loop_decisions_in_txn(txn, reader_key, opener, &mut report.value);
+        self.serve_saved_copy_in(txn, &mut report.value)?;
         Ok(Some(StoredWeaveDigest {
             reader: reader_key,
             scheduled_for,
@@ -1410,8 +1459,8 @@ impl ScopedRead<'_> {
                     .ok_or_else(invalid)?,
             )
             .ok_or_else(invalid)?;
-        let report = self.weave_report(reader, &row.recipe)?;
-        let sources = loop_decisions::indexed_sources(&report.value)?;
+        let report = self.weave_report_snapshot(reader, &row.recipe)?;
+        let sources = dependencies::indexed_sources(&report.value)?;
         let wire = WireDigest::from_report(now, &report)?;
         let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
         let next = serde_json::to_vec(&WireSchedule {
@@ -1438,25 +1487,24 @@ impl ScopedRead<'_> {
             if !sources_live_in_txn(&self.vault.store, txn, &report.value)? {
                 return Ok(None);
             }
-            if self.weave_report_in_txn(txn, reader, &row.recipe)? != report {
+            // Each row it saves must still serve; a loop decision the
+            // ledger gained since joins the next period (FIX 7694).
+            let current = self.weave_report_in_txn(txn, reader, &row.recipe)?;
+            if current.receipt != report.receipt
+                || !super::weave_lens::snapshot_still_served(&report.value, &current.value)
+            {
                 return Ok(None);
             }
-            if let Some(raw) = self.vault.store.vault_meta.get(&*txn, &digest_key)? {
+            if let Some(raw) = digest_row_in(&self.vault.store, txn, &digest_key)? {
                 let previous: WireDigest = serde_json::from_slice(&raw).map_err(|_| invalid())?;
-                for source in loop_decisions::indexed_sources(&previous.into_report()?.value)? {
-                    self.vault
-                        .store
-                        .vault_meta
-                        .delete(txn, &source_key(&source, &digest_key))?;
+                for source in dependencies::indexed_sources(&previous.into_report()?.value)? {
+                    index_source_in_txn(&self.vault.store, txn, &source, &digest_key, false)?;
                 }
             }
             for source in &sources {
-                self.vault
-                    .store
-                    .vault_meta
-                    .put(txn, &source_key(source, &digest_key), &[])?;
+                index_source_in_txn(&self.vault.store, txn, source, &digest_key, true)?;
             }
-            self.vault.store.vault_meta.put(txn, &digest_key, &bytes)?;
+            put_digest_row_in_txn(&self.vault.store, txn, &digest_key, &bytes)?;
             self.vault.store.vault_meta.put(txn, &key, &next)?;
             // Delivery is the reader's inbox, in this same write, for a
             // digest with anything in it. An owner's notice went out when
@@ -1476,11 +1524,14 @@ impl ScopedRead<'_> {
                 crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
                     .enqueue_weave_lens_in_txn(txn, id, row.next_due_at, now)?;
             }
+            // The copy handed back serves as a read of it would.
+            let mut served = report;
+            self.serve_saved_copy_in(txn, &mut served.value)?;
             Ok(Some(StoredWeaveDigest {
                 reader: id,
                 scheduled_for: row.next_due_at,
                 rendered_at: now,
-                report,
+                report: served,
                 lens: None,
                 lens_refused: None,
             }))
