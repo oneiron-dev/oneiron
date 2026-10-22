@@ -1218,9 +1218,13 @@ async fn vault_shape_apply(
     oneiron::task_verb::sdk::validate_input("vault.shape.apply", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.shape.apply", value).await?;
     let ran = async {
-        let (output, listed) =
-            super::host_doors::vault_shape_apply(server, auth, facade_door_input(&mut hooks)?)
-                .await;
+        let (output, listed) = super::host_doors::vault_shape_apply(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;

@@ -30,6 +30,7 @@ mod reach;
 mod retire;
 mod run;
 mod seed;
+mod shared_setup;
 mod skill;
 mod visibility;
 
@@ -52,6 +53,7 @@ pub use reach::{
 };
 pub use run::{SHAPE_APPLY_ATTEMPT_KIND, SHAPE_ITEM_ATTEMPT_KIND, ShapeApplyRun, shape_item_ref};
 pub use seed::StoredShapeSeed;
+pub use shared_setup::{ShapeLearningOutcome, ShapeLearningSetting};
 pub use skill::ShapeSkillSource;
 
 use crate::EntityId;

@@ -3,11 +3,14 @@
 //! the plan through the owner's doors, widenings only for the items it
 //! approves. Any other credential applies as its principal: the seed is
 //! stored and every item waits for the owner's word. The generated facade
-//! handler and the MCP dispatcher both call this through `host_doors`.
+//! handler and the MCP dispatcher both call this through `host_doors`, with
+//! where the owner's request reached this install (`surface`, the host's own
+//! reading of it, never a field of the input): the audit record of his
+//! conversation-learning answer, when a creation carries one (FIX 5603).
 use std::sync::Arc;
 
 use oneiron::EntityId;
-use oneiron::authority::HostSlipIssuer;
+use oneiron::authority::{ActSurface, HostSlipIssuer};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::vault_shape::{ShapeApplier, ShapeApplyReceipt, ShapeApplyRequest};
 
@@ -26,9 +29,10 @@ type ShapeApplyListing = (ShapeApplyReceipt, Option<Vec<EntityId>>);
 pub(crate) async fn vault_shape_apply(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: ShapeApplyRequest,
 ) -> MaybeListed<ShapeApplyReceipt> {
-    match vault_shape_apply_answer(server, auth, input).await {
+    match vault_shape_apply_answer(server, auth, surface, input).await {
         Ok((receipt, rows)) => (Ok(receipt), rows),
         Err(refusal) => (Err(refusal), Some(Vec::new())),
     }
@@ -38,6 +42,7 @@ pub(crate) async fn vault_shape_apply(
 async fn vault_shape_apply_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: ShapeApplyRequest,
 ) -> MemoryResult<ShapeApplyListing> {
     const VERB: &str = "vault.shape.apply";
@@ -56,6 +61,7 @@ async fn vault_shape_apply_answer(
                     ShapeApplier::Owner {
                         owner: &owner,
                         slips,
+                        surface,
                     },
                     &input,
                     now,
