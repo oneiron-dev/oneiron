@@ -1,3 +1,7 @@
+//! The merge queue observation read and its batch verdicts.
+//! `Memory::merge_queue_observe_as` is its call surface.
+//! `memory::merge_queue_doors::types` defines the records it returns.
+
 use std::collections::BTreeSet;
 
 use super::*;

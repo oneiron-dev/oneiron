@@ -7,7 +7,7 @@
 //! the restore by name (`body_key_custody_unavailable`): no key is minted
 //! for it and no image key stands in.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::custody::{custody_unavailable, instance_id, instance_state};
 use super::response::{RESPONSE_BINDINGS, ResponseBinding};
@@ -82,12 +82,13 @@ pub(crate) fn require_body_instances(
 
 /// What a prune took from raw rows: the digests whose instance rows went,
 /// the entities whose inline ASSET binding went, and the carriers whose
-/// row-held response binding went (KS-2B1).
+/// row-held response binding went (KS-2B1), each with the instance it named
+/// (FIX 9066), so an erase receipt can say whose erase retired it.
 #[derive(Default)]
 pub(crate) struct PrunedBodies {
     pub(crate) digests: BTreeSet<[u8; 32]>,
     pub(crate) assets: BTreeSet<EntityId>,
-    pub(crate) responses: BTreeSet<Vec<u8>>,
+    pub(crate) responses: BTreeMap<Vec<u8>, [u8; 16]>,
 }
 
 impl PrunedBodies {
@@ -110,7 +111,7 @@ impl PrunedBodies {
             )
             .chain(
                 self.responses
-                    .iter()
+                    .keys()
                     .map(|carrier| RESPONSE_BINDINGS.key_bytes(carrier)),
             )
             .collect()
@@ -149,10 +150,11 @@ pub(crate) fn prune_retired_bodies_in_rows(
             && retired.contains(&INLINE_ASSETS.decode_value(value)?)
         {
             pruned.assets.insert(entity);
-        } else if let Some(carrier) = key.strip_prefix(RESPONSE_BINDINGS.decl().prefix)
-            && retired.contains(&ResponseBinding::of_row(value)?.instance)
-        {
-            pruned.responses.insert(carrier.to_vec());
+        } else if let Some(carrier) = key.strip_prefix(RESPONSE_BINDINGS.decl().prefix) {
+            let instance = ResponseBinding::of_row(value)?.instance;
+            if retired.contains(&instance) {
+                pruned.responses.insert(carrier.to_vec(), instance);
+            }
         }
     }
     let gone = pruned.row_keys();

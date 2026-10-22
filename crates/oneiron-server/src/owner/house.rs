@@ -10,7 +10,7 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 
 use super::OwnerResult;
-use super::cooperative_deletion::with_issuer;
+use super::courtesy_delete::with_issuer;
 use crate::server::SyncServer;
 
 /// `POST /v1/owner/workspace/finish`: the house `workspace_ref`'s stored

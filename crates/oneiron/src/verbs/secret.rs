@@ -388,6 +388,14 @@ impl Memory<'_> {
         version: Option<u64>,
         why: Option<&str>,
     ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExport>> {
+        // A repo-marked version reads as a repo file before the owner-key
+        // sight below: a tool or a run on the owner's key gets the masked
+        // copy, or the file reveal with a why (FIX 7608, FIX 8960).
+        if self.repo_reads_masked()?
+            && let Some(export) = self.export_repo_marked_artifact(artifact, version, why)?
+        {
+            return Ok(export);
+        }
         let vault = self.vault();
         let sight = self.secret_sight()?;
         let Some(why) = why.filter(|_| {

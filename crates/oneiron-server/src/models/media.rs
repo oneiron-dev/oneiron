@@ -1250,8 +1250,11 @@ fn media_backends(
             // OpenAI-compatible wire below.
             ProviderKind::Soniox => soniox::live_backend(provider),
             _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
-                Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models))
-                    as Arc<dyn MediaBackend>
+                Arc::new(OpenAiMediaBackend::new(
+                    MediaHttp { http },
+                    wire_models,
+                    provider.base_url.clone(),
+                )) as Arc<dyn MediaBackend>
             }),
         };
         match built {
