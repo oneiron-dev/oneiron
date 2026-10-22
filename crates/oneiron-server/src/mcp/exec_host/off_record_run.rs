@@ -317,6 +317,11 @@ fn run_in_off_record_session(
         &gated_write,
     )
     .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
+    // The host's one type-feedback service (FIX 8277): the session's steps
+    // keep their feedback with their run.
+    if let Some(feedback) = provider.code_check() {
+        executor = executor.with_code_check(feedback);
+    }
     reactor
         .block_on(executor.run(&config))
         .map_err(|error| McpCodeExecutionError::Run(error.to_string()))

@@ -4,7 +4,7 @@
 
 use oneiron_code_check::{
     BackendId, CheckInput, CodeCheck, Declaration, Diagnostic, MICROSOFT_TS_VERSION, MicrosoftTsc,
-    TscRsBudget, TscRsWasm, TsrsWasm,
+    ProgramLanguage, TscRsBudget, TscRsWasm, TsrsWasm,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -212,6 +212,7 @@ fn measure(program: &Program, backend: &Loaded, repetition: usize) -> Sample {
     let result = backend.checker.check(&CheckInput {
         declarations: &DECLARATIONS,
         program: &program.text,
+        language: ProgramLanguage::JavaScript,
     });
     let ms = started.elapsed().as_secs_f64() * 1000.0;
     let mut sample = Sample {
@@ -602,8 +603,8 @@ fn run() -> Result<()> {
             "agreement": "same-repetition sorted diagnostic multiset vs Microsoft; no deduplication",
             "code_location_fields": ["file", "line", "column", "code"], "profile": "release"},
         "wasm_budget": {"wall_ms": budget.wall_time.as_millis(), "memory_bytes": budget.memory_bytes,
-            "output_bytes": budget.output_bytes, "concurrent_slots": budget.concurrent},
-        "native_budget": {"wall_ms": budget.wall_time.as_millis(), "output_bytes": budget.output_bytes,
+            "input_bytes": budget.input_bytes, "concurrent_slots": budget.concurrent},
+        "native_budget": {"wall_ms": budget.wall_time.as_millis(), "input_bytes": budget.input_bytes,
             "note": "compiled-in defaults, not a process RSS limit"},
         "contract_source_sha256": sha(include_bytes!("../src/lib.rs")),
         "catalog_revision": format!("sha256:{}", sha(DECLARATIONS[1].text.as_bytes())),

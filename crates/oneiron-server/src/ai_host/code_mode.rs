@@ -17,7 +17,7 @@ use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::code_run::{CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism, CompactionHostBinding};
 use oneiron::compaction::EpochEmbedder;
 use oneiron::engine_executor::{
-    ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig, EngineExecutorLimits,
+    ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig, EngineExecutorLimits, TypeFeedback,
 };
 use oneiron::llm::BudgetDenied;
 use oneiron::llm::manifest::ModelRole;
@@ -27,7 +27,7 @@ use oneiron::{
     LlmStreamResult, ModelId, ModelLocality, ModelTierRef, Vault,
 };
 use oneiron_code_check::{
-    BackendKind, CheckFailure, CheckMode, CodeCheck, Fallback, MicrosoftTsc, ShadowCheck,
+    BackendKind, CheckFailure, CheckMode, CodeCheck, Fallback, FeedbackCheck, MicrosoftTsc,
     TscRsBudget, TscRsWasm, TsrsWasm,
 };
 
@@ -193,10 +193,10 @@ pub(super) async fn bind(
             return server;
         }
     };
-    let provider = match shadow_check(&models.code_mode.check).await {
-        Some(shadow) => provider.with_code_check(shadow),
-        None => provider,
-    };
+    let provider = provider.with_code_check(type_feedback(
+        &models.code_mode.check,
+        Arc::clone(server.vault()),
+    ));
     // A manifest-backed run picks its seat through the host's decision ladder.
     let provider = match server.seat_router(models) {
         Some((decisions, facet)) => provider.with_model_seat_router(decisions, facet),
@@ -266,30 +266,44 @@ fn exact_route(models: &ModelRuntime, vault: &Vault, pick: &ModelId) -> Option<M
     (served <= route && ladder.exact_prompt().is_some()).then_some(served)
 }
 
-/// Shadow mode's checker, per `[models.code_mode.check]`; none when the mode
-/// is `off`. A check never gates code mode: when no checker loads,
-/// `execute_code` is served unchecked.
-async fn shadow_check(settings: &CodeCheckSettings) -> Option<Arc<ShadowCheck>> {
-    if settings.mode != CheckMode::Shadow {
-        return None;
+/// The type-feedback service, per `[models.code_mode.check]` (FIX 8277):
+/// with the mode `off`, each step's feedback answers unavailable. In
+/// feedback mode the checker loads off every execution door and is never
+/// awaited here, so `execute_code` binds and runs at once; a check admitted
+/// before the load ends waits for it on its own thread. A check never gates
+/// code mode: when no checker loads, each step's feedback says so and its
+/// run goes on. Landed checks write their results on `vault`.
+fn type_feedback(settings: &CodeCheckSettings, vault: Arc<Vault>) -> TypeFeedback {
+    if settings.mode == CheckMode::Off {
+        return TypeFeedback::off();
     }
-    let settings = settings.clone();
-    // Compiling the tsc-rs module takes seconds.
-    match tokio::task::spawn_blocking(move || code_checker(&settings)).await {
-        Ok(Ok(checker)) => {
-            let backend = checker.backend();
-            tracing::info!(backend = backend.name, pin = %backend.pin, "code mode checks each program in shadow mode");
-            Some(Arc::new(ShadowCheck::new(checker)))
-        }
-        Ok(Err(failure)) => {
-            tracing::error!(%failure, "no code checker loaded; code mode runs unchecked");
-            None
-        }
-        Err(error) => {
-            tracing::error!(panicked = error.is_panic(), "the code checker load stopped");
-            None
-        }
-    }
+    let configured = match settings.backend {
+        BackendKind::TscRs => "tsc-rs",
+        BackendKind::Microsoft => "microsoft",
+        BackendKind::Tsrs => "tsrs",
+    };
+    let feedback = TypeFeedback::loading(configured, Some(vault));
+    let (loading, settings) = (feedback.clone(), settings.clone());
+    tokio::spawn(async move {
+        // Compiling the checker's module takes seconds.
+        let loaded = match tokio::task::spawn_blocking(move || code_checker(&settings)).await {
+            Ok(Ok(checker)) => {
+                let backend = checker.backend();
+                tracing::info!(backend = backend.name, pin = %backend.pin, "code mode checks each program as feedback");
+                Ok(Arc::new(FeedbackCheck::new(checker)))
+            }
+            Ok(Err(failure)) => {
+                tracing::error!(%failure, "no code checker loaded; each step's type feedback says so");
+                Err(failure)
+            }
+            Err(error) => {
+                tracing::error!(panicked = error.is_panic(), "the code checker load stopped");
+                Err(CheckFailure::Crashed)
+            }
+        };
+        loading.loaded(loaded);
+    });
+    feedback
 }
 
 /// The configured backend. tsc-rs, and tsrs alike, falls back to
@@ -299,36 +313,36 @@ fn code_checker(settings: &CodeCheckSettings) -> Result<Arc<dyn CodeCheck>, Chec
     let microsoft = settings
         .microsoft_tsc
         .as_ref()
-        .map(MicrosoftTsc::new)
+        .map(|tsc| MicrosoftTsc::new(tsc).map(|tsc| tsc.with_input_bytes(settings.max_input_bytes)))
         .transpose();
     if let Err(failure) = &microsoft {
         tracing::warn!(%failure, "models.code_mode.check.microsoft_tsc is not the pinned tsc");
     }
     let microsoft = microsoft.ok().flatten();
+    let budget = TscRsBudget {
+        input_bytes: settings.max_input_bytes,
+        ..TscRsBudget::default()
+    };
     let checker: Arc<dyn CodeCheck> = match (settings.backend, microsoft) {
         (BackendKind::Microsoft, microsoft) => {
             Arc::new(microsoft.ok_or(CheckFailure::Unavailable)?)
         }
-        (BackendKind::TscRs, microsoft) => {
-            match (TscRsWasm::load(TscRsBudget::default()), microsoft) {
-                (Ok(tsc_rs), Some(microsoft)) => {
-                    Arc::new(Fallback::new(Box::new(tsc_rs), Box::new(microsoft)))
-                }
-                (Ok(tsc_rs), None) => Arc::new(tsc_rs),
-                (Err(_), Some(microsoft)) => Arc::new(microsoft),
-                (Err(failure), None) => return Err(failure),
+        (BackendKind::TscRs, microsoft) => match (TscRsWasm::load(budget), microsoft) {
+            (Ok(tsc_rs), Some(microsoft)) => {
+                Arc::new(Fallback::new(Box::new(tsc_rs), Box::new(microsoft)))
             }
-        }
-        (BackendKind::Tsrs, microsoft) => {
-            match (TsrsWasm::load(TscRsBudget::default()), microsoft) {
-                (Ok(tsrs), Some(microsoft)) => {
-                    Arc::new(Fallback::new(Box::new(tsrs), Box::new(microsoft)))
-                }
-                (Ok(tsrs), None) => Arc::new(tsrs),
-                (Err(_), Some(microsoft)) => Arc::new(microsoft),
-                (Err(failure), None) => return Err(failure),
+            (Ok(tsc_rs), None) => Arc::new(tsc_rs),
+            (Err(_), Some(microsoft)) => Arc::new(microsoft),
+            (Err(failure), None) => return Err(failure),
+        },
+        (BackendKind::Tsrs, microsoft) => match (TsrsWasm::load(budget), microsoft) {
+            (Ok(tsrs), Some(microsoft)) => {
+                Arc::new(Fallback::new(Box::new(tsrs), Box::new(microsoft)))
             }
-        }
+            (Ok(tsrs), None) => Arc::new(tsrs),
+            (Err(_), Some(microsoft)) => Arc::new(microsoft),
+            (Err(failure), None) => return Err(failure),
+        },
     };
     Ok(checker)
 }

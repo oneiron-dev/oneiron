@@ -1,7 +1,7 @@
-//! Reads `tsc --pretty false` output. Both backends print it byte for byte
-//! alike, so one reader serves both.
+//! Reads `tsc --pretty false` output. Every backend prints it byte for byte
+//! alike, so one reader serves them all, and it reads every message whole.
 
-use crate::{CheckFailure, Diagnostic, PROGRAM_FILE};
+use crate::{CheckFailure, Diagnostic, PROGRAM_FILES};
 
 const CATEGORIES: [&str; 4] = ["error", "warning", "suggestion", "message"];
 
@@ -27,6 +27,39 @@ pub(crate) fn diagnostics(stdout: &[u8]) -> Result<Vec<Diagnostic>, CheckFailure
     Ok(diagnostics)
 }
 
+/// The whole diagnostics of a check that stopped before it ended: every
+/// complete line up to the first that is not one, the line the stop cut
+/// short dropped.
+pub(crate) fn partial_diagnostics(stdout: &[u8]) -> Vec<Diagnostic> {
+    let whole = stdout
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(&[][..], |end| &stdout[..end]);
+    let text = match std::str::from_utf8(whole) {
+        Ok(text) => text,
+        Err(error) => std::str::from_utf8(&whole[..error.valid_up_to()]).unwrap_or_default(),
+    };
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    for line in text.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with(' ') {
+            let Some(previous) = diagnostics.last_mut() else {
+                break;
+            };
+            previous.message.push('\n');
+            previous.message.push_str(line);
+            continue;
+        }
+        let Some(diagnostic) = diagnostic(line) else {
+            break;
+        };
+        diagnostics.push(diagnostic);
+    }
+    diagnostics
+}
+
 /// `file(line,column): category TScode: message`, or the same without the
 /// place for a diagnostic about the whole check.
 fn diagnostic(line: &str) -> Option<Diagnostic> {
@@ -48,8 +81,8 @@ fn located(text: &str) -> Option<Diagnostic> {
     let (file, position) = place.rsplit_once('(')?;
     let (line, column) = position.split_once(',')?;
     let line: u32 = line.parse().ok()?;
-    // The envelope's first line precedes the program.
-    let line = if file == PROGRAM_FILE {
+    // The envelope's first line precedes the program, in either language.
+    let line = if PROGRAM_FILES.contains(&file) {
         line.checked_sub(1)?
     } else {
         line

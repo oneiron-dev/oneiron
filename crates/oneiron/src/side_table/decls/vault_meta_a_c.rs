@@ -588,6 +588,12 @@ side_tables! {
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
     CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;
+    /// One program step's type feedback (FIX 8277): its check's state, measures and diagnostics
+    /// or the run's body holding them, the preparation note, the actor the run ran as and the
+    /// checker incarnation a pending check belongs to. Key: id16(run) + be64(step) +
+    /// be64(invocation).
+    CODE_RUN_TYPE_DIAGNOSTICS: VaultMeta b"code_run:type_diagnostics:v1:" Named Authored
+        => crate::code_run::erase_type_diagnostics_actor_in_txn;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
     CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored;

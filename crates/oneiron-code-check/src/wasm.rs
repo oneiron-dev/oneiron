@@ -15,8 +15,12 @@
 //!
 //! A backend names its module's ABI in an [`Abi`]; the request, the file
 //! system and the WASI calls are the same for both.
+//!
+//! A check keeps everything the checker prints on stdout, with no bound of
+//! its own: the wall time and the memory bound end a check, and whatever it
+//! printed whole by then stays as a partial report (FIX 8277).
 
-use crate::{CheckFailure, CheckInput, Exited, TSC_ARGS, TscRsBudget, project_files};
+use crate::{CheckFailure, CheckInput, Exited, Stopped, TSC_ARGS, TscRsBudget, project_files};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Condvar, Mutex, PoisonError, mpsc};
@@ -133,10 +137,10 @@ impl WasmCheck {
     }
 
     /// Checks one program: how its run of tsc ended, and its peak linear
-    /// memory.
-    pub(crate) fn check(&self, input: &CheckInput<'_>) -> Result<(Exited, u64), CheckFailure> {
+    /// memory; or why it stopped, with what it had printed.
+    pub(crate) fn check(&self, input: &CheckInput<'_>) -> Result<(Exited, u64), Stopped> {
         let deadline = Instant::now() + self.budget.wall_time;
-        let files = project_files(input)?
+        let files = project_files(input, self.budget.input_bytes)?
             .into_iter()
             .map(|(name, bytes)| (format!("{ROOT}/{name}"), bytes))
             .collect();
@@ -149,7 +153,7 @@ impl WasmCheck {
                 .spawn_scoped(scope, move || {
                     let _ = sender.send(self.run(files, deadline));
                 })
-                .map_err(|_| CheckFailure::Unavailable)?;
+                .map_err(|_| Stopped::from(CheckFailure::Unavailable))?;
             // Past the deadline, the epoch ticks until the check returns: each
             // tick runs its deadline callback, which ends it, however late
             // its store began.
@@ -161,25 +165,29 @@ impl WasmCheck {
                         self.engine.increment_epoch();
                         wait = EPOCH_TICK;
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break Err(CheckFailure::Crashed),
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        break Err(Stopped::from(CheckFailure::Crashed));
+                    }
                 }
             };
             // Joined here, a panicked check is a crash: the scope would
             // otherwise re-raise it on the caller's thread.
-            thread.join().map_err(|_| CheckFailure::Crashed)?;
+            thread
+                .join()
+                .map_err(|_| Stopped::from(CheckFailure::Crashed))?;
             result
         })
     }
 
     /// Runs tsc once over `files` in a new instance: how it ended, and its
-    /// peak linear memory.
+    /// peak linear memory; or why it stopped, with what it had printed.
     fn run(
         &self,
         files: BTreeMap<String, Vec<u8>>,
         deadline: Instant,
-    ) -> Result<(Exited, u64), CheckFailure> {
+    ) -> Result<(Exited, u64), Stopped> {
         if Instant::now() >= deadline {
-            return Err(CheckFailure::Timeout);
+            return Err(CheckFailure::Timeout.into());
         }
         let mut store = Store::new(&self.engine, Host::new(files, self.budget, deadline));
         store.limiter(|host| host);
@@ -193,18 +201,19 @@ impl WasmCheck {
                 Ok(UpdateDeadline::Continue(1))
             }
         });
-        let ended = |error: &wasmtime::Error, host: &Host| {
-            if error.is::<Deadline>() {
+        let ended = |error: &wasmtime::Error, host: &mut Host| Stopped {
+            failure: if error.is::<Deadline>() {
                 CheckFailure::Timeout
             } else if host.over_budget {
                 CheckFailure::OverBudget
             } else {
                 CheckFailure::Crashed
-            }
+            },
+            stdout: std::mem::take(&mut host.stdout),
         };
         let instance = match self.pre.instantiate(&mut store) {
             Ok(instance) => instance,
-            Err(error) => return Err(ended(&error, store.data())),
+            Err(error) => return Err(ended(&error, store.data_mut())),
         };
         let memory = instance
             .get_memory(&mut store, "memory")
@@ -214,7 +223,7 @@ impl WasmCheck {
                 .get_typed_func::<(), ()>(&mut store, "_initialize")
                 .map_err(|_| CheckFailure::Crashed)?;
             if let Err(error) = initialize.call(&mut store, ()) {
-                return Err(ended(&error, store.data()));
+                return Err(ended(&error, store.data_mut()));
             }
         }
         let input = instance
@@ -231,7 +240,7 @@ impl WasmCheck {
         let length = u32::try_from(request.len()).map_err(|_| CheckFailure::InvalidInput)?;
         let at = match input.call(&mut store, length) {
             Ok(at) => at,
-            Err(error) => return Err(ended(&error, store.data())),
+            Err(error) => return Err(ended(&error, store.data_mut())),
         };
         memory
             .write(&mut store, at as usize, request.as_bytes())
@@ -239,11 +248,14 @@ impl WasmCheck {
         // A panic leaves through WASI `proc_exit`, never as a return.
         let status = match run.call(&mut store, ()) {
             Ok(status) => status,
-            Err(error) => return Err(ended(&error, store.data())),
+            Err(error) => return Err(ended(&error, store.data_mut())),
         };
         let host = store.into_data();
         if host.over_budget {
-            return Err(CheckFailure::OverBudget);
+            return Err(Stopped {
+                failure: CheckFailure::OverBudget,
+                stdout: host.stdout,
+            });
         }
         let exited = Exited {
             status,
@@ -351,7 +363,6 @@ pub(crate) struct Host {
     staged: Vec<u8>,
     stdout: Vec<u8>,
     stderr: bool,
-    output_bytes: usize,
     memory_bytes: usize,
     peak_memory: u64,
     over_budget: bool,
@@ -368,7 +379,6 @@ impl Host {
             staged: Vec::new(),
             stdout: Vec::new(),
             stderr: false,
-            output_bytes: budget.output_bytes,
             memory_bytes: budget.memory_bytes,
             peak_memory: 0,
             over_budget: false,
@@ -609,10 +619,6 @@ fn link_wasi(linker: &mut Linker<Host>, module: &Module) -> wasmtime::Result<()>
                 // stdout carries the diagnostics; stderr only a crash's story.
                 host.stderr |= fd == 2 && !chunk.is_empty();
                 if fd == 1 {
-                    if host.stdout.len() + chunk.len() > host.output_bytes {
-                        host.over_budget = true;
-                        return Err(wasmtime::Error::new(Exit));
-                    }
                     host.stdout.extend_from_slice(chunk);
                 }
                 total += length;

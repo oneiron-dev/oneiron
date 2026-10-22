@@ -41,6 +41,7 @@ pub mod shadow_runner;
 mod storage;
 mod support;
 mod team_submit;
+mod type_diagnostics;
 mod types;
 mod wait_rows;
 
@@ -145,6 +146,7 @@ pub(crate) use self::storage::{
     code_run_inline_body_of_row, code_run_row_inline, deliver_wait_in_txn,
     deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
 };
+pub(crate) use self::storage::{StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn};
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
     put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
@@ -161,6 +163,13 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
+pub use self::type_diagnostics::{
+    DiagnosticCollection, DiagnosticMeasures, ProgramPreparationNote, ProgramStepFeedback,
+    ProgramStepIdentity, TYPE_CHECK_INTERRUPTED, TYPE_CHECK_NOT_ATTACHED, TYPE_CHECK_NOT_LOADED,
+    TYPE_CHECK_NOT_STARTED, TYPE_CHECK_OFF, TYPE_FEEDBACK_NOT_KEPT, TypeCheckFacts, TypeDiagnostic,
+    TypeDiagnostics,
+};
+pub(crate) use self::type_diagnostics::{measure, parse_check_ref};
 pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way

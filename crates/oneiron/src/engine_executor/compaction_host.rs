@@ -764,6 +764,7 @@ impl EngineNativeExecutor<'_> {
         replay_record: CodeRunReplayRecord,
     ) -> super::types::EngineExecutorOutcome {
         super::types::EngineExecutorOutcome {
+            program_steps: self.program_steps(replay_record.run_id),
             status,
             steps_run,
             replay_record,

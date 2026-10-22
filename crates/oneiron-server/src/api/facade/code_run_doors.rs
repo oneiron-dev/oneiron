@@ -5,9 +5,15 @@
 //! model-keyed side row with no entity, so the credential's collector lists
 //! every row its reads touched beside it (`host_door_lists`): a complete
 //! list, empty when the read named no entity row.
+//!
+//! The type-feedback door (FIX 8277) takes the same owner proof and reads
+//! one program step's type feedback by its check reference.
 use std::sync::Arc;
 
-use oneiron::memory::code_run_doors::{CodeRunModelHealCountRequest, CodeRunModelHealCountView};
+use oneiron::code_run::ProgramStepFeedback;
+use oneiron::memory::code_run_doors::{
+    CodeRunModelHealCountRequest, CodeRunModelHealCountView, CodeRunTypeDiagnosticsRequest,
+};
 
 use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
@@ -36,6 +42,33 @@ pub(crate) async fn vault_code_model_heal_count(
         caller,
         MODEL_HEAL_COUNT_VERB,
         move |_, _, memory| memory.code_run_model_heal_count_as(&owner, input),
+    )
+    .await
+}
+
+/// The CALL behind the type-feedback door's public spelling (FIX 8277): a
+/// read beside the other code doors, by the step's `check_ref`.
+const TYPE_DIAGNOSTICS_VERB: &str = "vault.code.type_diagnostics";
+
+pub(crate) async fn vault_code_type_diagnostics(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeRunTypeDiagnosticsRequest,
+) -> Listed<Option<ProgramStepFeedback>> {
+    let owner = match owner_proof(auth, server, TYPE_DIAGNOSTICS_VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let caller = match super::facade_actor(server, auth) {
+        Ok(caller) => caller,
+        Err(error) => return refused(error.into_memory_error()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        TYPE_DIAGNOSTICS_VERB,
+        move |_, _, memory| memory.code_run_type_diagnostics_as(&owner, input),
     )
     .await
 }

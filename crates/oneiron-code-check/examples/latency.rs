@@ -4,7 +4,7 @@
 //! Then larger programs: the correct fixture repeated in block scopes.
 
 use oneiron_code_check::{
-    CheckInput, CodeCheck, Declaration, MicrosoftTsc, TscRsBudget, TscRsWasm,
+    CheckInput, CodeCheck, Declaration, MicrosoftTsc, ProgramLanguage, TscRsBudget, TscRsWasm,
 };
 use std::time::{Duration, Instant};
 
@@ -70,6 +70,7 @@ fn time(label: &str, checker: &dyn CodeCheck, rounds: usize) {
                 .check(&CheckInput {
                     declarations: &DECLARATIONS,
                     program,
+                    language: ProgramLanguage::JavaScript,
                 })
                 .unwrap_or_else(|failure| panic!("{name}: {failure}"));
             samples.push(started.elapsed());
@@ -110,6 +111,7 @@ fn time_scaled(label: &str, checker: &dyn CodeCheck, rounds: usize) {
                 .check(&CheckInput {
                     declarations: &DECLARATIONS,
                     program: &program,
+                    language: ProgramLanguage::JavaScript,
                 })
                 .unwrap_or_else(|failure| panic!("{copies} copies: {failure}"));
             samples.push(started.elapsed());

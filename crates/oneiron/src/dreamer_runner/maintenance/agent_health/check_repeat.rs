@@ -13,10 +13,11 @@
 //! calls that name one attempt at one generation, whose card names that
 //! attempt's TASK, or those that name none, whose card names no TASK.
 //!
-//! A run's shadow type checks count too: each step's stored report states
-//! its action digest over the program, each declaration file and the checker
-//! at its pin, so the digest is the logical check. A streak holds while the
-//! check reports the same error diagnostics, as recorded, on that digest.
+//! A run's type checks count too (FIX 8277): each step's check, as its
+//! feedback row keeps it once it landed, states its action digest over the
+//! program, its language, each declaration file and the checker at its pin,
+//! so the digest is the logical check. A streak holds while the check
+//! reports the same error diagnostics, as recorded, on that digest.
 
 use std::collections::BTreeMap;
 
@@ -25,6 +26,7 @@ use rmpv::Value;
 use super::call_evidence::CallStream;
 use super::{Attempts, DialBook, Dispatches, Finding, entity, run_loop, settled, task_of};
 use crate::attempt_queue::AttemptState;
+use crate::code_run::{DiagnosticCollection, StepKey, StoredStepFeedback, TypeDiagnostics};
 use crate::receipt::CallOutcome;
 use crate::self_heal::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
@@ -39,20 +41,36 @@ struct Streak<T> {
     evidence: Vec<EntityId>,
 }
 
-/// Where the executor stores a step's shadow check report:
-/// `executor/repl/{seq:06}.code-check.json` (`code_check_output_path`).
-const CHECK_REPORT_DIR: &str = "executor/repl/";
-const CHECK_REPORT_SUFFIX: &str = ".code-check.json";
-
-/// The step a stored output reports the shadow check of, if it is one.
-fn check_report_seq(path: &str) -> Option<u64> {
-    path.strip_prefix(CHECK_REPORT_DIR)?
-        .strip_suffix(CHECK_REPORT_SUFFIX)?
-        .parse()
-        .ok()
+/// A step's landed check as the report the streaks read: its action digest
+/// and every diagnostic, inline in its feedback row or from the run's body
+/// that keeps them whole. `None` for a check that has not landed complete,
+/// or whose diagnostics do not read.
+fn check_report(
+    vault: &Vault,
+    key: StepKey,
+    row: &StoredStepFeedback,
+) -> Option<serde_json::Value> {
+    let TypeDiagnostics::Complete {
+        check, diagnostics, ..
+    } = row.feedback(key).type_diagnostics
+    else {
+        return None;
+    };
+    let diagnostics: serde_json::Value = match diagnostics {
+        DiagnosticCollection::Inline { diagnostics } => serde_json::to_value(diagnostics).ok()?,
+        DiagnosticCollection::Stored { .. } => {
+            let body = vault.get_code_run_raw_output(&row.body()?).ok().flatten()?;
+            serde_json::from_slice(&body).ok()?
+        }
+    };
+    let digest = check.action_digest?;
+    Some(serde_json::json!({
+        "action_digest": digest,
+        "diagnostics": diagnostics,
+    }))
 }
 
-/// A shadow check's action digest and, when it found an error, its
+/// A type check's action digest and, when it found an error, its
 /// failure: the diagnostics as recorded and how many were left out. `None`
 /// when the checker crashed or its inputs were not captured.
 fn check_report_failure(
@@ -151,15 +169,16 @@ pub(super) fn check_repeat_findings(
                 fails,
             ));
         }
-        // The shadow checks, in step order. An unreadable or unfinished
-        // report is no evidence either way.
-        let reports: Vec<(u64, serde_json::Value)> = run
-            .outputs
-            .iter()
-            .filter(|output| output.complete)
-            .filter_map(|output| {
-                let seq = check_report_seq(&output.path)?;
-                let body = vault.get_code_run_raw_output(output).ok().flatten()?;
+        // The type checks, in step order, each once it landed, however late.
+        // A check pending, failed or unavailable, or one whose row or body
+        // does not read, is no evidence either way.
+        let reports: Vec<(u64, serde_json::Value)> = vault
+            .type_diagnostics_rows(attempt)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(key, row)| {
+                let (_, seq, _) = key;
+                let report = check_report(vault, key, &row)?;
                 let at = run
                     .step_checkpoints
                     .iter()
@@ -167,7 +186,7 @@ pub(super) fn check_repeat_findings(
                     .map_or(record.updated_at, |checkpoint| {
                         checkpoint.created_at_ms / 1000
                     });
-                Some((at, serde_json::from_slice::<serde_json::Value>(&body).ok()?))
+                Some((at, report))
             })
             .collect();
         let mut streaks: BTreeMap<&str, Streak<(&serde_json::Value, &serde_json::Value)>> =

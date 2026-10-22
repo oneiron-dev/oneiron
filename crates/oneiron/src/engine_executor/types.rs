@@ -524,6 +524,10 @@ pub struct EngineExecutorOutcome {
     pub seat_receipt: Option<crate::llm::seat::SeatChoiceReceipt>,
     /// The run's compaction after this call, when the host keeps a seat.
     pub compaction: Option<super::compaction::CompactionReport>,
+    /// Every program step's type feedback as it stands at this return (FIX
+    /// 8277), read without waiting on any check: a pending one lands later
+    /// under its `check_ref`.
+    pub program_steps: Vec<crate::code_run::ProgramStepFeedback>,
 }
 
 impl EngineExecutorOutcome {

@@ -425,7 +425,7 @@ pub struct TaskWaitFailure {
     pub reason: String,
 }
 
-/// One reduction of a wait set over its children.
+/// One reduction of a wait set over its children; an answer adds their steps' type feedback.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskWaitSetResult {
     pub ready: Vec<TaskWaitFinding>,
@@ -437,6 +437,8 @@ pub struct TaskWaitSetResult {
     /// while it is not.
     pub reason: Option<String>,
     pub until: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub program_steps: Vec<super::ProgramStepFeedback>,
 }
 
 /// How many children a wait set waits for.
@@ -747,6 +749,7 @@ pub(crate) fn reduce_task_wait_set(
         done: false,
         reason: None,
         until: set.until_ms,
+        program_steps: Vec::new(),
     };
     let finding =
         |task: EntityId, finding: &ReaderFindingRef, reason: Option<&str>| TaskWaitFinding {

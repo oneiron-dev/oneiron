@@ -7,8 +7,8 @@
 //! fresh temporary directory and runs `tsc` there with an empty environment.
 
 use crate::{
-    BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, DEFAULT_OUTPUT_BYTES,
-    DEFAULT_WALL_TIME, Exited, TSC_ARGS, project_files,
+    BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, DEFAULT_INPUT_BYTES,
+    DEFAULT_WALL_TIME, Exited, Stopped, TSC_ARGS, project_files,
 };
 use std::io::Read;
 use std::path::PathBuf;
@@ -39,6 +39,8 @@ const VERSION_BYTES: usize = 256;
 pub struct MicrosoftTsc {
     tsc: PathBuf,
     wall_time: Duration,
+    /// The most declaration and program text one check takes.
+    input_bytes: usize,
 }
 
 impl MicrosoftTsc {
@@ -54,8 +56,12 @@ impl MicrosoftTsc {
         let tsc = std::fs::canonicalize(tsc.into()).map_err(|_| CheckFailure::Unavailable)?;
         let mut command = oneiron_spawn::command(&tsc);
         command.arg("--version");
-        let version = run_bounded(command, Instant::now() + DEFAULT_WALL_TIME, VERSION_BYTES)
-            .map_err(|_| CheckFailure::Unavailable)?;
+        let version = run_bounded(
+            command,
+            Instant::now() + DEFAULT_WALL_TIME,
+            Some(VERSION_BYTES),
+        )
+        .map_err(|_| CheckFailure::Unavailable)?;
         if version.status != 0
             || version.stderr
             || String::from_utf8_lossy(&version.stdout).trim()
@@ -66,7 +72,16 @@ impl MicrosoftTsc {
         Ok(Self {
             tsc,
             wall_time: DEFAULT_WALL_TIME,
+            input_bytes: DEFAULT_INPUT_BYTES,
         })
+    }
+
+    /// The same checker, taking at most `bytes` of declaration and program
+    /// text per check (`models.code_mode.check.max_input_bytes`).
+    #[must_use]
+    pub fn with_input_bytes(mut self, bytes: usize) -> Self {
+        self.input_bytes = bytes;
+        self
     }
 }
 
@@ -80,7 +95,7 @@ impl CodeCheck for MicrosoftTsc {
 
     fn check(&self, input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
         let deadline = Instant::now() + self.wall_time;
-        let files = project_files(input)?;
+        let files = project_files(input, self.input_bytes)?;
         // tsc runs with this host's file system, and resolving a module reads
         // or probes the path it names, so a program that could name one is
         // left unchecked here. tsc-rs reads only the check's own files.
@@ -99,19 +114,25 @@ impl CodeCheck for MicrosoftTsc {
         }
         let mut command = oneiron_spawn::command(&self.tsc);
         command.args(TSC_ARGS).current_dir(directory.path());
-        run_bounded(command, deadline, DEFAULT_OUTPUT_BYTES)?.report(self.backend(), None)
+        // Every diagnostic it prints is kept: the check's output has no bound
+        // of its own (FIX 8277).
+        match run_bounded(command, deadline, None) {
+            Ok(exited) => exited.report(self.backend(), None),
+            Err(stopped) => stopped.report(self.backend(), None),
+        }
     }
 }
 
 /// Runs `command` with an empty environment until it exits, killing it and
-/// its process group at `deadline` or as soon as its stdout passes `limit`
-/// bytes. No more than `limit + 1` bytes of its output are ever held, and one
-/// byte of stderr.
+/// its process group at `deadline`, or, with a `limit`, as soon as its stdout
+/// passes `limit` bytes; then no more than `limit + 1` bytes of its output
+/// are ever held. One byte of stderr is. A run that stops keeps what it had
+/// printed.
 fn run_bounded(
     mut command: Command,
     deadline: Instant,
-    limit: usize,
-) -> Result<Exited, CheckFailure> {
+    limit: Option<usize>,
+) -> Result<Exited, Stopped> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -126,12 +147,13 @@ fn run_bounded(
         .map_err(|_| CheckFailure::Unavailable)?;
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         stop(&mut child);
-        return Err(CheckFailure::Unavailable);
+        return Err(CheckFailure::Unavailable.into());
     };
-    let (Ok(stdout), Ok(stderr)) = (read_bounded(stdout, limit), read_bounded(stderr, 0)) else {
+    let (Ok(stdout), Ok(stderr)) = (read_bounded(stdout, limit), read_bounded(stderr, Some(0)))
+    else {
         // A reader that did start ends once the group is gone.
         stop(&mut child);
-        return Err(CheckFailure::Unavailable);
+        return Err(CheckFailure::Unavailable.into());
     };
     let mut printed = None;
     let ended = loop {
@@ -141,7 +163,7 @@ fn run_bounded(
             printed = Some(read);
         }
         if let Some(Ok(bytes)) = &printed
-            && bytes.len() > limit
+            && limit.is_some_and(|limit| bytes.len() > limit)
         {
             break Err(CheckFailure::OverBudget);
         }
@@ -156,7 +178,13 @@ fn run_bounded(
         Ok(status) => status,
         Err(failure) => {
             stop(&mut child);
-            return Err(failure);
+            // The group is gone, so the reader ends at its pipe's end with
+            // what the run printed.
+            let stdout = printed
+                .or_else(|| stdout.recv_timeout(DRAIN).ok())
+                .and_then(Result::ok)
+                .unwrap_or_default();
+            return Err(Stopped { failure, stdout });
         }
     };
     // After the exit, each reader ends at its pipe's end. A process that
@@ -172,8 +200,8 @@ fn run_bounded(
             .map_err(|_| CheckFailure::Timeout)?,
     }
     .map_err(|_| CheckFailure::UnreadableOutput)?;
-    if printed.len() > limit {
-        return Err(CheckFailure::OverBudget);
+    if limit.is_some_and(|limit| printed.len() > limit) {
+        return Err(CheckFailure::OverBudget.into());
     }
     let complained = stderr
         .recv_timeout(drain)
@@ -187,20 +215,24 @@ fn run_bounded(
     })
 }
 
-/// Reads `pipe` on its own thread, stopping one byte past `limit`: dropping
-/// the pipe then ends the process's writes to it.
+/// Reads `pipe` on its own thread to its end, or with a `limit` stopping one
+/// byte past it: dropping the pipe then ends the process's writes to it.
 fn read_bounded(
     pipe: impl Read + Send + 'static,
-    limit: usize,
+    limit: Option<usize>,
 ) -> Result<mpsc::Receiver<std::io::Result<Vec<u8>>>, CheckFailure> {
     let (sender, receiver) = mpsc::sync_channel(1);
     std::thread::Builder::new()
         .name("tsc-output".into())
         .spawn(move || {
+            let mut pipe = pipe;
             let mut read = Vec::new();
-            let result = pipe
-                .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
-                .read_to_end(&mut read);
+            let result = match limit {
+                Some(limit) => pipe
+                    .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
+                    .read_to_end(&mut read),
+                None => pipe.read_to_end(&mut read),
+            };
             let _ = sender.send(result.map(|_| read));
         })
         .map_err(|_| CheckFailure::Unavailable)?;

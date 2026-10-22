@@ -210,6 +210,12 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .filter(|output| is_result_output_path(&output.path))
             .cloned()
             .collect();
+        // Its steps' type diagnostics kept whole, read as its results are
+        // (FIX 8277).
+        if let ExecutorStorage::Canonical(vault) = storage {
+            self.results
+                .extend(vault.type_diagnostics_bodies(record.run_id));
+        }
         self.bindings = record.bindings.clone();
         self.recorded_rows = record.agent_verb_rows();
         self.storage = Some(storage);
@@ -361,7 +367,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
 
 /// The declarations the system prompt teaches, in its order: the WIT host
 /// verbs, the code-mode catalog fragment (every row at its SDK path, with its
-/// typed input and reply), and the interpreter's own functions. A shadow
+/// typed input and reply), and the interpreter's own functions. A feedback
 /// check reads these same texts.
 pub(super) fn executor_declarations() -> [oneiron_code_check::Declaration<'static>; 3] {
     [

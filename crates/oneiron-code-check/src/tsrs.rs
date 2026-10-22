@@ -61,8 +61,10 @@ impl CodeCheck for TsrsWasm {
     }
 
     fn check(&self, input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
-        let (exited, peak) = self.0.check(input)?;
-        exited.report(self.backend(), Some(peak))
+        match self.0.check(input) {
+            Ok((exited, peak)) => exited.report(self.backend(), Some(peak)),
+            Err(stopped) => stopped.report(self.backend(), None),
+        }
     }
 }
 

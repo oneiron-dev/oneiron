@@ -1,5 +1,6 @@
-//! Shadow-mode counts: how often agent programs fail a check, which
-//! diagnostics they carry, and what their step did next.
+//! Feedback-mode counts: how often agent programs fail a check, which
+//! diagnostics they carry, how many and how large, and what their step did
+//! next.
 
 use crate::{CheckFailure, CheckReport};
 use serde::Serialize;
@@ -52,8 +53,14 @@ pub struct MetricsSnapshot {
     pub with_diagnostics: u64,
     /// Programs no checker answered for, by failure code.
     pub unchecked: BTreeMap<&'static str, u64>,
-    /// Checked programs carrying each diagnostic code.
+    /// Checked programs carrying each diagnostic code: program incidence,
+    /// each program counted once per code.
     pub codes: BTreeMap<u32, u64>,
+    /// Every diagnostic checked programs carried, each occurrence counted,
+    /// partial reports' included.
+    pub diagnostic_occurrences: u64,
+    /// The UTF-8 bytes of those diagnostics' messages.
+    pub diagnostic_bytes: u64,
     /// What the step did next, for programs with diagnostics and without.
     pub then_with_diagnostics: BTreeMap<&'static str, u64>,
     pub then_clean: BTreeMap<&'static str, u64>,
@@ -70,7 +77,7 @@ struct Counts {
     latency: BTreeMap<&'static str, VecDeque<u64>>,
 }
 
-/// Process-lifetime counts of shadow checks.
+/// Process-lifetime counts of feedback checks.
 #[derive(Default)]
 pub struct CheckMetrics {
     counts: Mutex<Counts>,
@@ -90,7 +97,23 @@ impl CheckMetrics {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Counts { snapshot, latency } = &mut *counts;
+        if let Ok(report) = result {
+            snapshot.diagnostic_occurrences = snapshot
+                .diagnostic_occurrences
+                .saturating_add(report.diagnostics.len() as u64);
+            snapshot.diagnostic_bytes = report
+                .diagnostics
+                .iter()
+                .fold(snapshot.diagnostic_bytes, |bytes, diagnostic| {
+                    bytes.saturating_add(diagnostic.message.len() as u64)
+                });
+        }
         match result {
+            // A partial report counts as the failure that stopped it.
+            Ok(CheckReport {
+                incomplete: Some(failure),
+                ..
+            }) => *snapshot.unchecked.entry(failure.code()).or_default() += 1,
             Ok(report) => {
                 snapshot.checked += 1;
                 let mut codes: Vec<u32> = report.diagnostics.iter().map(|d| d.code).collect();
