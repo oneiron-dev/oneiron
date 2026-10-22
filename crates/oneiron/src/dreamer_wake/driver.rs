@@ -1,5 +1,6 @@
 //! The wake loop: admit, warn, dispatch under panic containment, stop conditions.
 
+mod admission;
 mod attribution;
 mod claim_authoring;
 mod concurrent;
@@ -7,9 +8,15 @@ mod executor_error;
 mod hooks;
 mod observe;
 mod park_cause;
+mod rewrite;
+mod settle;
+mod stop;
 
 pub use self::claim_authoring::{BoundClaimAuthoringSelector, ClaimAuthoringSelection};
 pub(crate) use self::park_cause::{llm_waits_on_owner_act, waits_on_owner_act};
+pub(crate) use self::rewrite::check_host_wake_rewrite;
+use self::settle::Settlement;
+use self::stop::{attempt_stop, boundary_stop};
 
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
@@ -102,6 +109,8 @@ pub struct DreamerWakeDriver<'a> {
     contribution_host:
         Option<&'a (dyn crate::dreamer_runner::maintenance::ContributionReplayHost + Send + Sync)>,
     claim_authoring: ClaimAuthoringSelection,
+    /// The material this pass's `host.wake` pre-hooks added (FIX 8722).
+    hook_material: Vec<String>,
     #[cfg(feature = "sync")]
     pub(super) progress: Option<WakeProgressLane<'a>>,
 }
@@ -124,9 +133,17 @@ impl<'a> DreamerWakeDriver<'a> {
             skill_optimizer: None,
             contribution_host: None,
             claim_authoring: ClaimAuthoringSelection::None,
+            hook_material: Vec::new(),
             #[cfg(feature = "sync")]
             progress: None,
         }
+    }
+
+    /// The material this pass's `host.wake` pre-hooks added, in order, each
+    /// text re-validated and re-gated (FIX 8722); empty when none did.
+    #[must_use]
+    pub fn hook_material(&self) -> &[String] {
+        &self.hook_material
     }
 
     /// Attach the Coach's author and independent typed-decision replay judge.
@@ -243,6 +260,9 @@ impl<'a> DreamerWakeDriver<'a> {
         // An ended pass's Checkpoint parks, and its Retry parks whose delay
         // passed, resume as the same tries (DOOR-144).
         self.resume_checkpoints(input);
+        // An owner Stop's owed abandon is retried once due, on every wake
+        // host, with a program runtime bound or none (FIX 7352).
+        self.store.recover_owed_stop_abandons(now);
         crate::human_task::run_human_followups_on_wake(self.vault, now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
         // PEOPLE `about`: a person whose facts moved queues its lines anew.
@@ -309,270 +329,18 @@ impl<'a> DreamerWakeDriver<'a> {
             // shutdown requested mid-pass could not raise the cancellation
             // flag until the whole queue drained.
             yield_once().await;
-            if cancel.is_cancelled() {
-                // Cooperative-preemption boundary (H-S5/R2): between attempts
-                // the driver holds no admitted attempt and no in-flight gated
-                // write, so stopping here can never truncate a gated write
-                // or an off-record close.
-                report.stop = WakePassStop::Cancelled;
-                break;
-            }
-            self.maybe_fire_wrap_notice();
-            if self.deadline.expired() {
-                // Hard cut at the attempt boundary: any admitted LLM call has
-                // settled before the sequential driver reaches this check.
-                report.stop = WakePassStop::DeadlineHardCut;
-                break;
-            }
-            if self.enter_finalize_if_due() {
-                // Graceful wrap: admit NO new attempts and NO new step leases;
-                // the pass ends under deadline/budget pressure.
-                report.stop = if self.counter_exhausted() {
-                    WakePassStop::BudgetExhausted
-                } else {
-                    WakePassStop::DeadlineHardCut
-                };
+            if let Some(stop) = boundary_stop(self, cancel) {
+                report.stop = stop;
                 break;
             }
 
-            let cleanup = if !self.consolidation_only
-                && input.trigger == WakeTrigger::Timer
-                && input.scope == DreamerConsolidationScope::Macro
-            {
-                self.store.admit_next_vault_cleanup(AdmitDreamerAttempt {
-                    lease_owner: input.lease_owner.clone(),
-                    now: input.now,
-                    budget_id: self.budget_id.clone(),
-                    budget_total_units: input.budget_total_units,
-                    reserve_units: input.reserve_units,
-                    started_milestone: self
-                        .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                })?
-            } else {
-                DreamerAdmissionOutcome::Empty
-            };
-            let cleanup = match cleanup {
-                DreamerAdmissionOutcome::Empty
-                    if !self.consolidation_only
-                        && input.trigger == WakeTrigger::Timer
-                        && input.scope == DreamerConsolidationScope::Macro =>
-                {
-                    self.store.admit_next_note_review(AdmitDreamerAttempt {
-                        lease_owner: input.lease_owner.clone(),
-                        now: input.now,
-                        budget_id: self.budget_id.clone(),
-                        budget_total_units: input.budget_total_units,
-                        reserve_units: input.reserve_units,
-                        started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    })?
-                }
-                outcome => outcome,
-            };
-            // Then each resident's free time for its human (FIX 4453), before
-            // its own dreaming: its choice of rest ends its own-time item.
-            let cleanup = match cleanup {
-                DreamerAdmissionOutcome::Empty
-                    if !self.consolidation_only
-                        && input.trigger == WakeTrigger::Timer
-                        && input.scope == DreamerConsolidationScope::Macro =>
-                {
-                    self.store.admit_next_free_time_item(AdmitDreamerAttempt {
-                        lease_owner: input.lease_owner.clone(),
-                        now: input.now,
-                        budget_id: self.budget_id.clone(),
-                        budget_total_units: input.budget_total_units,
-                        reserve_units: input.reserve_units,
-                        started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    })?
-                }
-                outcome => outcome,
-            };
-            // Then each resident's own dreaming (OF-490), on the same pass.
-            let cleanup = match cleanup {
-                DreamerAdmissionOutcome::Empty
-                    if !self.consolidation_only
-                        && input.trigger == WakeTrigger::Timer
-                        && input.scope == DreamerConsolidationScope::Macro =>
-                {
-                    // The host may route a resident's dreaming to its own
-                    // line (FIX 1152); every settlement below follows the
-                    // line its admission reserved on.
-                    self.store.admit_next_resident_dream(
-                        AdmitDreamerAttempt {
-                            lease_owner: input.lease_owner.clone(),
-                            now: input.now,
-                            budget_id: self.budget_id.clone(),
-                            budget_total_units: input.budget_total_units,
-                            reserve_units: input.reserve_units,
-                            started_milestone: self
-                                .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                        },
-                        &mut |candidate: &crate::attempt_queue::AttemptRecord| {
-                            exec.runner_budget_id(candidate)
-                        },
-                    )?
-                }
-                outcome => outcome,
-            };
-            let priority = match cleanup {
-                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
-                    self.store.admit_next_skill_optimize(AdmitDreamerAttempt {
-                        lease_owner: input.lease_owner.clone(),
-                        now: input.now,
-                        budget_id: self.budget_id.clone(),
-                        budget_total_units: input.budget_total_units,
-                        reserve_units: input.reserve_units,
-                        started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    })?
-                }
-                outcome => outcome,
-            };
-            let priority = match priority {
-                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
-                    self.store.admit_next_maintenance(AdmitDreamerAttempt {
-                        lease_owner: input.lease_owner.clone(),
-                        now: input.now,
-                        budget_id: self.budget_id.clone(),
-                        budget_total_units: input.budget_total_units,
-                        reserve_units: input.reserve_units,
-                        started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    })?
-                }
-                outcome => outcome,
-            };
-            // The wake policy's recipe receipts follow maintenance: a recipe
-            // body queues work of its own, which admits after it.
-            let priority = match priority {
-                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
-                    self.store.admit_next_recipe_wake(AdmitDreamerAttempt {
-                        lease_owner: input.lease_owner.clone(),
-                        now: input.now,
-                        budget_id: self.budget_id.clone(),
-                        budget_total_units: input.budget_total_units,
-                        reserve_units: input.reserve_units,
-                        started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    })?
-                }
-                outcome => outcome,
-            };
-            // Then the TASKs routed to the Dreamer: the work a person or agent
-            // asked for, before the vault's own weaving.
-            // A TASK whose admission is refused (the highway refuses its
-            // Accept) rolls its admission back and stays queued; the lanes
-            // after it still admit this pass.
-            let priority = match priority {
-                DreamerAdmissionOutcome::Empty
-                    if !self.consolidation_only && !task_admission_refused =>
-                {
-                    let request = AdmitDreamerAttempt {
-                        lease_owner: input.lease_owner.clone(),
-                        now: input.now,
-                        budget_id: self.budget_id.clone(),
-                        budget_total_units: input.budget_total_units,
-                        reserve_units: input.reserve_units,
-                        started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    };
-                    match self.store.admit_next_task_realize(request) {
-                        Ok(outcome) => outcome,
-                        Err(error) => {
-                            tracing::warn!(
-                                kind = ?error.kind(),
-                                %error,
-                                "a TASK realization was not admitted; this pass admits no more TASKs"
-                            );
-                            task_admission_refused = true;
-                            DreamerAdmissionOutcome::Empty
-                        }
-                    }
-                }
-                outcome => outcome,
-            };
-            // Then the turn programs landed turns woke (DOOR-141 PR2), and
-            // only on an executor that runs them: a pass whose host binds no
-            // program runtime admits none. A program whose admission fails
-            // stops program admission for this pass, never the pass.
-            let priority = match priority {
-                DreamerAdmissionOutcome::Empty
-                    if !self.consolidation_only
-                        && !program_admission_refused
-                        && exec.runs_turn_programs() =>
-                {
-                    let admitted = self
-                        .milestone_claim(DreamerMilestoneKind::Started, input.now)
-                        .and_then(|started_milestone| {
-                            self.store.admit_next_turn_program(AdmitDreamerAttempt {
-                                lease_owner: input.lease_owner.clone(),
-                                now: input.now,
-                                budget_id: self.budget_id.clone(),
-                                budget_total_units: input.budget_total_units,
-                                reserve_units: input.reserve_units,
-                                started_milestone,
-                            })
-                        });
-                    match admitted {
-                        Ok(outcome) => outcome,
-                        Err(error) => {
-                            tracing::warn!(
-                                kind = ?error.kind(),
-                                %error,
-                                "a turn program was not admitted; this pass admits no more programs"
-                            );
-                            program_admission_refused = true;
-                            DreamerAdmissionOutcome::Empty
-                        }
-                    }
-                }
-                outcome => outcome,
-            };
-            // Then the weave lens renders: each published digest period
-            // through the weave-report skill, for the reader it is for.
-            let priority = match priority {
-                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
-                    self.store.admit_next_weave_lens(AdmitDreamerAttempt {
-                        lease_owner: input.lease_owner.clone(),
-                        now: input.now,
-                        budget_id: self.budget_id.clone(),
-                        budget_total_units: input.budget_total_units,
-                        reserve_units: input.reserve_units,
-                        started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    })?
-                }
-                outcome => outcome,
-            };
-            // Only the NEW recipe-vs-connector choice is policy data. Cleanup
-            // and maintenance remain first; consolidation's home-node stop
-            // remains last. Read the owner row once per pass below.
-            let order = match admission_policy.weave_recipe_priority {
-                super::policy::WeaveRecipePriority::BeforeConnectorEvent => [true, false],
-                super::policy::WeaveRecipePriority::AfterConnectorEvent => [false, true],
-            };
-            let mut priority = priority;
-            for recipe in order {
-                if self.consolidation_only || !matches!(&priority, DreamerAdmissionOutcome::Empty) {
-                    break;
-                }
-                let request = AdmitDreamerAttempt {
-                    lease_owner: input.lease_owner.clone(),
-                    now: input.now,
-                    budget_id: self.budget_id.clone(),
-                    budget_total_units: input.budget_total_units,
-                    reserve_units: input.reserve_units,
-                    started_milestone: self
-                        .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                };
-                priority = if recipe {
-                    self.store.admit_next_weave_recipe(request)?
-                } else {
-                    self.store.admit_next_connector_event(request)?
-                };
-            }
+            let priority = self.admit_priority(
+                &input,
+                exec,
+                &admission_policy,
+                &mut task_admission_refused,
+                &mut program_admission_refused,
+            )?;
             let mut admitted =
                 match priority {
                     DreamerAdmissionOutcome::Admitted(attempt) => *attempt,
@@ -887,175 +655,24 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
             };
 
-            match execution {
-                DreamerAttemptExecution::Completed { completed_units } => {
-                    self.store.settle_budget(SettleDreamerBudget {
-                        budget_id: line.clone(),
-                        child_attempt: attempt_id,
-                        actual_units: completed_units,
-                        now: input.now,
-                    })?;
-                    self.complete_attempt(&*exec, &admitted, input.now).await?;
-                    self.write_attempt_milestone(&admitted, DreamerMilestoneKind::Done, input.now)?;
-                    report.completed += 1;
-                }
-                DreamerAttemptExecution::Deferred {
-                    completed_units,
-                    retry_at,
-                } => {
-                    self.store.defer_selection(
-                        &admitted,
-                        SettleDreamerBudget {
-                            budget_id: line.clone(),
-                            child_attempt: attempt_id,
-                            actual_units: completed_units,
-                            now: input.now,
-                        },
-                        retry_at,
-                    )?;
-                    let stage = stage.unwrap_or("deferred");
-                    self.log_attempt_outcome(&admitted, stage, None, None, "settled", "none");
-                    self.write_attempt_milestone(
-                        &admitted,
-                        DreamerMilestoneKind::CheckpointReached,
-                        input.now,
-                    )?;
-                    report.deferred += 1;
-                }
-                DreamerAttemptExecution::Landed {
-                    completed_units,
-                    reserve_units,
-                    status,
-                    resume_point,
-                    hand_off,
-                } => {
-                    let spent_reserve_units = self.land_attempt(
-                        &admitted,
-                        LandingRequest {
-                            reserve_units,
-                            status,
-                            resume_point,
-                            hand_off,
-                        },
-                        input.now,
-                    )?;
-                    // Ordinary work AND the bounded landing spend come out of
-                    // the same reservation: both are units this attempt really
-                    // consumed, so the wake ledger settles the sum rather than
-                    // refunding work that happened.
-                    self.store.settle_budget(SettleDreamerBudget {
-                        budget_id: line.clone(),
-                        child_attempt: attempt_id,
-                        actual_units: completed_units.saturating_add(spent_reserve_units),
-                        now: input.now,
-                    })?;
-                    self.log_attempt_outcome(&admitted, "landed", None, None, "settled", "none");
-                    // A designed landing leaves a durable resume point, exactly
-                    // like a deadline-cut park — never a `Done` milestone,
-                    // which would claim the job delivered.
-                    self.write_attempt_milestone(
-                        &admitted,
-                        DreamerMilestoneKind::CheckpointReached,
-                        input.now,
-                    )?;
-                    report.landed += 1;
-                }
-                DreamerAttemptExecution::ParkWithSpend {
-                    reason,
-                    cause,
-                    completed_units,
-                    step_hashes,
-                } => {
-                    // The in-flight call finished and was charged. Stop the run
-                    // at this boundary without refunding its real spend or
-                    // publishing post-deadline output.
-                    self.store.settle_checkpoint_budget(
-                        SettleDreamerBudget {
-                            budget_id: line.clone(),
-                            child_attempt: attempt_id,
-                            actual_units: completed_units,
-                            now: input.now,
-                        },
-                        &step_hashes,
-                        ParkDreamerAttempt {
-                            attempt_id,
-                            reason: reason.clone(),
-                            cause,
-                            park_owner: input.lease_owner.clone(),
-                            now: input.now,
-                        },
-                        admitted_lease(&admitted, &input.lease_owner),
-                    )?;
-                    let stage = stage.unwrap_or("park_with_spend");
-                    let settled = "checkpoint_settled";
-                    self.log_attempt_outcome(
-                        &admitted,
-                        stage,
-                        None,
-                        Some(cause),
-                        settled,
-                        "committed",
-                    );
-                    self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
-                    self.write_attempt_milestone(
-                        &admitted,
-                        DreamerMilestoneKind::CheckpointReached,
-                        input.now,
-                    )?;
-                    report.parked += 1;
-                }
-                DreamerAttemptExecution::Park { reason, cause } => {
-                    // The lease is not settled as spent: what its run line
-                    // charged stays spent (SCAN C012), the rest of the
-                    // reservation is refunded, all of it for an attempt that
-                    // never dispatched.
-                    let settled =
-                        self.settle_charged_or_abort(&line, attempt_id, &spend_meter, input.now)?;
-                    let hard_cut =
-                        reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired();
-                    let (cause, park) = if let Some(row) = self.store.parked_attempt(attempt_id)? {
-                        // One park-owner: the step layer already parked this
-                        // attempt inside its trap wtxn — publish only.
-                        self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
-                        (row.cause, "step_layer_parked")
-                    } else {
-                        self.park_attempt(&admitted, reason, cause, &input.lease_owner, input.now)?;
-                        (cause, "committed")
-                    };
-                    let stage = match stage {
-                        Some(stage) => stage,
-                        None if hard_cut => "hard_cut",
-                        None => "park",
-                    };
-                    self.log_attempt_outcome(
-                        &admitted,
-                        stage,
-                        hard_cut_error,
-                        Some(cause),
-                        settled,
-                        park,
-                    );
-                    if hard_cut {
-                        // A deadline-cut park leaves a durable resume point.
-                        self.write_attempt_milestone(
-                            &admitted,
-                            DreamerMilestoneKind::CheckpointReached,
-                            input.now,
-                        )?;
-                    }
-                    report.parked += 1;
-                }
-            }
+            self.settle_execution(
+                &*exec,
+                Settlement {
+                    input: &input,
+                    admitted: &admitted,
+                    line: &line,
+                    spend_meter: &spend_meter,
+                    attempt_id,
+                    execution,
+                    stage,
+                    hard_cut_error,
+                },
+                &mut report,
+            )
+            .await?;
 
-            if cancel_requested {
-                // The admitted attempt was parked and its reservation refunded
-                // through the Park arm above — the pass may now stop at this
-                // attempt boundary (H-S5/R2).
-                report.stop = WakePassStop::Cancelled;
-                break;
-            }
-            if backlog_left {
-                report.stop = WakePassStop::BacklogLeft;
+            if let Some(stop) = attempt_stop(cancel_requested, backlog_left) {
+                report.stop = stop;
                 break;
             }
         }

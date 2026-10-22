@@ -15856,7 +15856,7 @@ pub struct HookSelector {
     pub render_class: Option<HookRenderClass>,
 }
 
-/// `oneiron::skill_hub::pack_catalog::hooks::HookAuthor`.
+/// `oneiron::skill_hub::pack_catalog::hooks::author::HookAuthor`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
@@ -15878,7 +15878,7 @@ pub enum HookAuthor {
     },
 }
 
-/// `oneiron::skill_hub::pack_catalog::hooks::PackHookBinding`.
+/// `oneiron::skill_hub::pack_catalog::hooks::bindings::PackHookBinding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PackHookBinding {
@@ -18533,6 +18533,8 @@ pub enum SlimDropOutcome {
         #[serde(rename = "blocker")]
         blocker: ShedBlocker,
     },
+    #[serde(rename = "nothing_pending")]
+    NothingPending,
 }
 
 /// `oneiron::slim::public::SlimDropReceipt`.
@@ -29981,8 +29983,8 @@ pub struct LearningProjectionView {
 pub struct ObjectiveConfession {
     #[serde(rename = "objective")]
     pub objective: String,
-    #[serde(rename = "met")]
-    pub met: bool,
+    #[serde(rename = "met", default, skip_serializing_if = "Option::is_none")]
+    pub met: Option<bool>,
     #[serde(rename = "flaw", default, skip_serializing_if = "Option::is_none")]
     pub flaw: Option<String>,
     #[serde(
@@ -48234,7 +48236,7 @@ pub enum MutationIntent {
     ExplicitMutation,
 }
 
-/// `oneiron::outbound_consent::connector_call::ConnectorCallRequest`.
+/// `oneiron::outbound_consent::connector_call_types::ConnectorCallRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorCallRequest {
@@ -48279,7 +48281,7 @@ pub struct ConnectorToolResult {
     pub rpc_error: Option<crate::WireJson>,
 }
 
-/// `oneiron::outbound_consent::connector_call::ConnectorQuestion`.
+/// `oneiron::outbound_consent::connector_call_types::ConnectorQuestion`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectorQuestion {
     #[serde(rename = "key")]
@@ -57623,6 +57625,8 @@ pub struct ProgramRunView {
     pub run: Option<ProgramRunStateView>,
     #[serde(rename = "steps")]
     pub steps: Vec<ProgramStepView>,
+    #[serde(rename = "erased_steps")]
+    pub erased_steps: Vec<String>,
     #[serde(rename = "undecodable_steps")]
     pub undecodable_steps: u64,
     #[serde(

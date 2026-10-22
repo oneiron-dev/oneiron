@@ -160,8 +160,8 @@ pub(crate) use self::storage::{
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
 pub(crate) use self::storage::{
-    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_stub,
-    wait_settled_owners,
+    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_erased,
+    wait_reply_scan, wait_settled_owners,
 };
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};

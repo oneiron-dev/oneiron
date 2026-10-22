@@ -148,7 +148,7 @@ impl Store {
         Vec<crate::world_keys::WorldKeyId>,
         crate::secret_custody::PlannedCredentials,
     )> {
-        let rows = {
+        let (rows, own_fences) = {
             let txn = self.env.read_txn()?;
             let mark = ARCHIVED.get(self, &txn, &())?;
             if !archived_by(mark.as_deref(), self.env.path())? {
@@ -158,7 +158,8 @@ impl Store {
             prefixes.push(GATE_DECISION_KEY_PREFIX);
             prefixes.extend(body_prefixes());
             prefixes.extend(known_history_prefixes());
-            vault_meta_rows(&self.env, &txn, &prefixes)?
+            let rows = vault_meta_rows(&self.env, &txn, &prefixes)?;
+            (rows, self.credential_fences_in_txn(&txn))
         };
         let mut custody = preflight_checkpoint_rows(&rows, Some(source))?;
         // Its body instances fork with its claim keys (KS-2A): a missing one
@@ -174,9 +175,17 @@ impl Store {
         // Its credential values' keys fork with the rest, each by exact id
         // from its source's custody (KS-6 part 2, CALLS `KS-6 required
         // restore set`): one the source lacks, or a custody fault, leaves
-        // that row sealed, pending, warned.
+        // that row sealed, pending, warned. One its source's erase evidence,
+        // its own, or a retired value key of the custody it binds names
+        // erased is never forked, and its fence comes with it (CALLS `KS-6
+        // erase fence form`), each looked up by its own handle.
+        let mut fences = source.credential_fences();
+        fences.merge(&own_fences);
+        if let Some(binding) = custody.plan_mut().source() {
+            fences.with_custody(binding);
+        }
         let mut credentials =
-            crate::secret_custody::plan_archived_credentials(self, custody.plan_mut());
+            crate::secret_custody::plan_archived_credentials(self, custody.plan_mut(), &mut fences);
         // The environment's path is the canonical root it was opened at.
         let root = self.env.path().to_path_buf();
         refuse_custody_beside(&root)?;
@@ -195,7 +204,7 @@ impl Store {
             .and_then(|()| self.read_back_known_in_txn(&wtxn, &prune.kept))
             .and_then(|()| {
                 read_back_credentials_in_txn(self, &wtxn, &mut credentials);
-                Ok(())
+                fences.put_in_txn(self, &mut wtxn)
             })
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             // The orders standing on its source now, not the ones it had.

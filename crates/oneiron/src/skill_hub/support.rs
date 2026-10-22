@@ -1,3 +1,7 @@
+//! Bounded hub value parsing helpers.
+//! Entry: `exact_map`.
+//! Defines its own items.
+
 use std::io::Cursor;
 
 use rmpv::Value;

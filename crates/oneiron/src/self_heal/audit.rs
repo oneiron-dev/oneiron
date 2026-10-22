@@ -26,7 +26,10 @@ const SEALS: SideTable<[u8; 16], SealedAttemptReceipt, Named> =
 #[serde(deny_unknown_fields)]
 pub struct ObjectiveConfession {
     pub objective: String,
-    pub met: bool,
+    /// The agent's own answer; `None` when it gave none (FIX 9466): a
+    /// missing or malformed confession is recorded as no answer, never
+    /// filled in.
+    pub met: Option<bool>,
     pub flaw: Option<String>,
     pub uncertainty: Option<String>,
 }
@@ -34,7 +37,7 @@ pub struct ObjectiveConfession {
 impl ObjectiveConfession {
     #[must_use]
     pub fn confesses_flaw(&self) -> bool {
-        !self.met || self.flaw.is_some()
+        self.met == Some(false) || self.flaw.is_some()
     }
 
     #[must_use]

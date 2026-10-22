@@ -12,6 +12,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
 use crate::federation::decode_federation_grant_body;
+use crate::federation::record_scope::note_world;
 use crate::federation::{FederationGrant, FederationGrantRole, FederationGrantScope, Position};
 use crate::{EntityId, Vault};
 
@@ -130,8 +131,14 @@ pub(in crate::sync) fn admit_promoted_entity_write_in_txn(
     }
     let admission = authorize_in_txn(vault, txn, scope, selector, Some(selector.member_ref))?;
     admit_selected_in_txn(vault, txn, id, selector, &admission)?;
-    let mut record = crate::federation::record_scope::scope_for_blob(&vault.store, txn, id, &old)?
-        .ok_or_else(denied)?;
+    // A NOTE sits at one world it is in that the grant and the proof both
+    // hold (FIX-LIST 9433).
+    let held = [
+        &admission.grant.authority_scope.worlds,
+        &proof.scope().worlds,
+    ];
+    let mut record =
+        note_world::blob_scope_held_at(&vault.store, txn, id, &old, &held)?.ok_or_else(denied)?;
     record.verbs =
         crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from(["write".to_string()]));
     if !admission
@@ -276,8 +283,12 @@ impl StoredSelection<'_, '_> {
         // digest-bound record position in this transaction, just as export
         // does; missing or stale stamps cannot acquire authority from a
         // matching legacy selector (including via the facet closure below).
+        // A NOTE sits at one world it is in that the grant and the selector
+        // both hold (FIX-LIST 9433).
+        let selected = note_world::selector_world_axis(self.selector.world);
+        let held = [&self.admission.grant.authority_scope.worlds, &selected];
         let Some(mut record) =
-            crate::federation::record_scope::scope_for_blob(&self.vault.store, self.txn, id, &raw)?
+            note_world::blob_scope_held_at(&self.vault.store, self.txn, id, &raw, &held)?
         else {
             return Ok(None);
         };

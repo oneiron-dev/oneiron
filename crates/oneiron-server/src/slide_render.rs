@@ -519,10 +519,12 @@ impl Drop for StopOnDrop {
 
 /// A deck preview beside the renderer that drew it (FIX 7653): the
 /// renderer's lease and turn cover the preview until it is encoded, and it
-/// serializes as the preview alone.
+/// serializes as the preview alone. Past its own encoding into the answer,
+/// the renderer stays with the door's reply until that is encoded too
+/// (FIX 8238, `crate::api::answer_hold`).
 pub(crate) struct RenderedPreview {
     preview: DeckPreview,
-    _renderer: Option<AdmittedRenderer>,
+    _renderer: Option<crate::api::answer_hold::KeptUntilEncoded<AdmittedRenderer>>,
 }
 
 impl serde::Serialize for RenderedPreview {
@@ -543,7 +545,7 @@ pub(crate) fn rendered(
     match preview {
         Ok(preview) => Ok(RenderedPreview {
             preview,
-            _renderer: renderer,
+            _renderer: renderer.map(crate::api::answer_hold::KeptUntilEncoded::new),
         }),
         Err(error) => Err(match &renderer {
             Some(renderer) => renderer.typed(error),

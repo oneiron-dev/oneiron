@@ -135,12 +135,14 @@ fn refused(message: String) -> MemoryError {
 
 /// Admits one TASK-bound run of a saved workflow as `caller`, whose run has
 /// the parent its proof gives. The same intent key with the same TASK
-/// answers its first run before the TASK is read or any lane is checked
-/// (FIX 5415); another TASK, or none, under it is refused. Otherwise one
-/// writer holds the caller's proof, a member's reads of what the binding
-/// names on their own lane and their landing facet (FIX 5421), its standing
-/// on the TASK, the bind gate, the run's admission with the backlink on its
-/// wrapper alone, and the wrapper's take.
+/// answers its first run before the TASK is read or a member's lane is
+/// checked (FIX 5415); another TASK, or none, under it is refused. An agent's
+/// replay answers only once its admitted lane reads what that run names and
+/// captured (FIX 9700). Otherwise one writer holds the caller's proof, its
+/// reads of what the binding names on its lane and a member's landing facet
+/// (FIX 5421), its standing on the TASK, the bind gate, the run's admission
+/// with the backlink on its wrapper alone and an agent's reads of what it
+/// captured, and the wrapper's take.
 pub(crate) fn dispatch_bound(
     vault: &Vault,
     caller: &WorkflowBinder<'_>,
@@ -156,14 +158,20 @@ pub(crate) fn dispatch_bound(
     // A replay is read as the side-row wall stored its first run (FIX
     // 2314), in a writer this pass commits nothing in.
     if input.dedupe_key.is_some() {
+        // FIX 6291: an agent's lane reads its replay at a grant clock
+        // committed before the writer.
+        if matches!(caller, WorkflowBinder::Agent { .. }) {
+            vault.store.authorization_now()?;
+        }
         let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
         if let Some(existing) =
             dispatcher.bound_workflow_existing_in(&mut txn, &input, &spawn, &bind, &refusal)?
         {
+            caller.captures_read_in(vault, &mut txn, task, &existing)?;
             return Ok(existing);
         }
     }
-    let lane = caller.member_lane()?;
+    let lane = caller.read_lane()?;
     // FIX 6291: a member's grants, read on their lane or folded from a real
     // parent's run, are judged at a grant clock committed before the writer.
     if lane.is_some() || input.parent_attempt.is_some() {
@@ -173,14 +181,16 @@ pub(crate) fn dispatch_bound(
     if let Some(existing) =
         dispatcher.bound_workflow_existing_in(&mut txn, &input, &spawn, &bind, &refusal)?
     {
+        caller.captures_read_in(vault, &mut txn, task, &existing)?;
         return Ok(existing);
     }
     caller.revalidate_in_txn(vault, &txn)?;
-    binder::member_reads_in(vault, &mut txn, lane.as_ref(), task, &input.target)?;
+    binder::lane_reads_in(vault, caller, &mut txn, lane.as_ref(), task, &input.target)?;
     caller.landing_admits_in(vault, &txn, lane.as_ref(), task)?;
     admit_in_txn(vault, &txn, actor, task)?;
     caller.fund_in_txn(vault, &mut txn, actor)?;
     let outcome = dispatcher.dispatch_bound_workflow_in_txn(&mut txn, input, spawn, &bind)?;
+    caller.captures_read_in(vault, &mut txn, task, &outcome)?;
     if let AgentDispatchOutcome::WorkflowDispatched(status) = &outcome {
         take_in_txn(vault, &mut txn, actor, &status.attempt, task)?;
     }
@@ -707,9 +717,11 @@ pub(in crate::task_verb) fn bound_wrapper_job(
 }
 
 /// The statuses of a wrapper's live leaves no later try replaces, their
-/// retries included.
+/// retries included, in pre-order. Walked on a stack of its own, so a deep
+/// tree never deepens the call stack (FIX 10067).
 fn live_leaves(nodes: &[RunTreeNode], superseded: &HashSet<String>, out: &mut Vec<RunTreeStatus>) {
-    for node in nodes {
+    let mut pending: Vec<&RunTreeNode> = nodes.iter().rev().collect();
+    while let Some(node) = pending.pop() {
         if !superseded.contains(&node.attempt_id)
             && matches!(
                 node.status,
@@ -718,7 +730,7 @@ fn live_leaves(nodes: &[RunTreeNode], superseded: &HashSet<String>, out: &mut Ve
         {
             out.push(node.status);
         }
-        live_leaves(&node.children, superseded, out);
+        pending.extend(node.children.iter().rev());
     }
 }
 

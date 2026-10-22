@@ -1224,7 +1224,7 @@ declare namespace Sdk {
   type SlimDropRequest = { cause: ShedCause; waited_secs: number };
   type HeapDropReport = { sync_windows: number; ppr_cache_rows: number; ppr_dependency_rows: number; hnsw_nodes: number; estimated_reclaimed_bytes: number };
   type ShedBlocker = { kind: "no_pending_outbound_step" } | { kind: "multiple_pending_outbound_steps"; count: number } | { kind: "sync_window_busy"; window_key: string; outstanding_handles: number } | { kind: "already_slim_for_different_step" };
-  type SlimDropOutcome = { status: "entered"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "already_slim"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "refused"; blocker: ShedBlocker };
+  type SlimDropOutcome = { status: "entered"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "already_slim"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "refused"; blocker: ShedBlocker } | { status: "nothing_pending" };
   type SlimDropReceipt = { process_id: number; outcome: SlimDropOutcome };
   type SlimResumeOutcome = { status: "already_full" } | { status: "resumed"; residue: SlimResidueView };
   type SlimResumeReceipt = { process_id: number; outcome: SlimResumeOutcome };
@@ -1979,7 +1979,7 @@ declare namespace Sdk {
   type LateCreditShare = { subject?: EntityId | null; origin_skill?: EntityId | null; chain?: UsedProvenanceEdge[] | null; decay: number; weight: number };
   type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution?: PackAttributionFields | null; direct_subjects: (EntityId | null)[]; shares: LateCreditShare[] };
   type LearningProjectionView = { receipt?: LateCreditReceipt | null };
-  type ObjectiveConfession = { objective: string; met: boolean; flaw?: string | null; uncertainty?: string | null };
+  type ObjectiveConfession = { objective: string; met?: boolean | null; flaw?: string | null; uncertainty?: string | null };
   type AttemptConfession = { attempt: AttemptId; subject: EntityId; type_ref: CellTypeRef; objectives: ObjectiveConfession[] };
   type AuditDraw = { rate: number; sample: number; at: number };
   type SealCheckKind = "confession_recheck" | "random_audit";
@@ -3738,7 +3738,7 @@ declare namespace Sdk {
   type ProgramStepIssueView = { kind: "model"; occurrence: number; request_hash: string } | { kind: "write"; step_start: number; ordinal: number; receipt: string; call_digest: string } | { kind: "outbound"; intent: string; call_seq: number };
   type ProgramStepState = "issued" | "settled" | "uncertain";
   type ProgramStepView = { step_ref: string; attempt: string; issue: ProgramStepIssueView; state: ProgramStepState; result_digest?: string | null; uncertain?: string | null; at: number };
-  type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; held_by_try: ProgramHeldView[]; run?: ProgramRunStateView | null; steps: ProgramStepView[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] };
+  type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; held_by_try: ProgramHeldView[]; run?: ProgramRunStateView | null; steps: ProgramStepView[]; erased_steps: string[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] };
   type SettledProgramStepRequest = { root: string; step_ref: string };
   type ProgramResultAvailability = "readable" | "withheld" | "absent";
   type SettledProgramStepView = { root: string; attempt: string; actor: EntityId; code_run: string; step_ref: string; issue: ProgramStepIssueView; settled_at: number; result_digest: string; result_ref?: string | null; availability: ProgramResultAvailability; model_step?: SettledStepView | null; body_base64?: string | null };

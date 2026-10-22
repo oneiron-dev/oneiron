@@ -161,6 +161,14 @@ impl RecordingJsHost<'_, '_> {
         let cause = crate::code_run::ReadWorldUnknown::CallableSkill;
         self.gated_write.read_worlds_unknown(run_id, cause);
         let mut loaded = Vec::new();
+        // The answer check holds its buffers on the run's own share (FIX
+        // 10149); a host lent none checks unheld, as before.
+        let memory = self.result_share.zip(self.storage).map(|(share, storage)| {
+            crate::skill::AnswerMemory {
+                share,
+                watch: storage.limit_watch(),
+            }
+        });
         let ran = crate::skill::execute_callable_skill_cancellable(
             &lease.vault,
             &lease.leased,
@@ -175,6 +183,7 @@ impl RecordingJsHost<'_, '_> {
             started_at_ms / 1000,
             parent,
             &mut loaded,
+            memory,
         );
         self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;

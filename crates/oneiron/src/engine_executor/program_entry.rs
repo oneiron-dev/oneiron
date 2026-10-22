@@ -435,6 +435,7 @@ impl<'a> EngineNativeExecutor<'a> {
         )
         .with_recoverable_outputs(&self.storage, &record, recoverable)?
         .with_skill_executor(&config.model)
+        .with_result_share(&self.result_share)
         .with_program_injection(injection);
         let pinned = SelfCall::SkillsCall(SelfSkillCall {
             skill: entry.skill,

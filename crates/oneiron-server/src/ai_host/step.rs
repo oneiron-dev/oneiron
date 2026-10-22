@@ -87,6 +87,8 @@ pub(super) struct ModelStep<'a> {
 pub(super) struct StepOutput {
     pub(super) bytes: Vec<u8>,
     pub(super) confession: Option<Vec<ObjectiveConfession>>,
+    /// The objectives it was asked to confess against (FIX 9466).
+    pub(super) objectives: Vec<String>,
 }
 
 /// The objectives a step is asked to confess against: the caller's, verbatim,
@@ -138,8 +140,13 @@ impl From<Error> for StepFault {
 }
 
 /// Hands a held run's owed notice to its owners, then records it delivered
-/// (OF-541). A refusal leaves it owed, and the next pump delivers it.
-pub(super) fn deliver_hold_notice(dispatcher: &AgentDispatcher<'_>, root: AttemptId, now: u64) {
+/// (OF-541). A refusal leaves it owed, and the next pump delivers it: `true`
+/// when it is still owed, which keeps the pump's timed recheck (FIX 9467).
+pub(super) fn deliver_hold_notice(
+    dispatcher: &AgentDispatcher<'_>,
+    root: AttemptId,
+    now: u64,
+) -> bool {
     let delivered = dispatcher
         .deliver_budget_notice(root)
         .and_then(|owed| match owed {
@@ -150,10 +157,12 @@ pub(super) fn deliver_hold_notice(dispatcher: &AgentDispatcher<'_>, root: Attemp
         Ok(Some(hold)) => {
             let notice = hold.notice.as_ref().map(|notice| notice.text.as_str());
             tracing::info!(?root, notice, "a held run's notice reached its owners");
+            false
         }
-        Ok(None) => {}
+        Ok(None) => false,
         Err(error) => {
             tracing::error!(kind = ?error.kind(), ?root, "a held run's notice was not delivered");
+            true
         }
     }
 }
@@ -264,7 +273,11 @@ impl StepRunner {
         } else {
             parse_confession(&bytes, &objectives)
         };
-        Ok(StepOutput { bytes, confession })
+        Ok(StepOutput {
+            bytes,
+            confession,
+            objectives,
+        })
     }
 
     pub(super) fn generate(

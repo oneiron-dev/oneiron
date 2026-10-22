@@ -6108,7 +6108,9 @@ class SlimDropOutcomeAlreadySlim(TypedDict):
 class SlimDropOutcomeRefused(TypedDict):
     status: Literal["refused"]
     blocker: ShedBlocker
-SlimDropOutcome = SlimDropOutcomeEntered | SlimDropOutcomeAlreadySlim | SlimDropOutcomeRefused
+class SlimDropOutcomeNothingPending(TypedDict):
+    status: Literal["nothing_pending"]
+SlimDropOutcome = SlimDropOutcomeEntered | SlimDropOutcomeAlreadySlim | SlimDropOutcomeRefused | SlimDropOutcomeNothingPending
 class SlimDropReceipt(TypedDict):
     process_id: int
     outcome: SlimDropOutcome
@@ -9715,7 +9717,7 @@ class LearningProjectionView(TypedDict):
     receipt: NotRequired[LateCreditReceipt | None]
 class ObjectiveConfession(TypedDict):
     objective: str
-    met: bool
+    met: NotRequired[bool | None]
     flaw: NotRequired[str | None]
     uncertainty: NotRequired[str | None]
 class AttemptConfession(TypedDict):
@@ -18807,6 +18809,7 @@ class ProgramRunView(TypedDict):
     held_by_try: list[ProgramHeldView]
     run: NotRequired[ProgramRunStateView | None]
     steps: list[ProgramStepView]
+    erased_steps: list[str]
     undecodable_steps: int
     next_cursor: NotRequired[str | None]
     withheld: list[str]
