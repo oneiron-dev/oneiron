@@ -113,16 +113,7 @@ pub fn bind_agent_run_attribution(
         used_edges: Vec::new(),
         credit,
     };
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        super::derivation_witness::drain_in_txn(
-            &vault.store,
-            &rtxn,
-            attempt,
-            record.attempt_count,
-            &mut fields,
-        )?;
-    }
+    super::derivation_witness::drain(&vault.store, attempt, record.attempt_count, &mut fields);
     AttemptQueue::new(vault).set_pack_attribution(
         attempt,
         lease_owner,
@@ -177,7 +168,7 @@ pub fn witness_agent_run_close(
         attempt.id,
         attempt.attempt_count,
         &mut fields,
-    )?;
+    );
     let mut seen: BTreeSet<(EntityId, EntityId)> = fields
         .used_edges
         .iter()

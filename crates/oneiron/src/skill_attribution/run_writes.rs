@@ -19,7 +19,6 @@ use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::batch::BatchOp;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::Result;
 use crate::memory::HostWriteOrigin;
 use crate::store::Store;
 
@@ -175,46 +174,47 @@ fn derived_from_pair(op: &BatchOp) -> Option<(EntityId, EntityId)> {
 /// Records `derivations` as their run's witnesses once the batch has applied
 /// them in `wtxn`: only edges the batch left stored, and only while the run's
 /// lease holds. Every edge is kept; the chain's length is measured (Rule 5).
+/// Capture-only: a witness that fails is dropped whole and the batch stands.
 pub(crate) fn note_run_derivations_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     derivations: Option<&RunDerivations>,
-) -> Result<()> {
-    let Some(RunDerivations { token, pairs }) = derivations else {
-        return Ok(());
-    };
-    derivation_witness::record_in_txn(store, wtxn, token, pairs, WitnessProducer::Write)
+) {
+    if let Some(RunDerivations { token, pairs }) = derivations {
+        derivation_witness::record_in_txn(store, wtxn, token, pairs, WitnessProducer::Write);
+    }
 }
 
 /// Records `derived`'s DerivedFrom edge to `source`, which a writer stored
 /// directly rather than through a batch, as a derivation of the run whose
-/// envelope is open on this thread; nothing outside one.
+/// envelope is open on this thread; nothing outside one. Capture-only.
 pub(crate) fn note_direct_derivation_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     derived: EntityId,
     source: EntityId,
-) -> Result<()> {
-    let Some(token) = current_run_write_token() else {
-        return Ok(());
-    };
-    derivation_witness::record_in_txn(
-        store,
-        wtxn,
-        &token,
-        &[(derived, source)],
-        WitnessProducer::RevisionLink,
-    )
+) {
+    if let Some(token) = current_run_write_token() {
+        derivation_witness::record_in_txn(
+            store,
+            wtxn,
+            &token,
+            &[(derived, source)],
+            WitnessProducer::RevisionLink,
+        );
+    }
 }
 
 /// Records, in an authorized promotion's `wtxn`, the DerivedFrom edges among
 /// `landed`, the ops it replayed, each under the run its journal entry
 /// captured: never the promoter's, and nothing for an op no run journaled.
+/// Capture-only, in one savepoint: a witness that fails is dropped whole and
+/// the promotion stands.
 pub(crate) fn note_promoted_ops_in_txn<'a>(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     landed: impl IntoIterator<Item = (&'a BatchOp, Option<&'a RunWriteToken>)>,
-) -> Result<()> {
+) {
     let mut runs: Vec<(&RunWriteToken, Vec<(EntityId, EntityId)>)> = Vec::new();
     for (op, source_run) in landed {
         let (Some(token), Some(pair)) = (source_run, derived_from_pair(op)) else {
@@ -225,8 +225,19 @@ pub(crate) fn note_promoted_ops_in_txn<'a>(
             None => runs.push((token, vec![pair])),
         }
     }
-    for (token, pairs) in runs {
-        derivation_witness::record_in_txn(store, wtxn, token, &pairs, WitnessProducer::Promotion)?;
+    if runs.is_empty() {
+        return;
     }
-    Ok(())
+    derivation_witness::capture_in_txn(store, wtxn, "promotion", |txn| {
+        for (token, pairs) in &runs {
+            derivation_witness::record_pairs_in_txn(
+                store,
+                txn,
+                token,
+                pairs,
+                WitnessProducer::Promotion,
+            )?;
+        }
+        Ok(())
+    });
 }

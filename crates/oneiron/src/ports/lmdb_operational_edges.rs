@@ -54,7 +54,7 @@ impl EdgeStoreMaintenance for Store {
         if kind == EdgeKind::DerivedFrom {
             super::integrity::record_derived_edge_in_txn(self, txn, source, target)?;
             // FIX 3103: a direct link derives for the run writing it.
-            crate::skill_attribution::note_direct_derivation_in_txn(self, txn, *source, *target)?;
+            crate::skill_attribution::note_direct_derivation_in_txn(self, txn, *source, *target);
         }
         if changed {
             crate::ppr::invalidate_ppr_for_edge(self, txn, source, target)?;

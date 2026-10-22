@@ -370,7 +370,7 @@ impl Vault {
         plan_in_txn(self, txn, &input)?;
         let queued = enqueue_with_lineage_in_txn(self, txn, input, parent_attempt, run_id, now)?;
         // FIX 3103: the asking run, as its request is queued.
-        crate::skill_attribution::note_summary_request_in_txn(&self.store, txn, queued.attempt)?;
+        crate::skill_attribution::note_summary_request_in_txn(&self.store, txn, queued.attempt);
         Ok(queued)
     }
 
@@ -386,11 +386,7 @@ impl Vault {
             let input = derivation::declaration(request, purpose, previous);
             plan_in_txn(self, txn, &input)?;
             let queued = enqueue_in_txn(self, txn, input)?;
-            crate::skill_attribution::note_summary_request_in_txn(
-                &self.store,
-                txn,
-                queued.attempt,
-            )?;
+            crate::skill_attribution::note_summary_request_in_txn(&self.store, txn, queued.attempt);
             Ok(queued)
         })
     }
@@ -494,7 +490,7 @@ impl Vault {
                 (None, None)
             };
             super::status::record_result_in_txn(self, txn, attempt, summary, landed.as_ref())?;
-            crate::skill_attribution::note_summary_landing_in_txn(self, txn, attempt, summary)?;
+            crate::skill_attribution::note_summary_landing_in_txn(self, txn, attempt, summary);
             derivation::register_in_txn(self, txn, &derivation::decode(&plan.input)?, summary)?;
             super::arc::landed_in_txn(self, txn, plan, evidence, summary)?;
             Ok((true, reply))
@@ -581,7 +577,7 @@ impl Vault {
                 .transpose()?
                 .unzip();
             super::status::record_result_in_txn(self, txn, attempt, id, landed.as_ref())?;
-            crate::skill_attribution::note_summary_landing_in_txn(self, txn, attempt, id)?;
+            crate::skill_attribution::note_summary_landing_in_txn(self, txn, attempt, id);
             derivation::register_in_txn(self, txn, &input, id)?;
             super::arc::landed_in_txn(self, txn, plan, evidence, id)?;
             Ok(((id, landed), reply.flatten()))
