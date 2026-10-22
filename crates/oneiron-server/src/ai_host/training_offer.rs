@@ -64,8 +64,9 @@ const WINDOW_SECS: u64 = 30 * DAY_SECS;
 const MONTH_SECS: u64 = 30 * DAY_SECS;
 /// When an offer's promise is checked, after it is made.
 const CHECK_AFTER_SECS: u64 = 30 * DAY_SECS;
-/// The catalog's per-million list prices carry no currency; they are read as
-/// this one.
+/// The currency an offer quotes its money in. Only a catalog row quoted in it
+/// projects a month's bill; a row quoted in another currency, or in none its
+/// provider named, projects none and stays an option (FIX 9534).
 const CATALOG_CURRENCY: &str = "USD";
 /// How far a checked month may run over the promised one and still hold.
 const COST_TOLERANCE: f64 = 0.10;
@@ -77,7 +78,8 @@ const BUDGET_UNITS: u64 = 1 << 20;
 const PRICING_NOTE: &str = "Both sides are priced at list price on this seat's measured \
     token counts, cached prompt tokens at each model's quoted cache rates, or at its input price \
     where it quotes none; the candidate's counts are the incumbent's scaled by how many tokens \
-    each model's tokenizer counts in one fixed passage.";
+    each model's tokenizer counts in one fixed passage. Only list prices quoted in USD are \
+    priced: a model whose price names another currency, or none, shows no figure.";
 /// The note instead when the candidate's price is an estimate: a tokenizer
 /// of the two was never measured.
 const ESTIMATE_NOTE: &str = "The candidate's price is an estimate: it is priced at list \

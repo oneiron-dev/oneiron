@@ -14,6 +14,36 @@ use crate::{
 };
 use std::collections::BTreeSet;
 
+/// The currency of a first-party installed-pack row whose catalog cost names
+/// none: the published pack's existing contract, which quotes its list
+/// prices in US dollars (Engine ruling on FIX 9534). It is read for that
+/// pack's rows alone and is no guess for any other source; a pack row whose
+/// cost says `"currency": null` stays unknown.
+const PACK_LIST_PRICE_CURRENCY: &str = "USD";
+
+/// The installed pack's catalog data with [`PACK_LIST_PRICE_CURRENCY`] on
+/// each row's cost that names no currency; one that names any, `null`
+/// included, keeps it.
+fn with_pack_currency(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut data: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|error| invalid(error.to_string()))?;
+    if let Some(rows) = data
+        .get_mut("rows")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for row in rows {
+            if let Some(cost) = row
+                .pointer_mut("/catalog/cost")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                cost.entry("currency")
+                    .or_insert_with(|| PACK_LIST_PRICE_CURRENCY.into());
+            }
+        }
+    }
+    serde_json::to_vec(&data).map_err(|error| invalid(error.to_string()))
+}
+
 impl CatalogSeed {
     /// Only an installed first-party source with scan evidence is accepted.
     /// Fetching or staging a pack alone never gives its rows routing authority.
@@ -68,7 +98,7 @@ impl CatalogSeed {
             .iter()
             .find(|file| file.path == "knowledge/catalog.json")
             .ok_or_else(|| invalid("model catalog data file missing"))?;
-        let mut seed = Self::from_json(&bytes.content)?;
+        let mut seed = Self::from_json(&with_pack_currency(&bytes.content)?)?;
         let vendors: BTreeSet<_> = seed
             .rows
             .iter()
