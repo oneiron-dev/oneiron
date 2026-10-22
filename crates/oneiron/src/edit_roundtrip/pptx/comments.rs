@@ -41,7 +41,13 @@ pub(super) fn patch_with_mints(
         Some(mints) => SlideMints::Replay(mints),
         None => SlideMints::Draw(entropy.as_bytes()),
     };
-    pptx_comments::comment_patch(base, &edits, mints, &limits.codec())
+    pptx_comments::comment_patch(
+        base,
+        &edits,
+        mints,
+        &limits.codec(),
+        &crate::office_body::document_resources(),
+    )
 }
 
 /// IDs of exported root comments that explicitly have no resolved anchor.
@@ -55,10 +61,12 @@ pub(crate) fn unknown_anchor_threads_with_limits(
     bytes: &[u8],
     limits: &PptxOperationalLimits,
 ) -> Result<BTreeSet<EntityId>, PptxError> {
-    Ok(
-        pptx_comments::unknown_anchor_threads(bytes, &limits.codec())?
-            .into_iter()
-            .filter_map(|id| EntityId::from_bytes(id).ok())
-            .collect(),
-    )
+    Ok(pptx_comments::unknown_anchor_threads(
+        bytes,
+        &limits.codec(),
+        &crate::office_body::document_resources(),
+    )?
+    .into_iter()
+    .filter_map(|id| EntityId::from_bytes(id).ok())
+    .collect())
 }

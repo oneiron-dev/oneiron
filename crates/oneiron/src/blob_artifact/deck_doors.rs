@@ -23,6 +23,7 @@ use crate::edit_roundtrip::{DeckEditRejection, DeckRejectionInspection, OfficeFo
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, resolve_entity_ref};
+use crate::office_body::{document_refused, document_resources};
 
 /// One PPTX version to inspect: `version`, or the head when absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -157,18 +158,35 @@ impl Memory<'_> {
         let comment_limits = comment_limits.ok_or(Error::Artifact(
             ArtifactError::InvalidEditManifest("PowerPoint comment limits policy failed closed"),
         ))?;
-        let package = Package::open(&file.bytes, limits).map_err(|error| {
-            MemoryError::bad_request(format!("the deck package cannot be opened: {error}"))
-        })?;
+        // The entry count is an observation (FIX 9617): the package reserves
+        // its memory through the host's port, and only the machine's floor
+        // or the host's wait refuses, typed, never as a bad request.
+        let package =
+            Package::open(&file.bytes, limits, &document_resources()).map_err(|error| {
+                error.resource().map_or_else(
+                    || {
+                        MemoryError::bad_request(format!(
+                            "the deck package cannot be opened: {error}"
+                        ))
+                    },
+                    |refusal| document_refused(refusal).into(),
+                )
+            })?;
         let deck = inspect_deck(&package).map_err(|error| {
-            MemoryError::bad_request(format!("the deck cannot be read: {error}"))
+            error.resource().map_or_else(
+                || MemoryError::bad_request(format!("the deck cannot be read: {error}")),
+                |refusal| document_refused(refusal).into(),
+            )
         })?;
         let mut marks = history;
         marks.join(&deck.marks);
         let comments = match inspect_pptx_with_limits(&file.bytes, &comment_limits) {
             Ok(inspection) => DeckCommentInspection::Inspected { inspection },
-            Err(refusal) => DeckCommentInspection::Refused {
-                reason: refusal.to_string(),
+            Err(refusal) => match refusal.resource() {
+                Some(resource) => return Err(document_refused(resource).into()),
+                None => DeckCommentInspection::Refused {
+                    reason: refusal.to_string(),
+                },
             },
         };
         Ok(DeckInspectionView {

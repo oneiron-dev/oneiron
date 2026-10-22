@@ -7,8 +7,10 @@
 //!
 //! - the executor is the model the pack loaded under, else the seat the run
 //!   was born on. A run with neither binds nothing and closes unattributed;
-//! - the judge is the run's decision ladder at its top model rung, the judge
-//!   the run's Done climbs to, else the person;
+//! - the judge is unknown as the run binds: the model whose answer to the
+//!   run's Done stands is recorded when its report takes that answer
+//!   ([`super::finalize_run_judge_in_txn`], FIX 1877), and a run no model
+//!   judged closes with its judge unknown;
 //! - a team run's pattern and decider are its frozen stamp's: the pattern's
 //!   context and the team run's decision, which its `TeamReceipt` names. A
 //!   run outside any team is solo, and its own agent decides.
@@ -37,7 +39,6 @@ use crate::learning_setting::{
     CREDIT_CHECK_EVERY_HOP, CREDIT_DEPTH_CAP, CREDIT_ENABLED, SettingSpec, setting_value_scoped,
 };
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::{DecisionProvider, HeldLadder, ProviderPin};
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::{CreditOptions, PackAttributionFields, UsedProvenanceEdge};
 
@@ -60,7 +61,6 @@ pub fn bind_agent_run_attribution(
     vault: &Vault,
     attempt: AttemptId,
     lease_owner: &str,
-    judges: &HeldLadder,
 ) -> Result<bool> {
     let Some(status) = DreamerRunnerStore::new(vault).status(attempt)? else {
         return Ok(false);
@@ -102,7 +102,7 @@ pub fn bind_agent_run_attribution(
     let fields = PackAttributionFields {
         type_ref,
         executor,
-        judge: ladder_judge(judges),
+        judge: None,
         pattern,
         team_shape: vec![role.to_owned()],
         decider,
@@ -301,30 +301,4 @@ pub(crate) fn run_executor_model(vault: &Vault, record: &AttemptRecord) -> Resul
     Ok(vault
         .model_seat_receipt(run)?
         .map(|seat| seat.model.to_string()))
-}
-
-/// The ladder's top model rung, else its person, as `model@revision`.
-fn ladder_judge(ladder: &HeldLadder) -> String {
-    [
-        &ladder.big,
-        &ladder.escalation,
-        &ladder.system_one,
-        &ladder.local,
-    ]
-    .into_iter()
-    .flatten()
-    .next()
-    .map_or_else(|| pinned(&ladder.human_pin), |rung| pinned(&rung.pin()))
-}
-
-fn pinned(pin: &ProviderPin) -> String {
-    if pin
-        .model
-        .rsplit_once('@')
-        .is_some_and(|(id, revision)| !id.is_empty() && !revision.is_empty())
-    {
-        pin.model.clone()
-    } else {
-        format!("{}@{}", pin.model, pin.version)
-    }
 }

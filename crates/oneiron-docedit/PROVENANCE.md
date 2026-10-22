@@ -52,3 +52,14 @@ The comment-anchor allocation change (2026-10-20, scan C060) touches `src/edit/v
 `occurrence` is given or the fast path misses; the copies of the quote are counted as `match_indices`
 streams past (total, the chosen copy's start, the fast hit's copy number) instead of collected into a
 vector. Marker placement, the `RepeatedCommentQuote` note, refusals and their order are unchanged.
+The DOCX admission change (2026-10-22, Rule 5, FIX 8570, 8763, 5354) adds `src/admission.rs` and touches
+`src/docx.rs`, `src/parse_budget.rs`, `src/lib.rs`, `src/runtime.rs`, `src/import.rs`, `src/docx_validate.rs` and
+`src/redline_extract.rs`. A host hands its memory port in through a thread-scoped `admission::Operation` (the
+scoped pair import re-enters it on both threads). The archive reader reserves each entry's record, name and
+bytes before it allocates them, and parse admission reserves what the trees cost: node overhead as an
+estimate, decoded bytes as measured. The entry count and the node count are observations, never refusals,
+and `MAX_DOCX_XML_NODES`, `MAX_DOCX_XML_EXPANDED_BYTES`, `ParseBound` and `ParseLimitExceeded` are gone.
+`ArchiveLimits::is_valid` no longer bounds any dimension by `DEFAULT`, and `DocxArchive::read` uses the
+operation's limits. A byte ceiling hit is `DocxError::Capacity` (`ErrorCode::CapacityExceeded`), a memory or
+deadline refusal is `DocxError::Resource` (`ErrorCode::ResourceRefused`), and both carry typed details. The
+writer refuses a package past classic ZIP's widths (65,534 entries, 0xFFFFFFFE bytes) as that format's limit.

@@ -10,6 +10,13 @@
 //! a send waits for room, so only the socket's own mode keeps it from
 //! blocking past the deadline. An untimed read on such a socket, or a
 //! clone of it, waits in poll(2) through [`recv_frame_polled`].
+//!
+//! A booked frame makes room before each allocation it makes (FIX 6195): a
+//! sender counts the body's bytes with nothing allocated
+//! ([`frame_body_len`]) and books them before it sends; a read books the
+//! body's declared length before reading it, then the value the body
+//! decodes into before that is built ([`FrameBooking`]). The wire is the
+//! same either way.
 
 use std::io::{self, IoSlice, IoSliceMut};
 use std::mem::MaybeUninit;
@@ -29,6 +36,11 @@ use serde::de::DeserializeOwned;
 
 use crate::shape;
 use crate::wire::MAX_FDS_PER_FRAME;
+
+mod booked;
+
+use booked::body_only;
+pub use booked::{FrameBooking, frame_body_len, recv_frame_polled_booked, recv_frame_until_booked};
 
 const HEADER: usize = 4;
 
@@ -282,19 +294,24 @@ fn send_frame_with<T: Serialize, G>(
     }
     #[cfg(target_vendor = "apple")]
     rustix::net::sockopt::set_socket_nosigpipe(stream, true).map_err(io::Error::from)?;
-    let body = rmp_serde::to_vec_named(msg)?;
-    // Refused here, not by the receiver, which would end the connection.
-    shape::check(&body).map_err(FrameError::Refused)?;
-    let len = u32::try_from(body.len())
+    // The body's length first, with nothing allocated: a frame over its
+    // limit is refused before any buffer is made, and the buffer is made
+    // whole, as the sender booked it.
+    let encoded = frame_body_len(msg)?;
+    let len = u32::try_from(encoded)
         .ok()
         .filter(|len| *len <= limit)
         .ok_or(FrameError::TooLarge {
-            len: body.len() as u64,
+            len: encoded,
             limit,
         })?;
     if fds.len() > MAX_FDS_PER_FRAME {
         return Err(FrameError::TooManyFds(fds.len()));
     }
+    let mut body = Vec::with_capacity(len as usize);
+    rmp_serde::encode::write_named(&mut body, msg)?;
+    // Refused here, not by the receiver, which would end the connection.
+    shape::check(&body).map_err(FrameError::Refused)?;
     let header = len.to_le_bytes();
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_FDS_PER_FRAME))];
     let mut control = SendAncillaryBuffer::new(&mut space);
@@ -383,7 +400,8 @@ pub fn recv_frame<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
 ) -> Result<(T, Vec<OwnedFd>), FrameError> {
-    recv_frame_with(stream, limit, Wait::Syscall, |_| Ok(())).map(|(msg, fds, ..)| (msg, fds))
+    recv_frame_with(stream, limit, Wait::Syscall, body_only(|_| Ok(())))
+        .map(|(msg, fds, ..)| (msg, fds))
 }
 
 /// [`recv_frame`] for a socket in nonblocking mode: the frame waits in
@@ -407,7 +425,7 @@ pub fn recv_frame_polled_len<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
 ) -> Result<(T, Vec<OwnedFd>, u32), FrameError> {
-    recv_frame_with(stream, limit, Wait::Poll(None), |_| Ok(()))
+    recv_frame_with(stream, limit, Wait::Poll(None), body_only(|_| Ok(())))
         .map(|(msg, fds, len, ())| (msg, fds, len))
 }
 
@@ -424,7 +442,7 @@ pub fn recv_frame_polled_reserved<T: DeserializeOwned, L>(
     limit: u32,
     reserve: impl FnOnce(u32) -> Result<L, FrameError>,
 ) -> Result<(T, Vec<OwnedFd>, u32, L), FrameError> {
-    recv_frame_with(stream, limit, Wait::Poll(None), reserve)
+    recv_frame_with(stream, limit, Wait::Poll(None), body_only(reserve))
 }
 
 /// Received descriptors are close-on-exec from the moment they exist, so no
@@ -457,7 +475,7 @@ pub fn recv_frame_until<T: DeserializeOwned>(
     limit: u32,
     deadline: Option<Instant>,
 ) -> Result<(T, Vec<OwnedFd>), FrameError> {
-    recv_frame_with(stream, limit, Wait::until(deadline), |_| Ok(()))
+    recv_frame_with(stream, limit, Wait::until(deadline), body_only(|_| Ok(())))
         .map(|(msg, fds, ..)| (msg, fds))
 }
 
@@ -475,15 +493,15 @@ pub fn recv_frame_until_reserved<T: DeserializeOwned, L>(
     deadline: Option<Instant>,
     reserve: impl FnOnce(u32) -> Result<L, FrameError>,
 ) -> Result<(T, Vec<OwnedFd>, u32, L), FrameError> {
-    recv_frame_with(stream, limit, Wait::until(deadline), reserve)
+    recv_frame_with(stream, limit, Wait::until(deadline), body_only(reserve))
 }
 
-fn recv_frame_with<T: DeserializeOwned, L>(
+fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     stream: &UnixStream,
     limit: u32,
     wait: Wait,
-    reserve: impl FnOnce(u32) -> Result<L, FrameError>,
-) -> Result<(T, Vec<OwnedFd>, u32, L), FrameError> {
+    mut booking: B,
+) -> Result<(T, Vec<OwnedFd>, u32, B::Held), FrameError> {
     let mut header = [0u8; HEADER];
     let mut got = 0;
     let mut fds = Vec::new();
@@ -529,7 +547,7 @@ fn recv_frame_with<T: DeserializeOwned, L>(
     }
     // The room first, then the body: nothing is allocated for a frame its
     // receiver has not made room for.
-    let lease = reserve(len)?;
+    let mut held = booking.body(len)?;
     let mut body = vec![0u8; len as usize];
     let mut filled = 0;
     let body_flags = if wait.polls() {
@@ -546,6 +564,12 @@ fn recv_frame_with<T: DeserializeOwned, L>(
             Err(errno) => return Err(io::Error::from(errno).into()),
         }
     }
-    shape::check(&body).map_err(FrameError::Protocol)?;
-    Ok((rmp_serde::from_slice(&body)?, fds, len, lease))
+    let shape = shape::check(&body).map_err(FrameError::Protocol)?;
+    // Room for the value before it is built, while the body still lives;
+    // the body's own goes back once only the value is left.
+    booking.value(&mut held, shape.decoded())?;
+    let message = rmp_serde::from_slice(&body)?;
+    drop(body);
+    booking.body_gone(&mut held, len);
+    Ok((message, fds, len, held))
 }

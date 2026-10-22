@@ -780,6 +780,13 @@ impl Vault {
             record.explicit_end_hint = Some(timestamp);
         }
         OPEN_POINTER.delete(&self.store, wtxn, &key.pointer())?;
+        // The sitting's own scratchpad ends with it (FIX 9748); a seal that
+        // fails leaves the close as it was.
+        if let Err(error) =
+            crate::context_board::seal_session_pad_in_txn(self, wtxn, key.actor, &id.to_hex())
+        {
+            tracing::warn!(?error, "sitting close left its scratchpad unsealed");
+        }
 
         // (e) The CHAT-lane actor-distill job (ARCH-0053 §3, ONE-1739),
         // same commit as the close: "this sitting is over and not yet

@@ -6,6 +6,7 @@ use crate::gate;
 
 use super::super::binding::{PolicyContentBinding, content_binding, relay_verify_content_binding};
 use super::super::classify::{pass_audit, wants_model};
+use super::super::clock::PolicyCallClock;
 use super::super::decide::{SafeguardModel, safeguard_verdict};
 use super::super::pattern::{CompiledPatternRule, CompiledPatternRules, PolicyPatternRole};
 use super::super::planes::{HostedLegalPolicy, PolicyPlane, hosted_rubric_rows};
@@ -48,7 +49,7 @@ impl Vault {
     ///
     /// With no hosted policy bound to the attested identity there is nothing to
     /// pin and no model call to pin it across, so the re-check is skipped
-    /// whole.
+    /// whole. Both derivations spend one call clock (FIX 10034).
     ///
     /// Every pass it returns names the hosted policy it was handed, so an
     /// attestation minted from it can name that policy and no later one.
@@ -74,14 +75,15 @@ impl Vault {
         config: &PolicyModelConfig,
         safeguard: Option<RelaySafeguardTier<'_>>,
     ) -> Result<RelayBoundaryPass> {
+        let clock = PolicyCallClock::start();
         let pass = self
-            .hosted_relay_pass_once(request, hosted, patterns, config, safeguard)
+            .hosted_relay_pass_once(request, hosted, patterns, config, safeguard, &clock)
             .await?;
         if hosted.is_none() || !self.relay_binding_moved(request, config, &pass)? {
             return Ok(pass);
         }
         let pass = self
-            .hosted_relay_pass_once(request, hosted, patterns, config, safeguard)
+            .hosted_relay_pass_once(request, hosted, patterns, config, safeguard, &clock)
             .await?;
         if !self.relay_binding_moved(request, config, &pass)? {
             return Ok(pass);
@@ -126,6 +128,7 @@ impl Vault {
         patterns: Option<&CompiledPatternRules>,
         config: &PolicyModelConfig,
         safeguard: Option<RelaySafeguardTier<'_>>,
+        clock: &PolicyCallClock,
     ) -> Result<RelayBoundaryPass> {
         let binding = self.relay_policy_binding(request, config)?;
         let Some(policy) = hosted else {
@@ -198,6 +201,7 @@ impl Vault {
                 binding,
                 config,
                 audit,
+                clock,
             )?;
             if verdict.decision.skip_reason().is_some() {
                 return Ok(degraded_hosted_pass(
@@ -236,6 +240,7 @@ impl Vault {
             binding,
             config,
             audit,
+            clock,
         )
         .await?;
         let degrade = match verdict.decision.skip_reason() {
