@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1157 facade rows, 4138 declarations.
+Census: 1157 facade rows, 4139 declarations.
 Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -2464,6 +2464,12 @@ class FinishReasonIncompleteBody(TypedDict):
 class FinishReasonIncomplete(TypedDict):
     incomplete: FinishReasonIncompleteBody
 FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther | FinishReasonIncomplete
+class ReplyAssertionRecord(TypedDict):
+    entity_type: int
+    id: EntityId
+class ReplyAssertions(TypedDict):
+    cited: NotRequired[list[ReplyAssertionRecord]]
+    created: NotRequired[list[ReplyAssertionRecord]]
 class MessageStreamReceipt(TypedDict):
     message_id: EntityId
     actor: EntityId
@@ -2475,6 +2481,7 @@ class MessageStreamReceipt(TypedDict):
     recovered: bool
     ephemeral_text_lost: bool
     receipt_ref: str
+    reply_assertions: NotRequired[ReplyAssertions]
 MessageCancelKind = Literal["user_interrupted", "agent_aborted", "external_signal"]
 MessageCustomCancelKind = Literal["custom"]
 class MessageCustomCancel(TypedDict):
@@ -2506,6 +2513,13 @@ class MessageCompletion(TypedDict):
 class MessageDocumentState(TypedDict):
     frontier: list[int]
     content: str
+class MessageReplyAssertions(TypedDict):
+    message: EntityId
+    conversation: EntityId
+    turn: EntityId
+    writer: EntityId
+    writer_class: int
+    assertions: ReplyAssertions
 class MessageDurability(TypedDict):
     message_id: str
     completion: MessageCompletion
@@ -2514,6 +2528,7 @@ class MessageDurability(TypedDict):
     next_after_generation: NotRequired[str | None]
     document_exists: bool
     document_history: list[MessageDocumentState]
+    birth_assertions: NotRequired[MessageReplyAssertions | None]
 class WitnessMessage(TypedDict):
     id: NotRequired[str | None]
     author: WitnessAuthor
@@ -14859,12 +14874,6 @@ ModelRoleInput = ModelRoleInputGenerate | ModelRoleInputEmbed | ModelRoleInputTa
 class ModelRoleInvoke(TypedDict):
     role: ModelRole
     input: ModelRoleInput
-class ReplyAssertionRecord(TypedDict):
-    entity_type: int
-    id: EntityId
-class ReplyAssertions(TypedDict):
-    cited: NotRequired[list[ReplyAssertionRecord]]
-    created: NotRequired[list[ReplyAssertionRecord]]
 class LlmResponse(TypedDict):
     message: LlmMessage
     usage: LlmUsage
@@ -16135,7 +16144,9 @@ class ArtifactAskStandingClosed(TypedDict):
     state: Literal["closed"]
 class ArtifactAskStandingFailed(TypedDict):
     state: Literal["failed"]
-ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed | ArtifactAskStandingFailed
+class ArtifactAskStandingDetailsOmitted(TypedDict):
+    state: Literal["details_omitted"]
+ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed | ArtifactAskStandingFailed | ArtifactAskStandingDetailsOmitted
 class ArtifactAskRecord(TypedDict):
     artifact: EntityId
     question_version: int
@@ -16146,6 +16157,7 @@ class ArtifactAskRecord(TypedDict):
     ask_id: NotRequired[EntityId | None]
     failed: NotRequired[str | None]
     parent_proposal_ref: NotRequired[str | None]
+    details_omitted: NotRequired[bool]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):

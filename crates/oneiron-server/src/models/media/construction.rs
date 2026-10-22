@@ -6,7 +6,7 @@ use super::{
     Arc, BTreeMap, BTreeSet, BrokerSite, BudgetExhaustionPolicy, BudgetGuard, BudgetLease,
     FatalLlmError, HostAccount, KeyDoor, LlmBackend, LlmError, LlmGenerateFuture, LlmRequest,
     LlmResult, LlmStreamResult, LoggedReceipts, MEDIA_RUN, MediaHttp, MediaRow, MediaRuntime,
-    MediaSeat, MediaSend, ModelsConfig, Mutex, NoChat, OfferCooldowns, OfferLadder,
+    MediaSeat, MediaSend, ModelHostBudgets, ModelsConfig, Mutex, NoChat, OfferCooldowns, OfferLadder,
     OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse, OpenAiMediaMethod,
     OpenAiMediaTransport, OpenAiMediaTransportFuture, RunReceiptSink, RungStatus, SeatScope,
     SeatState, SeatStatus, SingleRouteBackend, SingleSend, Wire, ladder_locality, media_backends,
@@ -96,13 +96,15 @@ impl MediaRuntime {
     /// Builds each `[models.media]` seat. A rung whose provider cannot
     /// start drops out of its ladder, and the reason shows in `status`. A
     /// `key_secret` provider's calls go through the credential broker at
-    /// `site`, its key read at `keys`.
+    /// `site`, its key read at `keys`. Every rung's and clone wire's replies
+    /// hold their bytes on `budgets`, the vault's (FIX 9321).
     pub(in crate::models) fn build(
         config: &ModelsConfig,
         rests: &Arc<OfferCooldowns>,
         status: &mut Vec<SeatStatus>,
         site: Option<&Result<BrokerSite, String>>,
         keys: Option<&Arc<dyn KeyDoor>>,
+        budgets: &ModelHostBudgets,
     ) -> Self {
         let mut runtime = Self::empty();
         if config.media.seats.is_empty() {
@@ -120,7 +122,7 @@ impl MediaRuntime {
             .filter(|(_, provider)| provider.kind.renders_from_refs())
             .map(|(name, _)| name.clone())
             .collect();
-        runtime.cloners = voice_cloners(config);
+        runtime.cloners = voice_cloners(config, budgets);
         runtime.live_asr = soniox::live_rungs(config);
         let backends = media_backends(config, site, keys);
         for (operation, seat) in &config.media.seats {
@@ -131,7 +133,7 @@ impl MediaRuntime {
                 let provider = &config.providers[&model.provider];
                 let mut entry = RungStatus::new(model, provider);
                 match backends.get(&model.provider).and_then(|backend| {
-                    media_rung(provider, backend, model, position, *operation, &seat.caps)
+                    media_rung(provider, backend, model, position, *operation, &seat.caps, budgets)
                 }) {
                     Some(rung) => {
                         rows.push((rung.model.clone(), model.clone(), provider.locality));

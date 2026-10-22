@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4193 declarations.
+// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4194 declarations.
 // Replies: 1085 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
@@ -481,7 +481,9 @@ declare namespace Sdk {
   type StreamFinalityReason = "explicit_finalize" | "idle_timeout30s" | { idle_timeout: { timeout_ms: number } } | "process_crash_recovery" | "user_interrupted" | "agent_aborted" | "external_signal" | { custom: string };
   type IncompleteReason = "terminal_disagreement";
   type FinishReason = "stop" | "length" | "tool_calls" | "content_filtered" | "cancelled" | { other: { name: string } } | { incomplete: { reason: IncompleteReason } };
-  type MessageStreamReceipt = { message_id: EntityId; actor: EntityId; generation: EntityId; finality: StreamFinality; finality_reason: StreamFinalityReason; finish_reason?: FinishReason | null; bytes: number; recovered: boolean; ephemeral_text_lost: boolean; receipt_ref: string };
+  type ReplyAssertionRecord = { entity_type: number; id: EntityId };
+  type ReplyAssertions = { cited?: ReplyAssertionRecord[]; created?: ReplyAssertionRecord[] };
+  type MessageStreamReceipt = { message_id: EntityId; actor: EntityId; generation: EntityId; finality: StreamFinality; finality_reason: StreamFinalityReason; finish_reason?: FinishReason | null; bytes: number; recovered: boolean; ephemeral_text_lost: boolean; receipt_ref: string; reply_assertions?: ReplyAssertions };
   type MessageCancelKind = "user_interrupted" | "agent_aborted" | "external_signal";
   type MessageCustomCancelKind = "custom";
   type MessageCustomCancel = { kind: MessageCustomCancelKind; description: string };
@@ -492,7 +494,8 @@ declare namespace Sdk {
   type MessageDurabilityRequest = { message_id: string; after_generation?: string | null; limit?: number | null };
   type MessageCompletion = { incomplete: boolean; generating: boolean; finish_reason?: FinishReason | null };
   type MessageDocumentState = { frontier: number[]; content: string };
-  type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[] };
+  type MessageReplyAssertions = { message: EntityId; conversation: EntityId; turn: EntityId; writer: EntityId; writer_class: number; assertions: ReplyAssertions };
+  type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[]; birth_assertions?: MessageReplyAssertions | null };
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
   type ScopedClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; scope: ClaimScope; sensitivity?: number | null; evidence_turn_refs?: string[]; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
@@ -2979,8 +2982,6 @@ declare namespace Sdk {
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelRoleInput = { kind: "generate"; request: LlmRequest } | { kind: "embed"; text: string } | { kind: "tag"; text: string };
   type ModelRoleInvoke = { role: ModelRole; input: ModelRoleInput };
-  type ReplyAssertionRecord = { entity_type: number; id: EntityId };
-  type ReplyAssertions = { cited?: ReplyAssertionRecord[]; created?: ReplyAssertionRecord[] };
   type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
   type NerSpan = { message: number; start: number; end: number; label: string; confidence: number };
   type CorefLink = { span: number; antecedent: number; confidence?: number | null };
@@ -3206,8 +3207,8 @@ declare namespace Sdk {
   type ScheduledBackfill = { question: string; version: number; due_at: number };
   type QuestionReadRequest = { id: EntityId; version?: number | null };
   type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
-  type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" };
-  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null };
+  type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" } | { state: "details_omitted" };
+  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
   type QuestionAnswersReply = QuestionAnswer[] | QuestionAnswersPage;
