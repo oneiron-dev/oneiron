@@ -367,7 +367,8 @@ impl crate::Vault {
         let mut questions = Vec::new();
         for template in templates {
             let bytes = self.version_bytes_in_txn(txn, template)?;
-            let package = Package::open(&bytes, limits).map_err(|_| invalid("template package"))?;
+            let package = Package::open(&bytes, limits, &crate::office_body::document_resources())
+                .map_err(|_| invalid("template package"))?;
             check_template(&package)?;
             let outcome = compile_with_fonts(&kept_brief(&kept), &package, &bindings, &book)?;
             questions.push(match &outcome {
@@ -460,8 +461,12 @@ impl crate::Vault {
         let book = self.font_book_in_txn(txn, request.fonts)?;
         let bindings = self.asset_bindings_in_txn(txn, request.assets)?;
         let template_bytes = self.version_bytes_in_txn(txn, &request.template)?;
-        let template =
-            Package::open(&template_bytes, limits).map_err(|_| invalid("template package"))?;
+        let template = Package::open(
+            &template_bytes,
+            limits,
+            &crate::office_body::document_resources(),
+        )
+        .map_err(|_| invalid("template package"))?;
         let brief = kept_brief(&kept);
         let plan = match compile_with_fonts(&brief, &template, &bindings, &book)? {
             Outcome::Ask(decisions) => {

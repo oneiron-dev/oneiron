@@ -95,7 +95,7 @@ impl Model {
         let bytes = package
             .part(chart)?
             .ok_or(NativeRefusal::Stale("chart part missing"))?;
-        let tree = XmlTree::parse(&bytes, package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, package.resources())?;
         tree.root(C, "chartSpace")
             .map_err(|_| NativeRefusal::UnsupportedChartFamily("not a classic chart part"))?;
         if tree.child(0, C, "pivotSource")?.is_some() {
@@ -319,7 +319,7 @@ fn open_workbook(package: &Package, part: &str) -> Result<Workbook, NativeRefusa
         .ok_or(NativeRefusal::AmbiguousChartData(
             "embedded workbook missing",
         ))?;
-    Workbook::open(&bytes, package.limits())
+    Workbook::open(&bytes, package.limits(), package.resources())
 }
 
 /// Replace one sequence's values: the workbook cells, then every cache that

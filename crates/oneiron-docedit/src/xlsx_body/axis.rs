@@ -57,7 +57,7 @@ impl Book {
             .package
             .part(part)?
             .ok_or(refused("a worksheet part is missing"))?;
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let mut edits = Vec::new();
         for node in &tree.nodes {
             if !node.is(SML, "f")
