@@ -1,3 +1,7 @@
+//! Small value decoders and hashing helpers for code-run records.
+//! The closed-map entry is `pinned_map`.
+//! `replay` owns the replay hash width; this module forwards no definitions.
+
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 

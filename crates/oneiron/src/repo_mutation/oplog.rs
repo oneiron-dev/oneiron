@@ -1,3 +1,7 @@
+//! Repository mutation intent rows, recovery and actor erasure.
+//! The recovery entry is `Vault::recover_prepared_repo_mutations`.
+//! `snapshot` owns snapshot values; `types` owns public oplog and outcome types.
+
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};

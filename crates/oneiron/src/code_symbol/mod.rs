@@ -1,3 +1,7 @@
+//! Code-symbol manifests, semantic changes and producing-operation views.
+//! The manifest value is `CodeSymbolManifest`.
+//! Child modules own the types, codecs, graph builders and views re-exported here.
+
 mod actor_erase;
 mod codec;
 mod document_view;

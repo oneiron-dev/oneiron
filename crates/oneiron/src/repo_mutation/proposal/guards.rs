@@ -1,3 +1,7 @@
+//! Transaction-local guards for repository proposals.
+//! The conflict check is `validate_conflict_in_txn`.
+//! The parent proposal module owns `RepoProposal`; this leaf forwards no definitions.
+
 use super::*;
 
 pub(super) fn validate_conflict_in_txn(

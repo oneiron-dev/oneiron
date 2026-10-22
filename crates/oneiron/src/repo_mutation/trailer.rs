@@ -1,3 +1,7 @@
+//! Repository commit provenance trailers and Git notes.
+//! The parse entry is `parse_repo_provenance_trailer`.
+//! `types` owns `RepoCommitProvenance`; this module owns the trailer and note helpers.
+
 use std::path::Path;
 
 use serde::Deserialize;

@@ -1,3 +1,7 @@
+//! Requests, operations, status and outcomes for repository mutations.
+//! The request type is `RepoMutationRequest`.
+//! This module owns the mutation vocabulary and forwards no definitions.
+
 use std::path::PathBuf;
 
 use crate::codebase::RepoRef;

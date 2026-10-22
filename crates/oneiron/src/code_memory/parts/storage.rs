@@ -1,3 +1,7 @@
+// Code-memory keys, codecs and row-family access.
+// The slot-read entry is `read_slots_for_symbol`.
+// This fragment defines items in `code_memory::implementation`, not a child module.
+
 // ---------------------------------------------------------------------------
 // Keys, codecs, and row-family helpers (private: raw keys never cross the API)
 // ---------------------------------------------------------------------------

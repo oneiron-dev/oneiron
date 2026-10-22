@@ -1,3 +1,7 @@
+//! Code revisions, tested forks and reviewed import promotion.
+//! The revision value is `CodeRevision`.
+//! Child modules own the types, codecs and promotion definitions re-exported here.
+
 mod commit_metadata;
 pub use commit_metadata::CodeCommitMetadata;
 mod promotion;

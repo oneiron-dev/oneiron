@@ -1,3 +1,7 @@
+//! Preparation and execution of queued repository mutations.
+//! The execution entry is `execute_repo_mutation`.
+//! `operation` owns the forwarded operation validator; `types` owns public request types.
+
 use std::path::{Path, PathBuf};
 
 use crate::Vault;

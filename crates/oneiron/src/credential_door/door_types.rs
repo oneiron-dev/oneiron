@@ -233,7 +233,7 @@ pub(crate) enum DoorScanVerdict {
     /// The push is refused; each proposal names one offending path.
     Rejected {
         /// One proposal per offending blob.
-        proposals: Vec<SecretLiftProposal>,
+        proposals: Vec<CheckoutSecretLiftProposal>,
         /// The value-free hits the proposals were made from, one each.
         hits: Vec<ReceiveScanHit>,
     },
@@ -253,7 +253,7 @@ pub(crate) enum DoorScanVerdict {
 /// the token, never any value bytes: the proposal travels back to whoever
 /// pushed, and it must be safe to print.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SecretLiftProposal {
+pub(crate) struct CheckoutSecretLiftProposal {
     /// The offending blob's path.
     pub(crate) path: String,
     /// The detector's reason code (e.g. `gate.secret_scan.github_token`).
@@ -263,7 +263,7 @@ pub(crate) struct SecretLiftProposal {
     pub(crate) suggested_secret_name: String,
 }
 
-impl SecretLiftProposal {
+impl CheckoutSecretLiftProposal {
     /// Builds a proposal from non-secret addressing data only.
     pub(super) fn new(repo: &RepoRef, path: &str, reason: &'static str) -> Self {
         Self {

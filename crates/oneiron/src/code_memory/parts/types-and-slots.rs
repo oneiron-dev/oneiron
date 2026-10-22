@@ -1,3 +1,7 @@
+// Code-memory anchors, row tables and multi-writer slots.
+// The ordinary write entry is `attach_code_memory`.
+// This fragment defines items in `code_memory::implementation`, not a child module.
+
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::ops::ControlFlow;

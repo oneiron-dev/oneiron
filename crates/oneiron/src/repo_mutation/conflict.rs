@@ -1,3 +1,7 @@
+//! Repository conflict claims and checked resolution writes.
+//! The resolution entry is `resolve_repo_conflict_file`.
+//! `conflict_value` owns the claim values; `write` owns the checked claim writer.
+
 // The checked claim writer, shared with the merge queue's overlap handoff.
 mod write;
 

@@ -1,3 +1,7 @@
+// Scoped code-memory pulls and always-on contract registration.
+// The read entry is `pull_code_memory`.
+// This fragment defines items in `code_memory::implementation`, not a child module.
+
 // Section 5 — pull read: ScopedRead clamp plus provenance-labelled DATA
 // ---------------------------------------------------------------------------
 

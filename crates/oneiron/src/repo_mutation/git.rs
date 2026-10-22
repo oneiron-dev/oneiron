@@ -1,3 +1,7 @@
+//! Repository identity, Git argument validation and bridged commands.
+//! The command entry is `run_git`.
+//! `git_wire` owns the process bridge; this module forwards no definitions.
+
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
