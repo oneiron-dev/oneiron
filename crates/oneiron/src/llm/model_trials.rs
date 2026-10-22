@@ -327,9 +327,9 @@ impl Vault {
             &mut txn, principal, question, id, locality,
         )?;
         txn.commit()?;
-        measured
-            .map(Some)
-            .ok_or(Error::ConcurrentWrite("model trial arms are still in flight"))
+        measured.map(Some).ok_or(Error::ConcurrentWrite(
+            "model trial arms are still in flight",
+        ))
     }
 
     /// Commit the billed reads before asking eval authoring for its sufficiency
