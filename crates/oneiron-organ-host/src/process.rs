@@ -880,6 +880,19 @@ impl OrganProcess {
                                     self.stop();
                                     return Err(CallFailure::Deadline { stopped: true });
                                 }
+                                // Refused before a byte left: the call ends,
+                                // and the organ, still in step, lives on.
+                                Err(FrameError::Refused(why)) => {
+                                    let err = HostError::Frame(FrameError::Refused(why));
+                                    return Err(self.end_call(
+                                        id,
+                                        CancelReason::Caller,
+                                        reply,
+                                        grace,
+                                        asks,
+                                        err,
+                                    ));
+                                }
                                 Err(err) => {
                                     self.kill();
                                     return Err(CallFailure::Frame(err.into()));

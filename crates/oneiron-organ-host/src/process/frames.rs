@@ -119,7 +119,9 @@ impl FrameBooking for Handshake<'_> {
 /// Room for a frame the host is about to send, its encoded body's `len`
 /// bytes counted with nothing allocated, booked before the frame takes the
 /// writer: the wait is on `waits`, the call's clock, and ends when
-/// `stopped` says the frame is not wanted.
+/// `stopped` says the frame is not wanted. A frame the machine's floor
+/// cannot hold is refused before a byte of it leaves, so the process is
+/// unharmed.
 pub(super) fn book_send(
     room: &Room,
     waits: &WaitClock,
@@ -130,6 +132,8 @@ pub(super) fn book_send(
         .timing(|| room.lease(len, stopped))
         .map_err(|refused| match refused {
             Unroomed::Stopped => FrameError::Withdrawn,
-            Unroomed::Floor { .. } => unroomed(refused),
+            Unroomed::Floor { .. } => {
+                FrameError::Refused("the machine's memory floor cannot hold the frame")
+            }
         })
 }
