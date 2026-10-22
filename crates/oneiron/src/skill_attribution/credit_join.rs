@@ -31,7 +31,7 @@ use super::contribution_targets::CheckedEdge;
 use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, LateCreditShare, shares_in_txn};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
-use crate::learning::{LearningCell, LearningEvidence, LearningPredicate, Observation, TypeRef};
+use crate::learning::{LearningCell, LearningEvidence, LearningPredicate, Observation};
 use crate::receipt::{PackAttributionFields, PackLearningContext};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -283,23 +283,48 @@ pub(super) fn credit_cell(
         .project(fields.project)
 }
 
-/// Records `evidence` in `subject`'s credit cell. A cell with no own head
-/// first keeps the prior its read borrows through `parents`, the stamp's
+/// Records `evidence` in a credit cell. A cell with no own head and no
+/// stored prior first keeps the prior its read borrows through the stamp's
 /// placed ancestry (FIX 9889), as a team outcome's first result does: the
 /// evidence then adds runs against that weight instead of a shipped head.
-/// A cell with runs or a stored prior keeps what it has.
+/// The capture is best effort: a read it needs that fails keeps nothing and
+/// is logged, and the evidence is recorded as it always was.
 pub(super) fn record_credit_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    fields: &PackAttributionFields,
     cell: &LearningCell,
-    parents: &[TypeRef],
     evidence: &LearningEvidence,
     now: u64,
 ) -> Result<()> {
-    let form = evidence.observation.form();
-    crate::learning::prior::capture_borrowed_prior_in_txn(vault, txn, cell, parents, form)?;
+    if let Err(error) = capture_first_prior_in_txn(vault, txn, fields, cell, evidence) {
+        tracing::warn!(
+            kind = ?error.kind(),
+            %error,
+            "a credit cell's borrowed prior was not kept; its evidence records over the shipped prior"
+        );
+    }
     crate::learning::record_evidence_in_txn(vault, txn, cell, evidence, now)?;
     Ok(())
+}
+
+/// [`record_credit_in_txn`]'s capture: nothing for a cell that already has
+/// an own head or a stored prior, so its ancestry is never read then.
+fn capture_first_prior_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    fields: &PackAttributionFields,
+    cell: &LearningCell,
+    evidence: &LearningEvidence,
+) -> Result<()> {
+    if crate::learning::prior::PRIOR.contains(&vault.store, txn, &cell.digest())?
+        || crate::learning::read::own_estimate_in_txn(vault, txn, cell)?.is_some()
+    {
+        return Ok(());
+    }
+    let parents = capture_parents_in_txn(vault, txn, fields.project, &fields.type_ref)?;
+    let form = evidence.observation.form();
+    crate::learning::prior::capture_borrowed_prior_in_txn(vault, txn, cell, &parents, form)
 }
 
 /// One subject's observation of `credit`'s outcome at `weight`, under the
@@ -427,12 +452,11 @@ fn reconcile_in_txn(
     }
     let before = masses(last_direct, last_shares);
     let after = masses(&direct, &shares);
-    let parents = capture_parents_in_txn(vault, txn, fields.project, &fields.type_ref)?;
     for (subject, weight) in &after {
         if before.get(subject) != Some(weight) {
             let cell = credit_cell(&fields, &credit.axis, *subject);
             let evidence = credit_evidence(credit, &fields, true, *weight);
-            record_credit_in_txn(vault, txn, &cell, &parents, &evidence, now)?;
+            record_credit_in_txn(vault, txn, &fields, &cell, &evidence, now)?;
         }
     }
     for subject in before

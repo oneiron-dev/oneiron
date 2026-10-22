@@ -173,7 +173,14 @@ impl ReviewDecisions<'_> {
                 &input.axis,
             ))
             .map_err(|_| invalid_critic_config("review artifact identity"))?;
-            let id = format!("review_{}", blake3::hash(&identity).to_hex());
+            // A project's review is its own artifact (FIX 6038); a vault
+            // review keeps the identity it has always had.
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&identity);
+            if let Some(project) = input.project {
+                hasher.update(project.as_bytes());
+            }
+            let id = format!("review_{}", hasher.finalize().to_hex());
             meta.push((id, provenance_of(input.critic, &decisions[0])?));
             let severity = label(&decisions[1], &SEVERITIES)?;
             let hard_check_passed = if input.lens.hard_check {

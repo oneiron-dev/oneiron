@@ -212,6 +212,8 @@ pub struct PlannerCard {
     pub project: Option<EntityId>,
     pub type_ref: TypeRef,
     pub executor_mix: String,
+    /// The scope's own payoff rows, else the vault's (each row names its
+    /// scope).
     pub rows: Vec<PayoffRow>,
     /// Highest score first; ties by skill id.
     pub patterns: Vec<PatternCardEntry>,
@@ -280,12 +282,17 @@ pub(crate) fn planner_card_in_txn(
     .into_iter()
     .map(|(entry, score)| PatternCardEntry { score, ..entry })
     .collect();
-    let scan = ReceiptScan::Scoped(project, type_ref);
+    let mut rows = payoff_rows_in_txn(vault, txn, ReceiptScan::Scoped(project, type_ref), true)?;
+    // A project with no team receipts of its own reads the vault's rows, as
+    // they are: each keeps `project: None`, never the project's own runs.
+    if rows.is_empty() && project.is_some() {
+        rows = payoff_rows_in_txn(vault, txn, ReceiptScan::Scoped(None, type_ref), true)?;
+    }
     Ok(PlannerCard {
         project,
         type_ref: type_ref.clone(),
         executor_mix,
-        rows: payoff_rows_in_txn(vault, txn, scan, true)?,
+        rows,
         patterns,
     })
 }
