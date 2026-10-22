@@ -128,7 +128,7 @@ sha256 = "385644867534c30c490f4507d61485a799f81dfaec7e2a91290a41bf43d8286a"
 # pin below that names a repo file (inputs.files, the contract lines, the
 # Cargo.lock hash) is recomputed at that same commit, never mixed.
 repository = "https://github.com/oneiron-dev/oneiron"
-commit = "88741de13777297e8b3c7ca348b356deb302e5db"
+commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
 workspace_version = "0.1.0"
 msrv = "1.96"
 cargo_lock_sha256 = "234077d8170fbd7ceba358c475b146b004ec591241ed0875d6239b8f0fa101a3"
