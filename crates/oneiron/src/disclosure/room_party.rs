@@ -179,6 +179,58 @@ fn room_party_under_in(
     })
 }
 
+/// [`bound_room_party_in`] as a caller's read sees `member` in `txn` (FIX
+/// 8150): a contact `admits` refuses is one the caller cannot read, so it is
+/// absent here, as a missing one is. It neither names the member's party nor
+/// makes the member unknown, and the member keeps the class it has without
+/// it. The owner and agent rules are those of [`room_party_under_in`].
+fn bound_room_party_scoped_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    admits: &dyn Fn(&EntityId) -> Result<bool>,
+    member: EntityId,
+) -> Result<RoomParty> {
+    if is_room_owner_in(vault, txn, fold, &member, RoomPartyOwnerRule::BoundOwner)? {
+        return Ok(RoomParty::VaultOwner);
+    }
+    let mut contacts = Vec::new();
+    for contact in vault.counterparty_contact_ids_for_identity_in_txn(txn, &member)? {
+        if admits(&contact)? {
+            contacts.push(contact);
+        }
+    }
+    if let [contact] = contacts.as_slice() {
+        let actor = matches!(
+            crate::vault::live_entity_row_in_txn(&vault.store, txn, &member)?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_PERSON | ENTITY_TYPE_AGENT_DEF,
+                ..
+            }
+        );
+        if actor && active_contact_in(vault, txn, contact)? {
+            return Ok(RoomParty::Contact(*contact));
+        }
+    }
+    if !contacts.is_empty() {
+        return Ok(RoomParty::Unknown);
+    }
+    let bound = fold.vault_id.is_some()
+        && crate::authority::actor_binding_is_active(fold, &member, "agent");
+    let defined = matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, &member)?,
+        LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_AGENT_DEF,
+            ..
+        }
+    );
+    Ok(if bound || defined {
+        RoomParty::VaultAgent
+    } else {
+        RoomParty::Unknown
+    })
+}
+
 /// Whether `contact` is a contact Active in `txn`, by its claims. A revoked
 /// contact keeps its disclosure-scope row, so its status, not that row,
 /// decides. A row of another kind is no contact.
@@ -203,6 +255,26 @@ impl Vault {
         members
             .iter()
             .map(|member| bound_room_party_in(self, &txn, &fold, *member))
+            .collect()
+    }
+
+    /// [`Self::room_parties`] in `read`'s own snapshot (FIX 8150): each
+    /// member's contact links are those `read` reads, so a contact the caller
+    /// cannot read changes no member's class. Every member is classed in one
+    /// snapshot, under one policy.
+    pub fn room_parties_under(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        members: &[EntityId],
+    ) -> Result<Vec<RoomParty>> {
+        read.persist_grant_clock()?;
+        let txn = self.store.env.read_txn()?;
+        let policy = read.live_policy_manifest_in(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let admits = |id: &EntityId| read.is_ref_readable_with_policy_in(&txn, &policy, id);
+        members
+            .iter()
+            .map(|member| bound_room_party_scoped_in(self, &txn, &fold, &admits, *member))
             .collect()
     }
 }

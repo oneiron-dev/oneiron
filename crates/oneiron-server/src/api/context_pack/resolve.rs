@@ -50,9 +50,9 @@ pub(crate) async fn core_context_pack(
     payload: Result<Json<CoreContextPackRequest>, JsonRejection>,
 ) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
-    // The pack echoes the room's roster and its pre-filter counts, which no
-    // lane judges, so a facet narrowing is refused rather than half kept.
-    auth.require_unnarrowed_facets()?;
+    // A facet-narrowed credential reads a facet-narrowed pack (FIX 646): every
+    // row, count and handle the pack echoes passes the admitted read, the
+    // room's signed facets met in (FIX 643).
     let req = json_payload(payload)?;
     req.check_query_bytes(&server, &auth, QueryDoor::ContextPack, "query")?;
     let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
@@ -606,6 +606,9 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     // How many claims the scope withheld is a count of rows the caller may
     // not read: it never leaves as a stat (F19).
     pack.stats.claims_suppressed = 0;
+    // How many candidates the cosine-ghost rule damped counts rows before
+    // any read admitted them, so it never leaves either (FIX 646).
+    pack.stats.cosine_ghosts_dampened = 0;
     pack.stats.candidates_considered = pack.results.len();
     pack.stats.entities_hydrated = pack.results.len();
     pack.stats.neighbors_hydrated = pack.neighbors.len();

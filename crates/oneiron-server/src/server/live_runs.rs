@@ -159,6 +159,9 @@ pub(crate) struct LiveRuns {
     /// The lens frames whose cards a run closes when it leaves, set once by
     /// the server that holds both.
     lens: OnceLock<Arc<LensFrameStore>>,
+    /// The close a run's board sessions take when it leaves (FIX 8143), set
+    /// once by the server that holds them.
+    sessions: OnceLock<Box<dyn Fn(EntityId) + Send + Sync>>,
 }
 
 /// One registered run: its executor run, the agent it runs as, the leased
@@ -216,6 +219,12 @@ impl LiveRuns {
     /// it created in `lens`. Set once; a later call is ignored.
     pub(crate) fn close_cards_with(&self, lens: Arc<LensFrameStore>) {
         let _ = self.lens.set(lens);
+    }
+
+    /// Has each run that leaves because it ended close its board sessions
+    /// with `close` (FIX 8143). Set once; a later call is ignored.
+    pub(crate) fn close_sessions_with(&self, close: Box<dyn Fn(EntityId) + Send + Sync>) {
+        let _ = self.sessions.set(close);
     }
 
     /// Registers run `run`, which its runner enters as `actor` under the
@@ -457,6 +466,9 @@ impl LiveRuns {
     fn retired(&self, run: EntityId) {
         if let Some(lens) = self.lens.get() {
             lens.close_run(&run.to_hex());
+        }
+        if let Some(close) = self.sessions.get() {
+            close(run);
         }
     }
 

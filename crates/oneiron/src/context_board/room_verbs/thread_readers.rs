@@ -2,12 +2,8 @@
 //! thread of a room, and the ceiling that thread puts on its reader, over the
 //! room's roster.
 
-use super::{
-    clearances_in, peer_read_keys_in, reading_defaults_in, room_clearance_in, room_facets_axis_in,
-    room_reader_in, room_roster_in,
-};
-use crate::claim::{RoomTerms, RoomTurnCeiling};
-use crate::context_board::room::{RoomPresence, room_clearance, room_worlds};
+use super::{room_clearance_in, room_reader_in, room_roster_in};
+use crate::claim::RoomTurnCeiling;
 use crate::federation::Scope;
 use crate::{EntityId, Vault};
 
@@ -88,35 +84,10 @@ pub(crate) fn thread_ceiling_in(
         members.push(caller);
     }
     let own = off_room_reader_clearance_in(vault, txn, room, thread, &members, caller)?;
-    let worlds = reading_defaults_in(vault, txn, &members)?;
-    let clearances = clearances_in(vault, txn, &members)?;
-    let roster: Vec<_> = members
-        .iter()
-        .zip(worlds.into_iter().zip(clearances))
-        .map(|(member, (active_worlds, clearance))| RoomPresence {
-            actor: *member,
-            actor_class: None,
-            label: String::new(),
-            present: true,
-            active_worlds,
-            clearance,
-        })
-        .collect();
-    let terms = RoomTerms {
-        worlds: room_worlds(&roster)?,
-        facets: room_facets_axis_in(vault, txn, room)?,
-        clearance: crate::claim::meet_clearance(room_clearance(&roster).as_ref(), own.as_ref()),
-        p7: true,
-    };
-    Ok(Some(RoomTurnCeiling {
-        room,
-        caller,
-        terms: crate::claim::TurnTerms::new(terms),
-        peers: peer_read_keys_in(vault, txn, caller, &members)?,
-        roster: members,
-        branch: Some(thread),
-        personal: false,
-    }))
+    let mut ceiling =
+        super::ceiling::room_turn_ceiling_in(vault, txn, room, caller, &members, own.as_ref())?;
+    ceiling.branch = Some(thread);
+    Ok(Some(ceiling))
 }
 
 /// What the vault's Owner or an Admin reading a private thread off the room

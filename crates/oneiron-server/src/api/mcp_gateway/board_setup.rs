@@ -1228,9 +1228,19 @@ pub(crate) async fn run_current_board(
     let mut state_rows = mcp_board_state_rows(&sections);
     state_rows.extend(board.render());
     let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &state_rows);
+    // The connection's published events are read under the run's own key,
+    // as its host door's calls are, bound again on every attach and refresh
+    // (FIX 4888). A key that cannot be built binds none.
+    let reader = server
+        .vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .at(oneiron::claim::CallerLocality::OnDevice)
+        .read_key()
+        .ok();
     let epoch = {
         let mut registry = server.mcp_registry.lock().await;
         registry.attach_run_board(connection, &actor.entity_ref().to_hex());
+        registry.bind_run_reader(connection, reader);
         registry.board_snapshot_epoch(connection, state_hash)
     };
     super::board_observations::run_read_set(server, actor, connection)

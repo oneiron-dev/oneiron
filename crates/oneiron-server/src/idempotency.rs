@@ -198,6 +198,8 @@ struct CachedHttpResponse {
     rows: Vec<oneiron::EntityId>,
     /// The rows a replay re-admits ([`ServedRows::admit`]).
     admit: Option<Vec<oneiron::EntityId>>,
+    /// [`ServedRows::sources`], kept as the entry's source stamps.
+    sources: Vec<oneiron::EntityId>,
 }
 
 /// The rows a response was derived from, as its handler listed them while it
@@ -212,6 +214,11 @@ pub(crate) struct ServedRows {
     /// then, still reads each of them. `None` when the handler could not list
     /// them all: a route that keeps them never replays such a response.
     pub(crate) admit: Option<Vec<oneiron::EntityId>>,
+    /// The rows whose words the response carries without naming them, such
+    /// as the CLAIMs a board's standing block was compiled from (FIX 8148).
+    /// They are kept as the entry's source stamps, so an erase of one retires
+    /// the response, and the route's release admits each again.
+    pub(crate) sources: Vec<oneiron::EntityId>,
 }
 
 /// A cached success as its release judges it.
@@ -221,6 +228,8 @@ pub(crate) struct Replay<'a> {
     /// [`ServedRows::admit`]; `None` as well for an entry written before it
     /// was kept.
     pub(crate) admit: Option<&'a [oneiron::EntityId]>,
+    /// [`ServedRows::sources`]; empty for an entry that kept none.
+    pub(crate) sources: &'a [oneiron::EntityId],
 }
 
 /// Whether the caller's read, as it stands now, still reads every row a
@@ -252,6 +261,7 @@ impl CachedHttpResponse {
             body: &self.body,
             rows: &self.rows,
             admit: self.admit.as_deref(),
+            sources: &self.sources,
         }
     }
 
@@ -290,6 +300,7 @@ impl CachedHttpResponse {
                 .map(|admit| admit.iter().map(oneiron::EntityId::to_hex).collect()),
             stamps: oneiron::store::ResponseStamps {
                 actor: stamp.caller,
+                sources: self.sources,
                 ..Default::default()
             },
             erased: false,
@@ -327,6 +338,7 @@ impl CachedHttpResponse {
                 })
                 .transpose()
                 .map_err(IdempotencyStoreError::rows)?,
+            sources: stored.stamps.sources,
         })
     }
 }
@@ -584,6 +596,7 @@ async fn idempotent(
             body: response_body.clone(),
             rows: served.rows,
             admit: served.admit,
+            sources: served.sources,
         };
 
         // The caller owns the response beside the rows it served: its

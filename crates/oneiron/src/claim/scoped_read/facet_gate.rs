@@ -9,6 +9,16 @@ use crate::federation::ScopeAxis;
 use crate::federation::facet_read::facets_admit_in;
 
 impl ScopedRead<'_> {
+    /// Read inside `room`'s signed facets, as a turn in it does, while
+    /// keeping every other term (FIX 643): the read a named-room assembly
+    /// outside a turn makes. The owner's key reads past them, as past every
+    /// facet.
+    #[must_use]
+    pub fn within_room_facets(mut self, room: EntityId) -> Self {
+        self.actor_key = self.actor_key.within_room_facets(room);
+        self
+    }
+
     /// Whether a deleted row's shell may be named to this read: a read limited
     /// to facets names only a shell that still proves a place inside them, and
     /// a dangling reference with no shell proves none (DEC-0005).
@@ -81,7 +91,16 @@ impl ScopedRead<'_> {
             None => None,
         }
         .filter(|facets| !matches!(facets, ScopeAxis::All));
-        if (credential.is_none() && room.is_none())
+        // A named room read outside a turn takes the room's signed facets as
+        // this snapshot finds them (FIX 643).
+        let named = match self.actor_key.room_facets {
+            Some(room) => Some(crate::context_board::room_facets_axis_in(
+                self.vault, txn, room,
+            )?),
+            None => None,
+        }
+        .filter(|facets| !matches!(facets, ScopeAxis::All));
+        if (credential.is_none() && room.is_none() && named.is_none())
             || self.actor_key.facets_owner_exempt_in(self.vault, txn)?
         {
             return Ok(true);
@@ -89,7 +108,11 @@ impl ScopedRead<'_> {
         let Some(raw) = raw else {
             return Ok(false);
         };
-        for facets in credential.into_iter().chain(room.as_ref()) {
+        for facets in credential
+            .into_iter()
+            .chain(room.as_ref())
+            .chain(named.as_ref())
+        {
             let inside = match self.session_view {
                 Some(view) => facets_admit_in(self.vault, view, txn, *id, raw, facets)?,
                 None => facets_admit_in(self.vault, &self.vault.store, txn, *id, raw, facets)?,

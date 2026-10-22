@@ -187,14 +187,19 @@ pub(crate) struct RoomAudience {
 }
 
 impl RoomAudience {
+    /// Each member classed under `read`, the caller's own read, in one
+    /// snapshot (FIX 8150): a contact link it cannot read changes no member's
+    /// class, so neither the reader chosen nor the clearance terms met hang on
+    /// a contact hidden from the caller.
     pub(crate) fn resolve(
         vault: &oneiron::Vault,
         auth: &CoreAuth,
+        read: &oneiron::claim::ScopedRead<'_>,
         members: &[oneiron::EntityId],
         live: oneiron::conversation::RoomLiveSpeakerEntries,
     ) -> Result<Self, ApiError> {
         let parties = vault
-            .room_parties(members)
+            .room_parties_under(read, members)
             .map_err(|error| core_engine_error("room contact resolution failed", error))?;
         let owner = bound_room_owner(vault, auth, members)?;
         let reader = owner.or_else(|| own_agent_reader(auth, members, &parties));
