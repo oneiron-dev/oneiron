@@ -475,8 +475,21 @@ impl Vault {
         if let Some(approval) = new_approval {
             TEACHER_APPROVAL.put(&self.store, txn, &(), approval)?;
         }
-        // A tighter owner pin clears stale resident routes atomically.
-        RESIDENT_ROUTES.delete(&self.store, txn, &())?;
+        // Each resident narrowing the new pins still admit stays, so a bind on
+        // one slot leaves the owner's other narrowed slots as they were (FIX
+        // 9919). One the new pins widen past, or leave without a model at its
+        // route, clears in this transaction; so does a row that does not
+        // decode, as every write cleared it before.
+        let kept: BTreeMap<_, _> = read_routes(&self.store, txn)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(slot, route)| route_admits(manifest, *slot, *route).is_ok())
+            .collect();
+        if kept.is_empty() {
+            RESIDENT_ROUTES.delete(&self.store, txn, &())?;
+        } else {
+            RESIDENT_ROUTES.put(&self.store, txn, &(), &kept)?;
+        }
         MANIFEST.put(&self.store, txn, &(), manifest)
     }
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
@@ -535,18 +548,29 @@ impl Vault {
     ) -> Result<()> {
         let manifest =
             read_manifest(&self.store, txn)?.ok_or_else(|| invalid("manifest not configured"))?;
-        if route_rank(route) > route_rank(manifest.routes[&slot]) {
-            return Err(invalid("resident route cannot widen manifest pin"));
-        }
-        for (role, binding) in &manifest.roles {
-            if *role != ModelRole::ExtractionTeacher && binding.slot == slot {
-                model_for_route(binding, route, manifest.routes[&slot])?;
-            }
-        }
+        route_admits(&manifest, slot, route)?;
         let mut routes = read_routes(&self.store, txn)?;
         routes.insert(slot, route);
         RESIDENT_ROUTES.put(&self.store, txn, &(), &routes)
     }
+}
+/// Whether `manifest` admits a resident narrowing of `slot` to `route`: no
+/// wider than the slot's pin, and every served role on the slot has a model
+/// at that route.
+fn route_admits(manifest: &ModelManifest, slot: ModelSlot, route: ModelLocality) -> Result<()> {
+    let pin = *manifest
+        .routes
+        .get(&slot)
+        .ok_or_else(|| invalid("missing slot route"))?;
+    if route_rank(route) > route_rank(pin) {
+        return Err(invalid("resident route cannot widen manifest pin"));
+    }
+    for (role, binding) in &manifest.roles {
+        if *role != ModelRole::ExtractionTeacher && binding.slot == slot {
+            model_for_route(binding, route, pin)?;
+        }
+    }
+    Ok(())
 }
 fn effective_route(
     manifest: &ModelManifest,

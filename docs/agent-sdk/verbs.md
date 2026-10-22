@@ -458,6 +458,8 @@ both bindings and their export-census tests in one change.
 - `vault.authority.handoff_alarms.acknowledge`
 - `vault.roots.requests.cancel`
 - `vault.cleanup.run`
+- `vault.cleanup.review`
+- `vault.cleanup.decide`
 - `vault.archive.delete.preview`
 - `vault.archive.delete.confirm`
 - `vault.usage.events.undecodable`
