@@ -44,6 +44,7 @@ use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::store::{CredentialLeaf, CustodyKind, Store};
 use crate::vault::Vault;
 
+mod connector_resume;
 mod image;
 
 pub(crate) use self::image::{
@@ -51,6 +52,9 @@ pub(crate) use self::image::{
     image_credential_row, plan_archived_credentials,
 };
 
+pub(crate) use self::connector_resume::{
+    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
+};
 use super::codec::{BodyValue, decode_custody_map, encode_custody_map};
 use super::types::{
     CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_CUSTODY_STORED_SCHEMA_VERSION,

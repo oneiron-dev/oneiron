@@ -10,7 +10,8 @@
 //! them again. A fork leaves one it cannot copy behind: the copy's row then
 //! answers the typed `credential_leaf_unreadable` when it is opened (its
 //! pending diagnostic), and the activation or restore goes on as it did.
-//! Every other kind's fault is the pass's own, exactly as before.
+//! A connector call's resume key (FIX 9157) goes the same way. Every other
+//! kind's fault is the pass's own, exactly as before.
 
 use crate::error::{Error, Result};
 

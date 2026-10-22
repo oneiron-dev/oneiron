@@ -157,6 +157,9 @@ pub(crate) use self::storage_seal::{
     put_stored_custody_in_txn, read_secret_custody_meta_in_txn, read_stored_custody_in_txn,
     stored_value_held_in_txn, stored_value_opens_in_txn,
 };
+pub(crate) use self::storage_seal::{
+    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
+};
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::moves_custody_floor;
 pub(crate) use self::transition::{

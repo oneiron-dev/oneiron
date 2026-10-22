@@ -70,6 +70,7 @@ use crate::secret_lease::SecretGrantRef;
 use crate::side_table::{self, Named, SideTable};
 
 use super::authority::OutboundBindingAuthority;
+use super::connector_call_erase::{delete_pending_call_in_txn, put_pending_call_in_txn};
 use super::execution::ScopedMcpDispatchResult;
 use super::result_scrub::OutboundResultSender;
 use super::scope::{
@@ -387,6 +388,15 @@ pub(super) struct PendingConnectorCall {
     /// stored.
     #[serde(skip)]
     pub(super) code: Option<Box<super::connector_call_code::CodePass>>,
+    /// An off-record caller's arguments, sealed under the call's resume
+    /// custody (FIX 9159): the stored row's `arguments` is then empty. They
+    /// go, and their keys retire, with the row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) sealed_arguments: Option<Vec<u8>>,
+    /// This pass's caller keeps no record (FIX 9159): its row keeps its
+    /// arguments sealed, never in the clear. Never stored.
+    #[serde(skip)]
+    pub(super) off_record: bool,
 }
 
 impl PendingConnectorCall {
@@ -670,6 +680,8 @@ impl Vault {
             approval: None,
             input: None,
             code: None,
+            sealed_arguments: None,
+            off_record: memory.keeps_no_record(),
         };
         let Some(named) = named else {
             return self.drive_connector_call(None, None, pending, host);
@@ -681,6 +693,11 @@ impl Vault {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             PENDING_CALLS.get(&self.store, &txn, &call_ref)?
         };
+        // An off-record caller's held arguments open for the comparison and
+        // the resume (FIX 9159).
+        let held = held
+            .map(|held| held.opened(&self.store, &call_ref))
+            .transpose()?;
         match held {
             None => {
                 let pending = super::connector_call_code::with_code_pass(memory, pending);
@@ -775,11 +792,12 @@ impl Vault {
         Ok(
             self.with_write_txn(|txn| match PENDING_CALLS.get(&self.store, txn, call_ref)? {
                 Some(pending) if pending.settled.is_some() && pending.input.is_none() => {
-                    PENDING_CALLS.delete(&self.store, txn, call_ref)
+                    delete_pending_call_in_txn(&self.store, txn, call_ref)
                 }
                 _ => Ok(false),
             })?,
         )
+        .inspect(|_| self.finish_connector_resume_retirements_after_commit())
     }
 
     /// One tool's approved input schema for the caller `memory` is bound
@@ -890,7 +908,9 @@ impl Vault {
         let step = self.connector_reply_cleared(host.clears_at_door(), &pending, step);
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
             let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
-            self.with_write_txn(|txn| PENDING_CALLS.put(&self.store, txn, &call_ref, pending))?;
+            self.with_write_txn(|txn| {
+                put_pending_call_in_txn(&self.store, txn, &call_ref, pending)
+            })?;
             Ok::<_, IntentLedgerError>(call_ref)
         };
         let settle = |call_ref: Option<EntityId>, settled: SettledConnectorCall| {
@@ -899,7 +919,9 @@ impl Vault {
                     settled: Some(settled),
                     ..pending.clone()
                 };
-                self.with_write_txn(|txn| PENDING_CALLS.put(&self.store, txn, &call_ref, &row))?;
+                self.with_write_txn(|txn| {
+                    put_pending_call_in_txn(&self.store, txn, &call_ref, &row)
+                })?;
             }
             Ok::<_, IntentLedgerError>(())
         };
@@ -1683,10 +1705,11 @@ impl Vault {
                         source_rows: None,
                     };
                     ACKNOWLEDGED_CALLS.put(&self.store, txn, call_ref, &caller)?;
-                    PENDING_CALLS.delete(&self.store, txn, call_ref)
+                    delete_pending_call_in_txn(&self.store, txn, call_ref)
                 }
                 _ => Ok(false),
             })?,
         )
+        .inspect(|_| self.finish_connector_resume_retirements_after_commit())
     }
 }

@@ -66,6 +66,7 @@ impl CustodyVaultId {
 /// | `0x08` | `TrainingLink`      | the vault's training link key K (TRAINING-LINK = C) |
 /// | `0x09` | `CustodyTransition` | KS-6 custody transition instances        |
 /// | `0x0a` | `CustodyRequestInput` | KS-6 custody request inputs, whole     |
+/// | `0x0b` | `ConnectorResume` | a connector call's resume state (FIX 9157) |
 ///
 /// A later client adds its variant with its reserved tag, its item width and
 /// secret width, and its corruption label; custody itself stays the same.
@@ -116,6 +117,10 @@ pub(crate) enum CustodyKind {
     /// One custody request's whole protected input (KS-6), every numbered
     /// part of it under one key: item and secret as a transition's.
     CustodyRequestInput,
+    /// One generation of one connector call's resume state (FIX 9157): item
+    /// = the call ref (16 bytes), generation = the caller's round
+    /// generation; secret = the resume state's sealing key (32 bytes).
+    ConnectorResume,
 }
 
 impl CustodyKind {
@@ -131,6 +136,7 @@ impl CustodyKind {
             Self::TrainingLink => 0x08,
             Self::CustodyTransition => 0x09,
             Self::CustodyRequestInput => 0x0a,
+            Self::ConnectorResume => 0x0b,
         }
     }
 
@@ -146,6 +152,7 @@ impl CustodyKind {
             0x08 => Some(Self::TrainingLink),
             0x09 => Some(Self::CustodyTransition),
             0x0a => Some(Self::CustodyRequestInput),
+            0x0b => Some(Self::ConnectorResume),
             _ => None,
         }
     }
@@ -155,7 +162,7 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision => 16,
             Self::BodyInstance => 17,
-            Self::KnownValueEntry | Self::CredentialValue => 16,
+            Self::KnownValueEntry | Self::CredentialValue | Self::ConnectorResume => 16,
             Self::CustodyTransition | Self::CustodyRequestInput => 32,
             Self::WorldPad => 40,
             Self::CheckpointPayload => 49,
@@ -175,7 +182,8 @@ impl CustodyKind {
             | Self::TrainingLink
             | Self::CredentialValue
             | Self::CustodyTransition
-            | Self::CustodyRequestInput => 32,
+            | Self::CustodyRequestInput
+            | Self::ConnectorResume => 32,
             Self::KnownValueEntry => 44,
         }
     }
@@ -194,6 +202,7 @@ impl CustodyKind {
             Self::CredentialValue => Error::CorruptedIndex("credential value custody"),
             Self::CustodyTransition => Error::CorruptedIndex("custody transition custody"),
             Self::CustodyRequestInput => Error::CorruptedIndex("custody request input custody"),
+            Self::ConnectorResume => Error::CorruptedIndex("connector resume custody"),
         }
     }
 }

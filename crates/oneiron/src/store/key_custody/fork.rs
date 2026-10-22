@@ -309,7 +309,9 @@ impl LocalCustody<'_> {
         let copied = (|| -> Result<()> {
             target.open_compartment()?;
             // KS-6: a credential's key a fork cannot copy stays behind,
-            // warned, and the fork goes on as it did (fork_step).
+            // warned, and the fork goes on as it did (fork_step). A
+            // connector call's resume key (FIX 9157) stays behind the same
+            // way.
             for id in &retired {
                 let step = self.retired(id).and_then(|retired| {
                     if retired {

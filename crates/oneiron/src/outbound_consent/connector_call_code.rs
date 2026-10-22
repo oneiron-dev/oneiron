@@ -176,7 +176,12 @@ impl Vault {
                             .map(|digest| *digest.as_bytes())
                     })?;
             }
-            PENDING_CALLS.put(&self.store, txn, &call_ref, &row)?;
+            super::connector_call_erase::put_pending_call_in_txn(
+                &self.store,
+                txn,
+                &call_ref,
+                &row,
+            )?;
             Ok((call_ref, row.code_consent_wait.is_some()))
         })?)
     }
@@ -472,6 +477,8 @@ impl Vault {
                 PENDING_CALLS.get(&self.store, &txn, &call_ref)?
             };
             if let Some(pending) = pending {
+                // An off-record caller's sealed arguments open (FIX 9159).
+                let pending = pending.opened(&self.store, &call_ref)?;
                 self.resume_code_owned_connector_call(&call_ref, pending, host, true)?;
             }
         }

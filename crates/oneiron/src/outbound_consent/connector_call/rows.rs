@@ -55,6 +55,11 @@ impl Vault {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             PENDING_CALLS.get(&self.store, &txn, call_ref)?
         };
+        // An off-record caller's sealed arguments open for the resume
+        // (FIX 9159).
+        let pending = pending
+            .map(|pending| pending.opened(&self.store, call_ref))
+            .transpose()?;
         let Some(pending) = pending else {
             return Ok((
                 ConnectorCallOutcome::Refused {

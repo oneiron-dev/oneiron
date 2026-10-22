@@ -137,9 +137,9 @@ pub(super) fn checkpoint_retirements(
     let mut retirements = Vec::new();
     for intent in retirements_in_rows(rows)? {
         // A body instance, a holder's known-value history (KS-3), a world
-        // pad (KS-5) and a credential's value or carrier key (KS-6) retire
-        // for an erase only, which no hold defers (KS-2A): the restore
-        // treats it as done.
+        // pad (KS-5), a credential's value or carrier key (KS-6) and a
+        // connector call's resume (FIX 9157) retire for an erase only, which
+        // no hold defers (KS-2A): the restore treats it as done.
         if matches!(
             intent.subject.kind(),
             CustodyKind::BodyInstance | CustodyKind::KnownValueEntry | CustodyKind::WorldPad
