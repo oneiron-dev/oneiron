@@ -9,28 +9,20 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use oneiron::llm::BrokerIsolation;
 use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
-    MediaUsage,
+    MediaUsage, ReferenceCompatibility,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::{future::Future, pin::Pin};
 
-/// The most reference images one image call sends inline.
-const MAX_IMAGE_REFERENCES: usize = 14;
-/// The aspect ratios a Gemini image model draws, as `(width, height)`.
-const IMAGE_RATIOS: [(u32, u32); 10] = [
-    (1, 1),
-    (2, 3),
-    (3, 2),
-    (3, 4),
-    (4, 3),
-    (4, 5),
-    (5, 4),
-    (9, 16),
-    (16, 9),
-    (21, 9),
-];
+mod prepare;
+
+use prepare::{
+    PreparedImage, PreparedVideo, VIDEO_REFERENCE_SLOTS, inline_image, prepare_image,
+    prepare_video,
+};
+
 /// Finish reasons that mean the provider withheld the answer.
 const FILTERED: [&str; 6] = [
     "SAFETY",
@@ -155,24 +147,15 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
 
     async fn image(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
-        let prompt = request.text();
-        let references = request
-            .reference_images()
-            .filter(|references| references.len() <= MAX_IMAGE_REFERENCES)
-            .ok_or(FatalLlmError::InvalidRequest)?;
-        if prompt.trim().is_empty() {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
+        let PreparedImage { prompt, config } = prepare_image(&request)?;
+        // Every reference goes, in order (FIX 8612): none is dropped or cut.
         let mut parts = vec![json!({ "text": prompt })];
-        parts.extend(references.iter().map(|reference| {
-            json!({ "inlineData": {
-                "mimeType": reference.media_type,
-                "data": STANDARD.encode(&reference.bytes),
-            } })
-        }));
+        for reference in &request.references {
+            parts.push(inline_image(reference).ok_or(FatalLlmError::InvalidRequest)?);
+        }
         let body = json!({
             "contents": [{ "role": "user", "parts": parts }],
-            "generationConfig": image_config(&request)?,
+            "generationConfig": config,
         });
         let reply = self
             .send(
@@ -188,24 +171,20 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
 
     async fn submit_job(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<String> {
         let wire = self.wire_model(&request.model)?;
-        let prompt = request.text();
-        if request.operation != AiOperation::Video || prompt.trim().is_empty() {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let references = request
-            .reference_images()
-            .filter(|references| references.len() <= 1)
-            .ok_or(FatalLlmError::InvalidRequest)?;
+        let PreparedVideo { prompt, parameters } = prepare_video(&request)?;
         let mut instance = json!({ "prompt": prompt });
-        if let Some(start) = references.first() {
-            instance["image"] = json!({ "inlineData": {
-                "mimeType": start.media_type,
-                "data": STANDARD.encode(&start.bytes),
-            } });
+        // The job's one start frame, when it has one; the builder refused a
+        // call with more, so nothing is cut here.
+        match request.references.as_slice() {
+            [] => {}
+            [start] => {
+                instance["image"] = inline_image(start).ok_or(FatalLlmError::InvalidRequest)?;
+            }
+            _ => return Err(FatalLlmError::InvalidRequest.into()),
         }
         let body = json!({
             "instances": [instance],
-            "parameters": video_parameters(&request.params)?,
+            "parameters": parameters,
         });
         let reply = self
             .send(
@@ -318,9 +297,31 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
 }
 
 impl<T: GeminiMediaTransport> MediaBackend for GeminiMediaBackend<T> {
-    /// A model this client was not built for, or its transport's refusal.
+    /// A Veo job carries one start frame; an image call every reference.
+    fn reference_compatibility(&self, request: &MediaRequest) -> ReferenceCompatibility {
+        match request.operation {
+            AiOperation::Video => ReferenceCompatibility::Slots {
+                slots: VIDEO_REFERENCE_SLOTS,
+            },
+            _ => ReferenceCompatibility::Whole,
+        }
+    }
+
+    /// A model this client was not built for, a call its send's own
+    /// builders refuse (an operation this wire does not serve, no prompt, a
+    /// param that cannot be sent, FIX 8613), or its transport's refusal: all
+    /// before the call's permit starts, so none of them is charged.
     fn preflight(&self, request: &MediaRequest) -> LlmResult<()> {
         self.wire_model(&request.model)?;
+        match request.operation {
+            AiOperation::Image => {
+                prepare_image(request)?;
+            }
+            AiOperation::Video => {
+                prepare_video(request)?;
+            }
+            _ => return Err(FatalLlmError::InvalidRequest.into()),
+        }
         self.transport.preflight()
     }
 
@@ -378,69 +379,6 @@ impl<T: GeminiMediaTransport> MediaBackend for GeminiMediaBackend<T> {
             }
         })
     }
-}
-
-/// An image call's `generationConfig`: image output, its aspect ratio and
-/// size from the call's `size` (`"WxH"`) or `width`/`height` when it names
-/// one, then each other param as it came. Gemini's own `aspectRatio` and
-/// `imageSize` params win over a named size.
-fn image_config(request: &MediaRequest) -> LlmResult<Value> {
-    let sized = ["size", "width", "height"]
-        .iter()
-        .any(|key| request.params.contains_key(*key));
-    let intent = request.image_intent()?;
-    let mut image = Map::new();
-    if sized {
-        if intent.width == 0 || intent.height == 0 {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        image.insert(
-            "aspectRatio".into(),
-            json!(nearest_ratio(intent.width, intent.height)),
-        );
-        let side = intent.width.max(intent.height);
-        let size = match side {
-            ..=1024 => "1K",
-            ..=2048 => "2K",
-            _ => "4K",
-        };
-        image.insert("imageSize".into(), json!(size));
-    }
-    let mut config = Map::new();
-    config.insert("responseModalities".into(), json!(["TEXT", "IMAGE"]));
-    for (key, value) in intent.params {
-        match key.as_str() {
-            "aspect_ratio" | "aspectRatio" => {
-                image.insert("aspectRatio".into(), value);
-            }
-            "image_size" | "imageSize" => {
-                image.insert("imageSize".into(), value);
-            }
-            "" | "responseModalities" | "imageConfig" => {
-                return Err(FatalLlmError::InvalidRequest.into());
-            }
-            _ => {
-                config.insert(key, value);
-            }
-        }
-    }
-    if !image.is_empty() {
-        config.insert("imageConfig".into(), Value::Object(image));
-    }
-    Ok(Value::Object(config))
-}
-
-/// The drawn ratio closest to `width:height`.
-fn nearest_ratio(width: u32, height: u32) -> String {
-    let wanted = f64::from(width) / f64::from(height);
-    let (w, h) = IMAGE_RATIOS
-        .into_iter()
-        .min_by(|a, b| {
-            let off = |(w, h): (u32, u32)| (f64::from(w) / f64::from(h) / wanted).ln().abs();
-            off(*a).total_cmp(&off(*b))
-        })
-        .unwrap_or((1, 1));
-    format!("{w}:{h}")
 }
 
 /// A generateContent answer as image parts, then any text the model wrote
@@ -527,50 +465,6 @@ fn image_response(body: &Value, model: ModelId) -> LlmResult<MediaResponse> {
         usage,
         model,
     })
-}
-
-/// A Veo job's `parameters`: the call's `seconds` as `durationSeconds`, its
-/// `size` (`"WxH"`) as an aspect ratio and resolution, then each other
-/// param as it came. A param that names a field set here is refused.
-fn video_parameters(params: &BTreeMap<String, Value>) -> LlmResult<Value> {
-    fn set(out: &mut Map<String, Value>, key: &str, value: Value) -> LlmResult<()> {
-        if key.is_empty() || out.insert(key.to_owned(), value).is_some() {
-            Err(FatalLlmError::InvalidRequest.into())
-        } else {
-            Ok(())
-        }
-    }
-    let mut out = Map::new();
-    for (key, value) in params {
-        match key.as_str() {
-            "seconds" | "durationSeconds" => {
-                let seconds = value
-                    .as_u64()
-                    .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
-                    .filter(|seconds| *seconds > 0)
-                    .ok_or(FatalLlmError::InvalidRequest)?;
-                set(&mut out, "durationSeconds", json!(seconds))?;
-            }
-            "size" => {
-                let (width, height) = value
-                    .as_str()
-                    .and_then(|size| size.split_once('x'))
-                    .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
-                    .filter(|(w, h)| *w > 0 && *h > 0)
-                    .ok_or(FatalLlmError::InvalidRequest)?;
-                let ratio = if width >= height { "16:9" } else { "9:16" };
-                let resolution = match width.min(height) {
-                    ..=720 => "720p",
-                    ..=1080 => "1080p",
-                    _ => "4k",
-                };
-                set(&mut out, "aspectRatio", json!(ratio))?;
-                set(&mut out, "resolution", json!(resolution))?;
-            }
-            _ => set(&mut out, key, value.clone())?,
-        }
-    }
-    Ok(Value::Object(out))
 }
 
 /// A Veo operation's name, as its poll path takes it:

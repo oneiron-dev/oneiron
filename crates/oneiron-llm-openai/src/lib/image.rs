@@ -72,8 +72,9 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
         lease: &'a BudgetLease,
     ) -> ImageFuture<'a> {
         Box::pin(async move {
-            // Validate here as well as at ImageCatalog: direct users of the trait need the same bound.
-            if !(1..=8).contains(&references.len()) {
+            // An edit edits something. Every reference goes, in order,
+            // however many (FIX 8614): no count is refused here.
+            if references.is_empty() {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
             let images = references
@@ -101,11 +102,8 @@ pub(super) fn reference_part(
     index: usize,
     reference: ImageBytes,
 ) -> LlmResult<OpenAiImagePart> {
-    let extension = match reference.media_type.as_str() {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/webp" => "webp",
-        _ => return Err(FatalLlmError::InvalidRequest.into()),
+    let Some(extension) = reference_extension(&reference.media_type) else {
+        return Err(FatalLlmError::InvalidRequest.into());
     };
     if reference.bytes.is_empty() {
         return Err(FatalLlmError::InvalidRequest.into());
@@ -116,6 +114,17 @@ pub(super) fn reference_part(
         media_type: reference.media_type,
         bytes: reference.bytes,
     })
+}
+
+/// The file extension a reference image of `media_type` is sent under;
+/// `None` for a type the image wire does not take.
+pub(super) fn reference_extension(media_type: &str) -> Option<&'static str> {
+    match media_type {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/webp" => Some("webp"),
+        _ => None,
+    }
 }
 
 pub(super) fn fields(intent: &ImageIntent) -> LlmResult<(ModelId, BTreeMap<String, Value>)> {

@@ -49,6 +49,7 @@ use super::voxcpm2_speech::VoxCpm2Speech;
 use super::walk::provider_down;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
 
+mod fit;
 mod jobs;
 
 use jobs::{JobRow, JobStore, erased_poll, submit_stamps};
