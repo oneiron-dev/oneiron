@@ -1,5 +1,6 @@
 //! Builder flags, run() dispatch, and the aggregate maintenance report.
 
+use crate::deletion::CorruptClaimRepair;
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
@@ -26,6 +27,7 @@ pub struct MaintenanceBuilder<'a> {
     attempt_queue_lease_timeout_secs: u64,
     do_backfill_gate_claim_index: bool,
     do_migrate_conversation_dags: bool,
+    corrupt_claim_ids: Vec<EntityId>,
 }
 
 /// Aggregate counters for maintenance operations.
@@ -127,6 +129,10 @@ pub struct MaintenanceReport {
     /// Federated facet stamps held ahead of their rows that this run retired:
     /// held 30 days or more, or held under a grant that no longer confers.
     pub held_facet_stamps_retired: u64,
+    /// Each record `reclassify_corrupt_claims` selected, in order: classified
+    /// by this run with its signed repair event, classified already at the
+    /// header it has now, or no corrupt CLAIM and left as it is (FIX 7800).
+    pub corrupt_claim_repairs: Vec<CorruptClaimRepair>,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -146,6 +152,7 @@ impl<'a> MaintenanceBuilder<'a> {
             attempt_queue_lease_timeout_secs: 0,
             do_backfill_gate_claim_index: false,
             do_migrate_conversation_dags: false,
+            corrupt_claim_ids: Vec::new(),
         }
     }
 
@@ -250,6 +257,19 @@ impl<'a> MaintenanceBuilder<'a> {
         self
     }
 
+    /// ARCH-0038's audited repair for a corrupt CLAIM (FIX 7800), for the
+    /// records `ids` names: each that is a stored CLAIM whose non-empty body
+    /// fails its strict capture decode is classified, its bytes unchanged,
+    /// with one signed REDACTION_AUDIT repair event, so its hard erase can
+    /// finish. That erase records `capture_failed` on its receipt and its
+    /// sweep, which then takes every carrier. Any other record is reported and
+    /// left as it is. Off unless asked: it authorizes no erase and reads no
+    /// body to anyone, and runs before a sweep asked of the same run.
+    pub fn reclassify_corrupt_claims(mut self, ids: impl IntoIterator<Item = EntityId>) -> Self {
+        self.corrupt_claim_ids.extend(ids);
+        self
+    }
+
     pub fn run(self) -> Result<MaintenanceReport> {
         let mut report = MaintenanceReport::default();
         if self.do_migrate_conversation_dags {
@@ -316,6 +336,11 @@ impl<'a> MaintenanceBuilder<'a> {
             report.text_doc_field_lengths_removed = counts.doc_field_lengths;
             report.text_bm25_field_stats_removed = counts.field_stats;
             report.text_documents_reindexed = counts.reindexed;
+        }
+
+        if !self.corrupt_claim_ids.is_empty() {
+            report.corrupt_claim_repairs =
+                self.vault.reclassify_corrupt_claims(&self.corrupt_claim_ids)?;
         }
 
         if self.do_hard_erase_sweep {
