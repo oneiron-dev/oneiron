@@ -1,7 +1,12 @@
 //! The asking side of a mesh organ call: stage the inputs, send the call,
-//! answer the organ's asks while it runs, take the outputs back.
+//! answer the organ's asks while it runs, take the outputs back. The bytes
+//! this node takes back, the reply and each output, lease this machine's
+//! memory floor before they are allocated, and an output keeps its lease
+//! while it lives (FIX 6196). The organ's own memory stays its host's:
+//! `memory.grow` is never answered here.
 
 use std::collections::HashSet;
+use std::io;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -17,7 +22,8 @@ use crate::budget::Stop;
 use crate::clock::Clock;
 use crate::error::HostError;
 use crate::handlers::{Answered, AskHandlers, AskRequest, HandlerScope};
-use crate::outcome::{OrganOutcome, OrganOutput, OutputBytes};
+use crate::outcome::{Leased, OrganOutcome, OrganOutput, OutputBytes};
+use crate::resource_memory::{FloorRefusal, SharedFloor};
 use crate::spec::{FetchGrant, LentInput, OrganCall, OrganInput};
 
 /// Why a node did not return an outcome.
@@ -77,6 +83,40 @@ async fn put(
     Ok(Carried::Staged { hash, len: total })
 }
 
+/// This node's memory floor for the bytes a call takes back, and the
+/// call's deadline, which a wait for it keeps.
+#[derive(Clone, Copy)]
+struct Here<'a> {
+    floor: Option<&'a SharedFloor>,
+    deadline: Instant,
+}
+
+impl Here<'_> {
+    /// A lease of this machine's memory for staged bytes about to be taken
+    /// back, before they are allocated; none for bytes that rode inline, or
+    /// with no floor here.
+    fn hold(self, carried: &Carried) -> Result<Option<Leased>, PeerError> {
+        let (Some(floor), Carried::Staged { len, .. }) = (self.floor, carried) else {
+            return Ok(None);
+        };
+        let held = floor
+            .0
+            .lease(*len, self.deadline, &|| false)
+            .map_err(|refused| {
+                PeerError::Failed(match refused {
+                    FloorRefusal::Floor { needed, available } => HostError::Io(io::Error::new(
+                        io::ErrorKind::OutOfMemory,
+                        format!(
+                            "this node's memory floor: {needed} bytes needed, {available} available"
+                        ),
+                    )),
+                    FloorRefusal::Deadline => HostError::DeadlineExceeded,
+                })
+            })?;
+        Ok(Some(Leased(Mutex::new(held))))
+    }
+}
+
 /// The bytes a reply named, got in pieces when staged, checked against
 /// their hash.
 async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, MeshError> {
@@ -107,14 +147,21 @@ async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, Me
 /// Runs `call` on the node behind `conn`. `inputs` are the bytes this node
 /// read or was lent, vault inputs first, each with the version it read.
 /// The organ's asks are answered here by `asks`, and every ask's receipt
-/// line lands in `asks` as a local call's would.
+/// line lands in `asks` as a local call's would. What comes back leases
+/// `floor`, this machine's, before it is allocated.
 pub(crate) async fn call_on(
     conn: &dyn MeshConnection,
     machine: EntityId,
     call: &OrganCall,
     inputs: &[(Option<OrganInput>, LentInput)],
     asks: &AskHandlers<'_>,
+    floor: Option<&SharedFloor>,
 ) -> Result<OrganOutcome, PeerError> {
+    let longest = Duration::from_millis(u64::from(u32::MAX));
+    let here = Here {
+        floor,
+        deadline: Instant::now() + call.deadline.min(longest),
+    };
     let mut sent = HashSet::new();
     let mut wire = Vec::with_capacity(inputs.len());
     for (read, input) in inputs {
@@ -163,6 +210,7 @@ pub(crate) async fn call_on(
     };
     let result = match decode::<Reply>(&reply.map_err(absent)?).map_err(absent)? {
         Reply::Call(carried) => {
+            let _held = here.hold(&carried)?;
             decode::<PeerResult>(&take(conn, carried).await.map_err(absent)?).map_err(absent)?
         }
         other => return Err(absent(unexpected(&other))),
@@ -170,7 +218,7 @@ pub(crate) async fn call_on(
     match result {
         PeerResult::Done(outcome) => {
             keep_lines(asks, &outcome.receipt.asks);
-            received(conn, outcome).await
+            received(conn, outcome, here).await
         }
         PeerResult::Failed(failure) => {
             keep_lines(asks, &failure.asks);
@@ -207,6 +255,7 @@ fn keep_lines(asks: &AskHandlers<'_>, lines: &[crate::receipt::AskReceipt]) {
 async fn received(
     conn: &dyn MeshConnection,
     outcome: PeerOutcome,
+    here: Here<'_>,
 ) -> Result<OrganOutcome, PeerError> {
     let PeerOutcome {
         body,
@@ -221,6 +270,7 @@ async fn received(
     }
     let mut outputs = Vec::with_capacity(wire.len());
     for (output, line) in wire.into_iter().zip(&receipt.outputs) {
+        let leased = here.hold(&output.bytes)?;
         let bytes = take(conn, output.bytes).await.map_err(absent)?;
         let content_hash = Hash32::of(&bytes);
         if content_hash != output.content_hash
@@ -238,6 +288,7 @@ async fn received(
             content_hash,
             bytes: OutputBytes::Inline(bytes),
             _kept: None,
+            _leased: leased,
         });
     }
     Ok(OrganOutcome {

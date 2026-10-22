@@ -16,6 +16,7 @@ use crate::handlers::{AskHandlers, in_handler};
 use crate::host::OrganHost;
 use crate::mesh::{self, ORGAN_ALPN, PeerError};
 use crate::outcome::OrganOutcome;
+use crate::resource_memory::{MachineFloor, SharedFloor};
 use crate::spec::{LentInput, OrganCall, OrganInput, SightedInput};
 
 /// How long a node has to answer the dial and say what it offers.
@@ -118,6 +119,9 @@ pub struct OrganRouter {
     #[cfg(unix)]
     local: Option<Arc<OrganHost>>,
     mesh: Option<MeshLeg>,
+    /// This machine's memory floor, which the bytes a call takes back from
+    /// another node lease before they are allocated (FIX 6196).
+    floor: Option<SharedFloor>,
 }
 
 impl std::fmt::Debug for OrganRouter {
@@ -125,7 +129,10 @@ impl std::fmt::Debug for OrganRouter {
         let mut debug = f.debug_struct("OrganRouter");
         #[cfg(unix)]
         debug.field("local", &self.local.is_some());
-        debug.field("mesh", &self.mesh.is_some()).finish()
+        debug
+            .field("mesh", &self.mesh.is_some())
+            .field("floor", &self.floor.is_some())
+            .finish()
     }
 }
 
@@ -141,9 +148,22 @@ impl OrganRouter {
     #[cfg(unix)]
     #[must_use]
     pub fn with_local(mut self, host: Arc<OrganHost>) -> Self {
+        if self.floor.is_none() {
+            self.floor = host.floor();
+        }
         if can_start_organs() {
             self.local = Some(host);
         }
+        self
+    }
+
+    /// Holds the bytes a call takes back from another node in this
+    /// machine's memory `floor` before they are allocated: its reply and
+    /// its outputs (FIX 6196). A router given a host built on a floor uses
+    /// that one.
+    #[must_use]
+    pub fn with_floor(mut self, floor: Arc<dyn MachineFloor>) -> Self {
+        self.floor = Some(SharedFloor(floor));
         self
     }
 
@@ -236,9 +256,13 @@ impl OrganRouter {
         }
         let inputs = read_inputs(vault, &call, lent)?;
         for machine in nodes {
-            let tried_node = mesh
-                .runtime
-                .block_on(mesh.try_node(machine, &call, &inputs, asks));
+            let tried_node = mesh.runtime.block_on(mesh.try_node(
+                machine,
+                &call,
+                &inputs,
+                asks,
+                self.floor.as_ref(),
+            ));
             match tried_node {
                 Ok(outcome) => {
                     return Ok(Routed::Done {
@@ -263,6 +287,7 @@ impl MeshLeg {
         call: &OrganCall,
         inputs: &[(Option<OrganInput>, LentInput)],
         asks: &AskHandlers<'_>,
+        floor: Option<&SharedFloor>,
     ) -> Result<OrganOutcome, PeerError> {
         let dialed = tokio::time::timeout(DIAL_TIMEOUT, self.transport.dial(machine, ORGAN_ALPN));
         let conn = match dialed.await {
@@ -287,9 +312,8 @@ impl MeshLeg {
             }
             let longest = Duration::from_millis(u64::from(u32::MAX));
             let wait = call.deadline.min(longest) + REPLY_GRACE;
-            match tokio::time::timeout(wait, mesh::call_on(&*conn, machine, call, inputs, asks))
-                .await
-            {
+            let called = mesh::call_on(&*conn, machine, call, inputs, asks, floor);
+            match tokio::time::timeout(wait, called).await {
                 Ok(ran) => ran,
                 Err(_) => Err(PeerError::Failed(HostError::DeadlineExceeded)),
             }

@@ -190,6 +190,7 @@ fn take_outputs(
                 content_hash,
                 bytes,
                 _kept: Some(room.keep(len)),
+                _leased: None,
             })
         })
         .collect::<Result<Vec<_>, HostError>>()?;

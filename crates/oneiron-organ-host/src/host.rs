@@ -100,6 +100,12 @@ impl OrganHost {
         }
     }
 
+    /// The machine floor this host's organs lease from, for a router that
+    /// takes bytes back from other nodes beside it.
+    pub(crate) fn floor(&self) -> Option<SharedFloor> {
+        self.floor.clone()
+    }
+
     /// Installs (or reinstalls) an organ. A reinstall stops the old process
     /// and clears its crash history and any refusal.
     pub fn install(&self, spec: OrganSpec) {
@@ -447,7 +453,8 @@ impl OrganHost {
             process: Arc::clone(&process),
         });
         // The process's kernel limits follow what its buffers are granted.
-        room.bind(Arc::clone(&process));
+        let limits: Arc<OrganProcess> = Arc::clone(&process);
+        room.bind(limits);
         let offered = process
             .hello
             .verbs

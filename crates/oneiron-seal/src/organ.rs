@@ -46,9 +46,9 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use oneiron_organ_protocol::{
-    ASK_MEMORY_GROW, ASK_NET_FETCH, Answer, AskCode, AskRefusal, AskReply, Asker, ByteBuf,
-    CallContext, ErrorCode, FetchAnswer, FetchAsk, MemoryAnswer, MemoryAsk, Organ, OrganError,
-    OrganIdentity, OutputBytes, VerbSpec,
+    ASK_MEMORY_GROW, ASK_NET_FETCH, Answer, AnswerMemory, AskCode, AskRefusal, AskReply, Asker,
+    ByteBuf, CallContext, ErrorCode, FetchAnswer, FetchAsk, MemoryAnswer, MemoryAsk, Organ,
+    OrganError, OrganIdentity, OutputBytes, VerbSpec, frame_body_len,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -218,7 +218,7 @@ enum Failure {
 impl Failure {
     /// The seal's error; a failed verification's verdict is of `pdf`, when
     /// this side holds the bytes it verified.
-    fn of(err: SealError, pdf: Option<&[u8]>) -> Result<Self, OrganError> {
+    fn of(err: SealError, pdf: Option<&[u8]>, memory: &ReplyMemory) -> Result<Self, OrganError> {
         Ok(match err {
             SealError::Retryable {
                 stage,
@@ -231,7 +231,7 @@ impl Failure {
             },
             SealError::Fatal { stage, code } => Self::Fatal { stage, code },
             SealError::VerifyFailed { report } => Self::VerifyFailed {
-                verdict: Box::new(Verdict::of(&report, pdf)?),
+                verdict: Box::new(Verdict::of(&report, pdf, &|bytes| memory.reserve(bytes))?),
             },
             SealError::BackendUnavailable { retry_after_ms } => {
                 Self::BackendUnavailable { retry_after_ms }
@@ -245,7 +245,8 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     if call.schema != SEAL_SCHEMA {
         return Err(bad("seal.pdf is schema 2"));
     }
-    let args: SealArgs = from_value(call.args, "seal args")?;
+    let memory = ReplyMemory(call.asker());
+    let args: SealArgs = memory.args(call.args, "seal args")?;
     let (pdf, suffixes) = match call.inputs {
         [pdf, suffixes] if pdf.media_type == PDF && suffixes.media_type == REVISIONS => {
             (&pdf[..], &suffixes[..])
@@ -269,9 +270,13 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
         })
         .collect::<Result<Vec<_>, OrganError>>()?;
     let (observed, engine) = engine(args.config, args.now_ms, began, call.asker())?;
+    let failed = |err: SealError| -> Result<Answer, OrganError> {
+        let failure = SealReport::Failed(Failure::of(err, None, &memory)?);
+        report(&failure, &observed, &memory)
+    };
     let engine = match engine {
         Ok(engine) => engine,
-        Err(err) => return report(&SealReport::Failed(Failure::of(err, None)?), &observed),
+        Err(err) => return failed(err),
     };
     let request = SealRequest {
         operation_id: args.operation_id,
@@ -279,7 +284,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     };
     let sealed = match block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions)) {
         Ok(sealed) => sealed,
-        Err(err) => return report(&SealReport::Failed(Failure::of(err, None)?), &observed),
+        Err(err) => return failed(err),
     };
     let degraded = sealed
         .warnings
@@ -302,9 +307,12 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
             requested: sealed.requested_profile,
             achieved: sealed.achieved_profile,
             degraded,
-            self_verify: Verdict::of(&sealed.self_verify_report, Some(&sealed.bytes))?,
+            self_verify: Verdict::of(&sealed.self_verify_report, Some(&sealed.bytes), &|bytes| {
+                memory.reserve(bytes)
+            })?,
         },
         &observed,
+        &memory,
     )?;
     answer.outputs.push(OutputBytes {
         name: SEALED_OUTPUT.to_owned(),
@@ -315,21 +323,63 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
 }
 
 fn verify(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
-    let args: VerifyArgs = from_value(call.args, "verify args")?;
+    let memory = ReplyMemory(call.asker());
+    let args: VerifyArgs = memory.args(call.args, "verify args")?;
     let pdf = the_pdf(call)?;
     // Verification asks only for memory: its host gives it no signing or
     // fetch handler.
     let (observed, engine) = engine(args.config, args.now_ms, began, call.asker())?;
     let checked = engine.and_then(|engine| engine.verify_sealed_pdf(pdf));
+    let reserve = |bytes| memory.reserve(bytes);
     match checked {
         Ok(checked) => report(
-            &VerifyReply::Verified(Verdict::of(&checked, Some(pdf))?),
+            &VerifyReply::Verified(Verdict::of(&checked, Some(pdf), &reserve)?),
             &observed,
+            &memory,
         ),
         Err(err) => report(
-            &VerifyReply::Failed(Failure::of(err, Some(pdf))?),
+            &VerifyReply::Failed(Failure::of(err, Some(pdf), &memory)?),
             &observed,
+            &memory,
         ),
+    }
+}
+
+/// The call's memory for what it allocates beside its decodes (FIX 6195):
+/// its args' decoded copy, its report's JSON and encoded value, each
+/// reserved by `memory.grow` before it is made. A host that reserves
+/// nothing for this organ leaves them as they were; the machine's floor and
+/// the call's deadline refuse them, retryable.
+struct ReplyMemory(Asker);
+
+impl ReplyMemory {
+    fn reserve(&self, bytes: u64) -> Result<(), OrganError> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        let memory = AskedMemory {
+            asks: Arc::new(CallAsks {
+                asker: self.0.clone(),
+            }),
+        };
+        match memory.grow(bytes) {
+            Ok(()) | Err(SealMemoryRefusal::Unavailable) => Ok(()),
+            Err(SealMemoryRefusal::Cancelled) => {
+                Err(OrganError::new(ErrorCode::Cancelled, "cancelled"))
+            }
+            Err(refusal) => Err(OrganError::new(
+                ErrorCode::Budget,
+                format!("the call's memory: {refusal}"),
+            )),
+        }
+    }
+
+    /// `value` read as `T`, its encoded copy and what it decodes into, about
+    /// as much again, reserved first.
+    fn args<T: DeserializeOwned>(&self, value: &rmpv::Value, what: &str) -> Result<T, OrganError> {
+        let encoded = frame_body_len(value).map_err(|err| bad(format!("{what}: {err}")))?;
+        self.reserve(encoded.saturating_mul(2))?;
+        from_value(value, what)
     }
 }
 
@@ -607,8 +657,14 @@ impl SealFetcher for AskedFetcher {
             return Err(FetchError::InvalidResponse);
         }
         let body = match reply.data {
+            // A region's bytes came reserved before the runtime copied them
+            // (FIX 8454): that copy is adopted whole with what holds it, and
+            // nothing copies it again. Inline bytes take a lease of their own.
             Some(data) => {
-                AdmittedBytes::copy_from(&self.memory, &data).map_err(FetchError::Memory)?
+                let (bytes, memory) = data.into_parts();
+                let held = matches!(memory, AnswerMemory::Reserved { .. })
+                    .then(|| Box::new(memory) as Box<dyn Send>);
+                AdmittedBytes::adopt(&self.memory, bytes, held).map_err(FetchError::Memory)?
             }
             None => AdmittedBytes::empty(),
         };
@@ -661,8 +717,16 @@ fn bad(detail: impl Into<String>) -> OrganError {
 }
 
 /// The outcome as the report's one tagged entry, and the call's counts
-/// beside it as `observed`.
-fn report<T: Serialize>(report: &T, observed: &SealObservations) -> Result<Answer, OrganError> {
+/// beside it as `observed`. Its encoded copy and the value it becomes,
+/// about as much again, are reserved before either is made (FIX 6195).
+fn report<T: Serialize>(
+    report: &T,
+    observed: &SealObservations,
+    memory: &ReplyMemory,
+) -> Result<Answer, OrganError> {
+    let encoded = frame_body_len(report)
+        .map_err(|err| OrganError::new(ErrorCode::Internal, format!("encode: {err}")))?;
+    memory.reserve(encoded.saturating_mul(2))?;
     let mut value = to_value(report)?;
     if let rmpv::Value::Map(entries) = &mut value {
         entries.push((
