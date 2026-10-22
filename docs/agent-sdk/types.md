@@ -3376,16 +3376,16 @@ class Oneiron:
         def nominate(self, spec: Facade.ModelTrialNominate) -> Facade.ModelTrialView:
             """Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."""
         def get(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
-            """Reads a retained held-out trial, its catalog revision, independent labels and measured cost."""
+            """Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown."""
         def approve(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
             """Approves exploration for a held-out model trial only; leaves its role binding unchanged."""
         def run(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
-            """Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."""
+            """Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."""
         def complete(self, spec: Facade.ModelTrialComplete) -> Facade.ModelTrialView:
             """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
     class _VaultModelsBindingsVerbs:
         def propose(self, spec: Facade.ModelBindingPropose) -> Facade.ModelBindingProposal:
-            """Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."""
+            """Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it."""
         def get(self, spec: Facade.ModelBindingProposalRef) -> Facade.ModelBindingProposal:
             """Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."""
         def read(self, spec: Facade.ModelBindingRead) -> Facade.ModelBinding:

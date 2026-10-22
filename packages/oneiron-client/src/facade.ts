@@ -3188,11 +3188,11 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.models.catalog.get": { description: "Reads a pinned model catalog revision with its prices, backend offers and score evidence.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.catalog.diff": { description: "Diffs two immutable model catalog revisions, including prices, scores and retired offers.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.trials.nominate": { description: "Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.models.trials.get": { description: "Reads a retained held-out trial, its catalog revision, independent labels and measured cost.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.models.trials.get": { description: "Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.trials.approve": { description: "Approves exploration for a held-out model trial only; leaves its role binding unchanged.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.models.trials.run": { description: "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.models.trials.run": { description: "Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.trials.complete": { description: "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.models.bindings.propose": { description: "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.models.bindings.propose": { description: "Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.bindings.get": { description: "Reads an owner-reviewed model role-binding proposal and its pinned trial evidence.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.bindings.read": { description: "Reads the currently active manifest binding for a model role.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.bindings.accept": { description: "Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -5667,17 +5667,17 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         trials: {
           /** Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority. */
           nominate: (input: Facade.ModelTrialNominate, options?: O): FacadeReturns<"vault.models.trials.nominate">[K] => invoke("vault.models.trials.nominate", input, options, newInvocation()),
-          /** Reads a retained held-out trial, its catalog revision, independent labels and measured cost. */
+          /** Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown. */
           get: (input: Facade.ModelTrialRef, options?: O): FacadeReturns<"vault.models.trials.get">[K] => invoke("vault.models.trials.get", input, options, newInvocation()),
           /** Approves exploration for a held-out model trial only; leaves its role binding unchanged. */
           approve: (input: Facade.ModelTrialRef, options?: O): FacadeReturns<"vault.models.trials.approve">[K] => invoke("vault.models.trials.approve", input, options, newInvocation()),
-          /** Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost. */
+          /** Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome. */
           run: (input: Facade.ModelTrialRef, options?: O): FacadeReturns<"vault.models.trials.run">[K] => invoke("vault.models.trials.run", input, options, newInvocation()),
           /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
           complete: (input: Facade.ModelTrialComplete, options?: O): FacadeReturns<"vault.models.trials.complete">[K] => invoke("vault.models.trials.complete", input, options, newInvocation()),
         },
         bindings: {
-          /** Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it. */
+          /** Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it. */
           propose: (input: Facade.ModelBindingPropose, options?: O): FacadeReturns<"vault.models.bindings.propose">[K] => invoke("vault.models.bindings.propose", input, options, newInvocation()),
           /** Reads an owner-reviewed model role-binding proposal and its pinned trial evidence. */
           get: (input: Facade.ModelBindingProposalRef, options?: O): FacadeReturns<"vault.models.bindings.get">[K] => invoke("vault.models.bindings.get", input, options, newInvocation()),

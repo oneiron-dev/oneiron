@@ -13361,7 +13361,7 @@
     },
     {
       "name": "vault.models.trials.get",
-      "description": "Reads a retained held-out trial, its catalog revision, independent labels and measured cost.",
+      "description": "Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown.",
       "input": "crate::llm::catalog_doors::ModelTrialRef",
       "output": "crate::llm::catalog_doors::ModelTrialView",
       "call": "memory.vault().model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.get\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
@@ -13391,7 +13391,7 @@
     },
     {
       "name": "vault.models.trials.run",
-      "description": "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost.",
+      "description": "Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome.",
       "input": "crate::llm::catalog_doors::ModelTrialRef",
       "output": "crate::llm::catalog_doors::ModelTrialView",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.trials.run\", &input)?",
@@ -13421,7 +13421,7 @@
     },
     {
       "name": "vault.models.bindings.propose",
-      "description": "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it.",
+      "description": "Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it.",
       "input": "crate::llm::catalog_doors::ModelBindingPropose",
       "output": "crate::llm::catalog_doors::ModelBindingProposal",
       "call": "memory.vault().propose_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.propose\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",

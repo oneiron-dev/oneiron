@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1205 code-mode rows (1165 host rows, 40 run rows), 4144 declarations.
+// Census: 1205 code-mode rows (1165 host rows, 40 run rows), 4145 declarations.
 // Replies: 1085 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
@@ -3077,13 +3077,14 @@ declare namespace Sdk {
   type PricedModelBackend = { pin: ModelBackendPin; price: LlmCatalogCost };
   type FrozenTrialCase = { selection: HeldOutSelection; unit: EntityId; source_frontier: number[]; fact_value_hash: number[]; label: boolean; noise_weight: number; derived_from: EntityId[] };
   type TrialAdmission = "ready" | "ask_exploration";
-  type ModelTrialEvidence = { measurements_hash: number[]; incumbent_loss?: number | null; candidate_loss?: number | null; independent_families: number; incumbent_cost_per_thousand: number; candidate_cost_per_thousand: number; trial_cost: number };
+  type ModelTrialExecutionState = "not_started" | "running" | "interrupted" | "measured";
+  type ModelTrialEvidence = { measurements_hash: number[]; incumbent_loss?: number | null; candidate_loss?: number | null; independent_families: number; incumbent_cost_per_thousand: number; candidate_cost_per_thousand: number; trial_cost: number; unknown_arms: number };
   type PairedQualityInterval = { low: number; high: number };
   type TrialAssessment = { set: TrialSetPin; measurements_hash: number[]; paired_gain?: PairedQualityInterval | null; retest_noise: number; stricter_margin?: number | null; required_families: number; rare_slices_sufficient: boolean; versions_match: boolean; canary_diverged: boolean };
   type TrialQuality = "better" | "not_worse" | "worse" | "unknown";
   type ModelTrialAction = "stay" | "offer" | "auto_approve" | "ask_tradeoff" | "unknown";
   type ModelTrialReceipt = { assessment: TrialAssessment; quality: TrialQuality; action: ModelTrialAction; candidate_cost_per_unit: number; added_cost_per_thousand: number; added_future_cost: number; completed_at: number };
-  type ModelTrialView = { catalog_revision: string; id: EntityId; request: ModelTrialRequest; incumbent: PricedModelBackend; candidate: PricedModelBackend; nominated_score: number; score_fetched_at: number; cases: FrozenTrialCase[]; estimated_cost: number; admission: TrialAdmission; prepared_at: number; execution_started: boolean; evidence?: ModelTrialEvidence | null; receipt?: ModelTrialReceipt | null };
+  type ModelTrialView = { catalog_revision: string; id: EntityId; request: ModelTrialRequest; incumbent: PricedModelBackend; candidate: PricedModelBackend; nominated_score: number; score_fetched_at: number; cases: FrozenTrialCase[]; estimated_cost: number; admission: TrialAdmission; prepared_at: number; execution_started: boolean; execution: ModelTrialExecutionState; arms_completed: number; arms_unknown: number; arms_total: number; evidence?: ModelTrialEvidence | null; receipt?: ModelTrialReceipt | null };
   type ModelTrialRef = { question: EntityId; trial: EntityId };
   type ModelTrialComplete = { question: EntityId; trial: EntityId; assessment: TrialAssessment };
   type ModelBindingPropose = { question: EntityId; trial: EntityId; role: ModelRole; binding: ModelBinding };
@@ -6008,7 +6009,7 @@ declare const vault: Sdk.VaultHost & {
       deny(input: Sdk.ModelBindingProposalRef): Promise<Sdk.ModelBindingProposal | StoredResult>;
       /** Reads an owner-reviewed model role-binding proposal and its pinned trial evidence. */
       get(input: Sdk.ModelBindingProposalRef): Promise<Sdk.ModelBindingProposal | StoredResult>;
-      /** Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it. */
+      /** Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it. */
       propose(input: Sdk.ModelBindingPropose): Promise<Sdk.ModelBindingProposal | StoredResult>;
       /** Reads the currently active manifest binding for a model role. */
       read(input: Sdk.ModelBindingRead): Promise<Sdk.ModelBinding | StoredResult>;
@@ -6048,11 +6049,11 @@ declare const vault: Sdk.VaultHost & {
       approve(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
       /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
       complete(input: Sdk.ModelTrialComplete): Promise<Sdk.ModelTrialView | StoredResult>;
-      /** Reads a retained held-out trial, its catalog revision, independent labels and measured cost. */
+      /** Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown. */
       get(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
       /** Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority. */
       nominate(input: Sdk.ModelTrialNominate): Promise<Sdk.ModelTrialView | StoredResult>;
-      /** Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost. */
+      /** Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome. */
       run(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
     };
   };
