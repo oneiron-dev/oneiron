@@ -1898,6 +1898,7 @@ class DoneMeans(TypedDict):
     no_if_any: NotRequired[list[Criterion]]
     outcome_binding: NotRequired[OutcomeBinding | None]
     browser_checks: NotRequired[list[ExpectInput]]
+    strict_verified_reuse: NotRequired[bool]
 EscalationTrigger = Literal["blocked", "criteria_unmet", "scope_widen", "spend_over", "deadline", "brief_revised", "retry_requested"]
 Reversibility = Literal["reversible_read", "outbound_effect"]
 class EscalationRule(TypedDict):
