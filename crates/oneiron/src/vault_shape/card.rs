@@ -36,6 +36,8 @@ impl Vault {
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<ShapeCard> {
         let live = self.read_live_shape(visible)?;
+        // Open applies count as the caller reads them (FIX 10199).
+        let (_, applies) = self.visible_seed_and_applies(&live.withheld, visible)?;
         let mut counts = BTreeMap::new();
         for (row, _) in &live.rows {
             *counts.entry(row.target().kind().to_owned()).or_insert(0u32) += 1;
@@ -47,7 +49,7 @@ impl Vault {
         Ok(ShapeCard {
             seed_id: self.shape_seed()?.map(|stored| stored.id),
             counts,
-            open_applies: u32::try_from(self.open_shape_applies()?.len()).unwrap_or(u32::MAX),
+            open_applies: u32::try_from(applies.len()).unwrap_or(u32::MAX),
             line: reach.line(),
             reach,
         })
