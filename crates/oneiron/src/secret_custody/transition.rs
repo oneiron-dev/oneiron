@@ -273,13 +273,16 @@ pub(crate) fn write_custody_transition_in_txn(
 /// Keeps `transition`, one piece, as this vault's latest of its record when
 /// it supersedes the one held, so this vault relays it, and drops the
 /// carrier it supersedes from the window that carrier rides; a piece of the
-/// transition held joins its siblings, the rest still owed. Returns whether
-/// it kept it.
+/// transition held joins its siblings, the rest still owed. An erased
+/// credential's is never kept (KS-6 part 2). Returns whether it kept it.
 pub(crate) fn remember_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     transition: &CustodyTransition,
 ) -> Result<bool> {
+    if vault.store.credential_fenced_in_txn(wtxn, &transition.id) {
+        return Ok(false);
+    }
     let key = HexId(transition.id);
     let held = TRANSITIONS
         .get(&vault.store, wtxn, &key)?
@@ -711,8 +714,7 @@ pub(crate) fn apply_custody_transition_in_txn(
         return Ok(CustodyApplied::Refused);
     }
     // An erased credential never comes back by a transition (KS-6 part 2).
-    let fence = vault.store.credential_fence_in_txn(wtxn, &transition.id);
-    if fence == crate::store::FenceLookup::Fenced {
+    if vault.store.credential_fenced_in_txn(wtxn, &transition.id) {
         return Ok(CustodyApplied::Refused);
     }
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;

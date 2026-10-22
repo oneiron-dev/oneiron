@@ -65,8 +65,7 @@ use crate::error::{Error, Result};
 use crate::secret_custody::{
     CustodyApplied, CustodyTransition, RelayedInput, SecretCustodyStatus,
     apply_custody_transition_in_txn, completed_custody_groups_in_txn, custody_transitions,
-    held_input_in_txn, held_inputs, holds_custody_carrier_in_txn, keep_custody_piece_in_txn,
-    keep_input_in_txn,
+    held_inputs, holds_custody_carrier_in_txn, keep_custody_piece_in_txn, keep_input_in_txn,
 };
 
 /// Which input rows a window admits and prunes (CALLS CUSTODY_INPUT_PRUNE,
@@ -265,9 +264,10 @@ pub(crate) fn mirror_custody_transitions(
     if key.world().is_some() {
         return Ok(false);
     }
-    let fold = {
+    let (fold, erased) = {
         let rtxn = vault.store.env.read_txn()?;
-        vault.authority_view_readonly_in_txn(&rtxn)?
+        let erased = vault.store.erased_credentials_in_txn(&rtxn);
+        (vault.authority_view_readonly_in_txn(&rtxn)?, erased)
     };
     let mut wrote = mirror_custody_inputs(vault, doc, key, &fold)?;
     // Every piece this vault holds rides its window under its own key
@@ -275,7 +275,8 @@ pub(crate) fn mirror_custody_transitions(
     let mut due = Vec::new();
     let mut latest: BTreeMap<EntityId, CustodyTransition> = BTreeMap::new();
     for piece in custody_transitions(vault)? {
-        if sealed_after_revoke(&fold, &piece) {
+        // An erased credential's rides none (KS-6 part 2).
+        if sealed_after_revoke(&fold, &piece) || erased.contains(&piece.id) {
             continue;
         }
         if transition_window(&piece) == *key {
@@ -307,7 +308,7 @@ pub(crate) fn mirror_custody_transitions(
     }
     // A carrier this vault's latest supersedes leaves every window, each
     // piece of it, as does one that still seals a value an admitted revoke
-    // ended.
+    // ended, and every carrier of a credential an erase fenced here.
     if holds_custody_map(doc) {
         let map = doc.get_map(CUSTODY_MAP);
         let mut gone = Vec::new();
@@ -316,6 +317,7 @@ pub(crate) fn mirror_custody_transitions(
                 && !map_key.starts_with(INPUT_ROW_PREFIX)
                 && let Ok(held) = CustodyTransition::decode(&bytes)
                 && (sealed_after_revoke(&fold, &held)
+                    || erased.contains(&held.id)
                     || latest
                         .get(&held.id)
                         .is_some_and(|latest| latest.supersedes(&held)))
@@ -558,9 +560,10 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
 /// Keeps each relayed input row, whole or one part, that a counted,
 /// unanswered request naming this install as its holder names, by the
 /// request's hash and the input's digest, so its pickup can join and open
-/// it; the writer that keeps it checks that again against its own fold. Any
-/// other input row stays in the window, unread. A row that fails is logged
-/// and left.
+/// it: one whose reference names the request's own signer (FIX 8088), in
+/// place of a kept row that does not. The writer that keeps it checks that
+/// again against its own fold. Any other input row stays in the window,
+/// unread. A row that fails is logged and left.
 fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
     if rows.is_empty() {
         return;
@@ -580,7 +583,8 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
                 let key = input.row_key();
                 if *map_key == input_row(&key)
                     && input_awaits(&fold, machine, &input)
-                    && held_input_in_txn(&vault.store, &rtxn, &key)?.is_none()
+                    && witness::input_genuine(vault, &rtxn, &input)?
+                    && witness::input_slot_open(vault, &rtxn, &key)?
                 {
                     due.push(input);
                 }
@@ -595,7 +599,8 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
             let mut kept = 0;
             for input in &due {
                 if input_awaits(&fold, machine, input)
-                    && held_input_in_txn(&vault.store, wtxn, &input.row_key())?.is_none()
+                    && witness::input_genuine(vault, wtxn, input)?
+                    && witness::input_slot_open(vault, wtxn, &input.row_key())?
                 {
                     keep_input_in_txn(vault, wtxn, input)?;
                     kept += 1;

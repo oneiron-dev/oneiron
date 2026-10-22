@@ -311,7 +311,11 @@ impl PlannedCredentials {
     /// reads it back. An erase fenced it: ErasedUnavailable. Its fence did
     /// not read: PendingCustody, warned, with a retry. An id no fence names
     /// is left to the plan as before.
-    pub(crate) fn fenced(&mut self, fences: &CredentialFences, credential: &CredentialRef) -> bool {
+    pub(crate) fn fenced(
+        &mut self,
+        fences: &mut CredentialFences,
+        credential: &CredentialRef,
+    ) -> bool {
         let disposition = match fences.lookup(&credential.id) {
             FenceLookup::Clear => return false,
             FenceLookup::Fenced => CredentialDisposition::ErasedUnavailable,
@@ -406,7 +410,7 @@ fn named<R: Borrow<CredentialRef>>(
 pub(crate) fn plan_archived_credentials(
     store: &Store,
     plan: &mut CustodyPlan,
-    fences: &CredentialFences,
+    fences: &mut CredentialFences,
 ) -> PlannedCredentials {
     let mut refs = Vec::new();
     let mut faulted_rows = Vec::new();

@@ -34,10 +34,10 @@ use crate::ports::{EntityStoreMaintenance, ScrubbedRecord};
 use crate::side_table::{self, SideKey, SideTableDbs};
 use crate::store::key_custody::{self, CustodyBinding, LocalCustody};
 use crate::store::{
-    BODY_KEYS, BodyKeyRow, CredentialFences, INLINE_ASSETS, RESPONSE_BINDINGS, ResponseBinding,
-    ResponseFamily, Store, body_instances_in_rows, body_key_in, carrier_row,
-    known_history_prefixes, prune_retired_bodies_in_rows, read_back_known_history,
-    require_body_instances, require_known_history,
+    BODY_KEYS, BodyKeyRow, INLINE_ASSETS, RESPONSE_BINDINGS, ResponseBinding, ResponseFamily,
+    Store, body_instances_in_rows, body_key_in, carrier_row, known_history_prefixes,
+    prune_retired_bodies_in_rows, read_back_known_history, require_body_instances,
+    require_known_history,
 };
 
 /// The `vault_meta` families a body prune reads and writes: the instance
@@ -148,7 +148,7 @@ impl Store {
         Vec<crate::world_keys::WorldKeyId>,
         crate::secret_custody::PlannedCredentials,
     )> {
-        let rows = {
+        let (rows, own_fences) = {
             let txn = self.env.read_txn()?;
             let mark = ARCHIVED.get(self, &txn, &())?;
             if !archived_by(mark.as_deref(), self.env.path())? {
@@ -158,7 +158,8 @@ impl Store {
             prefixes.push(GATE_DECISION_KEY_PREFIX);
             prefixes.extend(body_prefixes());
             prefixes.extend(known_history_prefixes());
-            vault_meta_rows(&self.env, &txn, &prefixes)?
+            let rows = vault_meta_rows(&self.env, &txn, &prefixes)?;
+            (rows, self.credential_fences_in_txn(&txn))
         };
         let mut custody = preflight_checkpoint_rows(&rows, Some(source))?;
         // Its body instances fork with its claim keys (KS-2A): a missing one
@@ -174,17 +175,17 @@ impl Store {
         // Its credential values' keys fork with the rest, each by exact id
         // from its source's custody (KS-6 part 2, CALLS `KS-6 required
         // restore set`): one the source lacks, or a custody fault, leaves
-        // that row sealed, pending, warned. One its source's fence, its own
-        // or a retired key of the custody it binds names erased is never
-        // forked, and its fence comes with it (CALLS `KS-6 erase fence
-        // form`).
+        // that row sealed, pending, warned. One its source's erase evidence,
+        // its own, or a retired value key of the custody it binds names
+        // erased is never forked, and its fence comes with it (CALLS `KS-6
+        // erase fence form`), each looked up by its own handle.
         let mut fences = source.credential_fences();
-        fences.merge(&CredentialFences::in_rows(&rows));
+        fences.merge(&own_fences);
         if let Some(binding) = custody.plan_mut().source() {
-            fences.derive_from(binding);
+            fences.with_custody(binding);
         }
         let mut credentials =
-            crate::secret_custody::plan_archived_credentials(self, custody.plan_mut(), &fences);
+            crate::secret_custody::plan_archived_credentials(self, custody.plan_mut(), &mut fences);
         // The environment's path is the canonical root it was opened at.
         let root = self.env.path().to_path_buf();
         refuse_custody_beside(&root)?;

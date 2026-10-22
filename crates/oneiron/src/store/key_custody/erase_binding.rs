@@ -42,6 +42,10 @@ fn credential_parent_kind(kind: CustodyKind) -> bool {
     )
 }
 
+/// The generation an erased credential's value name carries when no intent
+/// of its value was bound: the name stands for its whole erase alone.
+const PARENT_ONLY: u64 = u64::MAX;
+
 /// `<kind tag>.<item hex>.<through hex>`.
 fn retirement_name(subject: &CustodySubject, through: u64) -> String {
     format!(
@@ -138,11 +142,13 @@ impl Store {
                 }
             }
         }
+        // A fenced credential whose value had no intent bound names its
+        // whole erase alone, through `PARENT_ONLY`.
         for credential in self.fenced_credentials_in_txn(txn, erased)? {
             let parent = custody
                 .binding()
                 .subject(CustodyKind::CredentialValue, credential.as_bytes())?;
-            owed.entry(parent).or_insert(0);
+            owed.entry(parent).or_insert(PARENT_ONLY);
         }
         let names: BTreeSet<String> = owed
             .iter()
@@ -157,11 +163,12 @@ impl Store {
     /// its journal obligations is complete, every required target having
     /// acknowledged it and the anchor advanced past it (with no anchor set,
     /// the acknowledgements alone, rollback not proven). An erased
-    /// credential's names stand for its whole erase (KS-6 part 2): its
-    /// discovery complete, and every key its id names, found then or later,
-    /// finished so. A retirement with no obligation recorded, or no custody
-    /// bound to read it, has not: missing proof stays pending, never `not
-    /// required`. No names: none is owed.
+    /// credential's names stand for its whole erase too (KS-6 part 2): its
+    /// fence and discovery complete, no intent of any key its id names, and
+    /// every key it names, found then or later, finished so, besides each
+    /// bound key's own check. A retirement with no obligation recorded, or
+    /// no custody bound to read it, has not: missing proof stays pending,
+    /// never `not required`. No names: none is owed.
     ///
     /// # Errors
     ///
@@ -192,7 +199,11 @@ impl Store {
                 {
                     return Ok(false);
                 }
-                continue;
+                // A parent-only name proves no more; a bound key's own
+                // retirement is checked as any other's.
+                if through == PARENT_ONLY {
+                    continue;
+                }
             }
             let subject = custody.binding().subject(kind, &item)?;
             if retirement_in_txn(self, txn, &subject)?.is_some() {

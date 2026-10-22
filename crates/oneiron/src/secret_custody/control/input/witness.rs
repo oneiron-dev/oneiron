@@ -127,6 +127,12 @@ impl WitnessGroup {
         })
     }
 
+    /// Whether `signer` is the key this witness names as its signer.
+    #[cfg(feature = "sync")]
+    pub(crate) fn signed_by(&self, signer: &[u8; 32]) -> bool {
+        self.signer == *signer
+    }
+
     /// The key part `index` of this witness is kept and relayed under.
     fn part_key(&self, index: u32) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();

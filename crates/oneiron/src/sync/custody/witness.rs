@@ -11,19 +11,23 @@
 //!   its request is answered, refused or on a revoked secret here. A part's
 //!   request this vault has not folded stays, as an input row's does.
 //! - The holder a counted, unanswered request names keeps each part it
-//!   names, rechecked in the writer that keeps it; its pickup joins them.
+//!   names that the request's own signer signed, rechecked in the writer
+//!   that keeps it, in place of a kept part that is not; its pickup joins
+//!   them. A request it does not hold stays opaque, relay-pending.
 
+use heed::RoTxn;
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
 
 use super::super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use super::super::types::WindowKey;
 use super::{CUSTODY_MAP, commit_custody, holds_custody_map, names_input, refused};
 use crate::Vault;
-use crate::authority::AuthorityFold;
+use crate::authority::{AuthorityEntryHash, AuthorityFold, AuthorityKey};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::secret_custody::{
-    WitnessPart, held_witness_in_txn, held_witnesses, keep_witness_in_txn,
+    RelayedInput, WitnessPart, held_input_in_txn, held_witness_in_txn, held_witnesses,
+    keep_witness_in_txn,
 };
 
 /// The key prefix of a witness part's row in the custody map, before its
@@ -57,8 +61,63 @@ pub(super) fn admit_witness_part(
     Ok(())
 }
 
+/// The key that signed the request entry `request` as this vault stores
+/// it: the one signer a witness part, or a reference to one, may name.
+fn request_signer_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    request: &AuthorityEntryHash,
+) -> Result<Option<[u8; 32]>> {
+    let entry = crate::authority::stored_authority_row(&vault.store, txn, request)?;
+    Ok(entry.and_then(|entry| match entry.signer_key() {
+        AuthorityKey::Ed25519(key) => Some(*key),
+        _ => None,
+    }))
+}
+
+/// Whether `input`, a relayed input row, is one its holder keeps: its
+/// request's signed entry inline, or a reference to a witness its
+/// request's own signer signed.
+pub(super) fn input_genuine(vault: &Vault, txn: &RoTxn<'_>, input: &RelayedInput) -> Result<bool> {
+    if !input.references_witness() {
+        return Ok(input.witnessed().is_some());
+    }
+    let Some(group) = input.witness_group() else {
+        return Ok(false);
+    };
+    let signer = request_signer_in_txn(vault, txn, &input.request)?;
+    Ok(signer.is_some_and(|signer| group.signed_by(&signer)))
+}
+
+/// Whether the holder may keep a row under input key `key`: none is kept
+/// there, or the one kept is not genuine.
+pub(super) fn input_slot_open(vault: &Vault, txn: &RoTxn<'_>, key: &[u8; 32]) -> Result<bool> {
+    match held_input_in_txn(&vault.store, txn, key)? {
+        Some(held) => Ok(!input_genuine(vault, txn, &held)?),
+        None => Ok(true),
+    }
+}
+
+/// Whether `part` authenticates by its request's own signer.
+fn part_genuine(vault: &Vault, txn: &RoTxn<'_>, part: &WitnessPart) -> Result<bool> {
+    if !part.authenticated() {
+        return Ok(false);
+    }
+    let signer = request_signer_in_txn(vault, txn, &part.group.request)?;
+    Ok(signer.is_some_and(|signer| part.group.signed_by(&signer)))
+}
+
+/// Whether the holder may keep a part under key `key`: none is kept there,
+/// or the one kept is not genuine.
+fn part_slot_open(vault: &Vault, txn: &RoTxn<'_>, key: &[u8; 32]) -> Result<bool> {
+    match held_witness_in_txn(&vault.store, txn, key)? {
+        Some(held) => Ok(!part_genuine(vault, txn, &held)?),
+        None => Ok(true),
+    }
+}
+
 /// Whether the request a witness part is for still awaits its holder.
-fn part_open(fold: &AuthorityFold, part: &WitnessPart) -> bool {
+fn part_pending(fold: &AuthorityFold, part: &WitnessPart) -> bool {
     fold.owner_work_request(&part.group.request).is_some()
         && fold.owner_work_result(&part.group.request).is_none()
 }
@@ -106,7 +165,7 @@ pub(super) fn mirror_witness_parts(
         let Some(part) = WitnessPart::decode(&bytes) else {
             continue;
         };
-        if WindowKey::from_timestamp(part.group.sealed_at) != *key || !part_open(fold, &part) {
+        if WindowKey::from_timestamp(part.group.sealed_at) != *key || !part_pending(fold, &part) {
             continue;
         }
         let map = doc.get_map(CUSTODY_MAP);
@@ -139,9 +198,10 @@ pub(super) fn mirror_witness_parts(
 }
 
 /// Keeps each relayed witness part a counted, unanswered request naming
-/// this install as its holder names, so its pickup can join it; the writer
-/// that keeps it checks that again against its own fold. Any other part
-/// stays in the window, unread. A part that fails is logged and left.
+/// this install as its holder names, signed by that request's own signer,
+/// so its pickup can join it, in place of a kept part that is not; the
+/// writer that keeps it checks that again against its own fold. Any other
+/// part stays in the window, unread. A part that fails is logged and left.
 pub(super) fn keep_relayed_witnesses(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
     if rows.is_empty() {
         return;
@@ -160,9 +220,9 @@ pub(super) fn keep_relayed_witnesses(vault: &Vault, window: &str, rows: Vec<(Str
                 };
                 let key = part.row_key();
                 if *map_key == witness_row(&key)
-                    && part.authenticated()
                     && part_awaits(&fold, machine, &part)
-                    && held_witness_in_txn(&vault.store, &rtxn, &key)?.is_none()
+                    && part_genuine(vault, &rtxn, &part)?
+                    && part_slot_open(vault, &rtxn, &key)?
                 {
                     due.push(part);
                 }
@@ -177,7 +237,8 @@ pub(super) fn keep_relayed_witnesses(vault: &Vault, window: &str, rows: Vec<(Str
             let mut kept = 0;
             for part in &due {
                 if part_awaits(&fold, machine, part)
-                    && held_witness_in_txn(&vault.store, wtxn, &part.row_key())?.is_none()
+                    && part_genuine(vault, wtxn, part)?
+                    && part_slot_open(vault, wtxn, &part.row_key())?
                 {
                     keep_witness_in_txn(vault, wtxn, part)?;
                     kept += 1;

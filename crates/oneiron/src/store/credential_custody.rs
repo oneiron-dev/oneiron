@@ -21,6 +21,7 @@
 //! round generation, retired with its PENDING_CALLS row.
 
 mod erase;
+mod fences;
 
 use heed::RwTxn;
 use rand::RngCore;
@@ -34,7 +35,8 @@ use crate::store::key_custody::{
     RetireCause, RetirementIntent, stage_retirement_in_txn,
 };
 
-pub(crate) use self::erase::{CredentialFences, FenceLookup, credential_fence_prefix};
+pub(crate) use self::erase::{FenceLookup, credential_erases_staged};
+pub(crate) use self::fences::CredentialFences;
 
 /// The width of every KS-6 key: an AES-256-GCM key (CALLS `KS-6 leaf ids`,
 /// CUSTODY_LEAF_KEY_BYTES).

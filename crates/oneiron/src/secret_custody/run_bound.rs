@@ -288,7 +288,7 @@ impl Vault {
         let erased = self.with_write_txn(|wtxn| {
             let held = NAME_INDEX.scan_from(&self.store, &*wtxn, prefix.as_bytes())?;
             for (name, entry) in &held {
-                self.store.stage_credential_erase_in_txn(wtxn, &entry.id)?;
+                self.fence_credential_in_txn(wtxn, &entry.id);
                 crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
                 // A run-bound name names its one record and is never
                 // reclaimed: its high-water goes with it.

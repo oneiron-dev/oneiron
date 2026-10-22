@@ -78,9 +78,10 @@ impl Vault {
                 crate::world_keys::WorldKeyDestroyCause::LocalDelete,
                 request_id.copied(),
             )?;
-            // An erased custody record is fenced and every key its id names
-            // staged to retire before its row goes (KS-6 part 2).
-            self.store.stage_erased_credential_in_txn(wtxn, id)?;
+            // An erased custody record is fenced, every key its id names
+            // staged to retire and its kept carriers dropped before its row
+            // goes (KS-6 part 2).
+            self.fence_erased_credential_in_txn(wtxn, id)?;
             // An erased custody record's known-value history goes, its
             // entries' retirement staged; another record's stays (KS-3).
             self.store.stage_known_history_erase_in_txn(wtxn, id)?;
@@ -197,7 +198,7 @@ impl Vault {
         // part 2).
         if erase {
             self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
-            self.store.stage_erased_credential_in_txn(wtxn, id)?;
+            self.fence_erased_credential_in_txn(wtxn, id)?;
         }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;

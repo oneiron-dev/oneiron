@@ -609,9 +609,11 @@ pub(crate) fn assembled_input_in_txn(
 }
 
 /// Forgets the input the request names `digest` of: its whole row, or each
-/// of its parts, found by the digest each names, a first part missing
-/// included, and every part of its witness (FIX 8088). A part that arrives
-/// later goes with the answered request ([`Vault::settle_custody_inputs`]).
+/// of its parts, then each other row found by the digest it names, a first
+/// part missing included, and every part of its witness (FIX 8088). A fault
+/// finding those is warned and never undoes the rest: they, and a part
+/// that arrives later, go with the answered request
+/// ([`Vault::settle_custody_inputs`]).
 pub(crate) fn drop_input_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -624,7 +626,10 @@ pub(crate) fn drop_input_in_txn(
     for index in (0_u32..).take(parts) {
         INPUTS.delete(&vault.store, wtxn, &part_key(digest, index))?;
     }
-    witness::drop_rows_of_in_txn(vault, wtxn, digest)
+    if let Err(error) = witness::drop_rows_of_in_txn(vault, wtxn, digest) {
+        tracing::warn!(kind = ?error.kind(), "an input's other rows stay for its settle");
+    }
+    Ok(())
 }
 
 /// Forgets every input row kept for a request on record `id`, each part of
@@ -650,10 +655,15 @@ pub(crate) fn drop_inputs_for_in_txn(
     for key in &doomed {
         INPUTS.delete(&vault.store, wtxn, key)?;
     }
-    // Every witness part kept for such a request goes too (FIX 8088).
+    // Every witness part kept for such a request goes too (FIX 8088); a
+    // fault finding them is warned, and they go with the settle.
     let witnesses = witness::drop_witnesses_in_txn(vault, wtxn, |group| {
         witness::witness_target(&fold, group) == Some(*id)
-    })?;
+    })
+    .unwrap_or_else(|error| {
+        tracing::warn!(kind = ?error.kind(), "a revoked secret's witness parts stay for its settle");
+        0
+    });
     Ok(doomed.len() + witnesses)
 }
 
@@ -688,8 +698,13 @@ impl Vault {
                 })
                 .map(|(key, _)| key)
                 .collect();
-            // So does every witness part kept for one (FIX 8088).
-            let witnesses = witness::settled_witnesses_in_txn(&self.store, &txn, settled)?;
+            // So does every witness part kept for one (FIX 8088); a fault
+            // finding them is warned, and the next settle retries.
+            let witnesses = witness::settled_witnesses_in_txn(&self.store, &txn, settled)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(kind = ?error.kind(), "settled witness parts stay owed");
+                    Vec::new()
+                });
             (done, witnesses)
         };
         if done.is_empty() && witnesses.is_empty() {
@@ -699,7 +714,10 @@ impl Vault {
             for key in &done {
                 INPUTS.delete(&self.store, txn, key)?;
             }
-            witness::delete_witnesses_in_txn(self, txn, &witnesses)?;
+            if let Err(error) = witness::delete_witnesses_in_txn(self, txn, &witnesses) {
+                tracing::warn!(kind = ?error.kind(), "settled witness parts stay owed");
+                return Ok(done.len());
+            }
             Ok(done.len() + witnesses.len())
         })
     }
