@@ -22,63 +22,77 @@ use crate::world_keys::{
     WindowPadProjection, image_pad_row_of, project_window_pad_refs, projected_pad_row_equal,
 };
 
-/// A blob that persists as today for a fault, told value-free.
-fn keep<'a>(window: &WindowKey, blob: &'a [u8], why: &'static str) -> Cow<'a, [u8]> {
-    tracing::warn!(%window, why, "window blob persists as today, not by reference");
-    Cow::Borrowed(blob)
+/// What a window blob persists as here.
+pub(crate) enum PersistedWindowPads<'a> {
+    /// Its pad rows as their bare references.
+    ByReference(Vec<u8>),
+    /// As it is: a window of no world, or a blob that holds no pad row.
+    AsIs(&'a [u8]),
+    /// As it is for a fault (KEEP TODAY), with its value-free reason.
+    Kept(&'a [u8], &'static str),
 }
 
 /// `blob`, window `window`'s snapshot, shallow snapshot or update, as it
 /// persists here: reference-only when it holds a pad row and current custody
-/// here holds every pad it references live; any other blob as it is.
-/// `context` is a document holding an update's dependencies (the projector
-/// copies it).
-pub fn persisted_window_pads<'a>(
+/// here holds every pad it references live; any other blob as it is, a fault
+/// told by its reason. `context` is a document holding an update's
+/// dependencies (the projector copies it).
+pub(crate) fn persisted_window_pads_form<'a>(
     vault: &Vault,
     window: &WindowKey,
     blob: &'a [u8],
     context: Option<&LoroDoc>,
-) -> Cow<'a, [u8]> {
+) -> PersistedWindowPads<'a> {
     // A live pad rides its world's windows alone (`types::entity_world`).
     if window.world().is_none() {
-        return Cow::Borrowed(blob);
+        return PersistedWindowPads::AsIs(blob);
     }
     let namespace = vault.store.world_pad_namespace();
     let hint = namespace.unwrap_or_default();
     let (bytes, required) = match project_window_pad_refs(window, blob, context, &hint) {
-        Ok(WindowPadProjection::NothingToProject) => return Cow::Borrowed(blob),
+        Ok(WindowPadProjection::NothingToProject) => return PersistedWindowPads::AsIs(blob),
         Ok(WindowPadProjection::Projected {
             bytes,
             required_refs,
         }) => (bytes, required_refs),
-        Err(error) => {
-            tracing::warn!(%window, kind = ?error.kind(), "window blob not projected");
-            return keep(window, blob, "projection fault");
-        }
+        Err(_) => return PersistedWindowPads::Kept(blob, "projection fault"),
     };
     if namespace.is_none() {
-        return keep(window, blob, "no current custody here");
+        return PersistedWindowPads::Kept(blob, "no current custody here");
     }
     for reference in &required {
+        // Only a pad custody holds live is proven here; a lookup that
+        // faults proves nothing.
         match vault
             .store
             .world_pad_custody_entry(&reference.key.envelope_key_id())
         {
             Ok(WorldPadCustody::Live(_)) => {}
             Ok(WorldPadCustody::Missing | WorldPadCustody::Closed | WorldPadCustody::Retired) => {
-                return keep(
-                    window,
-                    blob,
-                    "a pad it references is not live in custody here",
-                );
+                return PersistedWindowPads::Kept(blob, "a pad it references is not live here");
             }
-            Err(error) => {
-                tracing::warn!(%window, kind = ?error.kind(), "window pad custody not read");
-                return keep(window, blob, "custody fault");
-            }
+            Err(_) => return PersistedWindowPads::Kept(blob, "custody fault"),
         }
     }
-    Cow::Owned(bytes)
+    PersistedWindowPads::ByReference(bytes)
+}
+
+/// [`persisted_window_pads_form`] as the bytes a `u:` row or a `d:`
+/// snapshot persists, a blob kept as it is for a fault warned value-free.
+pub fn persisted_window_pads<'a>(
+    vault: &Vault,
+    window: &WindowKey,
+    blob: &'a [u8],
+    context: Option<&LoroDoc>,
+) -> Cow<'a, [u8]> {
+    match persisted_window_pads_form(vault, window, blob, context) {
+        PersistedWindowPads::ByReference(bytes) => Cow::Owned(bytes),
+        PersistedWindowPads::AsIs(blob) => Cow::Borrowed(blob),
+        PersistedWindowPads::Kept(blob, why) => {
+            tracing::warn!(%window, why, "window blob persists as today, not by reference");
+            Cow::Borrowed(blob)
+        }
+    }
 }
 
 /// Whether `held`, the row a window document holds at `id`, already is

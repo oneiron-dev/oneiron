@@ -107,6 +107,8 @@ impl Vault {
         }
         let mut databases = BTreeMap::new();
         let mut census = carried_bodies::BodyCensus::default();
+        // Window snapshots kept as they rest, warned by count (FIX 7107).
+        let mut kept_windows = 0;
         for entry in DB_MANIFEST {
             let mut image_row = |key: &[u8], value: &[u8]| -> Result<Option<(Vec<u8>, Vec<u8>)>> {
                 if storage_tier(entry.name, key) != StorageTier::Canonical {
@@ -148,9 +150,13 @@ impl Vault {
                     // current custody, which a restore takes it from (KS-5,
                     // FIX 5686 part 2).
                     reference
-                } else if let Some(projected) =
-                    super::window_pad_refs::image_window_pads(self, entry.name, key, value)
-                {
+                } else if let Some(projected) = super::window_pad_refs::image_window_pads(
+                    self,
+                    entry.name,
+                    key,
+                    value,
+                    &mut kept_windows,
+                ) {
                     // So does a window snapshot's, where custody here holds
                     // its pads (FIX 7107).
                     projected
@@ -188,6 +194,7 @@ impl Vault {
             databases.insert(entry.name.into(), rows);
         }
         drop(txn);
+        super::window_pad_refs::warn_kept_window_pads(kept_windows);
         // A response binding whose row holds no response now names nothing
         // the image carries: it stays out (KS-2B1).
         let stale = census.stale();

@@ -11,23 +11,31 @@
 use crate::Vault;
 
 /// What the image carries for the row `key` of `database` in place of
-/// `value`, a window snapshot whose pads custody here holds: `None` keeps the
-/// row as it rests.
+/// `value`, a window snapshot whose pads custody here holds live: `None`
+/// keeps the row as it rests, counted in `kept` when it rests so because a
+/// pad it holds was not proven live here (a lookup that faults proves
+/// nothing).
 #[cfg(feature = "sync")]
 pub(super) fn image_window_pads(
     vault: &Vault,
     database: &str,
     key: &[u8],
     value: &[u8],
+    kept: &mut usize,
 ) -> Option<Vec<u8>> {
+    use crate::sync::window::{PersistedWindowPads, persisted_window_pads_form};
     if database != "sync_state" {
         return None;
     }
     let window = key.strip_prefix(crate::sync::window_rows::WINDOW_SNAPSHOT.decl().prefix)?;
     let window = crate::sync::WindowKey::try_new(std::str::from_utf8(window).ok()?)?;
-    match crate::sync::window::persisted_window_pads(vault, &window, value, None) {
-        std::borrow::Cow::Owned(bytes) => Some(bytes),
-        std::borrow::Cow::Borrowed(_) => None,
+    match persisted_window_pads_form(vault, &window, value, None) {
+        PersistedWindowPads::ByReference(bytes) => Some(bytes),
+        PersistedWindowPads::AsIs(_) => None,
+        PersistedWindowPads::Kept(..) => {
+            *kept += 1;
+            None
+        }
     }
 }
 
@@ -38,6 +46,19 @@ pub(super) fn image_window_pads(
     _database: &str,
     _key: &[u8],
     _value: &[u8],
+    _kept: &mut usize,
 ) -> Option<Vec<u8>> {
     None
+}
+
+/// Warns, by their count alone, of the window snapshots an image carries as
+/// they rest because a pad they hold was not proven live here (FIX 10467
+/// tracks their strict removal).
+pub(super) fn warn_kept_window_pads(kept: usize) {
+    if kept > 0 {
+        tracing::warn!(
+            kept,
+            "window snapshots ride this image as they rest: a pad they hold is not proven live here"
+        );
+    }
 }

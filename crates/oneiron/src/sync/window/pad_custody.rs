@@ -41,6 +41,7 @@ use crate::world_keys::{
 
 pub use self::persist::persisted_window_pads;
 pub(super) use self::persist::window_row_holds;
+pub(crate) use self::persist::{PersistedWindowPads, persisted_window_pads_form};
 
 /// What becomes of an envelope's capsule that did not arrive whole or did
 /// not install (CALLS: WINDOW_PAD_PART_REPAIR, lead 10-22 14:3x).
@@ -55,6 +56,21 @@ pub enum WindowPadPartRepair {
 }
 
 pub const WINDOW_PAD_PART_REPAIR: WindowPadPartRepair = WindowPadPartRepair::FreshCapsuleRebind;
+
+/// Whether an owner-lane window's convergence waits for the receipt of its
+/// sealed sends (CALLS: WINDOW_PAD_RECEIPT_WITNESS, Engine 10-22 on FIX
+/// 10479). No owner-lane update waited on an answer before the envelope, so
+/// the wait is the owner's to turn on.
+pub enum WindowPadReceiptWitness {
+    /// Convergence is the version vectors' alone, as before: a receipt still
+    /// answers its send, and a `NotReady` still sends the carrier again.
+    Off,
+    /// A window stays pending while a sealed send of it has no receipt; the
+    /// re-bootstrap after `MAX_CONVERGENCE_ROUNDS` stands as it is.
+    On,
+}
+
+pub const WINDOW_PAD_RECEIPT_WITNESS: WindowPadReceiptWitness = WindowPadReceiptWitness::Off;
 
 /// A window blob made ready for one machine: projected and sealed for it,
 /// pad-free, or kept as today's carrier.
