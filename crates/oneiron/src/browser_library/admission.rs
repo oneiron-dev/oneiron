@@ -139,6 +139,8 @@ pub enum ProgramAdmissionOutcome {
     /// The job was cut off when its process stopped and was not run again:
     /// the program a filing in its run filed, if one did.
     Interrupted { filed: Option<EntityId> },
+    /// An engine error stopped the job, by its kind alone.
+    Failed { kind: String },
 }
 
 /// Why the source caller could not be established (CUA E8b).
