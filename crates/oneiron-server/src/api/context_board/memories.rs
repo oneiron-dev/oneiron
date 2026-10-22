@@ -78,10 +78,10 @@ pub(crate) struct ContextBoardCompanionControls {
     #[serde(default, rename = "person_ref", alias = "personRef")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     person_ref: Option<String>,
-    /// Optional other endpoint of the relationship (32-hex entity id) or opaque label.
-    #[serde(default, rename = "persona_ref", alias = "personaRef")]
+    /// Optional PERSON at the relationship's other end (32-hex entity id) or opaque label.
+    #[serde(default, rename = "counterpart_person_ref")]
     #[schema(example = "fedcba9876543210fedcba9876543210")]
-    persona_ref: Option<String>,
+    counterpart_person_ref: Option<String>,
     /// Requested expression register: professional, warm, or unrestricted.
     #[serde(default)]
     #[schema(example = "warm")]
@@ -161,10 +161,11 @@ pub(crate) struct ContextBoardCompanionAssembly {
     #[serde(rename = "person_ref")]
     #[schema(example = "11111111111111111111111111111111")]
     person_ref: Option<String>,
-    /// Optional other relationship endpoint used for companion-aware assembly metadata.
-    #[serde(rename = "persona_ref")]
+    /// Optional PERSON at the relationship's other end, used for companion-aware assembly
+    /// metadata.
+    #[serde(rename = "counterpart_person_ref")]
     #[schema(example = "22222222222222222222222222222222")]
-    persona_ref: Option<String>,
+    counterpart_person_ref: Option<String>,
     /// Effective expression register boundary.
     #[schema(example = "warm")]
     expression: Option<String>,
@@ -318,8 +319,9 @@ fn bounded_pinned_refs(
 /// caller's `memories.pinned_refs`, the policy manifest's pins and each hook block's rows, read
 /// as a context pack reads its pins, under the caller's read narrowed to the board's room (or
 /// the caller alone) and the disclosure clamp of those present. A once answer waits for a pack
-/// assembly, so these rows read under standing clearance alone. `None` when MEMORIES is turned
-/// off or no row is admitted. What goes out under a contact's standing clearance gets the
+/// assembly, so these rows read under standing clearance alone. `memories.enabled=false` turns
+/// off only optional retrieval: these mandatory pins are always assembled (FIX 8142). `None`
+/// when no row is admitted. What goes out under a contact's standing clearance gets the
 /// owner's post-hoc receipt, as a pack's rows do.
 pub(crate) async fn board_pins_section(
     server: &crate::server::SyncServer,
@@ -328,9 +330,6 @@ pub(crate) async fn board_pins_section(
     room_id: Option<oneiron::EntityId>,
     hook_pins: &[oneiron::context_board::HookPin],
 ) -> Result<Option<oneiron::MemoriesSection>, ApiError> {
-    if memories.and_then(|controls| controls.enabled) == Some(false) {
-        return Ok(None);
-    }
     let pins = BoardPinSources {
         refs: bounded_pinned_refs(memories)?,
         manifest: true,
@@ -506,9 +505,9 @@ pub(crate) fn resolve_companion_assembly(
         companion.and_then(|controls| controls.person_ref.as_deref()),
         "companion.person_ref",
     )?;
-    let (persona_ref_wire, persona_ref) = parse_companion_ref(
-        companion.and_then(|controls| controls.persona_ref.as_deref()),
-        "companion.persona_ref",
+    let (counterpart_wire, counterpart_person_ref) = parse_companion_ref(
+        companion.and_then(|controls| controls.counterpart_person_ref.as_deref()),
+        "companion.counterpart_person_ref",
     )?;
     let requested_expression = companion
         .and_then(|controls| controls.expression.as_deref())
@@ -523,28 +522,33 @@ pub(crate) fn resolve_companion_assembly(
         .transpose()?;
     let fallback_expression =
         requested_expression.unwrap_or(oneiron::CompanionExpression::Professional);
-    if !companion_scope_resolution_authorized(vault, companion_auth, person_ref, persona_ref)? {
+    if !companion_scope_resolution_authorized(
+        vault,
+        companion_auth,
+        person_ref,
+        counterpart_person_ref,
+    )? {
         return Ok(oneiron::CompanionAssembly {
             caller: Some(session_id.to_owned()),
             scope: Some(companion_scope_wire(&oneiron::CompanionScope::neutral()).to_owned()),
             scope_source: Some("neutral_default".to_owned()),
             person_ref: person_ref_wire,
-            persona_ref: persona_ref_wire,
+            counterpart_person_ref: counterpart_wire,
             expression: Some(fallback_expression.as_str().to_owned()),
         });
     }
-    // A companion persona is a PERSON identity.
+    // The companion counterpart is a PERSON identity (FIX 871).
     // Authorization is checked above, before either identity is inspected.
-    let personal = match (person_ref, persona_ref) {
-        (Some(person), Some(persona)) => {
+    let personal = match (person_ref, counterpart_person_ref) {
+        (Some(person), Some(counterpart)) => {
             let person_kind = vault
                 .get_entity_type(&person)
                 .map_err(|error| core_engine_error("companion PERSON resolution failed", error))?;
-            let persona_kind = vault
-                .get_entity_type(&persona)
+            let counterpart_kind = vault
+                .get_entity_type(&counterpart)
                 .map_err(|error| core_engine_error("companion PERSON resolution failed", error))?;
             person_kind == Some(oneiron::registry::ENTITY_TYPE_PERSON)
-                && persona_kind == Some(oneiron::registry::ENTITY_TYPE_PERSON)
+                && counterpart_kind == Some(oneiron::registry::ENTITY_TYPE_PERSON)
         }
         _ => false,
     };
@@ -565,7 +569,7 @@ pub(crate) fn resolve_companion_assembly(
             .to_owned(),
         ),
         person_ref: person_ref_wire,
-        persona_ref: persona_ref_wire,
+        counterpart_person_ref: counterpart_wire,
         expression: Some(fallback_expression.as_str().to_owned()),
     })
 }

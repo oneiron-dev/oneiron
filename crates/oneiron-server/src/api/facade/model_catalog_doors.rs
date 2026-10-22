@@ -14,7 +14,7 @@ use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{EntityId, LlmUsage};
 
-use super::host_doors::{Listed, internal, naming, owner_proof};
+use super::host_doors::support::{Listed, internal, naming, owner_proof};
 use crate::auth::CoreAuth;
 use crate::decision_host::MODEL_DIAL;
 use crate::server::SyncServer;

@@ -26,6 +26,10 @@ pub(crate) fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
     .map_err(|_| Error::CorruptedIndex("type index key"))
 }
 
+/// One page of [`Vault::latest_entity_bodies_by_type_page`]: its
+/// `(id, learned_at, body)` rows and the cursor the next page resumes from.
+type LatestBodiesPage = (Vec<(EntityId, u64, Vec<u8>)>, Option<(EntityId, u64)>);
+
 /// Result of resolving a context-pack short reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HydratedShortId {
@@ -593,47 +597,89 @@ impl Vault {
             )?
             .take(scan_limit)
         {
-            let entry = entry?;
-            let Some(row) = self.store.port_entity_record(&txn, &entry.id)? else {
-                continue;
-            };
-            if row.entity_type != entity_type
-                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
-                    &self.store,
-                    &txn,
-                    &entry.id,
-                    row.entity_type,
-                )?
-                || !crate::ports::body_readable_in_txn(
-                    &self.store,
-                    &txn,
-                    &entry.id,
-                    &row.body,
-                    crate::ports::BodyStale::for_kind(row.entity_type),
-                )?
-            {
-                continue;
-            }
-            if row.learned_at != entry.timestamp {
-                return Err(Error::CorruptedIndex("temporal learned key"));
-            }
-            rows.push((
-                entry.id,
-                row.learned_at,
-                crate::note::live_body_in_txn(
-                    &self.store,
-                    &txn,
-                    &entry.id,
-                    row.entity_type,
-                    &row.body,
-                )?
-                .into_owned(),
-            ));
+            rows.extend(self.latest_body_in_txn(&txn, entity_type, entry?)?);
             if rows.len() >= limit {
                 break;
             }
         }
         Ok(rows)
+    }
+
+    /// One newest-first page of a type's bodies: those among the next `scan`
+    /// rows of the `temporal_learned` index after the `(id, learned_at)`
+    /// cursor `after`, read from one snapshot as
+    /// [`Vault::latest_entity_bodies_by_type`] reads them, and the cursor the
+    /// next page resumes from, `None` once history ends. A walk that follows
+    /// the cursor reads every row once, with no whole-history ceiling.
+    pub fn latest_entity_bodies_by_type_page(
+        &self,
+        entity_type: u8,
+        after: Option<(EntityId, u64)>,
+        scan: usize,
+    ) -> Result<LatestBodiesPage> {
+        if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
+        let scan = scan.max(1);
+        let txn = self.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        let mut last = None;
+        let mut scanned = 0;
+        for entry in self
+            .store
+            .port_entity_timeline(
+                &txn,
+                crate::ports::TimelineQuery {
+                    after: after.map(|(id, timestamp)| crate::ports::EntityTime { id, timestamp }),
+                    reverse: true,
+                    ..Default::default()
+                },
+            )?
+            .take(scan)
+        {
+            let entry = entry?;
+            scanned += 1;
+            last = Some((entry.id, entry.timestamp));
+            rows.extend(self.latest_body_in_txn(&txn, entity_type, entry)?);
+        }
+        Ok((rows, last.filter(|_| scanned == scan)))
+    }
+
+    /// The `(id, learned_at, body)` one timeline row holds when it is a live,
+    /// readable body of `entity_type`.
+    fn latest_body_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity_type: u8,
+        entry: crate::ports::EntityTime,
+    ) -> Result<Option<(EntityId, u64, Vec<u8>)>> {
+        let Some(row) = self.store.port_entity_record(txn, &entry.id)? else {
+            return Ok(None);
+        };
+        if row.entity_type != entity_type
+            || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                &self.store,
+                txn,
+                &entry.id,
+                row.entity_type,
+            )?
+            || !crate::ports::body_readable_in_txn(
+                &self.store,
+                txn,
+                &entry.id,
+                &row.body,
+                crate::ports::BodyStale::for_kind(row.entity_type),
+            )?
+        {
+            return Ok(None);
+        }
+        if row.learned_at != entry.timestamp {
+            return Err(Error::CorruptedIndex("temporal learned key"));
+        }
+        let body =
+            crate::note::live_body_in_txn(&self.store, txn, &entry.id, row.entity_type, &row.body)?
+                .into_owned();
+        Ok(Some((entry.id, row.learned_at, body)))
     }
 
     /// Counts entity IDs of a given type via the `type_index` prefix path.

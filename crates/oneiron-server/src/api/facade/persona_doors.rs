@@ -8,7 +8,7 @@ use oneiron::task_verb::sdk::{
     PersonaSnapshotExportedCopy, PersonaSnapshotPreview, PersonaSnapshotPreviewRequest,
 };
 
-use super::host_doors::{MaybeListed, owner_proof};
+use super::host_doors::support::{MaybeListed, owner_proof};
 use super::shared_act_doors::as_person_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

@@ -1,3 +1,6 @@
+//! The `/v1/core/memory` routes: a memory timeline, its watch and the memory verbs.
+//! `core_memory_timeline` and `core_memory_verb` are its call surface.
+//! `crate::api::memory` defines these DTOs; the engine's `oneiron::memory` owns the records.
 use super::CoreBatchEntityInput;
 use super::CoreBatchEntityResult;
 use super::CoreHydrateDeletionMetadata;

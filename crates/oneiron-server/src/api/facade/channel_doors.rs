@@ -3,44 +3,13 @@
 use std::sync::Arc;
 
 use oneiron::channel_identity_selection::ChannelIdentitySelectionRuleSet;
-use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::channel_doors::*;
-use oneiron::memory::{Memory, MemoryError, MemoryResult};
 
 use super::FacadeApiError;
-use super::host_doors::{Listed, credential_listing};
+use super::host_doors::support::owner_action::as_owner;
+use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
-
-fn owner_proof(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    verb: &str,
-) -> MemoryResult<AuthenticatedOwner> {
-    super::owner_binding::facade_owner(server, auth, verb)
-}
-
-async fn as_owner<T: Send + 'static>(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    verb: &'static str,
-    act: impl FnOnce(&Memory<'_>, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
-) -> Listed<T> {
-    let admitted = || {
-        let owner = owner_proof(server, auth, verb)?;
-        let caller =
-            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-        Ok::<_, MemoryError>((owner, caller))
-    };
-    let (owner, caller) = match admitted() {
-        Ok(admitted) => admitted,
-        Err(error) => return (Err(error), Vec::new()),
-    };
-    credential_listing(server, auth, caller, verb, move |_, _, memory| {
-        act(&memory, &owner)
-    })
-    .await
-}
 
 pub(crate) async fn vault_channel_identities_provision(
     server: &Arc<SyncServer>,

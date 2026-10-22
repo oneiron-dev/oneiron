@@ -31,7 +31,7 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::voice_identity::ref_bank::VoiceBankActor;
 
-use super::host_doors::{MaybeListed, internal};
+use super::host_doors::support::{MaybeListed, internal};
 use super::shared_act_doors::{as_person_naming, person};
 use crate::api::ai::{VoiceBankRefusal, evict_answer, provision_clone, render_consent_answer};
 use crate::auth::CoreAuth;

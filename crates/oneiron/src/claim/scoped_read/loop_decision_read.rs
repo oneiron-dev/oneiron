@@ -227,9 +227,49 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         reader: WeaveReader<'_>,
     ) -> Vec<ReadableLoopDecision> {
-        let Some(mut read) = self.loop_read_in(txn, reader) else {
+        let Some(read) = self.loop_read_in(txn, reader) else {
             return Vec::new();
         };
+        self.walk_loop_decisions_in(txn, read)
+    }
+
+    /// FIX 7597: every loop decision a recorded period's or schedule's Owner
+    /// may see now, for work the owner recorded and no present opener
+    /// carries (his proofless background lens, a due Owner schedule). It
+    /// admits only while `owner` is this lane's own actor and a live Owner
+    /// of this vault in `txn` (the live-owner census, a co-Owner as well as
+    /// the first, each a live PERSON), then reads exactly as the Owner arm
+    /// does: the same walk, floor and item rules. No Owner proof is made,
+    /// and an id alone binds nothing else. Not current, or a check that does
+    /// not answer, adds no loop decision; nothing here refuses.
+    pub(crate) fn authorised_loop_decisions_for_recorded_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
+    ) -> Vec<ReadableLoopDecision> {
+        let bound = match self.recorded_loop_owner_in(txn, owner) {
+            Ok(bound) => bound,
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "a recorded owner's standing did not read; no loop decisions"
+                );
+                None
+            }
+        };
+        let Some(read) = bound.and_then(|bound| self.loop_read_bound_in(txn, bound)) else {
+            return Vec::new();
+        };
+        self.walk_loop_decisions_in(txn, read)
+    }
+
+    /// The ledger walk every bound reader shares: each row through
+    /// [`Self::admit_loop_decision_in`], in ledger order.
+    fn walk_loop_decisions_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        mut read: LoopRead,
+    ) -> Vec<ReadableLoopDecision> {
         let mut count = ScanCount::start(&self.vault.store, txn, EngineScan::GateDecisionRows, &[])
             .unwrap_or_else(|_| {
                 ScanCount::start_at(
@@ -281,6 +321,28 @@ impl ScopedRead<'_> {
                 }
             },
         }?;
+        self.loop_read_bound_in(txn, bound)
+    }
+
+    /// The recorded `owner` as this lane's live Owner in `txn`: `None` when
+    /// the lane is not his own or the census no longer counts him.
+    fn recorded_loop_owner_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
+    ) -> Result<Option<LoopReader>> {
+        if self.actor_key.actor_ref() != owner.to_hex() {
+            return Ok(None);
+        }
+        Ok(
+            crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &owner)?
+                .then_some(LoopReader::Owner(owner)),
+        )
+    }
+
+    /// Resolves this lane's policy and floor for a reader `bound` in `txn`:
+    /// `None` when the lane reads no row at all.
+    fn loop_read_bound_in(&self, txn: &heed::RoTxn<'_>, bound: LoopReader) -> Option<LoopRead> {
         let (filter, policy) = match self.resolve_retrieval_filter_in(txn, None) {
             Ok(resolved) => resolved,
             Err(error) => {

@@ -308,6 +308,7 @@ fn bind_target(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     let house = target == AnonymousChatTarget::HouseMind;
     let ladder = if house {
