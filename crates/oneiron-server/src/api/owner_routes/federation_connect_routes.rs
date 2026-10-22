@@ -1,7 +1,9 @@
 //! `/v1/owner/federation/connect`: the owner's Connect (ARCH-0043
 //! #relationship-lifecycle, FIX 323), behind the same owner door as every
 //! other owner route. Each host signs its half with its root key; the owner
-//! carries the halves between the two hosts.
+//! carries the halves between the two hosts. Each route runs its
+//! `vault.federation.connect.*` row's verb hooks once around the call, as
+//! the owner in person (FIX 8201).
 
 use std::sync::Arc;
 
@@ -10,14 +12,14 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::task_verb::sdk::EmptyRequest;
+use serde_json::Value;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, blocking, hooked_owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
-use crate::owner::federation_connect::{
-    self, AcceptConnect, Accepted, ConnectGrant, ConnectIdentity, MintConnectGrant, Offer,
-    OfferConnect,
-};
+use crate::owner::federation_connect::{self, AcceptConnect, MintConnectGrant, OfferConnect};
+use crate::owner::hooked_row;
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -33,9 +35,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 async fn identity(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<ConnectIdentity> {
-    owner(&auth, &server)?;
-    let identity = blocking(move || federation_connect::identity(&server)).await?;
+) -> OwnerReply<Value> {
+    let (_, actor) = hooked_owner(&auth, &server)?;
+    let identity = blocking(move || {
+        hooked_row(
+            server.vault(),
+            actor,
+            "vault.federation.connect.identity",
+            EmptyRequest {},
+            |_| federation_connect::identity(&server),
+        )
+    })
+    .await?;
     Ok(Json(identity))
 }
 
@@ -46,11 +57,19 @@ async fn mint_grant(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<MintConnectGrant>, JsonRejection>,
-) -> OwnerReply<ConnectGrant> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let minted =
-        blocking(move || federation_connect::mint_grant(&server, &owner, &request)).await?;
+    let minted = blocking(move || {
+        hooked_row(
+            server.vault(),
+            actor,
+            "vault.federation.connect.grants.mint",
+            request,
+            |request: MintConnectGrant| federation_connect::mint_grant(&server, &owner, &request),
+        )
+    })
+    .await?;
     Ok(Json(minted))
 }
 
@@ -60,10 +79,19 @@ async fn offer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<OfferConnect>, JsonRejection>,
-) -> OwnerReply<Offer> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let offer = blocking(move || federation_connect::offer(&server, &owner, &request)).await?;
+    let offer = blocking(move || {
+        hooked_row(
+            server.vault(),
+            actor,
+            "vault.federation.connect.offer",
+            request,
+            |request: OfferConnect| federation_connect::offer(&server, &owner, &request),
+        )
+    })
+    .await?;
     Ok(Json(offer))
 }
 
@@ -73,9 +101,18 @@ async fn accept(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<AcceptConnect>, JsonRejection>,
-) -> OwnerReply<Accepted> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let accepted = blocking(move || federation_connect::accept(&server, &owner, &request)).await?;
+    let accepted = blocking(move || {
+        hooked_row(
+            server.vault(),
+            actor,
+            "vault.federation.connect.accept",
+            request,
+            |request: AcceptConnect| federation_connect::accept(&server, &owner, &request),
+        )
+    })
+    .await?;
     Ok(Json(accepted))
 }

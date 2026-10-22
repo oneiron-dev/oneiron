@@ -2,7 +2,9 @@
 //! catalog and its own rows, and lays or clears a seed or a pin over a knob
 //! or a spawn choice at the vault, a project's goal, a project or a task
 //! type (`oneiron::learning_setting_doors`). The engine keeps the catalog
-//! bounds and the seed and pin rules.
+//! bounds and the seed and pin rules. Each route runs its
+//! `vault.settings.learning*` row's verb hooks once around the call, as the
+//! owner in person (FIX 9479).
 
 use std::sync::Arc;
 
@@ -12,13 +14,15 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::learning_setting_doors::{
-    LearningSettingClear, LearningSettingPut, LearningSettingsRequest, LearningSettingsView,
+    self as doors, LearningSettingClear, LearningSettingPut, LearningSettingsRequest,
+    LearningSettingsView,
 };
+use serde_json::Value;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, blocking, hooked_owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
-use crate::owner::OwnerResult;
+use crate::owner::{OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -33,15 +37,20 @@ async fn list(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<LearningSettingsRequest>, QueryRejection>,
-) -> OwnerReply<LearningSettingsView> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = query_params(query)?;
-    let view = blocking(move || -> OwnerResult<LearningSettingsView> {
-        Ok(oneiron::learning_setting_doors::learning_settings_as_owner(
-            server.vault(),
-            &owner,
-            &request,
-        )?)
+    let view = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.settings.learning",
+            request,
+            |request: LearningSettingsRequest| -> OwnerResult<LearningSettingsView> {
+                Ok(doors::learning_settings_as_owner(vault, &owner, &request)?)
+            },
+        )
     })
     .await?;
     Ok(Json(view))
@@ -53,16 +62,19 @@ async fn put(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<LearningSettingPut>, JsonRejection>,
-) -> OwnerReply<LearningSettingsView> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let view = blocking(move || -> OwnerResult<LearningSettingsView> {
-        Ok(
-            oneiron::learning_setting_doors::put_learning_setting_as_owner(
-                server.vault(),
-                &owner,
-                request,
-            )?,
+    let view = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.settings.learning.put",
+            request,
+            |request: LearningSettingPut| -> OwnerResult<LearningSettingsView> {
+                Ok(doors::put_learning_setting_as_owner(vault, &owner, request)?)
+            },
         )
     })
     .await?;
@@ -75,16 +87,19 @@ async fn clear(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<LearningSettingClear>, JsonRejection>,
-) -> OwnerReply<LearningSettingsView> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let view = blocking(move || -> OwnerResult<LearningSettingsView> {
-        Ok(
-            oneiron::learning_setting_doors::clear_learning_setting_as_owner(
-                server.vault(),
-                &owner,
-                request,
-            )?,
+    let view = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.settings.learning.clear",
+            request,
+            |request: LearningSettingClear| -> OwnerResult<LearningSettingsView> {
+                Ok(doors::clear_learning_setting_as_owner(vault, &owner, request)?)
+            },
         )
     })
     .await?;

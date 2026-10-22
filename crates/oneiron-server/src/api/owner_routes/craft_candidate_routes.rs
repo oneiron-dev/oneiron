@@ -1,7 +1,9 @@
 //! `/v1/owner/craft-candidates`: the owner lists the craft notes residents'
 //! dreaming proposed about themselves, and approves or rejects one on its
 //! card (`oneiron::actor_claims`, OF-490). The engine writes the verdict, the
-//! candidate's close and the decision receipt in one write.
+//! candidate's close and the decision receipt in one write. Each route runs
+//! its `vault.craft_candidates*` row's verb hooks once around the call, as
+//! the owner in person (FIX 8201).
 
 use std::sync::Arc;
 
@@ -13,11 +15,12 @@ use axum::routing::{get, post};
 use oneiron::actor_claims::{
     self, CraftCandidateAnswer, CraftCandidatesRequest, CraftCandidatesView, CraftVerdictView,
 };
+use serde_json::Value;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, blocking, hooked_owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
-use crate::owner::{OwnerError, OwnerResult};
+use crate::owner::{OwnerError, OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -32,15 +35,20 @@ async fn list(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<CraftCandidatesRequest>, QueryRejection>,
-) -> OwnerReply<CraftCandidatesView> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = query_params(query)?;
-    let view = blocking(move || -> OwnerResult<CraftCandidatesView> {
-        Ok(actor_claims::craft_candidates_as_owner(
-            server.vault(),
-            &owner,
-            &request,
-        )?)
+    let view = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.craft_candidates",
+            request,
+            |request: CraftCandidatesRequest| -> OwnerResult<CraftCandidatesView> {
+                Ok(actor_claims::craft_candidates_as_owner(vault, &owner, &request)?)
+            },
+        )
     })
     .await?;
     Ok(Json(view))
@@ -52,16 +60,25 @@ async fn answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CraftCandidateAnswer>, JsonRejection>,
-) -> OwnerReply<CraftVerdictView> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let answer = json_payload(payload)?;
-    let view = blocking(move || -> OwnerResult<CraftVerdictView> {
-        actor_claims::answer_craft_candidate_as_owner(server.vault(), &owner, &answer).map_err(
-            |error| match error {
-                oneiron::Error::EntityNotFound => {
-                    OwnerError::NotFound("craft candidate", answer.candidate_id.clone())
-                }
-                error => error.into(),
+    let view = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.craft_candidates.answer",
+            answer,
+            |answer: CraftCandidateAnswer| -> OwnerResult<CraftVerdictView> {
+                actor_claims::answer_craft_candidate_as_owner(vault, &owner, &answer).map_err(
+                    |error| match error {
+                        oneiron::Error::EntityNotFound => {
+                            OwnerError::NotFound("craft candidate", answer.candidate_id.clone())
+                        }
+                        error => error.into(),
+                    },
+                )
             },
         )
     })

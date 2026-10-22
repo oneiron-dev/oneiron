@@ -1,7 +1,9 @@
 //! `/v1/owner/widen-proposals`: the owner lists the context-widen proposals
 //! agents raised, and approves or declines one as the board above
 //! (`oneiron::agent_dispatch::widen_doors`). The engine keeps the board
-//! proof and the approve-once consent.
+//! proof and the approve-once consent. Each route runs its
+//! `vault.widen_proposals*` row's verb hooks once around the call, as the
+//! owner in person (FIX 9479).
 
 use std::sync::Arc;
 
@@ -14,10 +16,12 @@ use oneiron::agent_dispatch::widen_doors::{
     self, WidenProposalAnswer, WidenProposalView, WidenProposalsRequest, WidenProposalsView,
 };
 
-use super::{OwnerReply, blocking, owner};
+use serde_json::Value;
+
+use super::{OwnerReply, blocking, hooked_owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
-use crate::owner::OwnerResult;
+use crate::owner::{OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -33,15 +37,20 @@ async fn list(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<WidenProposalsRequest>, QueryRejection>,
-) -> OwnerReply<WidenProposalsView> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = query_params(query)?;
-    let view = blocking(move || -> OwnerResult<WidenProposalsView> {
-        Ok(widen_doors::widen_proposals_as_owner(
-            server.vault(),
-            &owner,
-            &request,
-        )?)
+    let view = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.widen_proposals",
+            request,
+            |request: WidenProposalsRequest| -> OwnerResult<WidenProposalsView> {
+                Ok(widen_doors::widen_proposals_as_owner(vault, &owner, &request)?)
+            },
+        )
     })
     .await?;
     Ok(Json(view))
@@ -53,15 +62,20 @@ async fn approve(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<WidenProposalAnswer>, JsonRejection>,
-) -> OwnerReply<WidenProposalView> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let answer = json_payload(payload)?;
-    let view = blocking(move || -> OwnerResult<WidenProposalView> {
-        Ok(widen_doors::approve_widen_proposal_as_owner(
-            server.vault(),
-            &owner,
-            &answer,
-        )?)
+    let view = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.widen_proposals.approve",
+            answer,
+            |answer: WidenProposalAnswer| -> OwnerResult<WidenProposalView> {
+                Ok(widen_doors::approve_widen_proposal_as_owner(vault, &owner, &answer)?)
+            },
+        )
     })
     .await?;
     Ok(Json(view))
@@ -72,15 +86,20 @@ async fn decline(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<WidenProposalAnswer>, JsonRejection>,
-) -> OwnerReply<WidenProposalView> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let answer = json_payload(payload)?;
-    let view = blocking(move || -> OwnerResult<WidenProposalView> {
-        Ok(widen_doors::decline_widen_proposal_as_owner(
-            server.vault(),
-            &owner,
-            &answer,
-        )?)
+    let view = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.widen_proposals.decline",
+            answer,
+            |answer: WidenProposalAnswer| -> OwnerResult<WidenProposalView> {
+                Ok(widen_doors::decline_widen_proposal_as_owner(vault, &owner, &answer)?)
+            },
+        )
     })
     .await?;
     Ok(Json(view))
