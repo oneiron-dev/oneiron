@@ -75,8 +75,8 @@ pub use library::{
     DraftPage, DraftStep, FiledWorkflow, LibraryCard, LibraryFindInput, LibraryFindOutput,
     LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
     LibraryRunInput, LibraryRunMode, LibraryRunOutput, PressedThrough, ProposeInput, ProposeOutput,
-    RecentCounts, ReplayGuest, RetiredCard, RunOutcome, SecretParam, SlotCandidate, SlotField,
-    SupersedeOutcome, SupersedeRefusal, WorkflowCheck, WorkflowLibrary, WorkflowProgram,
+    RecentCounts, ReplayGuest, RetiredCard, RunOutcome, SecretArg, SecretParam, SlotCandidate,
+    SlotField, SupersedeOutcome, SupersedeRefusal, WorkflowCheck, WorkflowLibrary, WorkflowProgram,
     WorkflowProof, WorkflowSeed, default_mode, draft_from_steps, effective_mode, model_free,
     site_of, validate_replay_args,
 };
@@ -1448,6 +1448,11 @@ pub trait BrowserDriver: Send {
     fn typed_operand(&self, _target: &str) -> Option<TypeOperand> {
         None
     }
+
+    /// Withdraws the newest no-progress stop the driver's history noted
+    /// (FIX 8507): the run's final checks met after all. A driver that
+    /// keeps no history withdraws nothing.
+    fn withdraw_no_progress(&mut self) {}
 
     /// Starts recording a demonstration of the attached browser (CUA E9a):
     /// only a browser session on a Chromium guest records one; any other

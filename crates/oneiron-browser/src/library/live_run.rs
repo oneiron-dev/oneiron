@@ -5,7 +5,7 @@
 //! and what the library counts of it.
 
 #[cfg(feature = "driver")]
-use super::{LibraryRunInput, LibraryRunOutput, WorkflowLibrary, missed};
+use super::{LibraryRunInput, LibraryRunOutput, SecretArg, WorkflowLibrary, missed};
 use super::{WorkflowProgram, WorkflowProof};
 #[cfg(feature = "driver")]
 use crate::{
@@ -159,6 +159,55 @@ fn rung_model_free(rung: &str) -> bool {
 }
 
 #[cfg(feature = "driver")]
+/// Whether `batch` went up for no progress only once its last step ran
+/// (FIX 8507): every effect of its `steps` landed, so its checks decide.
+pub(super) fn no_progress_at_end(batch: &crate::BatchOutput, steps: usize) -> bool {
+    batch.stop_cause == Some(BatchStopCause::NoProgress) && batch.completed == steps
+}
+
+#[cfg(feature = "driver")]
+/// `batch`, whose checks all met after its no-progress stop at its end,
+/// as done (FIX 8507); the driver's history withdraws that stop, so a
+/// draft of the run reads its steps as working.
+pub(super) fn met_after_all<D: BrowserDriver + ?Sized>(
+    driver: &mut D,
+    batch: &mut crate::BatchOutput,
+) {
+    batch.status = SubgoalStatus::Done;
+    batch.failed_step = None;
+    batch.error = None;
+    batch.stop_cause = None;
+    batch.failed_receipt = None;
+    driver.withdraw_no_progress();
+}
+
+#[cfg(feature = "driver")]
+/// A run's arguments with its typed secret arguments in their place (FIX
+/// 8346), and the names whose value is their slot's own text.
+fn typed_args(
+    input: &LibraryRunInput,
+) -> Result<(std::collections::BTreeMap<String, String>, Vec<String>), BrowserError> {
+    let mut args = input.args.clone();
+    let mut text = Vec::new();
+    for (name, arg) in &input.secret_args {
+        let value = match arg {
+            SecretArg::Handle(handle) if super::handle_form(handle) => handle.clone(),
+            SecretArg::Handle(_) => {
+                return Err(BrowserError::Input(format!(
+                    "the secret argument {name}'s handle names no handle"
+                )));
+            }
+            SecretArg::Text(value) => {
+                text.push(name.clone());
+                value.clone()
+            }
+        };
+        args.insert(name.clone(), value);
+    }
+    Ok((args, text))
+}
+
+#[cfg(feature = "driver")]
 /// Runs a library program live in its mode, its Fill steps' generation
 /// through `writer`, then checks its postcondition on the page. A run that
 /// missed it goes back to the planner with each check it missed, what its
@@ -175,7 +224,9 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
         .program(&input.workflow)?
         .ok_or_else(|| BrowserError::NoWorkflow(input.workflow.clone()))?;
     let mode = effective_mode(input.mode, &proof);
-    let (steps, checks) = program.fill(&input.args)?;
+    let (args, text) = typed_args(&input)?;
+    let (steps, checks) = super::secret_slots::as_text(&program, &text).fill(&args)?;
+    let step_count = steps.len();
     let mut batch = driver.batch_with(
         BatchInput {
             subgoal: Some(program.subgoal.clone()),
@@ -187,13 +238,23 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
         decider,
         writer,
     )?;
-    let misses = if batch.status == SubgoalStatus::Done {
+    // A run that went up for no progress after its last step still meets
+    // its checks, read now (FIX 8507): all met, it is done; else it goes
+    // up as it went, with what each missed check found.
+    let at_end = no_progress_at_end(&batch, step_count);
+    let misses = if batch.status == SubgoalStatus::Done || at_end {
         missed(driver, &checks)?
     } else {
         Vec::new()
     };
     let unmet: Vec<usize> = misses.iter().map(|(index, _)| *index).collect();
-    if !misses.is_empty() {
+    if at_end {
+        if misses.is_empty() {
+            met_after_all(driver, &mut batch);
+        } else if let Some(failed) = batch.failed_receipt.as_mut() {
+            failed.missed = misses.into_iter().map(|(_, check)| check).collect();
+        }
+    } else if !misses.is_empty() {
         // A missed postcondition goes back to the planner, with each check
         // it missed and the page. Checks a cut tree left unproven are no
         // miss on their own.

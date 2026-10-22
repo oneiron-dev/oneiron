@@ -23,11 +23,11 @@
 use super::BrowserSession;
 use super::storage::OriginSnapshots;
 use super::switch::{Halt, hold, seed_state};
-use crate::library::{check_solved, no_fresh_guest, replay_and_file};
+use crate::library::{check_solved, no_fresh_guest, replay_and_file, supersedes_refused};
 use crate::request::BrowserRequestHandler;
 use crate::{
-    BrowserEngine, BrowserError, HandleRetention, NoDecider, ProposeInput, ProposeOutput,
-    ReplayGuest, StoragePhase, SwitchComponent, SwitchStage, WorkflowLibrary,
+    AdmissionRefusal, BrowserEngine, BrowserError, HandleRetention, NoDecider, ProposeInput,
+    ProposeOutput, ReplayGuest, StoragePhase, SwitchComponent, SwitchStage, WorkflowLibrary,
 };
 use std::sync::Arc;
 
@@ -131,9 +131,26 @@ impl BrowserSession {
             Ok(solved) => solved,
             Err(refused) => return Ok(refused),
         };
+        // A link the library refuses costs no fresh guest (FIX 7876); its
+        // filing checks it again.
+        if let Some(link) = solved.supersedes.as_deref()
+            && let Some(why) = library.supersedes_refused(&solved.site, link)?
+        {
+            return Ok(supersedes_refused(link.to_owned(), why));
+        }
         let (mut fresh, guest) = match self.fresh_replay_guest() {
             Ok(started) => started,
-            Err(Halt { stage, error }) => return Ok(no_fresh_guest(stage, &error)),
+            Err(Halt { stage, error }) => {
+                let mut refused = no_fresh_guest(stage, &error);
+                // The host's start words stand; only a secret this
+                // session's reads took shows as its handle (FIX 7882).
+                if let Some(AdmissionRefusal::FreshGuest { detail, .. }) = refused.refusal.as_mut()
+                    && let Some(masked) = self.secrets.mask_known(detail)
+                {
+                    *detail = masked;
+                }
+                return Ok(refused);
+            }
         };
         fresh.policy = std::mem::take(&mut self.policy);
         // The replay's sends run under this session's presses: its grants'

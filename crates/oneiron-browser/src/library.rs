@@ -155,6 +155,10 @@ pub struct ProposeOutput {
     /// The postcondition checks the page missed, by index.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmet: Vec<usize>,
+    /// Each check `unmet` names, with what its read found (FIX 8049): the
+    /// observed row, the cut it read under, the rebindings it made.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missed: Vec<crate::CheckReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<BatchOutput>,
     /// The fresh guest the replay ran on, and what it took of this session.
@@ -205,6 +209,20 @@ pub struct LibraryRunInput {
     /// Strict or assisted; by default the program's own ([`default_mode`]).
     #[serde(default)]
     pub mode: Option<LibraryRunMode>,
+    /// Secret slots' arguments in typed form (FIX 8346): a name here takes
+    /// the place of the same name in `args`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_args: BTreeMap<String, SecretArg>,
+}
+
+/// A secret slot's argument, typed (FIX 8346): `{"handle": "sc12"}` names
+/// a handle this run holds; `{"text": "sc12"}` is the slot's own text,
+/// typed or checked as text even in a handle's form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum SecretArg {
+    Handle(String),
+    Text(String),
 }
 
 /// A library run: its batch, and the postcondition checks the page missed.
@@ -266,6 +284,17 @@ pub trait WorkflowLibrary: Send {
         workflow: &str,
         reason: Option<&str>,
     ) -> Result<Option<LibraryCard>, BrowserError>;
+    /// The refusal a proposal's `supersedes` link would meet at its filing,
+    /// read before its fresh guest starts (FIX 7876): a ref that does not
+    /// parse, or names no program of `site` the proposer may succeed. The
+    /// filing's own write checks it again; none read here passes nothing.
+    fn supersedes_refused(
+        &mut self,
+        _site: &str,
+        _supersedes: &str,
+    ) -> Result<Option<SupersedeRefusal>, BrowserError> {
+        Ok(None)
+    }
     /// The programs retires took out for `site`, the newest first.
     fn retired(&mut self, _site: &str) -> Result<Vec<RetiredCard>, BrowserError> {
         Err(BrowserError::Library(
@@ -450,18 +479,6 @@ fn missed<D: BrowserDriver + ?Sized>(
 }
 
 #[cfg(feature = "driver")]
-/// The checks the page as it is now misses, by index.
-fn unmet<D: BrowserDriver + ?Sized>(
-    driver: &mut D,
-    checks: &[ExpectInput],
-) -> Result<Vec<usize>, BrowserError> {
-    Ok(missed(driver, checks)?
-        .into_iter()
-        .map(|(index, _)| index)
-        .collect())
-}
-
-#[cfg(feature = "driver")]
 /// Puts every live handle `driver` minted among `steps` and `checks` back to
 /// its row's locator.
 fn by_locator<D: BrowserDriver + ?Sized>(
@@ -516,10 +533,25 @@ fn refused(check: WorkflowCheck, refusal: Option<AdmissionRefusal>) -> ProposeOu
         refused_by: Some(check),
         refusal,
         unmet: Vec::new(),
+        missed: Vec::new(),
         replay: None,
         replay_guest: None,
         superseded: None,
     }
+}
+
+/// A proposal refused before its replay because the library refuses its
+/// `supersedes` link to `workflow` (FIX 7876).
+#[cfg(feature = "driver")]
+pub(crate) fn supersedes_refused(workflow: String, why: SupersedeRefusal) -> ProposeOutput {
+    let refusal = AdmissionRefusal::Supersedes { workflow, why };
+    refused(WorkflowCheck::Supersedes, Some(refusal))
+}
+
+#[cfg(feature = "driver")]
+/// Checks missed, split into their indexes and their receipts.
+fn split_missed(missed: Vec<(usize, CheckReceipt)>) -> (Vec<usize>, Vec<CheckReceipt>) {
+    missed.into_iter().unzip()
 }
 
 #[cfg(feature = "driver")]
@@ -562,10 +594,12 @@ pub(crate) fn check_solved<D: BrowserDriver + ?Sized>(
     // The replay fills its steps and its checks from its own values.
     let values = if held_out { &replay_args } else { &args };
     let (steps, checks) = program.fill(values)?;
-    let missed = unmet(driver, &solved_checks)?;
+    let missed = missed(driver, &solved_checks)?;
     if !missed.is_empty() {
+        let (unmet, missed) = split_missed(missed);
         return Ok(Err(ProposeOutput {
-            unmet: missed,
+            unmet,
+            missed,
             ..refused(WorkflowCheck::Solved, None)
         }));
     }
@@ -622,7 +656,8 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
         solved_url,
         solved_title,
     } = solved;
-    let replay = fresh.batch_with(
+    let step_count = steps.len();
+    let mut replay = fresh.batch_with(
         BatchInput {
             subgoal: Some(program.subgoal.clone()),
             steps,
@@ -634,15 +669,23 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
         // A replay asks no model, so a Fill's generation goes up unasked.
         &NoWriter,
     )?;
-    let missed = if replay.status == SubgoalStatus::Done {
-        unmet(fresh, &checks)?
+    // A replay that went up for no progress after its last step still
+    // meets its checks, read now (FIX 8507).
+    let at_end = live_run::no_progress_at_end(&replay, step_count);
+    let missed = if replay.status == SubgoalStatus::Done || at_end {
+        missed(fresh, &checks)?
     } else {
         Vec::new()
     };
+    if at_end && missed.is_empty() {
+        live_run::met_after_all(fresh, &mut replay);
+    }
     if replay.status != SubgoalStatus::Done || !missed.is_empty() {
         let (check, refusal) = secret_slots::replay_check(&program, &args, &replay_args, held_out);
+        let (unmet, missed) = split_missed(missed);
         return Ok(ProposeOutput {
-            unmet: missed,
+            unmet,
+            missed,
             replay: Some(replay),
             replay_guest: Some(guest),
             ..refused(check, refusal)
@@ -674,6 +717,7 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
             refused_by: None,
             refusal: None,
             unmet: Vec::new(),
+            missed: Vec::new(),
             replay: None,
             replay_guest: None,
             superseded,

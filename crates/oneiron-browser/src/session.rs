@@ -95,18 +95,18 @@ use crate::retention::HandleRetention;
 use crate::secret::{Secrets, entry};
 use crate::stop::elapsed_ms;
 use crate::{
-    AbandonedTakeover, ActionFact, BatchInput, BatchOutput, BrowserDriver, BrowserEngine,
-    BrowserError, BrowserPersonInput, BrowserTab, ClickInput, CropInput, DemonstrationOutput,
-    DemonstrationStartInput, DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput,
-    DraftInput, DraftOutput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH,
-    EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput, FieldWriter, FindInput,
-    FindOutput, HandleInfo, HandoverInput, HandoverOutput, ImageOutput, LibraryFindInput,
-    LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput,
-    LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider, NoWriter, Observation,
-    ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput,
-    Rebound, ReceiptEvidenceSink, ReplayAction, RoutineDecider, Row, ScreenshotInput,
-    ScreenshotOutput, ScreenshotTrigger, SecretCustody, SecretKind, SelectInput, SendPolicy,
-    StepStop, StoragePhase, SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover,
+    AbandonedTakeover, ActionFact, BatchInput, BatchOutput, BatchStopCause, BrowserDriver,
+    BrowserEngine, BrowserError, BrowserPersonInput, BrowserTab, ClickInput, CropInput,
+    DemonstrationOutput, DemonstrationStartInput, DemonstrationStarted, DemonstrationStopCause,
+    DemonstrationStopInput, DraftInput, DraftOutput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
+    EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput,
+    ExpectOutput, FieldWriter, FindInput, FindOutput, HandleInfo, HandoverInput, HandoverOutput,
+    ImageOutput, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
+    LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
+    NoWriter, Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode,
+    ProposeInput, ProposeOutput, Rebound, ReceiptEvidenceSink, ReplayAction, RoutineDecider, Row,
+    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SecretCustody, SecretKind, SelectInput,
+    SendPolicy, StepStop, StoragePhase, SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover,
     TakeoverRecord, TextProvenance, TypeInput, TypeOperand, ViewInput, WaitForInput, WaitForOutput,
     WorkflowLibrary, ZoomInput, site_of,
 };
@@ -1219,6 +1219,10 @@ impl BrowserDriver for BrowserSession {
 
     fn typed_operand(&self, target: &str) -> Option<TypeOperand> {
         self.typed_into(target)
+    }
+
+    fn withdraw_no_progress(&mut self) {
+        self.withdraw(&BatchStopCause::NoProgress);
     }
 
     fn demonstration_start(

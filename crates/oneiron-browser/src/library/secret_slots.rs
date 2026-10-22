@@ -97,6 +97,41 @@ pub(super) fn bind(steps: &mut [BatchStep], checks: &mut [ExpectInput]) {
     }
 }
 
+/// `program` with each secret arm that is the lone slot of a name in
+/// `text` moved to its plain arm (FIX 8346): the run gave that slot its own
+/// text, so it is typed or checked as text even in a handle's form.
+#[cfg(feature = "driver")]
+pub(super) fn as_text(program: &WorkflowProgram, text: &[String]) -> WorkflowProgram {
+    let mut program = program.clone();
+    let named = |secret: &Option<String>| {
+        secret
+            .as_deref()
+            .and_then(lone_slot)
+            .is_some_and(|name| text.iter().any(|given| given == name))
+    };
+    let moved = |secret: &mut Option<String>, plain: &mut Option<String>| {
+        if plain.is_none() && named(secret) {
+            *plain = secret.take();
+        }
+    };
+    for step in &mut program.steps {
+        match step {
+            BatchStep::Type {
+                text: typed,
+                secret,
+                ..
+            } => moved(secret, typed),
+            BatchStep::Expect { value, secret, .. } => moved(secret, value),
+            BatchStep::Decide(step) => moved(&mut step.secret, &mut step.text),
+            _ => {}
+        }
+    }
+    for check in &mut program.postcondition {
+        moved(&mut check.secret, &mut check.value);
+    }
+    program
+}
+
 /// Moves a secret arm that names no handle to its plain arm, when that is
 /// empty; one naming both stays as it is, for the step to refuse.
 fn as_plain(secret: &mut Option<String>, plain: &mut Option<String>) {

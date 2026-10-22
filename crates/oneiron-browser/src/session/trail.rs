@@ -198,6 +198,17 @@ impl BrowserSession {
             })
     }
 
+    /// Withdraws the newest stop of `cause` (FIX 8507).
+    pub(super) fn withdraw(&mut self, cause: &BatchStopCause) {
+        let newest = self
+            .trail
+            .iter()
+            .rposition(|event| matches!(event, Event::Stop(marker) if marker.stop.cause == *cause));
+        if let Some(at) = newest {
+            self.trail.remove(at);
+        }
+    }
+
     /// Keeps an effect's receipt in the history.
     pub(super) fn keep(&mut self, receipt: EffectReceipt) {
         self.trail.push(Event::Effect(Box::new(receipt)));

@@ -72,6 +72,21 @@ impl WorkflowLibrary for VaultLibrary {
         })
     }
 
+    /// The proposal's `supersedes` link, read before its replay (FIX 7876):
+    /// a ref that does not parse, or names no program of `site` the caller
+    /// may succeed. The filing's write checks it again.
+    fn supersedes_refused(
+        &mut self,
+        site: &str,
+        supersedes: &str,
+    ) -> Result<Option<SupersedeRefusal>, BrowserError> {
+        let Ok(old) = oneiron::EntityId::from_hex(supersedes) else {
+            return Ok(Some(SupersedeRefusal::Malformed));
+        };
+        oneiron::browser_library::supersedes_refusal(&self.server.vault, self.by, site, old)
+            .map_err(library_failed)
+    }
+
     fn record_run(&mut self, workflow: &str, outcome: &RunOutcome) -> Result<(), BrowserError> {
         let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
             return Ok(());
