@@ -227,7 +227,9 @@ pub enum TrialArm {
 }
 
 /// Where a trial's paid reads stand, inside its own row (FIX 9920).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelTrialExecutionState {
     /// No run has claimed it.

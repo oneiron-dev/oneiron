@@ -47670,8 +47670,24 @@
      "path": "src/outbound_consent/connector_call_input.rs",
      "purpose": "A connector call whose connector asked for input, kept on the call's own row (ONE-2510, FIX 3837; canon…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorResumeProtocol",
+      "OpenedConnectorResume"
+     ],
+     "path": "src/outbound_consent/connector_call_input_resume.rs",
+     "purpose": "A live connector exchange's resume state, kept on its call's row beside the round it waits on (FIX 9157…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -47774,7 +47790,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 1,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -75600,7 +75616,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76225,7 +76241,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4968,
+   "source_files": 4969,
    "test_files": 902
   },
   "oneiron-android": {
@@ -98759,7 +98775,7 @@
      "path": "src/connector_call_host.rs",
      "purpose": "The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1,
       "struct": 1
      }
@@ -98771,7 +98787,7 @@
      "path": "src/connector_call_host/live_exchange.rs",
      "purpose": "The live half of the call host: the worker that owns an exchange once its send returned",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 22
      }
     },
     {
@@ -98781,7 +98797,7 @@
      "path": "src/connector_call_host/presenting.rs",
      "purpose": "What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 15
      }
     },
     {
@@ -98791,7 +98807,27 @@
      "path": "src/connector_call_host/reply_read.rs",
      "purpose": "The reply readers both halves of the call host share: one reply body, JSON read whole or an event stream…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_host/resume.rs",
+     "purpose": "A live exchange taken up again after a restart (FIX 9157, ruled by the Engine 07:49)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_host/sent.rs",
+     "purpose": "What one send of the call host came to, before the ledger scrubs its raw fields",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -98821,7 +98857,7 @@
      "path": "src/connector_elicitation.rs",
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -102212,7 +102248,7 @@
      "path": "src/models/native_exl3/mod.rs",
      "purpose": "The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -105360,7 +105396,7 @@
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 5,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -105733,7 +105769,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1217,
+   "source_files": 1219,
    "test_files": 182
   },
   "oneiron-spawn": {
