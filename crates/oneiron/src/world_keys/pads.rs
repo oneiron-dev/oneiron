@@ -497,6 +497,41 @@ pub(crate) fn held_pad_world_in_txn(
     Ok(false)
 }
 
+/// Refuses destroying the pad row `raw` read from a carrier, a window value
+/// or a cached body that no canonical row may back, while a legal hold
+/// stands on its world or on a claim its key seals (OF-470, FIX 3061): the
+/// refusal is queued with `actor`, on that world and those claims, as
+/// [`reject_held_world_in_txn`] queues it. What [`held_pad_world_in_txn`]
+/// reads as unheld passes, an undecodable pad among it. A hold on the pad id
+/// itself stays the caller's check.
+#[cfg(feature = "sync")]
+pub(crate) fn reject_held_pad_carrier_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    raw: &[u8],
+    actor: &crate::store::legal_hold::HoldActor,
+) -> Result<()> {
+    if !held_pad_world_in_txn(store, txn, raw)? {
+        return Ok(());
+    }
+    let Some(Ok(world)) = pad_body_world(raw) else {
+        return Ok(());
+    };
+    let mut sealed = vec![world];
+    let claims = store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)?
+        .collect::<Result<Vec<_>>>()?;
+    for id in claims {
+        let Some(claim) = store.port_entity_raw(txn, &id)? else {
+            continue;
+        };
+        if matches!(crate::sync::types::entity_world(&claim), Ok(Some(of)) if of == world) {
+            sealed.push(id);
+        }
+    }
+    store.reject_legal_holds_in_txn(txn, &sealed, actor)
+}
+
 /// Destroys `world`'s keys on this replica, in the caller's write transaction:
 /// purges every pad row of the world, stages each one's hard tombstone, and
 /// writes the permanent destroyed fact with its receipt. `target` is any row
