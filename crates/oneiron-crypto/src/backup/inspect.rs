@@ -86,11 +86,11 @@ pub struct BackupEvidence {
     pub commitment_digest: [u8; 32],
     /// The signature record's exact bytes.
     pub signature: Vec<u8>,
-    /// BLAKE3 of the sealed manifest's envelope.
+    /// BLAKE3 of the sealed manifest root's envelope.
     pub manifest_blake3: [u8; 32],
-    /// Where the manifest's frame starts.
+    /// Where the manifest root's frame starts.
     pub manifest_offset: u64,
-    /// The sealed frames: every chunk, and the manifest.
+    /// The sealed frames: every chunk, the manifest's pieces and its root.
     pub frames: u64,
     /// BLAKE3 of every byte of the artifact, as held.
     pub outer_blake3: [u8; 32],
