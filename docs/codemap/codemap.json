@@ -14670,7 +14670,7 @@
      "path": "src/code_run/dispatcher/program_step.rs",
      "purpose": "A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -26688,7 +26688,7 @@
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -26815,7 +26815,7 @@
      "purpose": "A turn program's holds and their resume (DOOR-141 PR3b, FIX 4382, FIX 5711)",
      "surface": {
       "crate-vis": 9,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -26826,6 +26826,17 @@
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
       "crate-vis": 26
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/stop_recovery.rs",
+     "purpose": "The abandon an owner's Stop still owes its try's sends (FIX 7188, FIX 7352), retried on every wake host…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -26927,7 +26938,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AbortDreamerBudgetReservation",
@@ -26973,11 +26984,21 @@
      "path": "src/dreamer_runner/types.rs",
      "purpose": "Dreamer runner request/outcome vocabulary and its pure impls",
      "surface": {
-      "const": 1,
       "crate-vis": 4,
       "enum": 13,
-      "fn": 20,
+      "fn": 19,
       "struct": 26
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/types/retry_policy.rs",
+     "purpose": "How long a Retry park waits before a later wake pass resumes it (FIX 8716): the vault's own…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
      }
     },
     {
@@ -26989,7 +27010,7 @@
      "path": "src/dreamer_runner/wake_park.rs",
      "purpose": "The runner side of the normal Checkpoint resume (DOOR-144): the parks it reads, and the projection the…",
      "surface": {
-      "fn": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -27114,8 +27135,8 @@
      "purpose": "The wake loop: admit, warn, dispatch under panic containment, stop conditions",
      "surface": {
       "const": 5,
-      "crate-vis": 1,
-      "fn": 9,
+      "crate-vis": 2,
+      "fn": 10,
       "re-export": 1,
       "struct": 1
      }
@@ -27202,6 +27223,16 @@
      "notable": [],
      "path": "src/dreamer_wake/driver/park_cause.rs",
      "purpose": "What a non-deadline executor error parks as (FIX 7272)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/rewrite.rs",
+     "purpose": "The Rewrite a `host.wake` pre-hook may make (ARCH-0080 §5): add material for the wake, and nothing else (FIX…",
      "surface": {
       "crate-vis": 3
      }
@@ -33293,7 +33324,7 @@
      "path": "src/gate/policy_values.rs",
      "purpose": "Typed behaviour values and deterministic, scoped manifest-row selection",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -43058,7 +43089,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 3,
       "re-export": 1,
       "struct": 2,
@@ -76071,7 +76102,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 144,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76085,7 +76116,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77100,9 +77131,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 129,
+   "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5050,
+   "source_files": 5053,
    "test_files": 902
   },
   "oneiron-android": {
@@ -105667,7 +105698,7 @@
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
