@@ -68,25 +68,48 @@ impl McpResultMetadata {
     }
 }
 
-/// The effective scope a result was produced under.
+/// The effective scope a result was produced under: its world, the facet a
+/// write lands in (`facet_ref`) and, apart from it, every facet the
+/// credential reads (`read_facet_refs`, FIX 9509): `null` while it was never
+/// narrowed by facet, else each facet as 32 hex, sorted.
 #[must_use]
 pub fn mcp_effective_scope_value(scope: &McpConnectorScope) -> Value {
     json!({
         "world_ref": scope.world_ref.map(|id| id.to_hex()),
         "facet_ref": scope.facet_ref.map(|id| id.to_hex()),
+        "read_facet_refs": read_facet_refs(scope),
     })
 }
 
-/// A short, stable scope label for the board header.
+/// A short, stable scope label for the board header. A scoped label names
+/// the facets the credential reads (`reads=`) apart from the one its writes
+/// land in (`facet=`), so a several-facet reader is never shown as one.
 #[must_use]
 pub fn mcp_effective_scope_label(scope: &McpConnectorScope) -> String {
+    let reads = match read_facet_refs(scope) {
+        None => "*".to_owned(),
+        Some(facets) if facets.is_empty() => "none".to_owned(),
+        Some(facets) => facets.join("+"),
+    };
     match (scope.world_ref, scope.facet_ref) {
-        (None, None) => "VaultWide".to_owned(),
+        (None, None) if reads == "*" => "VaultWide".to_owned(),
         (world, facet) => format!(
-            "Scoped(world={}, facet={})",
+            "Scoped(world={}, facet={}, reads={reads})",
             world.map_or_else(|| "*".to_owned(), |id| id.to_hex()),
             facet.map_or_else(|| "*".to_owned(), |id| id.to_hex()),
         ),
+    }
+}
+
+/// Every facet `scope` reads, as sorted 32 hex: `None` when it reads every
+/// facet, empty when it reads none.
+fn read_facet_refs(scope: &McpConnectorScope) -> Option<Vec<String>> {
+    match &scope.facets {
+        oneiron::federation::ScopeAxis::All => None,
+        oneiron::federation::ScopeAxis::Bottom => Some(Vec::new()),
+        oneiron::federation::ScopeAxis::Some(facets) => {
+            Some(facets.iter().map(|facet| facet.0.to_hex()).collect())
+        }
     }
 }
 
