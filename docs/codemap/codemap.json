@@ -69923,7 +69923,7 @@
       "const": 1,
       "enum": 3,
       "fn": 5,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 3
      }
     },
@@ -70002,6 +70002,20 @@
       "crate-vis": 3,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapeLearningOutcome",
+      "ShapeLearningSetting"
+     ],
+     "path": "src/vault_shape/shared_setup.rs",
+     "purpose": "Sharing the vault from its shape (ARCH-0070), and the creator's answer to the conversation-learning question…",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 2
      }
     },
     {
@@ -77226,7 +77240,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77305,7 +77319,7 @@
    },
    "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5068,
+   "source_files": 5069,
    "test_files": 902
   },
   "oneiron-android": {
@@ -110927,6 +110941,8 @@
       "ShapeGrantBound",
       "ShapeItemClass",
       "ShapeItemState",
+      "ShapeLearningOutcome",
+      "ShapeLearningSetting",
       "ShapeMailScope",
       "ShapeMemberRole",
       "ShapePlan",
@@ -111658,7 +111674,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1013,
-      "struct": 3107
+      "struct": 3109
      }
     },
     {
