@@ -539,7 +539,12 @@ pub use import::{
     ImportedNoteStanding, NOTES_IMPORT_SOURCE,
 };
 mod title_index;
-pub(crate) use birth::document_birth_in_txn;
+pub(crate) use birth::{document_birth_in_txn, room_birth_document_in_txn};
+// FIX 4280: a room's NOTE read where the room holds it, and the sizes a
+// store-aware entrance measures of a NOTE document (rule 5).
+mod room_reads;
+mod scan;
+pub(crate) use scan::measure as measure_note_document;
 #[cfg(feature = "sync")]
 pub(crate) use title_index::replace_recovered_set_in_txn as replace_recovered_titles_in_txn;
 mod operations;

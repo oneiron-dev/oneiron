@@ -44,6 +44,9 @@ use serde_json::{Map, Value};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
+// FIX 4280: a call serving a room NOTE keeps no record either.
+pub(crate) mod room_notes;
+
 tokio::task_local! {
     /// The id of the connection the call in flight arrived on: one per
     /// accepted socket, never derived from the peer's address.

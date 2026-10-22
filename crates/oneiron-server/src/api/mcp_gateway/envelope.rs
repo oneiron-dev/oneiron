@@ -706,7 +706,14 @@ pub(crate) async fn handle_mcp_request(
                 actor.actor_ref,
             );
             let anonymous =
-                crate::api::call_receipt::in_anonymous_session(server, headers, principal);
+                crate::api::call_receipt::in_anonymous_session(server, headers, principal)
+                    || crate::api::call_receipt::room_notes::mcp_room_note_call(
+                        server,
+                        headers,
+                        principal,
+                        &tool,
+                        request.params.as_ref(),
+                    );
             // FIX 1085: the call counts once on the wire, under the caller
             // resolved above and the tool it names, before it is judged.
             super::wire::observe_tool_call(server, mode, &actor, &tool, anonymous);

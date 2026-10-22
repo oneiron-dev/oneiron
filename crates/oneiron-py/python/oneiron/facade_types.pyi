@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1149 facade rows, 4064 declarations.
+Census: 1149 facade rows, 4066 declarations.
 Inputs: 1084 of 1149 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1035 of 1149 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
@@ -3425,10 +3425,16 @@ WithheldRole = Literal["input", "prompt", "trigger"]
 class WithheldRef(TypedDict):
     handle: str
     role: WithheldRole
+class RoomEvidenceRef(TypedDict):
+    supplied: str
+    turn: NotRequired[str | None]
+class RoomEvidence(TypedDict):
+    refs: list[RoomEvidenceRef]
 class RowBirth(TypedDict):
     made_by: MadeBy
     content_hash: str
     withheld: NotRequired[list[WithheldRef]]
+    room_evidence: NotRequired[RoomEvidence | None]
 class ScopedExportRecord(TypedDict):
     record: RecordRef
     position: RecordPosition
@@ -7156,6 +7162,7 @@ class CreateNoteRequest(TypedDict):
 class OffRecordNoteRequest(TypedDict):
     session_ref: str
     note: CreateNoteRequest
+    evidence_turn_refs: NotRequired[list[str]]
 class OffRecordClaimRequest(TypedDict):
     session_ref: str
     claim: ScopedClaimInput
