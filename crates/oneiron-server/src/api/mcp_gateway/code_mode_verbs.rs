@@ -733,6 +733,15 @@ impl FreshGuest for RunFreshGuest {
     fn state_charge(&self) -> Box<dyn HandleRetention> {
         self.handles.charge()
     }
+
+    /// A fresh guest abandoned under its replay lands its sandbox's abandon
+    /// receipt, as the run's own guest's does (FIX 7879). The replay's own
+    /// answer stands either way.
+    fn abandoned(&mut self, manifest: &oneiron_container::SessionManifest) {
+        let _ = self
+            .vault
+            .append_sandbox_abandon_receipt(self.run_id, manifest);
+    }
 }
 
 impl RunBrowser {

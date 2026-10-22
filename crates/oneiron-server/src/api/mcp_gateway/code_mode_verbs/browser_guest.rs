@@ -81,6 +81,21 @@ impl BrowserGuestStarter for RunGuestStarter {
     fn state_charge(&self) -> Box<dyn HandleRetention> {
         self.handles.charge()
     }
+
+    /// A switch target's attach moves the readiness, as the first guest's
+    /// does (FIX 8092): the last completed start wins.
+    fn observe_attach(
+        &mut self,
+        _engine: BrowserEngine,
+        attached: Result<&oneiron_container::SessionManifest, &BrowserError>,
+    ) {
+        match attached {
+            Ok(manifest) => self.readiness.started(manifest),
+            Err(_) => self
+                .readiness
+                .unavailable(BrowserUnavailableReason::DriverAttachFailed),
+        }
+    }
 }
 
 /// Starts run `run_id`'s browser on the engine the host's `guest` names and

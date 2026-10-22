@@ -27,7 +27,7 @@ use crate::library::{check_solved, no_fresh_guest, replay_and_file};
 use crate::request::BrowserRequestHandler;
 use crate::{
     BrowserEngine, BrowserError, HandleRetention, NoDecider, ProposeInput, ProposeOutput,
-    ReplayGuest, SwitchStage, WorkflowLibrary,
+    ReplayGuest, StoragePhase, SwitchComponent, SwitchStage, WorkflowLibrary,
 };
 use std::sync::Arc;
 
@@ -47,6 +47,14 @@ pub trait FreshGuest: Send {
     /// A charge on the host's retained line, holding nothing yet, for the
     /// sign-ins a session holds while it carries them into a fresh guest.
     fn state_charge(&self) -> Box<dyn HandleRetention>;
+
+    /// Hears, once, that a fresh guest's replay ended with that guest's
+    /// sandbox abandoned, with its manifest (FIX 7879): the host lands its
+    /// abandon receipt as it does its run's own guest's. Its own observer,
+    /// apart from any demonstration's close. The default hears nothing.
+    fn abandoned(&mut self, manifest: &oneiron_container::SessionManifest) {
+        let _ = manifest;
+    }
 }
 
 /// What a fresh admission guest takes of the proposing session
@@ -72,7 +80,28 @@ fn fresh_guest_state_policy(
     hold(&mut state, charge, &mut guest.not_carried);
     let (kept, losses) = (&mut guest.carried, &mut guest.not_carried);
     seed_state(&to.driver, guest.engine, &state, kept, losses)?;
+    fresh_records(&mut guest);
     Ok(guest)
+}
+
+/// The fresh carry's records as its own (FIX 7877): a store read at the
+/// carry names `fresh_export`, not a switch's, and the URL, which the
+/// carry never takes, is no loss of it.
+fn fresh_records(guest: &mut ReplayGuest) {
+    let fresh = |phase: &mut Option<StoragePhase>| {
+        if *phase == Some(StoragePhase::SwitchExport) {
+            *phase = Some(StoragePhase::FreshExport);
+        }
+    };
+    guest
+        .not_carried
+        .retain(|lost| lost.component != SwitchComponent::Url);
+    for lost in &mut guest.not_carried {
+        fresh(&mut lost.phase);
+    }
+    for kept in &mut guest.carried {
+        fresh(&mut kept.phase);
+    }
 }
 
 impl BrowserSession {
@@ -113,6 +142,13 @@ impl BrowserSession {
             None => replay_and_file(&mut fresh, &mut NoDecider, library, solved, guest),
         };
         self.policy = std::mem::take(&mut fresh.policy);
+        // A fresh guest abandoned under its replay lands its own receipt,
+        // however the replay ended.
+        if fresh.abandoned()
+            && let Some(factory) = self.fresh.as_mut()
+        {
+            factory.abandoned(fresh.manifest());
+        }
         let mut output = output?;
         if let Some(replay) = output.replay.as_mut() {
             self.page_replay(replay);

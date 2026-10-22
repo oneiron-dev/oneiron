@@ -135,6 +135,9 @@ pub(crate) struct CdpDriver {
     /// The DOM nodes the last read showed a secret in, for a screenshot
     /// to mask.
     secret_nodes: Vec<(Option<String>, u64)>,
+    /// A closed tab still in front when it closed, whose snapshots go once
+    /// another tab is in front (FIX 7411).
+    held_closed: Vec<String>,
 }
 
 /// One page target the driver follows, with its session on it, and the
@@ -250,6 +253,7 @@ impl CdpDriver {
             secrets,
             typed: HashMap::new(),
             secret_nodes: Vec::new(),
+            held_closed: Vec::new(),
         };
         if driver.pipe.mediated() {
             let deadline = Instant::now() + CALL;
