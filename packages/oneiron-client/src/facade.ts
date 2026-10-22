@@ -3161,8 +3161,8 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.skills.attribution.judgments": { description: "The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.proposals": { description: "The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.positive.retire": { description: "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.steps.submit": { description: "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.steps.receipt": { description: "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "ai.steps.submit": { description: "Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "ai.steps.receipt": { description: "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "ai.streams.open": { description: "Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.streams.subscribe": { description: "Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "ai.streams.events": { description: "Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -6355,9 +6355,9 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         completions: (input: Facade.ChatCompletionRequest, options?: O): FacadeReturns<"ai.chat.completions">[K] => invoke("ai.chat.completions", input, options, newInvocation()),
       },
       steps: {
-        /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
+        /** Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result. */
         submit: (input: Facade.ModelStepSubmit, options?: O): FacadeReturns<"ai.steps.submit">[K] => invoke("ai.steps.submit", input, options, newInvocation()),
-        /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
+        /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain. */
         receipt: (input: Facade.ModelStepReceiptRequest, options?: O): FacadeReturns<"ai.steps.receipt">[K] => invoke("ai.steps.receipt", input, options, newInvocation()),
       },
       streams: {

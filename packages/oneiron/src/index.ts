@@ -3184,9 +3184,9 @@ export class Oneiron {
       completions: (input: Facade.ChatCompletionRequest): Facade.ChatCompletionResponse => this.#call(() => this.#client.aiChatCompletions(input) as Facade.ChatCompletionResponse),
     },
     steps: {
-      /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
+      /** Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result. */
       submit: (input: Facade.ModelStepSubmit): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsSubmit(input) as Facade.ModelStepReceipt),
-      /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
+      /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain. */
       receipt: (input: Facade.ModelStepReceiptRequest): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsReceipt(input) as Facade.ModelStepReceipt),
     },
     streams: {

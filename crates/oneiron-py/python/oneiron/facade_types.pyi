@@ -14916,7 +14916,9 @@ class ModelStepResultFailed(TypedDict):
 class ModelStepResultBudgetDenied(TypedDict):
     status: Literal["budget_denied"]
     trap_ref: str
-ModelStepResult = ModelStepResultFinished | ModelStepResultFailed | ModelStepResultBudgetDenied
+class ModelStepResultErased(TypedDict):
+    status: Literal["erased"]
+ModelStepResult = ModelStepResultFinished | ModelStepResultFailed | ModelStepResultBudgetDenied | ModelStepResultErased
 class ModelStepReceipt(TypedDict):
     step_ref: str
     step_hash: str

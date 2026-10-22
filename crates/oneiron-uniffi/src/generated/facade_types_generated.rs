@@ -46587,6 +46587,8 @@ pub enum ModelStepResult {
         #[serde(rename = "trap_ref")]
         trap_ref: String,
     },
+    #[serde(rename = "erased")]
+    Erased,
 }
 
 /// `oneiron::llm::step::public::ModelStepReceipt`.

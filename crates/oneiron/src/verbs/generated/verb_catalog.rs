@@ -12757,10 +12757,10 @@ impl AgentVerb {
                 "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."
             }
             Self::AiStepsSubmit => {
-                "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."
+                "Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result."
             }
             Self::AiStepsReceipt => {
-                "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."
+                "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain."
             }
             Self::AiStreamsOpen => {
                 "Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one."

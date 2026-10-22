@@ -29,6 +29,8 @@ mod settled;
 mod step_claim;
 mod step_only;
 mod step_state;
+// FIX 9929: a public submission's kept copies under body custody.
+mod submission_custody;
 mod trap;
 mod trap_binding;
 mod types;
@@ -83,6 +85,9 @@ pub(crate) use self::response_pins::{
 };
 pub(crate) use self::step_state::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, step_state_carriage, step_state_owners,
+};
+pub(crate) use self::submission_custody::{
+    erase_submissions_in_txn, submission_carriage, submission_owners,
 };
 
 #[cfg(test)]

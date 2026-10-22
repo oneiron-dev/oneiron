@@ -5951,7 +5951,7 @@ export type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError
 /** `oneiron::llm::step::public::ModelStepFailure` */
 export type ModelStepFailure = { class: ModelStepFailureClass; message: string; llm?: LlmError | null; validation_attempts?: number | null; validation_errors: string[]; spent_usage?: LlmUsage | null }
 /** `oneiron::llm::step::public::ModelStepResult` */
-export type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string }
+export type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string } | { status: "erased" }
 /** `oneiron::llm::step::public::ModelStepReceipt` */
 export type ModelStepReceipt = { step_ref: string; step_hash: string; model: ModelId; retry: ModelStepRetryPolicy; progression?: StepProgression | null; result?: ModelStepResult | null }
 /** `oneiron::llm::step::public::ModelStepReceiptRequest` */

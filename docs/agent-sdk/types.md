@@ -4096,9 +4096,9 @@ class Oneiron:
             """Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling."""
     class _AiStepsVerbs:
         def submit(self, spec: Facade.ModelStepSubmit) -> Facade.ModelStepReceipt:
-            """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
+            """Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result."""
         def receipt(self, spec: Facade.ModelStepReceiptRequest) -> Facade.ModelStepReceipt:
-            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain."""
     class _AiStreamsVerbs:
         def open(self, spec: Facade.ModelStreamOpen) -> Facade.ModelStreamOpened:
             """Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one."""

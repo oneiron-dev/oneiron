@@ -5731,10 +5731,10 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def submit(self, spec):
-            """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
+            """Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result."""
             return json.loads(_translate(lambda: self._client.ai_steps_submit(json.dumps(spec))))
         def receipt(self, spec):
-            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain."""
             return json.loads(_translate(lambda: self._client.ai_steps_receipt(json.dumps(spec))))
     class _AiStreamsVerbs:
         def __init__(self, client: _NativeClient) -> None:
