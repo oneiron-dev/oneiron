@@ -1968,7 +1968,7 @@ declare namespace Sdk {
   type SkillContribution = { skill: EntityId; check: ContributionCheck };
   type UsedProvenanceEdge = { derived: EntityId; source: EntityId; check?: ContributionCheck | null };
   type CreditOptions = { enabled: boolean; depth_cap?: number | null; check_every_hop: boolean };
-  type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge: string; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
+  type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
   type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields };
   type EvidenceRow = { at: number; anchor: Anchor; observation: Observation; weight: number; judge?: string | null; on_judge_model?: boolean; outcome_label?: string | null; pack_attribution?: PackLearningContext | null; goal_revision?: string | null };
   type LearningEvidenceView = { receipt: string; evidence: EvidenceRow };
@@ -1976,8 +1976,8 @@ declare namespace Sdk {
   type MeasuredLearningView = { estimate: MeasuredLearningEstimate; own: boolean; borrowed_from?: LearningCellKey | null; attributed_outcome_receipts: string[]; provenance: LearningProvenanceView; prior_provenance?: LearningProvenanceView | null };
   type LearningCellView = { cell: LearningCellKey; view: MeasuredLearningView };
   type LearningProjectionRequest = { attempt_receipt: string; outcome_receipt: string; axis: string };
-  type LateCreditShare = { subject: EntityId; origin_skill?: EntityId | null; chain: UsedProvenanceEdge[]; decay: number; weight: number };
-  type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution: PackAttributionFields; direct_subjects: EntityId[]; shares: LateCreditShare[] };
+  type LateCreditShare = { subject?: EntityId | null; origin_skill?: EntityId | null; chain?: UsedProvenanceEdge[] | null; decay: number; weight: number };
+  type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution?: PackAttributionFields | null; direct_subjects: (EntityId | null)[]; shares: LateCreditShare[] };
   type LearningProjectionView = { receipt?: LateCreditReceipt | null };
   type ObjectiveConfession = { objective: string; met: boolean; flaw?: string | null; uncertainty?: string | null };
   type AttemptConfession = { attempt: AttemptId; subject: EntityId; type_ref: CellTypeRef; objectives: ObjectiveConfession[] };
@@ -1987,7 +1987,7 @@ declare namespace Sdk {
   type ObjectiveFinding = { objective: string; flaw_present: boolean; evidence_ref: string };
   type SealCheckOutcome = { judge_revision: string; checked_at: number; findings: ObjectiveFinding[] };
   type SealCheckReceipt = { request: SealCheckRequest; outcome?: SealCheckOutcome | null; last_asked_at?: number | null };
-  type SealedAttemptReceipt = { confession: AttemptConfession; executor: string; result_ref: string; sealed_at: number; passing: boolean; draw?: AuditDraw | null; checks: SealCheckReceipt[] };
+  type SealedAttemptReceipt = { confession: AttemptConfession; project?: EntityId | null; executor: string; result_ref: string; sealed_at: number; passing: boolean; draw?: AuditDraw | null; checks: SealCheckReceipt[] };
   type SealAssessment = { weighted_flaws: number; weighted_hidden_flaws: number; confirmed_confessions: number; false_confessions: number };
   type SealReceiptView = { receipt: SealedAttemptReceipt; assessment: SealAssessment; honesty_reward: number };
   type SealAttemptRequest = { attempt: AttemptId };
@@ -3009,7 +3009,7 @@ declare namespace Sdk {
   type AttributionEvidenceRequest = { receipt_ref: string; actor: EntityId; skill?: EntityId | null; outcome: string; followed_skill?: boolean | null; followed_state?: FollowedStateInput | null; skill_covered_step?: boolean | null; at: number };
   type AttributionEvidenceReceipt = { sequence: number };
   type AttributionProjectRequest = { since_cursor?: number | null };
-  type AttemptJudgmentView = { sequence: number; verdict: AttributionLabel; subject: EntityId; evidence_receipts: string[]; at: number };
+  type AttemptJudgmentView = { sequence: number; verdict: AttributionLabel; subject?: EntityId | null; evidence_receipts: string[]; at: number };
   type PositiveProposalView = { evidence_sequence: number; skill: EntityId; actor: EntityId; finding: string; reason?: string | null; evidence_receipts: string[]; at: number };
   type SkillEditProposalView = { judgment_sequence: number; skill: EntityId; evidence_receipts: string[]; at: number };
   type AttributionProjection = { cursor: number; judgments: AttemptJudgmentView[]; positive_proposals: PositiveProposalView[]; pending_edit_proposals: SkillEditProposalView[] };

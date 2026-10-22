@@ -220,7 +220,9 @@ pub fn supersede_displaced_judge_receipts(
             }
             // Also re-project on a repeated call: a crash after committing the
             // marker but before projecting must not strand a stale active claim.
-            if judgment.verdict == super::AttributionVerdict::SkillDefect {
+            if judgment.verdict == super::AttributionVerdict::SkillDefect
+                && let Some(subject) = judgment.subject
+            {
                 let Some(receipt_ref) = judgment.evidence_receipts.first() else {
                     continue;
                 };
@@ -236,13 +238,13 @@ pub fn supersede_displaced_judge_receipts(
                 crate::skill_reliability::mark_displaced_outcome_in_txn(
                     vault,
                     txn,
-                    &judgment.subject,
+                    &subject,
                     executor.as_deref(),
                     receipt_ref,
                     displaced,
                     replacement,
                 )?;
-                let pair = (judgment.subject, executor);
+                let pair = (subject, executor);
                 if !affected.contains(&pair) {
                     affected.push(pair);
                 }
