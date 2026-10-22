@@ -10,6 +10,7 @@ mod codec;
 mod doors;
 mod graph;
 pub mod helper;
+mod helper_eval;
 mod identity;
 mod invocation;
 mod lifecycle;
