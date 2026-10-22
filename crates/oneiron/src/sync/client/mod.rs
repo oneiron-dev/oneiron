@@ -53,6 +53,7 @@ mod note_session;
 mod residence;
 mod sync_frames;
 mod types;
+mod window_pads;
 
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
