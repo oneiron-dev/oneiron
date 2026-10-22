@@ -343,6 +343,24 @@ oneiron-bench infer run --arm-id ID --transport direct|own-server \
   `router().served(<engine id>)` → `RunBackend` under an undeclared run, over
   the `oneiron-llm-openai` wire, as the Dreamer's step layer calls a model.
   The named provider must build `ready`.
+- `--transport native-ipc --native-socket /ABS/worker.sock`: the same catalog
+  and OpenAI request/stream codecs, over EXL3 native codec v1 with one sealed
+  input descriptor. An existing external worker must already be running.
+  Qualification reads `hello` and full `stats` before timing. No HTTP fallback
+  or request retry occurs. Rows retain typed `inference_calls`, final cheap
+  stats, qualification stats, and worker hello separately from client TTFT.
+- `--seed N` pins the request seed on every arm; absent, requests are unchanged.
+- Native speed rows require terminal completion, valid counters, and actual
+  generated token IDs (`usage.bench_token_ids`), with separate SHA-256 hashes
+  for IDs (compact JSON) and answer text (UTF-8). The ordinary worker does not
+  export IDs: such rows are `rejected`, not averaged. For a controlled screen,
+  `deploy/house-model/exl3_executor_bench.py --serve` observes completed Job
+  sequences without changing the worker files. Its `--export-dir` saves the
+  canonical prepare request bytes. Run the same script without `--serve`, with
+  `--requests` (JSONL: `case_id`, `request_file`; first is warmup) and `--out`,
+  to measure `prepare` → scheduler submit/wait without any transport. All
+  artifacts stay outside the source tree. These observations are benchmark
+  evidence, not production artifact attestation.
 - `--transport own-server --server BIN`: a loopback `oneiron-server` (`init`,
   `token bootstrap`, `serve`) gets the same `[models]` block in its config;
   the bench redeems the owner pairing link (an owner-grade credential, which

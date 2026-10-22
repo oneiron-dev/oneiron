@@ -12,11 +12,13 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use futures_util::StreamExt as _;
+use oneiron::llm::{CacheOutcome, InferenceCallReceipt, InferenceEndReason, WorkerKind};
 use oneiron::{
     BudgetLease, ContentPart, FinishReason, LlmBackend, LlmRequest, LlmStreamEvent, LlmUsage,
 };
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+use sha2::{Digest as _, Sha256};
 
 /// The timing keys llama-server and the house EXL3 server report, each
 /// recorded as a number or null; any other numeric key they add is kept too.
@@ -57,6 +59,15 @@ pub(super) struct Timing {
     pub(super) served_provider: Option<String>,
     /// What the engine called the model in its reply.
     pub(super) reported_model: Option<String>,
+    pub(super) inference_calls: Vec<InferenceCallReceipt>,
+    pub(super) token_ids: Option<Vec<u64>>,
+    pub(super) token_ids_sha256: Option<String>,
+    pub(super) text_sha256: Option<String>,
+    pub(super) receipt_rejection: Option<String>,
+    pub(super) native_stats: Option<JsonValue>,
+    pub(super) native_stats_op: Option<JsonValue>,
+    pub(super) native_hello: Option<JsonValue>,
+    pub(super) request_sha256: Option<String>,
 }
 
 /// A call that reached `Done`.
@@ -215,6 +226,16 @@ fn finished(
         .or_else(|| provider_usage(raw).get("served_model"))
         .and_then(JsonValue::as_str)
         .map(str::to_owned);
+    let calls = usage.inference_calls();
+    let provider = provider_usage(raw);
+    let token_ids: Option<Vec<u64>> = provider
+        .get("bench_token_ids")
+        .and_then(|ids| serde_json::from_value(ids.clone()).ok());
+    let token_ids_sha256 = token_ids
+        .as_ref()
+        .and_then(|ids| serde_json::to_vec(ids).ok())
+        .map(|bytes| format!("{:x}", Sha256::digest(bytes)));
+    let rejection = receipt_rejection(&calls, token_ids.as_deref(), output);
     let timing = Timing {
         ttft_any_ms: at.first_any,
         ttft_text_ms: at.first_text,
@@ -234,11 +255,64 @@ fn finished(
         reasoning_chars: Some(reasoning_chars),
         served_provider: usage.served_provider().map(str::to_owned),
         reported_model,
+        request_sha256: provider
+            .get("bench_request_sha256")
+            .and_then(JsonValue::as_str)
+            .map(str::to_owned),
+        inference_calls: calls,
+        token_ids,
+        token_ids_sha256,
+        text_sha256: Some(format!("{:x}", Sha256::digest(text.as_bytes()))),
+        receipt_rejection: rejection,
+        native_stats: provider.get("bench_native_stats").cloned(),
+        native_stats_op: provider.get("bench_stats_op").cloned(),
+        native_hello: provider.get("bench_hello").cloned(),
     };
     Measured {
         timing,
         text,
         usage,
         started: at.started,
+    }
+}
+
+/// Speed evidence is separate from a successful text reply. Unknown counters
+/// and absent token observations are rejected, never zero-filled.
+fn receipt_rejection(
+    calls: &[InferenceCallReceipt],
+    ids: Option<&[u64]>,
+    output: u64,
+) -> Option<String> {
+    let invalid = || Some("incomplete or invalid native speed receipt".to_owned());
+    let [call] = calls else {
+        return invalid();
+    };
+    if call.worker.kind != WorkerKind::Exl3
+        || call.worker.identity.backend_epoch.is_none()
+        || call.ttft_us.is_none()
+        || !matches!(
+            call.end_reason,
+            Some(
+                InferenceEndReason::Stop
+                    | InferenceEndReason::Length
+                    | InferenceEndReason::ToolCalls
+            )
+        )
+        || call.output_tokens != Some(output)
+        || call.queue_wait.worker_us.is_none()
+        || call.queue_wait.engine_us.is_none()
+        || call.passes.is_empty()
+        || call.passes.iter().any(|pass| {
+            pass.outcome == CacheOutcome::Unknown
+                || pass.prefill_us.is_none()
+                || pass.generate_us.is_none()
+        })
+        || !matches!((call.drafts_proposed, call.drafts_accepted), (Some(p), Some(a)) if a <= p)
+    {
+        return invalid();
+    }
+    match ids {
+        Some(ids) if ids.len() as u64 == output => None,
+        _ => Some("missing or inconsistent observed token ids".to_owned()),
     }
 }
