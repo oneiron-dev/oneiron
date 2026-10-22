@@ -17,7 +17,13 @@
 //! effect.
 //!
 //! The DOM's mutations are counted by one `MutationObserver` per document,
-//! started by the first mark on it.
+//! started by the first mark on it, in the driver's own isolated world
+//! ([`CHANGE_WORLD`]) where the engine makes one, so the page's scripts
+//! never see it (FIX 6764); an engine that makes none keeps it in the
+//! page's world, as before. A click on a row reads its control's state too
+//! (checked, selected, its ARIA states), which no DOM mutation shows (FIX
+//! 8006); and a fact the act's own observation contradicts (its outline
+//! moved) is dropped by the act.
 //!
 //! Where the session keeps storage snapshots, the mark's one evaluation also
 //! reads the page's stores (`storage`, BROWSER-SPLIT PR3b); that part is
@@ -40,10 +46,18 @@ pub(crate) const CHANGE_CHECK_WINDOW: Duration = Duration::from_millis(1000);
 /// document starts its count.
 const PAGE_SIGNALS: &str = "(() => { const d = document; let s = d.oneironChange; if (!s) { s = {n: 0}; s.o = new MutationObserver(r => { s.n += r.length; }); s.o.observe(d, {subtree: true, childList: true, attributes: true, characterData: true}); Object.defineProperty(d, 'oneironChange', {value: s}); } s.n += s.o.takeRecords().length; return [location.href, scrollX, scrollY, s.n]; })()";
 
+/// The isolated world the change check's observer lives in, apart from the
+/// page's scripts and from every other world the driver makes.
+const CHANGE_WORLD: &str = "oneironChange";
+
+/// A clicked control's state, which a toggle moves without a DOM mutation:
+/// its checked, selected and indeterminate properties and its ARIA states.
+const CONTROL_STATE: &str = "function() { const a = n => this.getAttribute(n); return [this.checked, this.selected, this.indeterminate, this.value, a('aria-checked'), a('aria-pressed'), a('aria-selected'), a('aria-expanded')]; }";
+
 /// What one act's change check watches, and names in its fact.
 pub(super) enum Watch<'a> {
-    /// A click on a row, or at a point.
-    Click(ActionTarget),
+    /// A click on a row, its node's state read too, or at a point.
+    Click(ActionTarget, Option<&'a Value>),
     /// A type or select into a row: its value too, read off its node.
     Entry(ActionTarget, &'a Value),
     /// An open of a URL.
@@ -56,7 +70,7 @@ impl Watch<'_> {
         let reason = NoEffectReason::NoObservableChange;
         let window_ms = u64::try_from(watched.as_millis()).unwrap_or(u64::MAX);
         match self {
-            Self::Click(target) => ActionFact::ClickNoEffect {
+            Self::Click(target, _) => ActionFact::ClickNoEffect {
                 engine,
                 target: target.clone(),
                 reason,
@@ -84,7 +98,8 @@ pub(super) struct Mark {
     /// The URL, scroll position and DOM mutation count, as one evaluation
     /// answered them.
     page: Value,
-    /// The target's value, for a type or select.
+    /// The target's value, for a type or select; its control's state, for
+    /// a click on a row.
     value: Value,
     documents: String,
     navigations: u64,
@@ -170,20 +185,21 @@ impl CdpDriver {
             let expression = self.mark_signals(PAGE_SIGNALS)?;
             Some((expression, read))
         });
+        let world = self.change_world(deadline);
+        let evaluate = |expression: &str| {
+            let mut params = json!({"expression": expression, "returnByValue": true});
+            if let Some(context) = &world {
+                params["contextId"] = context.clone();
+            }
+            params
+        };
         let page = match marked {
             Some((expression, read)) => {
-                let answer = self.signal(
-                    "Runtime.evaluate",
-                    json!({"expression": expression, "returnByValue": true}),
-                    deadline,
-                );
+                let answer =
+                    self.signal("Runtime.evaluate", evaluate(expression.as_str()), deadline);
                 split_mark(answer, read)?
             }
-            None => self.signal(
-                "Runtime.evaluate",
-                json!({"expression": PAGE_SIGNALS, "returnByValue": true}),
-                deadline,
-            )?,
+            None => self.signal("Runtime.evaluate", evaluate(PAGE_SIGNALS), deadline)?,
         };
         let value = match watch {
             Watch::Entry(_, node) => self.signal(
@@ -191,7 +207,12 @@ impl CdpDriver {
                 json!({"objectId": node["objectId"], "functionDeclaration": "function() { return this.value; }", "returnByValue": true}),
                 deadline,
             )?,
-            Watch::Click(_) | Watch::Navigate(_) => Value::Null,
+            Watch::Click(_, Some(node)) => self.signal(
+                "Runtime.callFunctionOn",
+                json!({"objectId": node["objectId"], "functionDeclaration": CONTROL_STATE, "returnByValue": true}),
+                deadline,
+            )?,
+            Watch::Click(_, None) | Watch::Navigate(_) => Value::Null,
         };
         let documents = self.shown_documents_by(deadline).ok()?;
         let listed = self
@@ -214,6 +235,23 @@ impl CdpDriver {
             navigations,
             tabs,
         })
+    }
+
+    /// The front tab's change world, for its document now (FIX 6764): the
+    /// same world each time, a new context once a new document stands.
+    /// None where the engine makes no isolated world, and the check reads
+    /// in the page's world.
+    fn change_world(&self, deadline: Instant) -> Option<Value> {
+        let world = self
+            .pipe
+            .call(
+                Some(&self.session),
+                "Page.createIsolatedWorld",
+                json!({"frameId": self.target, "worldName": CHANGE_WORLD}),
+                deadline,
+            )
+            .ok()?;
+        world.get("executionContextId").cloned()
     }
 
     /// One read on the front tab, answered by `deadline`: its value, none

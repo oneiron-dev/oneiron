@@ -776,6 +776,12 @@ pub(crate) fn vision_rung(
     seat.rung().map_err(|_| unbound())
 }
 
+/// The reason that leads a [`no_rung`] reply's message (FIX 8047): no rung
+/// up to the ceiling takes the question. MemoryError has no reason slot, so
+/// a caller tells this `model_unavailable` from a hook's or a provider's by
+/// it alone.
+pub(crate) const NO_RUNG_REASON: &str = "decision.no_rung";
+
 /// The typed reply when no rung up to the ceiling takes the question:
 /// `MODEL_UNAVAILABLE`, naming the capability the call needs.
 fn no_rung(contract: &AnswerContract, images: bool) -> MemoryError {
@@ -790,7 +796,7 @@ fn no_rung(contract: &AnswerContract, images: bool) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
         format!(
-            "ai.verdict needs a rung that {reads}answers {answers}; none up to the ceiling does"
+            "{NO_RUNG_REASON}: ai.verdict needs a rung that {reads}answers {answers}; none up to the ceiling does"
         ),
         &[
             "Bind a rung that takes it or raise the ceiling; a score over an image is never asked without the image.",
