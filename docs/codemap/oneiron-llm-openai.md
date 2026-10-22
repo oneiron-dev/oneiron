@@ -17,7 +17,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/media/prepare.rs` | src | s | 14 crate-vis | — | The OpenAI-compatible media calls' pure builders (FIX 8614, FIX 8616): every check a call's send makes on… |
 | `src/lib/mod.rs` | src | s | 8 re-export | — | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
 | `src/lib/options.rs` | src | s | 2 struct · 4 fn · 1 const | OpenAiProviderOptions, OpenAiReasoningOptions | Namespaced provider options and reasoning controls with wire-field projection |
-| `src/lib/responses.rs` | src | L | 4 struct · 23 fn · 2 const | OpenAiResponsesChain, OpenAiResponsesLlmStream, OpenAiResponsesStreamAccumulator, OpenAiResponsesTurn | Responses protocol mapping for held sockets: one turn's create frame, the chain a socket keeps, and event… |
+| `src/lib/responses.rs` | src | m | 4 struct · 2 const · 3 re-export | OpenAiResponsesChain, OpenAiResponsesLlmStream, OpenAiResponsesStreamAccumulator, OpenAiResponsesTurn | Responses protocol mapping for held sockets: one turn's create frame, the chain a socket keeps, and event… |
+| `src/lib/responses/chain.rs` | src | s | 8 fn | — | Responses socket-chain operations and item digests |
+| `src/lib/responses/output.rs` | src | s | 4 fn | — | Response output parsing and socket event inspection |
+| `src/lib/responses/stream.rs` | src | s | 6 fn | — | Responses stream accumulation and polling |
+| `src/lib/responses/turn.rs` | src | s | 5 fn | — | Turn construction and input-message mapping |
 | `src/lib/stream.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | OpenAiCompatLlmStream, OpenAiCompatStreamAccumulator | OpenAI chunk decoding with correlated text, reasoning, and tool fragments |
 | `src/lib/tests.rs` | test | m | — | — | The adapter under a run admission's gate: its preflight refuses what its send would, before the call's… |
 | `src/lib/transport.rs` | src | s | 2 struct · 2 enum · 1 trait · 2 type | OpenAiCompatHttpRequest, OpenAiCompatHttpResponse, OpenAiCompatStreamFrame, OpenAiCompatTransport, OpenAiCompatTransportError | Host-owned execution seam: future/stream aliases, HTTP envelope types, stream frame, transport trait, error… |
