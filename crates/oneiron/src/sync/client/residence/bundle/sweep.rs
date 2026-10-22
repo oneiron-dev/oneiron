@@ -11,14 +11,19 @@
 //! after an earlier sweep listed the home included. That never holds back a
 //! sweep that was due, nor a publication or a read, and the erase itself
 //! never waits on it.
+//!
+//! A kept pad object whose bytes the home lacks is offered back to it when
+//! this machine's own store keeps it whole (`refill`, FIX 9362); else it
+//! stays owed.
 
 use std::collections::BTreeMap;
 
 use super::access::{self, OwnAsks};
 use super::pad_sweep::{Owed, PadSweepProof, record};
+use super::refill::{self, ObjectRead};
 use super::{
-    PADS_UNAVAILABLE, PartSource, ResidenceRpc, SealedBundleRelay, entries, read_object, refused,
-    replace_pads, storage,
+    PartSource, ResidenceRpc, SealedBundleRelay, entries, read_object, refused, replace_pads,
+    storage,
 };
 use crate::authority::PeerMachine;
 use crate::sync::residence::SealedBundleObject;
@@ -60,26 +65,41 @@ fn home_of(vault: &Vault, home: PeerMachine) -> EntityId {
 }
 
 /// One kept generation's pad object as the home keeps it now; `None` for
-/// one it keeps no more, or whose bytes it lacks (FIX 7106): that object
-/// stays owed.
+/// one it keeps no more. One whose bytes the home lacks (FIX 7106) is offered
+/// back to it under `revision`, the index the sweep listed, when this
+/// machine's own store keeps it whole (FIX 9362); else it stays owed.
 async fn fetch_pads(
+    vault: &Vault,
     rpc: &mut ResidenceRpc,
     generation: SealedBundleGeneration,
+    revision: [u8; 32],
 ) -> Result<Option<SealedKeyPads>, TransportError> {
     let read = read_object(
         &mut PartSource::Machine(rpc),
         Some(generation),
         SealedBundleObject::Pads,
     )
-    .await;
+    .await?;
     let bytes = match read {
-        Ok(Some((_, bytes))) => bytes,
-        Ok(None) => return Ok(None),
-        Err(TransportError::InvalidPayload(reason)) if reason == PADS_UNAVAILABLE => {
-            tracing::warn!("a kept pad object the home lacks stays owed by erase's sweep");
-            return Ok(None);
+        ObjectRead::Whole(_, bytes) => bytes,
+        ObjectRead::Missing => return Ok(None),
+        ObjectRead::PadsUnavailable(unavailable) => {
+            // An offer that fails holds nothing back: the object stays owed.
+            let refilled = if unavailable.generation == generation {
+                refill::refill_held(vault, rpc, &unavailable, revision)
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(%error, "a kept pad object's refill was not offered");
+                        None
+                    })
+            } else {
+                None
+            };
+            if refilled.is_none() {
+                tracing::warn!("a kept pad object the home lacks stays owed by erase's sweep");
+            }
+            return Ok(refilled);
         }
-        Err(error) => return Err(error),
     };
     let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
     if pads.generation() != generation {
@@ -146,7 +166,9 @@ pub(super) async fn sweep_erased(
         if !work.iter().any(|(_, owed)| owed.contains(entry)) {
             continue;
         }
-        if let Some(pads) = fetch_pads(rpc, entry.generation).await? {
+        if let Some(pads) =
+            fetch_pads(vault, rpc, entry.generation, listed.retained_revision).await?
+        {
             let seen = vec![pads.digest()];
             kept.insert(
                 entry.generation,
@@ -242,7 +264,9 @@ pub(super) async fn sweep_erased(
                 } else {
                     // Another erase rewrote the object first: strip the
                     // subject from the one the home holds now, once.
-                    let fresh = fetch_pads(rpc, *generation).await?.ok_or_else(refused)?;
+                    let fresh = fetch_pads(vault, rpc, *generation, listed.retained_revision)
+                        .await?
+                        .ok_or_else(refused)?;
                     let again =
                         rewrite(vault, subject, std::slice::from_ref(&fresh), kit, &grants)?
                             .pop()
