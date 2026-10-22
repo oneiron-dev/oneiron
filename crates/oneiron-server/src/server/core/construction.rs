@@ -145,6 +145,9 @@ impl SyncServer {
         let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
         vault.set_reader_job_runner(runner);
         crate::models::outbound_wait::install(&vault);
+        // V2-R3: a lock of this vault waits for this process's snapshot
+        // release before its key drops; an erase drops its sessions.
+        crate::models::install_snapshot_runtime(&vault);
         // Provider media replies are booked on their own line (FIX 8615).
         crate::models::install_media_reply_line(
             config.limits.media_reply_bytes,

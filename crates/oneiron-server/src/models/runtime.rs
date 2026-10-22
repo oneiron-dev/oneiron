@@ -155,6 +155,8 @@ impl ModelRuntime {
                 ..Self::unconfigured()
             };
         };
+        // V2-R3: the next vault lock's bound and the status read this.
+        worker_host::snapshot_policy(&config.snapshots);
         let mut status = ModelsStatus {
             // The process's supervisors for `[models.workers]` (FIX 8315).
             workers: worker_host::configure(&config.workers, &config.providers),
@@ -479,6 +481,8 @@ impl ModelRuntime {
             })
             .collect();
         worker_host::refresh(&mut status.workers);
+        // V2-R3: sealed snapshot parking, counts and outcomes only.
+        status.snapshots = worker_host::snapshot_status();
         status
     }
 }
