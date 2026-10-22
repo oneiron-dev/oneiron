@@ -303,18 +303,25 @@ async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
 /// the row runs in the facade's dispatch ([`call_verb`]), which the held
 /// socket runs too. A body that is not JSON is refused where the row reads
 /// it, as its handler refused it before. Its answer meets one destination
-/// release before it is sent ([`released_reply`], FIX 8170).
+/// release before it is sent ([`released_reply`], FIX 8170). What its answer
+/// holds (a deck preview's renderer) is kept until the reply's body is
+/// encoded (FIX 8238).
 async fn facade_route(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
-) -> Result<(axum::Extension<FacadeReleased>, Json<serde_json::Value>), FacadeApiError> {
-    let call = FacadeCall::http(&server, &auth, &headers);
-    let verb = uri.path().trim_start_matches('/');
-    let output = call_verb(&server, &call, verb, facade_json(payload)).await?;
-    Ok(released_reply(&server, &auth, verb, output))
+) -> Response {
+    super::answer_hold::until_encoded(async move {
+        let call = FacadeCall::http(&server, &auth, &headers);
+        let verb = uri.path().trim_start_matches('/');
+        match call_verb(&server, &call, verb, facade_json(payload)).await {
+            Ok(output) => released_reply(&server, &auth, verb, output).into_response(),
+            Err(refused) => refused.into_response(),
+        }
+    })
+    .await
 }
 
 /// `verb`, which names no facade verb, refused before the actor, the input

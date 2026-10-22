@@ -392,6 +392,28 @@ pub(super) fn refusal_words(outcome: &Value) -> Option<AgentVerbRefusalWords> {
     })
 }
 
+/// The key [`keep_row_receipt`] writes a dispatched row's receipt under, on
+/// its recorded outcome; the outcome's decoder reads past it.
+const ROW_RECEIPT: &str = "row_receipt";
+
+/// Writes the call receipt a dispatched row's reply stated onto its recorded
+/// outcome (FIX 8159), so a replay under the same key states it again.
+pub(super) fn keep_row_receipt(outcome: &mut Value, receipt: &str) {
+    if let Value::Map(entries) = outcome {
+        entries.push((Value::from(ROW_RECEIPT), Value::from(receipt)));
+    }
+}
+
+/// The receipt [`keep_row_receipt`] kept on a recorded outcome; `None` when
+/// its row stated none.
+pub(super) fn row_receipt(outcome: &Value) -> Option<String> {
+    let entries = expect_map(outcome, "dispatch outcome must be a map").ok()?;
+    map_get(entries, ROW_RECEIPT)
+        .and_then(str_value)
+        .map(str::to_owned)
+        .ok()
+}
+
 pub(super) fn replay_denied_trap_error(result: &SelfDeniedResult) -> Error {
     let outcome =
         GateDenialOutcome::parse(&result.outcome).map_or("deny", GateDenialOutcome::as_str);

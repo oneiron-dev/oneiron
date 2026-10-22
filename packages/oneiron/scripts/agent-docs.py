@@ -51,8 +51,28 @@ def artifacts():
     }
     if set(codes) != remedies.keys():
         raise ValueError("Document remediation for each added/removed SDK error code")
+    # Codes a server door refuses with, defined outside the contracts crate
+    # (FIX 5325, 6547, 8242): each read from its own source, so the table
+    # names only codes that exist, never a copy.
+    server_sources = [
+        ("crates/oneiron/src/workspace_roster/rooms/audience_doors.rs", r'pub const MEMORY_CODE_\w+: &str = "([A-Z_]+)";'),
+        ("crates/oneiron-vault-contract/src/lib/ctl.rs", r'Self::WritesFrozen => "([a-z_]+)",'),
+        ("crates/oneiron-server/src/slide_render.rs", r'pub\(crate\) const RENDER_\w+: &str = "([a-z_]+)";'),
+    ]
+    server_codes = [code for path, pattern in server_sources for code in re.findall(pattern, (ROOT / path).read_text())]
+    server_remedies = {
+        "AGENT_THREAD_WALK_IN_FORBIDDEN": "An agent may request to join a private thread it is not in; it cannot add itself. Ask the thread's members to add the agent, or have it request to join. HTTP answers 409; over MCP the kind is `agent_thread_walk_in_forbidden` (-32020).",
+        "writes_frozen": "This hosted vault is paused while the service prepares to reap it; the pause names no duration. Retry once the reap is aborted or the vault wakes. HTTP answers 503; over MCP the kind is `writes_frozen` (-32020).",
+        "render_deadline": "The deck render did not finish within its deadline, and nothing of it was kept. Ask again once `retry_after` seconds have passed. HTTP answers 503; over MCP the kind is `render_deadline` (-32020).",
+        "render_memory_floor": "This machine cannot hold the deck render's memory past its reserve. Ask on a host with more memory. HTTP answers 503; over MCP the kind is `render_memory_floor` (-32020).",
+        "render_disk_floor": "The vault's disk is at its free-space reserve, where the deck render writes its scratch. Ask again once `retry_after` seconds have passed and the disk has room. HTTP answers 503; over MCP the kind is `render_disk_floor` (-32020).",
+    }
+    if set(server_codes) != server_remedies.keys():
+        raise ValueError("Document remediation for each added/removed server refusal code")
     error_doc = "# Memory Wire typed errors\n\nEvery SDK failure carries `code`, `message`, and nonempty `suggestions`.\nUse the returned suggestions; do not parse message prose. No adapter swallows\nor downgrades the engine's refusal. Future remote codes pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
     error_doc += "".join(f"| `{code}` | {remedies[code]} |\n" for code in codes)
+    error_doc += "\n## Server refusal codes\n\nA server door refuses with these too; they pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
+    error_doc += "".join(f"| `{code}` | {server_remedies[code]} |\n" for code in server_codes)
     error_doc += "\nRemote server-specific codes and HTTP schemas are also indexed by\n[the engine API reference](../../oneiron.skills.md).\n"
     census = "# Memory Wire facade census\n\nThis is the complete **shipped SDK facade**, in manifest order. It is\nnot a claim that every engine-internal method is a public SDK verb.\n`scripts/sdk/agent-verbs.json` owns this list.\nNames are stable: a new export or rename must update the engine catalog,\nboth bindings and their export-census tests in one change.\n\n"
     census += "\n".join(f"- `{verb}`" for verb in verbs) + "\n"

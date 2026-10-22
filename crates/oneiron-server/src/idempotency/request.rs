@@ -101,15 +101,12 @@ async fn idempotent(
     let store_key = store_key(&principal, &key);
     let target = request_target(&request);
     let (parts, body) = request.into_parts();
-    let body = match to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
+    // FIX 9528: a body that does not fit or cannot be read is refused in the
+    // route's own typed envelope, naming why.
+    let read = super::body_read::keyed_body(body, &parts.headers, ROUTE_BODY_LIMIT_BYTES).await;
+    let body = match read {
         Ok(body) => body,
-        Err(_) => {
-            tracing::warn!(
-                reason = "body_read_failed",
-                "failed to read idempotent request body"
-            );
-            return StatusCode::PAYLOAD_TOO_LARGE.into_response();
-        }
+        Err(error) => return api_error_response(error, is_core_auth_route),
     };
     let request_body = body.to_vec();
 
@@ -285,16 +282,13 @@ pub(crate) async fn idempotency_for_mutating_form(
     if !request.headers().contains_key(IDEMPOTENCY_KEY_HEADER) {
         return next.run(request).await;
     }
+    let is_core_route = is_core_auth_route(request_path(&request));
     let (parts, body) = request.into_parts();
-    let body = match to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
+    // FIX 9528: refused in the route's own typed envelope, naming why.
+    let read = super::body_read::keyed_body(body, &parts.headers, ROUTE_BODY_LIMIT_BYTES).await;
+    let body = match read {
         Ok(body) => body,
-        Err(_) => {
-            tracing::warn!(
-                reason = "body_read_failed",
-                "failed to read keyed request body"
-            );
-            return StatusCode::PAYLOAD_TOO_LARGE.into_response();
-        }
+        Err(error) => return api_error_response(error, is_core_route),
     };
     let mutating = mutates(&body);
     let request = Request::from_parts(parts, Body::from(body));

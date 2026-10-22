@@ -60,6 +60,9 @@ mod verdict;
 // The strict library try a TASK-bound program's run takes before its
 // planner (CUA E4).
 pub(crate) use self::task_workflow::{WorkflowPreflight, preflight_task_workflow};
+// The facade's browser rows count their hooks' decisions as this door's do
+// (FIX 10425).
+pub(crate) use self::guests::count_hook_decisions;
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;
