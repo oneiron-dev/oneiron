@@ -557,20 +557,27 @@ impl Vault {
     /// otherwise it escalates (a revoked key refuses). Then the key's
     /// elicitation setting, read now, decides: never allow refuses, always
     /// allow sends, always ask asks the owner, and auto takes rule 1 under
-    /// the original grant. `answers_digest` names the frozen answer, for the
-    /// record; it is never the answer's text.
+    /// the original grant. `answers` is the frozen answer, whose own content
+    /// class counts beside the tool's (FIX 8807); `answers_digest` names it,
+    /// for the record, never its text. Each grant, key and slate the check
+    /// reads lists on `memory`'s answer (FIX 5816).
     ///
     /// # Errors
     ///
     /// Storage errors.
     pub fn authorize_connector_elicitation_answer(
         &self,
+        memory: &crate::memory::Memory<'_>,
         binding: &ConnectorElicitationBinding,
+        answers: &serde_json::Value,
         answers_digest: [u8; 32],
         carries_content: bool,
     ) -> crate::Result<ElicitationAnswerVerdict> {
         let verdict = if carries_content {
-            self.elicitation_answer_verdict(binding)?
+            let mut read = Vec::new();
+            let verdict = self.elicitation_answer_verdict(binding, answers, &mut read);
+            memory.produced_from(read);
+            verdict?
         } else {
             ElicitationAnswerVerdict::Send
         };
@@ -588,6 +595,8 @@ impl Vault {
     fn elicitation_answer_verdict(
         &self,
         binding: &ConnectorElicitationBinding,
+        answers: &serde_json::Value,
+        read: &mut Vec<EntityId>,
     ) -> crate::Result<ElicitationAnswerVerdict> {
         let escalate = |reason: &str| -> crate::Result<ElicitationAnswerVerdict> {
             Ok(ElicitationAnswerVerdict::Escalate(reason.to_owned()))
@@ -595,6 +604,7 @@ impl Vault {
         let Some(grant) = self.get_standing_outbound_grant(&binding.grant_id)? else {
             return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
         };
+        read.push(binding.grant_id);
         if grant.principal_ref != binding.principal_ref {
             return escalate(escalation_code(ScopedMcpEscalationReason::WrongPrincipal));
         }
@@ -613,6 +623,7 @@ impl Vault {
                 ScopedMcpEscalationReason::ConnectorKeyUnregistered,
             ));
         };
+        read.push(binding.key_ref);
         match key.status {
             crate::connector_key::ConnectorKeyStatus::Active => {}
             crate::connector_key::ConnectorKeyStatus::Revoked => {
@@ -631,16 +642,17 @@ impl Vault {
                 ));
             }
         }
-        let Some(route) = self.route_connector_call(&binding.name)? else {
+        let (route, catalog_key) = self.route_connector_call_listing(&binding.name)?;
+        read.extend(catalog_key);
+        let Some(route) = route else {
             return escalate("connector_not_routable");
         };
-        // An elicitation answer is no connector.call answer: it lists none.
-        let (payload_data_class, _, _) =
-            self.connector_tool_class(&key, &route, &binding.tool, &mut Vec::new())?;
+        let (slate_class, _, _) = self.connector_tool_class(&key, &route, &binding.tool, read)?;
+        // The answer's own content raises the class it goes under (FIX 8807).
         let call = ScopedMcpCall {
             server: &binding.server,
             tool: &binding.tool,
-            payload_data_class,
+            payload_data_class: slate_class.max(super::tool_call::content_data_class(answers)),
             resolved_endpoint: &binding.endpoint,
         };
         if let ScopedMcpConsentDecision::Escalate(reason) = evaluate_scoped_mcp_call(scope, call) {

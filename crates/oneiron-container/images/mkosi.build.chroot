@@ -58,6 +58,19 @@ for package in "${order[@]}"; do
   cargo build --release --locked --offline -p "$package" ${bins[$package]}
 done
 
+# The SBOM's Cargo side, with the features this build resolved: the crates
+# each package's binaries link (normal edges) and the crates its build also
+# compiled (normal plus build edges). Same lock, same store, offline.
+for package in "${order[@]}"; do
+  for edges in normal normal,build; do
+    out="$BUILDDIR/sbom-cargo-$package-${edges/,/+}.txt"
+    # A failure here leaves no file: the SBOM step then refuses, after the image is built.
+    cargo tree --locked --offline -p "$package" --target x86_64-unknown-linux-gnu -e "$edges" \
+      --prefix none --format '{p}|{l}' > "$out.part" && mv "$out.part" "$out" \
+      || echo "cargo tree -p $package -e $edges failed" >&2
+  done
+done
+
 while IFS=$'\t' read -r package bin dest mode; do
   install -D -m "$mode" "$CARGO_TARGET_DIR/release/$bin" "$DESTDIR$dest"
   sum=$(sha256sum "$DESTDIR$dest" | cut -d' ' -f1)

@@ -1,7 +1,8 @@
 //! The home's list of the generations it keeps, newest first by the order it
 //! committed them in (FIX 8885). A slot may hold more than one generation and
 //! a generation's id is its slot and a random nonce, so the list's commit
-//! order, never the id, says which is newer.
+//! order, never the id, says which is newer. The list names the revision of
+//! the home's one read that made it (FIX 7106).
 
 use std::collections::BTreeSet;
 
@@ -17,8 +18,10 @@ use crate::sync::transport::TransportError;
 use crate::world_keys::{SEALED_BUNDLE_KEEP, SealedBundleGeneration};
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BundleListReply {
     generations: Vec<BundleListEntry>,
+    retained_revision: String,
 }
 
 #[derive(Deserialize)]
@@ -38,6 +41,15 @@ pub(super) struct ListedGeneration {
     pub(super) pads_digest: [u8; 32],
 }
 
+/// The home's list as one read of it names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ListedIndex {
+    /// The revision of the home's read (FIX 7106): opaque, never an order.
+    pub(super) retained_revision: [u8; 32],
+    /// Newest first.
+    pub(super) generations: Vec<ListedGeneration>,
+}
+
 /// The generations the home keeps, newest first, naming the owner's
 /// `request` this install is asked to publish for, when it is. Refused
 /// unless each commit order falls below the one before it and no generation
@@ -46,6 +58,14 @@ pub(super) async fn list_entries(
     rpc: &mut ResidenceRpc,
     request: Option<AuthorityEntryHash>,
 ) -> Result<Vec<ListedGeneration>, TransportError> {
+    Ok(list_index(rpc, request).await?.generations)
+}
+
+/// [`list_entries`], with the revision of the home's read that named them.
+pub(super) async fn list_index(
+    rpc: &mut ResidenceRpc,
+    request: Option<AuthorityEntryHash>,
+) -> Result<ListedIndex, TransportError> {
     let mut params = json!({});
     if let Some(request) = request {
         params["request"] = json!(sealed_digest_hex(&request));
@@ -74,7 +94,10 @@ pub(super) async fn list_entries(
     {
         return Err(refused());
     }
-    Ok(listed)
+    Ok(ListedIndex {
+        retained_revision: sealed_digest_from_hex(&list.retained_revision).ok_or_else(refused)?,
+        generations: listed,
+    })
 }
 
 /// Whether `newest`, the home's newest generation, is newer than `taken`, the
@@ -87,18 +110,4 @@ pub(super) fn newer_than_taken(
     listed: &[SealedBundleGeneration],
 ) -> bool {
     *newest != taken && (listed.contains(&taken) || newest.slot >= taken.slot)
-}
-
-/// The fingerprint of the home's list as `listed` names it: each
-/// generation, its commit order and its pad object's digest, in list order.
-/// A sweep records the list it was made against (FIX 8885).
-pub(super) fn list_fingerprint(listed: &[ListedGeneration]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.sealed-bundle.list.v1");
-    for entry in listed {
-        hasher.update(&entry.generation.to_bytes());
-        hasher.update(&entry.commit_order.to_be_bytes());
-        hasher.update(&entry.pads_digest);
-    }
-    *hasher.finalize().as_bytes()
 }
