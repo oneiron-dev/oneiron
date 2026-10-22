@@ -162,9 +162,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/artifact_hosting/mod.rs` | src | m | 10 fn · 2 mod · 3 re-export · 3 crate-vis | — | Local artifact hosting over pinned code snapshots and blob exports |
 | `src/artifact_hosting/pointer_rows.rs` | src | s | 7 crate-vis | — | — |
 | `src/artifact_hosting/preview.rs` | src | s | 1 struct · 11 fn · 1 re-export | PrivatePreview | Ephemeral audience and credentials for a session's declared live port |
-| `src/artifact_hosting/publication_sync.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 crate-vis | ArtifactPublicationFrame, ArtifactPublicationOutcome | Publication sync: a pinned channel pointer, with the rows that make its export servable, reaches the sync… |
+| `src/artifact_hosting/publication_sync.rs` | src | m | 1 enum · 2 fn · 2 crate-vis | ArtifactPublicationOutcome | Publication sync: a pinned channel pointer, with the rows that make its export servable, reaches the sync… |
+| `src/artifact_hosting/publication_sync/parts.rs` | src | m | 10 crate-vis | — | Bounded publication parts (FIX 9575) |
+| `src/artifact_hosting/publication_sync/parts/receive.rs` | src | m | 1 crate-vis | — | The sync server's half of publication parts (FIX 9575): each part kept in order under the owner's live… |
 | `src/artifact_hosting/publish.rs` | src | m | 5 crate-vis | — | The OF-327 artifact-publish dispatch door and its share-style receipt projection |
 | `src/artifact_hosting/serving.rs` | src | s | 3 fn · 1 crate-vis | — | Read-only resolution of artifact pointers, snapshots, and served files |
+| `src/artifact_hosting/serving_blob.rs` | src | s | 9 crate-vis | — | The serving presentation of a published blob version (FIX 1195) |
 | `src/artifact_hosting/tests.rs` | test | L | — | — | — |
 | `src/artifact_hosting/vocabulary.rs` | src | s | 5 struct · 4 enum · 5 fn · 1 const | ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel, ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus, ArtifactServedFile, ArtifactSnapshotRef +1 | Value types for artifact pointers, immutable exports, and publication |
 | `src/attempt_queue/annotation_hold.rs` | src | s | 2 struct · 4 fn · 1 const · 5 crate-vis | AnnotationHold, AnnotationHoldSweep | OF-368: a comment's agent task waits while its comment is unattached |
@@ -653,7 +656,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/verbs.rs` | src | L | 21 struct · 1 enum · 17 fn · 1 crate-vis | ArtifactAdmitSubmit, ArtifactAskOutcome, ArtifactAskSubmit, ArtifactAskUnits, ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest +14 | The artifact family's agent verbs (`vault.artifacts.*`, OF-511): one typed door per contract verb for every… |
 | `src/blob_artifact/version_codec.rs` | src | s | 2 crate-vis | — | Strict MessagePack framing for blob version records |
 | `src/blob_artifact/version_rows.rs` | src | s | 1 fn · 4 crate-vis | — | The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those… |
-| `src/blob_artifact/versions.rs` | src | m | 2 struct · 8 fn · 1 const · 1 re-export · 24 crate-vis | BlobArtifactVersion, CalcEngineStamp | Blob version chain: version record codec and the Vault version-chain API |
+| `src/blob_artifact/versions.rs` | src | m | 2 struct · 8 fn · 1 const · 1 re-export · 23 crate-vis | BlobArtifactVersion, CalcEngineStamp | Blob version chain: version record codec and the Vault version-chain API |
 | `src/blob_artifact/versions/reads.rs` | src | m | 1 struct · 9 fn · 5 crate-vis | BlobBytes | The version chain's reads: the head, the version tree, one version's metadata and its bytes |
 | `src/bm25/codec.rs` | src | m | 19 crate-vis | — | Binary codecs, stat/total-docs accessors, corruption constructors, key validation |
 | `src/bm25/config.rs` | src | s | 1 enum · 10 crate-vis | Bm25Formula | Rank-profile config: field/channel params, formula, recency, defaults |
@@ -1526,6 +1529,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/observations.rs` | src | s | 4 fn | — | Read-time lifecycle observations over the same scoped bytes served to a session |
 | `src/context_board/observations_tests.rs` | test | s | — | — | Real ledger lifecycle and skill-body observations for the session board |
 | `src/context_board/own_changes.rs` | src | m | 1 fn | — | Read-time own-proposal outcomes and connector changes for one session |
+| `src/context_board/paging.rs` | src | s | 4 crate-vis | — | Opaque continuation cursors for Context Board pages |
 | `src/context_board/people.rs` | src | m | 4 struct · 1 enum · 16 fn · 1 const · 2 crate-vis | People, PeoplePrefix, PeopleView, PersonKind, PersonRow | PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike |
 | `src/context_board/plugin/admission.rs` | src | m | 3 struct · 1 enum · 11 fn · 2 crate-vis | AdmittedPluginSection, PackSectionRegistration, PluginSectionAdmission, PluginSectionRegistry | Post-consent execution and the live registry projection |
 | `src/context_board/plugin/claim.rs` | src | m | 2 struct · 4 fn · 2 const · 1 crate-vis | PluginInstallClaimPayload, PluginSectionInstallProposal | Install claim payload and the pre-consent proposal path |
@@ -1533,10 +1537,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/plugin/doors.rs` | src | s | 3 struct | EngineSectionBindings, VaultPluginInstallExecutor, VaultPluginInstallSource | Production bindings for the plugin-section doors: the engine's own section-binding resolver and the… |
 | `src/context_board/plugin/errors.rs` | src | s | 1 enum · 1 type | PluginSectionError | Plugin-seam error type and result alias |
 | `src/context_board/plugin/install.rs` | src | s | 1 struct · 2 enum · 12 fn | PluginInstallOrigin, PluginInstallTarget, ValidatedSectionManifest | Install origin, target, and the validated manifest |
-| `src/context_board/plugin/manifest.rs` | src | s | 8 struct · 4 trait · 4 fn · 1 const | AuthorityLaneRef, PluginInstallExecutor, PluginInstallSource, SectionBindingResolver, SectionId, SectionManifest, SectionManifestEnvelope, SectionManifestProvenance +4 | Versioned section-manifest schema, verb allowlist, and install traits |
-| `src/context_board/plugin/mod.rs` | src | s | 10 re-export | — | Plugin-section seam — the typed section manifest, its gated admission, the live registry projection, and the… |
-| `src/context_board/plugin/render.rs` | src | s | 3 struct · 7 fn · 1 const | PluginProposalRow, PluginSectionRow, PluginSectionSnapshot | Pure plugin renderers and the pending-proposal section |
-| `src/context_board/plugin/state.rs` | src | m | 2 struct · 2 enum · 3 fn | BoardBlockKind, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope | Durable actor-scoped state for admitted Context Board plugin blocks |
+| `src/context_board/plugin/manifest.rs` | src | s | 9 struct · 4 trait · 7 fn · 1 const | ApprovedPluginIdentity, AuthorityLaneRef, PluginInstallExecutor, PluginInstallSource, SectionBindingResolver, SectionId, SectionManifest, SectionManifestEnvelope +5 | Versioned section-manifest schema, verb allowlist, and install traits |
+| `src/context_board/plugin/mod.rs` | src | s | 11 re-export | — | Plugin-section seam — the typed section manifest, its gated admission, the live registry projection, and the… |
+| `src/context_board/plugin/pages.rs` | src | s | 3 struct · 2 fn · 1 const | BoardBlockPage, PluginProposalPage, PluginSectionSnapshotPage | Paged plugin reads: the pending-proposal list and the page shapes the durable block reads answer with |
+| `src/context_board/plugin/render.rs` | src | s | 3 struct · 8 fn · 1 const | PluginProposalRow, PluginSectionRow, PluginSectionSnapshot | Pure plugin renderers and the pending-proposal section |
+| `src/context_board/plugin/state.rs` | src | m | 2 struct · 2 enum · 5 fn | BoardBlockKind, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope | Durable actor-scoped state for admitted Context Board plugin blocks |
 | `src/context_board/plugin/tests.rs` | test | m | — | — | — |
 | `src/context_board/plugin/validate.rs` | src | s | 2 fn · 1 const · 3 crate-vis | — | Bounded-shape checks and the two-phase validation gate |
 | `src/context_board/read_set.rs` | src | m | 6 struct · 4 enum · 16 fn · 8 crate-vis | ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange, ProposalReason, ServedLifecycle +2 | Session read-set tracking, separate from the stateless board renderer |
@@ -3216,7 +3221,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/outbound/types.rs` | src | s | 3 struct · 1 crate-vis | OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext | Outbound schedule DTOs: context, draft input, and intent receipt |
 | `src/memory/owner_door.rs` | src | s | 2 fn | — | The embedded owner's door for the verb-table rows that are the vault owner's (`vault.packs.put`, the… |
 | `src/memory/people_verbs.rs` | src | m | 7 struct · 1 enum · 4 fn · 1 const | GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest, PeopleListRequest, PeoplePage, PersonRequest | PEOPLE verbs (owner ruling, ARCH-0067): `vault.people.list`, `vault.people.get`, `self.message` and… |
-| `src/memory/plugin_sections.rs` | src | m | 15 struct · 3 enum · 7 fn | PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest, PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow, PluginSectionPendingRow, PluginSectionProposal +10 | Plugin Context Board sections (DOOR-112, e2e BOARD-07): the typed `vault.packs.sections.*` doors over the… |
+| `src/memory/plugin_sections.rs` | src | m | 15 struct · 3 enum · 6 fn | PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest, PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow, PluginSectionPendingRow, PluginSectionProposal +10 | Plugin Context Board sections (DOOR-112, e2e BOARD-07): the typed `vault.packs.sections.*` doors over the… |
+| `src/memory/plugin_sections/pages.rs` | src | s | 1 fn | — | `vault.packs.sections.list`: one page of pending proposals through the engine's single paged proposal walk… |
 | `src/memory/presented_credential.rs` | src | s | 1 fn · 1 crate-vis | — | The verified credential a host bound to a handle, for the engine doors that take the caller's own credential… |
 | `src/memory/read_lane.rs` | src | m | 4 fn · 21 crate-vis | — | The bound actor's one read lane |
 | `src/memory/read_selection.rs` | src | s | 1 enum · 2 crate-vis | RecallWorlds | Caller-selected world and project filters |
@@ -4080,7 +4086,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/decisions/tests/tasks.rs` | test | m | 9 crate-vis | — | Census cases for what a task, an ask and an agent may do |
 | `src/recovery/checkpoint/decisions/tests/worlds.rs` | test | s | 1 crate-vis | — | Census case and regression for the worlds an agent may read |
 | `src/recovery/checkpoint/decisions/worlds.rs` | src | s | 2 crate-vis | — | Which worlds an executing principal may read: the owner grants and the default about it, as the… |
-| `src/recovery/checkpoint/host_holds.rs` | src | s | 2 struct · 7 fn · 3 crate-vis | BackupHolds, HostOrderHolds | Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that… |
+| `src/recovery/checkpoint/host_holds.rs` | src | s | 2 struct · 1 enum · 8 fn · 3 crate-vis | BackupHoldVisibility, BackupHolds, HostOrderHolds | Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that… |
 | `src/recovery/checkpoint/image.rs` | src | s | 6 crate-vis | — | A checkpoint image and its structural read (moved out of the checkpoint module whole) |
 | `src/recovery/checkpoint/landing.rs` | src | m | 1 crate-vis | — | Landing one checkpoint image in its destination: the restore pipeline behind every restore, wake and migrate… |
 | `src/recovery/checkpoint/landing_lengths.rs` | src | s | 3 crate-vis | — | The length each image row lands at, known before anything is opened, so a restore claims its real size up… |
@@ -4903,7 +4909,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/chunks/page.rs` | src | s | 4 crate-vis | — | One page of a chunk exchange (FIX 8860, 8183): a manifest's canonical bytes from an offset, or a WANT's… |
 | `src/sync/chunks/read.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 type | ChunkMark, ChunkRead, LfsReadAuthority | Who reads a lift-marked LFS object's real bytes over a chunk exchange (FIX 2897; ARCH-0069: "the owner gets… |
 | `src/sync/chunks/tests.rs` | test | m | — | — | Real binary have/want exchanges between independent vaults |
-| `src/sync/client/artifacts.rs` | src | s | 2 crate-vis | — | Pinned artifact publications on the owner lane: each owed one goes out once the NOTE session binds, and… |
+| `src/sync/client/artifacts.rs` | src | s | 4 crate-vis | — | Pinned artifact publications on the owner lane: each owed one goes out in bounded parts once the NOTE… |
 | `src/sync/client/base.rs` | src | m | 1 struct · 16 fn · 15 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
 | `src/sync/client/connect.rs` | src | s | 3 fn | — | Public Connect delivery/rejoin over the production guest admission path |
 | `src/sync/client/documents.rs` | src | s | 2 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
@@ -4943,7 +4949,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/connection/home_handoff.rs` | src | s | 2 crate-vis | — | FIX 5661 C2a: the old home's delivery worker |
 | `src/sync/connection/home_search.rs` | src | s | 1 struct · 1 enum · 5 fn · 2 crate-vis | DeviceResidence, HomeSearch | The home search this device's query doors reach through its own sync connection (OF-534): a search an opened… |
 | `src/sync/connection/mod.rs` | src | m | 3 struct · 17 fn · 3 re-export · 1 crate-vis | ConnectionConfig, ResidenceModeChange, SyncConnection | WebSocket connection manager with debounced sync and reconnection |
-| `src/sync/connection/node_batch.rs` | src | s | 2 crate-vis | — | One bounded node proposal batch per sync tick |
+| `src/sync/connection/node_batch.rs` | src | s | 2 crate-vis | — | One bounded node proposal batch per sync tick, then at most one owed artifact publication part as its own… |
 | `src/sync/connection/note_reads.rs` | src | s | 2 fn | — | Typed reads of a residence open, using the named connection's own vault |
 | `src/sync/connection/session.rs` | src | s | 20 crate-vis | — | Session types: WS aliases, pump budget, convergence session, resync markers |
 | `src/sync/connection/steady.rs` | src | m | 1 crate-vis | — | Steady state: debounced multiplex loop over WS, local updates, shutdown |
