@@ -35,6 +35,16 @@ pub(super) async fn facade_call_receipt(
         .await
         .unwrap_or_default();
     let request = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
+    // FIX 4280: a call serving a room NOTE to a caller verified in its room
+    // keeps none either, judged on arrival, before a close drops its hold.
+    let anonymous = anonymous
+        || call_receipt::room_notes::header_room_note_call(
+            &server,
+            &session_headers,
+            principal,
+            &verb,
+            request.as_ref(),
+        );
     let request_digest = match &request {
         Some(value) => oneiron::receipt::call_json_digest(value),
         None => oneiron::receipt::call_bytes_digest(&bytes),

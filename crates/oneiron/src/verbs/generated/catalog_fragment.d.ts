@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1206 code-mode rows (1166 host rows, 40 run rows), 4153 declarations.
+// Census: 1206 code-mode rows (1166 host rows, 40 run rows), 4155 declarations.
 // Replies: 1086 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
@@ -689,7 +689,9 @@ declare namespace Sdk {
   type ScopedExportRequest = { selector: RecordSelector; channel: ExportChannel };
   type WithheldRole = "input" | "prompt" | "trigger";
   type WithheldRef = { handle: string; role: WithheldRole };
-  type RowBirth = { made_by: MadeBy; content_hash: string; withheld?: WithheldRef[] };
+  type RoomEvidenceRef = { supplied: string; turn?: string | null };
+  type RoomEvidence = { refs: RoomEvidenceRef[] };
+  type RowBirth = { made_by: MadeBy; content_hash: string; withheld?: WithheldRef[]; room_evidence?: RoomEvidence | null };
   type ScopedExportRecord = { record: RecordRef; position: RecordPosition; bytes: number[]; birth?: RowBirth | null };
   type ScopedExport = { selector: RecordSelector; credential: CredentialCeiling; channel: ExportChannel; applied: Scope; records: ScopedExportRecord[] };
   type VaultReceiptsRequest = { limit?: number | null; kinds?: string[] };
@@ -1466,7 +1468,7 @@ declare namespace Sdk {
   type OffRecordClosed = { session_ref: string; turns_dropped: number; context_receipts_dropped: number; emit_receipts_dropped: number; emit_receipts_kept: number; promoted_turns_kept: number };
   type OffRecordRecallRequest = { session_ref: string; query: string; limit: number };
   type CreateNoteRequest = { kind: string; markdown: string };
-  type OffRecordNoteRequest = { session_ref: string; note: CreateNoteRequest };
+  type OffRecordNoteRequest = { session_ref: string; note: CreateNoteRequest; evidence_turn_refs?: string[] };
   type OffRecordClaimRequest = { session_ref: string; claim: ScopedClaimInput };
   type OffRecordExecuteRequest = { session_ref: string; run_ref: string; task: string };
   type OffRecordRunStatus = "complete" | "waiting" | "yielded" | "window_full";

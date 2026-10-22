@@ -281,13 +281,21 @@ impl OverlayState {
 /// Whether the row at `key` of `keyspace` is a room's bookkeeping of a write
 /// rather than content it stages (WILL L11-01, Engine 10-19): a record
 /// position staged beside a row (`record_scope::stage_session_position`), or
-/// a `FacetOf` edge, which a room stages only as a NOTE's birth facet. Its
+/// a `FacetOf` edge, which a room stages only as a NOTE's birth facet, or a
+/// row's `made_by` birth and its born-from index row (FIX 4281; Engine
+/// 10-22: birth metadata never counts toward the room's byte limit). Its
 /// bytes stay outside the room's budget, so a room at its limit takes exactly
-/// the writes it took before rows carried positions; it still stages in the
-/// same segment as its row.
+/// the writes it took before rows carried positions or births; it still
+/// stages in the same segment as its row.
 pub(super) fn unbudgeted_row(keyspace: OverlayKeyspace, key: &[u8]) -> bool {
     match keyspace {
-        OverlayKeyspace::VaultMeta => key.starts_with(crate::side_table::SCOPE_RECORD.prefix),
+        OverlayKeyspace::VaultMeta => [
+            crate::side_table::SCOPE_RECORD.prefix,
+            crate::side_table::PROVENANCE_ROW_BIRTH.prefix,
+            crate::side_table::PROVENANCE_BIRTH_BY_TRIGGER.prefix,
+        ]
+        .into_iter()
+        .any(|prefix| key.starts_with(prefix)),
         // An edge key is `[src(16) | kind(1) | tgt(16)]`, in both directions.
         OverlayKeyspace::EdgesOut | OverlayKeyspace::EdgesIn => {
             key.get(16) == Some(&(crate::edge::EdgeKind::FacetOf as u8))

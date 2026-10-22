@@ -13,14 +13,17 @@ use super::{FacadeApiError, FacadeCall};
 use crate::api::credential_memory;
 use crate::server::SyncServer;
 
-/// The session a facade call of row `verb` keeps its verb hooks' records
-/// and ask pauses for, when it keeps no record. A caller the facade binds an
-/// actor to (`bound`) is judged on its credential's surface with the
-/// off-record session its request names, the invocation it names and the
-/// hook pause it resumes beside it (`x-oneiron-hook-ask`), as the row's own
-/// door reads them; a malformed room turn the row itself may not read never
-/// turns that judgement off. One it binds none to (a host's root, which
-/// names no person and so binds no session) is judged by its row alone.
+/// The session a facade call of row `verb` with `input` keeps its verb
+/// hooks' records and ask pauses for, when it keeps no record: a call that
+/// serves a room NOTE to a caller verified in its room keeps none either
+/// (FIX 4280; its close names the room hold this host keeps for it). A
+/// caller the facade binds an actor to (`bound`) is judged on its
+/// credential's surface with the off-record session its request names, the
+/// invocation it names and the hook pause it resumes beside it
+/// (`x-oneiron-hook-ask`), as the row's own door reads them; a malformed
+/// room turn the row itself may not read never turns that judgement off.
+/// One it binds none to (a host's root, which names no person and so binds
+/// no session) is judged by its row alone.
 ///
 /// # Errors
 ///
@@ -31,6 +34,7 @@ pub(super) fn facade_hook_session(
     call: &FacadeCall<'_>,
     bound: Option<(EntityId, EdgeActorClass)>,
     verb: &str,
+    input: &serde_json::Value,
 ) -> Result<Option<HookSession>, FacadeApiError> {
     let auth = call.auth();
     let hook_ask = call.hook_ask()?;
@@ -49,5 +53,15 @@ pub(super) fn facade_hook_session(
             Ok(None) | Err(_) => memory,
         }
     });
-    Ok(verb_hook_boundary::hook_session(memory.as_ref(), verb)?)
+    let held = crate::api::call_receipt::room_notes::held_room_note(
+        server,
+        crate::api::call_receipt::request_principal(auth),
+        Some(input),
+    );
+    Ok(verb_hook_boundary::hook_session_for_call(
+        memory.as_ref(),
+        verb,
+        input,
+        held.as_ref(),
+    )?)
 }

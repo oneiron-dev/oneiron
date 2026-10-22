@@ -19,7 +19,9 @@
 //! off-record session its principal is verified in) runs its hooks as any
 //! call does; only their records and their asks' pauses change place: the
 //! in-memory keep, under its live session's key, for as long as the session
-//! lives ([`hook_session`], FIX 4283).
+//! lives ([`hook_session`], FIX 4283). So does a call that serves a room
+//! NOTE to a caller verified in its room ([`hook_session_for_call`], FIX
+//! 4280).
 
 use std::sync::Arc;
 
@@ -100,7 +102,37 @@ impl HookSession {
 ///
 /// A resume of a pause that is gone; storage errors.
 pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> MemoryResult<Option<HookSession>> {
-    let anonymous = memory.is_some_and(Memory::keeps_no_record);
+    hook_session_kept(memory, verb, false)
+}
+
+/// [`hook_session`] of a call of row `verb` with `input`: a call that serves
+/// a room NOTE (`vault.notes.read`, `.history` or `.editor.bind` of a NOTE
+/// the room `memory` binds holds, for a principal verified in it, or an
+/// editor's close of `held`, a room hold the engine minted; FIX 4280,
+/// [`Vault::room_note_call_for`]) keeps its hooks' records for its session
+/// too, never the vault. Every other call is judged as [`hook_session`]
+/// judges it.
+///
+/// # Errors
+///
+/// As [`hook_session`].
+pub fn hook_session_for_call(
+    memory: Option<&Memory<'_>>,
+    verb: &str,
+    input: &Value,
+    held: Option<&crate::off_record::RoomNoteHandle>,
+) -> MemoryResult<Option<HookSession>> {
+    let room_note = memory.is_some_and(|memory| memory.room_note_call(verb, input, held));
+    hook_session_kept(memory, verb, room_note)
+}
+
+/// [`hook_session`], `room_note` the call serving a room NOTE.
+fn hook_session_kept(
+    memory: Option<&Memory<'_>>,
+    verb: &str,
+    room_note: bool,
+) -> MemoryResult<Option<HookSession>> {
+    let anonymous = room_note || memory.is_some_and(Memory::keeps_no_record);
     // A pause is resumed beside the invocation it paused; a call that names
     // none resumes nothing.
     let resume = memory.and_then(|memory| memory.invocation().and(memory.hook_ask()));

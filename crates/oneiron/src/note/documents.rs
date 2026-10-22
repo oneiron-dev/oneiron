@@ -348,10 +348,10 @@ pub(super) fn stamp(doc: &LoroDoc, actor: EntityId, at: u64, action: &str) {
     doc.set_next_commit_timestamp(at.min(i64::MAX as u64) as i64);
     doc.commit();
 }
-/// The NOTE's current head and head sequence. A NOTE that never switched is
-/// its own head at sequence 0.
+/// The NOTE's current head and head sequence, read through `store` (a room's
+/// view included). A NOTE that never switched is its own head at sequence 0.
 pub(crate) fn head_in(
-    store: &crate::store::Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
 ) -> Result<(EntityId, u64)> {
@@ -446,10 +446,28 @@ pub(crate) fn live_doc(
     txn: &heed::RoTxn<'_>,
     note: EntityId,
 ) -> Result<NoteDocument> {
-    let canonical = super::document_store::load(vault, txn, note)?;
+    live_doc_in(
+        vault,
+        &vault.store,
+        txn,
+        note,
+        &vault.store.pending_scan_checks,
+    )
+}
+
+/// [`live_doc`] with the NOTE and its document read through `store`, a
+/// room's view included (FIX 4280); its size measurements wait in `pending`.
+pub(crate) fn live_doc_in(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    pending: &crate::scan_check::PendingScanChecks,
+) -> Result<NoteDocument> {
+    let canonical = super::document_store::load_in(vault, store, txn, note, pending)?;
     Ok(NoteDocument {
         note,
-        head: head_in(&vault.store, txn, note)?.0,
+        head: head_in(store, txn, note)?.0,
         doc: canonical.doc,
     })
 }

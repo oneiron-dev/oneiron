@@ -24,8 +24,8 @@ use super::asset_resolve::serve_hydrated_views;
 use super::read_lane::ReadTargetSlot;
 use super::support::short_ref_in_txn;
 use super::{
-    EntityView, LexicalHit, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
-    MemoryResult, caps, resolve_entity_ref,
+    EntityView, LexicalHit, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND,
+    Memory, MemoryError, MemoryResult, caps, resolve_entity_ref,
 };
 
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
@@ -376,6 +376,54 @@ impl<'s> SessionReadContext<'s> {
         resolve_entity_ref(self.vault, reference)
     }
 
+    /// The evidence refs a room write's caller supplied (FIX 4281; Engine
+    /// 10-22), each read in this call's view of the room on its key, in one
+    /// snapshot: a ref naming a TURN the key reads is that TURN, with its
+    /// body as read. Every other ref (one naming nothing, a malformed one, a
+    /// row the key does not read, a row that is no TURN) is kept as supplied
+    /// and never refuses the write. Nothing is capped.
+    ///
+    /// # Errors
+    ///
+    /// Storage and corruption errors resolving a ref, and the lane's own
+    /// refusals, as any read meets them.
+    pub(crate) fn supplied_evidence(
+        &self,
+        refs: &[String],
+    ) -> MemoryResult<Vec<crate::provenance::birth::room::SuppliedEvidence>> {
+        let mut targets = Vec::with_capacity(refs.len());
+        for reference in refs {
+            targets.push(match self.target(reference) {
+                Ok(target) => target,
+                Err(error) if error.code != MEMORY_CODE_INTERNAL => None,
+                Err(error) => return Err(error),
+            });
+        }
+        let reads: Vec<_> = targets
+            .iter()
+            .flatten()
+            .map(|(id, mode)| PointRead::id(*id).at(*mode))
+            .collect();
+        let mut rows = self
+            .lane(ClaimReadStatus::Recorded)
+            .read(&reads, None)?
+            .value
+            .into_iter();
+        Ok(refs
+            .iter()
+            .zip(targets)
+            .map(|(reference, target)| {
+                let row = target.and_then(|_| rows.next().flatten());
+                crate::provenance::birth::room::SuppliedEvidence {
+                    supplied: reference.clone(),
+                    turn: row
+                        .filter(|row| row.entity_type == crate::registry::ENTITY_TYPE_TURN)
+                        .and_then(|row| Some((row.id, row.body?))),
+                }
+            })
+            .collect())
+    }
+
     /// The row the room's alias `alias` names at content hash `hash`, in this
     /// call's view of the room.
     fn room_alias(&self, alias: &str, hash: u8) -> MemoryResult<Option<EntityId>> {
@@ -458,8 +506,9 @@ fn served_forms_on_base() -> MemoryError {
 
 /// A room's own short ref, `s<n>:<hash>`: the alias a room mints for each
 /// row it stages (`SessionOverlay::alloc_session_short_id`), outside the
-/// vault's grammar, so neither names the other's row.
-fn room_short_ref(reference: &str) -> Option<(&str, u8)> {
+/// vault's grammar, so neither names the other's row. A room NOTE's reads
+/// resolve it too (FIX 4280, `OffRecordSession::room_row`).
+pub(crate) fn room_short_ref(reference: &str) -> Option<(&str, u8)> {
     let (alias, hash) = reference.split_once(':')?;
     let ordinal = alias.strip_prefix('s')?;
     if ordinal.is_empty()

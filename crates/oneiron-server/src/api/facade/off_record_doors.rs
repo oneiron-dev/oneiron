@@ -507,7 +507,12 @@ pub(crate) async fn vault_off_record_notes_create(
         let session = managed_session(server.vault(), caller, VERB, &input.session_ref)?;
         crate::api::credential_memory(&server.vault, Some(&held), actor, class)
             .at(held.locality())
-            .create_note_in_session(&session, &input.note.kind, &input.note.markdown)
+            .create_note_in_session(
+                &session,
+                &input.note.kind,
+                &input.note.markdown,
+                &input.evidence_turn_refs,
+            )
     })
     .await
 }

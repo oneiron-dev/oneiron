@@ -163,11 +163,19 @@ pub enum EngineScan {
     /// One TASK's Linear mirror event index rows a provenance page reads,
     /// its lookahead row included.
     LinearProvenanceRows,
+    /// One NOTE document's body bytes, as a store-aware entrance loads or a
+    /// room's birth projects it (once refused past 1 MiB).
+    NoteDocumentBytes,
+    /// One loaded NOTE document's pins (once refused past 256).
+    NoteDocumentPinRows,
+    /// One loaded NOTE document's authorship entries (once refused past
+    /// 4096).
+    NoteDocumentAuthorshipRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 65] = [
+    pub const ALL: [Self; 68] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -233,6 +241,9 @@ impl EngineScan {
         Self::ProjectDepthContributionBytes,
         Self::DispatchAncestorRows,
         Self::LinearProvenanceRows,
+        Self::NoteDocumentBytes,
+        Self::NoteDocumentPinRows,
+        Self::NoteDocumentAuthorshipRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -312,6 +323,9 @@ impl EngineScan {
             Self::ProjectDepthContributionBytes => "project_depth_contribution_bytes",
             Self::DispatchAncestorRows => "dispatch_ancestor_rows",
             Self::LinearProvenanceRows => "linear_provenance_rows",
+            Self::NoteDocumentBytes => "note_document_bytes",
+            Self::NoteDocumentPinRows => "note_document_pin_rows",
+            Self::NoteDocumentAuthorshipRows => "note_document_authorship_rows",
         }
     }
 
@@ -339,6 +353,9 @@ impl EngineScan {
                 crate::context_projection::CONTEXT_PROJECTION_ANCESTOR_CHECK
             }
             Self::LinearProvenanceRows => 200,
+            Self::NoteDocumentBytes => 1_048_576,
+            Self::NoteDocumentPinRows => 256,
+            Self::NoteDocumentAuthorshipRows => 4096,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -410,6 +427,9 @@ impl EngineScan {
             Self::ProjectDepthContributionBytes => 90,
             Self::DispatchAncestorRows => 91,
             Self::LinearProvenanceRows => 92,
+            Self::NoteDocumentBytes => 93,
+            Self::NoteDocumentPinRows => 94,
+            Self::NoteDocumentAuthorshipRows => 95,
         }]
     }
 }

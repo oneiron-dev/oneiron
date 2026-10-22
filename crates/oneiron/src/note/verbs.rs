@@ -593,14 +593,25 @@ pub(super) fn note_core(
     txn: &heed::RoTxn<'_>,
     note: EntityId,
 ) -> crate::error::Result<(EntityMetadataHeader, NoteBody)> {
+    note_core_in(vault, &vault.store, txn, note)
+}
+
+/// [`note_core`] with the NOTE's row read through `store`: the vault's own,
+/// or a room's view of it (FIX 4280). Erase and archive stay the vault's to
+/// say.
+pub(super) fn note_core_in(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> crate::error::Result<(EntityMetadataHeader, NoteBody)> {
     if vault.local_hard_delete_marker_exists_in_txn(txn, &note)? {
         return Err(invalid("NOTE was erased"));
     }
     if vault.archive_tombstone_in_txn(txn, &note)?.is_some() {
         return Err(invalid("NOTE is archived"));
     }
-    let raw = vault
-        .get_raw_in(txn, &note)?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &note)?
         .ok_or(invalid("NOTE does not exist"))?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(invalid("NOTE header"))?;
     if header.entity_type != ENTITY_TYPE_NOTE {
@@ -608,9 +619,9 @@ pub(super) fn note_core(
     }
     let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
     #[cfg(feature = "sync")]
-    let resolved = crate::entity_doc::resolve_record_body(&vault.store, txn, &note, bytes)?;
+    let resolved = crate::entity_doc::resolve_record_body(store, txn, &note, bytes)?;
     #[cfg(feature = "sync")]
     let bytes = resolved.as_slice();
-    let body = super::decode_note_body_in_txn(&vault.store, txn, bytes)?;
+    let body = super::decode_note_body_in_txn(store, txn, bytes)?;
     Ok((header, body))
 }

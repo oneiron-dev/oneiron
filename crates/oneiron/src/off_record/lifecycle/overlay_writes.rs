@@ -25,6 +25,7 @@ use crate::task_verb::sdk::{AgentVerb, CreateNoteRequest};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
 
+use super::room_births::RoomRowAttachments;
 use super::session::OffRecordSession;
 
 /// Whether a session write rides no turn of the room, so that only close
@@ -36,9 +37,10 @@ const SESSION_WRITES_RIDE_NO_TURN: bool = true;
 impl OffRecordSession<'_> {
     /// Stages `ops`, the writes of the one row `row`, into the room's overlay
     /// under `route`, each op on a fresh view of the room so it reads the
-    /// ones before it, and answers the room's short id for `row`. Each of
-    /// `needs` must be a row the room reads (overlay or base) in the
-    /// transaction that stages them.
+    /// ones before it, then `attachments` beside it (its birth, and a NOTE's
+    /// document birth: FIX 4280, 4281), and answers the room's short id for
+    /// `row`. Each of `needs` must be a row the room reads (overlay or base)
+    /// in the transaction that stages them.
     ///
     /// # Errors
     ///
@@ -46,6 +48,10 @@ impl OffRecordSession<'_> {
     /// closing; [`Error::EntityNotFound`] for a missing row of `needs`; the
     /// room's [`OffRecordOverlayFull`](crate::error::OffRecordError::OffRecordOverlayFull)
     /// once its budget is spent; any refusal of the session apply.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the route, then the one row's own staging axes and what stages beside it"
+    )]
     pub(crate) fn stage_session_rows(
         &self,
         route: &SessionWriteRoute,
@@ -54,6 +60,7 @@ impl OffRecordSession<'_> {
         learned_at: u64,
         needs: &[EntityId],
         ops: Vec<BatchOp>,
+        attachments: &RoomRowAttachments,
     ) -> Result<String> {
         route.require_recording(&self.session_ref)?;
         let conversation = self.overlay_conversation_shell()?;
@@ -67,6 +74,7 @@ impl OffRecordSession<'_> {
                 learned_at,
                 needs,
                 ops,
+                attachments,
             )
         })
     }
@@ -95,6 +103,7 @@ impl OffRecordSession<'_> {
         learned_at: u64,
         needs: &[EntityId],
         ops: Vec<BatchOp>,
+        attachments: &RoomRowAttachments,
     ) -> Result<String> {
         // The row's own id is its scope's turn: no TURN of the room has it,
         // so no promote or save plans it (`SESSION_WRITES_RIDE_NO_TURN`).
@@ -145,6 +154,10 @@ impl OffRecordSession<'_> {
                 data,
             )?;
         }
+        // The row's birth, and a NOTE's document birth, in the same segment
+        // and transaction: bookkeeping past the room's budget (FIX 4280,
+        // 4281; Engine 10-22).
+        self.stage_row_attachments(wtxn, row, attachments)?;
         let (short, _) = self
             .overlay()
             .alloc_session_short_id(&row, row.as_bytes())?;
@@ -231,7 +244,8 @@ impl OffRecordSession<'_> {
                 vad: Vad::NEUTRAL,
             });
         }
-        self.stage_session_rows(route, id, occurred, learned_at, &needs, ops)
+        let attachments = RoomRowAttachments::staged_claim(envelope, learned_at);
+        self.stage_session_rows(route, id, occurred, learned_at, &needs, ops, &attachments)
     }
 
     /// [`Self::stage_session_claim`], the row derived from each of
@@ -293,7 +307,8 @@ impl OffRecordSession<'_> {
                 vad: Vad::NEUTRAL,
             });
         }
-        self.stage_session_rows(route, id, occurred, learned_at, &needs, ops)
+        let attachments = RoomRowAttachments::derived_claim(envelope, sources, learned_at);
+        self.stage_session_rows(route, id, occurred, learned_at, &needs, ops, &attachments)
     }
 
     /// Whether a run bound to a session writes `verb` into its room
@@ -332,7 +347,8 @@ impl OffRecordSession<'_> {
             "vault.notes.create" => serde_json::from_value::<CreateNoteRequest>(input.clone())
                 .map_err(|_| decode("a NOTE"))
                 .and_then(|note| {
-                    memory.prepare_note_in_session(self, route, &note.kind, &note.markdown)
+                    // A code run's NOTE names no evidence (FIX 4281, P2).
+                    memory.prepare_note_in_session(self, route, &note.kind, &note.markdown, &[])
                 })
                 .map(|prepared| {
                     staged(move |wtxn, apply| encoded(&prepared.stage_in_txn(self, wtxn, apply)?))

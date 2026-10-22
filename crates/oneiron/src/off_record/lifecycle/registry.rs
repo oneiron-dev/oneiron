@@ -58,6 +58,11 @@ pub(super) struct OffRecordSessionEntry {
     pub(super) created_name: Option<String>,
     pub(super) state: Mutex<OffRecordSessionEntryState>,
     published_record: ArcSwapOption<OffRecordSessionRecord>,
+    /// The scan checks this instance's NOTE reads and births raised (FIX
+    /// 4280): RAM only, listed with the vault's while the room lives
+    /// (`Vault::scan_checks`), never kept in the vault, dropped with the
+    /// entry.
+    pub(super) pending_scan_checks: crate::scan_check::PendingScanChecks,
 }
 
 pub(super) struct OffRecordSessionEntryState {
@@ -239,6 +244,7 @@ impl OffRecordSessionRegistry {
                 saver: None,
             }),
             published_record: ArcSwapOption::from(Some(Arc::new(record))),
+            pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
         });
         sessions.insert(session_ref.to_owned(), entry.clone());
         self.published.store(Arc::new(sessions.clone()));
@@ -329,6 +335,19 @@ impl OffRecordSessionRegistry {
             }
         }
         Ok(None)
+    }
+
+    /// Calls `each` with the scan checks every live session holds, read
+    /// from the published snapshots (FIX 4280).
+    pub(crate) fn each_pending_scan_checks(
+        &self,
+        mut each: impl FnMut(&crate::scan_check::PendingScanChecks),
+    ) {
+        for entry in self.published.load().values() {
+            if entry.published_record.load().is_some() {
+                each(&entry.pending_scan_checks);
+            }
+        }
     }
 
     /// Whether any session is live, overlay rows or not.

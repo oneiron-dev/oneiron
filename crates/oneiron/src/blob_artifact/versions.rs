@@ -582,6 +582,7 @@ impl Vault {
                         content_hash.as_slice(),
                     ]),
                     withheld: Vec::new(),
+                    room_evidence: None,
                 },
             )?;
         }

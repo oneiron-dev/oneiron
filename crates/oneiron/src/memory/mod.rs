@@ -297,7 +297,7 @@ pub use search_vector::{
     VectorSearchRequest, VectorSearchResult,
 };
 pub(crate) use session_reads::{
-    SessionAnswer, SessionRead, SessionReadContext, scoped_session_text,
+    SessionAnswer, SessionRead, SessionReadContext, room_short_ref, scoped_session_text,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};

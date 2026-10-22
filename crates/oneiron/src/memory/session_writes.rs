@@ -73,20 +73,24 @@ impl Memory<'_> {
     /// authored text as its birth, as [`Self::create_note`] creates one in
     /// the vault. The receipt names the room's short id for it and no
     /// record ref: the row is no vault record unless the vault comes to hold
-    /// it.
+    /// it. Its NOTE document and its birth stage beside it, the birth
+    /// keeping `evidence` as its caller supplied it, each ref read in the
+    /// room as a TURN or kept as supplied (FIX 4280, 4281).
     ///
     /// # Errors
     ///
     /// As [`Self::create_note`]; `FORBIDDEN` when the room is anonymous or
-    /// full; `INVALID_STATE` when it is on record or closing.
+    /// full; `INVALID_STATE` when it is on record or closing. Its evidence
+    /// never refuses it.
     pub fn create_note_in_session(
         &self,
         session: &OffRecordSession<'_>,
         kind: &str,
         markdown: &str,
+        evidence: &[String],
     ) -> MemoryResult<EntityRefReceipt> {
         let route = self.session_write_route(session, "vault.notes.create")?;
-        self.prepare_note_in_session(session, &route, kind, markdown)?
+        self.prepare_note_in_session(session, &route, kind, markdown, evidence)?
             .stage(session, &route)
             .map_err(MemoryError::from)
     }

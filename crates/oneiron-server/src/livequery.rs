@@ -360,6 +360,7 @@ pub(crate) async fn rpc_reply(
     context: SocketCallContext,
 ) -> Result<RpcReply, ProtocolError> {
     let mut call = RpcCall::captured(server, &request);
+    let room_note = context.room_note_call(server, auth, &request.method, &request.params);
     let (result, attempt) = call_receipt::attempt_witnessed(rpc::claimed(
         server,
         auth,
@@ -371,7 +372,7 @@ pub(crate) async fn rpc_reply(
     call.attempt = attempt;
     // OF-063: judged on arrival and again before the receipt is written, so
     // a session closed mid-call keeps its call's exception.
-    call.anonymous = context.anonymous(server, auth);
+    call.anonymous = room_note || context.anonymous(server, auth);
     RpcReply::answer(server, auth, call, request.request_id, result)
 }
 

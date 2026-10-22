@@ -130,13 +130,19 @@ impl ScanCount {
     /// [`Self::finish`] through a read target, for a scan that holds a
     /// store or a room's view rather than the vault.
     pub(crate) fn defer(self, store: &impl ManifestDbs) {
+        self.defer_to(store.pending_scan_checks());
+    }
+
+    /// [`Self::defer`] into `pending`, crossings held apart from the vault's
+    /// own: a live room's (FIX 4280), which the host's read of the checks
+    /// lists while the room lives and which close drops; none is ever kept
+    /// in the vault, so no check names a room's row there.
+    pub(crate) fn defer_to(self, pending: &PendingScanChecks) {
         if self.rows <= self.threshold {
             return;
         }
         let check = self.check();
-        store
-            .pending_scan_checks()
-            .park((self.scan.tag(), self.scope), check);
+        pending.park((self.scan.tag(), self.scope), check);
     }
 
     fn check(&self) -> ScanCheck {
@@ -276,6 +282,11 @@ impl Vault {
         // Waiting first: a check that leaves the map after this copy was
         // kept by a commit the later snapshot sees.
         let mut checks = self.store.pending_scan_checks.waiting();
+        // A live room's crossings, held with the room and dropped at its
+        // close (FIX 4280): listed, never kept.
+        self.store
+            .off_record_sessions
+            .each_pending_scan_checks(|pending| checks.extend(pending.waiting()));
         let txn = self.store.env.read_txn()?;
         for row in CHECK.iter_from(&self.store, &txn, &[])? {
             let (key, check) = row?;
