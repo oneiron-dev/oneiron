@@ -181,7 +181,7 @@ impl<'v> ScopedRead<'v> {
     /// as the explicit-Scope gates judge one: a CLAIM's own record Scope, any
     /// other row's where `scope_for_blob` places it on this read's store. A
     /// row with no position admits nothing, and sealed custody is never one.
-    fn grant_admits_position_in(
+    pub(crate) fn grant_admits_position_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,

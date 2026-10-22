@@ -44,8 +44,9 @@ pub(crate) fn project_room_dependency(bytes: &[u8]) -> Option<EntityId> {
 
 pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<EntityId>> {
     let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
+    // The depth cache is owner-editable policy to any value; the engine's
+    // ancestor walk never bounds it (rule 5).
     if body.schema_version != 1
-        || usize::from(body.depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
         || body.home_room != home_room_id(id)?.to_hex()
         || body.roster.is_empty()
         || body.depth_remaining > body.depth_limit
