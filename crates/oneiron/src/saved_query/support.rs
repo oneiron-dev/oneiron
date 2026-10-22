@@ -18,8 +18,10 @@ pub(super) const MAX_TEXT_BYTES: usize = 512;
 /// One unit of cosine similarity expressed in the micros scale.
 pub(super) const MICROS_PER_UNIT: u32 = 1_000_000;
 
-/// Domain separator for the evidence hash.
-pub(super) const EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron.saved_query.evidence.v1";
+/// Domain separator for the evidence hash. Version 2 also covers each claim
+/// value's lossless canonical bytes (FIX 10090); a v1 memo is never read
+/// again, and no legacy reader exists.
+pub(super) const EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron.saved_query.evidence.v2";
 
 /// Length-prefixes every variable-length field so no two distinct evidence sets
 /// can serialize to the same byte stream.

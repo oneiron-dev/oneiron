@@ -101,7 +101,7 @@ No path is absolute on the host.
 | `artifacts.oci` | `reference` (a tag, not an identity), `index_digest`, `manifest_digest`, `config_digest` (the image id), `layer_digest`, `layer_diff_id`, and `archive` (a file). These identities are distinct: none stands in for another. Required: `null` only for the standalone Firecracker vault image, which names its kernel image; every builder output names its real OCI form. |
 | `artifacts.rootfs_ext4` | A file: `path`, `bytes`, `sha256`, `blake3`. |
 | `artifacts.kernel` | `config` (source pin) and `image` (a file, or `null`: the family builds no kernel). |
-| `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. |
+| `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. A variant's other binaries are not roles here: desktop-cua's `cua-driver` and generic-agent's Bun, tsrs and launchers are bound by the rootfs hashes, and named with their pins and measured hashes in the receipt (`inputs.payloads`, `installed`, `source_builds`, `native`) and the SBOM. |
 | `sbom` | The build's SPDX 2.3 JSON SBOM: `{media_type: "application/spdx+json", path: "sbom.spdx.json", sha256}`, measured again from the file and checked against the receipt; `null` for a build without one. The in-toto provenance statement (`provenance.json`) is named by the receipt. |
 | `provenance` | The build receipt: `{media_type, path: "receipt.json", sha256}`. |
 | `host` | `kvm` (true when every launch form needs `/dev/kvm`; only the vault), `kernel_floor` (from the fence's Landlock ABI floor: ABI 3 needs Linux 6.2), `landlock_abi_floor`, and `seccomp_user_notify` (fence plumbing). |

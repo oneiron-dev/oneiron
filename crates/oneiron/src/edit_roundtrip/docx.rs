@@ -41,15 +41,22 @@ pub(super) fn run_docx_revision_with_limits(
             "run_ref must be non-empty",
         )));
     }
-    oneiron_docedit::preflight_with_limits(input_bytes, limits).map_err(|error| {
-        // A parse-budget refusal keeps the bound it names.
-        match oneiron_docedit::parse_limit_refusal(&error) {
-            Some(refusal) => Error::Refused(refusal.to_owned()),
-            None => Error::Artifact(ArtifactError::EditRoundtripFailed(
-                "docx input exceeds effective archive limits",
-            )),
-        }
-    })?;
+    // The preflight and the revision read in the host's memory (FIX 8570).
+    let resources = crate::office_body::document_resources();
+    resources
+        .docx(|| oneiron_docedit::preflight_with_limits(input_bytes, limits))
+        .map_err(|error| {
+            if let Some(refusal) = oneiron_docedit::docx_resource(&error) {
+                return crate::office_body::document_refused(refusal);
+            }
+            // A ceiling the package passed keeps the dimension it names.
+            match oneiron_docedit::parse_limit_refusal(&error) {
+                Some(refusal) => Error::Refused(refusal.to_owned()),
+                None => Error::Artifact(ArtifactError::EditRoundtripFailed(
+                    "docx input exceeds effective archive limits",
+                )),
+            }
+        })?;
     let before = opc::read_with_limits(input_bytes, limits)?;
     let inspection = inspect(&before, OfficeFormat::Docx);
     let transaction =
@@ -58,12 +65,18 @@ pub(super) fn run_docx_revision_with_limits(
                 "native docx revision transaction is invalid",
             ))
         })?;
-    let (current, notes) = oneiron_docedit::revise_with_notes(input_bytes, &transaction, limits)
-        .map_err(|error| match error.parse_limit_refusal() {
-            Some(refusal) => Error::Refused(refusal.to_owned()),
-            None => Error::Artifact(ArtifactError::EditRoundtripFailed(
-                "native docx revision failed validation or could not be written",
-            )),
+    let (current, notes) = resources
+        .docx(|| oneiron_docedit::revise_with_notes(input_bytes, &transaction, limits))
+        .map_err(|error| {
+            if let Some(refusal) = error.resource() {
+                return crate::office_body::document_refused(refusal);
+            }
+            match error.parse_limit_refusal() {
+                Some(refusal) => Error::Refused(refusal.to_owned()),
+                None => Error::Artifact(ArtifactError::EditRoundtripFailed(
+                    "native docx revision failed validation or could not be written",
+                )),
+            }
         })?;
     let after = match opc::read_with_limits(&current, limits) {
         Ok(package) => package,

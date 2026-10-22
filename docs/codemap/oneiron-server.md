@@ -57,13 +57,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/feedback_triage/github.rs` | src | m | 4 crate-vis | — | The feedback sweep's GitHub issue sources (OF-420 T1; ARCH-0056: "GitHub issues still work |
 | `src/ai_host/feedback_triage/parts.rs` | src | s | 7 crate-vis | — | A long revision's parts (FIX 7549): the window a request must fit on the Coach's seat, and the item cut into… |
 | `src/ai_host/feedback_triage/synthesis.rs` | src | s | 4 crate-vis | — | A long revision's synthesis (FIX 7549): its answers, in order, joined in batches whose requests each fit the… |
+| `src/ai_host/handle.rs` | src | m | 17 fn · 15 crate-vis | — | The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints |
 | `src/ai_host/harness.rs` | src | s | 1 crate-vis | — | The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit… |
 | `src/ai_host/home_digests.rs` | src | s | 1 crate-vis | — | Due digests on a host that runs no Dreamer (OF-499) |
 | `src/ai_host/identity.rs` | src | s | 1 crate-vis | — | Identity decisions (OF-123, ask rule B): the host side of the Dreamer's identity re-check |
 | `src/ai_host/judge_swap.rs` | src | s | 2 crate-vis | — | The Coach's judge-swap upkeep on this server (OF-184) |
 | `src/ai_host/lens_callbacks.rs` | src | s | 2 crate-vis | — | OF-181 (FIX 2611): a lens card's model round trip goes back to the agent that rendered the card, as that… |
+| `src/ai_host/lifecycle.rs` | src | m | 5 fn · 5 crate-vis | — | The running host's lifecycle (`AiHost`): attach and start, the binds a server makes once it exists, shutdown… |
 | `src/ai_host/local_vision.rs` | src | m | 8 crate-vis | — | The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound… |
-| `src/ai_host/mod.rs` | src | L | 2 struct · 22 fn · 3 mod · 1 re-export · 37 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
+| `src/ai_host/mod.rs` | src | s | 2 struct · 3 mod · 1 re-export · 21 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
 | `src/ai_host/payer_funding.rs` | src | m | 7 crate-vis | — | Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805) |
 | `src/ai_host/policy.rs` | src | s | 5 crate-vis | — | The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to… |
 | `src/ai_host/question_timer.rs` | src | s | 3 crate-vis | — | The hand-off of a bound Dreamer's timer work (OF-506, FIX 1149) |
@@ -89,6 +91,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/trained_serving.rs` | src | s | 2 crate-vis | — | Whether this host serves a trained checkpoint its role binds (OF-577, FIX 857) |
 | `src/ai_host/training_offer.rs` | src | m | 2 crate-vis | — | The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads… |
 | `src/ai_host/training_offer/check.rs` | src | s | 1 crate-vis | — | The check of one approved offer's promise against the seat's metered calls: fixed code, no model call |
+| `src/ai_host/training_offer/choices.rs` | src | s | 2 crate-vis | — | The two option lists a seat's brief is gathered from: each stock model the seat may switch to, priced on its… |
 | `src/ai_host/training_offer/cost.rs` | src | s | 3 crate-vis | — | Fixed-code projection on the same dated workload, with each tokenizer |
 | `src/ai_host/training_offer/draft.rs` | src | s | 1 crate-vis | — | The offer the Coach's answer names, projected from the brief it read |
 | `src/ai_host/training_offer/pilot.rs` | src | s | 1 crate-vis | — | Measured per-seat pilot evidence beside the production offer skill's brief |
@@ -98,12 +101,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/training_pack/trainer.rs` | src | s | 3 crate-vis | — | The question-head trainer (FIX 7263), the one `TrainingConnector` this host ships |
 | `src/ai_host/training_pack/wire.rs` | src | m | 13 crate-vis | — | `oneiron.training-pack.job/1` and its receipt (FIX 7263): the request the question-head worker reads and the… |
 | `src/ai_host/turn_actions.rs` | src | m | 2 crate-vis | — | The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)… |
+| `src/ai_host/turn_actions/phases.rs` | src | s | 3 crate-vis | — | Two phases of one turn action's run (`act`): admitting its call, with its context board where the board may… |
 | `src/ai_host/turn_program.rs` | src | s | 1 crate-vis | — | The host's half of DOOR-141: the wakes a landed turn's own commit owed its actor's armed programs, typed… |
 | `src/ai_host/turn_program_host.rs` | src | s | 4 crate-vis | — | What this server lends one entry of a Dreamer turn program (DOOR-141 PR2): the engine-native code host's own… |
 | `src/ai_host/turns.rs` | src | s | 9 crate-vis | — | Chat turns in flight |
 | `src/ai_host/waves.rs` | src | m | 4 crate-vis | — | Live, model-backed wave planning on the server's durable workflow pump |
 | `src/ai_host/weave_lens.rs` | src | m | 4 crate-vis | — | The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST… |
-| `src/ai_host/workflows.rs` | src | m | 6 crate-vis | — | The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it… |
+| `src/ai_host/workers.rs` | src | s | 3 crate-vis | — | The workers a started host runs on its seats: the Dreamer and the workflow pump, and the MACRO declaration… |
+| `src/ai_host/workflows.rs` | src | m | 5 crate-vis | — | The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it… |
 | `src/api/ai/chat.rs` | src | m | 17 crate-vis | — | `POST /v1/ai/chat`: one chat turn on the generative seat |
 | `src/api/ai/chat/admission.rs` | src | m | 1 crate-vis | — | Chat turn admission and setup |
 | `src/api/ai/chat/answer.rs` | src | s | 5 crate-vis | — | Chat answer opening and request construction |
@@ -171,7 +176,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/companion/mod.rs` | src | s | 6 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
 | `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
 | `src/api/consumer_usage.rs` | src | s | 4 crate-vis | — | Per-vault usage facts |
-| `src/api/context_board/board.rs` | src | m | 14 crate-vis | — | The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX… |
+| `src/api/context_board/board.rs` | src | m | 15 crate-vis | — | The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX… |
 | `src/api/context_board/chat_emit.rs` | src | m | 6 crate-vis | — | What a chat answer's context leaves on record (FIX 6921), a live turn's or a queued Continue or Retry's (FIX… |
 | `src/api/context_board/cursor.rs` | src | s | 14 crate-vis | — | Server-owned MEMORIES cursors and session read sets, keyed by principal and session |
 | `src/api/context_board/egress.rs` | src | s | 5 crate-vis | — | Where a chat call's context board may go (FIX 7257), for a live turn and a queued Continue or Retry alike… |
@@ -582,9 +587,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/recovery_bundle.rs` | src | m | 10 crate-vis | — | The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no… |
 | `src/api/report.rs` | src | s | 3 crate-vis | — | OF-537 report execution and owner triage |
 | `src/api/routes.rs` | src | m | 1 crate-vis | — | The HTTP API router: every `/api`, `/v1` and facade route, with its layers in their order |
-| `src/api/run_tree.rs` | src | m | 29 crate-vis | — | The run tree routes: one run's tree of attempts, its observation and the owner's interventions |
+| `src/api/run_tree.rs` | src | m | 23 crate-vis | — | The run tree routes: one run's tree of attempts, its observation and the owner's interventions |
 | `src/api/run_tree/cancel.rs` | src | s | 3 crate-vis | — | Run-tree cancel through the caller-bound cancel door (FIX 8219) |
+| `src/api/run_tree/encode.rs` | src | s | 3 crate-vis | — | The run tree's JSON, written on a heap stack (FIX 10067) |
 | `src/api/run_tree/keyed.rs` | src | s | 1 crate-vis | — | Keyed run-tree interventions (FIX 6056) |
+| `src/api/run_tree/projection.rs` | src | s | 2 crate-vis | — | The engine run tree's projection onto the core run-tree DTOs, one node at a time (FIX 10067): a node is… |
 | `src/api/run_tree/scoped.rs` | src | s | 3 crate-vis | — | The run tree as a caller's current read authority admits it (FIX 8220, 8221): one projector for the… |
 | `src/api/saved_query.rs` | src | s | 6 crate-vis | — | CA-07 saved-query HTTP routes |
 | `src/api/scoped_auth.rs` | src | m | 12 crate-vis | — | Legacy owner-auth gate and scoped-read constructors for both auth flavors |
@@ -1328,6 +1335,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/recall_hyde.rs` | src | m | 9 crate-vis | — | A host-backed HydeExpander: typed work is handed to the caller's own host, outside every vault transaction |
 | `src/server/recall_rerank.rs` | src | m | 6 crate-vis | — | The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)… |
 | `src/server/resident_pump.rs` | src | m | 5 crate-vis | — | The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's… |
+| `src/server/resident_pump/attribution.rs` | src | s | 1 crate-vis | — | The executor a seatless, unplanned run records (FIX 1876, OF-540) |
 | `src/server/resident_pump/browser_workflow.rs` | src | m | 3 crate-vis | — | A TASK bound to a library program (CUA E4, FIX 7603; DESIGN-2 §2): its try runs the program its first lease… |
 | `src/server/resident_pump/child_pin.rs` | src | s | 3 crate-vis | — | A seatless planned child's binding (FIX 2310, OF-541 PR H) |
 | `src/server/resident_pump/craft.rs` | src | s | 1 crate-vis | — | A resident's own craft in its run's task (OF-490): every lesson and failure mode it keeps, learned or… |
