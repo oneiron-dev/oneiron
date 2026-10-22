@@ -6830,6 +6830,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/bin/deck-gate-engine.rs",
+     "purpose": "`deck-gate-engine`: the OF-510 deck gate's engine half with the engine's own Loro body",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "BlobArtifactBody"
      ],
@@ -44634,7 +44642,7 @@
      "purpose": "Live office body records and Vault doors",
      "surface": {
       "crate-vis": 5,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -44650,7 +44658,7 @@
      "surface": {
       "crate-vis": 9,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -44742,7 +44750,17 @@
      "path": "src/office_body/pptx/merge.rs",
      "purpose": "A deck fork's merge candidate as the body would hold it once landed: the head's document with the fork's own…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/peers.rs",
+     "purpose": "Two Loro peers of one deck body, as the OF-510 deck gate's step 4 merges them (FIX 3773)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -67296,7 +67314,7 @@
      "path": "src/typed_body.rs",
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 11,
       "re-export": 1,
@@ -67334,7 +67352,7 @@
      "path": "src/typed_body/lift.rs",
      "purpose": "Typed bodies the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -67355,6 +67373,16 @@
      "purpose": "The typed-body commit receipts (KS7-2), under their body's entity tree",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/typed_body/reviewed_fork.rs",
+     "purpose": "A fork landed up to the frontier its review read (FIX 9992)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -74875,7 +74903,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -75428,7 +75456,7 @@
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap"
     },
     "typed_body": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -75528,7 +75556,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4913,
+   "source_files": 4916,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82608,13 +82636,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/cli.rs",
+     "purpose": "The gate runner's command line, shared by docedit's `deck-gate-cases` and the engine's `deck-gate-engine`…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/oracle_run/edits.rs",
      "purpose": "The path every exported edit takes: apply the operations to the import, project over the retained package…",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -82632,9 +82670,29 @@
      "kind": "src",
      "notable": [],
      "path": "src/live/oracle_run/merge.rs",
-     "purpose": "Step 4: the concurrent cases, each merged in both landing orders through the review flow (fork, preflight…",
+     "purpose": "Step 4: the concurrent cases",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/merge/evidence.rs",
+     "purpose": "Both landing orders' evidence (FIX 8591): each order's merged head is exported and kept, as a candidate…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/merge/peers.rs",
+     "purpose": "Step 4's convergence case (FIX 3773): two Loro peers of one deck body, each forked at the merge base's…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -82648,7 +82706,9 @@
      "purpose": "The OF-510 deck gate runner, engine half: the `pptx-live-v1` case set through the current projector…",
      "surface": {
       "fn": 1,
-      "struct": 2
+      "re-export": 1,
+      "struct": 2,
+      "type": 1
      }
     },
     {
@@ -82667,6 +82727,16 @@
      "notable": [],
      "path": "src/live/oracle_run/recipes.rs",
      "purpose": "The live mutations step 2 exercises, each over the first slide and its first text shape: the operations, the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/recipes/more.rs",
+     "purpose": "The step 2 mutations FIX 5670 adds, so the Office gate says how PowerPoint opens each: Edit Points, a ragged…",
      "surface": {
       "crate-vis": 2
      }
@@ -82689,6 +82759,16 @@
      "purpose": "Step 8: the preservation corpus and the adversarial fixtures through the same path as the core set…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/schema.rs",
+     "purpose": "Step 5's schema evidence (FIX 8590)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -82891,12 +82971,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/pptx/merge.rs",
      "purpose": "The three-way comparison of a fork's base, the head and its proposal, and the merge preflight over the…",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -83737,7 +83818,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 56,
+     "files": 61,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83809,7 +83890,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 150,
+   "source_files": 155,
    "test_files": 14
   },
   "oneiron-driver": {
