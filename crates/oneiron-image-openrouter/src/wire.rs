@@ -12,11 +12,14 @@ pub fn build_image_request(
     references: &[ImageBytes],
 ) -> LlmResult<OpenRouterImageHttpRequest> {
     let row = config.model(&intent.model)?;
+    // The whole reference set goes, in order (FIX 9322): `max_references` is
+    // the host's routing hint, never a count this wire cuts or refuses at. A
+    // model that takes no reference at all still cannot do a reference edit.
     if intent.instruction.trim().is_empty()
         || intent.width == 0
         || intent.height == 0
         || u64::from(intent.width) * u64::from(intent.height) > row.max_pixels
-        || references.len() > row.max_references
+        || (!references.is_empty() && row.max_references == 0)
         || references
             .iter()
             .any(|r| r.bytes.is_empty() || !valid_media_type(&r.media_type))

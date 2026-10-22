@@ -37,7 +37,7 @@ impl Memory<'_> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let (started_at, idempotent_replay) = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
-            self.require_execution_writer(&body)?;
+            self.require_execution_writer(&*wtxn, task_ref, &body)?;
             match body.state {
                 Some(TaskExecutionState::Working {
                     started_at: already,
@@ -255,7 +255,7 @@ impl Memory<'_> {
         at: u64,
         consult_kind: Option<&super::ConsultResultKind>,
     ) -> MemoryResult<(TaskTerminalRecord, bool)> {
-        self.require_execution_writer(&body)?;
+        self.require_execution_writer(&*wtxn, task_ref, &body)?;
         // Local compare-and-set: one replica settles a task once. A
         // byte-identical replay is the network retrying rather than a
         // second result, so it reports the winner and mutates nothing.
@@ -364,7 +364,34 @@ impl Memory<'_> {
     /// The one actor allowed to write execution facts on this TASK: the
     /// addressed executor, or the owner when the assignee is the local Dreamer,
     /// which has no actor row of its own.
-    pub(super) fn require_execution_writer(&self, body: &TaskVerbBody) -> MemoryResult<()> {
+    ///
+    /// A consult proves it from its immutable ConsultAssignee fact, read in
+    /// `txn`, the settling transaction (FIX 10182): the party that fact
+    /// addressed (or its asker, for the Dreamer) still holding the binding
+    /// generation it held at mint. Its body's assignee or owner, which a
+    /// later rewrite may change, never stands in. Every consult mint writes
+    /// that fact, so a consult without one proves nobody. A TASK of another
+    /// kind carries no such fact and keeps its body's addressee.
+    pub(super) fn require_execution_writer(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+        body: &TaskVerbBody,
+    ) -> MemoryResult<()> {
+        let facts = self.vault().task_authority_facts_in(txn, task_ref)?;
+        if facts.has_consult_party_fact() || body.task_kind() == super::TaskKind::Consult {
+            let standing = facts
+                .consult_execution_standing(self.actor())
+                .ok_or_else(unaddressed_write)?;
+            return self
+                .vault()
+                .verify_write_actor_generation_in_txn(
+                    txn,
+                    crate::WriteActor::new(self.actor(), self.actor_class()),
+                    standing.generation,
+                )
+                .map_err(MemoryError::from);
+        }
         let expected = match body.assignee.and_then(TaskAssignee::entity_ref) {
             Some(entity_ref) => entity_ref,
             None => EntityId::from_hex(&body.owner_ref).map_err(|_| {
@@ -378,11 +405,7 @@ impl Memory<'_> {
         } else {
             // The task is ADDRESSED. A write from anyone else is not a late
             // result, it is an unaddressed write.
-            Err(consult_refusal(
-                MEMORY_CODE_FORBIDDEN,
-                "only the addressed assignee may write this task's execution facts",
-                "Write as the actor the task is addressed to.",
-            ))
+            Err(unaddressed_write())
         }
     }
 }
@@ -566,4 +589,13 @@ impl Vault {
     pub fn settle_code_run_waits(&self) -> crate::Result<()> {
         super::ask_facade::settle_waiting_asks(self)
     }
+}
+
+/// A write of a TASK's execution facts by anyone but its addressed executor.
+fn unaddressed_write() -> MemoryError {
+    consult_refusal(
+        MEMORY_CODE_FORBIDDEN,
+        "only the addressed assignee may write this task's execution facts",
+        "Write as the actor the task is addressed to.",
+    )
 }

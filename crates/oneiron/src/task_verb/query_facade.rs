@@ -453,6 +453,28 @@ impl Memory<'_> {
                     ));
                 }
                 if cancelled_count == 0 {
+                    // An allowed cancel of an open TASK with no local attempt
+                    // (a human, peer or child addressed one) cancels the TASK
+                    // itself (FIX 10185): its Cancelled fact is the effect. A
+                    // settled or already cancelled TASK answers as before.
+                    if live_attempts.is_empty()
+                        && let Some(task_ref) = state.task_ref
+                        && !self
+                            .vault()
+                            .task_authority_facts_in(&*wtxn, task_ref)?
+                            .cancelled
+                        && super::wire_decode::task_verb_body_in(self.vault(), &*wtxn, task_ref)?
+                            .is_some_and(|body| body.terminal().is_none())
+                    {
+                        cancel_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)?;
+                        return Ok((
+                            decision_ref,
+                            decision.outcome(),
+                            true,
+                            Some(RunTreeStatus::Cancelled),
+                            false,
+                        ));
+                    }
                     return Ok((
                         decision_ref,
                         decision.outcome(),
