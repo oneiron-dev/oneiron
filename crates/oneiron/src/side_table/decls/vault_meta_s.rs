@@ -434,6 +434,9 @@ side_tables! {
     SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL_REVISION: VaultMeta b"skill_hub/marketplace-code-auto-install-revision/v1" Raw;
     /// Owner switch (`0` off, `1` on) for auto-installing code-bearing marketplace folders. Key: ().
     SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL: VaultMeta b"skill_hub/marketplace-code-auto-install/v1" Raw;
+    /// Owner setting (`0` rule fit, `1` owner-asked fit) choosing the fit an ordinary skill install
+    /// runs; an absent row is the rule fit. Key: ().
+    SKILL_HUB_MARKETPLACE_SKILL_FIT: VaultMeta b"skill_hub/marketplace-skill-fit/v1" Raw;
     /// Origin marker for a hub-materialized skill (imported flag, optional forked-from parent id);
     /// survives deletion so it cannot be laundered by delete/recreate. Key: id16.
     SKILL_HUB_ORIGIN: VaultMeta b"skill_hub/origin/v1\0" Raw;
