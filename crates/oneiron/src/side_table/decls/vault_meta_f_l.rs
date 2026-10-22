@@ -431,7 +431,8 @@ side_tables! {
     /// The current immutable catalog revision. Key: ().
     LLM_CATALOG_HEAD: VaultMeta b"llm:catalog_head:v1" Named;
     /// Pinned catalog prices, scores and refresh diffs. Key: revision string.
-    LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named;
+    LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named
+        => crate::llm::catalog_doors::erase_catalog_source_rows_in_txn;
     /// Measured description scores keyed inside one singleton map. Key: ().
     LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored;
     /// Vault-owned description policy. Key: ().
@@ -452,7 +453,8 @@ side_tables! {
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
-    LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored;
+    LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored
+        => crate::llm::registry::erase_registry_source_in_txn;
     /// Per-vault narrow-only resident route overrides, cleared when the manifest is replaced. Key:
     /// ().
     LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson;
