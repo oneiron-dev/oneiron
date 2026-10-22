@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1142 facade rows, 3990 generated types.
+// UniFFI census: 1142 facade rows, 4010 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1094.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -7256,6 +7256,13 @@ pub enum StreamFinalityReason {
     Custom(String),
 }
 
+/// `oneiron_model::llm::protocol::IncompleteReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum IncompleteReason {
+    #[serde(rename = "terminal_disagreement")]
+    TerminalDisagreement,
+}
+
 /// `oneiron_model::llm::protocol::FinishReason`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum FinishReason {
@@ -7273,6 +7280,11 @@ pub enum FinishReason {
     Other {
         #[serde(rename = "name")]
         name: String,
+    },
+    #[serde(rename = "incomplete")]
+    Incomplete {
+        #[serde(rename = "reason")]
+        reason: IncompleteReason,
     },
 }
 
@@ -12300,6 +12312,12 @@ pub enum WeaveItemView {
         card_ref: String,
         #[serde(rename = "card")]
         card: AgentHealthCard,
+        #[serde(
+            rename = "draft_erased",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        draft_erased: Option<bool>,
     },
     #[serde(rename = "sieve_audit")]
     SieveAudit {
@@ -31437,6 +31455,8 @@ pub struct ArtifactVersionView {
     pub made_by: MadeBy,
     #[serde(rename = "born_from")]
     pub born_from: Vec<BornFromSource>,
+    #[serde(rename = "claim")]
+    pub claim: RecordRef,
 }
 
 /// `oneiron::blob_artifact::family::ArtifactView`.
@@ -39232,6 +39252,10 @@ pub struct BornFromArtifact {
     pub version: u64,
     #[serde(rename = "at")]
     pub at: u64,
+    #[serde(rename = "artifact")]
+    pub artifact: RecordRef,
+    #[serde(rename = "claim")]
+    pub claim: RecordRef,
 }
 
 /// `oneiron::blob_artifact::verbs::BornFromView`.
@@ -39239,6 +39263,8 @@ pub struct BornFromArtifact {
 pub struct BornFromView {
     #[serde(rename = "born")]
     pub born: Vec<String>,
+    #[serde(rename = "born_records")]
+    pub born_records: Vec<RecordRef>,
     #[serde(rename = "versions")]
     pub versions: Vec<BornFromArtifact>,
 }
@@ -39257,6 +39283,8 @@ pub enum PendingProposalKind {
 pub struct PendingProposalView {
     #[serde(rename = "artifact_id")]
     pub artifact_id: String,
+    #[serde(rename = "artifact")]
+    pub artifact: RecordRef,
     #[serde(rename = "proposal_ref")]
     pub proposal_ref: String,
     #[serde(rename = "kind")]
@@ -39327,12 +39355,37 @@ pub struct ReleasedWait {
     pub released: bool,
 }
 
+/// `oneiron_docedit::pptx_comments::model::PptxCommentTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PptxCommentTarget {
+    #[serde(rename = "slide")]
+    pub slide: u64,
+    #[serde(
+        rename = "slide_creation_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub slide_creation_id: Option<u32>,
+    #[serde(
+        rename = "shape_creation_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub shape_creation_id: Option<String>,
+    #[serde(
+        rename = "shape_fingerprint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub shape_fingerprint: Option<Vec<u8>>,
+}
+
 /// `oneiron::blob_artifact::verbs::SlideReviewUnitInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SlideReviewUnitInput {
     #[serde(rename = "target")]
-    pub target: crate::WireJson,
+    pub target: PptxCommentTarget,
     #[serde(
         rename = "review_image",
         default,
@@ -39411,6 +39464,30 @@ pub struct DecisionQuestion {
     pub accept_type: bool,
 }
 
+/// `oneiron_docedit::pptx_comments::model::PptxAuthor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PptxAuthor {
+    #[serde(rename = "guid")]
+    pub guid: String,
+    #[serde(rename = "name")]
+    pub name: String,
+}
+
+/// `oneiron::edit_roundtrip::slides_review::SlideReviewLabels`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlideReviewLabels {
+    #[serde(rename = "yes")]
+    pub yes: String,
+    #[serde(rename = "no")]
+    pub no: String,
+    #[serde(rename = "low")]
+    pub low: String,
+    #[serde(rename = "middle")]
+    pub middle: String,
+    #[serde(rename = "high")]
+    pub high: String,
+}
+
 /// `oneiron::blob_artifact::verbs::SlideReviewSubmit`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -39424,15 +39501,15 @@ pub struct SlideReviewSubmit {
     #[serde(rename = "question")]
     pub question: DecisionQuestion,
     #[serde(rename = "author")]
-    pub author: crate::WireJson,
+    pub author: PptxAuthor,
     #[serde(rename = "labels")]
-    pub labels: crate::WireJson,
+    pub labels: SlideReviewLabels,
     #[serde(
         rename = "reversibility",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub reversibility: Option<crate::WireJson>,
+    pub reversibility: Option<Reversibility>,
     #[serde(
         rename = "evidence_refs",
         default,
@@ -39452,18 +39529,288 @@ pub struct SlideReviewSubmit {
     )]
     pub deadline_ms: Option<u64>,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
-    pub made_by: Option<crate::WireJson>,
+    pub made_by: Option<MadeBy>,
+}
+
+/// `oneiron::edit_roundtrip::slides_review::ShapeReviewAnchor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeReviewAnchor {
+    #[serde(rename = "node_part")]
+    pub node_part: String,
+    #[serde(rename = "node_index")]
+    pub node_index: u64,
+    #[serde(rename = "shape_id", default, skip_serializing_if = "Option::is_none")]
+    pub shape_id: Option<u32>,
+    #[serde(rename = "fingerprint")]
+    pub fingerprint: Vec<u8>,
+}
+
+/// `oneiron::edit_roundtrip::slides_review::SlideReviewAnchor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlideReviewAnchor {
+    #[serde(rename = "slide_part")]
+    pub slide_part: String,
+    #[serde(rename = "sld_id")]
+    pub sld_id: u32,
+    #[serde(rename = "slide_fingerprint")]
+    pub slide_fingerprint: Vec<u8>,
+    #[serde(rename = "render_fingerprint")]
+    pub render_fingerprint: Vec<u8>,
+    #[serde(rename = "shape", default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<ShapeReviewAnchor>,
+}
+
+/// `oneiron::edit_roundtrip::slides_review::SlideLocation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SlideLocation {
+    #[serde(rename = "slide_width")]
+    pub slide_width: i64,
+    #[serde(rename = "slide_height")]
+    pub slide_height: i64,
+    #[serde(rename = "left")]
+    pub left: i64,
+    #[serde(rename = "top")]
+    pub top: i64,
+    #[serde(rename = "right")]
+    pub right: i64,
+    #[serde(rename = "bottom")]
+    pub bottom: i64,
+}
+
+/// `oneiron::llm::decision::policy::BandMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BandMode {
+    #[serde(rename = "shadow")]
+    Shadow,
+    #[serde(rename = "enforce")]
+    Enforce,
+}
+
+/// `oneiron::llm::decision::media_ref::ImageRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ImageRef {
+    #[serde(rename = "evidence")]
+    pub evidence: EvidenceVersion,
+    #[serde(rename = "hash")]
+    pub hash: Vec<u8>,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "width")]
+    pub width: u32,
+    #[serde(rename = "height")]
+    pub height: u32,
+    #[serde(rename = "frame", default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<PixelRegion>,
+}
+
+/// `oneiron::ingest::meeting_audio::types::SpeechSpan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SpeechSpan {
+    #[serde(rename = "start_ms")]
+    pub start_ms: u64,
+    #[serde(rename = "end_ms")]
+    pub end_ms: u64,
+}
+
+/// `oneiron::ingest::meeting_audio::types::SourceSpan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SourceSpan {
+    #[serde(rename = "source_start_ms")]
+    pub source_start_ms: u64,
+    #[serde(rename = "source_end_ms")]
+    pub source_end_ms: u64,
+    #[serde(rename = "pack_start_ms")]
+    pub pack_start_ms: u64,
+    #[serde(rename = "pack_end_ms")]
+    pub pack_end_ms: u64,
+}
+
+/// `oneiron::ingest::meeting_audio::types::SpeakerTrack`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SpeakerTrack {
+    #[serde(rename = "start_ms")]
+    pub start_ms: u64,
+    #[serde(rename = "end_ms")]
+    pub end_ms: u64,
+    #[serde(rename = "speaker_cluster")]
+    pub speaker_cluster: String,
+}
+
+/// `oneiron::llm::decision::media_ref::AudioRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AudioRef {
+    #[serde(rename = "evidence")]
+    pub evidence: EvidenceVersion,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "duration_ms")]
+    pub duration_ms: u64,
+    #[serde(rename = "window")]
+    pub window: SpeechSpan,
+    #[serde(
+        rename = "source_spans",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_spans: Option<Vec<SourceSpan>>,
+    #[serde(rename = "speakers", default, skip_serializing_if = "Option::is_none")]
+    pub speakers: Option<Vec<SpeakerTrack>>,
+}
+
+/// `oneiron::llm::decision::media_ref::DecisionMediaRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DecisionMediaRef {
+    #[serde(rename = "image")]
+    Image(ImageRef),
+    #[serde(rename = "audio")]
+    Audio(AudioRef),
+}
+
+/// `oneiron::llm::decision::media_ref::MediaServed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MediaServed {
+    #[serde(rename = "full")]
+    Full,
+    #[serde(rename = "no_image_reader")]
+    NoImageReader,
+    #[serde(rename = "audio_unsupported")]
+    AudioUnsupported,
+    #[serde(rename = "no_audio_reader")]
+    NoAudioReader,
+}
+
+/// `oneiron::llm::decision::media_ref::DecisionMedia`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionMedia {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "reference")]
+    pub reference: DecisionMediaRef,
+    #[serde(rename = "served")]
+    pub served: MediaServed,
+}
+
+/// `oneiron::edit_roundtrip::slides_review::SlideJudgment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlideJudgment {
+    #[serde(rename = "thread_id")]
+    pub thread_id: String,
+    #[serde(rename = "target")]
+    pub target: PptxCommentTarget,
+    #[serde(rename = "anchor")]
+    pub anchor: SlideReviewAnchor,
+    #[serde(rename = "decision")]
+    pub decision: TypedDecision,
+    #[serde(rename = "answer_contract")]
+    pub answer_contract: AnswerContract,
+    #[serde(rename = "presence", default, skip_serializing_if = "Option::is_none")]
+    pub presence: Option<TypedDecision>,
+    #[serde(rename = "location", default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<SlideLocation>,
+    #[serde(rename = "band_mode")]
+    pub band_mode: BandMode,
+    #[serde(rename = "renderer")]
+    pub renderer: String,
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "media", default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<Vec<DecisionMedia>>,
+    #[serde(rename = "render_hash")]
+    pub render_hash: Vec<u8>,
+    #[serde(rename = "evidence_hash")]
+    pub evidence_hash: Vec<u8>,
+    #[serde(
+        rename = "judged_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judged_version: Option<u64>,
+    #[serde(rename = "comment")]
+    pub comment: String,
+    #[serde(rename = "labels")]
+    pub labels: SlideReviewLabels,
+}
+
+/// `oneiron_docedit::pptx_comments::model::PptxCommentAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum PptxCommentAction {
+    #[serde(rename = "add")]
+    Add {
+        #[serde(rename = "target")]
+        target: PptxCommentTarget,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "reply")]
+    Reply {
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "resolve")]
+    Resolve {
+        #[serde(rename = "resolved")]
+        resolved: bool,
+    },
+}
+
+/// `oneiron::edit_roundtrip::pptx::package::PptxCommentPatch`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PptxCommentPatch {
+    #[serde(rename = "asked_by")]
+    pub asked_by: String,
+    #[serde(rename = "answered_by")]
+    pub answered_by: String,
+    #[serde(rename = "author")]
+    pub author: PptxAuthor,
+    #[serde(rename = "thread_id")]
+    pub thread_id: String,
+    #[serde(rename = "comment_id")]
+    pub comment_id: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "action")]
+    pub action: PptxCommentAction,
+}
+
+/// `oneiron::edit_roundtrip::slides_review::SlideAbstention`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlideAbstention {
+    #[serde(rename = "target")]
+    pub target: PptxCommentTarget,
+    #[serde(rename = "decision", default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<TypedDecision>,
+}
+
+/// `oneiron::edit_roundtrip::slides_review::SlideUnitRefusalReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SlideUnitRefusalReason {
+    #[serde(rename = "MissingShape")]
+    MissingShape,
+    #[serde(rename = "AmbiguousShape")]
+    AmbiguousShape,
+    #[serde(rename = "TargetChanged")]
+    TargetChanged,
+    #[serde(rename = "UnresolvedGeometry")]
+    UnresolvedGeometry,
+    #[serde(rename = "EvidenceBudget")]
+    EvidenceBudget,
+    #[serde(rename = "UnreadableImage")]
+    UnreadableImage,
 }
 
 /// `oneiron::blob_artifact::verbs::SlideUnitRefused`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SlideUnitRefused {
     #[serde(rename = "target")]
-    pub target: crate::WireJson,
+    pub target: PptxCommentTarget,
     #[serde(rename = "reason")]
-    pub reason: String,
+    pub reason: SlideUnitRefusalReason,
     #[serde(rename = "offer", default, skip_serializing_if = "Option::is_none")]
-    pub offer: Option<crate::WireJson>,
+    pub offer: Option<PptxCommentTarget>,
 }
 
 /// `oneiron::blob_artifact::verbs::SlideReviewOutcome`.
@@ -39471,8 +39818,12 @@ pub struct SlideUnitRefused {
 pub struct SlideReviewOutcome {
     #[serde(rename = "proposed", default, skip_serializing_if = "Option::is_none")]
     pub proposed: Option<PendingProposalView>,
+    #[serde(rename = "judgments")]
+    pub judgments: Vec<SlideJudgment>,
+    #[serde(rename = "comments")]
+    pub comments: Vec<PptxCommentPatch>,
     #[serde(rename = "abstained")]
-    pub abstained: Vec<crate::WireJson>,
+    pub abstained: Vec<SlideAbstention>,
     #[serde(rename = "refused")]
     pub refused: Vec<SlideUnitRefused>,
 }
@@ -41457,7 +41808,7 @@ pub struct NativeOutputRequest {
     #[serde(rename = "report", default, skip_serializing_if = "Option::is_none")]
     pub report: Option<crate::WireJson>,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
-    pub made_by: Option<crate::WireJson>,
+    pub made_by: Option<MadeBy>,
 }
 
 /// `oneiron::blob_artifact::family::VersionReconciliation`.
@@ -48643,15 +48994,6 @@ pub struct DecisionBandReadRequest {
     pub reversibility: Reversibility,
     #[serde(rename = "seed")]
     pub seed: DecisionBand,
-}
-
-/// `oneiron::llm::decision::policy::BandMode`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum BandMode {
-    #[serde(rename = "shadow")]
-    Shadow,
-    #[serde(rename = "enforce")]
-    Enforce,
 }
 
 /// `oneiron::llm::decision::policy::LearnedBand`.

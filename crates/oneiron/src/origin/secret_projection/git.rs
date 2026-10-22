@@ -159,6 +159,23 @@ impl RepoGitProjection {
     pub(crate) const fn lifetime(&self) -> RepoGitProjectionLifetime {
         self.lifetime
     }
+
+    /// Each root's copy whose bytes differ from its original's (FIX 7608
+    /// 2b-ii): the copy commits a received push's old tip and incoming
+    /// history are classified against. An identity root names none.
+    pub(crate) fn changed_root_copies(&self) -> std::collections::BTreeSet<GitOid> {
+        self.refs
+            .iter()
+            .map(|(_, original, copy)| (original, copy))
+            .chain(
+                self.private_root
+                    .iter()
+                    .map(|(original, copy)| (original, copy)),
+            )
+            .filter(|(original, copy)| original != copy)
+            .map(|(_, copy)| copy.clone())
+            .collect()
+    }
 }
 
 /// The directory every masked copy lives under, made when absent.
