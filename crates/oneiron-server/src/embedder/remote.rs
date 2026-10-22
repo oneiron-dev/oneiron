@@ -78,7 +78,7 @@ impl EgressPredicate for ConfiguredEgress {
 /// The per-row egress list `primary`'s remote rung configures, if it
 /// configures one: the one host verdict on which rows may leave for a model
 /// off this device, which the GPU pool's batches are judged by too
-/// (FIX 9486). `None` sends no row off this device.
+/// (FIX 9486). With `None`, the world release alone judges a pod's rows.
 pub(crate) fn configured_egress(
     primary: &EmbedderConfig,
 ) -> oneiron::Result<Option<Arc<dyn EgressPredicate>>> {

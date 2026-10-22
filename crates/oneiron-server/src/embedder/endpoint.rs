@@ -295,7 +295,7 @@ struct PodRoute {
     scope: Option<DerivationScope>,
     client: Reach,
     /// The section's configured per-row egress list, when it has one; with
-    /// none, no row goes to a pod.
+    /// none, the world release alone judges each row.
     egress: Option<Arc<dyn EgressPredicate>>,
     /// The vault's world release toward a pod.
     release: Arc<dyn PodRelease>,

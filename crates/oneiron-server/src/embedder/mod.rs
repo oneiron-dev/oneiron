@@ -604,9 +604,9 @@ pub(crate) fn build_slot_with_broker(
 /// Sends the endpoint provider's document batches through leases on the
 /// serve host's GPU pool; queries stay on the configured endpoint. Any other
 /// provider computes on this host and takes none. A row goes to a pod only
-/// when the section's configured egress list allows it and `release`, the
-/// vault's world release, lets it leave this device (FIX 9486); every other
-/// row embeds on the endpoint.
+/// when `release`, the vault's world release, lets it leave this device and,
+/// where the section configures an egress list, the list allows it
+/// (FIX 9486); every other row embeds on the endpoint.
 pub(crate) fn route_batches_through(
     slot: &EmbedderSlot,
     pool: crate::runtime::GpuPool,

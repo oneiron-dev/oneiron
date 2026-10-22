@@ -7,9 +7,9 @@
 //! unchanged, through every request of the batch, the lease check after
 //! each answer and the mark each vector is stored with. Only then is each
 //! row judged for that destination: a pod is off this device whatever the
-//! primary's label says, so a row goes there only when the configured egress
-//! list allows it ([`EgressPredicate::decide`]) and no world keeps it on this
-//! device ([`PodRelease`]). Every other row, denied or with no verdict,
+//! primary's label says, so a row goes there only when no world keeps it on
+//! this device ([`PodRelease`]) and, where the section configures an egress
+//! list, the list allows it ([`EgressPredicate::decide`]). Every other row, denied or with no verdict,
 //! embeds on the primary, the on-device endpoint; the batch is never failed
 //! because one row cannot leave, and the answers are put back in row order.
 
@@ -82,10 +82,10 @@ pub(super) fn select_batch_destination(pods: &PodRoute) -> oneiron::Result<Embed
 }
 
 /// For each row of `inputs`, in order, whether it goes to `destination`'s
-/// pod: never for the primary; for a pod, only a row the configured egress
-/// list allows (`Deny` and no verdict keep it home, and so does a section
-/// that configures no list) and no world keeps on this device. A row that
-/// stays embeds on the primary.
+/// pod: never for the primary; for a pod, only a row no world keeps on this
+/// device and, when the section configures an egress list, that the list
+/// allows (`Deny` and no verdict keep it home). A row whose world cannot be
+/// read stays too. A row that stays embeds on the primary.
 pub(super) fn partition_released_rows(
     destination: &EmbeddingDestination,
     pods: &PodRoute,
@@ -94,13 +94,15 @@ pub(super) fn partition_released_rows(
     if matches!(destination, EmbeddingDestination::Primary) {
         return Ok(vec![false; inputs.len()]);
     }
-    let Some(egress) = pods.egress.as_deref() else {
-        return Ok(vec![false; inputs.len()]);
+    // With no configured list, the world release alone judges each row, as
+    // rows reached a pod before the list existed.
+    let allowed: Vec<bool> = match pods.egress.as_deref() {
+        Some(egress) => inputs
+            .iter()
+            .map(|input| egress_allows(egress, input))
+            .collect(),
+        None => vec![true; inputs.len()],
     };
-    let allowed: Vec<bool> = inputs
-        .iter()
-        .map(|input| egress_allows(egress, input))
-        .collect();
     if !allowed.contains(&true) {
         return Ok(allowed);
     }
