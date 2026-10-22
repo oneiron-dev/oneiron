@@ -38,6 +38,8 @@ mod pointer_rows;
 /// Lease-bound live process previews, separate from pinned artifact pointers.
 pub mod preview;
 mod publication_sync;
+mod serving;
+mod vocabulary;
 use self::pointer_rows::{
     decode_artifact_pointer_row, hex_nibble, put_artifact_pointer_in_txn, snapshot_file_entry,
     validate_artifact_path,
@@ -45,8 +47,11 @@ use self::pointer_rows::{
 pub(crate) use self::pointer_rows::{remove_blob_pointers_in_txn, validate_artifact_id};
 use self::publication_sync::mark_publication_in_txn;
 pub use self::publication_sync::{ArtifactPublicationFrame, ArtifactPublicationOutcome};
-
-pub const ARTIFACT_POINTER_CHANNELS: [&str; 2] = ["published", "preview"];
+pub use self::vocabulary::{
+    ARTIFACT_POINTER_CHANNELS, ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel,
+    ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus,
+    ArtifactServedFile, ArtifactSnapshotRef, ArtifactSnapshotSelector,
+};
 
 /// One exact publish identity, even after its pointer changes or disappears.
 const ARTIFACT_ADMISSIONS: SideTable<
@@ -160,34 +165,7 @@ const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Ra
 const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 const ARTIFACT_POINTER_BLOB_TAG: u8 = 0x02;
 
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum ArtifactPointerChannel {
-    #[default]
-    Published,
-    Preview,
-}
-
 impl ArtifactPointerChannel {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Published => ARTIFACT_POINTER_CHANNELS[0],
-            Self::Preview => ARTIFACT_POINTER_CHANNELS[1],
-        }
-    }
-
-    #[must_use]
-    pub const fn key_byte(self) -> u8 {
-        match self {
-            Self::Published => ARTIFACT_CHANNEL_PUBLISHED,
-            Self::Preview => ARTIFACT_CHANNEL_PREVIEW,
-        }
-    }
-
     #[must_use]
     const fn from_key_byte(byte: u8) -> Option<Self> {
         match byte {
@@ -196,150 +174,6 @@ impl ArtifactPointerChannel {
             _ => None,
         }
     }
-
-    pub fn parse(value: &str) -> Result<Self> {
-        match value {
-            "published" => Ok(Self::Published),
-            "preview" => Ok(Self::Preview),
-            _ => Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-                "artifact pointer channel must be published or preview",
-            ))),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ArtifactSnapshotSelector {
-    Channel(ArtifactPointerChannel),
-    ForkHash(CodebaseForkHash),
-    BlobVersion(u64),
-}
-
-impl Default for ArtifactSnapshotSelector {
-    fn default() -> Self {
-        Self::Channel(ArtifactPointerChannel::Published)
-    }
-}
-
-/// Exactly one immutable export, owned by the artifact in the route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[non_exhaustive]
-pub enum ArtifactExportRef {
-    ForkHash(CodebaseForkHash),
-    BlobVersion { artifact_id: EntityId, version: u64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[non_exhaustive]
-pub struct ArtifactPointer {
-    pub artifact: String,
-    pub channel: ArtifactPointerChannel,
-    pub export: ArtifactExportRef,
-    /// Durable evidence of an explicit stale-taint publish override.
-    pub stale_taint_override: bool,
-    /// The serve tier of this live pointer.
-    pub serve_tier: ArtifactServeTier,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ArtifactSnapshotRef {
-    pub artifact: String,
-    pub fork_hash: CodebaseForkHash,
-    pub code_artifact_id: EntityId,
-    pub snapshot: CodebaseSnapshot,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ArtifactServedFile {
-    pub artifact: String,
-    pub serve_tier: ArtifactServeTier,
-    pub selector: ArtifactSnapshotSelector,
-    pub export: ArtifactExportRef,
-    pub path: String,
-    pub media_type: Option<String>,
-    pub content_hash: [u8; 32],
-    pub size_bytes: u64,
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ArtifactPublishVerbRequest {
-    pub artifact: String,
-    /// A publish defaults closed; public disclosure must be explicit.
-    pub serve_tier: ArtifactServeTier,
-    pub channel: ArtifactPointerChannel,
-    pub export: ArtifactExportRef,
-    pub actor: WriteActor,
-    /// Stable identity for retrying this exact publish action.
-    pub publish_id: EntityId,
-    pub occurred_at: u64,
-}
-
-impl ArtifactPublishVerbRequest {
-    #[must_use]
-    pub fn new(
-        artifact: impl Into<String>,
-        channel: ArtifactPointerChannel,
-        fork_hash: CodebaseForkHash,
-        actor: WriteActor,
-        publish_id: EntityId,
-        occurred_at: u64,
-    ) -> Self {
-        Self {
-            artifact: artifact.into(),
-            serve_tier: ArtifactServeTier::Private,
-            channel,
-            export: ArtifactExportRef::ForkHash(fork_hash),
-            actor,
-            publish_id,
-            occurred_at,
-        }
-    }
-
-    #[must_use]
-    pub fn new_blob(
-        artifact_id: EntityId,
-        channel: ArtifactPointerChannel,
-        version: u64,
-        actor: WriteActor,
-        publish_id: EntityId,
-        occurred_at: u64,
-    ) -> Self {
-        Self {
-            artifact: artifact_id.to_hex(),
-            serve_tier: ArtifactServeTier::Private,
-            channel,
-            export: ArtifactExportRef::BlobVersion {
-                artifact_id,
-                version,
-            },
-            actor,
-            publish_id,
-            occurred_at,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum ArtifactPublishVerbStatus {
-    Proposed,
-    Published,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ArtifactPublishVerbOutcome {
-    pub status: ArtifactPublishVerbStatus,
-    pub pointer: Option<ArtifactPointer>,
-    /// Only an admitted publish has a share-style, replayable receipt.
-    pub receipt: Option<ReceiptRecord>,
-    pub gate_decision_ref: String,
 }
 
 /// Immutable admission for a publish. The pointer can be repointed or removed,
@@ -576,185 +410,6 @@ impl Vault {
         channel: ArtifactPointerChannel,
     ) -> Result<bool> {
         self.unpublish_artifact_pointer(&artifact_id.to_hex(), channel)
-    }
-
-    pub fn artifact_pointer(
-        &self,
-        artifact: &str,
-        channel: ArtifactPointerChannel,
-    ) -> Result<Option<ArtifactPointer>> {
-        validate_artifact_id(artifact)?;
-        let row = {
-            let rtxn = self.store.env.read_txn()?;
-            let key = ArtifactPointerRowKey {
-                channel,
-                artifact: artifact.to_owned(),
-            };
-            ARTIFACT_POINTERS.get(&self.store, &rtxn, &key)?
-        };
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let (export, stale_taint_override, serve_tier) =
-            (row.export, row.stale_taint_override, row.serve_tier);
-        if self.resolve_export_owner(artifact, export)?.is_none() {
-            return Ok(None);
-        }
-        Ok(Some(ArtifactPointer {
-            artifact: artifact.to_owned(),
-            channel,
-            export,
-            stale_taint_override,
-            serve_tier,
-        }))
-    }
-
-    pub fn resolve_artifact_snapshot_by_fork(
-        &self,
-        artifact: &str,
-        fork_hash: &CodebaseForkHash,
-    ) -> Result<Option<ArtifactSnapshotRef>> {
-        let rtxn = self.store.env.read_txn()?;
-        self.resolve_artifact_snapshot_by_fork_in_txn(&rtxn, artifact, fork_hash)
-    }
-
-    /// Transaction-composable body of [`Vault::resolve_artifact_snapshot_by_fork`]:
-    /// the first code artifact in fork-index order whose snapshot at
-    /// `fork_hash` is `artifact`'s and whose class is `Artifact`, the one
-    /// publication of that route selects.
-    pub(crate) fn resolve_artifact_snapshot_by_fork_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        artifact: &str,
-        fork_hash: &CodebaseForkHash,
-    ) -> Result<Option<ArtifactSnapshotRef>> {
-        validate_artifact_id(artifact)?;
-        for code_artifact_id in self.codebase_snapshots_by_fork_hash_in_txn(txn, fork_hash)? {
-            let Some(snapshot) = self.get_codebase_snapshot_in_txn(txn, &code_artifact_id)? else {
-                continue;
-            };
-            if snapshot.project_id != artifact {
-                continue;
-            }
-            // This serving adapter mounts code trees only. The semantic family
-            // match keeps other registered kinds out without treating their
-            // different export bodies as code snapshots.
-            let Some(record) = self.store.port_entity_record(txn, &code_artifact_id)? else {
-                continue;
-            };
-            if artifact_family_kind_of(record.entity_type) != Some(ArtifactFamilyKindId::Code) {
-                continue;
-            }
-            if decode_code_artifact_body(&record.body)?.class != CodeArtifactClass::Artifact {
-                continue;
-            }
-            return Ok(Some(ArtifactSnapshotRef {
-                artifact: artifact.to_owned(),
-                fork_hash: *fork_hash,
-                code_artifact_id,
-                snapshot,
-            }));
-        }
-        Ok(None)
-    }
-
-    pub fn resolve_artifact_file(
-        &self,
-        artifact: &str,
-        selector: ArtifactSnapshotSelector,
-        path: &str,
-    ) -> Result<Option<ArtifactServedFile>> {
-        validate_artifact_path(path)?;
-        let export = match selector {
-            ArtifactSnapshotSelector::Channel(channel) => {
-                let Some(pointer) = self.artifact_pointer(artifact, channel)? else {
-                    return Ok(None);
-                };
-                pointer.export
-            }
-            ArtifactSnapshotSelector::ForkHash(hash) => ArtifactExportRef::ForkHash(hash),
-            ArtifactSnapshotSelector::BlobVersion(version) => {
-                let Ok(artifact_id) = EntityId::from_hex(artifact) else {
-                    return Ok(None);
-                };
-                ArtifactExportRef::BlobVersion {
-                    artifact_id,
-                    version,
-                }
-            }
-        };
-        match export {
-            ArtifactExportRef::ForkHash(fork_hash) => {
-                let Some(snapshot_ref) =
-                    self.resolve_artifact_snapshot_by_fork(artifact, &fork_hash)?
-                else {
-                    return Ok(None);
-                };
-                let Some(entry) = snapshot_file_entry(&snapshot_ref.snapshot, path) else {
-                    return Ok(None);
-                };
-                let mount = self
-                    .mount_codebase_snapshot(&snapshot_ref.code_artifact_id)?
-                    .ok_or(Error::EntityNotFound)?;
-                let bytes = mount.read_file(path)?.ok_or(Error::EntityNotFound)?;
-                Ok(Some(ArtifactServedFile {
-                    artifact: artifact.to_owned(),
-                    selector,
-                    serve_tier: ArtifactServeTier::Private,
-                    export,
-                    path: path.to_owned(),
-                    media_type: None,
-                    content_hash: entry.content_hash,
-                    size_bytes: entry.size_bytes,
-                    bytes,
-                }))
-            }
-            ArtifactExportRef::BlobVersion {
-                artifact_id,
-                version,
-            } => {
-                if artifact != artifact_id.to_hex() || version == 0 {
-                    return Ok(None);
-                }
-                let rtxn = self.store.env.read_txn()?;
-                if self
-                    .get_blob_artifact_in_txn(&rtxn, &artifact_id)?
-                    .is_none()
-                {
-                    return Ok(None);
-                }
-                let Some(record) =
-                    self.blob_artifact_version_metadata_in_txn(&rtxn, &artifact_id, version)?
-                else {
-                    return Ok(None);
-                };
-                // Pin the export presentation with the version. Later body
-                // edits cannot rename or retype an already-published route.
-                if path != "export" && path != "index.html" && path != record.export_name {
-                    return Ok(None);
-                }
-                let bytes = self
-                    .read_blob_artifact_version_in_txn(&rtxn, &artifact_id, version)?
-                    .ok_or(Error::EntityNotFound)?;
-                if *blake3::hash(&bytes).as_bytes() != record.content_hash {
-                    return Err(Error::CorruptedIndex("blob export content hash"));
-                }
-                let bytes = self.resolve_docx_authors_in_txn(&rtxn, bytes)?; // FIX 4513
-                let size_bytes = u64::try_from(bytes.len())
-                    .map_err(|_| Error::ArithmeticOverflow("blob export length"))?;
-                Ok(Some(ArtifactServedFile {
-                    artifact: artifact.to_owned(),
-                    selector,
-                    serve_tier: ArtifactServeTier::Private,
-                    export,
-                    path: path.to_owned(),
-                    media_type: Some(record.export_media_type),
-                    content_hash: record.content_hash,
-                    size_bytes,
-                    bytes,
-                }))
-            }
-        }
     }
 
     pub fn request_artifact_publish(

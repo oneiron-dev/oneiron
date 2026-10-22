@@ -4186,11 +4186,11 @@ export type HookRegenRecord = { body_hash: string; stamp: HookContractStamp; int
 export type HookRegenView = { record: HookRegenRecord; candidate_hash?: string | null }
 /** `oneiron::memory::hook_regen_doors::types::HookRegenAdoptRequest` */
 export type HookRegenAdoptRequest = { binding: EntityId; candidate_hash: string }
-/** `oneiron::artifact_hosting::ArtifactPointerChannel` */
+/** `oneiron::artifact_hosting::vocabulary::ArtifactPointerChannel` */
 export type ArtifactPointerChannel = "published" | "preview"
 /** `oneiron::codebase::snapshot::CodebaseForkHash` */
 export type CodebaseForkHash = number[]
-/** `oneiron::artifact_hosting::ArtifactExportRef` */
+/** `oneiron::artifact_hosting::vocabulary::ArtifactExportRef` */
 export type ArtifactExportRef = { ForkHash: CodebaseForkHash } | { BlobVersion: { artifact_id: EntityId; version: number } }
 /** `oneiron::artifact_hosting::access::ArtifactLinkCapability` */
 export type ArtifactLinkCapability = number[]
@@ -4200,9 +4200,9 @@ export type ArtifactServeTier = "Private" | "Public" | { LinkToken: ArtifactLink
 export type ArtifactPublishRequest = { artifact: string; channel: ArtifactPointerChannel; export: ArtifactExportRef; serve_tier: ArtifactServeTier; publish_id: EntityId; occurred_at: number }
 /** `oneiron::artifact_hosting::door_types::ArtifactPublishApproval` */
 export type ArtifactPublishApproval = { effect_digest: string }
-/** `oneiron::artifact_hosting::ArtifactPublishVerbStatus` */
+/** `oneiron::artifact_hosting::vocabulary::ArtifactPublishVerbStatus` */
 export type ArtifactPublishVerbStatus = "proposed" | "published"
-/** `oneiron::artifact_hosting::ArtifactPointer` */
+/** `oneiron::artifact_hosting::vocabulary::ArtifactPointer` */
 export type ArtifactPointer = { artifact: string; channel: ArtifactPointerChannel; export: ArtifactExportRef; stale_taint_override: boolean; serve_tier: ArtifactServeTier }
 /** `oneiron::artifact_hosting::door_types::ArtifactPublishView` */
 export type ArtifactPublishView = { status: ArtifactPublishVerbStatus; pointer?: ArtifactPointer | null; receipt_ref?: string | null; gate_decision_ref: string }
