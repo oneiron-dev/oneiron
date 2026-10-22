@@ -5,15 +5,25 @@
 //! starts. A full floor never refuses a request: it waits in the pipe's
 //! queue, in order, still paused, until a worker of the pipe finishes and
 //! takes it on its own room, or the next message the pipe routes finds
-//! room. No count bounds the queue; only the host's floor paces it.
+//! room. No count bounds the queue; only the host's floor paces it. The
+//! bytes a worker holds (the request's body while it is performed, then
+//! the answer's body and its encoding until the page takes it) are held on
+//! the same floor's byte reserve first ([`HostNetFloor::acquire_bytes`]):
+//! a full reserve makes the worker wait for room, the request still
+//! paused, never drops it.
 
 use super::Pipe;
 use base64::Engine as _;
-use oneiron_container::{EgressRelay, HostNetPermit};
+use oneiron_container::{EgressRelay, HostNetFloor, HostNetPermit, saturated_floor};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// How long a worker waits before it asks the floor's byte reserve again,
+/// once it was full (`paused_byte_wait`, CALLS row, open): the driver's
+/// poll. Only paces; no wait ends a request.
+const BYTE_WAIT: Duration = Duration::from_millis(50);
 
 /// The paused requests waiting for a host worker, in the order they paused.
 pub(super) type Waiting = Arc<Mutex<VecDeque<Paused>>>;
@@ -109,6 +119,10 @@ impl Pipe {
             self.fail_paused(&session, &id, "Failed");
             return;
         };
+        let Some(asked_room) = held_bytes(relay.host_net_floor(), body.len()) else {
+            self.fail_paused(&session, &id, "Failed");
+            return;
+        };
         let asked = oneiron_container::HttpRequest {
             url: request["url"].as_str().unwrap_or("").to_owned(),
             method: request["method"].as_str().unwrap_or("GET").to_owned(),
@@ -118,8 +132,18 @@ impl Pipe {
         };
         // The host's handler takes it where the session has one, else the
         // relay; a refusal it gave is kept before the request fails.
-        match self.fetch_paused(&relay, &session, &event, asked) {
+        let answered = self.fetch_paused(&relay, &session, &event, asked);
+        drop(asked_room);
+        match answered {
             Some(response) => {
+                let encoded = response.body.len().div_ceil(3).saturating_mul(4);
+                let Some(_answer_room) = held_bytes(
+                    relay.host_net_floor(),
+                    response.body.len().saturating_add(encoded),
+                ) else {
+                    self.fail_paused(&session, &id, "Failed");
+                    return;
+                };
                 let headers: Vec<_> = response
                     .headers
                     .into_iter()
@@ -179,5 +203,19 @@ impl Pipe {
             json!({"requestId": id, "errorReason": reason}),
             Instant::now() + Duration::from_secs(30),
         );
+    }
+}
+
+/// Room for `bytes` on `floor`'s byte reserve, held until it drops: waited
+/// for while the reserve is full, at [`BYTE_WAIT`]. None where the floor
+/// refused it for anything but back-pressure, and the request fails.
+fn held_bytes(floor: &dyn HostNetFloor, bytes: usize) -> Option<HostNetPermit> {
+    let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+    loop {
+        match floor.acquire_bytes(bytes) {
+            Ok(permit) => return Some(permit),
+            Err(error) if saturated_floor(&error).is_some() => std::thread::sleep(BYTE_WAIT),
+            Err(_) => return None,
+        }
     }
 }
