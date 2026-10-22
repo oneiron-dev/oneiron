@@ -15,6 +15,9 @@ pub trait HookBodyRuntime: Send + Sync {
     /// Runs one body; `read` answers `oneiron.read`. Returns the emitted outcome JSON.
     /// `context` is the run's clock: the runtime measures each read and
     /// verdict callback through it, and never stops a body for its budget.
+    /// It reports what the body used there too, a failed body's included
+    /// ([`HookRunContext::report_usage`], FIX 9332); a runtime that reports
+    /// nothing leaves a failed run's usage unavailable, never zero.
     fn run_hook(
         &self,
         body: &str,
@@ -48,12 +51,56 @@ pub struct HookBodyRun {
     pub host_calls: u32,
 }
 
+/// What one hook body used (FIX 9332): its fuel and its host calls (reads,
+/// verdicts and the emit), each as its runtime measured it. A count no one
+/// measured is `None`, never a zero standing in for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HookBodyUsage {
+    pub fuel_used: Option<u64>,
+    pub host_calls: Option<u32>,
+}
+
+impl HookBodyUsage {
+    /// A run that invoked no runtime: it used nothing, known.
+    pub const NOT_RUN: Self = Self {
+        fuel_used: Some(0),
+        host_calls: Some(0),
+    };
+    /// A runtime ran the body and reported nothing of what it used.
+    pub const UNAVAILABLE: Self = Self {
+        fuel_used: None,
+        host_calls: None,
+    };
+
+    /// The usage as a Hook receipt's named fields: a measured count as its
+    /// number, one not measured as `unavailable`, never `0`.
+    pub(super) fn receipt_fields(&self) -> [(&'static str, String); 2] {
+        let spelled = |count: Option<u64>| {
+            count.map_or_else(
+                || HOOK_USAGE_UNAVAILABLE.to_owned(),
+                |measured| measured.to_string(),
+            )
+        };
+        [
+            ("fuel_used", spelled(self.fuel_used)),
+            ("host_calls", spelled(self.host_calls.map(u64::from))),
+        ]
+    }
+}
+
+/// A CALLS choice (FIX 9332): how a Hook receipt spells a count its run's
+/// runtime did not measure.
+const HOOK_USAGE_UNAVAILABLE: &str = "unavailable";
+
 /// One hook run's clock (FIX 8842). Its caller makes it once, before the
 /// body runs, and reads its overrun once the run has ended. Its deadline,
 /// `budget_ms` after its start, is an accounting deadline, never a stop: an
 /// admitted read or verdict runs to its end and its answer is delivered
 /// even when late, the body runs to its own end, and a run past it keeps
-/// its outcome with the overrun beside it.
+/// its outcome with the overrun beside it. It also holds what the body used
+/// (FIX 9332), for a run that failed: nothing, until its caller invokes a
+/// runtime ([`Self::body_starts`]), then unavailable until the runtime
+/// reports it.
 #[derive(Debug)]
 pub struct HookRunContext {
     started: Instant,
@@ -63,6 +110,7 @@ pub struct HookRunContext {
     callbacks: Duration,
     read_overruns: u32,
     verdict_overruns: u32,
+    usage: HookBodyUsage,
 }
 
 impl HookRunContext {
@@ -77,6 +125,7 @@ impl HookRunContext {
             callbacks: Duration::ZERO,
             read_overruns: 0,
             verdict_overruns: 0,
+            usage: HookBodyUsage::NOT_RUN,
         }
     }
 
@@ -117,6 +166,25 @@ impl HookRunContext {
             .callbacks
             .saturating_add(ended.saturating_duration_since(began));
         (answer, ended > self.deadline)
+    }
+
+    /// Its caller is about to invoke a runtime on the body: what the body
+    /// uses is unavailable until the runtime reports it (FIX 9332).
+    pub fn body_starts(&mut self) {
+        self.usage = HookBodyUsage::UNAVAILABLE;
+    }
+
+    /// What the body used, as its runtime measured it, on its success and
+    /// its failure alike.
+    pub fn report_usage(&mut self, usage: HookBodyUsage) {
+        self.usage = usage;
+    }
+
+    /// What the body used, as it stands: [`HookBodyUsage::NOT_RUN`] while no
+    /// runtime was invoked.
+    #[must_use]
+    pub const fn usage(&self) -> HookBodyUsage {
+        self.usage
     }
 
     /// The run's overrun, read once its body has ended (its worker joined,

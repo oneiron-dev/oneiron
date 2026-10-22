@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1157 facade rows, 4135 declarations.
+Census: 1157 facade rows, 4142 declarations.
 Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -1109,6 +1109,16 @@ class ShapeApplyRun(TypedDict):
     run_id: str
     root: str
     items: list[str]
+class ShapeLearningSetting(TypedDict):
+    on: bool
+    revision: str
+    act: NotRequired[str | None]
+class ShapeLearningOutcome(TypedDict):
+    requested: bool
+    written: bool
+    ignored: bool
+    resulting: NotRequired[ShapeLearningSetting | None]
+    reason: NotRequired[str | None]
 class ShapeApplyReceipt(TypedDict):
     frontier: str
     seed_id: str
@@ -1117,6 +1127,7 @@ class ShapeApplyReceipt(TypedDict):
     items: list[ShapeApplyItem]
     done: bool
     run: ShapeApplyRun
+    conversation_learning: NotRequired[ShapeLearningOutcome | None]
 class ShapeRead(TypedDict):
     seed: NotRequired[StoredShapeSeed | None]
     live: ShapeSeed
@@ -1156,6 +1167,7 @@ class ShapePlan(TypedDict):
 class ShapeApplyRequest(TypedDict):
     plan: ShapePlan
     approve: NotRequired[list[int]]
+    conversation_learning: NotRequired[bool | None]
 class MessagePersonRequest(TypedDict):
     pr: str
     text: str
@@ -1886,6 +1898,7 @@ class DoneMeans(TypedDict):
     no_if_any: NotRequired[list[Criterion]]
     outcome_binding: NotRequired[OutcomeBinding | None]
     browser_checks: NotRequired[list[ExpectInput]]
+    strict_verified_reuse: NotRequired[bool]
 EscalationTrigger = Literal["blocked", "criteria_unmet", "scope_widen", "spend_over", "deadline", "brief_revised", "retry_requested"]
 Reversibility = Literal["reversible_read", "outbound_effect"]
 class EscalationRule(TypedDict):
@@ -2451,6 +2464,12 @@ class FinishReasonIncompleteBody(TypedDict):
 class FinishReasonIncomplete(TypedDict):
     incomplete: FinishReasonIncompleteBody
 FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther | FinishReasonIncomplete
+class ReplyAssertionRecord(TypedDict):
+    entity_type: int
+    id: EntityId
+class ReplyAssertions(TypedDict):
+    cited: NotRequired[list[ReplyAssertionRecord]]
+    created: NotRequired[list[ReplyAssertionRecord]]
 class MessageStreamReceipt(TypedDict):
     message_id: EntityId
     actor: EntityId
@@ -2462,6 +2481,7 @@ class MessageStreamReceipt(TypedDict):
     recovered: bool
     ephemeral_text_lost: bool
     receipt_ref: str
+    reply_assertions: NotRequired[ReplyAssertions]
 MessageCancelKind = Literal["user_interrupted", "agent_aborted", "external_signal"]
 MessageCustomCancelKind = Literal["custom"]
 class MessageCustomCancel(TypedDict):
@@ -2493,6 +2513,13 @@ class MessageCompletion(TypedDict):
 class MessageDocumentState(TypedDict):
     frontier: list[int]
     content: str
+class MessageReplyAssertions(TypedDict):
+    message: EntityId
+    conversation: EntityId
+    turn: EntityId
+    writer: EntityId
+    writer_class: int
+    assertions: ReplyAssertions
 class MessageDurability(TypedDict):
     message_id: str
     completion: MessageCompletion
@@ -2501,6 +2528,7 @@ class MessageDurability(TypedDict):
     next_after_generation: NotRequired[str | None]
     document_exists: bool
     document_history: list[MessageDocumentState]
+    birth_assertions: NotRequired[MessageReplyAssertions | None]
 class WitnessMessage(TypedDict):
     id: NotRequired[str | None]
     author: WitnessAuthor
@@ -13164,7 +13192,7 @@ class PptxCommentPatch(TypedDict):
 class SlideAbstention(TypedDict):
     target: PptxCommentTarget
     decision: NotRequired[TypedDecision | None]
-SlideUnitRefusalReason = Literal["MissingShape", "AmbiguousShape", "TargetChanged", "UnresolvedGeometry", "EvidenceBudget", "UnreadableImage"]
+SlideUnitRefusalReason = Literal["MissingShape", "AmbiguousShape", "TargetChanged", "UnresolvedGeometry", "EvidenceBudget", "UnreadableImage", "RunDeadline"]
 class SlideUnitRefused(TypedDict):
     target: PptxCommentTarget
     reason: SlideUnitRefusalReason
@@ -13373,6 +13401,12 @@ class DeckOutline(TypedDict):
     assets: NotRequired[list[OutlineAsset]]
 class DeckOutlineProposeRequest(TypedDict):
     outline: DeckOutline
+CitedClaimLifecycle = Literal["active", "superseded", "retracted"]
+class EvidenceObservation(TypedDict):
+    pin: int
+    source_frontier: NotRequired[list[int] | None]
+    lifecycle: NotRequired[CitedClaimLifecycle | None]
+    mapped: bool
 class KeptOutline(TypedDict):
     note: EntityId
     frontier: list[int]
@@ -13381,12 +13415,17 @@ class KeptOutline(TypedDict):
     content_hash: list[int]
     kept_by: EntityId
     kept_at: int
+    evidence: NotRequired[list[EvidenceObservation]]
 class OutlineFreshnessEvidenceMovedBody(TypedDict):
     pins: list[int]
 class OutlineFreshnessEvidenceMoved(TypedDict):
     evidence_moved: OutlineFreshnessEvidenceMovedBody
 OutlineFreshness = Literal["fresh", "not_kept", "edited"] | OutlineFreshnessEvidenceMoved
-KeptOutlineOmissionReason = Literal["sources_unreadable", "invalid_frozen_outline"]
+KeptOutlineOmissionReason = Literal["sources_unreadable", "invalid_frozen_outline", "keys_unknown"]
+class EvidenceChange(TypedDict):
+    kept: EvidenceObservation
+    now: EvidenceObservation
+DeckPresentation = Literal["whole", "masked"]
 class DeckOutlineView(TypedDict):
     outline_ref: str
     frontier: list[int]
@@ -13394,8 +13433,11 @@ class DeckOutlineView(TypedDict):
     kept: NotRequired[KeptOutline | None]
     freshness: OutlineFreshness
     kept_omission: NotRequired[KeptOutlineOmissionReason | None]
+    evidence_changed: NotRequired[list[EvidenceChange]]
+    presentation: NotRequired[DeckPresentation]
 class DeckOutlineRefRequest(TypedDict):
     outline_ref: str
+    why: NotRequired[str | None]
 class DeckOutlineSettleRequest(TypedDict):
     outline_ref: str
     expected_frontier: list[int]
@@ -13414,6 +13456,7 @@ class DeckDesignRequest(TypedDict):
     templates: list[ArtifactVersionRef]
     assets: NotRequired[dict[str, ArtifactVersionRef]]
     fonts: NotRequired[list[ArtifactVersionRef]]
+    why: NotRequired[str | None]
 class DirectionSlide(TypedDict):
     page: str
     layout: str
@@ -13544,6 +13587,7 @@ class DeckDesignView(TypedDict):
     spec: DesignSpec
     plans: list[DeckPlanView | None]
     decisions: list[list[DeckDesignDecision]]
+    presentation: NotRequired[DeckPresentation]
 class DeckEmissionNames(TypedDict):
     text: str
     table: str
@@ -14846,12 +14890,6 @@ ModelRoleInput = ModelRoleInputGenerate | ModelRoleInputEmbed | ModelRoleInputTa
 class ModelRoleInvoke(TypedDict):
     role: ModelRole
     input: ModelRoleInput
-class ReplyAssertionRecord(TypedDict):
-    entity_type: int
-    id: EntityId
-class ReplyAssertions(TypedDict):
-    cited: NotRequired[list[ReplyAssertionRecord]]
-    created: NotRequired[list[ReplyAssertionRecord]]
 class LlmResponse(TypedDict):
     message: LlmMessage
     usage: LlmUsage
@@ -16129,7 +16167,9 @@ class ArtifactAskStandingClosed(TypedDict):
     state: Literal["closed"]
 class ArtifactAskStandingFailed(TypedDict):
     state: Literal["failed"]
-ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed | ArtifactAskStandingFailed
+class ArtifactAskStandingDetailsOmitted(TypedDict):
+    state: Literal["details_omitted"]
+ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed | ArtifactAskStandingFailed | ArtifactAskStandingDetailsOmitted
 class ArtifactAskRecord(TypedDict):
     artifact: EntityId
     question_version: int
@@ -16140,6 +16180,7 @@ class ArtifactAskRecord(TypedDict):
     ask_id: NotRequired[EntityId | None]
     failed: NotRequired[str | None]
     parent_proposal_ref: NotRequired[str | None]
+    details_omitted: NotRequired[bool]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):
@@ -18237,6 +18278,7 @@ class OfficeBodyFork(TypedDict):
     opened_at: int
     state: ForkState
     run_root: NotRequired[EntityId | None]
+    origin: NotRequired[AttemptId | None]
 class OfficeBodyForkEditRequest(TypedDict):
     artifact_ref: str
     fork_ref: str
@@ -18294,6 +18336,7 @@ class ProposalMember(TypedDict):
     fork: EntityId
     opener: BodyActor
     run_root: NotRequired[EntityId | None]
+    origin: NotRequired[AttemptId | None]
     verdict: MemberVerdict
     answer: NotRequired[MemberAnswer | None]
 BundleVerdict = Literal["landed", "rejected", "mixed", "let_go"]
@@ -18832,6 +18875,7 @@ class ProgramRunView(TypedDict):
     held_by_try: list[ProgramHeldView]
     run: NotRequired[ProgramRunStateView | None]
     steps: list[ProgramStepView]
+    erased_steps: list[str]
     undecodable_steps: int
     next_cursor: NotRequired[str | None]
     withheld: list[str]

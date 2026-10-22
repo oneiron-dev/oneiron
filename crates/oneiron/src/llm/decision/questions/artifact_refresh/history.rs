@@ -46,6 +46,7 @@ impl Asking<'_> {
             proposal_ref,
             failed,
             parent_proposal_ref: None,
+            details_omitted: false,
         };
         let committed = ask(&reference).and_then(|run| {
             vault.with_write_txn_grouped(|wtxn| {
@@ -88,7 +89,9 @@ impl Asking<'_> {
 }
 
 /// One logged ask as its principal reads it back: the pins it read and where its
-/// answers stand now, by the walk the next ask's baseline takes.
+/// answers stand now, by the walk the next ask's baseline takes. An entry logged with
+/// its ref details left out (FIX 9419) says so, and where its answers stand is not
+/// read: it names no proposal to read it from.
 pub(in crate::llm::decision::questions) fn artifact_event_record(
     vault: &Vault,
     event: &ArtifactAskEvent,
@@ -104,6 +107,12 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
     record
         .parent_proposal_ref
         .clone_from(&event.parent_proposal_ref);
+    if event.details_omitted {
+        record.details_omitted = true;
+        if event.failed.is_none() {
+            record.standing = ArtifactAskStanding::DetailsOmitted;
+        }
+    }
     Ok(record)
 }
 
@@ -136,6 +145,7 @@ fn ask_record(
         ask_id: stamp.ask_id,
         failed: failed.map(error_kind_wire_name),
         parent_proposal_ref: None,
+        details_omitted: false,
     })
 }
 

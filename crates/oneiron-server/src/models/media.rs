@@ -37,6 +37,7 @@ use super::broker_media::broker_media_backend;
 use super::catalog::{catalog_entry, engine_model_id};
 use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
 use super::gemini_media::gemini_backend;
+use super::host_budgets::ModelHostBudgets;
 use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
@@ -57,7 +58,7 @@ mod fit;
 mod jobs;
 mod options;
 
-use jobs::{JobRow, JobStore, erased_poll, submit_stamps};
+use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
 
 /// The run every media call is admitted under, one run per call.
 const MEDIA_RUN: &str = "ai-media";
@@ -327,12 +328,12 @@ impl MediaRuntime {
             .store
             .as_ref()
             .map_or(Ok(true), |store| -> Result<bool, String> {
-                let mut row = store
+                let kept = store
                     .get(id)
                     .ok_or_else(|| "its row is not kept".to_owned())?;
-                if row.erased {
+                let Some(mut row) = kept.live() else {
                     return Ok(false);
-                }
+                };
                 row.ended = Some(state.clone());
                 store.put(id, row)
             });
@@ -364,15 +365,15 @@ impl MediaRuntime {
         if let Some(held) = self.lock_jobs().get(id) {
             return Ok(held.clone());
         }
-        let row = self
+        let kept = self
             .store
             .as_ref()
             .and_then(|store| store.get(id))
             .ok_or(FatalLlmError::InvalidRequest)?;
         // An erased job is never taken up, resumed or resubmitted (KS-2B2).
-        if row.erased {
+        let Some(row) = kept.live() else {
             return Ok(Held::Ended(erased_poll(id)));
-        }
+        };
         if let Some(state) = row.ended {
             return Ok(Held::Ended(state));
         }
@@ -402,15 +403,16 @@ impl MediaRuntime {
     /// The end job `id` holds here, or its row keeps; its erased end once
     /// an erase took it, whose end held here goes (KS-2B2).
     fn ended(&self, id: &str) -> LlmResult<MediaJobState> {
-        let row = self.store.as_ref().and_then(|store| store.get(id));
-        if row.as_ref().is_some_and(|row| row.erased) {
+        let kept = self.store.as_ref().and_then(|store| store.get(id));
+        if kept.as_ref().is_some_and(KeptJob::erased) {
             self.lock_jobs().remove(id);
             return Ok(erased_poll(id));
         }
         if let Some(Held::Unkept(state)) = self.lock_jobs().get(id) {
             return Ok(state.clone());
         }
-        row.and_then(|row| row.ended)
+        kept.and_then(KeptJob::live)
+            .and_then(|row| row.ended)
             .ok_or_else(|| FatalLlmError::InvalidRequest.into())
     }
 
@@ -576,8 +578,12 @@ fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
     provider
 }
 
-/// The clone wire of each configured hosted speech provider, by name.
-fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
+/// The clone wire of each configured hosted speech provider, by name, its
+/// replies holding their bytes on `budgets` (FIX 9321).
+fn voice_cloners(
+    config: &ModelsConfig,
+    budgets: &ModelHostBudgets,
+) -> BTreeMap<String, Arc<HostedCloner>> {
     let mut cloners = BTreeMap::new();
     for (name, provider) in &config.providers {
         let built = match provider.kind {
@@ -606,6 +612,7 @@ fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
                         wire,
                         locality: provider.locality,
                         connector,
+                        budgets: budgets.clone(),
                     }),
                 );
             }
@@ -617,7 +624,8 @@ fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
     cloners
 }
 
-/// `model` on `provider` as a media rung at `position` for `operation`.
+/// `model` on `provider` as a media rung at `position` for `operation`, its
+/// calls' replies holding their bytes on `budgets` (FIX 9321).
 fn media_rung(
     provider: &ProviderConfig,
     backend: &Arc<dyn MediaBackend>,
@@ -625,6 +633,7 @@ fn media_rung(
     position: usize,
     operation: AiOperation,
     caps: &MediaCaps,
+    budgets: &ModelHostBudgets,
 ) -> Option<LadderRung> {
     let row = catalog_entry(model, provider).ok()?.with_media(caps);
     let binding = match media_offer(provider, row.model.clone(), operation) {
@@ -647,8 +656,8 @@ fn media_rung(
         },
         media: Some(MediaRung {
             // Its calls hold their replies' bytes until each answer leaves
-            // the adapter (FIX 8615).
-            backend: Arc::new(booked::BookedReplies(Arc::clone(backend))),
+            // the adapter (FIX 8615), on the vault's line (FIX 9321).
+            backend: Arc::new(booked::BookedReplies(Arc::clone(backend), budgets.clone())),
             row,
             caps: caps.clone(),
         }),

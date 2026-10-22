@@ -242,21 +242,34 @@ impl ChatBrain {
                 add_rows(&mut said_from, rows.as_deref());
             }
         }
+        // The turn's context: its memories' board, then each tool context.
+        let mut context = Vec::new();
         if let Some(memories) = &memories {
-            messages.push(text_message(LlmMessageRole::User, memories.board.clone()));
+            context.push(memories.board.clone());
             add_rows(&mut said_from, Some(&memories.ids));
         }
-        for (context, rows) in &self.foreign {
+        for (foreign, rows) in &self.foreign {
             // The connector's own source and foreign marker stay with every
             // field. They are task data, never a System instruction.
-            let data = serde_json::to_string(context).map_err(refused)?;
-            messages.push(text_message(LlmMessageRole::User, data));
+            context.push(serde_json::to_string(foreign).map_err(refused)?);
             add_rows(&mut said_from, Some(rows));
         }
         messages.push(text_message(
             LlmMessageRole::User,
             request.transcript.clone(),
         ));
+        // FIX 9443: the layout read once for this fresh turn. The stable one
+        // makes the context one turn-context message before the transcript;
+        // today's keeps each block its own user message there, as before.
+        let layout = ai.prompt_layout();
+        if layout == oneiron::prompt::PromptLayout::EarlySystem {
+            let at = messages.len() - 1;
+            for (offset, text) in context.into_iter().enumerate() {
+                messages.insert(at + offset, text_message(LlmMessageRole::User, text));
+            }
+        } else {
+            oneiron::prompt::place_context_for_layout(&mut messages, layout, context.as_slice());
+        }
         let admitted = ai
             .admit_role(vault, CHAT_ROLE, chat_request(&self.seat, messages))
             .map_err(refused)?;

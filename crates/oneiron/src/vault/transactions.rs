@@ -794,6 +794,8 @@ impl Vault {
 mod sync_state_delete;
 #[cfg(feature = "sync")]
 mod sync_state_reclaim;
+#[cfg(feature = "sync")]
+mod telemetry_if_absent;
 
 #[cfg(all(test, feature = "sync"))]
 mod sync_scan_tests;

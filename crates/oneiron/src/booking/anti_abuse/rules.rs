@@ -1,3 +1,7 @@
+//! Booking anti-abuse rule vocabulary.
+//! Entry: `BookingAntiAbuseRule`.
+//! Defines its own items.
+
 use std::num::{NonZeroU16, NonZeroU32, NonZeroU64};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

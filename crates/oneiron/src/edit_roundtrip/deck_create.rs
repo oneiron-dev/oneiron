@@ -3,16 +3,20 @@
 //!
 //! The outline is a brief NOTE (`plugin/brief`) whose markdown holds the
 //! closed outline JSON, as a `json` fenced block or the whole body. A person
-//! keeps it: the keep maps every evidence pin that names a cited CLAIM
-//! through its note cursors (a span that no longer maps is marked drifted,
-//! its quote kept), parses the result against the closed schema, and freezes
-//! the note frontier, the exact outline bytes and their hash. Editing the
-//! note or moving cited evidence makes the keep stale; a stale keep never
-//! runs.
+//! keeps it: the keep maps every evidence pin this engine can address (a
+//! cited CLAIM's, or a note document span named without one) through its
+//! note cursors (a span that no longer maps is marked drifted, its quote
+//! kept), parses the result against the closed schema, and freezes the note
+//! frontier, the exact outline bytes and their hash. Beside the bytes and
+//! outside their hash it keeps what it observed of each such pin: the cited
+//! CLAIM's lifecycle, the cited document's frontier, whether the span maps
+//! (FIX 9813, 9814). Editing the note or moving cited CLAIM evidence makes
+//! the keep stale; a stale keep never runs. Evidence that changes otherwise
+//! is reported beside the keep, never as another keep to make.
 //!
-//! Up to three design directions compile the kept outline against
-//! alternative templates into one design spec linked to the outline: plans
-//! summarised, never three live decks. Creation compiles against the chosen
+//! Each requested design direction compiles the kept outline against its
+//! template into one design spec linked to the outline: plans summarised,
+//! never live decks (FIX 9604). Creation compiles against the chosen
 //! template, checks the plan, emits a checked candidate and lands it as the
 //! first version of a new deck artifact. Its creation record names the kept
 //! outline as born-from, identifies the template, and keeps the slides,
@@ -21,7 +25,9 @@
 
 use std::collections::BTreeMap;
 
+mod evidence_pins;
 mod store;
+use evidence_pins::{EngineSpan, cited_lifecycle, engine_span, hex, note_pin, pins, pins_mut};
 pub(crate) use store::outline_pins;
 
 use oneiron_docedit::design_plan::{
@@ -48,8 +54,6 @@ use crate::write_envelope::WriteActor;
 
 const PPTX_MEDIA_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-/// Design directions in one spec.
-pub const MAX_DIRECTIONS: usize = 3;
 
 pub(crate) type CompiledDirections = (
     DesignSpec,
@@ -97,6 +101,10 @@ pub struct KeptOutline {
     pub content_hash: [u8; 32],
     pub kept_by: EntityId,
     pub kept_at: u64,
+    /// What the engine observed of each pin it can address at the keep,
+    /// outside the bytes and their hash (FIX 9813, 9814).
+    #[serde(default)]
+    pub evidence: Vec<EvidenceObservation>,
 }
 
 /// Whether a keep still describes its outline.
@@ -111,6 +119,39 @@ pub enum OutlineFreshness {
     EvidenceMoved {
         pins: Vec<usize>,
     },
+}
+
+/// A cited CLAIM's lifecycle as the engine observed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CitedClaimLifecycle {
+    Active,
+    Superseded,
+    Retracted,
+}
+
+/// What the engine observed of one evidence pin it can address: a note
+/// document span, with or without a cited CLAIM (FIX 9813, 9814).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EvidenceObservation {
+    /// The pin, in document order, as [`OutlineFreshness::EvidenceMoved`]
+    /// counts them.
+    pub pin: usize,
+    /// The cited document's frontier; `None` once it no longer resolves.
+    pub source_frontier: Option<Vec<u8>>,
+    /// The cited CLAIM's lifecycle; `None` when the pin names none or it no
+    /// longer reads.
+    pub lifecycle: Option<CitedClaimLifecycle>,
+    /// Whether the span still maps onto live characters with its quote.
+    pub mapped: bool,
+}
+
+/// One pin whose evidence changed since the keep: what the keep saw, and
+/// what the engine sees now. It is reported, never a keep to make again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EvidenceChange {
+    pub kept: EvidenceObservation,
+    pub now: EvidenceObservation,
 }
 
 /// One design direction: a template and what the kept outline becomes on it.
@@ -260,7 +301,8 @@ impl crate::Vault {
         let document = crate::note::deck_outline_document_in_txn(self, txn, note)?;
         let mut outline: Value = serde_json::from_str(outline_text(&document.markdown))
             .map_err(|_| invalid("the brief holds no outline JSON"))?;
-        self.map_evidence_in_txn(txn, &mut outline)?;
+        self.map_evidence_in_txn(txn, &mut outline, true)?;
+        let evidence = self.observe_evidence_in_txn(txn, &outline)?;
         let bytes = serde_json::to_vec(&outline).map_err(|_| invalid("outline encoding"))?;
         Brief::parse(&bytes).map_err(CompileError::from)?;
         let kept = KeptOutline {
@@ -271,6 +313,7 @@ impl crate::Vault {
             bytes,
             kept_by: actor.entity_ref(),
             kept_at: self.now_recorded_at(),
+            evidence,
         };
         OUTLINE_KEEPS.put(&self.store, txn, &note, &kept)?;
         DESIGN_SPECS.delete(&self.store, txn, &note)?;
@@ -313,8 +356,10 @@ impl crate::Vault {
         }
         let held: Value =
             serde_json::from_slice(&kept.bytes).map_err(|_| invalid("kept outline encoding"))?;
+        // Only a cited CLAIM's span gates the keep, as it always has; any
+        // other change is reported beside it (`deck_outline_evidence_in_txn`).
         let mut remapped = held.clone();
-        self.map_evidence_in_txn(txn, &mut remapped)?;
+        self.map_evidence_in_txn(txn, &mut remapped, false)?;
         let (mut before, mut after) = (Vec::new(), Vec::new());
         pins(&held, &mut |pin| before.push(pin.get("drift").cloned()));
         pins(&remapped, &mut |pin| after.push(pin.get("drift").cloned()));
@@ -332,7 +377,34 @@ impl crate::Vault {
         })
     }
 
-    /// Compile the fresh kept outline against up to three templates and
+    /// What changed in the keep's cited evidence since it was kept, beside
+    /// the freshness that gates it: a cited CLAIM's lifecycle, a source's
+    /// frontier, a span the engine maps differently (FIX 9813, 9814). Empty
+    /// with no keep.
+    pub(crate) fn deck_outline_evidence_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        note: EntityId,
+    ) -> std::result::Result<Vec<EvidenceChange>, DeckCreateError> {
+        let Some(kept) = OUTLINE_KEEPS.get(&self.store, txn, &note)? else {
+            return Ok(Vec::new());
+        };
+        let held: Value =
+            serde_json::from_slice(&kept.bytes).map_err(|_| invalid("kept outline encoding"))?;
+        Ok(self
+            .observe_evidence_in_txn(txn, &held)?
+            .into_iter()
+            .filter_map(|now| {
+                let kept = kept.evidence.iter().find(|seen| seen.pin == now.pin)?;
+                (*kept != now).then(|| EvidenceChange {
+                    kept: kept.clone(),
+                    now,
+                })
+            })
+            .collect())
+    }
+
+    /// Compile the fresh kept outline against every requested template and
     /// store the directions as the outline's design spec.
     pub fn design_deck_directions(
         &self,
@@ -355,8 +427,8 @@ impl crate::Vault {
         assets: &BTreeMap<String, ArtifactVersionRef>,
         fonts: &[ArtifactVersionRef],
     ) -> std::result::Result<CompiledDirections, DeckCreateError> {
-        if templates.is_empty() || templates.len() > MAX_DIRECTIONS {
-            return Err(invalid("one to three design directions"));
+        if templates.is_empty() {
+            return Err(invalid("at least one design direction"));
         }
         let kept = self.fresh_outline_in_txn(txn, note)?;
         let limits = self.docedit_package_limits_in_txn(txn)?;
@@ -663,57 +735,4 @@ fn outline_text(markdown: &str) -> &str {
         .split_once("```json")
         .and_then(|(_, rest)| rest.split_once("```"))
         .map_or(markdown.trim(), |(block, _)| block.trim())
-}
-
-/// A pin this engine can map: a cited CLAIM and a note document by entity
-/// id, its frontier and cursors in hex.
-fn note_pin(pin: &Value) -> Option<NotePin> {
-    let text = |key: &str| pin.get(key).and_then(Value::as_str);
-    let quote_hash = unhex(text("quote_hash")?)?;
-    Some(NotePin {
-        claim: EntityId::from_hex(text("claim")?).ok()?,
-        document: EntityId::from_hex(text("document")?).ok()?,
-        frontier: unhex(text("version")?)?,
-        start_cursor: unhex(text("start")?)?,
-        end_cursor: unhex(text("end")?)?,
-        quote_hash: quote_hash.try_into().ok()?,
-        quote_text: text("quote")?.to_owned(),
-    })
-}
-
-/// Every evidence pin in document order: an object with a quote hash.
-fn pins(value: &Value, visit: &mut impl FnMut(&Value)) {
-    match value {
-        Value::Object(map) if map.contains_key("quote_hash") => visit(value),
-        Value::Object(map) => map.values().for_each(|child| pins(child, visit)),
-        Value::Array(items) => items.iter().for_each(|child| pins(child, visit)),
-        _ => {}
-    }
-}
-
-fn pins_mut(value: &mut Value, visit: &mut impl FnMut(&mut Value)) {
-    match value {
-        Value::Object(map) if map.contains_key("quote_hash") => visit(value),
-        Value::Object(map) => map.values_mut().for_each(|child| pins_mut(child, visit)),
-        Value::Array(items) => items.iter_mut().for_each(|child| pins_mut(child, visit)),
-        _ => {}
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
-}
-
-fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect()
 }

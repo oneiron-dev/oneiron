@@ -194,11 +194,17 @@ pub(crate) fn stamp_planner_craft_exposure(
 
 /// The craft a captured `request` showed: the rows its craft messages
 /// name, the requester's and a wave plan's planner's alike (FIX 5912), then
-/// those of the turn context right before the request's last user message
-/// when that context is, whole, a craft carrier (FIX 6676), in their order,
-/// each claim revision once, stamped at `at`. Empty for one that shows
-/// none. No other user message is read.
-pub(crate) fn captured_craft(request: &LlmRequest, at: u64) -> Vec<ManifestEntry> {
+/// `trusted`, the rows the host's own snapshot read when it assembled the
+/// request and kept beside it (FIX 9439), in their order, each claim
+/// revision once, stamped at `at`. Empty for one that shows none. No user
+/// message is read: a craft carrier in the turn's context is known by the
+/// rows kept with it, never by its text, so a user's words shaped like one
+/// name nothing.
+pub(crate) fn captured_craft(
+    request: &LlmRequest,
+    trusted: &[ManifestEntry],
+    at: u64,
+) -> Vec<ManifestEntry> {
     let mut seen = BTreeSet::new();
     request
         .messages
@@ -206,7 +212,10 @@ pub(crate) fn captured_craft(request: &LlmRequest, at: u64) -> Vec<ManifestEntry
         .filter(|message| message.role == LlmMessageRole::System)
         .filter_map(|message| shown_craft(&message_text(message), at))
         .flatten()
-        .chain(carried_craft(&request.messages, at).into_iter().flatten())
+        .chain(trusted.iter().map(|entry| ManifestEntry {
+            at,
+            ..entry.clone()
+        }))
         .filter(|entry| seen.insert((entry.reference.clone(), entry.version.clone())))
         .collect()
 }
@@ -291,24 +300,6 @@ fn carried(resident: &EntityId, craft: &LlmMessage) -> Option<LlmMessage> {
             text: serde_json::to_string(&carrier).ok()?,
         }],
     })
-}
-
-/// The craft the carrier in `messages`' turn context names (FIX 6676): the
-/// user message right before the last user message, read only when its
-/// text is, whole, a carrier holding the craft carrier's own legend.
-fn carried_craft(messages: &[LlmMessage], at: u64) -> Option<Vec<ManifestEntry>> {
-    let latest = messages
-        .iter()
-        .rposition(|message| message.role == LlmMessageRole::User)?;
-    let context = messages.get(latest.checked_sub(1)?)?;
-    if context.role != LlmMessageRole::User {
-        return None;
-    }
-    let carrier: CraftCarrier = serde_json::from_str(&message_text(context)).ok()?;
-    if carrier.resident_craft.legend != CRAFT_CARRIER_LEGEND {
-        return None;
-    }
-    craft_message_entries(&carrier.resident_craft.craft.to_string(), at)
 }
 
 fn system(text: String) -> LlmMessage {
