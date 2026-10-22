@@ -1,10 +1,12 @@
-//! One bounded node proposal batch per sync tick.
+//! One bounded node proposal batch per sync tick, then at most one owed
+//! artifact publication part as its own one-member batch (FIX 9575).
 
 use futures_util::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::session::{WsSink, residence_update_frame};
 use super::{LocalUpdate, SyncConnection};
+use crate::artifact_hosting::ArtifactPublicationPart;
 use crate::side_table::HexId;
 use crate::sync::client::{SyncClient, SyncResidenceMode};
 use crate::sync::documents::DS_E;
@@ -30,7 +32,8 @@ impl SyncConnection {
         client: &SyncClient,
         updates: &mut Vec<LocalUpdate>,
         documents: &mut Vec<Vec<u8>>,
-    ) -> Result<(), String> {
+        publication: &mut Option<ArtifactPublicationPart>,
+    ) -> Result<Option<(ArtifactPublicationPart, bool)>, String> {
         let opened = client.config.residence_mode == SyncResidenceMode::Opened;
         let mut frames = Vec::new();
         let mut size = 1;
@@ -141,6 +144,32 @@ impl SyncConnection {
             }
             // Documents remain in their own durable journal until the home ACK.
         }
-        sent
+        sent?;
+        send_publication_part(write, client, publication).await
     }
+}
+
+/// Sends the owed publication part `publication` holds, if any, as its own
+/// one-member batch, once it is still owed and not withheld; returns it, and
+/// whether the socket took it. A part dropped unsent is a change since
+/// replaced or settled, whose debt stays in the outbox.
+async fn send_publication_part(
+    write: &mut WsSink,
+    client: &SyncClient,
+    publication: &mut Option<ArtifactPublicationPart>,
+) -> Result<Option<(ArtifactPublicationPart, bool)>, String> {
+    let Some(part) = publication.take() else {
+        return Ok(None);
+    };
+    if !client.artifact_publication_part_current(&part) {
+        return Ok(Some((part, false)));
+    }
+    let batch = transport::encode_node_batch(std::slice::from_ref(&part.frame))
+        .into_result()
+        .map_err(|error| error.to_string())?;
+    write
+        .send(Message::Binary(batch.into()))
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(Some((part, true)))
 }

@@ -328,24 +328,19 @@ impl Vault {
                 if artifact_id != target.owner || artifact != artifact_id.to_hex() {
                     return Ok(None);
                 }
-                let Some(record) =
-                    self.blob_artifact_version_metadata_in_txn(txn, &artifact_id, version)?
-                else {
+                // A replica serves from its descriptor (FIX 1195).
+                let Some(serving) = self.serving_blob_in_txn(txn, &artifact_id, version)? else {
                     return Ok(None);
                 };
-                if path != "export" && path != "index.html" && path != record.export_name {
+                if path != "export" && path != "index.html" && path != serving.export_name {
                     return Ok(None);
                 }
-                let Some(bytes) = self.read_blob_artifact_version_sighted_in_txn(
-                    txn,
-                    &artifact_id,
-                    version,
-                    sight,
-                )?
+                let Some(bytes) =
+                    self.read_serving_blob_in_txn(txn, &artifact_id, &serving, sight)?
                 else {
                     return Ok(None);
                 };
-                (bytes, Some(record.export_media_type), record.content_hash)
+                (bytes, Some(serving.export_media_type), serving.content_hash)
             }
         };
         // A DOCX copy shows its default author (FIX 4513).
