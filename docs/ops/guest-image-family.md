@@ -36,10 +36,29 @@ variant, a stale lock scope, and an output field on an unbuilt variant.
 ## Build
 
 Fetch and build run on a Linux x86_64 host. They need python3 3.11 or newer,
-the util-linux `unshare`, libseccomp, network for the fetch phase, and
-unprivileged user and mount namespaces. They need no root, no sudo and no
-container daemon. `build.py` re-executes itself as root of a single-uid user
-namespace, and mkosi runs there with its `chown()` calls made no-ops.
+the util-linux `unshare` (2.38 or newer, for `--map-user`), libseccomp,
+network for the fetch phase, and unprivileged user and mount namespaces. They
+need no root, no sudo and no container daemon. Fleet render boxes are
+containers without user namespaces; book the builder elsewhere.
+
+Two namespaces nest:
+- `build.py` re-executes itself as root of a single-uid user namespace with a
+  private mount namespace (and, for `build`, no network namespace peers at
+  all). Its own steps run there: the bootstrap unpack, the fetch root below,
+  the exporter, which reads every tree back whatever its modes.
+- mkosi runs one namespace down, as the invoking uid again
+  (`unshare --map-user`). mkosi 27.1 takes uid 0 with `CAP_SYS_ADMIN` for real
+  root, and its essential-package tar extraction then chowns to ids no
+  single-uid namespace maps. As a regular uid it takes its own unprivileged
+  path: every tool in a sandbox that maps that uid to root, package managers
+  with `chown()` made a no-op. `MKOSI_FORCE_USERNS_FALLBACK=1` keeps it on
+  plain `unshare(CLONE_NEWUSER)`, never systemd-nsresourced's foreign uid
+  range, whose files the builder could not read back.
+
+Every host-side tool (git, tar, unshare, mount, mkosi itself) runs with a
+scrubbed environment: PATH and the locale, no `HOME` (mkosi gets an empty one
+in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
+`CARGO_*`, `RUST*` or user site-packages.
 
 1. **Fetch (online).** `build.py fetch --repo R --mirror M --work W --variant base`
    puts every input in the mirror `M` and checks it against its pin:
@@ -49,6 +68,16 @@ namespace, and mkosi runs there with its `chown()` calls made no-ops.
    - payloads;
    - a clean `CARGO_HOME` filled by `cargo fetch --locked` at the engine commit;
    - the Debian packages for the tools tree and the requested variants.
+
+   Cargo reads `.cargo/config.toml` in every parent of its working directory,
+   so a work dir under a home directory would pick up that home's Cargo
+   config. The pinned cargo therefore runs in a root of its own: a tmpfs in a
+   nested mount namespace, holding the pinned base layer's `/usr` and a copy
+   of its `/etc`, the engine source at `/src`, the store's `CARGO_HOME` at
+   `/cargo-home`, the pinned Rust at `/rust`, `/proc` and five device nodes.
+   Of the host it keeps only the CA bundle and the resolver file, both copied
+   in. `HOME` is unset. The config walk is `/src/.cargo/config.toml` (the
+   pinned repo file) and an empty `/`.
 
    The `.deb` files come through mkosi's own apt run against our sources
    file. That file pins main, updates and security to the snapshot,
@@ -88,11 +117,46 @@ namespace, and mkosi runs there with its `chown()` calls made no-ops.
 
       The ext4 is refused above the engine's 4 GiB Firecracker rootfs cap;
       the cap does not move.
+   7. It writes `rootfs.members.tsv`: every tar member with its type, mode,
+      owner, size, mtime and sha256 (or link target). This is the payload
+      identity a second build compares.
+   8. It writes the SBOM and the provenance statement (below).
 3. **Receipt.** `build.py receipt --variant base` writes `receipt.json` and
    prints the `[variants.base.outputs."linux/amd64"]` block. Paste the block
-   into `release.toml` with `state = "built-candidate"`.
+   into `release.toml` with `state = "built-candidate"`. The receipt also
+   compares the measured bytes with the variant's proposed budget and the
+   Firecracker cap.
 4. **Release manifest.** `build.py manifest --work W --variant base` writes
    `image-release.json` beside the artifacts (see "Verify a release" below).
+
+**SBOM and provenance.** Each build writes two unsigned documents beside its
+artifacts. The receipt, the `release.toml` block (`sbom_sha256`,
+`provenance_sha256`) and the release manifest's `sbom` field name them by
+digest. Signing them is the release signature's seam (`manifest.md`).
+- `sbom.spdx.json` is SPDX 2.3 JSON. It lists:
+  - the image (OCI manifest digest, archive sha256);
+  - every installed Debian package, with a purl and its `.deb` sha256 from the
+    lock;
+  - each native binary with its sha256. The binary `CONTAINS` the Cargo
+    packages it links: `cargo tree -e normal` in the build chroot, so with
+    the features this build resolved. Crates only its build compiled are
+    `BUILD_DEPENDENCY_OF` it.
+  - for the checker, every crate archive and git source in the offline store;
+  - the pinned payloads (Lightpanda, the Rust components) and pinned repo
+    files placed in the image.
+
+  Licences are what each crate declares. A Debian package's licence is
+  `NOASSERTION`: its copyright file is not machine-read here.
+- `provenance.json` is an in-toto Statement v1 with a SLSA provenance v1
+  predicate:
+  - the builder: the tools tree's content hash, mkosi's pin and the builder
+    commit;
+  - every input pin, each a resolved dependency: the engine commit, the base
+    layer, the mkosi archive, the Rust components, the Debian sources plus the
+    lock hash, `Cargo.lock`, the git dependencies, payloads and pinned files;
+  - the epoch, seed and rootfs UUID;
+  - the OCI archive, manifest, config, `rootfs.tar` and `rootfs.ext4` digests
+    as subjects.
 
 **Ownership.** The single-uid build leaves every file root-owned on disk, so
 the tar states each owner explicitly:
