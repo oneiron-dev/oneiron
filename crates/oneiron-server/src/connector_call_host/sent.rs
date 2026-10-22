@@ -11,6 +11,9 @@ pub(super) struct Sent {
     pub(super) awaiting: Option<ConnectorAwaitingInput>,
     pub(super) body: Option<Vec<u8>>,
     pub(super) error: Option<String>,
+    /// The resume state of the round the connector asked, if it asked one
+    /// (FIX 9157).
+    pub(super) resume: Option<RoundResume>,
 }
 
 impl Sent {
@@ -22,6 +25,7 @@ impl Sent {
             awaiting: None,
             body: None,
             error: None,
+            resume: None,
         }
     }
 
@@ -33,6 +37,7 @@ impl Sent {
             awaiting: None,
             body: None,
             error: Some(error.to_owned()),
+            resume: None,
         }
     }
 
@@ -44,6 +49,7 @@ impl Sent {
             awaiting: None,
             body: Some(body),
             error: None,
+            resume: None,
         }
     }
 }

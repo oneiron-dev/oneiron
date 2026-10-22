@@ -11,16 +11,21 @@
 //! arguments), is opened only by this vault, and is retired with the
 //! PENDING_CALLS row. The row keeps the protocol, the generation and the
 //! sealed bytes, never the state. A round whose state cannot be opened
-//! stands uncertain, as before.
+//! stands uncertain, as before. An exchange that ended leaves no state: its
+//! round has nothing to take up again.
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::outbound_intent_ledger::IntentLedgerError;
+use crate::outbound_intent_ledger::{
+    FrozenOutboundCall, IntentLedgerError, read_intent_for_attempt_in_txn,
+};
 use crate::secret_custody::{open_connector_resume_in_txn, seal_connector_resume_in_txn};
+use crate::secret_lease::SecretGrantRef;
 
 use super::connector_call::PENDING_CALLS;
 
@@ -57,6 +62,15 @@ pub struct OpenedConnectorResume {
     pub protocol: ConnectorResumeProtocol,
     /// The state the host kept, in zeroizing storage.
     pub state: Zeroizing<Vec<u8>>,
+    /// The custody record the call presents in place of the route's own
+    /// secret, as its row keeps it: the door presents it again.
+    pub credential: Option<EntityId>,
+    /// The secret grant the call redeems at each send, as its row keeps it.
+    pub grant: Option<SecretGrantRef>,
+    /// The original send as the ledger keeps it, for a Retry: what each
+    /// answer re-sends, its grant checked again first (FIX 8226). `None`
+    /// for a stream, or when the ledger does not read it.
+    pub original: Option<FrozenOutboundCall>,
 }
 
 /// The custody generation round `round`'s state is sealed at.
@@ -92,11 +106,11 @@ impl Vault {
             if row.settled.is_some() {
                 return Ok(false);
             }
-            let Some(input) = row
-                .input
-                .as_mut()
-                .filter(|input| input.handle == handle && input.generation == generation)
-            else {
+            // An uncertain round's exchange ended, or did not survive a
+            // restart: there is nothing live to keep a state for.
+            let Some(input) = row.input.as_mut().filter(|input| {
+                input.handle == handle && input.generation == generation && !input.uncertain
+            }) else {
                 return Ok(false);
             };
             let sealed =
@@ -111,15 +125,17 @@ impl Vault {
         })?)
     }
 
-    /// Every unanswered round's resume state, opened (FIX 9157): what a
-    /// server starting takes up again. A state that cannot be opened is
-    /// left out and logged; its round stays uncertain.
+    /// The resume state of every unanswered round standing uncertain with
+    /// one, opened (FIX 9157): what a server starting takes up again. Only
+    /// the rounds `wanted` names by call and handle are opened. A state that
+    /// cannot be opened is left out and logged; its round stays uncertain.
     ///
     /// # Errors
     ///
     /// Storage errors.
     pub fn open_connector_input_resumes(
         &self,
+        wanted: impl Fn(&EntityId, &str) -> bool,
     ) -> Result<Vec<OpenedConnectorResume>, IntentLedgerError> {
         let rows = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
@@ -128,32 +144,72 @@ impl Vault {
         let snapshot = self.store.custody_snapshot()?;
         let mut opened = Vec::new();
         for (call_ref, row) in rows {
-            let Some(input) = row.input.filter(|_| row.settled.is_none()) else {
+            let Some(input) = row
+                .input
+                .filter(|input| row.settled.is_none() && input.uncertain)
+            else {
                 continue;
             };
-            let Some(resume) = input.resume else {
+            let Some(resume) = input.resume.filter(|_| wanted(&call_ref, &input.handle)) else {
                 continue;
             };
-            match open_connector_resume_in_txn(
+            let state = match open_connector_resume_in_txn(
                 &self.store,
                 &snapshot,
                 &call_ref,
                 resume.generation,
                 &resume.sealed,
             ) {
-                Ok(state) => opened.push(OpenedConnectorResume {
-                    call_ref,
-                    handle: input.handle,
-                    generation: input.generation,
-                    protocol: resume.protocol,
-                    state,
-                }),
+                Ok(state) => state,
                 Err(error) => {
                     tracing::warn!(%error, "connector call resume state not opened");
+                    continue;
                 }
-            }
+            };
+            let original = match resume.protocol {
+                ConnectorResumeProtocol::Retry => {
+                    self.connector_input_original(row.attempt_id, row.call_seq, input.intent)
+                }
+                ConnectorResumeProtocol::Stream => None,
+            };
+            opened.push(OpenedConnectorResume {
+                call_ref,
+                handle: input.handle,
+                generation: input.generation,
+                protocol: resume.protocol,
+                state,
+                credential: row.credential,
+                grant: row.grant,
+                original,
+            });
         }
         Ok(opened)
+    }
+
+    /// The original send of a call whose connector asked for input, as the
+    /// ledger keeps it under the call's attempt: the Done intent `intent`
+    /// its row names. `None`, logged when the read failed, otherwise.
+    fn connector_input_original(
+        &self,
+        attempt_id: AttemptId,
+        call_seq: u64,
+        intent: Option<[u8; 32]>,
+    ) -> Option<FrozenOutboundCall> {
+        let record = self
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| IntentLedgerError::from(Error::from(error)))
+            .and_then(|txn| read_intent_for_attempt_in_txn(self, &txn, attempt_id, call_seq));
+        match record {
+            Ok(record) => record
+                .map(|record| FrozenOutboundCall::from_record(&record))
+                .filter(|original| original.intent_id() == intent.as_ref()),
+            Err(error) => {
+                tracing::warn!(%error, "connector call original send not read");
+                None
+            }
+        }
     }
 
     /// Takes the questions `handle` names on the call `call_ref` out of

@@ -174,6 +174,7 @@ impl Vault {
                 intent: input.intent,
             });
             input.uncertain = false;
+            input.resume = None;
             true
         })
     }
@@ -198,12 +199,14 @@ impl Vault {
                 reasons: vec![reason.to_owned()],
             });
             input.uncertain = false;
+            input.resume = None;
             true
         })
     }
 
     /// Marks the questions `handle` names on the call `call_ref` uncertain:
-    /// their live exchange ended unanswered. `true` when it marked them.
+    /// their live exchange ended unanswered, so its resume state goes too
+    /// (FIX 9157). `true` when it changed them.
     ///
     /// # Errors
     ///
@@ -214,8 +217,9 @@ impl Vault {
         handle: &str,
     ) -> Result<bool, IntentLedgerError> {
         self.update_connector_input(call_ref, handle, |input, _| {
-            let marked = !input.uncertain;
+            let marked = !input.uncertain || input.resume.is_some();
             input.uncertain = true;
+            input.resume = None;
             marked
         })
     }
@@ -255,7 +259,9 @@ impl Vault {
 
     /// Marks every unanswered call's questions uncertain, and returns how
     /// many it marked: what a server starting with no live exchange calls
-    /// before it serves, since none of their exchanges survived.
+    /// before it serves, since none of their exchanges survived. Each
+    /// round keeps its resume state, which the settler takes the exchange
+    /// up again from (FIX 9157).
     ///
     /// # Errors
     ///
@@ -270,7 +276,11 @@ impl Vault {
             let Some(input) = row.input.filter(|_| row.settled.is_none()) else {
                 continue;
             };
-            if self.mark_connector_input_uncertain(&call_ref, &input.handle)? {
+            if self.update_connector_input(&call_ref, &input.handle, |input, _| {
+                let marked = !input.uncertain;
+                input.uncertain = true;
+                marked
+            })? {
                 marked += 1;
             }
         }
