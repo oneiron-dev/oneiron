@@ -136,6 +136,55 @@ impl Presenting {
     }
 }
 
+/// What a credential presents again for a live exchange taken up after a
+/// restart (FIX 9157): the `Authorization` header its session sends, and
+/// the value everything the connector says next is cleared of.
+pub(super) struct Presented {
+    pub(super) auth: Option<HeaderValue>,
+    pub(super) kept: Option<KeptSentValue>,
+}
+
+impl Presenting {
+    /// Presents this credential again, inside its door, for a live exchange
+    /// taken up after a restart (FIX 9157): the callback only rebuilds the
+    /// header and the clearing value, and nothing is sent here. A grant door
+    /// counts the redemption as a send. `None` when the door refuses it or
+    /// the route's secret names no live record.
+    pub(super) fn present_again(self, vault: &Vault) -> Option<Presented> {
+        let Some(door) = self.door else {
+            return Some(Presented {
+                auth: None,
+                kept: None,
+            });
+        };
+        let mut presented = None;
+        let mut present = |value: &[u8]| -> oneiron::Result<()> {
+            presented = Some(Presented {
+                auth: Some(authorization_header(value)?),
+                kept: Some(SentValue::new(value, &self.text).keep()),
+            });
+            Ok(())
+        };
+        let effector = self.effector.as_str();
+        let opened = match door {
+            Door::Grant { grant, target, .. } => vault
+                .redeem_secret_grant_at_door(&grant, &target, &mut present)
+                .is_ok(),
+            Door::Record(custody) => vault
+                .inject_secret_record_at_door(&custody, effector, &mut present)
+                .is_ok(),
+            Door::Route(custody) => vault
+                .present_resolved_secret_at_door(&custody, effector, &mut present)
+                .is_ok(),
+            Door::Unresolved => false,
+        };
+        if !opened {
+            return None;
+        }
+        presented
+    }
+}
+
 /// The stored value is a whole `Authorization` header (`Basic ...` or
 /// `Bearer ...`) or a bare bearer token, as the native mail check reads it.
 fn authorization_header(value: &[u8]) -> oneiron::Result<HeaderValue> {
@@ -231,6 +280,26 @@ impl KeyAliases {
             .iter()
             .map(|(key, response)| (self.original(key).to_owned(), response.clone()))
             .collect()
+    }
+
+    /// Each alias beside the original key it stands for: what a round's
+    /// resume state keeps (FIX 9157).
+    pub(super) fn pairs(&self) -> Vec<(&str, &str)> {
+        self.0
+            .iter()
+            .map(|(alias, original)| (alias.as_str(), original.as_str()))
+            .collect()
+    }
+
+    /// The aliases a round's resume state kept, each original zeroized
+    /// again (FIX 9157).
+    pub(super) fn of_pairs(pairs: Vec<(String, String)>) -> Self {
+        Self(
+            pairs
+                .into_iter()
+                .map(|(alias, original)| (alias, Zeroizing::new(original)))
+                .collect(),
+        )
     }
 
     /// The response to the connector's own key `key`.

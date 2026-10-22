@@ -431,6 +431,23 @@ pub(super) async fn activity(socket: &Path) -> Option<WorkerActivity> {
     activity_of(&stats)
 }
 
+/// Asks the worker at `socket` to stop (FIX 9298): `drain`, answered once
+/// every call it accepted has ended, with no deadline, then `shutdown`. A
+/// worker that does not answer is left to the caller's signals.
+pub(super) async fn drain_and_shutdown(socket: &Path) {
+    let Ok(mut channel) = Channel::connect(socket).await else {
+        return;
+    };
+    if channel
+        .exchange("drain", None, json!({}), None)
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let _ = channel.ask("shutdown", json!({})).await;
+}
+
 /// One qualification over the worker's socket: its `hello`, then `request`
 /// sent once, buffered, with the epoch the hello named. Returns the hello
 /// and the reply in the HTTP reply's shape.
