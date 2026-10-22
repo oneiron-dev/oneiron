@@ -307,33 +307,27 @@ impl Vault {
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
-        if !proposal.validation.ok || proposal.new_bytes.is_empty() {
-            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
-                "only a proposal that passed its gate waits for Keep",
-            )));
-        }
-        let row = PendingRow {
-            proposal_ref: proposal.run_ref.clone(),
-            retained_by: actor.entity_ref(),
-            retained_at,
-            made_by: made_by.cloned(),
-            base_version: proposal.base_version,
-            base_content_hash: Some(proposal.base_content_hash),
-            new_bytes: proposal.new_bytes.clone(),
-            deck: None,
-            body: PendingBody::Edit {
-                format: proposal.format,
-                manifest: proposal.manifest.to_msgpack()?,
-                inspection: proposal.inspection.clone(),
-                recalc: proposal.recalc,
-                calc_engine: proposal
-                    .calc_engine
-                    .as_deref()
-                    .map(|stamp| (stamp.engine().to_owned(), stamp.version().to_owned())),
-                sheet_answers: proposal.sheet_answers.as_deref().cloned(),
-            },
-        };
+        let row = edit_pending_row(proposal, made_by, actor, retained_at)?;
         self.put_pending(artifact_id, &row, reader)
+    }
+
+    /// [`Self::retain_edit_proposal`] in the caller's own write transaction, for a
+    /// writer that commits the proposal beside rows of its own (a standing question's
+    /// ask and its stamp, FIX 2337). No read reaches this rail, so a named made_by
+    /// that names any row but its writer is refused (FIX 1229).
+    pub(crate) fn retain_edit_proposal_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+        proposal: &EditProposal,
+        made_by: Option<&MadeBy>,
+        actor: WriteActor,
+        retained_at: u64,
+    ) -> Result<PendingProposalView> {
+        admission::retention_lane(artifact_id, made_by, actor.entity_ref(), None)?;
+        let row = edit_pending_row(proposal, made_by, actor, retained_at)?;
+        self.put_pending_in_txn(wtxn, artifact_id, &row)?;
+        Ok(row.view(*artifact_id))
     }
 
     /// Offers one native organ result to an artifact as a waiting proposal,
@@ -664,8 +658,6 @@ impl Vault {
         row: &PendingRow,
         reader: Option<MadeByReader<'_>>,
     ) -> Result<PendingProposalView> {
-        validate_pending_ref(&row.proposal_ref)?;
-        let key = settlement_key_parts(artifact_id, &row.proposal_ref);
         let lane =
             admission::retention_lane(artifact_id, row.made_by.as_ref(), row.retained_by, reader)?;
         self.with_write_txn_grouped(|wtxn| {
@@ -674,17 +666,30 @@ impl Vault {
             if let (Some(lane), Some(made_by)) = (&lane, &row.made_by) {
                 admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
             }
-            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                return Err(already_settled(&existing));
-            }
-            if PENDING.contains(&self.store, wtxn, &key)? {
-                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                    "a proposal already waits under this ref",
-                )));
-            }
-            PENDING.put(&self.store, wtxn, &key, row)
+            self.put_pending_in_txn(wtxn, artifact_id, row)
         })?;
         Ok(row.view(*artifact_id))
+    }
+
+    /// Holds `row` beside its artifact in `wtxn`: a settled ref, or one already
+    /// waiting, is refused.
+    fn put_pending_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+        row: &PendingRow,
+    ) -> Result<()> {
+        validate_pending_ref(&row.proposal_ref)?;
+        let key = settlement_key_parts(artifact_id, &row.proposal_ref);
+        if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
+            return Err(already_settled(&existing));
+        }
+        if PENDING.contains(&self.store, wtxn, &key)? {
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "a proposal already waits under this ref",
+            )));
+        }
+        PENDING.put(&self.store, wtxn, &key, row)
     }
 
     fn pending_row(
@@ -749,6 +754,41 @@ fn output_record(
         sheet_answers: None,
         deck: None,
     }
+}
+
+/// The row a held edit proposal waits in: only one that passed its gate waits.
+fn edit_pending_row(
+    proposal: &EditProposal,
+    made_by: Option<&MadeBy>,
+    actor: WriteActor,
+    retained_at: u64,
+) -> Result<PendingRow> {
+    if !proposal.validation.ok || proposal.new_bytes.is_empty() {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "only a proposal that passed its gate waits for Keep",
+        )));
+    }
+    Ok(PendingRow {
+        proposal_ref: proposal.run_ref.clone(),
+        retained_by: actor.entity_ref(),
+        retained_at,
+        made_by: made_by.cloned(),
+        base_version: proposal.base_version,
+        base_content_hash: Some(proposal.base_content_hash),
+        new_bytes: proposal.new_bytes.clone(),
+        deck: None,
+        body: PendingBody::Edit {
+            format: proposal.format,
+            manifest: proposal.manifest.to_msgpack()?,
+            inspection: proposal.inspection.clone(),
+            recalc: proposal.recalc,
+            calc_engine: proposal
+                .calc_engine
+                .as_deref()
+                .map(|stamp| (stamp.engine().to_owned(), stamp.version().to_owned())),
+            sheet_answers: proposal.sheet_answers.as_deref().cloned(),
+        },
+    })
 }
 
 pub(super) fn validate_pending_ref(proposal_ref: &str) -> Result<()> {

@@ -850,9 +850,16 @@ impl Vault {
         Ok(due)
     }
 
-    /// The actor a wake asks as: the withdrawn answers' principal.
+    /// The actor a wake asks as: the withdrawn answers' principal, under the
+    /// class its standing question's version keeps (FIX 1588).
     pub fn answer_wake_actor(&self, wake: &UnitWithdrawal) -> Result<WriteActor> {
-        crate::llm::decision::questions::principal_actor(self, wake.principal)
+        let question = &wake.question;
+        crate::llm::decision::questions::standing_asker_for_question(
+            self,
+            question.id,
+            question.version,
+            wake.principal,
+        )
     }
 
     /// Wakes one withdrawal's proposer: the ask's question is asked again of

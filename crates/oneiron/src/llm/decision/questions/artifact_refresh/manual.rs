@@ -14,11 +14,11 @@
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-use super::super::refresh::{principal_actor, source_actor_key};
+use super::super::refresh::{source_actor_key, standing_asker};
 use super::super::store::{QUESTION_VERSION, VersionKey, owned_head};
 use super::{
-    ASK_DEADLINE, ASKED, ArtifactAskRecord, ArtifactAsked, Asking, Selection, artifact_ask_records,
-    ask_selection, baseline,
+    ASK_DEADLINE, ASKED, ArtifactAskRecord, Asking, Selection, artifact_ask_records, ask_selection,
+    baseline,
 };
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::edit_roundtrip::{ArtifactAsk, UnitDecider};
@@ -27,11 +27,13 @@ use crate::llm::decision::{DecisionBandPolicy, DecisionRung, Reversibility};
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 /// Asks the caller's standing artifact question `question` now, by hand, as
-/// `principal`, through the decider `decider_for` makes from its record and
-/// that actor, under `policy`. `None` when the question's adapter is not
+/// `principal`, under the class the question's version keeps (FIX 1588),
+/// through the decider `decider_for` makes from its record and that actor,
+/// under `policy`. `None` when the question's adapter is not
 /// [`ARTIFACT_ADAPTER`], so the caller refreshes its graph units instead.
-/// Else every artifact it has asked, at its last ask, this one included:
-/// empty for a paused question. Another principal's question is not found.
+/// Else every ask it has made of its artifacts, this one included, as
+/// [`artifact_ask_records`] lists them: empty for a paused question. Another
+/// principal's question is not found.
 pub fn refresh_artifact_question_now<D: UnitDecider>(
     vault: &Vault,
     principal: EntityId,
@@ -61,7 +63,7 @@ pub fn refresh_artifact_question_now<D: UnitDecider>(
         }
         (head.version, record)
     };
-    let actor = principal_actor(vault, record.principal)?;
+    let actor = standing_asker(vault, &record)?;
     let decider = decider_for(&record, actor)?;
     let asking = Asking {
         vault,
@@ -83,7 +85,8 @@ pub fn refresh_artifact_question_now<D: UnitDecider>(
 impl Asking<'_> {
     /// Asks every unit of `units` now and holds the answers as a proposal,
     /// unless its artifact has no head, its principal cannot read it, or an
-    /// earlier ask's proposal still waits for Keep.
+    /// earlier ask's proposal still waits for Keep. The ask is logged as the
+    /// pump's are, a failed one too.
     fn ask_now(&self, units: &ArtifactUnits) -> Result<()> {
         let vault = self.vault;
         let artifact = units.artifact;
@@ -125,43 +128,25 @@ impl Asking<'_> {
             return Ok(());
         }
         files.retain(|file| readable.contains(file));
-        let reference = format!(
-            "manual:{}:{}:{}",
-            &self.question.to_hex()[..16],
-            self.version,
-            self.now
-        );
         let definition = &self.record.definition;
         let mut dial = definition.dial;
         dial.ceiling = dial.ceiling.min(DecisionRung::Big);
-        let ask = ArtifactAsk {
-            question: &definition.question,
-            principal,
-            dial,
-            policy: self.policy,
-            reversibility: Reversibility::ReversibleRead,
-            decider: self.decider,
-            evidence: &[],
-            budget: definition.deadline(vault)?,
-            deadline: Instant::now() + ASK_DEADLINE,
-            run_ref: &reference,
-        };
-        let run = ask_selection(vault, artifact, &selection, &files, None, ask)?;
-        let proposed = match &run.proposal {
-            Some(proposal) => Some(
-                vault
-                    .retain_edit_proposal(&artifact, proposal, None, None, self.actor, self.now)?,
-            ),
-            None => None,
-        };
-        let stamp = ArtifactAsked {
-            question_version: self.version,
-            versions: observed,
-            asked_at: self.now,
-            proposal_ref: proposed.as_ref().map(|_| reference),
-        };
-        vault.with_write_txn(|wtxn| {
-            ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)
-        })
+        let budget = definition.deadline(vault)?;
+        self.ask_recorded(artifact, observed, "manual", |reference| {
+            let ask = ArtifactAsk {
+                question: &definition.question,
+                principal,
+                dial,
+                policy: self.policy,
+                reversibility: Reversibility::ReversibleRead,
+                decider: self.decider,
+                evidence: &[],
+                budget,
+                deadline: Instant::now() + ASK_DEADLINE,
+                run_ref: reference,
+            };
+            ask_selection(vault, artifact, &selection, &files, None, ask)
+        })?;
+        Ok(())
     }
 }

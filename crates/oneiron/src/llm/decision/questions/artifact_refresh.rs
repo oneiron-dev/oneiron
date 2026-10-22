@@ -15,13 +15,16 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
+mod history;
 mod manual;
 
+pub use self::history::artifact_ask_records;
+pub(super) use self::history::artifact_event_record;
 pub use self::manual::refresh_artifact_question_now;
 
 use serde::{Deserialize, Serialize};
 
-use super::refresh::{hold_failed, principal_actor, source_actor_key};
+use super::refresh::{hold_failed, source_actor_key, standing_asker};
 use super::{records::*, store::*};
 use crate::blob_artifact::{ArtifactAskUnits, read_blob_artifact_head_in_txn};
 use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
@@ -42,7 +45,8 @@ const ASKED: SideTable<(EntityId, EntityId), ArtifactAsked, Named> =
 /// One ask's run clock, past which no unit call runs.
 const ASK_DEADLINE: Duration = Duration::from_secs(300);
 
-/// The last ask of one artifact for one question.
+/// The last ask of one artifact for one question: the schedule's projection of the ask
+/// log (FIX 2337).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct ArtifactAsked {
     question_version: u32,
@@ -51,6 +55,10 @@ struct ArtifactAsked {
     asked_at: u64,
     /// The proposal its answers wait under; none when no unit was answered.
     proposal_ref: Option<String>,
+    /// The logged ask this stamp projects; none on a stamp written before asks were
+    /// logged one by one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ask_id: Option<EntityId>,
 }
 
 /// One question a pass could not ask, at the artifact it stopped on; it is held, then
@@ -203,7 +211,7 @@ pub fn refresh_due_artifact_questions_while<D: UnitDecider>(
         if !may_start() {
             break;
         }
-        let made = principal_actor(vault, record.principal)
+        let made = standing_asker(vault, &record)
             .and_then(|actor| Ok((actor, decider_for(&record, actor)?)));
         let (actor, decider) = match made {
             Ok(made) => made,
@@ -372,45 +380,25 @@ impl Asking<'_> {
             return Ok(None);
         }
         files.retain(|file| readable.contains(file));
-        let reference = format!(
-            "standing:{}:{}:{}",
-            &self.question.to_hex()[..16],
-            self.version,
-            self.now
-        );
         let definition = &self.record.definition;
         let mut dial = definition.dial;
         dial.ceiling = dial.ceiling.min(DecisionRung::Big);
-        let ask = ArtifactAsk {
-            question: &definition.question,
-            principal,
-            dial,
-            policy: self.policy,
-            reversibility: Reversibility::ReversibleRead,
-            decider: self.decider,
-            evidence: &[],
-            budget: definition.deadline(vault)?,
-            deadline: Instant::now() + ASK_DEADLINE,
-            run_ref: &reference,
-        };
-        let run = ask_selection(vault, artifact, &selection, &files, only.as_ref(), ask)?;
-        let proposed = match &run.proposal {
-            Some(proposal) => Some(
-                vault
-                    .retain_edit_proposal(&artifact, proposal, None, None, self.actor, self.now)?,
-            ),
-            None => None,
-        };
-        let stamp = ArtifactAsked {
-            question_version: self.version,
-            versions: observed,
-            asked_at: self.now,
-            proposal_ref: proposed.as_ref().map(|_| reference),
-        };
-        vault.with_write_txn(|wtxn| {
-            ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)
-        })?;
-        Ok(proposed)
+        let budget = definition.deadline(vault)?;
+        self.ask_recorded(artifact, observed, "standing", |reference| {
+            let ask = ArtifactAsk {
+                question: &definition.question,
+                principal,
+                dial,
+                policy: self.policy,
+                reversibility: Reversibility::ReversibleRead,
+                decider: self.decider,
+                evidence: &[],
+                budget,
+                deadline: Instant::now() + ASK_DEADLINE,
+                run_ref: reference,
+            };
+            ask_selection(vault, artifact, &selection, &files, only.as_ref(), ask)
+        })
     }
 
     /// The units of `selection` whose reads moved between the `baseline` versions the
@@ -547,9 +535,10 @@ fn baseline(
     Ok(Some(versions))
 }
 
-/// One standing artifact question's last ask of one artifact, read back by its principal
-/// (`vault.questions.answers`): the head it asked and where its answers stand. A later ask
-/// of the same artifact replaces it.
+/// One ask a standing artifact question made of one artifact, read back by its principal
+/// (`vault.questions.answers`): the head it asked and where its answers stand. Every
+/// logged ask stays (FIX 2337); a later ask of the same artifact replaces only an ask
+/// stamped before asks were logged, which names no `ask_id`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactAskRecord {
@@ -563,6 +552,13 @@ pub struct ArtifactAskRecord {
     #[serde(default)]
     pub proposal_ref: Option<String>,
     pub standing: ArtifactAskStanding,
+    /// The logged ask's own id; none on an ask stamped before asks were logged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_id: Option<EntityId>,
+    /// The kind of error that stopped a failed ask, which held nothing; none when the ask
+    /// completed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
 }
 
 /// Where one artifact ask's answers stand, by the same walk the next ask's baseline takes:
@@ -580,50 +576,6 @@ pub enum ArtifactAskStanding {
     /// Nothing waits and no Keep moved the artifact: the answers were discarded, or an edit
     /// withdrew them.
     Closed,
-}
-
-/// Every artifact the caller's standing question has asked, at its last ask, in artifact
-/// order: the `TYPED_QUESTION_ARTIFACT_ASKED` stamps, each with where its answers stand.
-/// Another principal's question is not found, as [`super::answer_records`] refuses it.
-pub fn artifact_ask_records(
-    vault: &Vault,
-    principal: EntityId,
-    question: EntityId,
-) -> Result<Vec<ArtifactAskRecord>> {
-    let stamps = {
-        let txn = vault.store.env.read_txn()?;
-        owned_head(vault, &txn, principal, question)?;
-        ASKED.scan_from(&vault.store, &txn, question.as_bytes())?
-    };
-    stamps
-        .into_iter()
-        .map(|((_, artifact), stamp)| {
-            let asked = stamp
-                .versions
-                .iter()
-                .find(|(id, _)| *id == artifact)
-                .map_or(0, |(_, version)| *version);
-            let standing = match (&stamp.proposal_ref, baseline(vault, artifact, &stamp)?) {
-                (None, _) => ArtifactAskStanding::Unanswered,
-                (Some(_), None) => ArtifactAskStanding::Waiting,
-                (Some(_), Some(versions)) => versions
-                    .iter()
-                    .find(|(id, _)| *id == artifact)
-                    .filter(|(_, kept)| *kept > asked)
-                    .map_or(ArtifactAskStanding::Closed, |(_, kept)| {
-                        ArtifactAskStanding::Kept { version: *kept }
-                    }),
-            };
-            Ok(ArtifactAskRecord {
-                artifact,
-                question_version: stamp.question_version,
-                artifact_version: asked,
-                asked_at: stamp.asked_at,
-                proposal_ref: stamp.proposal_ref,
-                standing,
-            })
-        })
-        .collect()
 }
 
 /// The builder `selection` names, over the readable `files` of a folder ask, asking

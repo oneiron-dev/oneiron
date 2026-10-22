@@ -5,7 +5,7 @@
 use super::super::types::invalid;
 use super::records::*;
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Error, Result, Vault, WriteActor};
 use serde::Serialize;
 
 /// The bytes before a family's suffix: `id16 ":" family ":"`.
@@ -122,11 +122,13 @@ pub(super) const QUESTION_ANSWER: SideTable<AnswerKey, AnswerRecord, Named> =
 pub(super) const QUESTION_LABEL: SideTable<LabelKey, OutcomeLabel, Named> =
     SideTable::new(&side_table::TYPED_QUESTION);
 
-/// Stores the principal's new standing question from its author's
-/// `definition`: the engine mints its id and sets its version to 1.
+/// Stores the asker's new standing question from its author's
+/// `definition`: the engine mints its id and sets its version to 1. The
+/// authenticated `asker` is its principal, and its class is kept on the
+/// version (FIX 1588).
 pub fn create_question(
     vault: &Vault,
-    principal: EntityId,
+    asker: WriteActor,
     definition: QuestionDefinitionInput,
     now: u64,
 ) -> Result<QuestionRecord> {
@@ -137,9 +139,10 @@ pub fn create_question(
     definition.validate()?;
     let record = QuestionRecord {
         schema_version: 1,
-        principal,
+        principal: asker.entity_ref(),
         definition,
         created_at: now,
+        asker_class: Some(asker.actor_class().into()),
     };
     vault.with_write_txn_grouped(|txn| {
         let id = record.definition.question.id;
@@ -228,18 +231,20 @@ pub fn read_question_schedule(
         }))
 }
 
-/// The principal's standing question's next version, from its author's
+/// The asker's standing question's next version, from its author's
 /// whole replacement `definition` over `expected_version`: the engine pins
 /// its id to `id` and its version to the next one, in the writing
-/// transaction.
+/// transaction. The new version keeps the authenticated `asker`'s class
+/// (FIX 1588).
 pub fn edit_question(
     vault: &Vault,
-    principal: EntityId,
+    asker: WriteActor,
     id: EntityId,
     expected_version: u32,
     definition: QuestionDefinitionInput,
     now: u64,
 ) -> Result<QuestionRecord> {
+    let principal = asker.entity_ref();
     vault.with_write_txn_grouped(|txn| {
         let mut head = owned_head(vault, txn, principal, id)?;
         if head.version != expected_version {
@@ -278,6 +283,7 @@ pub fn edit_question(
             principal,
             definition,
             created_at: now,
+            asker_class: Some(asker.actor_class().into()),
         };
         secret_scan_before_put(&record)?;
         QUESTION_VERSION.put(&vault.store, txn, &VersionKey { id, version }, &record)?;
