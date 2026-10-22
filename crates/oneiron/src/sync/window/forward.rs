@@ -374,7 +374,7 @@ impl ForwardRun {
             self.lease_vault_id,
             &self.tombstones,
         );
-        match &mut self.stage {
+        let after = match &mut self.stage {
             Stage::Entities { plan, next } => {
                 let end = next.saturating_add(page).min(plan.rows());
                 entity_pass::run_page(&ctx, &mut self.ledger, plan, *next..end)?;
@@ -382,7 +382,9 @@ impl ForwardRun {
                 if end == plan.rows() {
                     after_entities(&ctx, &mut self.ledger, self.native_documents.take())?;
                     let keys = edge_pass::order(&ctx);
-                    self.stage = Stage::Edges { keys, next: 0 };
+                    Some(Stage::Edges { keys, next: 0 })
+                } else {
+                    None
                 }
             }
             Stage::Edges { keys, next } => {
@@ -395,7 +397,9 @@ impl ForwardRun {
                     // Parent obligation left by a different window whose doc is not loaded.
                     vault.with_write_txn_grouped(|txn| super::bridge::retry_in_txn(vault, txn))?;
                     let entries = tombstone_pass::entries(&ctx);
-                    self.stage = Stage::Tombstones { entries, next: 0 };
+                    Some(Stage::Tombstones { entries, next: 0 })
+                } else {
+                    None
                 }
             }
             Stage::Tombstones { entries, next } => {
@@ -407,11 +411,15 @@ impl ForwardRun {
                 let stopped = absorb(&mut self.outcome, outcome);
                 if stopped || end == entries.len() {
                     let outcome = std::mem::take(&mut self.outcome);
-                    let count = settle(&ctx, &mut self.ledger, outcome)?;
-                    self.stage = Stage::Done(count);
+                    Some(Stage::Done(settle(&ctx, &mut self.ledger, outcome)?))
+                } else {
+                    None
                 }
             }
-            Stage::Done(_) => {}
+            Stage::Done(_) => None,
+        };
+        if let Some(stage) = after {
+            self.stage = stage;
         }
         Ok(match self.stage {
             Stage::Done(count) => Some(count),
@@ -546,14 +554,21 @@ fn settle(
     // the Parent landed: its TARGET membership may still be missing. Keep
     // the source-scoped retry until the exact Parent is written or receives
     // a terminal rejection, never discharge it via an unrelated edge heal.
-    ledger.healed.retain(|id| {
-        !ledger.pending_entity_dependencies.contains(id)
-            && !ledger.pending_dag_parent_sources.contains(id)
-    });
-    ledger.terminal_quarantines.retain(|id| {
-        !ledger.pending_entity_dependencies.contains(id)
-            && !ledger.pending_dag_parent_sources.contains(id)
-    });
+    {
+        let RematLedger {
+            healed,
+            terminal_quarantines,
+            pending_entity_dependencies,
+            pending_dag_parent_sources,
+            ..
+        } = &mut *ledger;
+        healed.retain(|id| {
+            !pending_entity_dependencies.contains(id) && !pending_dag_parent_sources.contains(id)
+        });
+        terminal_quarantines.retain(|id| {
+            !pending_entity_dependencies.contains(id) && !pending_dag_parent_sources.contains(id)
+        });
+    }
     if !outcome.purge_failures.is_empty()
         || !outcome.cleared.is_empty()
         || !ledger.healed.is_empty()

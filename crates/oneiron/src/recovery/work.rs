@@ -170,7 +170,11 @@ impl RecoveryWork {
     }
 
     /// This work's next turn on the vault's task-work line.
-    fn turn(&self, vault: &Vault, deadline: Option<Instant>) -> Result<LinePermit, WaitTimedOut> {
+    fn turn(
+        &self,
+        vault: &Vault,
+        deadline: Option<Instant>,
+    ) -> std::result::Result<LinePermit, WaitTimedOut> {
         let wait = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
         match (self.principal, wait) {
             (Some(principal), Some(wait)) => vault.task_work.admit_blocking_for(principal, wait),
