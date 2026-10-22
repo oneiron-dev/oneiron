@@ -1,3 +1,7 @@
+//! Budget admission and settlement surface.
+//! Entry: BudgetGuard.
+//! Definitions are owned by guard, dispatch, policy, templates and types; LLM vocabulary stays in the parent.
+
 mod dispatch;
 mod guard;
 mod ladders;
