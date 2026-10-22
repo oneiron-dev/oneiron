@@ -138,8 +138,8 @@ pub struct ProjectEffective {
     pub seats: BTreeSet<String>,
     /// `None`: the meet of contradicting slices; nothing fits under it.
     pub slice: Option<Scope>,
-    pub depth_limit: u8,
-    pub depth_remaining: u8,
+    pub depth_limit: u64,
+    pub depth_remaining: u64,
     /// Main's `bound_by_parents` of the witness head: false for an owner
     /// state (unsigned, or host-signed), which the vault alone caps.
     pub bound_by_parents: bool,

@@ -228,10 +228,12 @@ pub(crate) use self::offer::{
     settle_training_offer_in_txn,
 };
 pub(crate) use self::offer_pilot::erase_pilot_source_in_txn;
-pub(crate) use self::offer_switch::erase_switch_actor_in_txn;
 pub use self::offer_switch::{
-    OfferSwitchReceipt, OfferSwitchUndo, SwitchOwner, model_role_seat, seat_model_role,
-    training_offer_switch, undo_training_offer_switch,
+    OfferSwitchReceipt, OfferSwitchUndo, SwitchApplication, SwitchOwner, model_role_seat,
+    seat_model_role, training_offer_switch, undo_training_offer_switch,
+};
+pub(crate) use self::offer_switch::{
+    erase_switch_actor_in_txn, settle_staged_switch_in_txn, undo_staged_switch_in_txn,
 };
 pub use self::offer_training::{
     OfferTrainingHandoff, TrainingChoice, authorize_offer_training, check_offer_training_plan,
