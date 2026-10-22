@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1193 code-mode rows (1153 host rows, 40 run rows), 4062 declarations.
+// Census: 1193 code-mode rows (1153 host rows, 40 run rows), 4063 declarations.
 // Replies: 1073 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -53,7 +53,8 @@ declare namespace Sdk {
   type ReportStatus = "accepted" | "needs_more_evidence" | "duplicate" | "rejected" | "queued";
   type ReportRoute = { destination: "owner_inbox" } | { destination: "publisher"; publisher_ref: string };
   type ReportDisclosure = "local" | "content_free" | "needs_approval" | "approved" | "denied";
-  type ReportReceipt = { issue_ref: string; already_submitted: boolean; status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null; route: ReportRoute; disclosure: ReportDisclosure };
+  type ReportDisclosureBasis = { basis: "issue_once"; publisher_ref: string; request_digest: string; decided_at: number } | { basis: "standing_grant"; grant_ref: string };
+  type ReportReceipt = { issue_ref: string; already_submitted: boolean; status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null; route: ReportRoute; disclosure: ReportDisclosure; disclosure_basis?: ReportDisclosureBasis | null };
   type FeedbackCategory = "bug" | "papercut" | "confusion" | "feature-wish";
   type FeedbackPreviewRequest = { issue_ref: string; category: FeedbackCategory; include_text?: boolean };
   type FeedbackSubjectPreview = { issue_ref: string; subject_ref: string; publisher_ref: string; disclosure: ReportDisclosure; includes_text: boolean; digest: string; encoding: string; bundle: unknown; destination: string; approval: string; previewed_at: number };
@@ -62,7 +63,7 @@ declare namespace Sdk {
   type ReportDisclosureChoice = "approve_once" | "stop_asking_for_publisher" | "deny";
   type ReportDisclosureRequest = { issue_ref: string; choice: ReportDisclosureChoice };
   type ReportReview = { status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null };
-  type ReportIssue = { issue_ref: string; actor_ref: string; request: ReportRequest; received_at: number; route: ReportRoute; review: ReportReview; disclosure: ReportDisclosure };
+  type ReportIssue = { issue_ref: string; actor_ref: string; request: ReportRequest; received_at: number; route: ReportRoute; review: ReportReview; disclosure: ReportDisclosure; disclosure_basis?: ReportDisclosureBasis | null };
   type ReportRouteRequest = { subject_ref: string; route: ReportRoute };
   type ReportRouteReceipt = { subject_ref: string; route: ReportRoute; updated: boolean };
   type ReportOutboundRequest = { issue_ref: string };

@@ -7,7 +7,14 @@
 //! continuation in one write. What a repository answers in place of a page
 //! is recorded on its row with any retry time it named, and the walk stops
 //! there; a later sweep resumes it once that time has passed. Pull requests
-//! the listing returns are kept, as their own kind.
+//! the listing returns are kept, as their own kind. An engine error during
+//! the walk is recorded on the source's row too, and the walk returns it
+//! (FIX 7629).
+//!
+//! A long walk renews the sweep's lease before each request, and the page or
+//! error write renews it again under the lease it was admitted under (FIX
+//! 7628). Once another walker holds the sweep, this walk stops at once and
+//! its continuation stays owed to that walker.
 //!
 //! The deployment's feedback credential goes only to the origin of its own
 //! `github_issue` destination, for a repository bound there; every other
@@ -219,7 +226,9 @@ impl GithubIssueSource {
 /// one page and one write at a time. With no skill bound it reads nothing.
 /// A source still inside a retry time it named waits for a later sweep.
 /// What it answers in place of a page is recorded on its row and ends this
-/// walk; an engine error ends it too, and returns.
+/// walk; an engine error ends it too, is recorded on its row, and returns.
+/// Before each request the sweep's lease is renewed; a lease another walker
+/// holds ends this walk, writing nothing more.
 pub(super) fn sweep(
     server: &SyncServer,
     client: &reqwest::blocking::Client,
@@ -239,6 +248,12 @@ pub(super) fn sweep(
     }
     let mut read = row.github;
     loop {
+        match vault.renew_feedback_triage_sweep(admitted) {
+            Ok(true) => {}
+            // Another walker holds the sweep: the continuation is its own.
+            Ok(false) => return Ok(()),
+            Err(error) => return Err(engine_failed(vault, admitted, source, error)),
+        }
         let now = vault.now_recorded_at();
         let page = match source.changes(client, read.as_ref(), now) {
             Ok(page) => page,
@@ -258,9 +273,14 @@ pub(super) fn sweep(
             }
         };
         let last = page.next.is_none();
+        let written = match vault.record_feedback_triage_github_page(admitted, &page, now) {
+            Ok(written) => written,
+            Err(error) => return Err(engine_failed(vault, admitted, source, error)),
+        };
         // `None`: another walk moved the continuation since this one read
-        // it, and goes on from there; or the skill was unbound meanwhile.
-        let Some(row) = vault.record_feedback_triage_github_page(admitted, &page, now)? else {
+        // it, and goes on from there; another walker holds the sweep now;
+        // or the skill was unbound meanwhile.
+        let Some(row) = written else {
             return Ok(());
         };
         if last {
@@ -268,6 +288,31 @@ pub(super) fn sweep(
         }
         read = row.github;
     }
+}
+
+/// FIX 7629: the engine's own failure while it walked `source`, recorded on
+/// the source's row as `Engine` at a fresh time, with no status and no retry
+/// time. The walk answers `error` itself; a record that fails too cannot
+/// make the store look sound, and is only logged by its kind.
+fn engine_failed(
+    vault: &oneiron::Vault,
+    admitted: &DreamerAdmittedAttempt,
+    source: &GithubIssueSource,
+    error: oneiron::Error,
+) -> oneiron::Error {
+    let engine = fault(FeedbackTriageSourceErrorKind::Engine, None);
+    let now = vault.now_recorded_at();
+    if let Err(unrecorded) =
+        vault.record_feedback_triage_source_error(admitted, source.name(), &engine, now)
+    {
+        tracing::warn!(
+            source = source.name(),
+            kind = ?error.kind(),
+            record_kind = ?unrecorded.kind(),
+            "a feedback source's engine error was not recorded on its row"
+        );
+    }
+    error
 }
 
 fn fault(kind: FeedbackTriageSourceErrorKind, status: Option<u16>) -> FeedbackTriageSourceFault {

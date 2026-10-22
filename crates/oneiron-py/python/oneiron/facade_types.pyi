@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1142 facade rows, 4007 declarations.
+Census: 1142 facade rows, 4008 declarations.
 Inputs: 1076 of 1142 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1028 of 1142 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
@@ -182,6 +182,15 @@ class ReportRoutePublisher(TypedDict):
     publisher_ref: str
 ReportRoute = ReportRouteOwnerInbox | ReportRoutePublisher
 ReportDisclosure = Literal["local", "content_free", "needs_approval", "approved", "denied"]
+class ReportDisclosureBasisIssueOnce(TypedDict):
+    basis: Literal["issue_once"]
+    publisher_ref: str
+    request_digest: str
+    decided_at: int
+class ReportDisclosureBasisStandingGrant(TypedDict):
+    basis: Literal["standing_grant"]
+    grant_ref: str
+ReportDisclosureBasis = ReportDisclosureBasisIssueOnce | ReportDisclosureBasisStandingGrant
 class ReportReceipt(TypedDict):
     issue_ref: str
     already_submitted: bool
@@ -190,6 +199,7 @@ class ReportReceipt(TypedDict):
     duplicate_of: NotRequired[str | None]
     route: ReportRoute
     disclosure: ReportDisclosure
+    disclosure_basis: NotRequired[ReportDisclosureBasis | None]
 FeedbackCategory = Literal["bug", "papercut", "confusion", "feature-wish"]
 class FeedbackPreviewRequest(TypedDict):
     issue_ref: str
@@ -240,6 +250,7 @@ class ReportIssue(TypedDict):
     route: ReportRoute
     review: ReportReview
     disclosure: ReportDisclosure
+    disclosure_basis: NotRequired[ReportDisclosureBasis | None]
 class ReportRouteRequest(TypedDict):
     subject_ref: str
     route: ReportRoute
