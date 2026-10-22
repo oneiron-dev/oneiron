@@ -4346,7 +4346,7 @@ export_facade! {
     let output = client.vault_questions_read(&input)?;
     crate::codec::lift_record("vault.questions.read", &output)
 };
-"vault.questions.answers" => fn vault_questions_answers(&self, input: QuestionAnswersRequest) -> Vec<QuestionAnswer> = |client| {
+"vault.questions.answers" => fn vault_questions_answers(&self, input: QuestionAnswersRequest) -> QuestionAnswersReply = |client| {
     let input: oneiron::receipt::QuestionAnswersRequest = crate::codec::lower_record("vault.questions.answers", input)?;
     let output = client.vault_questions_answers(&input)?;
     crate::codec::lift_record("vault.questions.answers", &output)

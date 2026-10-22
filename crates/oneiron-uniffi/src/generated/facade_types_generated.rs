@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1138 facade rows, 3963 generated types.
+// UniFFI census: 1138 facade rows, 3967 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1090.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -37976,6 +37976,17 @@ pub enum SpawnPhase {
     Launched,
     #[serde(rename = "refused")]
     Refused,
+    #[serde(rename = "erased")]
+    Erased,
+}
+
+/// `oneiron::team::spawn_intent::SpawnErasure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SpawnErasure {
+    #[serde(rename = "asker_erased")]
+    AskerErased,
+    #[serde(rename = "target_erased")]
+    TargetErased,
 }
 
 /// `oneiron::team::doors::CoordinationPatternView`.
@@ -38356,6 +38367,8 @@ pub struct PlannedSpawnObservation {
     pub spawn_ref: String,
     #[serde(rename = "phase")]
     pub phase: SpawnPhase,
+    #[serde(rename = "erasure", default, skip_serializing_if = "Option::is_none")]
+    pub erasure: Option<SpawnErasure>,
     #[serde(rename = "type_ref")]
     pub type_ref: TypeStamp,
     #[serde(rename = "plan", default, skip_serializing_if = "Option::is_none")]
@@ -38495,6 +38508,8 @@ pub struct SpawnIntentReply {
     pub agent_def_ref: Option<String>,
     #[serde(rename = "plan", default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<PlanObservation>,
+    #[serde(rename = "erasure", default, skip_serializing_if = "Option::is_none")]
+    pub erasure: Option<SpawnErasure>,
 }
 
 /// `oneiron::task_verb::run_doors::CancelForceRequest`.
@@ -48099,6 +48114,8 @@ pub enum GraphAskOutcome {
         answers: Vec<AnswerRecord>,
         #[serde(rename = "abstained")]
         abstained: Vec<String>,
+        #[serde(rename = "declined")]
+        declined: Vec<GraphAskDeclined>,
     },
 }
 
@@ -48286,6 +48303,17 @@ pub struct QuestionDefinitionDecisionQuestion {
     pub artifacts: Option<Vec<ArtifactUnits>>,
 }
 
+/// `oneiron::llm::decision::questions::records::QuestionAskerClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum QuestionAskerClass {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "system")]
+    System,
+}
+
 /// `oneiron::llm::decision::questions::records::QuestionRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -48298,6 +48326,12 @@ pub struct QuestionRecord {
     pub definition: QuestionDefinitionDecisionQuestion,
     #[serde(rename = "created_at")]
     pub created_at: u64,
+    #[serde(
+        rename = "asker_class",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub asker_class: Option<QuestionAskerClass>,
 }
 
 /// `oneiron::receipt::questions::QuestionEditRequest`.
@@ -48371,6 +48405,10 @@ pub struct QuestionReadRequest {
 pub struct QuestionAnswersRequest {
     #[serde(rename = "id")]
     pub id: String,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(rename = "page_size", default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u64>,
 }
 
 /// `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskStanding`.
@@ -48410,6 +48448,10 @@ pub struct ArtifactAskRecord {
     pub proposal_ref: Option<String>,
     #[serde(rename = "standing")]
     pub standing: ArtifactAskStanding,
+    #[serde(rename = "ask_id", default, skip_serializing_if = "Option::is_none")]
+    pub ask_id: Option<String>,
+    #[serde(rename = "failed", default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
 }
 
 /// `oneiron::receipt::questions::QuestionAnswer`.
@@ -48420,6 +48462,28 @@ pub enum QuestionAnswer {
     Graph(AnswerRecord),
     #[serde(rename = "artifact")]
     Artifact(ArtifactAskRecord),
+}
+
+/// `oneiron::receipt::questions::QuestionAnswersPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionAnswersPage {
+    #[serde(rename = "answers")]
+    pub answers: Vec<QuestionAnswer>,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+}
+
+/// `oneiron::receipt::questions::QuestionAnswersReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum QuestionAnswersReply {
+    All(Vec<QuestionAnswer>),
+    Page(QuestionAnswersPage),
 }
 
 /// `oneiron::receipt::questions::QuestionRefreshRequest`.
@@ -63114,6 +63178,11 @@ pub enum AgentSpawnOutput {
         proposal: String,
         #[serde(rename = "unapplied", default, skip_serializing_if = "Option::is_none")]
         unapplied: Option<Vec<SpawnUnapplied>>,
+    },
+    #[serde(rename = "target_erased")]
+    TargetErased {
+        #[serde(rename = "kind")]
+        kind: AgentSpawnKind,
     },
 }
 

@@ -2017,7 +2017,7 @@ export interface FacadeResults {
   "vault.questions.pause": Facade.QuestionPaused;
   "vault.questions.backfill": Facade.ScheduledBackfill;
   "vault.questions.read": Facade.QuestionRecord | null;
-  "vault.questions.answers": Facade.QuestionAnswer[];
+  "vault.questions.answers": Facade.QuestionAnswersReply;
   "vault.questions.refresh": Facade.QuestionAnswer[];
   "vault.questions.outcomes": Facade.QuestionOutcomes;
   "vault.questions.outcomes.project": Facade.QuestionOutcomesProjected;
@@ -3174,7 +3174,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.questions.pause": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.questions.backfill": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.questions.read": { description: "", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.questions.answers": { description: "", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.questions.answers": { description: "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.questions.refresh": { description: "Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.questions.outcomes": { description: "Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.questions.outcomes.project": { description: "Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -5636,6 +5636,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         pause: (input: Facade.QuestionPauseRequest, options?: O): FacadeReturns<"vault.questions.pause">[K] => invoke("vault.questions.pause", input, options, newInvocation()),
         backfill: (input: Facade.QuestionBackfillRequest, options?: O): FacadeReturns<"vault.questions.backfill">[K] => invoke("vault.questions.backfill", input, options, newInvocation()),
         read: (input: Facade.QuestionReadRequest, options?: O): FacadeReturns<"vault.questions.read">[K] => invoke("vault.questions.read", input, options, newInvocation()),
+        /** Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each. */
         answers: (input: Facade.QuestionAnswersRequest, options?: O): FacadeReturns<"vault.questions.answers">[K] => invoke("vault.questions.answers", input, options, newInvocation()),
         /** Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it. */
         refresh: (input: Facade.QuestionRefreshRequest, options?: O): FacadeReturns<"vault.questions.refresh">[K] => invoke("vault.questions.refresh", input, options, newInvocation()),

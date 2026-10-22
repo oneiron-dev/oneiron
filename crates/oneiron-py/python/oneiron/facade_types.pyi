@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1138 facade rows, 3981 declarations.
+Census: 1138 facade rows, 3985 declarations.
 Inputs: 1072 of 1138 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1024 of 1138 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
@@ -12125,7 +12125,8 @@ class TaskTypeTreeReadReply(TypedDict):
     tree: NotRequired[TaskTypeTreeView | None]
 class PlannedSpawnRead(TypedDict):
     spawn_ref: EntityId
-SpawnPhase = Literal["planned", "launched", "refused"]
+SpawnPhase = Literal["planned", "launched", "refused", "erased"]
+SpawnErasure = Literal["asker_erased", "target_erased"]
 CoordinationPatternView = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
 class SkillRevisionView(TypedDict):
     skill_ref: EntityId
@@ -12258,6 +12259,7 @@ ObservationIssue = ObservationIssueStampMismatch | ObservationIssueMissingBindin
 class PlannedSpawnObservation(TypedDict):
     spawn_ref: EntityId
     phase: SpawnPhase
+    erasure: NotRequired[SpawnErasure | None]
     type_ref: TypeStamp
     plan: NotRequired[PlanObservation | None]
     launched: list[LaunchedMember]
@@ -12297,6 +12299,7 @@ class SpawnIntentReply(TypedDict):
     team_ref: NotRequired[str | None]
     agent_def_ref: NotRequired[EntityId | None]
     plan: NotRequired[PlanObservation | None]
+    erasure: NotRequired[SpawnErasure | None]
 class CancelForceRequest(TypedDict):
     task_ref: EntityId
     reason: NotRequired[str | None]
@@ -15409,6 +15412,7 @@ class GraphAskOutcomeFailed(TypedDict):
     message: str
     answers: list[AnswerRecord]
     abstained: list[EntityId]
+    declined: list[GraphAskDeclined]
 GraphAskOutcome = GraphAskOutcomeDone | GraphAskOutcomeFailed
 class GraphAdmitRequest(TypedDict):
     question: DecisionQuestion
@@ -15451,11 +15455,13 @@ DecisionQuestionInput = TypedDict("DecisionQuestionInput", {"text": str, "class"
 QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinitionInput
+QuestionAskerClass = Literal["human", "agent", "system"]
 class QuestionRecord(TypedDict):
     schema_version: int
     principal: str
     definition: QuestionDefinition[DecisionQuestion]
     created_at: int
+    asker_class: NotRequired[QuestionAskerClass | None]
 class QuestionEditRequest(TypedDict):
     id: EntityId
     expected_version: int
@@ -15479,6 +15485,8 @@ class QuestionReadRequest(TypedDict):
     version: NotRequired[int | None]
 class QuestionAnswersRequest(TypedDict):
     id: EntityId
+    cursor: NotRequired[str | None]
+    page_size: NotRequired[int | None]
 class ArtifactAskStandingUnanswered(TypedDict):
     state: Literal["unanswered"]
 class ArtifactAskStandingWaiting(TypedDict):
@@ -15496,11 +15504,17 @@ class ArtifactAskRecord(TypedDict):
     asked_at: int
     proposal_ref: NotRequired[str | None]
     standing: ArtifactAskStanding
+    ask_id: NotRequired[EntityId | None]
+    failed: NotRequired[str | None]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):
     kind: Literal["artifact"]
 QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
+class QuestionAnswersPage(TypedDict):
+    answers: list[QuestionAnswer]
+    next_cursor: NotRequired[str | None]
+QuestionAnswersReply = list[QuestionAnswer] | QuestionAnswersPage
 class QuestionRefreshRequest(TypedDict):
     id: EntityId
 class QuestionOutcomesRequest(TypedDict):
@@ -20354,7 +20368,10 @@ class AgentSpawnOutputProposedWiden(TypedDict):
     kind: AgentSpawnKind
     proposal: str
     unapplied: NotRequired[list[SpawnUnapplied]]
-AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden
+class AgentSpawnOutputTargetErased(TypedDict):
+    state: Literal["target_erased"]
+    kind: AgentSpawnKind
+AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden | AgentSpawnOutputTargetErased
 class LeaderSplitInput(TypedDict):
     leader: NotRequired[str | None]
     slice: NotRequired[ScopeScope | None]

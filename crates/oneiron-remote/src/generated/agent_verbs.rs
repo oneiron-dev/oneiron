@@ -2703,7 +2703,7 @@ impl OneironClient {
                     Option<oneiron::llm::decision::questions::QuestionRecord>,
                 >(client, verb, &input),
                 "vault.questions.answers" => remote_agent_verb_output::<
-                    Vec<oneiron::receipt::QuestionAnswer>,
+                    oneiron::receipt::QuestionAnswersReply,
                 >(client, verb, &input),
                 "vault.questions.refresh" => remote_agent_verb_output::<
                     Vec<oneiron::receipt::QuestionAnswer>,
@@ -14210,7 +14210,7 @@ impl OneironClient {
     pub fn vault_questions_answers(
         &self,
         input: &oneiron::receipt::QuestionAnswersRequest,
-    ) -> Result<Vec<oneiron::receipt::QuestionAnswer>, MemoryError> {
+    ) -> Result<oneiron::receipt::QuestionAnswersReply, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

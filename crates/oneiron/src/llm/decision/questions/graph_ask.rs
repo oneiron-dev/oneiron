@@ -222,6 +222,10 @@ pub struct GraphAskFailure {
     pub failed_unit: Option<EntityId>,
     pub error: Box<Error>,
     pub completed: GraphAskResult,
+    /// Each unit before the failure whose answerer declined through a full
+    /// decision, with that decision, in `completed.abstained` order (FIX
+    /// 1582).
+    pub declined: Vec<(EntityId, TypedDecision)>,
 }
 
 impl GraphAskFailure {
@@ -233,6 +237,7 @@ impl GraphAskFailure {
                 answers: Vec::new(),
                 abstained: Vec::new(),
             },
+            declined: Vec::new(),
         }
     }
 }
@@ -398,6 +403,7 @@ pub fn run_graph_ask_receipted(
                     failed_unit: Some(unit),
                     error: Box::new(error),
                     completed,
+                    declined,
                 });
             }
         }
