@@ -18,7 +18,6 @@ use super::boundary::{
     ts_to_engine,
 };
 use super::bridge::ActorScopedVault;
-use super::input_error::caller_input_error;
 use super::convert::{
     calendar_event_from_engine, calendar_range_to_engine, calendar_selectors_to_engine,
     commit_outcome_from_engine, commit_receipt_from_engine, entity_ref_receipt_from_engine,
@@ -35,12 +34,27 @@ use super::dtos::{
     NapiNeighborOpts, NapiOutboundDraftInput, NapiOutboundIntentReceipt, NapiRecallScope,
     NapiStructuralPutInput,
 };
+use super::input_error::caller_input_error;
 use super::numeric::claim_input_to_engine;
 use oneiron::task_verb::sdk::{
-    AppendBlobVersionRequest, NeighborsRequest, OutboundScheduleRequest, QueryBm25Request,
-    ReadBlobVersionRequest,
+    AppendBlobVersionRequest, CalendarFreebusyRequest, CommitRequest, NeighborsRequest,
+    OutboundScheduleRequest, QueryBm25Request, ReadBlobVersionRequest,
 };
-use oneiron::task_verb::verb_hook_boundary::typed_row;
+use oneiron::task_verb::verb_hook_boundary::{typed_row, typed_row_validated};
+
+/// A direct `seedClaims` call's input as its row's hooks see it and as a
+/// hook may rewrite it (FIX 8114): the binding's own claims, the payload the
+/// call already takes, not the generated row's scoped ones. A rewrite must
+/// still read as that payload.
+fn validate_direct_seed(verb: &str, args: &serde_json::Value) -> Result<(), oneiron::MemoryError> {
+    serde_json::from_value::<CommitRequest>(args.clone())
+        .map(|_| ())
+        .map_err(|error| {
+            oneiron::MemoryError::bad_request(format!(
+                "a verb hook rewrote {verb}'s input: {error}"
+            ))
+        })
+}
 
 #[napi]
 impl ActorScopedVault {
@@ -363,10 +377,19 @@ impl ActorScopedVault {
         for claim in &claims {
             engine_claims.push(claim_input_to_engine(claim).map_err(facade_error)?);
         }
-        let outcomes = self
-            .facade()?
-            .seed_claims(&engine_claims)
-            .map_err(facade_error)?;
+        // The row's hooks run once around the call, on its own payload; the
+        // seed writer and its per-claim outcomes are unchanged (FIX 8114).
+        let memory = self.facade()?;
+        let outcomes = typed_row_validated(
+            &memory,
+            "vault.claims.seed",
+            CommitRequest {
+                claims: engine_claims,
+            },
+            validate_direct_seed,
+            |input| memory.seed_claims(&input.claims),
+        )
+        .map_err(facade_error)?;
         Ok(outcomes
             .into_iter()
             .map(commit_outcome_from_engine)
@@ -422,10 +445,14 @@ impl ActorScopedVault {
     /// is `null` when the id is unknown, unreadable, or not a calendar EVENT.
     #[napi]
     pub fn calendar_read(&self, event_ref: String) -> napi::Result<NapiCalendarEventRead> {
-        let read = self
-            .facade()?
-            .calendar_read(&CalendarReadRequest { event_ref })
-            .map_err(facade_error)?;
+        let memory = self.facade()?;
+        let read = typed_row(
+            &memory,
+            "vault.calendar.read",
+            CalendarReadRequest { event_ref },
+            |input| memory.calendar_read(&input),
+        )
+        .map_err(facade_error)?;
         Ok(NapiCalendarEventRead {
             value: read
                 .value
@@ -453,10 +480,11 @@ impl ActorScopedVault {
             text: request.text,
             limit: request.limit,
         };
-        let events = self
-            .facade()?
-            .calendar_search(&engine_request)
-            .map_err(facade_error)?;
+        let memory = self.facade()?;
+        let events = typed_row(&memory, "vault.calendar.search", engine_request, |input| {
+            memory.calendar_search(&input)
+        })
+        .map_err(facade_error)?;
         Ok(NapiCalendarEvents {
             value: events
                 .value
@@ -478,10 +506,18 @@ impl ActorScopedVault {
         let engine_range = calendar_range_to_engine(Some(range))
             .map_err(caller_input_error)?
             .ok_or_else(|| caller_input_error("range is required".to_owned()))?;
-        let busy = self
-            .facade()?
-            .calendar_freebusy(&calendar_selectors_to_engine(calendars), engine_range)
-            .map_err(facade_error)?;
+        let request = CalendarFreebusyRequest {
+            calendars: calendar_selectors_to_engine(calendars),
+            range: CalendarRangeDto {
+                start: engine_range.start,
+                end: engine_range.end,
+            },
+        };
+        let memory = self.facade()?;
+        let busy = typed_row(&memory, "vault.calendar.freebusy", request, |input| {
+            memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
+        })
+        .map_err(facade_error)?;
         Ok(NapiCalendarFreebusy {
             value: busy
                 .value
@@ -511,17 +547,19 @@ impl ActorScopedVault {
                 input.method
             ))
         })?;
-        let receipt = self
-            .facade()?
-            .calendar_invite(&CalendarInviteSurfaceInput {
-                method,
-                uid: input.uid,
-                sequence: input.sequence,
-                ics_blob_ref: input.ics_blob_ref,
-                recipient: input.recipient,
-                mention: mention_to_engine(input.mention).map_err(caller_input_error)?,
-            })
-            .map_err(facade_error)?;
+        let request = CalendarInviteSurfaceInput {
+            method,
+            uid: input.uid,
+            sequence: input.sequence,
+            ics_blob_ref: input.ics_blob_ref,
+            recipient: input.recipient,
+            mention: mention_to_engine(input.mention).map_err(caller_input_error)?,
+        };
+        let memory = self.facade()?;
+        let receipt = typed_row(&memory, "calendar.invite", request, |input| {
+            memory.calendar_invite(&input)
+        })
+        .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
             intent_ref: receipt.intent_ref,
             outcome: receipt.outcome,

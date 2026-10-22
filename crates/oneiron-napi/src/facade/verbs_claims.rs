@@ -12,7 +12,6 @@ use oneiron::task_verb::verb_hook_boundary::typed_row;
 use oneiron::{ClaimListFilter, SafeDeleteReason};
 
 use super::boundary::{boundary_error, facade_error, ts_from_engine};
-use super::input_error::{caller_input_error, witness_input_error};
 use super::bridge::ActorScopedVault;
 use super::convert::{
     claim_view_from_engine, commit_outcome_from_engine, commit_receipt_from_engine,
@@ -24,6 +23,7 @@ use super::dtos::{
     NapiDeleteReceipt, NapiEntityRead, NapiEntityViews, NapiForgetSelector, NapiGateReceipt,
     NapiPendingWrite, NapiWitnessReceipt, NapiWitnessTurn,
 };
+use super::input_error::{caller_input_error, witness_input_error};
 use super::numeric::claim_input_to_engine;
 
 #[napi]
