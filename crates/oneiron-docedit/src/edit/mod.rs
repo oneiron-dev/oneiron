@@ -30,13 +30,13 @@ pub use structure::{
     ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, StructureEdit,
     StructureReport, structure_patch,
 };
-pub(crate) use text::BREAK;
+pub(crate) use text::{BREAK, cell_text};
 pub use transaction::{
     AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
     PartChange, StepRefusal, TransactionError, run_transaction,
 };
 
-use crate::deck::{DeckError, DeckView, ShapeView};
+use crate::deck::{DeckError, DeckView, ShapeKind, ShapeView};
 use crate::design_plan::AssetKind;
 use crate::graphic::{AssetRecord, GraphicError, GraphicLimits};
 use crate::ooxml::XmlError;
@@ -103,9 +103,12 @@ pub enum ValueEdit<'a> {
         expected: Option<&'a str>,
         text: &'a str,
     },
-    /// A shape's or connector's preset geometry (`a:prstGeom/@prst`): a
-    /// [`Preset::name`] for a shape, a [`ConnectorPreset::name`] for a
-    /// connector. Its adjust values are dropped; custom geometry refuses.
+    /// A shape's, picture's or connector's preset geometry
+    /// (`a:prstGeom/@prst`): a [`Preset::name`] for a shape or a picture
+    /// (a picture's is its Crop to Shape), a [`ConnectorPreset::name`] for a
+    /// connector. Its adjust values are dropped; custom geometry is replaced,
+    /// as PowerPoint's Change Shape replaces it
+    /// ([`Effect::CustomGeometryReplaced`]).
     SetPreset { target: Target<'a>, preset: &'a str },
     /// A connector's glue: each end the native id of a shape on its slide
     /// and that shape's connection site, or free. Its geometry stays.
@@ -131,7 +134,9 @@ pub struct Xfrm {
 pub struct RunProps<'a> {
     pub bold: Option<bool>,
     pub italic: Option<bool>,
-    /// Hundredths of a point.
+    /// Hundredths of a point. DrawingML's `ST_TextFontSize` holds
+    /// 100..=400000; a size outside it is written clamped into it, so the
+    /// file opens, and the edit reports [`Effect::FontSizeClamped`].
     pub size: Option<u32>,
     /// `a:latin/@typeface`, as written (`+mn-lt` stays a theme reference).
     pub latin: Option<&'a str>,
@@ -154,6 +159,16 @@ pub struct EditReport {
     /// Laid-out text that changed (or a text frame that was resized) has no
     /// rendered fit proof; kept autofit metrics are no new guarantee.
     pub fit: Result<(), FitUnverified>,
+}
+
+/// One shape an ambiguous anchor may mean, as the deck view reads it: its
+/// index in the slide's shapes, its kind, name and creation id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnchorCandidate {
+    pub shape: usize,
+    pub kind: ShapeKind,
+    pub name: Option<String>,
+    pub creation_id: Option<String>,
 }
 
 /// Consequences an edit declares beyond its own write.
@@ -197,6 +212,10 @@ pub enum Effect {
     /// The shape inherited its geometry from its layout; the preset written
     /// is now its own.
     InheritedGeometryOwned,
+    /// A run size outside DrawingML's `ST_TextFontSize` (100..=400000
+    /// hundredths of a point), written clamped into it so the file opens
+    /// (FIX 8580).
+    FontSizeClamped { requested: u32, written: u32 },
     /// A live deck edit done PowerPoint's way where the deck once refused
     /// it (OF-510, the Office ruling of 10-18), on the live node it names.
     Converted {
@@ -218,6 +237,18 @@ pub enum EditRefusal {
     TargetChanged,
     #[error("ambiguous anchor: {0}")]
     AmbiguousAnchor(&'static str),
+    /// A connector end names a shape id several shapes on its slide hold
+    /// (FIX 8583): nothing is written, and the candidates go back so the
+    /// caller can pick one.
+    #[error(
+        "ambiguous anchor: the connector's {end} names shape id {shape}, which {} shapes hold",
+        .candidates.len()
+    )]
+    AmbiguousEndpoint {
+        end: &'static str,
+        shape: u32,
+        candidates: Vec<AnchorCandidate>,
+    },
     #[error("the edit changes text structure an animation targets")]
     AnimatedTextStructureChanged,
     #[error("animation dependency unsupported: {0}")]

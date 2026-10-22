@@ -70,6 +70,57 @@ pub(crate) fn qualify(prefix: &str, name: &str) -> String {
     }
 }
 
+/// Whether a qualified attribute name is a namespace declaration.
+fn binds(name: &str) -> bool {
+    name == "xmlns" || name.starts_with("xmlns:")
+}
+
+/// The namespace declarations `node`'s own open tag makes, as their source
+/// bytes, each led by a space (` xmlns:x="..."`). Written on a new element
+/// beside `node`, they keep bound what is copied out of it (FIX 8584).
+pub(crate) fn own_bindings(bytes: &[u8], node: &Node) -> String {
+    node.attr_spans
+        .iter()
+        .filter(|(name, _)| binds(name))
+        .map(|(_, span)| format!(" {}", String::from_utf8_lossy(&bytes[span.clone()])))
+        .collect()
+}
+
+/// The namespace declarations in scope at `node` that its own open tag does
+/// not make, the nearest ancestor's winning, as their source bytes each led
+/// by a space (FIX 8582). Written on a copy of `node` taken out of its part,
+/// they keep every prefix bound as it was: in element and attribute names,
+/// and in values an unknown or QName-valued attribute holds. The default
+/// namespace and an undeclaration of it (`xmlns=""`) count as bindings.
+pub(crate) fn inherited_bindings(bytes: &[u8], tree: &XmlTree, node: usize) -> String {
+    let mut seen: std::collections::BTreeSet<&str> = tree.nodes[node]
+        .attr_spans
+        .keys()
+        .map(String::as_str)
+        .filter(|name| binds(name))
+        .collect();
+    let mut out = String::new();
+    let mut at = tree.nodes[node].parent;
+    while let Some(index) = at {
+        let ancestor = &tree.nodes[index];
+        for (name, span) in &ancestor.attr_spans {
+            if binds(name) && seen.insert(name.as_str()) {
+                out.push(' ');
+                out.push_str(&String::from_utf8_lossy(&bytes[span.clone()]));
+            }
+        }
+        at = ancestor.parent;
+    }
+    out
+}
+
+/// The default namespace in scope at `node`: the nearest `xmlns` on it or
+/// an ancestor, `None` when none declares one.
+pub(crate) fn default_namespace(tree: &XmlTree, node: usize) -> Option<&str> {
+    std::iter::successors(Some(node), |&at| tree.nodes[at].parent)
+        .find_map(|at| tree.nodes[at].attr("xmlns"))
+}
+
 /// Where a new attribute goes: before `>` or `/>` of the open tag.
 fn attribute_point(bytes: &[u8], node: &Node) -> usize {
     let end = node.open_end;

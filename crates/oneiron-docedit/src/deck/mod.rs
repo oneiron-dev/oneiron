@@ -152,6 +152,8 @@ pub enum Ambiguity {
         creation_id: u32,
         slides: Vec<usize>,
     },
+    /// A native `p:sldId/@id` more than one slide holds (FIX 7986).
+    DuplicateSlideId { sld_id: u32, slides: Vec<usize> },
     DuplicateShapeId {
         slide: usize,
         id: u32,
@@ -482,15 +484,25 @@ fn slide_creation_id(tree: &crate::ooxml::XmlTree) -> Result<Option<u32>, DeckEr
 fn ambiguities(slides: &[SlideView]) -> Vec<Ambiguity> {
     let mut found = Vec::new();
     let mut creation: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    let mut native: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
     for (index, slide) in slides.iter().enumerate() {
         if let Some(id) = slide.creation_id {
             creation.entry(id).or_default().push(index);
         }
+        native.entry(slide.sld_id).or_default().push(index);
     }
     for (creation_id, owners) in creation {
         if owners.len() > 1 {
             found.push(Ambiguity::DuplicateSlideCreationId {
                 creation_id,
+                slides: owners,
+            });
+        }
+    }
+    for (sld_id, owners) in native {
+        if owners.len() > 1 {
+            found.push(Ambiguity::DuplicateSlideId {
+                sld_id,
                 slides: owners,
             });
         }

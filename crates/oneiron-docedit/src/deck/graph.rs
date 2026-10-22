@@ -22,6 +22,9 @@ pub(super) struct Relationship {
     pub(super) kind: String,
     /// The resolved part name; `None` for an external target.
     pub(super) target: Option<String>,
+    /// An external target as written (FIX 8576): never a part, never
+    /// fetched, hashed into the render fingerprint as written.
+    pub(super) external: Option<String>,
 }
 
 /// One parsed XML part and the relationships it owns.
@@ -119,15 +122,16 @@ pub(super) fn relationships(
         if rels.iter().any(|rel| rel.id == id) {
             return Err(DeckError::Invalid("duplicate relationship id"));
         }
-        let target = match node.attr("TargetMode") {
-            Some("External") => None,
-            None | Some("Internal") => Some(resolve_target(part, target)?),
+        let (target, external) = match node.attr("TargetMode") {
+            Some("External") => (None, Some(target.to_owned())),
+            None | Some("Internal") => (Some(resolve_target(part, target)?), None),
             Some(_) => return Err(DeckError::Invalid("unknown relationship target mode")),
         };
         rels.push(Relationship {
             id: id.to_owned(),
             kind: kind.rsplit('/').next().unwrap_or(kind).to_owned(),
             target,
+            external,
         });
     }
     Ok(rels)

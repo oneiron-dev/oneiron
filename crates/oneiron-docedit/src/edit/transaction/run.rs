@@ -17,10 +17,15 @@ pub fn run_transaction(
         return Err(TransactionError::BaseChanged);
     }
     let original = Package::open(base, limits)?;
-    if original.editability() != Editability::Unsigned {
-        return Err(TransactionError::NotEditable);
-    }
-    let mut deck = original.clone();
+    // A signed or uninspectable package runs on a scratch copy, and only a
+    // run whose candidate is the base byte for byte is accepted: a no-op
+    // stands, any change to it refuses as before (FIX 8579).
+    let read_only = original.editability() != Editability::Unsigned;
+    let mut deck = if read_only {
+        original.scratch()
+    } else {
+        original.clone()
+    };
     let mut marks = transaction.marks.clone();
     marks.join(&IdMarks::of_deck(&DeckView::read(&deck)?));
     let mut steps = Vec::with_capacity(transaction.steps.len());
@@ -38,6 +43,9 @@ pub fn run_transaction(
         steps.push(report);
     }
     let bytes = deck.export()?;
+    if read_only && bytes != base {
+        return Err(TransactionError::NotEditable);
+    }
     let candidate = Package::open(&bytes, limits)?;
     let (parts, untouched) = part_diff(&original, &candidate)?;
     if let Some(outside) = parts.iter().find(|change| !allowed.contains(&change.part)) {

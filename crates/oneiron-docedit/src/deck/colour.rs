@@ -173,7 +173,17 @@ fn colour_map<'a>(context: &'a SlideContext<'_>) -> Option<(&'a XmlTree, usize)>
         if let Some(map) = child(tree, over, A, "overrideClrMapping") {
             return Some((tree, map));
         }
+        // An explicit `a:masterClrMapping` asks for the master's map: a
+        // layout override below it does not apply (FIX 8575).
+        if child(tree, over, A, "masterClrMapping").is_some() {
+            return master_map(context);
+        }
     }
+    master_map(context)
+}
+
+/// The master's `p:clrMap`.
+fn master_map<'a>(context: &'a SlideContext<'_>) -> Option<(&'a XmlTree, usize)> {
     let tree = context.tree(context.master?)?;
     child(tree, 0, P, "clrMap").map(|map| (tree, map))
 }

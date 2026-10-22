@@ -18,16 +18,22 @@
 //! ones are removed.
 use super::check::{self, Declared};
 use super::xml::{self, A, P, Splice};
-use super::{EditRefusal, FitUnverified, RunProps, Written};
+use super::{EditRefusal, Effect, FitUnverified, RunProps, Written};
 use crate::deck::{DeckView, ShapeView, SlideView, TargetRole, TextRange};
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
-use build::{broken_run, insert_paragraphs, new_run, run_bytes};
+use build::{broken_run, insert_paragraphs, new_run};
 
 mod build;
 
 /// U+000B: an `a:br` in paragraph text, as PowerPoint writes it.
 pub(crate) const BREAK: char = '\u{b}';
+
+/// A run size as DrawingML's `ST_TextFontSize` holds it: 100..=400000
+/// hundredths of a point, a size outside clamped in (FIX 8580).
+pub(super) fn font_size(size: u32) -> u32 {
+    size.clamp(100, 400_000)
+}
 
 /// The app properties' namespace (`docProps/app.xml`).
 const EP: &str = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
@@ -104,6 +110,22 @@ pub(super) fn paragraphs(tree: &XmlTree, body: usize) -> Vec<Paragraph> {
             paragraph
         })
         .collect()
+}
+
+/// The characters run `run` holds in paragraph `paragraph`, runs and
+/// fields counted as the view counts them (breaks hold none).
+pub(super) fn run_span(
+    paragraphs: &[Paragraph],
+    paragraph: usize,
+    run: usize,
+) -> Option<(usize, usize)> {
+    paragraphs
+        .get(paragraph)?
+        .items
+        .iter()
+        .filter(|item| item.kind != Kind::Break)
+        .nth(run)
+        .map(|item| (item.start, item.end))
 }
 
 fn run_text(tree: &XmlTree, run: usize) -> String {
@@ -185,9 +207,11 @@ pub(super) fn replace_run_text(
     text: &str,
 ) -> Result<Written, EditRefusal> {
     let id = shape.id.ok_or(EditRefusal::Missing("shape id"))?;
-    if text.contains(['\n', '\r', BREAK]) || !xml::writable(text) {
+    // A U+000B is a line break: the run splits there, an `a:br` with its
+    // properties between the pieces (FIX 5143).
+    if text.contains(['\n', '\r']) || !xml::writable(&text.replace(BREAK, "")) {
         return Err(EditRefusal::Invalid(
-            "run text holds a break or a character XML cannot carry",
+            "run text holds a paragraph break or a character XML cannot carry",
         ));
     }
     let (bytes, tree) = xml::read(next, &slide.part)?;
@@ -216,7 +240,7 @@ pub(super) fn replace_run_text(
     } else {
         vec![(
             tree.nodes[item.node].span.clone(),
-            run_bytes(&bytes, &tree, item.node, text)?,
+            broken_run(&bytes, &tree, item.node, text)?,
         )]
     };
     finish_text(next, slide, id, &bytes, edits)
@@ -248,6 +272,19 @@ pub(super) fn set_run_props(
             "a typeface XML cannot carry, or an empty one",
         ));
     }
+    // A size outside `ST_TextFontSize` is written clamped in and reported,
+    // so the file always opens (FIX 8580).
+    let clamped = props
+        .size
+        .filter(|&size| font_size(size) != size)
+        .map(|requested| Effect::FontSizeClamped {
+            requested,
+            written: font_size(requested),
+        });
+    let props = &RunProps {
+        size: props.size.map(font_size),
+        ..*props
+    };
     let (bytes, tree) = xml::read(next, &slide.part)?;
     let body = xml::child(&tree, shape.node.index, P, "txBody")
         .ok_or(EditRefusal::Missing("text body"))?;
@@ -314,7 +351,9 @@ pub(super) fn set_run_props(
         }
         edits.push((node.span.clone(), out));
     }
-    finish(next, slide, id, &bytes, edits)
+    let mut written = finish(next, slide, id, &bytes, edits)?;
+    written.effects.extend(clamped);
+    Ok(written)
 }
 
 /// `a:rPr` children that follow `a:latin` in `CT_TextCharacterProperties`.
@@ -524,6 +563,36 @@ pub(super) fn rewrite_body(
     }
     let structure = (old.len() != new.len()).then_some(at);
     Ok((edits, structure))
+}
+
+/// A table cell's text body with `value` (`\n` between paragraphs) as its
+/// text (FIX 8595), through the mapping `set_text` uses: unchanged
+/// paragraphs, and every run, property, attribute and binding outside the
+/// changed text, keep their bytes. A cell's text counts no line break, so a
+/// paragraph whose text reads as before, its breaks aside, keeps them.
+/// `None` when the mapping refuses (a change cutting into a field, content
+/// it does not know); the caller keeps its own rebuild then.
+pub(crate) fn cell_text(bytes: &[u8], tree: &XmlTree, body: usize, value: &str) -> Option<Vec<u8>> {
+    let old = paragraphs(tree, body);
+    let new: Vec<Vec<char>> = value
+        .split('\n')
+        .enumerate()
+        .map(|(at, line)| match old.get(at) {
+            Some(held)
+                if held
+                    .text
+                    .iter()
+                    .copied()
+                    .filter(|&c| c != BREAK)
+                    .eq(line.chars()) =>
+            {
+                held.text.clone()
+            }
+            _ => line.chars().collect(),
+        })
+        .collect();
+    let (edits, _) = rewrite_body(bytes, tree, body, &new).ok()?;
+    xml::splice(bytes, edits).ok()
 }
 
 /// What the mapping does to one item of a paired paragraph.
