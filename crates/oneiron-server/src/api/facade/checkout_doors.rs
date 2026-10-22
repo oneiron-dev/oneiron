@@ -1,5 +1,5 @@
-use super::host_doors::support::{Listed, credential_listing};
 //! One credential-backed CHECKOUT door for HTTP, MCP and the generated SDK.
+use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::checkout::lease::{

@@ -1,5 +1,5 @@
-use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 //! The person's outline Keep and Decline use the same proof as other owner doors.
+use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::blob_artifact::deck_creation::{DeckOutlineDeclined, DeckOutlineSettleRequest};

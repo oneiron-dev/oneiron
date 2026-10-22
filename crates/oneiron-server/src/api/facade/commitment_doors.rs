@@ -1,6 +1,6 @@
-use super::host_doors::support::Listed;
 //! Owner-bound projections of the typed commitment lifecycle. The generated
 //! HTTP, SDK and MCP doors all use the caller's credential and existing gate.
+use super::host_doors::support::Listed;
 use super::host_doors::support::owner_listing::as_owner;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

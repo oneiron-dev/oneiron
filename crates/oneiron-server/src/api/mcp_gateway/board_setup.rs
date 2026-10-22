@@ -4,12 +4,14 @@ pub(super) use self::assembly::*;
 pub(super) use self::carrier::*;
 pub(crate) use self::run::*;
 pub(crate) use self::setup::*;
+#[cfg(test)]
+use super::device_release;
 use super::device_release::{mcp_carrier_releases, mcp_release_listed, mcp_snapshot_releases};
 use super::stream_reads::{mcp_live_task_lines, mcp_own_task_lines};
 use super::{
-    McpCallContext, McpGatewayError, board_observations, device_release, mcp_actor_result,
-    mcp_api_error, mcp_credential_reads, mcp_engine_error, mcp_facade_error,
-    mcp_scope_covers_entity, mcp_scoped_read, mcp_scoped_tasks_section, mcp_text_content,
+    McpCallContext, McpGatewayError, board_observations, mcp_actor_result, mcp_api_error,
+    mcp_credential_reads, mcp_engine_error, mcp_facade_error, mcp_scope_covers_entity,
+    mcp_scoped_read, mcp_scoped_tasks_section, mcp_text_content,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpPageCursorState;

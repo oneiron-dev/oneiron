@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use oneiron::EntityId;
-use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError};
 use oneiron::task_verb::sdk::{
     CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
     CourtesyDeleteSent, EmptyRequest,

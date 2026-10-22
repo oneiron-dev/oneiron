@@ -4,7 +4,7 @@ use std::sync::Arc;
 use oneiron::memory::{
     CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
     CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
-    CriticalWriteConfirmSettlement, MemoryResult,
+    CriticalWriteConfirmSettlement,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};

@@ -10,7 +10,7 @@ use oneiron::{EdgeActorClass, EntityId};
 
 use super::support::{
     Listed, artifact_asker, credential_listing, internal, naming, owner_proof, read_beside, refused,
-    rendered, slide_reviewer,
+    slide_reviewer,
 };
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

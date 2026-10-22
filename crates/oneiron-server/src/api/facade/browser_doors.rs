@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use oneiron::code_run::{HostSelfDispatcher, SelfAgentVerbCall};
-use oneiron::memory::{MemoryError, MemoryResult};
+use oneiron::memory::MemoryError;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{self, AgentVerb, LiveRunRequest};
 use oneiron::{EdgeActorClass, EntityId};
