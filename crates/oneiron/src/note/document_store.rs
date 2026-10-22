@@ -220,6 +220,27 @@ impl Vault {
         load(self, &txn, id)?.view()
     }
 
+    /// [`Self::note_document`] with the keys the lift marked in its texts
+    /// (its markdown, title and each pin's quote), read in one snapshot. A
+    /// display projection for a reader other than the owner shows each key
+    /// as its handle; each pin, its quote and hash stay the stored originals,
+    /// and a display quote is never a pin (OF-067; FIX 2967).
+    #[cfg(feature = "sync")]
+    pub(super) fn note_document_keys(
+        &self,
+        id: EntityId,
+    ) -> Result<(NoteDocumentView, crate::batch::secret_scan::LiftedKeys)> {
+        let txn = self.store.env.read_txn()?;
+        let view = load(self, &txn, id)?.view()?;
+        let mut texts = vec![view.markdown.as_str()];
+        texts.extend(view.title.as_deref());
+        for pin in &view.pins {
+            texts.push(pin.quote_text.as_str());
+        }
+        let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(&self.store, &txn, texts)?;
+        Ok((view, keys))
+    }
+
     pub fn pin_note_span(
         &self,
         document: EntityId,

@@ -496,20 +496,49 @@ pub(crate) fn live_frontier_in_txn(
     Ok(document_store::load(vault, txn, id)?.view()?.frontier)
 }
 
-/// The historical lift sweep's door to a NOTE (OF-067): its live document,
-/// stored again as this host's own write. Its live text is admitted as an
-/// edit's is, a masked document keeps no history, and the text index is
-/// written again from the live text. A title or a pin quote that holds a hit
-/// refuses, as at an edit. Returns whether the live text changed.
+/// The historical lift sweep's door to a NOTE (OF-067; FIX 2967): the keys
+/// of each text it keeps are marked under that text's hash, as a carrier's
+/// are, each going to custody with the NOTE named as where it was found.
+/// `kept` is what the sweep's census read of it (its stored body, the text
+/// it was indexed with or staged); the door adds its live text, its title
+/// and each pin's quote. The document, its history and seal, each pin's
+/// quote, hash and cursors and the title's reservation stay as they are, and
+/// a reader other than the owner reads each key as its handle. The outcome
+/// is the texts' as one: a hit left unplaced first, then a key marked now,
+/// then one marked before.
 pub(crate) fn lift_note_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
-) -> Result<bool> {
-    let doc = document_store::load(vault, txn, id)?;
-    let before = doc.view()?.markdown;
-    document_store::persist_authoritative(vault, txn, &doc)?;
-    Ok(doc.view()?.markdown != before)
+    kept: &[Vec<u8>],
+) -> Result<crate::batch::secret_scan::CarrierText> {
+    use crate::batch::secret_scan::{CarrierText, mark_carrier_text_in_txn};
+    let view = document_store::load(vault, txn, id)?.view()?;
+    let mut texts = Vec::<(&str, &[u8])>::new();
+    for text in kept {
+        texts.push(("note:kept", text.as_slice()));
+    }
+    texts.push(("note:markdown", view.markdown.as_bytes()));
+    if let Some(title) = &view.title {
+        texts.push(("note:title", title.as_bytes()));
+    }
+    for pin in &view.pins {
+        texts.push(("note:quote", pin.quote_text.as_bytes()));
+    }
+    let mut outcome = CarrierText::Clean;
+    for (place, text) in texts {
+        outcome = match (outcome, mark_carrier_text_in_txn(vault, txn, id, place, text)?) {
+            (CarrierText::Unplaceable(reason), _) | (_, CarrierText::Unplaceable(reason)) => {
+                CarrierText::Unplaceable(reason)
+            }
+            (CarrierText::Minted(reason), _) | (_, CarrierText::Minted(reason)) => {
+                CarrierText::Minted(reason)
+            }
+            (CarrierText::Marked, _) | (_, CarrierText::Marked) => CarrierText::Marked,
+            (CarrierText::Clean, CarrierText::Clean) => CarrierText::Clean,
+        };
+    }
+    Ok(outcome)
 }
 
 /// A NOTE's title and each pin's quote: the text it keeps beside its body,
