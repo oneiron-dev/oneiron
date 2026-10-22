@@ -10,9 +10,12 @@ pub(super) struct Archive<'a> {
     entries: Vec<(String, Vec<u8>, std::ops::Range<usize>)>,
     comment: Vec<u8>,
 }
-/// A package failure as the comment reader names it: a resource refusal as
-/// itself, every other one an invalid package.
+/// A package failure as the comment reader names it: a resource refusal or
+/// a ceiling as itself, every other one an invalid package.
 fn package_error(error: retained_opc::Error) -> PptxError {
+    if let Some(hit) = error.capacity() {
+        return PptxError::Capacity(hit);
+    }
     error
         .resource()
         .map_or(PptxError::InvalidPackage, PptxError::Resource)

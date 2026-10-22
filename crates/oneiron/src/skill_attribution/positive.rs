@@ -15,7 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
-use super::codec::evidence_after;
+use super::codec::{EVIDENCE, evidence_after};
 use super::types::{AttemptOutcome, FollowedState, OutcomeEvidence};
 
 /// Positive proposals. Key: the attribution evidence sequence.
@@ -83,28 +83,42 @@ pub fn run_positive_attribution_pass(vault: &Vault) -> Result<Vec<PositiveSkillP
     let mut minted = Vec::new();
     for (sequence, evidence) in &pending {
         highest = highest.max(*sequence);
-        let (Some(finding), Some(skill)) = (positive_finding(evidence), evidence.skill) else {
+        let (Some(finding), Some(skill), Some(actor)) =
+            (positive_finding(evidence), evidence.skill, evidence.actor)
+        else {
             continue;
         };
         minted.push(PositiveSkillProposal {
             evidence_sequence: *sequence,
             skill,
-            actor: evidence.actor,
+            actor,
             finding,
             evidence_receipts: vec![evidence.receipt_ref.clone()],
             at: evidence.at,
         });
     }
     vault.with_write_txn_grouped(|wtxn| {
-        for proposal in &minted {
-            POSITIVE_PROPOSAL.put(&vault.store, wtxn, &proposal.evidence_sequence, proposal)?;
+        let mut kept = Vec::with_capacity(minted.len());
+        for proposal in minted {
+            // An erase since the read left its evidence naming no one: the
+            // proposal is not made (FIX 8988).
+            let live = EVIDENCE
+                .get(&vault.store, wtxn, &proposal.evidence_sequence)?
+                .is_some_and(|row| {
+                    row.evidence.skill == Some(proposal.skill)
+                        && row.evidence.actor == Some(proposal.actor)
+                });
+            if !live {
+                continue;
+            }
+            POSITIVE_PROPOSAL.put(&vault.store, wtxn, &proposal.evidence_sequence, &proposal)?;
+            kept.push(proposal);
         }
         if highest > since {
             POSITIVE_CURSOR.put(&vault.store, wtxn, &(), &highest)?;
         }
-        Ok(())
-    })?;
-    Ok(minted)
+        Ok(kept)
+    })
 }
 
 /// Every positive proposal still waiting for the optimizer, oldest first.
@@ -131,4 +145,26 @@ pub fn retire_positive_proposal(vault: &Vault, evidence_sequence: u64) -> Result
     vault.with_write_txn_grouped(|wtxn| {
         POSITIVE_PROPOSAL.delete(&vault.store, wtxn, &evidence_sequence)
     })
+}
+
+/// Deletes every pending positive proposal that names erased `entity` as
+/// its skill or its actor (FIX 8988): pending work whose authority ended
+/// with it. A row that no longer decodes is deleted and counted.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_positive_proposals_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    for (sequence, proposal) in
+        super::skill_erase::erase_scan_in_txn(vault, wtxn, POSITIVE_PROPOSAL)?
+    {
+        if proposal.skill == *entity || proposal.actor == *entity {
+            POSITIVE_PROPOSAL.delete(&vault.store, wtxn, &sequence)?;
+        }
+    }
+    Ok(())
 }

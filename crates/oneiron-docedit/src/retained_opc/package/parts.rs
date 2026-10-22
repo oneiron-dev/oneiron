@@ -7,7 +7,7 @@
 //! allowed to touch.
 use super::{Added, Editability, Entry, Error, Limits, Package, Result, as_u32, check_limits};
 use crate::ooxml::{CONTENT_TYPES, PACKAGE_RELATIONSHIPS, XmlTree, escape_text};
-use crate::resource::{Resources, bytes_of, wide};
+use crate::resource::{Dimension, Resources, bytes_of, wide};
 use crate::retained_opc::xml;
 use flate2::{Compression, write::DeflateEncoder};
 use std::collections::BTreeSet;
@@ -38,10 +38,12 @@ impl Added {
     /// it is allocated (FIX 8598): deflate's stored-block worst case, past
     /// the bytes themselves.
     fn new(name: &str, data: Vec<u8>, resources: &Resources) -> Result<Self> {
-        let _hold = resources.reserve(
+        // An estimate: no compressed byte is measured before it is written.
+        let _hold = resources.reserve_estimate(
             wide(data.len())
                 .saturating_add(wide(data.len() / 1024))
                 .saturating_add(64),
+            0,
         )?;
         let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
         encoder
@@ -588,15 +590,21 @@ impl Package {
     /// ZIP64 sentinel, ends an edit.
     fn check_budgets(&self) -> Result<()> {
         let count = self.entries.iter().filter(|entry| !entry.removed).count() + self.added.len();
-        if count >= usize::from(u16::MAX) {
-            return Err(Error::Edit("a ZIP32 archive holds at most 65,534 entries"));
+        // 65,535 in classic ZIP's count is its ZIP64 sentinel.
+        let most = usize::from(u16::MAX) - 1;
+        if count > most {
+            return Err(Error::capacity_hit(Dimension::ZipEntries, count, most));
         }
-        if self
+        if let Some(part) = self
             .added
             .iter()
-            .any(|part| part.data.len() > self.limits.part_bytes)
+            .find(|part| part.data.len() > self.limits.part_bytes)
         {
-            return Err(Error::Edit("edited part size limit"));
+            return Err(Error::capacity_hit(
+                Dimension::PartBytes,
+                part.data.len(),
+                self.limits.part_bytes,
+            ));
         }
         let total = self
             .entries
@@ -612,7 +620,11 @@ impl Package {
                 .ok_or(Error::Edit("edited package size overflow"))
             })?;
         if total > self.limits.expanded_bytes {
-            return Err(Error::Edit("edited package size limit"));
+            return Err(Error::capacity_hit(
+                Dimension::ExpandedBytes,
+                total,
+                self.limits.expanded_bytes,
+            ));
         }
         self.check_export_size(usize::MAX, None)
     }

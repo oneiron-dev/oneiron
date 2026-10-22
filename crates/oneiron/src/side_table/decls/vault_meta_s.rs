@@ -336,9 +336,10 @@ side_tables! {
     /// One optimizer proposal's exploration trial: its basis, exposure bound, routed runs, overrun
     /// ask and state (MessagePack named map). Key: id16 (proposal).
     SKILL_EXPLORATION_TRIAL: VaultMeta b"skill:exploration_trial:v1:" Named;
-    /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill. Key: u64be
-    /// receipt length + receipt string + id16.
-    SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw;
+    /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill; an erased
+    /// skill's markers go. Key: u64be receipt length + receipt string + id16.
+    SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw
+        => crate::skill::resident::erase_resident_loaded_skill_in_txn;
     /// Lifelong resident owner of one skill id (version byte, has-owner byte, optional owner id16),
     /// kept across deletion. Key: id16.
     SKILL_RESIDENT_OWNER: VaultMeta b"skill:resident_owner:v1:" Raw;
@@ -353,10 +354,12 @@ side_tables! {
     /// of the terminal pack receipt id) + u64be (evidence sequence).
     SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
         => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
-    /// One matched-fork contribution check: the verdict and the pair it was read from (both fork
-    /// receipts and results, the anchor, the axis). Key: string (attempt receipt "\0" skill hex
-    /// "\0" axis).
-    SKILL_ATTRIBUTION_CONTRIBUTION_CHECK: VaultMeta b"skill_attribution:contribution_check:v1:" Named;
+    /// One run's matched-fork contribution checks for a skill and axis: the measured verdict and
+    /// the pair it was read from (both fork receipts and results, the anchor, the axis), and each
+    /// pair recorded unmatched, with why. Key: string (attempt receipt "\0" skill hex "\0" axis);
+    /// an erased skill's rows name no skill and move to an "erased:" digest in its place.
+    SKILL_ATTRIBUTION_CONTRIBUTION_CHECK: VaultMeta b"skill_attribution:contribution_check:v1:" Named
+        => crate::skill_attribution::erase_contribution_checks_in_txn;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
     /// Replacement judge revision (UTF-8) marking one routed judgment as displaced. Key: u64be
@@ -368,7 +371,7 @@ side_tables! {
     /// One minted skill-edit proposal awaiting gated apply, keyed by judgment sequence. Key: u64be.
     SKILL_ATTRIBUTION_EDIT_PROPOSAL: VaultMeta b"skill_attribution:edit_proposal:v1:" Raw;
     /// One recorded outcome-evidence row (hand-rolled MessagePack map) awaiting attribution routing,
-    /// keyed by sequence; its skill is nil once erased. Key: u64be.
+    /// keyed by sequence; its skill and its actor are each nil once erased. Key: u64be.
     SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw
         => crate::skill_attribution::erase_attribution_evidence_skill_in_txn;
     /// Monotonic counter (u64be) minting the next evidence sequence number. Key: ().
@@ -377,16 +380,20 @@ side_tables! {
     /// sequence).
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence; one that
-    /// charges an erased skill goes, with the edit proposals naming it. Key: u64be.
+    /// charges an erased skill goes, with the edit proposals naming it, and a lapse charging an
+    /// erased actor stays with its subject nil. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
         => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
-    /// Frozen anchored pack outcome, eligible used lineage chains and shares. Key: credit receipt id.
-    SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named;
+    /// Frozen anchored pack outcome, eligible used lineage chains and shares; an erased entity's
+    /// id is redacted where it is named. Key: credit receipt id.
+    SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named
+        => crate::skill_attribution::erase_late_credit_in_txn;
     /// The highest attribution evidence sequence the positive lane has read. Key: ().
     SKILL_ATTRIBUTION_POSITIVE_CURSOR: VaultMeta b"skill_attribution:positive_cursor:v1" Named;
-    /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill.
-    /// Key: u64be (evidence sequence).
-    SKILL_ATTRIBUTION_POSITIVE_PROPOSAL: VaultMeta b"skill_attribution:positive_proposal:v1:" Named;
+    /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill;
+    /// one naming an erased skill or actor goes. Key: u64be (evidence sequence).
+    SKILL_ATTRIBUTION_POSITIVE_PROPOSAL: VaultMeta b"skill_attribution:positive_proposal:v1:" Named
+        => crate::skill_attribution::erase_positive_proposals_in_txn;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
     /// claim projections. Key: ().
     SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR: VaultMeta b"skill_attribution:sweep_applied:v1" Raw;
