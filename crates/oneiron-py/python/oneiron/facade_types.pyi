@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1149 facade rows, 4064 declarations.
+Census: 1149 facade rows, 4066 declarations.
 Inputs: 1084 of 1149 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1035 of 1149 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
@@ -1215,11 +1215,15 @@ class PersonaSnapshotPreview(TypedDict):
     rows: list[PersonaSnapshotPreviewRow]
     compiled_at: str
     stale_after_secs: int
+CopyRefs = Literal["preserve", "omit"]
+class CopyTravelChoice(TypedDict):
+    refs: NotRequired[CopyRefs]
 class PersonaSnapshotCopyRequest(TypedDict):
     subject: EntityId
     stamp: str
     strike: NotRequired[list[str]]
     unstrike: NotRequired[list[str]]
+    travel: NotRequired[CopyTravelChoice | None]
 class PersonaSnapshotMemoryPackRow(TypedDict):
     row_id: str
     kind: str
@@ -1231,7 +1235,7 @@ class PersonaSnapshotMemoryPackRow(TypedDict):
 class PersonaSnapshotMemoryPack(TypedDict):
     schema: str
     kind: str
-    subject_ref: EntityId
+    subject_ref: NotRequired[EntityId | None]
     identity_line: NotRequired[str | None]
     audience_ref: NotRequired[str | None]
     takes_included: bool
@@ -1259,6 +1263,7 @@ class PersonaSnapshotCopyEditRequest(TypedDict):
     edits: list[PersonaSnapshotTextEdit]
     strike: NotRequired[list[str]]
     unstrike: NotRequired[list[str]]
+    travel: NotRequired[CopyTravelChoice | None]
 class DiaryQueryRequest(TypedDict):
     agent: str
     reason: str
