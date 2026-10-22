@@ -652,6 +652,17 @@ not call an image reproducible until that comparison holds.
 
 ### Findings (10-22)
 
+**Run v4 (mel, 10-23 01:2x, the vault pack's builder with its C prefix maps
+and empty-files directive) against p5:** base, browser, desktop-cua and
+generic-agent are identical, member for member, with the same OCI ids, ext4
+and native binaries, so their p5 smokes stand. The checker's binaries,
+toolchain and member set are the same, but 39 files differ: every one is a
+crates.io sparse-index cache record in its store (the gix-* family and
+system-deps, 81,921 bytes more), refetched six hours after p5, once gix had
+published again. That is the cache finding below; a later rebuild of the
+checker has new bytes until the cache is normalized to the lock's entries
+or dropped.
+
 **Runs p5 (kel) and p6 (bel), at builder `0c86704876`, engine
 `79a82238e3`:** the same result as p2 and p3 below, for all five variants:
 identical lock, tar, members, layer, ext4, OCI ids and native binaries, no
