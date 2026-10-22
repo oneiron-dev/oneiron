@@ -29674,6 +29674,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embed/release.rs",
+     "purpose": "Which pending rows may leave this device, judged row by row (FIX 9486): the release a host asks before it…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/embed/repo_projection.rs",
      "purpose": "What an embedder receives for an ASSET holding repo bytes (FIX 7608 slice 3, ASK 1): the masked copy, for a…",
      "surface": {
@@ -31632,7 +31642,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -41566,7 +41576,7 @@
      "path": "src/memory/extraction/mod.rs",
      "purpose": "Host-served extraction beside witness, followed by a separately authorized save of its tags",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 2
      }
     },
@@ -41584,11 +41594,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/extraction/register.rs",
+     "purpose": "The turns an input carries beside its own, in conversation order (FIX 9520, 10167): earlier context, and for…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/extraction/shadow.rs",
      "purpose": "Shadow execution never runs under the witness transaction or writes another row",
      "surface": {
       "crate-vis": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -41612,12 +41632,15 @@
       "EncoderMessage",
       "EncoderOutput",
       "EncoderParity",
+      "EncoderRegister",
       "EncoderTurn",
       "ExecutionCompute",
       "ExecutionPick",
       "ExecutionRuntime",
+      "ExtractionCaller",
       "ExtractionEncoder",
       "ExtractionWork",
+      "MoodPart",
       "NerSpan",
       "ShadowTrace",
       "SpeakerLink",
@@ -41628,9 +41651,9 @@
      "path": "src/memory/extraction/types.rs",
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
-      "enum": 6,
-      "fn": 10,
-      "struct": 14,
+      "enum": 7,
+      "fn": 15,
+      "struct": 16,
       "trait": 1
      }
     },
@@ -66047,6 +66070,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "TaggingFreshness",
+      "TaggingMoodPartView"
+     ],
+     "path": "src/tagging/freshness.rs",
+     "purpose": "Whether a saved tag set still reads its turn as published (FIX 10169)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HeldTagsOutcome",
       "UnreadText"
      ],
@@ -66079,7 +66117,7 @@
      "path": "src/tagging/input.rs",
      "purpose": "The tagger's input for one turn: the turn's MESSAGE rows, and the live register's bounded window of earlier…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -66108,7 +66146,7 @@
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
       "crate-vis": 10,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -66118,9 +66156,9 @@
       "OutputRefusal"
      ],
      "path": "src/tagging/output.rs",
-     "purpose": "What a tagger's answer must satisfy before a marker settles on it",
+     "purpose": "What a tagger's answer must satisfy before a marker settles on it: its structure, never its size",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1
      }
     },
@@ -66184,7 +66222,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 15,
+      "fn": 16,
       "struct": 4
      }
     },
@@ -66217,6 +66255,16 @@
      "purpose": "Settlement (FIX 6755): a marker completed, skipped, failed or retried with its trace, each in one transaction",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/register.rs",
+     "purpose": "The conversation register a bulk marker reads (FIX 9520, 10167)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -69469,14 +69517,14 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/vault/transactions.rs",
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
       "crate-vis": 3,
-      "fn": 27
+      "fn": 28
      }
     },
     {
@@ -76402,7 +76450,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -76696,7 +76744,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 275,
+     "files": 276,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77186,7 +77234,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 21,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77382,9 +77430,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 127,
+   "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5075,
+   "source_files": 5079,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80301,7 +80349,7 @@
      "path": "src/capture.rs",
      "purpose": "Repeat screenshots (AB-004)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -80408,6 +80456,19 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BrowserDriver"
+     ],
+     "path": "src/contract.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "DemonstrationOutput",
       "DemonstrationSource",
       "DemonstrationStartInput",
@@ -80429,21 +80490,36 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "AbandonedTakeover",
-      "DesktopGuest",
-      "DesktopSession",
-      "PersonInput",
-      "Takeover"
+      "DesktopSession"
      ],
      "path": "src/desktop.rs",
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…",
      "surface": {
-      "enum": 2,
-      "fn": 18,
-      "struct": 3
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/desktop/acts.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/desktop/images.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -80457,13 +80533,68 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/desktop/reads.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AbandonedTakeover",
+      "DesktopGuest",
+      "PersonInput",
+      "Takeover"
+     ],
+     "path": "src/desktop/session.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 2,
+      "fn": 18,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/desktop/tree.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/desktop/verbs.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a browser guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/acts.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -80527,6 +80658,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/person.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -80575,6 +80716,24 @@
      "surface": {
       "crate-vis": 15
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/tabs.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/verbs.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -80636,70 +80795,18 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "BatchInput",
-      "BatchOutput",
-      "BatchStep",
-      "BrowserDriver",
-      "BrowserError",
-      "BrowserPersonInput",
-      "BrowserTab",
-      "ClickInput",
-      "CropInput",
-      "DecideStep",
-      "DesktopWindow",
-      "EffectReceipt",
-      "ExpectInput",
-      "ExpectOutput",
-      "FindInput",
-      "FindOutput",
-      "HandoverInput",
-      "HandoverOutput",
-      "HotkeyInput",
-      "ImageOutput",
-      "KeyInput",
-      "NoDecider",
-      "Observation",
-      "ObservationPage",
-      "ObserveInput",
-      "OpenInput",
-      "PartialTree",
-      "PointInput",
-      "PressMode",
-      "RoutineAnswer",
-      "RoutineAsk",
-      "RoutineDecider",
-      "RoutineReply",
-      "ScreenshotInput",
-      "ScreenshotOutput",
-      "ScreenshotTrigger",
-      "ScrollDirection",
-      "ScrollInput",
-      "SelectInput",
-      "SendPolicy",
-      "SubgoalStatus",
-      "TabSwitch",
-      "TabSwitchCause",
-      "TypeInput",
-      "ViewInput",
-      "WaitForInput",
-      "WaitForOutput",
-      "WindowInput",
-      "WindowsInput",
-      "WindowsOutput",
-      "ZoomInput"
+      "BrowserError"
      ],
      "path": "src/lib.rs",
      "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
      "surface": {
-      "const": 10,
-      "enum": 9,
-      "fn": 12,
-      "re-export": 22,
-      "struct": 40,
-      "trait": 2
+      "const": 1,
+      "enum": 1,
+      "fn": 1,
+      "re-export": 25
      }
     },
     {
@@ -80879,6 +80986,41 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BatchInput",
+      "BatchOutput",
+      "BatchStep",
+      "BrowserPersonInput",
+      "BrowserTab",
+      "DecideStep",
+      "DesktopWindow",
+      "HandoverInput",
+      "HandoverOutput",
+      "NoDecider",
+      "PressMode",
+      "RoutineAnswer",
+      "RoutineAsk",
+      "RoutineDecider",
+      "RoutineReply",
+      "SendPolicy",
+      "SubgoalStatus",
+      "WindowInput",
+      "WindowsInput",
+      "WindowsOutput"
+     ],
+     "path": "src/programs.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 9,
+      "enum": 5,
+      "fn": 3,
+      "struct": 14,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -80998,7 +81140,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BrowserGuest",
@@ -81008,7 +81150,6 @@
      "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…",
      "surface": {
       "crate-vis": 6,
-      "fn": 23,
       "re-export": 4,
       "struct": 2
      }
@@ -81061,6 +81202,17 @@
       "crate-vis": 2,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session/lifecycle.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 23
      }
     },
     {
@@ -81177,6 +81329,48 @@
       "enum": 5,
       "struct": 5
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClickInput",
+      "CropInput",
+      "EffectReceipt",
+      "ExpectInput",
+      "ExpectOutput",
+      "FindInput",
+      "FindOutput",
+      "HotkeyInput",
+      "ImageOutput",
+      "KeyInput",
+      "Observation",
+      "ObservationPage",
+      "ObserveInput",
+      "OpenInput",
+      "PartialTree",
+      "PointInput",
+      "ScreenshotInput",
+      "ScreenshotOutput",
+      "ScreenshotTrigger",
+      "ScrollDirection",
+      "ScrollInput",
+      "SelectInput",
+      "TabSwitch",
+      "TabSwitchCause",
+      "TypeInput",
+      "ViewInput",
+      "WaitForInput",
+      "WaitForOutput",
+      "ZoomInput"
+     ],
+     "path": "src/verbs.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 3,
+      "fn": 7,
+      "struct": 26
+     }
     }
    ],
    "modules": {
@@ -81201,6 +81395,13 @@
      "layout": "file+dir",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…"
     },
+    "contract": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "—"
+    },
     "demonstration": {
      "files": 1,
      "impl_vault": false,
@@ -81209,16 +81410,16 @@
      "purpose": "A demonstration (CUA E9; DESIGN-2 \"The owner, by demonstration\"): one opted-in span of a browser session…"
     },
     "desktop": {
-     "files": 2,
+     "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 12,
+     "files": 16,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The CDP driver: one page in a browser guest, read as an outline and acted on by ref"
     },
@@ -81270,6 +81471,13 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…"
+    },
+    "programs": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "—"
     },
     "progress": {
      "files": 1,
@@ -81328,9 +81536,9 @@
      "purpose": "One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card…"
     },
     "session": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…"
     },
@@ -81347,11 +81555,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine…"
+    },
+    "verbs": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "—"
     }
    },
-   "over_bar": 4,
+   "over_bar": 0,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 63,
+   "source_files": 77,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -81984,6 +82199,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DerivationFreshness",
       "Vad",
       "VadAnnotation",
       "VadAnnotationSource",
@@ -81995,7 +82211,7 @@
       "const": 1,
       "enum": 2,
       "fn": 6,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -100836,7 +101052,17 @@
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/endpoint/destination.rs",
+     "purpose": "Where one document batch goes, chosen before any of its rows is admitted (FIX 9486)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -100916,7 +101142,7 @@
      "path": "src/embedder/local/mod.rs",
      "purpose": "The `local` provider: the model runs in this process, on candle",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -100926,7 +101152,17 @@
      "path": "src/embedder/local/model_manager.rs",
      "purpose": "Where the local model's files live, and how they get there",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/model_manager/revision.rs",
+     "purpose": "One hub ref, one commit (FIX 9489)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -100994,7 +101230,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 34
      }
     },
     {
@@ -101004,7 +101240,7 @@
      "path": "src/embedder/remote.rs",
      "purpose": "Builds a remote rung with a nonblocking host egress predicate",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -101015,6 +101251,16 @@
      "purpose": "`oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/serve/batches.rs",
+     "purpose": "A request's work, batch by batch (FIX 9487)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -104457,6 +104703,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/oneironer/dispatcher/fair.rs",
+     "purpose": "Fair room and a bulk share (FIX 9519)",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/oneironer/dispatcher/lifecycle.rs",
      "purpose": "The life of a supervised worker (FIX 6755 slice 3, Engine call 3): a platform runtime's managed process…",
      "surface": {
@@ -104560,7 +104816,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -104590,7 +104846,7 @@
      "path": "src/oneironer/local/window/mod.rs",
      "purpose": "One causal window with byte-accurate message coordinates",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -104614,6 +104870,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/local/window/windows.rs",
+     "purpose": "Every byte of a turn, in windows a runtime can hold (FIX 9518, 9520)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -104634,7 +104900,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/mlx/process.rs",
@@ -107185,7 +107451,7 @@
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
     },
     "embedder": {
-     "files": 25,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -107339,7 +107605,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 41,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -107467,7 +107733,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1253,
+   "source_files": 1258,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -109885,6 +110151,7 @@
       "ModelTrialRequest",
       "ModelTrialView",
       "ModelWireFormat",
+      "MoodPart",
       "MutationIntent",
       "NameOnlyReason",
       "NarrowConnect",
@@ -109947,7 +110214,6 @@
       "ObjectiveConfession",
       "ObjectiveFinding",
       "Observation",
-      "Observation2",
       "ObservationBase",
       "ObservationIssue",
       "ObservationPage",
@@ -110940,6 +111206,10 @@
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
+      "ScopedReadResultTaggingHistoryView",
+      "ScopedReadResultTaggingMentionsView",
+      "ScopedReadResultTaggingStatusView",
+      "ScopedReadResultTaggingTagsView",
       "ScopedReadResultTemporalSearchResult",
       "ScopedReadResultVectorSearchConfig",
       "ScopedReadResultVectorSearchResult",
@@ -111392,12 +111662,14 @@
       "TableMerge",
       "TaggedMentionView",
       "TaggingFailureView",
+      "TaggingFreshness",
       "TaggingHistoryView",
       "TaggingMarkerState",
       "TaggingMarkerView",
       "TaggingMentionHitView",
       "TaggingMentionsRequest",
       "TaggingMentionsView",
+      "TaggingMoodPartView",
       "TaggingOutcomeView",
       "TaggingSpeakerTarget",
       "TaggingStatusView",
@@ -111615,6 +111887,7 @@
       "VectorSearchRequest",
       "VectorSearchResult",
       "VerbHookStop",
+      "VerbsObservation",
       "VerdictBinding",
       "VerdictMode",
       "VersionReconciliation",
@@ -111793,7 +112066,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1013,
-      "struct": 3110
+      "struct": 3117
      }
     },
     {
