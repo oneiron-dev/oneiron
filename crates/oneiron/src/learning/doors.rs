@@ -68,6 +68,10 @@ pub struct LearningCellKey {
     pub consent_scope: Option<String>,
     #[serde(default)]
     pub setting_key: Option<String>,
+    /// The project whose runs the cell counts, as an entity id; absent, the
+    /// vault's (FIX 6038).
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 impl LearningCellKey {
@@ -80,6 +84,7 @@ impl LearningCellKey {
             axis: self.axis.clone(),
             consent_scope: self.consent_scope.clone(),
             setting_key: self.setting_key.clone(),
+            project: self.project.as_deref().map(entity_id).transpose()?,
         };
         cell.validate()?;
         Ok(cell)
@@ -96,6 +101,7 @@ impl From<LearningCell> for LearningCellKey {
             axis: cell.axis,
             consent_scope: cell.consent_scope,
             setting_key: cell.setting_key,
+            project: cell.project.map(|project| project.to_hex()),
         }
     }
 }
@@ -105,7 +111,8 @@ impl From<LearningCell> for LearningCellKey {
 #[serde(deny_unknown_fields)]
 pub struct LearningReadRequest {
     pub cell: LearningCellKey,
-    /// A project's type tree, or the vault tree when absent.
+    /// A project's type tree and the cell's scope, or the vault's when
+    /// absent; the key's own project names them when this is absent.
     #[serde(default)]
     pub project_ref: Option<String>,
 }
@@ -322,6 +329,9 @@ pub fn read_learning_as_owner(
     owner.revalidate(vault)?;
     let cell = input.cell.engine()?;
     let project = input.project_ref.as_deref().map(entity_id).transpose()?;
+    // One scope steers the cell and its tree (FIX 6038).
+    let project = project.or(cell.project);
+    let cell = cell.with_project(project);
     let parents = match &cell.type_ref {
         Some(stamp) => {
             let tree = crate::task_type::type_tree_at(vault, project, stamp.tree_version)?

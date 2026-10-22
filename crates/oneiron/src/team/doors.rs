@@ -57,13 +57,13 @@ impl From<&TaskTypeRef> for TypeStamp {
     }
 }
 
-/// A learning, team or critic stamp holds a `u32` version: widened here, it
-/// reads exactly as stored, never saturated.
+/// A learning, team or critic stamp holds the same `u64` version (FIX
+/// 4432): it reads exactly as stored.
 impl From<&TypeRef> for TypeStamp {
     fn from(stamp: &TypeRef) -> Self {
         Self {
             node_id: stamp.node_id.clone(),
-            tree_version: u64::from(stamp.tree_version),
+            tree_version: stamp.tree_version,
         }
     }
 }

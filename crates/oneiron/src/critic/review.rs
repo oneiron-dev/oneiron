@@ -44,6 +44,8 @@ pub struct CriticReviewInput {
     pub axis: String,
     pub run_id: String,
     pub branch_attempt: AttemptId,
+    /// The reviewed run's declared project; `None` is the vault (FIX 6038).
+    pub project: Option<EntityId>,
 }
 
 /// The stored lens skill and the actor executing it. Catalogue domains describe
@@ -73,6 +75,10 @@ pub struct ReviewRequest {
     /// review for. Kept on the stored review; not part of its identity, so a
     /// replayed review keeps the run first declared for it.
     pub spawn_attempt: Option<EntityId>,
+    /// The project the caller declares the reviewed run works in: the
+    /// scope of the critics' reliability cells (FIX 6038); `None` is the
+    /// vault. Part of the review's identity when set.
+    pub project: Option<EntityId>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +123,7 @@ pub fn review_artifact(
             .executor(critic.actor.entity_ref().to_hex())
             .type_ref(request.type_ref.clone())
             .axis(request.axis.clone())
+            .project(request.project)
             .validate()?;
     }
     if !request.auto_resolve_threshold.is_finite()
@@ -160,6 +167,7 @@ pub fn review_artifact(
                 axis: request.axis.clone(),
                 run_id: request.run_id.clone(),
                 branch_attempt: request.branch_attempt,
+                project: request.project,
             })
         })
         .collect::<Result<Vec<_>>>()?;

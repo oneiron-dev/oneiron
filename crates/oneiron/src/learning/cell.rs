@@ -179,7 +179,7 @@ pub struct LearningCell {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setting_key: Option<String>,
     /// The project whose runs the cell counts; `None` is the vault's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<EntityId>,
 }
 
