@@ -53,6 +53,9 @@ pub(crate) struct AnswerBreakpoint {
     /// no seed, whose sources cover only the log, so no replay sends the
     /// recalled rows again past an erase or a narrowed read.
     recalled: bool,
+    /// The craft rows the host's snapshot read for the request (FIX 9439):
+    /// a chat turn's seed keeps them beside its request.
+    craft: Vec<ManifestEntry>,
 }
 
 /// A chat turn's self mode and the log its caller read.
@@ -136,12 +139,14 @@ impl SelfChat {
         Some(rows)
     }
 
-    /// The turn's breakpoint, its log read as `reader` where it sits.
+    /// The turn's breakpoint, its log read as `reader` where it sits, with
+    /// `craft`, the rows its snapshot craft read showed (FIX 9439).
     pub(super) fn breakpoint(
         self,
         reader: WriteActor,
         locality: CallerLocality,
         recalled: bool,
+        craft: Vec<ManifestEntry>,
     ) -> AnswerBreakpoint {
         let instructions_digest = self.mode.instructions().map(digest_hex);
         AnswerBreakpoint {
@@ -152,6 +157,7 @@ impl SelfChat {
             instructions_digest,
             source: None,
             recalled,
+            craft,
         }
     }
 }
@@ -207,13 +213,14 @@ pub(super) fn enter(
         instructions_digest,
         source,
         recalled,
+        craft,
     } = breakpoint;
     let seed = match source {
         Some(source) => Some(source),
         None if recalled => None,
-        None => log
-            .as_ref()
-            .and_then(|log| capture_seed(mode.agent(), reader, log, instructions_digest, admitted)),
+        None => log.as_ref().and_then(|log| {
+            capture_seed(mode.agent(), reader, log, instructions_digest, craft, admitted)
+        }),
     };
     if let Some(log) = log {
         let call = ChatBreakpointCall {
@@ -241,13 +248,15 @@ pub(super) fn enter(
 }
 
 /// The seed a chat turn's reply keeps: its request exactly as the rung its
-/// walk takes now sends it, the rung by ref, and the log's sources. None
-/// for a log whose turns were not all pinned, or a call no rung takes now.
+/// walk takes now sends it, the rung by ref, the log's sources, and the
+/// craft rows the host's snapshot read for it (FIX 9439). None for a log
+/// whose turns were not all pinned, or a call no rung takes now.
 fn capture_seed(
     agent: EntityId,
     reader: WriteActor,
     log: &ChatLog,
     instructions_digest: Option<String>,
+    craft: Vec<ManifestEntry>,
     admitted: &RoleCall,
 ) -> Option<ChatBreakpoint> {
     if !log.pinned {
@@ -273,6 +282,7 @@ fn capture_seed(
         instructions_digest,
         sources: log.sources.clone(),
         summaries: log.summaries.clone(),
+        craft_entries: craft,
     })
 }
 
@@ -491,7 +501,13 @@ pub(crate) fn reuse_chat_breakpoint(
     if !asks {
         return ChatReuse::Unavailable("user_turn_changed");
     }
-    let craft = crate::ai_host::resident_craft::captured_craft(&request, vault.now_recorded_at());
+    // The craft it showed is what the host kept with it, never what its
+    // user text reads as (FIX 9439).
+    let craft = crate::ai_host::resident_craft::captured_craft(
+        &request,
+        &seed.craft_entries,
+        vault.now_recorded_at(),
+    );
     let Some(ladder) = readmit_rung(ai, vault, &seed, &request) else {
         return ChatReuse::Unavailable("rung_not_admitted");
     };
@@ -532,6 +548,7 @@ pub(crate) fn reuse_chat_breakpoint(
             instructions_digest: seed.instructions_digest.clone(),
             source: Some(seed),
             recalled: false,
+            craft: Vec::new(),
         },
         craft,
     }))

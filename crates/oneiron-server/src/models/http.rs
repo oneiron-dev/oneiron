@@ -16,8 +16,7 @@ use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
 
 mod reply_line;
 
-pub(crate) use reply_line::install_media_reply_line;
-use reply_line::read_booked;
+use reply_line::{read_booked, read_whole};
 pub(super) use reply_line::{ReplyBytes, charge_read, holding_replies};
 
 /// The smallest request body worth compressing (ARCH-0081 §6).
@@ -57,17 +56,18 @@ pub(super) enum HttpFailure {
     Malformed,
     /// A streamed event grew past the decoder's bound before it ended.
     EventTooLarge,
-    /// A reply body grew past [`MAX_REPLY_BYTES`] before it ended.
+    /// A reply body grew past its caller's own bound before it ended: an
+    /// identity or launch-manifest read ([`MAX_REPLY_BYTES`]), or a decision
+    /// read's. A JSON reply or an error status's body has none (FIX 9321).
     BodyTooLarge,
     /// The memory a media reply's body needed could not be allocated
     /// (FIX 8615): the machine's own floor, never a size bound.
     OutOfMemory,
 }
 
-/// The most one whole reply body may hold: a JSON reply, or the body of a
-/// streamed call's error status. Far above any reply a provider sends (a
-/// whole long answer with its usage), so only a broken provider or proxy
-/// reaches it.
+/// The most a house server's identity or launch-manifest read holds: that
+/// protocol's own bound. A JSON reply or an error status's body is read
+/// whole, however large (FIX 9321).
 pub(super) const MAX_REPLY_BYTES: usize = 16 << 20;
 
 impl From<reqwest::Error> for HttpFailure {
@@ -331,17 +331,25 @@ impl ProviderHttp {
         })
     }
 
+    /// One JSON exchange at `path`, its reply read whole, however large
+    /// (FIX 9321): no size refuses it, and only a real allocation failure
+    /// ends the read.
     pub(super) async fn post_json(
         &self,
         path: &str,
         headers: &BTreeMap<String, String>,
         body: &JsonValue,
     ) -> Result<JsonReply, HttpFailure> {
-        self.post_json_within(path, headers, body, MAX_REPLY_BYTES)
-            .await
+        let response = self.post(path, headers, body).await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        // The encoded bytes stay booked, inside a media call, until the
+        // reply is parsed.
+        let (bytes, _held) = read_whole(response).await?;
+        json_reply(status, headers, &bytes)
     }
 
-    /// [`Self::post_json`], with a reply bound of the caller's.
+    /// [`Self::post_json`], with a reply bound of the caller's own protocol.
     pub(super) async fn post_json_within(
         &self,
         path: &str,
@@ -353,20 +361,7 @@ impl ProviderHttp {
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
         let bytes = bounded_body(response, max_bytes).await?;
-        let body = if bytes.is_empty() {
-            JsonValue::Null
-        } else {
-            match serde_json::from_slice(&bytes) {
-                Ok(body) => body,
-                Err(_) if !(200..300).contains(&status) => JsonValue::Null,
-                Err(_) => return Err(HttpFailure::Malformed),
-            }
-        };
-        Ok(JsonReply {
-            status,
-            headers,
-            body,
-        })
+        json_reply(status, headers, &bytes)
     }
 
     /// One media exchange at `path`, its reply body read whole, however
@@ -480,8 +475,9 @@ impl ProviderHttp {
     }
 
     /// Starts a streamed exchange. A non-2xx answer arrives as one
-    /// [`SseItem::Status`] (or [`HttpFailure::BodyTooLarge`]); a 2xx answer
-    /// as its events, in order.
+    /// [`SseItem::Status`], its body read whole however large (FIX 9321),
+    /// or [`HttpFailure::OutOfMemory`] when that body could not be held; a
+    /// 2xx answer as its events, in order.
     pub(super) fn post_sse(
         &self,
         path: &str,
@@ -491,6 +487,29 @@ impl ProviderHttp {
         let sending = self.post(path, headers, body);
         futures_util::stream::unfold(SseState::Start(sending), next_sse)
     }
+}
+
+/// A finished exchange's reply as JSON: an empty body is null, and a body
+/// that does not parse is null on an error status and malformed otherwise.
+fn json_reply(
+    status: u16,
+    headers: BTreeMap<String, String>,
+    bytes: &[u8],
+) -> Result<JsonReply, HttpFailure> {
+    let body = if bytes.is_empty() {
+        JsonValue::Null
+    } else {
+        match serde_json::from_slice(bytes) {
+            Ok(body) => body,
+            Err(_) if !(200..300).contains(&status) => JsonValue::Null,
+            Err(_) => return Err(HttpFailure::Malformed),
+        }
+    };
+    Ok(JsonReply {
+        status,
+        headers,
+        body,
+    })
 }
 
 fn reply_headers(response: &reqwest::Response) -> BTreeMap<String, String> {
@@ -555,10 +574,10 @@ async fn next_sse(state: SseState) -> Option<(Result<SseItem, HttpFailure>, SseS
             if !response.status().is_success() {
                 let status = response.status().as_u16();
                 let headers = reply_headers(&response);
-                let body = match bounded_body(response, MAX_REPLY_BYTES).await {
-                    Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(JsonValue::Null),
-                    Err(HttpFailure::BodyTooLarge) => {
-                        return Some((Err(HttpFailure::BodyTooLarge), SseState::Done));
+                let body = match read_whole(response).await {
+                    Ok((bytes, _held)) => serde_json::from_slice(&bytes).unwrap_or(JsonValue::Null),
+                    Err(HttpFailure::OutOfMemory) => {
+                        return Some((Err(HttpFailure::OutOfMemory), SseState::Done));
                     }
                     Err(_) => JsonValue::Null,
                 };

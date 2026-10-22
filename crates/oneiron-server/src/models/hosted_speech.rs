@@ -20,7 +20,8 @@ use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId, ModelLocality};
 use reqwest::multipart::{Form, Part};
 use serde_json::{Value as JsonValue, json};
 
-use super::http::{MediaSend, ProviderHttp};
+use super::host_budgets::ModelHostBudgets;
+use super::http::{MediaSend, ProviderHttp, holding_replies};
 use super::rerank::transport;
 
 /// The rate both wires are asked to speak at.
@@ -161,6 +162,8 @@ pub struct HostedCloner {
     pub(super) locality: ModelLocality,
     /// What each clone call is admitted as on its caller's run (FIX 3009).
     pub(super) connector: PaidConnector,
+    /// The vault's budgets its replies hold their bytes on (FIX 9321).
+    pub(super) budgets: ModelHostBudgets,
 }
 
 impl HostedCloner {
@@ -273,7 +276,8 @@ impl HostedCloner {
     ) -> LlmResult<T> {
         let permit = run.admit_paid(&self.connector, 1)?;
         run.dispatch_paid(permit.lease(), &self.connector)?;
-        let sent = send.await;
+        // Its replies hold their bytes on the vault's line until it ends.
+        let sent = holding_replies(&self.budgets, send).await;
         // The request went out: a failed one keeps its reservation as spend.
         let outcome = match &sent {
             Ok(_) => CallOutcome::Used(1),

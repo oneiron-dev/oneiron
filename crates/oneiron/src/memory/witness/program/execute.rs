@@ -397,6 +397,32 @@ impl Memory<'_> {
                 }
             };
             effect(wtxn)?;
+            // FIX 10260: a reply born whole keeps the set its turn asserted,
+            // as admitted above, beside each MESSAGE this write landed new; a
+            // streamed birth's receipt, which `effect` saved, keeps it there.
+            if matches!(&sink, WitnessSink::Base(_)) && !silent {
+                let assertions = super::super::reply_assertions::admitted_reply_assertions_in_txn(
+                    &self.vault.store,
+                    wtxn,
+                    &[&plan.turn.assertions],
+                )?;
+                let landed: Vec<EntityId> = plan
+                    .messages
+                    .iter()
+                    .zip(&lands_new)
+                    .filter(|(_, new)| **new)
+                    .map(|(planned, _)| planned.id)
+                    .collect();
+                super::super::reply_assertions::keep_birth_reply_assertions_in_txn(
+                    self.vault,
+                    wtxn,
+                    plan.conversation_id,
+                    plan.turn_id,
+                    (self.actor, self.actor_class as u8),
+                    &assertions,
+                    &landed,
+                )?;
+            }
             // DOOR-141: a turn that lands new words at base owes each program
             // its actor armed a wake, recorded in this commit so a crash after
             // it cannot lose one. An import is a source's words and a host

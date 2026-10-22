@@ -390,15 +390,19 @@ pub struct OfficialSeatStamp {
 }
 
 impl OfficialSeatStamp {
-    /// Whether a host on `machine` (its machine label, `None` when it has
-    /// none) runs this seat's attempt (FIX 4552): a seat that names no machine
-    /// runs on any host; one that names a machine only on that machine, so an
-    /// attempt aimed at another machine's runner stays for that runner.
+    /// Whether a host known by `machines` (its machine labels: its machine
+    /// id and the aliases its operator declared, none when it has neither)
+    /// runs this seat's attempt (FIX 4552, FIX 9420): a seat that names no
+    /// machine runs on any host; one that names a machine only on a host one
+    /// of whose labels it names, so an attempt aimed at another machine's
+    /// runner stays for that runner.
     #[must_use]
-    pub fn runs_on(&self, machine: Option<&str>) -> bool {
+    pub fn runs_on(&self, machines: &[String]) -> bool {
         match self.machine_digest {
             None => true,
-            Some(digest) => machine.is_some_and(|machine| seat_machine_digest(machine) == digest),
+            Some(digest) => machines
+                .iter()
+                .any(|machine| seat_machine_digest(machine) == digest),
         }
     }
 }

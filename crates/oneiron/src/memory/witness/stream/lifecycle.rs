@@ -68,9 +68,11 @@ impl Memory<'_> {
     /// its host's own evidence (OF-063, FIX 3416). Each is read through the
     /// writer's own lane, opened before its writer, and judged in the
     /// terminal's write: one it cannot read refuses the terminal, which
-    /// commits nothing and leaves the stream open. A new MESSAGE keeps the
-    /// set admitted in its metadata under `reply_assertions`, in that write;
-    /// a continuation's MESSAGE keeps its birth envelope.
+    /// commits nothing and leaves the stream open. The generation's receipt
+    /// keeps the set admitted, its seed's with it, in that write (FIX
+    /// 10258); a new MESSAGE also copies it into its object metadata under
+    /// `reply_assertions` unless its caller put that key there, and a
+    /// continuation's MESSAGE keeps its birth envelope.
     pub fn finalize_model_stream_if(
         &self,
         handle: MessageStreamHandle,

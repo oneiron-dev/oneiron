@@ -115,11 +115,23 @@ impl LlmMeshService {
         let mut tasks = Vec::new();
         while let Ok(stream) = conn.accept_stream().await {
             let service = self.clone();
-            let session = Arc::clone(&session);
-            tasks.push(tokio::spawn(async move {
+            let task_session = Arc::clone(&session);
+            let serve = async move {
                 // A stream that breaks leaves the asker without a reply; it
                 // tries again or another node.
-                drop(service.serve_stream(peer, &session, stream).await);
+                drop(service.serve_stream(peer, &task_session, stream).await);
+            };
+            // Each accepted stream's task and its entry here are charged
+            // before it is spawned, never waited for, so a control or a Get
+            // that frees held bytes always runs; the charge goes when the
+            // task ends, is cancelled, or the connection closes (FIX 9323).
+            let entry = session
+                .staging
+                .budget
+                .charged(size_of_val(&serve).saturating_add(TASK_ENTRY));
+            tasks.push(tokio::spawn(async move {
+                let _entry = entry;
+                serve.await;
             }));
             tasks.retain(|task| !task.is_finished());
         }
@@ -164,16 +176,22 @@ impl LlmMeshService {
                 Err(why) => refused(why),
             },
             Request::Generate { request } => match self.request(session, request) {
-                Ok(request) => match self.handler.generate(peer, request).await {
-                    Ok(response) => match booked_json(&session.staging.budget, &response).await {
-                        Ok(body) => {
-                            let (carried, held) = session.staging.offer(body);
-                            (Reply::Generated(Ok(carried)), held)
-                        }
-                        Err(why) => refused(why),
-                    },
-                    Err(error) => (Reply::Generated(Err(error)), None),
-                },
+                Ok(request) => {
+                    // The answer's room is booked before the model runs, so
+                    // a finished answer never waits unbooked (FIX 9323).
+                    let budget = &session.staging.budget;
+                    let booking = budget.reserve(BATCH_BYTES + OUTGOING_ENTRY).await;
+                    match self.handler.generate(peer, request).await {
+                        Ok(response) => match charged_json(budget, booking, response) {
+                            Ok(body) => {
+                                let (carried, held) = session.staging.offer(body);
+                                (Reply::Generated(Ok(carried)), held)
+                            }
+                            Err(why) => refused(why),
+                        },
+                        Err(error) => (Reply::Generated(Err(error)), None),
+                    }
+                }
                 Err(why) => refused(why),
             },
             Request::Stream { request } => match self.request(session, request) {
@@ -240,6 +258,39 @@ impl MeshService for LlmMeshService {
 
 /// What a running stream's entry costs past its stream.
 const STREAM_ENTRY: usize = 2 * (size_of::<u64>() + size_of::<Held>());
+
+/// What an accepted stream's task costs past its future: its handle and its
+/// slot in the connection's list.
+const TASK_ENTRY: usize = 2 * size_of::<tokio::task::JoinHandle<()>>();
+
+/// `value`, an answer the model already made, as JSON on `booking`, which
+/// was booked before it ran: the answer and its encoding are charged at once
+/// while both live, never waited for, and the answer goes once it is
+/// written, leaving its encoding and its reply entry charged.
+fn charged_json<T: Serialize>(
+    budget: &StagingBudget,
+    mut booking: Booking,
+    value: T,
+) -> Result<BookedBody, String> {
+    let mut counted = Counted(0);
+    serde_json::to_writer(&mut counted, &value).map_err(|err| err.to_string())?;
+    let len = counted.0;
+    budget.charge(
+        &mut booking,
+        len.saturating_mul(2).saturating_add(OUTGOING_ENTRY),
+    );
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(len)
+        .map_err(|_| "this node has no memory for the answer".to_owned())?;
+    serde_json::to_writer(&mut bytes, &value).map_err(|err| err.to_string())?;
+    drop(value);
+    budget.charge(
+        &mut booking,
+        bytes.capacity().saturating_add(OUTGOING_ENTRY),
+    );
+    Ok(BookedBody { bytes, booking })
+}
 
 /// `value` as JSON, in room booked for it first: its length is counted, its
 /// room and its reply entry booked, waiting its turn, and only then is it

@@ -308,6 +308,8 @@ pub(in crate::api::ai::chat) fn start_turn(
     // A turn in an anonymous off-record session opens and bumps no durable
     // sitting; its witness and stream still bind the key (FIX 5564).
     let signals = sitting::signals_sitting(&vault, &hooked());
+    // The rows its snapshot craft showed ride its breakpoint (FIX 9439).
+    let breakpoint_craft = craft.clone().unwrap_or_default();
     // A turn that keeps no durable record keeps no craft receipt either.
     let craft = craft.filter(|_| !verb_hook_boundary::keeps_no_record(&hooked()));
     // Nor its context's records (FIX 6921): a session-only turn keeps none.
@@ -388,8 +390,10 @@ pub(in crate::api::ai::chat) fn start_turn(
             credential: credential.clone(),
             keepalive,
             mark,
-            breakpoint: self_chat
-                .map(|chat| chat.breakpoint(WriteActor::new(actor, class), locality, recalled)),
+            breakpoint: self_chat.map(|chat| {
+                let reader = WriteActor::new(actor, class);
+                chat.breakpoint(reader, locality, recalled, breakpoint_craft)
+            }),
             today: None,
             craft,
             assertions: ReplyAssertionCollector::default(),

@@ -143,11 +143,16 @@ impl RunInner {
 
 /// The inference receipts a settled call records (FIX 9065): those it
 /// reported (an answer's usage, then any provided beside it), then each
-/// request its lease observed that never reached a final receipt, in the order
-/// they began. A request's final receipt is the one its answer reports, so it
-/// is not counted again. A call that reported none (a failed, cancelled or
-/// dropped one) records everything its lease observed, final or partial. What
-/// no native source measured stays absent.
+/// request its lease observed that no reported receipt stands for, in the
+/// order they began. A reported receipt stands for one final observation of
+/// the same request (equal but for the engine model the adapter stamps after
+/// its send), so a request is counted once; another final observation (an
+/// earlier leg that returned an answer the call did not keep) and every
+/// partial one are kept (FIX 9417). Two physical requests are two receipts
+/// even when equal: each reported receipt stands for one observation only.
+/// A call that reported none (a failed, cancelled or dropped one) records
+/// everything its lease observed, final or partial. What no native source
+/// measured stays absent.
 fn settled_inference_calls(
     reported: Vec<InferenceCallReceipt>,
     observed: Vec<InferenceCallObservation>,
@@ -158,14 +163,36 @@ fn settled_inference_calls(
             .map(InferenceCallObservation::into_receipt)
             .collect();
     }
+    let mut stood_for = vec![false; reported.len()];
+    let mut kept = Vec::new();
+    for observation in observed {
+        if observation.is_final()
+            && let Some(slot) = reported
+                .iter()
+                .zip(stood_for.iter_mut())
+                .find(|(receipt, used)| !**used && stands_for(receipt, observation.receipt()))
+                .map(|(_, used)| used)
+        {
+            *slot = true;
+            continue;
+        }
+        kept.push(observation.into_receipt());
+    }
     let mut calls = reported;
-    calls.extend(
-        observed
-            .into_iter()
-            .filter(|observation| !observation.is_final())
-            .map(InferenceCallObservation::into_receipt),
-    );
+    calls.extend(kept);
     calls
+}
+
+/// Whether `reported`, a receipt an answer's usage carries, is `observed`'s
+/// own: equal but for the engine model, which the adapter stamps on the
+/// reported one after its send.
+fn stands_for(reported: &InferenceCallReceipt, observed: &InferenceCallReceipt) -> bool {
+    if observed.model.is_some() && observed.model != reported.model {
+        return false;
+    }
+    let mut unbound = reported.clone();
+    unbound.model.clone_from(&observed.model);
+    unbound == *observed
 }
 
 /// What a finished call charges a meter. Admission priced the same units

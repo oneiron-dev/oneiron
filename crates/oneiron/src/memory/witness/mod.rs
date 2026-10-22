@@ -5,6 +5,7 @@
 mod base;
 mod codec;
 mod program;
+mod reply_assertions;
 mod session;
 mod stream;
 mod turn_program;
@@ -18,6 +19,10 @@ mod validation;
 
 pub use self::types::{
     WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+};
+pub use self::reply_assertions::MessageReplyAssertions;
+pub(crate) use self::reply_assertions::{
+    erase_reply_assertions_in_txn, reply_assertions_owners, reply_assertions_stub,
 };
 
 pub(crate) use self::codec::{

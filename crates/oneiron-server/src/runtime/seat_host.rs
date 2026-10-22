@@ -8,29 +8,39 @@
 //! reads the queued CLI attempts it can run and claims each by id through
 //! the queue's existing lease ([`ByoaDispatcher::claim_host_cli_attempt`]),
 //! so an attempt another runner leased keeps its lease and nothing runs
-//! twice. It claims only attempts whose seat names no machine or names this
-//! install's machine id (the vault's own `host`), so an attempt aimed at
-//! another machine's runner stays for that runner. For each claim it:
+//! twice. It claims only attempts whose seat names no machine or names one
+//! of this host's machine labels: this install's machine id (the vault's own
+//! `host`) and any alias its operator declared (`[runtime]
+//! seat_host_aliases`, FIX 9420), so an attempt aimed at another machine's
+//! runner stays for that runner. For each claim it:
 //!
 //! 1. registers the run's T1 destinations on the server's
-//!    [`SecretDestinations`], keyed by the leased attempt, from the
+//!    [`super::SecretDestinations`], keyed by the leased attempt, from the
 //!    operator's own bindings (`[runtime.host_destinations]`), before any
-//!    process starts;
+//!    process starts, and watches the claim while the run goes on
+//!    (`child_run`, `lease`);
 //! 2. builds [`OfficialCliSeatExecutor`] in the run's checkout worktree,
 //!    over the host's disk floor and those destinations;
-//! 3. runs [`ByoaDispatcher::execute_cli`] and captures the terminal
-//!    exhaust ([`ByoaDispatcher::capture_terminal_exhaust`]).
+//! 3. runs [`ByoaDispatcher::execute_cli`] and settles its end: a bound
+//!    runner work's through the owner's runner-seat route at its own seat,
+//!    anything else captured as before (`terminal`, FIX 9320).
 //!
 //! The destinations are retired on every way out (an answer, a failure, a
 //! failed spawn, a lost or replaced lease, a stop) by the guard the leased
-//! run holds, and only its own registration: a successor's stays. The host
+//! run holds, and only its own registration: a successor's stays. A claim
+//! lost while the run goes on retires them at once. The host
 //! starts only where the own-runtime executor may serve: never on a hosted
 //! vault, whose logins run behind the microVM executor. No secret byte
 //! reaches an argv, a log, a reply or a receipt; T0, T1 and T2 custody,
 //! taint and capture are as they were.
 
-use std::collections::{BTreeMap, HashSet};
+mod child_run;
+mod lease;
+mod terminal;
+
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -43,8 +53,8 @@ use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
     ByoEndpointBackendFactory, ByoEndpointSpec, ByoaCliExecutor, ByoaDispatcher, ByoaEgressLease,
-    ByoaEgressPort, ByoaError, ByoaExhaust, ByoaInputStager, ByoaResult, ByoaTerminalDisposition,
-    CLAUDE_CODE_PROGRAM, CODEX_PROGRAM, CaptureByoaExhaust, CliSandboxSpec, OPENCODE_PROGRAM,
+    ByoaEgressPort, ByoaError, ByoaExhaust, ByoaInputStager, ByoaResult, CLAUDE_CODE_PROGRAM,
+    CODEX_PROGRAM, CliSandboxSpec, OPENCODE_PROGRAM,
 };
 use oneiron::git_wire::GitWire;
 use oneiron::origin::smart_http::SpillFloor;
@@ -52,10 +62,9 @@ use oneiron::{HostingPrivacyPosture, LlmBackend, Vault};
 use oneiron_vault_contract::now_ts;
 use tokio::sync::broadcast;
 
-use super::seat_login::OfficialCliSeatExecutor;
-use super::secret_destinations::{
-    RunSecretDestinations, SecretDestination, SecretDestinations, is_env_name,
-};
+use self::child_run::{NoSeatChildRuns, SeatChildRun};
+use super::seat_login::{OfficialCliSeatExecutor, RunnerSeatPolicySettings};
+use super::secret_destinations::RunSecretDestinations;
 use super::staged_input::WorkdirStager;
 use crate::server::SyncServer;
 
@@ -122,29 +131,24 @@ impl SyncServer {
 
     /// The CLI attempts this host can run now. Blocking.
     fn ready_seat_runs(&self) -> Vec<AttemptId> {
-        let machine = self.seat_host_machine();
+        let machines = self.seat_host_machines();
         ByoaDispatcher::new(self.vault(), NoEndpoints, NoEgress)
-            .ready_host_cli_attempts(now_ts(), machine.as_deref(), runs_here)
+            .ready_host_cli_attempts(now_ts(), &machines, runs_here)
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "the seat host cannot read its attempts; it retries");
                 Vec::new()
             })
     }
 
-    /// Claims attempt `id`, runs it and captures its exhaust, its
-    /// destinations held for the run alone. Blocking.
-    fn host_seat_run(&self, id: AttemptId) {
+    /// Claims attempt `id`, runs it and settles its end, everything it
+    /// holds held under its claim for the run alone. Blocking.
+    fn host_seat_run(self: &Arc<Self>, id: AttemptId) {
         let vault: &Vault = self.vault();
         let mut dispatcher = ByoaDispatcher::new(vault, NoEndpoints, NoEgress)
             .with_input_stager(CheckoutStager { vault });
-        let machine = self.seat_host_machine();
-        let claimed = dispatcher.claim_host_cli_attempt(
-            id,
-            LEASE_OWNER,
-            now_ts(),
-            machine.as_deref(),
-            runs_here,
-        );
+        let machines = self.seat_host_machines();
+        let claimed =
+            dispatcher.claim_host_cli_attempt(id, LEASE_OWNER, now_ts(), &machines, runs_here);
         let fence = match claimed {
             Ok(Some(fence)) => fence,
             Ok(None) => return,
@@ -153,60 +157,63 @@ impl SyncServer {
                 return;
             }
         };
-        let held = HeldDestinations::register(
-            &self.secret_destinations,
-            fence.attempt_id,
-            &self.config.runtime.host_destinations,
-        );
+        let child = SeatChildRun::begin(self, &fence, &NoSeatChildRuns);
         let mut executor = CheckoutSeat {
             vault,
             floor: Arc::new(self.transfers.disk.clone()),
-            destinations: held.as_ref().map(|held| held.handle.clone()),
+            destinations: child.destinations(),
+            stop: child.stop_flag(),
         };
         let checkouts = CheckoutLeaseService::new(vault, ReadOnly, ReadOnly);
         let ran =
             dispatcher.execute_cli(&fence, SEAT_RUN_BUDGET, &checkouts, &mut executor, now_ts());
-        // The run's processes are done: what was delivered for them goes.
-        drop(held);
-        let (disposition, exhaust, reason) = match ran {
-            Ok(exhaust) => (ByoaTerminalDisposition::Completed, exhaust, None),
-            Err(error) => {
-                tracing::warn!(%error, "a seat run failed; its failure is captured");
-                let reason = Some(error.to_string());
-                (
-                    ByoaTerminalDisposition::Failed,
-                    ByoaExhaust::default(),
-                    reason,
-                )
-            }
-        };
-        let captured = dispatcher.capture_terminal_exhaust(CaptureByoaExhaust {
-            attempt_id: fence.attempt_id,
-            lease_owner: fence.lease_owner,
-            attempt_count: fence.attempt_count,
-            disposition,
-            exhaust,
-            reason,
-            now: now_ts(),
-        });
-        if let Err(error) = captured {
-            tracing::warn!(%error, "a seat run's exhaust was not captured");
+        // The run's processes are done: what was delivered for them goes,
+        // and its claim is no longer watched.
+        if child.end() {
+            tracing::warn!(
+                "a seat run's claim ended while it ran; its end is captured if it still may be"
+            );
         }
+        let runner_seats = self.seat_runner_policy();
+        terminal::settle_host_seat(&mut dispatcher, runner_seats.as_ref(), &fence, ran);
     }
 }
 
 impl SyncServer {
-    /// This host's machine label for a seat's `machine_ref` (FIX 4552): this
-    /// install's machine id, as the vault reports its `host`. `None` before
-    /// one is minted, so the host then claims only attempts naming no machine.
-    fn seat_host_machine(&self) -> Option<String> {
-        match self.vault().local_machine() {
-            Ok(machine) => machine.map(|machine| machine.id.to_hex()),
+    /// This host's machine labels for a seat's `machine_ref` (FIX 4552, FIX
+    /// 9420): this install's machine id, as the vault reports its `host`,
+    /// then each alias its operator declared in `[runtime]
+    /// seat_host_aliases`. With no id minted yet, only the aliases name it,
+    /// and with neither the host claims only attempts naming no machine.
+    fn seat_host_machines(&self) -> Vec<String> {
+        let mut machines: Vec<String> = match self.vault().local_machine() {
+            Ok(machine) => machine
+                .map(|machine| machine.id.to_hex())
+                .into_iter()
+                .collect(),
             Err(error) => {
                 tracing::warn!(%error, "the seat host cannot read its machine id");
-                None
+                Vec::new()
             }
-        }
+        };
+        machines.extend(
+            self.config
+                .runtime
+                .seat_host_aliases
+                .iter()
+                .map(|alias| alias.trim())
+                .filter(|alias| !alias.is_empty())
+                .map(str::to_owned),
+        );
+        machines
+    }
+
+    /// The owner's runner-seat policy (`[models.dreamer] runner_seats`) a
+    /// bound runner work's end is routed under (FIX 9320). The server keeps
+    /// no models config yet: until the AI host hands it on, none is named and
+    /// every run is captured plain, as before.
+    fn seat_runner_policy(&self) -> Option<RunnerSeatPolicySettings> {
+        None
     }
 }
 
@@ -217,64 +224,14 @@ fn runs_here(spec: &CliSandboxSpec) -> bool {
         && spec.credential_handles.is_empty()
 }
 
-/// The destinations one leased run registered: retired, its own
-/// registration only, when the run lets them go, on every way out.
-struct HeldDestinations<'a> {
-    registry: &'a SecretDestinations,
-    run: AttemptId,
-    handle: RunSecretDestinations,
-}
-
-impl<'a> HeldDestinations<'a> {
-    /// Registers `bindings`, variable to effector, for `run`. A binding
-    /// whose variable is no environment variable name or whose effector is
-    /// blank is passed over, with a warning; with none left, nothing is
-    /// registered and a T1 grant refuses by name, as before.
-    fn register(
-        registry: &'a SecretDestinations,
-        run: AttemptId,
-        bindings: &BTreeMap<String, String>,
-    ) -> Option<Self> {
-        let mut destinations = Vec::new();
-        for (variable, effector) in bindings {
-            if !is_env_name(variable) || effector.trim().is_empty() {
-                tracing::warn!(
-                    %variable,
-                    "a runtime.host_destinations binding names no variable or no effector; passed over"
-                );
-                continue;
-            }
-            destinations.push(SecretDestination::env(variable.clone(), effector.trim()));
-        }
-        if destinations.is_empty() {
-            return None;
-        }
-        match registry.register(run, destinations) {
-            Ok(handle) => Some(Self {
-                registry,
-                run,
-                handle,
-            }),
-            Err(error) => {
-                tracing::warn!(%error, "a seat run's destinations were not registered");
-                None
-            }
-        }
-    }
-}
-
-impl Drop for HeldDestinations<'_> {
-    fn drop(&mut self) {
-        self.registry.retire_own(self.run, &self.handle);
-    }
-}
-
 /// The official CLI executor in the worktree of the checkout the run is
 /// bound to, over the host's disk floor and the run's destinations.
 struct CheckoutSeat<'a> {
     vault: &'a Vault,
     floor: Arc<dyn SpillFloor>,
     destinations: Option<RunSecretDestinations>,
+    /// Raised when the run's claim is lost: its process stops.
+    stop: Option<Arc<AtomicBool>>,
 }
 
 impl ByoaCliExecutor for CheckoutSeat<'_> {
@@ -290,6 +247,7 @@ impl ByoaCliExecutor for CheckoutSeat<'_> {
             workdir: worktree(self.vault, checkout)?,
             secret_destinations: self.destinations.clone(),
             floor: Some(Arc::clone(&self.floor)),
+            stop: self.stop.clone(),
         };
         seat.run(spec, checkout, boundary, budget, authorize)
     }

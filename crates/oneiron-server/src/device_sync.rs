@@ -248,6 +248,7 @@ async fn open(
             .ai
             .models()
             .mesh_routes(&server.vault, mesh.transport()),
+        staging: server.model_budgets.mesh_staging(),
     });
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
@@ -520,6 +521,8 @@ struct MeshCatalog {
     /// The router's routes to those models (FIX 3229), published after each
     /// refresh.
     routes: crate::models::MeshRoutes,
+    /// The vault's one mesh budget its transport's calls hold bytes on.
+    staging: oneiron_llm_own_server::StagingBudget,
 }
 
 #[cfg(feature = "mesh")]
@@ -560,8 +563,8 @@ impl MeshCatalog {
                 Arc::clone(&self.transport),
                 Arc::new(VaultLlmNodes(Arc::clone(&self.vault))),
                 tokio::runtime::Handle::current(),
-                // What its calls hold at once (FIX 8619).
-                oneiron_llm_own_server::StagingBudget::default(),
+                // What its calls hold at once (FIX 8619, FIX 9323).
+                self.staging.clone(),
             );
             match OwnServerBackend::from_registry(&self.vault, transport) {
                 Ok(backend) => self.backend = Some(backend),

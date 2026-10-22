@@ -218,6 +218,10 @@ pub struct RuntimeConfigOverride {
     /// `[runtime] seat_host`: whether this host runs queued official CLI
     /// attempts itself.
     pub seat_host: Option<bool>,
+    /// `[runtime] seat_host_aliases`: the operator's labels for this machine
+    /// a seat's `machine_ref` may name beside its machine id; a layer that
+    /// names it replaces the whole list.
+    pub seat_host_aliases: Option<Vec<String>>,
 }
 
 impl RuntimeConfigOverride {
@@ -262,6 +266,9 @@ impl RuntimeConfigOverride {
         }
         if other.seat_host.is_some() {
             self.seat_host = other.seat_host;
+        }
+        if other.seat_host_aliases.is_some() {
+            self.seat_host_aliases = other.seat_host_aliases;
         }
     }
 }

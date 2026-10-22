@@ -252,8 +252,8 @@ mod host {
                 Arc::new(LlmMeshService::new(
                     Arc::new(crate::api::MeshLlm(Arc::clone(server))),
                     // What this node's model calls for other nodes hold at
-                    // once (FIX 8618).
-                    oneiron_llm_own_server::StagingBudget::default(),
+                    // once (FIX 8618), on the vault's one budget (FIX 9323).
+                    server.model_budgets.mesh_staging(),
                 )),
             )
             .tick(organ_redrive(router, Arc::clone(vault)))

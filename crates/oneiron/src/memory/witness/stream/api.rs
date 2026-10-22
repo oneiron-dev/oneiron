@@ -189,6 +189,11 @@ impl Memory<'_> {
                 next_after_generation,
                 document_exists,
                 document_history,
+                birth_assertions: super::super::reply_assertions::birth_reply_assertions_in_txn(
+                    &self.vault.store,
+                    txn,
+                    &message,
+                )?,
             }))
         })?;
         if result.value.is_some() {
