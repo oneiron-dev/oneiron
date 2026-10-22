@@ -24,23 +24,7 @@ pub const ACTOR_ERASE_REVEAL_ASK: RevealAskErase = RevealAskErase::Delete;
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the custody rows.
-pub(in crate::secret_custody) fn names_no_actor(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+pub(in crate::secret_custody) use crate::deletion::names_no_actor;
 
 impl RevealRow {
     /// Whether this reveal may still go out: covered, asked or approved,

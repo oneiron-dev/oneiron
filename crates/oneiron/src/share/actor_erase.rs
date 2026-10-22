@@ -24,19 +24,7 @@ pub const ACTOR_ERASE_SHARE_ADMISSION: ShareAdmissionErase = ShareAdmissionErase
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the admissions.
-fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the share admissions (FIX 3520): a share it issued
 /// grants nothing more, and its admission keeps its Gate decision, its

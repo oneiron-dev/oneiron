@@ -1,7 +1,5 @@
 //! Claim-body and immutable-ledger admission before any put side effect.
-use super::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::ClaimBody;
-use crate::error::{Error, RecordError};
 use crate::store::Store;
 use crate::{EntityId, Result, TimeRange, WriteEnvelope};
 
@@ -111,25 +109,6 @@ pub(super) fn admit_claim_put(
         )?;
     }
     Ok(body)
-}
-
-// The ledger is immutable birth identity, never a second text plane. This
-// shared guard covers local writes and replicated/window rematerialization.
-pub(super) fn validate_note_birth_put(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    data: &[u8],
-) -> Result<()> {
-    crate::note::decode_note_body_in_txn(store, txn, data)?;
-    if let Some(old) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
-        && old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
-    {
-        return Err(Error::Record(RecordError::InvalidNoteBody(
-            "NOTE birth body is immutable",
-        )));
-    }
-    Ok(())
 }
 
 pub(super) fn validate_witness_message_body(data: &[u8], replicated: bool) -> Result<()> {

@@ -12,7 +12,10 @@ mod request;
 use std::collections::BTreeSet;
 
 use crate::entity_id::EntityId;
+use crate::error::{Error, ErrorKind, RecordError, Result};
 use crate::habit::TaskRole;
+use crate::registry::ENTITY_TYPE_SKILL;
+use crate::store::Store;
 
 use self::put_entity_update::{validate_local_skill_create, validate_skill_body_overwrite};
 use self::put_staging::{stage_claim_projection, stage_optional_side_row};
@@ -71,4 +74,43 @@ pub(super) struct AppliedPut {
     /// Shell-edge sources an ONE-1604-D1 dominance eviction orphaned, for the
     /// caller's explicit-source reconciliation. Empty on every other path.
     pub(super) evicted_shell_sources: BTreeSet<EntityId>,
+}
+
+// The ledger is immutable birth identity, never a second text plane. This
+// shared guard covers local writes and replicated/window rematerialization.
+fn validate_note_birth_put(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    data: &[u8],
+) -> Result<()> {
+    crate::note::decode_note_body_in_txn(store, txn, data)?;
+    if let Some(old) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+        && old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
+    {
+        return Err(Error::Record(RecordError::InvalidNoteBody(
+            "NOTE birth body is immutable",
+        )));
+    }
+    Ok(())
+}
+
+fn decode_previous_skill_record(
+    old_type: u8,
+    old_record: &[u8],
+) -> Result<Option<crate::skill::SkillRecord>> {
+    if old_type != ENTITY_TYPE_SKILL {
+        return Ok(None);
+    }
+    let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+    match crate::skill::decode_skill_record(prior_body) {
+        Ok(record) => Ok(Some(record)),
+        Err(error)
+            if error.kind() == ErrorKind::InvalidSkillBody
+                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }

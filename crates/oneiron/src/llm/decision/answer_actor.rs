@@ -88,19 +88,7 @@ fn forget_in_ask(ask: &mut DecisionAsk, actor: EntityId) -> bool {
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the decision rows.
-fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the asks (FIX 3520): each answer it gave keeps its
 /// value, time, role, kind, reason and rule, and names no one. The ask stays
