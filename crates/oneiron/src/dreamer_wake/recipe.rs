@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 
+mod landing;
+
 /// The host's workflow interpreter. It receives the exact actor-readable
 /// evidence and admitted SKILL.md bytes, never a vault handle or approval lane.
 pub trait WeaveRecipeRuntime {
@@ -68,6 +70,9 @@ struct RecipeResult {
     source: String,
     evidence_hash: [u8; 32],
     claim_hash: [u8; 32],
+    /// The output landed applied (Auto, revertible by the owner), not held
+    /// Proposed for the owner's review (FIX 8725).
+    applied: bool,
 }
 /// Committed result per attempt, written with its claim in one transaction.
 const RESULT: SideTable<AttemptId, RecipeResult, LegacyJson> =
@@ -107,12 +112,17 @@ fn provenance(
         ),
     ]))
 }
-fn envelope(actor: WriteActor, source: ClaimSource, provenance: WriteProvenance) -> WriteEnvelope {
+fn envelope(
+    actor: WriteActor,
+    source: ClaimSource,
+    provenance: WriteProvenance,
+    approval: ClaimApprovalStatus,
+) -> WriteEnvelope {
     WriteEnvelope::with_lineage(
         actor,
         source,
         provenance,
-        ClaimApprovalStatus::Proposed,
+        approval,
         SourceLineage::of(ClaimSource::Generated).with(source),
     )
 }
@@ -124,9 +134,12 @@ fn cited(pin: &WeaveRecipePin, source: ClaimSource) -> Value {
     })
 }
 fn claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
-    // The owner may approve or decline the proposal without changing its output.
+    // The owner may approve or decline a held output, and revert an applied
+    // one, without changing it.
     let mut original = body.clone();
     original.approval = ClaimApprovalStatus::Proposed;
+    original.lifecycle = ClaimLifecycleStatus::Active;
+    original.valid_to = None;
     Ok(*blake3::hash(&crate::claim::encode_claim_body(&original)?).as_bytes())
 }
 
@@ -146,22 +159,30 @@ fn cached_result(
         (None, None) => Ok(false),
         (Some(result), Some(body)) => {
             let source = ClaimSource::parse(&result.source).ok_or_else(invalid)?;
+            // The envelope's approval is not in its evidence: either binds.
             let stamped = envelope(
                 actor,
                 source,
                 provenance(pin, attempt, result.evidence_hash)?,
+                ClaimApprovalStatus::Proposed,
             );
             if result.version != 1
                 || result.pin_hash != pin.binding_hash()
                 || result.actor != actor.entity_ref().to_hex()
                 || body.subject != ClaimSubject::Entity(pin.subject)
                 || body.source != Some(source)
-                || body.lifecycle != ClaimLifecycleStatus::Active
-                // The owner may have decided the proposal since; a declined
+                // An applied output the owner reverted is retracted, and is
+                // still this attempt's committed output.
+                || !matches!(
+                    (body.lifecycle, result.applied),
+                    (ClaimLifecycleStatus::Active, _) | (ClaimLifecycleStatus::Retracted, true)
+                )
+                // The owner may have decided a held proposal since; a declined
                 // one is still this attempt's committed output.
                 || !matches!(
                     body.approval,
-                    ClaimApprovalStatus::Proposed
+                    ClaimApprovalStatus::Auto
+                        | ClaimApprovalStatus::Proposed
                         | ClaimApprovalStatus::Approved
                         | ClaimApprovalStatus::Rejected
                 )
@@ -182,16 +203,27 @@ fn cached_result(
     }
 }
 
+/// The evidence as one snapshot reads it: its bytes, trust meet, row hash
+/// and the one project it sits in (FIX 8726), `None` when it sits in no
+/// single project.
+struct Evidence {
+    bytes: Vec<u8>,
+    source: ClaimSource,
+    hash: [u8; 32],
+    project: Option<EntityId>,
+}
+
 /// The same snapshot holds the live scoped grant, source bytes and claim
 /// provenance. A queued recipe cannot grant itself `core:read` or read a
 /// different evidence ref. This is called again inside the write transaction
-/// so a revoked grant or changed source cannot be committed after drafting.
+/// so a revoked grant, a changed source or a moved project cannot be
+/// committed after drafting.
 fn read_evidence(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: WriteActor,
     id: EntityId,
-) -> Result<(Vec<u8>, ClaimSource, [u8; 32])> {
+) -> Result<Evidence> {
     let key = ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
@@ -208,8 +240,20 @@ fn read_evidence(
         return Err(invalid());
     }
     let bytes = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-    let meet = evidence_source_from_row(header.entity_type, &bytes)?;
-    Ok((bytes, meet, *blake3::hash(&raw).as_bytes()))
+    let source = evidence_source_from_row(header.entity_type, &bytes)?;
+    let project = crate::dreamer_consolidation::resources::stored_project(
+        &vault.store,
+        txn,
+        id,
+        header.entity_type,
+        &bytes,
+    )?;
+    Ok(Evidence {
+        hash: *blake3::hash(&raw).as_bytes(),
+        bytes,
+        source,
+        project,
+    })
 }
 
 /// Composes the ordinary worker with a host-supplied workflow interpreter.
@@ -289,55 +333,43 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
             .find(|file| file.path == "SKILL.md")
             .ok_or_else(invalid)?;
         let text = std::str::from_utf8(&markdown.content).map_err(|_| invalid())?;
-        let (evidence, source, read_hash) = {
+        let evidence = {
             let txn = vault.store.env.read_txn()?;
             read_evidence(vault, &txn, actor, pin.evidence)?
         };
-        let draft = self.runtime.draft(text, &evidence)?;
-        let envelope = envelope(actor, source, provenance(&pin, attempt, read_hash)?);
+        if evidence.project.is_none() {
+            // Today's placement stands: the output is born in the default
+            // project, as before projects were inherited.
+            tracing::info!(
+                code = "recipe_evidence_project_mixed",
+                attempt = ?attempt.status.attempt.id,
+                "a recipe's evidence sits in no single project; its output keeps the default project"
+            );
+        }
+        let draft = self.runtime.draft(text, &evidence.bytes)?;
         let candidate = ClaimCandidate::new(
             draft.predicate,
             ClaimSubject::Entity(pin.subject),
             draft.value,
             draft.confidence,
         )
-        .with_evidence(cited(&pin, source))
-        .with_evidence_taint(source)?;
-        let now = ctx.now_ms / 1000;
-        vault.with_write_txn_grouped(|txn| {
-            if cached_result(vault, txn, attempt, &pin, actor, &id)? {
-                return Ok(());
-            }
-            let (_, current_source, current_hash) = read_evidence(vault, txn, actor, pin.evidence)?;
-            if current_source != source || current_hash != read_hash {
-                return Err(invalid());
-            }
-            let mut envelope = envelope.clone();
-            vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
-            vault
-                .batch_in()
-                .claim_candidate(
-                    &id,
-                    candidate,
-                    &envelope,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )
-                .apply_recording_gate_decisions(txn)?;
-            let body = vault.get_claim_in_txn(txn, &id)?.ok_or_else(invalid)?;
-            let result = RecipeResult {
-                version: 1,
-                pin_hash: pin.binding_hash(),
-                actor: actor.entity_ref().to_hex(),
-                source: source.as_str().into(),
-                evidence_hash: read_hash,
-                claim_hash: claim_hash(&body)?,
-            };
-            RESULT.put(&vault.store, txn, &attempt.status.attempt.id, &result)
-        })?;
+        .with_evidence(cited(&pin, evidence.source))
+        .with_evidence_taint(evidence.source)?;
+        landing::land(
+            vault,
+            &landing::Drafted {
+                attempt,
+                pin: &pin,
+                actor,
+                id,
+                candidate,
+                evidence: &evidence,
+                at: TimeRange {
+                    start: ctx.now_ms / 1000,
+                    end: ctx.now_ms / 1000,
+                },
+            },
+        )?;
         Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
     }
 }

@@ -171,8 +171,9 @@ impl Claimed {
     /// The run asked for its confession: its objectives are chosen once, at
     /// its first claim, and kept with its attempt, so its ask and the parse
     /// of its answer name the same rows at every claim, and a continued run
-    /// confesses against its source's (OF-544).
-    fn asked(mut self, vault: &Vault, briefing: Option<&str>) -> Self {
+    /// confesses against its source's (OF-544). The ask is in the host's
+    /// `confession` wording (FIX 8696).
+    fn asked(mut self, vault: &Vault, briefing: Option<&str>, confession: &str) -> Self {
         let attempt = self.status.attempt.id;
         let choose = || run_objectives(vault, &self.status, briefing);
         self.objectives = match AgentDispatcher::new(vault).claimed_run_objectives(attempt, choose)
@@ -184,7 +185,11 @@ impl Claimed {
             }
         };
         if !self.objectives.is_empty() {
-            self.task = format!("{}\n\n{}", self.task, confession_ask(&self.objectives));
+            self.task = format!(
+                "{}\n\n{}",
+                self.task,
+                confession_ask(&self.objectives, confession)
+            );
         }
         self
     }
@@ -413,7 +418,7 @@ impl SyncServer {
             return false;
         };
         let vault = self.vault();
-        let claimed = match claim(vault, id, of) {
+        let claimed = match claim(vault, id, of, self.ai.confession_instruction()) {
             Ok(Some(claimed)) => claimed,
             Ok(None) => return false,
             Err(error) => {
@@ -451,8 +456,14 @@ impl SyncServer {
     }
 }
 
-/// Claims the run by id through its pump's door, with the task it runs.
-fn claim(vault: &Vault, id: AttemptId, of: RunOf) -> oneiron::Result<Option<Claimed>> {
+/// Claims the run by id through its pump's door, with the task it runs,
+/// asked for its confession in the host's `confession` wording.
+fn claim(
+    vault: &Vault,
+    id: AttemptId,
+    of: RunOf,
+    confession: &str,
+) -> oneiron::Result<Option<Claimed>> {
     let dispatcher = AgentDispatcher::new(vault);
     let claimed = match of {
         RunOf::Resident(agent) => dispatcher
@@ -487,7 +498,7 @@ fn claim(vault: &Vault, id: AttemptId, of: RunOf) -> oneiron::Result<Option<Clai
                 },
             ),
     };
-    Ok(claimed.map(|(claimed, briefing)| claimed.asked(vault, briefing.as_deref())))
+    Ok(claimed.map(|(claimed, briefing)| claimed.asked(vault, briefing.as_deref(), confession)))
 }
 
 /// What a leased run came to: its executor's outcome, or the receipt NOTE

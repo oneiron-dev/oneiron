@@ -35,6 +35,7 @@ pub(crate) mod coach_heal;
 mod coach_health;
 pub(crate) mod coach_host;
 mod code_fix;
+mod confession_wording;
 mod connector_event;
 mod contribution;
 mod dreamer;
@@ -149,6 +150,8 @@ pub struct AiHandle {
     /// The compaction writer factory chat and code mode share, settled when
     /// the host attaches (FIX 4465 D).
     writer_compaction: Arc<OnceLock<compaction::CodeModeCompaction>>,
+    /// The wording runs are asked for their confession in (FIX 8696).
+    confession: Arc<str>,
 }
 
 impl AiHandle {
@@ -206,6 +209,7 @@ impl AiHandle {
             host_compaction: Arc::default(),
             device: false,
             writer_compaction: Arc::default(),
+            confession: confession_wording::of(models),
         }
     }
 
@@ -1148,6 +1152,7 @@ fn start_workflows(
             retry_backoff_secs: models.workflows.retry_backoff_secs,
             spent: Default::default(),
             host,
+            confession: confession_wording::of(Some(models)),
         },
         Arc::clone(status),
         decisions,

@@ -80,12 +80,25 @@ pub(super) async fn candidate_loop(
     }
 }
 
-/// Queues each current candidate this process has not queued yet.
+/// Queues each current candidate this process has not queued yet, on the
+/// elected home alone, as the regular digest is emitted there (FIX 8953): a
+/// device, or a host the home moved away from, queues nothing and keeps
+/// what it queued; an election change wakes the loop to look again.
 fn queue_round(
     vault: &Vault,
     question: &str,
     queued: &mut HashSet<[u8; 32]>,
 ) -> oneiron::Result<()> {
+    let store = oneiron::DreamerRunnerStore::new(vault);
+    let local = store
+        .local_home_node_candidate(false, false, false)?
+        .node_id;
+    if store
+        .home_node_designation()?
+        .is_none_or(|home| home.node_id != local)
+    {
+        return Ok(());
+    }
     let now = now_ms() / 1_000;
     for candidate in vault.digest_harm_candidates(now)? {
         let basis = candidate.basis(question)?;

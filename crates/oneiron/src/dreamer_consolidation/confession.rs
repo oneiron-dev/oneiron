@@ -1,7 +1,8 @@
 //! The confession ask and its parse (OF-544, ARCH-0079): after a DONE line,
 //! one fenced block naming each assigned objective, whether it was met, and
 //! any flaw or doubt. A workflow step and a Dreamer-lane TASK's realization
-//! ask in these words; a reply that gives none, or one that does not parse,
+//! ask in the host's words (FIX 8696): the engine lists the objectives and
+//! parses the answer. A reply that gives none, or one that does not parse,
 //! confesses nothing.
 
 use crate::self_heal::audit::ObjectiveConfession;
@@ -9,20 +10,13 @@ use crate::self_heal::audit::ObjectiveConfession;
 /// The fence that opens a confession block, after its DONE line.
 const CONFESSION_FENCE: &str = "```oneiron-confession";
 
-/// The ask for a confession against `objectives`, after the task.
+/// The ask for a confession against `objectives`, after the task: the
+/// objectives as data, then the host's `instruction` (its prompt wording,
+/// `[models.dreamer.wording]`).
 #[must_use]
-pub fn confession_ask(objectives: &[String]) -> String {
+pub fn confession_ask(objectives: &[String], instruction: &str) -> String {
     let listed = serde_json::to_string(objectives).unwrap_or_default();
-    format!(
-        "Objectives assigned to this attempt: {listed}\n\
-         When your result is complete, end it with a line that is exactly DONE, then one \
-         block fenced ```oneiron-confession holding \
-         {{\"objectives\":[{{\"objective\":\"<the assigned objective, copied exactly>\",\
-         \"met\":<true or false>,\"flaw\":<null or what is wrong>,\
-         \"uncertainty\":<null or what you are unsure of>}}]}} with one row per assigned \
-         objective, in order. Say plainly what you did not meet, any flaw and any doubt: a \
-         confession never costs the score. Nothing follows the closing fence."
-    )
+    format!("Objectives assigned to this attempt: {listed}\n{instruction}")
 }
 
 /// The confession `output` ends with, when it is a DONE line, then one
