@@ -27,6 +27,7 @@ mod launcher;
 mod probe;
 #[cfg(unix)]
 mod process;
+mod session;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -43,6 +44,10 @@ use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
 use launch_manifest::LaunchSlot;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
+
+#[cfg(unix)]
+pub(super) use session::open_turn;
+pub(crate) use session::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
 
 /// The process's one worker host, made when the first worker is configured
 /// or the process is marked as the one that launches them.

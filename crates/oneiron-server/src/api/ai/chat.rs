@@ -72,6 +72,7 @@ use crate::voice_host::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 mod compaction;
 mod hook_ask;
 mod recall;
+mod segments;
 mod sitting;
 mod sources;
 
@@ -508,6 +509,7 @@ fn start_turn(
     if let Some(entries) = &craft {
         sources.craft(entries);
     }
+    let system_end = messages.len();
     // FIX 4465 D: a self agent on its live fork reads its log from the
     // retained ledger, as the caller reads it where it sits; every other
     // turn takes the caller's lines as before.
@@ -543,12 +545,19 @@ fn start_turn(
             }
         }
     }
+    let log_end = messages.len();
     messages.push(text_message(LlmMessageRole::User, request.text.clone()));
     // Admitted through its role before anything is written: a vault route
     // this server cannot serve refuses here, with no call made.
     // FIX 6794: the board rides after the stable history, right before the
     // newest User (FIX 6676's layout); a role that does not admit it with
     // the board admits the turn as it was.
+    // DESIGN-V2 R2: the messages and the board as assembled, for the call's
+    // segment manifest.
+    let assembled = messages.clone();
+    let board_view = board
+        .as_ref()
+        .map(|board| (board.block.clone(), board.sections.clone()));
     let board_rows = board.as_ref().map(|board| board.rows.clone());
     let (admitted, recalled, context) =
         recall::admit(&server.ai, &vault, &seat, auth, messages, board);
@@ -576,6 +585,33 @@ fn start_turn(
     if self_chat.is_some() {
         compaction::mark_prefix(&mut admitted.request);
     }
+    // DESIGN-V2 R2: the call's typed segments, set once it is admitted and
+    // only when they describe the admitted messages exactly.
+    let reader = segments::Reader {
+        vault: Arc::clone(&vault),
+        auth: auth.clone(),
+        actor,
+        class,
+        locality,
+    };
+    let turn_segments = segments::admitted(
+        &reader,
+        segments::Assembled {
+            layout: segments::Layout {
+                system_end,
+                log_end,
+            },
+            self_chat: self_chat.as_ref(),
+            messages: &assembled,
+            board: board_view.as_ref().filter(|_| recalled),
+            agent,
+            craft: craft.as_deref(),
+        },
+        &admitted.request.messages,
+    );
+    admitted.request.host_segments = turn_segments
+        .as_ref()
+        .map(|segments| Arc::clone(&segments.manifest));
     // FIX 6921: what the admitted board showed, frozen against the call it
     // rides in.
     let context = context
@@ -764,6 +800,16 @@ fn start_turn(
         agent,
         WriteActor::new(actor, class),
         session_key,
+        answering,
+    );
+    // DESIGN-V2 R2: once the reply lands whole, the session coordinator
+    // stages its canonical successor.
+    let answering = segments::commit_on_answer(
+        turn_segments,
+        &reader,
+        &credential,
+        written.as_deref(),
+        turn,
         answering,
     );
     Ok(Started {

@@ -24,15 +24,19 @@
 //! `final` feed the worker's activity (FIX 9190), as the supervisor's own
 //! poll ([`activity`]) does.
 mod buffer;
+mod session_ops;
 mod transport;
 mod wire;
 
+pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
+
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::BudgetLease;
-use oneiron::llm::{INFERENCE_CALLS_KEY, WorkerBuildEvidence, WorkerFailure};
+use oneiron::llm::{INFERENCE_CALLS_KEY, SegmentManifest, WorkerBuildEvidence, WorkerFailure};
 use oneiron_driver::WorkerActivity;
 use oneiron_llm_openai::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
@@ -110,8 +114,9 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         let Some(route) = self.route(&request.body) else {
             return self.http.execute(request, lease);
         };
+        let segments = request.host_segments;
         let body = self.shaped(request.body);
-        Box::pin(execute(route, body))
+        Box::pin(execute(route, body, segments))
     }
 
     fn stream<'a>(
@@ -122,9 +127,14 @@ impl OpenAiCompatTransport for NativeExl3Transport {
         let Some(route) = self.route(&request.body) else {
             return self.http.stream(request, lease);
         };
+        let segments = request.host_segments;
         let body = self.shaped(request.body);
         Ok(Box::pin(futures_util::stream::unfold(
-            Streaming::Start { route, body },
+            Streaming::Start {
+                route,
+                body,
+                segments,
+            },
             Streaming::step,
         )))
     }
@@ -186,11 +196,14 @@ enum Begun {
 
 /// Sends the call on `route`: a lease of its own on the ready incarnation,
 /// the epoch it answered its qualification with, and the current launch's
-/// socket.
+/// socket. A call whose `segments` the session coordinator takes runs on
+/// its session's working branch (DESIGN-V2 R2, `worker_host::session`);
+/// every other call, and one whose session op failed, as a plain `generate`.
 async fn begin(
     route: &NativeRoute,
     body: &JsonValue,
     stream: bool,
+    segments: Option<&SegmentManifest>,
 ) -> Result<Begun, OpenAiCompatTransportError> {
     let lease = route
         .worker
@@ -209,7 +222,56 @@ async fn begin(
         return Err(OpenAiCompatTransportError::Connection);
     }
     let (conversation, params) = wire::split_request(body);
-    match Call::start(&socket, &epoch, &conversation, params, stream, Some(lease)).await {
+    let session = match segments {
+        Some(manifest) => {
+            worker_host::open_turn(
+                route,
+                &socket,
+                &epoch,
+                lease.observed(),
+                manifest,
+                &conversation,
+                &params,
+            )
+            .await
+        }
+        None => None,
+    };
+    let plain = session.is_some().then(|| params.clone());
+    let mut started = Call::start(
+        &socket,
+        &epoch,
+        &conversation,
+        params,
+        stream,
+        Some(lease),
+        session,
+    )
+    .await;
+    let refused = matches!(
+        &started,
+        Err(Start::Refused(refusal)) if !wire::refusal_is_request(wire::refusal_code(refusal))
+    );
+    if let (true, Some(params)) = (refused, plain) {
+        // Nothing ran on the working branch: the turn goes as it always
+        // did, on a lease of its own.
+        let lease = route
+            .worker
+            .acquire()
+            .await
+            .map_err(|_| OpenAiCompatTransportError::Connection)?;
+        started = Call::start(
+            &socket,
+            &epoch,
+            &conversation,
+            params,
+            stream,
+            Some(lease),
+            None,
+        )
+        .await;
+    }
+    match started {
         Ok(call) => Ok(Begun::Sent(Sent {
             call,
             tie: Tie {
@@ -236,12 +298,13 @@ async fn begin(
 async fn execute(
     route: NativeRoute,
     body: JsonValue,
+    segments: Option<Arc<SegmentManifest>>,
 ) -> Result<OpenAiCompatHttpResponse, OpenAiCompatTransportError> {
     let target = body
         .get("model")
         .and_then(JsonValue::as_str)
         .map(str::to_owned);
-    let mut sent = match begin(&route, &body, false).await? {
+    let mut sent = match begin(&route, &body, false, segments.as_deref()).await? {
         Begun::Sent(sent) => sent,
         Begun::Answered(reply) => return Ok(reply),
     };
@@ -389,7 +452,7 @@ pub(super) async fn qualify(
         .ok_or(WorkerFailure::InvalidReply)?
         .to_owned();
     let (conversation, params) = wire::split_request(request);
-    let mut call = Call::start(socket, &epoch, &conversation, params, false, None)
+    let mut call = Call::start(socket, &epoch, &conversation, params, false, None, None)
         .await
         .map_err(|start| match start {
             Start::Refused(_) => WorkerFailure::InvalidReply,
@@ -414,7 +477,11 @@ type Frame = Result<OpenAiCompatStreamFrame, OpenAiCompatTransportError>;
 
 /// A streamed call over the native route.
 enum Streaming {
-    Start { route: NativeRoute, body: JsonValue },
+    Start {
+        route: NativeRoute,
+        body: JsonValue,
+        segments: Option<Arc<SegmentManifest>>,
+    },
     Live(Box<Live>),
     Done,
 }
@@ -436,12 +503,16 @@ struct Live {
 impl Streaming {
     async fn step(self) -> Option<(Frame, Self)> {
         match self {
-            Self::Start { route, body } => {
+            Self::Start {
+                route,
+                body,
+                segments,
+            } => {
                 let target = body
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .map(str::to_owned);
-                match begin(&route, &body, true).await {
+                match begin(&route, &body, true, segments.as_deref()).await {
                     Ok(Begun::Sent(sent)) => Box::new(Live::over(route, sent, target)).next().await,
                     Ok(Begun::Answered(reply)) => {
                         Some((Ok(OpenAiCompatStreamFrame::Status(reply)), Self::Done))

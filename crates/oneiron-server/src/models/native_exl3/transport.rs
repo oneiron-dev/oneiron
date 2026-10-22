@@ -14,6 +14,7 @@ use std::os::fd::BorrowedFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use oneiron::llm::SessionOp;
 use oneiron_driver::WorkerLease;
 use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
 use serde_json::{Value as JsonValue, json};
@@ -172,6 +173,36 @@ impl Channel {
         }
     }
 
+    /// Sends `op` with `body`, and with `input`'s descriptor and its
+    /// description under `input` when it carries one, then returns the
+    /// worker's frame of the same id: the op's answer, or a `refused`.
+    pub(super) async fn exchange(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        mut body: JsonValue,
+        input: Option<&InputRegion>,
+    ) -> io::Result<Incoming> {
+        let request_id = next_request_id();
+        match input {
+            Some(input) => {
+                if let Some(fields) = body.as_object_mut() {
+                    fields.insert("input".to_owned(), wire::input(request_id, input.len()));
+                }
+                self.send_with_fd(op, request_id, epoch, body, input.fd())
+                    .await?;
+            }
+            None => self.send(op, request_id, epoch, body).await?,
+        }
+        loop {
+            match self.next().await? {
+                Some(frame) if frame.request_id == request_id => return Ok(frame),
+                Some(_) => {}
+                None => return Err(io::ErrorKind::UnexpectedEof.into()),
+            }
+        }
+    }
+
     /// Sends `cancel` for `request_id` and waits until the worker says the
     /// call has ended: its `released`, its terminal if it ended first, a
     /// `cancel_ack` that found nothing, or the connection's close. No
@@ -238,7 +269,9 @@ pub(super) struct Call {
 
 impl Call {
     /// Connects to `path`, sends the call with `conversation` as its input
-    /// region, and waits for the worker to accept or refuse it.
+    /// region, and waits for the worker to accept or refuse it. A call that
+    /// names a `session` working branch goes as `session.generate`, its
+    /// body otherwise a `generate`'s.
     pub(super) async fn start(
         path: &Path,
         epoch: &str,
@@ -246,14 +279,24 @@ impl Call {
         params: JsonValue,
         stream: bool,
         lease: Option<WorkerLease>,
+        session: Option<JsonValue>,
     ) -> Result<Self, Start> {
         let bytes = serde_json::to_vec(conversation).map_err(|_| Start::NotSent)?;
         let input = InputRegion::new(&bytes).map_err(|_| Start::NotSent)?;
         let mut channel = Channel::connect(path).await.map_err(|_| Start::NotSent)?;
         let request_id = next_request_id();
-        let body = wire::generate_body(request_id, input.len(), params, stream);
+        let mut body = wire::generate_body(request_id, input.len(), params, stream);
+        let op = match session {
+            Some(session) => {
+                if let Some(fields) = body.as_object_mut() {
+                    fields.insert("session".to_owned(), session);
+                }
+                SessionOp::Generate.wire_name()
+            }
+            None => "generate",
+        };
         let sent = channel
-            .send_with_fd("generate", request_id, Some(epoch), body, input.fd())
+            .send_with_fd(op, request_id, Some(epoch), body, input.fd())
             .await;
         let mut call = Self {
             channel: Some(channel),
