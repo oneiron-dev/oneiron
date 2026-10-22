@@ -785,7 +785,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/dreamer_wording.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | DreamerWording | `[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX… |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 7 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
 | `src/config/models/media.rs` | src | s | 3 struct · 2 crate-vis | LiveAsrOptions, MediaSeatConfig, MediaSettings | `[models.media]`: the media seats (ODM-004: image, video and the rest are seats outside the tiers) |
-| `src/config/models/mod.rs` | src | m | 7 struct · 1 enum · 2 fn · 12 re-export · 3 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
+| `src/config/models/mod.rs` | src | m | 7 struct · 1 enum · 2 fn · 12 re-export · 5 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
 | `src/config/models/planner.rs` | src | s | 2 struct · 2 crate-vis | PlannerSeatSetting, PlannerSettings | `[models.planner]`: the seats a leased agent's planned spawns choose among (OF-541, OF-389) |
 | `src/config/models/provider.rs` | src | m | 3 struct · 4 enum · 7 fn · 5 crate-vis | OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression, ResponseFormatWire, ResponsesSocket | One provider entry: how to reach a model server, as data |
 | `src/config/models/tests.rs` | test | s | — | — | — |
@@ -849,6 +849,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/device_sync/dial.rs` | src | s | 2 crate-vis | — | What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron… |
 | `src/device_sync/enrolment.rs` | src | m | 7 crate-vis | — | A device's enrolment with its home (ARCH-0023b: "a device connects the moment it is enrolled") |
 | `src/device_sync/renewal.rs` | src | m | 7 crate-vis | — | FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the… |
+| `src/document_memory.rs` | src | s | 1 crate-vis | — | The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
 | `src/embedded.rs` | src | m | 1 fn · 5 re-export · 7 crate-vis | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
 | `src/embedded/blocking.rs` | src | m | 4 struct · 15 fn | BlockingBody, BlockingConnection, BlockingEngine, BlockingReply | The embedded engine for a binding whose callers are app threads (OF-237): [`BlockingEngine`] runs an… |
 | `src/embedded/engine.rs` | src | m | 6 struct · 20 fn · 1 const · 1 crate-vis | EmbeddedBody, EmbeddedConnection, EmbeddedEngine, EmbeddedReply, EmbeddedReplyStream, EmbeddedRequest | The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding |
@@ -1104,7 +1105,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/catalog.rs` | src | s | 4 crate-vis | — | Config model references to engine catalog rows |
 | `src/models/cooldown.rs` | src | L | 3 struct · 1 enum · 5 fn · 28 crate-vis | OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion | Offers a provider refused for a quota or a limit (OF-305) |
 | `src/models/cooldown/world_hold.rs` | src | s | 1 crate-vis | — | Whether a fallback may take a call's world where the offer it falls back to sends it, and why not (FIX 4938… |
-| `src/models/decision_read.rs` | src | m | 1 struct · 7 fn · 2 crate-vis | DecisionReadDoor | The house model's decision read over llama.cpp's native API: the `LabelReadModel` the escalation rung is… |
+| `src/models/decision_read.rs` | src | m | 1 struct · 8 fn · 2 crate-vis | DecisionReadDoor | The house model's decision read over llama.cpp's native API: the `LabelReadModel` the escalation rung is… |
 | `src/models/decision_read/tests.rs` | test | m | — | — | The decision read against an in-process llama.cpp: the joint marginals checked against idle-fold test 6's… |
 | `src/models/declared.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | DeclaredRun | A declared run on this server's models (ARCH-0053 `#run-declaration`): the host that states a run's… |
 | `src/models/discovered.rs` | src | s | 3 crate-vis | — | The models the owner's other nodes offer (OF-575, FIX 3229) |
@@ -1287,8 +1288,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/connector_sends.rs` | src | s | 1 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |
 | `src/server/consult_settle.rs` | src | s | 1 crate-vis | — | Consult settlement on every housekeeping pass (DOOR-063), on every substrate |
 | `src/server/core.rs` | src | m | 1 struct · 15 fn · 1 re-export · 20 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
-| `src/server/core/construction.rs` | src | s | 1 fn | — | Construction of the core sync server from an opened vault |
-| `src/server/core/pattern_workflow.rs` | src | m | 1 fn · 8 crate-vis | — | The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house… |
+| `src/server/core/construction.rs` | src | m | 1 fn | — | Construction of the core sync server from an opened vault |
+| `src/server/core/pattern_workflow.rs` | src | m | 2 fn · 8 crate-vis | — | The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house… |
 | `src/server/core/usage.rs` | src | s | 2 fn | — | The usage meter the trusted host binds to this vault before work starts |
 | `src/server/courtesy_delete.rs` | src | s | 1 crate-vis | — | Delivers queued courtesy deletion asks and answers (OF-273) |
 | `src/server/desktop_seats.rs` | src | m | 16 crate-vis | — | The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door… |

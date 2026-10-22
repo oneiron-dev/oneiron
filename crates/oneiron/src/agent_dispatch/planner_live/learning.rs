@@ -23,11 +23,11 @@ use crate::learning::{EstimateValue, LearningCell, LearningRead, TypeRef};
 use crate::llm::ModelId;
 use crate::posterior::beta_mean;
 use crate::task_type::{TaskTypeTree, TreeScope};
-use crate::team::payoff::payoff_outcomes_in_txn;
-use crate::team::{PayoffRow, PlannerCard, pattern_cell};
+use crate::team::{PlannerCard, pattern_cell};
 
 use super::super::planner::{MeasuredRate, PatternCandidate};
 use super::super::task_type_tree::load_team_type_tree_in_txn;
+use super::width_outcomes::WidthOutcomes;
 
 /// What a spawn's stamp borrows: the vault tree's learning type for the same
 /// node, and the weight its measured outcomes carry.
@@ -67,7 +67,9 @@ impl Donor {
     /// The solo rates and pattern candidates with the donor lent, staged
     /// over the primary reads: `solo` per seat model with its cell, `cards`
     /// per seat model, and `patterns` as they read. Only admitted pattern
-    /// skills and the seats' own executor mixes borrow.
+    /// skills and the seats' own executor mixes borrow. Width outcomes come
+    /// from `outcomes`, the plan's one receipt snapshot, folded at its one
+    /// evaluation time (FIX 9568), then taken at the borrow weight.
     ///
     /// # Errors
     ///
@@ -79,6 +81,7 @@ impl Donor {
         solo: &[(ModelId, LearningCell, LearningRead)],
         cards: &[(ModelId, PlannerCard)],
         patterns: &[PatternCandidate],
+        outcomes: &WidthOutcomes,
     ) -> Result<(BTreeMap<ModelId, MeasuredRate>, Vec<PatternCandidate>)> {
         let mut rates = BTreeMap::new();
         for (model, cell, read) in solo {
@@ -89,7 +92,6 @@ impl Donor {
         if cards.is_empty() {
             return Ok((rates, patterns));
         }
-        let rows = payoff_outcomes_in_txn(vault, txn, Some(&self.type_ref))?;
         for (model, card) in cards {
             for entry in &card.patterns {
                 let cell = pattern_cell(entry.skill, &card.executor_mix, &card.type_ref);
@@ -99,7 +101,7 @@ impl Donor {
                     candidate.rates.insert(model.clone(), rate);
                 }
             }
-            for (skill, width, row) in width_rows(&rows, &card.executor_mix) {
+            for ((skill, width), (wins, losses)) in outcomes.folded(&self.type_ref, card) {
                 if let Some(candidate) = admitted(&mut patterns, skill) {
                     let lent = candidate
                         .borrowed_widths
@@ -107,8 +109,8 @@ impl Donor {
                         .or_default()
                         .entry(model.clone())
                         .or_insert((0.0, 0.0));
-                    lent.0 += self.weight * row.wins as f64;
-                    lent.1 += self.weight * row.losses as f64;
+                    lent.0 += self.weight * wins;
+                    lent.1 += self.weight * losses;
                 }
             }
         }
@@ -152,17 +154,6 @@ pub(super) fn measured(read: &LearningRead) -> MeasuredRate {
     }
 }
 
-/// The payoff rows of one executor mix that ran a pattern skill at a width
-/// their shape signature names: `(skill, width, row)`.
-pub(super) fn width_rows<'a>(
-    rows: &'a [PayoffRow],
-    executor_mix: &'a str,
-) -> impl Iterator<Item = (EntityId, u32, &'a PayoffRow)> {
-    rows.iter()
-        .filter(move |row| row.models == executor_mix)
-        .filter_map(|row| Some((row.pattern_skill?, row_width(&row.shape)?, row)))
-}
-
 /// The admitted candidate for `skill`, if the plan admitted it.
 pub(super) fn admitted(
     patterns: &mut [PatternCandidate],
@@ -171,9 +162,4 @@ pub(super) fn admitted(
     patterns
         .iter_mut()
         .find(|candidate| candidate.skill.skill == skill)
-}
-
-/// The width a payoff row's shape signature (`width|roles`) names.
-fn row_width(signature: &str) -> Option<u32> {
-    signature.split('|').next()?.parse().ok()
 }

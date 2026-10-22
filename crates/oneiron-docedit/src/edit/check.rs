@@ -86,7 +86,7 @@ pub(super) fn verify(
     op: &ValueEdit<'_>,
     written: &Written,
 ) -> Result<Vec<String>, EditRefusal> {
-    let candidate = Package::open(&next.export()?, input.limits())?;
+    let candidate = Package::open(&next.export()?, input.limits(), input.resources())?;
     let mut changed = Vec::new();
     for part in candidate.names() {
         if input.part(part)? != candidate.part(part)? {
