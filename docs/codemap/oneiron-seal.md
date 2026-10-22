@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron-seal-organ.rs` | src | s | — | — | The seal organ's process: serves the host on the socket it passes |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
 | `src/lib.rs` | src | s | 2 mod · 6 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
-| `src/memory.rs` | src | m | 2 struct · 1 enum · 1 trait · 4 fn · 1 type · 14 crate-vis | AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
+| `src/memory.rs` | src | m | 2 struct · 1 enum · 1 trait · 4 fn · 1 type · 15 crate-vis | AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
 | `src/native/cms/assemble.rs` | src | s | 9 crate-vis | — | Signed-attribute builders and detached SignedData assembly |
 | `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
 | `src/native/cms/mod.rs` | src | s | 7 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |

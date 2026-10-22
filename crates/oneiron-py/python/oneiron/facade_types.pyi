@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1157 facade rows, 4128 declarations.
+Census: 1157 facade rows, 4131 declarations.
 Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -11025,6 +11025,22 @@ class ProgramStepFeedback(TypedDict):
     check_ref: str
     preparation_note: NotRequired[ProgramPreparationNote | None]
     type_diagnostics: TypeDiagnostics
+TypeCheckState = Literal["complete", "pending", "failed", "unavailable"]
+FeedbackWithheldReason = Literal["recipient", "placement", "producers_unknown", "conflicted_root", "release_check_failed"]
+class ProgramStepFeedbackReleaseReleased(ProgramStepFeedback):
+    release: Literal["released"]
+class ProgramStepFeedbackReleaseWithheld(TypedDict):
+    release: Literal["withheld"]
+    step: ProgramStepIdentity
+    check_ref: str
+    state: TypeCheckState
+    check: NotRequired[TypeCheckFacts | None]
+    failure: NotRequired[str | None]
+    unavailable: NotRequired[str | None]
+    measures: NotRequired[DiagnosticMeasures | None]
+    preparation_code: NotRequired[str | None]
+    reason: FeedbackWithheldReason
+ProgramStepFeedbackRelease = ProgramStepFeedbackReleaseReleased | ProgramStepFeedbackReleaseWithheld
 class CodeWaitTarget(TypedDict):
     run_id: EntityId
     wait_id: EntityId
@@ -12730,6 +12746,7 @@ class SpawnIntentRequest(TypedDict):
     width: NotRequired[SpawnAskKnob[int] | None]
     pattern: NotRequired[SpawnAskKnob[str] | None]
     budget_cap_units: NotRequired[SpawnAskKnob[int] | None]
+    balance_free_prompt: NotRequired[bool]
 class SpawnIntentReply(TypedDict):
     intent_key: str
     phase: SpawnPhase
@@ -20190,6 +20207,7 @@ class FoldHistoryStep(TypedDict):
     console: str
     type_diagnostics: NotRequired[TypeDiagnostics | None]
     preparation_note: NotRequired[ProgramPreparationNote | None]
+    type_feedback: NotRequired[ProgramStepFeedbackRelease | None]
 class FoldHistory(TypedDict):
     run: str
     completed_steps: int
@@ -21223,6 +21241,7 @@ class AgentSpawnInput(TypedDict):
     project: NotRequired[str | None]
     objectives: NotRequired[list[str] | None]
     comm: NotRequired[CommReach | None]
+    balance_free_prompt: NotRequired[bool]
 AgentSpawnKind = Literal["agent_spawn"]
 class LaunchStatement(TypedDict):
     agent_count: int

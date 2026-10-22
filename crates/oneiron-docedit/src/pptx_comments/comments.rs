@@ -11,6 +11,7 @@ use super::identities::{inspect_parts, resolve_anchor, resolve_positions, text};
 use super::links::{self, Parts, comment_part, put};
 use super::model::*;
 use super::xml::{Xml, escape, replace};
+use crate::resource::Resources;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use patch::comment_patch;
@@ -24,7 +25,7 @@ struct CommentIndex {
 fn comment_index(
     parts: &Parts,
     inspection: &PptxInspection,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<CommentIndex> {
     let mut index = CommentIndex {
         threads: BTreeMap::new(),
@@ -100,10 +101,12 @@ fn comment_index(
 pub fn unknown_anchor_threads(
     bytes: &[u8],
     limits: &PptxCommentLimits,
+    resources: &Resources,
 ) -> Result<BTreeSet<[u8; 16]>, PptxError> {
     if !limits.valid() {
         return Err(PptxError::InvalidPatch);
     }
+    let limits = &Codec { limits, resources };
     let archive = Archive::read(bytes, limits)?;
     let inspection = inspect_parts(&archive.parts, limits)?;
     let mut result = BTreeSet::new();
@@ -129,7 +132,7 @@ fn derive_allowed_parts(
     parts: &Parts,
     inspection: &PptxInspection,
     patches: &[PptxCommentEdit],
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<BTreeSet<String>> {
     let mut allowed = BTreeSet::new();
     let mut threads = comment_index(parts, inspection, limits)?.threads;

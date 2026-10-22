@@ -1,6 +1,7 @@
 //! Immutable project-scoped policy-manifest contributions.
 //! The mutable PROJECT body is membership; it never chooses a spawn ceiling.
 mod codec;
+mod explicit;
 mod fold;
 mod write;
 
@@ -10,6 +11,7 @@ pub(crate) use codec::{
     ProjectDepthContribution, canonical_birth, decode_contribution, is_project_depth_contribution,
     is_project_depth_id, validate_contribution_put,
 };
+pub(crate) use explicit::{ProjectDepthSetting, resolve_explicit_project_depth};
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use fold::resolve_creation_default;
 pub(crate) use fold::{

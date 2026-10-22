@@ -6,9 +6,12 @@
 //! so a call cancelled on the way leaves them to the next call or to the
 //! driver's drop. A drop cannot await: it kills the child and hands it and
 //! its watch to a thread of their own, which reads the exit and then reaps,
-//! with nothing a runtime's shutdown cancels between the two.
+//! with nothing a runtime's shutdown cancels between the two. A snapshot
+//! custody the driver holds goes with them, and the thread evicts it only
+//! once its reap succeeded (FIX 9497).
 
 use super::exit::child_pid;
+use super::snapshot::SnapshotLease;
 use super::{VaultVm, VmExitWatch};
 use rustix::io::Errno;
 use rustix::process::{WaitId, WaitIdOptions, waitid};
@@ -63,16 +66,25 @@ impl VaultVm {
 
 impl Drop for VaultVm {
     fn drop(&mut self) {
+        // With no VMM left, a custody still held is evicted as it drops.
+        let lease = self.snapshot_lease.take();
         if let Some(child) = self.child.take() {
-            reap_dropped(child, self.exit.take(), &self.vault);
+            reap_dropped(child, self.exit.take(), &self.vault, lease);
         }
     }
 }
 
 /// Kills `child`, a dropped driver's VMM, and hands it with `exit`, its
-/// watch, to a thread that reaps it once its exit is read.
-fn reap_dropped(mut child: tokio::process::Child, exit: Option<VmExitWatch>, vault: &str) {
-    // A child already reaped has no exit left to read.
+/// watch, and `lease`, the snapshot custody it may back, to a thread that
+/// reaps it once its exit is read and evicts the custody after the reap.
+fn reap_dropped(
+    mut child: tokio::process::Child,
+    exit: Option<VmExitWatch>,
+    vault: &str,
+    lease: Option<SnapshotLease>,
+) {
+    // A child already reaped has no exit left to read, and its custody is
+    // evicted as it drops here.
     if child.id().is_none() {
         return;
     }
@@ -87,7 +99,23 @@ fn reap_dropped(mut child: tokio::process::Child, exit: Option<VmExitWatch>, vau
     let owner = vault.to_owned();
     let spawned = std::thread::Builder::new()
         .name("vm-reaper".into())
-        .spawn(move || reap(child, exit, &owner));
+        .spawn(move || {
+            let reaped = reap(child, exit, &owner);
+            match lease {
+                Some(lease) if reaped => lease.evict_blocking(),
+                Some(lease) => {
+                    // Not reaped: the custody may still back a VMM, so it
+                    // is left held for the supervisor to evict.
+                    lease.leave_held();
+                    tracing::warn!(
+                        reason = "vm_snapshot_custody_not_evicted",
+                        vault = %owner,
+                        "a dropped vault VM driver's VMM was not reaped, so its snapshot custody stays unlocked for its supervisor to evict"
+                    );
+                }
+                None => {}
+            }
+        });
     if let Err(error) = spawned {
         tracing::warn!(
             reason = "vm_reaper_unavailable",
@@ -99,8 +127,8 @@ fn reap_dropped(mut child: tokio::process::Child, exit: Option<VmExitWatch>, vau
 }
 
 /// The reaper thread's work: blocks until `child` exits and its status is
-/// read, through `exit` when it watches it, then reaps it.
-fn reap(mut child: tokio::process::Child, exit: Option<VmExitWatch>, vault: &str) {
+/// read, through `exit` when it watches it, then reaps it. Whether it did.
+fn reap(mut child: tokio::process::Child, exit: Option<VmExitWatch>, vault: &str) -> bool {
     let observed = match &exit {
         Some(exit) => exit.wait_blocking().map(|_| ()),
         None => exited(&child),
@@ -114,18 +142,24 @@ fn reap(mut child: tokio::process::Child, exit: Option<VmExitWatch>, vault: &str
         );
     }
     match child.try_wait() {
-        Ok(Some(_)) => {}
-        Ok(None) => tracing::warn!(
-            reason = "vm_reap_failed",
-            vault,
-            "a dropped vault VM driver's VMM had not exited at its reap; the runtime reaps it"
-        ),
-        Err(error) => tracing::warn!(
-            reason = "vm_reap_failed",
-            vault,
-            %error,
-            "a dropped vault VM driver's VMM could not be reaped"
-        ),
+        Ok(Some(_)) => true,
+        Ok(None) => {
+            tracing::warn!(
+                reason = "vm_reap_failed",
+                vault,
+                "a dropped vault VM driver's VMM had not exited at its reap; the runtime reaps it"
+            );
+            false
+        }
+        Err(error) => {
+            tracing::warn!(
+                reason = "vm_reap_failed",
+                vault,
+                %error,
+                "a dropped vault VM driver's VMM could not be reaped"
+            );
+            false
+        }
     }
 }
 

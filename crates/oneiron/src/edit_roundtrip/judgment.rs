@@ -404,7 +404,12 @@ impl EditSession for NativeCellSession {
                 "typed answers could not be written to the workbook copy",
             ))
         };
-        let book = read_xlsx_cells(&doc.bytes, self.limits).map_err(|_| failed())?;
+        let book = read_xlsx_cells(
+            &doc.bytes,
+            self.limits,
+            &crate::office_body::document_resources(),
+        )
+        .map_err(|_| failed())?;
         let changes = plan
             .ops
             .iter()
@@ -444,9 +449,14 @@ impl EditSession for NativeCellSession {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let bytes = project_xlsx(&doc.bytes, &changes, self.limits)
-            .map_err(|_| failed())?
-            .bytes;
+        let bytes = project_xlsx(
+            &doc.bytes,
+            &changes,
+            self.limits,
+            &crate::office_body::document_resources(),
+        )
+        .map_err(|_| failed())?
+        .bytes;
         Ok(AppliedEdit {
             bytes,
             applied_ops: plan.ops.clone(),
