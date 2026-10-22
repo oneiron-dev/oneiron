@@ -422,9 +422,14 @@ impl Compiler<'_> {
             let transform = transform.then(local);
             if node.name == "g" {
                 // The group's frame, reserved before the stack grows.
+                // Two frames (the stack grows by doubling); the one pushed is
+                // the measured part.
                 let _hold = self
                     .resources
-                    .reserve(bytes_of::<(usize, usize, Style, Affine)>(2))
+                    .reserve_estimate(
+                        bytes_of::<(usize, usize, Style, Affine)>(2),
+                        bytes_of::<(usize, usize, Style, Affine)>(1),
+                    )
                     .map_err(GraphicError::Resource)?;
                 open.push((at, 0, style, transform));
             } else {
@@ -467,9 +472,14 @@ impl Compiler<'_> {
                 // The shape's segments, as its spec keeps them, reserved
                 // before the spec is built: a count is no refusal.
                 let segments = subpaths.iter().map(|sub| sub.segs.len()).sum::<usize>();
+                // Each drawn segment is kept once (measured); the second copy
+                // is the estimate.
                 let _hold = self
                     .resources
-                    .reserve(bytes_of::<super::Segment>(segments.saturating_mul(2)))
+                    .reserve_estimate(
+                        bytes_of::<super::Segment>(segments.saturating_mul(2)),
+                        bytes_of::<super::Segment>(segments),
+                    )
                     .map_err(Refused::Resource)?;
                 let (frame, specs) =
                     geometry::custom(&subpaths, transform, fill.is_some(), stroke.is_some())?;

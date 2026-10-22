@@ -60,6 +60,39 @@ impl DoceditError {
             Self::InvalidTransaction(_) => None,
         }
     }
+
+    /// [`docx_resource`] for a failed parse or revision.
+    #[must_use]
+    pub fn resource(&self) -> Option<resource::ResourceRefusal> {
+        match self {
+            Self::Document(error) => docx_resource(error),
+            Self::InvalidTransaction(_) => None,
+        }
+    }
+
+    /// [`docx_capacity`] for a failed parse or revision.
+    #[must_use]
+    pub fn capacity(&self) -> Option<resource::CapacityHit> {
+        match self {
+            Self::Document(error) => docx_capacity(error),
+            Self::InvalidTransaction(_) => None,
+        }
+    }
+}
+
+/// The refusal, when the machine's memory or a deadline stopped a DOCX
+/// read or revision ([`resource::Resources::docx`]): never an invalid
+/// document.
+#[must_use]
+pub fn docx_resource(error: &stemma::runtime::RuntimeError) -> Option<resource::ResourceRefusal> {
+    error.details.resource().map(Into::into)
+}
+
+/// The ceiling a well-formed DOCX passed (a byte ceiling of its archive
+/// limits, or classic ZIP's widths): never an invalid document (FIX 5354).
+#[must_use]
+pub fn docx_capacity(error: &stemma::runtime::RuntimeError) -> Option<resource::CapacityHit> {
+    error.details.capacity().map(resource::CapacityHit::of_docx)
 }
 
 /// Parse the native writer's transaction grammar and refuse direct mode before
@@ -124,15 +157,29 @@ pub fn revise_with_limits(
 /// [`revise_with_limits`], also returning the [`EditNote`]s the transaction's
 /// steps report, such as a comment quote that matched more than one copy and
 /// the copy it anchored.
+///
+/// Every read inside, the fork's own rereads included, runs under `limits`
+/// and reserves through the operation the caller runs it in
+/// ([`resource::Resources::docx`]).
 pub fn revise_with_notes(
     input: &[u8],
     transaction_json: &str,
     limits: ArchiveLimits,
 ) -> Result<(Vec<u8>, Vec<EditNote>), DoceditError> {
-    preflight_with_limits(input, limits)?;
-    let transaction = parse_native_revision(transaction_json)?;
-    let (edited, notes) = Document::parse(input)?.apply_with_notes(&transaction)?;
-    Ok((export_redline(&edited, limits)?, notes))
+    within(limits, || {
+        preflight_with_limits(input, limits)?;
+        let transaction = parse_native_revision(transaction_json)?;
+        let (edited, notes) = Document::parse(input)?.apply_with_notes(&transaction)?;
+        Ok((export_redline(&edited, limits)?, notes))
+    })
+}
+
+/// Runs DOCX work with every archive read under `limits`, in the operation
+/// the caller runs it in: its port, else none (FIX 8763).
+pub(crate) fn within<T>(limits: ArchiveLimits, work: impl FnOnce() -> T) -> T {
+    stemma::admission::Operation::current()
+        .with_limits(limits)
+        .run(work)
 }
 
 /// An edited document as Word-native revisions, passed by the blocking linker
@@ -164,11 +211,13 @@ pub fn preflight_with_limits(
     Ok(())
 }
 
-/// The caller-safe refusal when `error` is the DOCX parse budget's, naming
-/// the bound the package exceeded; `None` for any other failure.
+/// The caller-safe refusal when a well-formed DOCX passed a ceiling (a byte
+/// ceiling of its archive limits, or classic ZIP's widths), naming it;
+/// `None` for any other failure. A count in the package is never one: the
+/// parse reserves what its trees cost instead (FIX 8570).
 #[must_use]
 pub fn parse_limit_refusal(error: &stemma::runtime::RuntimeError) -> Option<&str> {
-    (error.code == stemma::runtime::ErrorCode::ParseLimitExceeded).then_some(error.message.as_str())
+    (error.code == stemma::runtime::ErrorCode::CapacityExceeded).then_some(error.message.as_str())
 }
 
 /// One body block of a Word document as an anchor reads it: its block id and
@@ -219,6 +268,8 @@ pub fn validate_blocking_with_limits(
     bytes: &[u8],
     limits: ArchiveLimits,
 ) -> Result<(), stemma::runtime::RuntimeError> {
-    preflight_with_limits(bytes, limits)?;
-    stemma::runtime::gate_serialized_bytes(bytes, ValidatorLevel::Blocking)
+    within(limits, || {
+        preflight_with_limits(bytes, limits)?;
+        stemma::runtime::gate_serialized_bytes(bytes, ValidatorLevel::Blocking)
+    })
 }

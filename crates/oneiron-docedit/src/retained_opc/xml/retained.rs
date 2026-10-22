@@ -69,9 +69,13 @@ impl State<'_> {
             .filter(|&at| at <= self.source.len())
     }
     fn open(&mut self, at: usize, attrs: *const *const c_char) -> Result<()> {
-        // The node twice (the arena grows by doubling) and its stack slot.
-        self.hold
-            .take(bytes_of::<Node<'_>>(2).saturating_add(bytes_of::<usize>(1)))?;
+        // The node twice (the arena grows by doubling) and its stack slot;
+        // the one node and slot pushed are the measured part.
+        let one = bytes_of::<Node<'_>>(1).saturating_add(bytes_of::<usize>(1));
+        self.hold.take_estimate(
+            bytes_of::<Node<'_>>(2).saturating_add(bytes_of::<usize>(1)),
+            one,
+        )?;
         let (name, inner, empty) = source_start(self.source, at)?;
         let parent = self.stack.last().copied();
         if let Some(id) = parent {
@@ -310,7 +314,9 @@ impl<'a> ValidatedXmlPart<'a> {
             c_int::try_from(source.len()).map_err(|_| Error::Edit("XML input size limit"))?;
         resources.checkpoint()?;
         let mut hold = resources.hold();
-        hold.take(wide(source.len()))?;
+        // Expat's own buffers, as long as the source: an estimate, nothing of
+        // it measured before the parser runs.
+        hold.take_estimate(wide(source.len()), 0)?;
         // A non-null native parser lives through XML_Parse and is freed by
         // OwnedParser even if validation refuses the part.
         // SAFETY: constant is a NUL-terminated encoding label for Expat.

@@ -658,18 +658,22 @@ impl PolicyManifestResolution {
         }
     }
 
-    /// Restrictive DOCX workload fold: shipped/default vault upper bound,
-    /// every trusted manifest's vault row, and the selected holder rows. A
-    /// malformed loaded manifest yields no usable budget (never a fallback).
+    /// DOCX workload policy: the selected trusted vault rows (an owner's,
+    /// else the shipped one) meet restrictively, each narrowed by the
+    /// caller's exact holder rows. No shipped value caps an owner's row
+    /// (FIX 8763); [`ArchiveLimits::DEFAULT`] stands only when no row exists.
+    /// A malformed loaded manifest yields no usable budget (never a fallback).
     pub(crate) fn docx_archive_limits(&self, holder: Option<EntityId>) -> Option<ArchiveLimits> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             return None;
         }
-        let mut limits = ArchiveLimits::DEFAULT;
-        for policy in &self.docx_archive_limits {
-            limits = limits.narrow(policy.for_holder(holder));
-        }
-        Some(limits)
+        let mut selected = self
+            .docx_archive_limits
+            .iter()
+            .map(|policy| policy.for_holder(holder));
+        Some(selected.next().map_or(ArchiveLimits::DEFAULT, |first| {
+            selected.fold(first, ArchiveLimits::narrow)
+        }))
     }
     pub(crate) fn hosted_tts_limits(
         &self,

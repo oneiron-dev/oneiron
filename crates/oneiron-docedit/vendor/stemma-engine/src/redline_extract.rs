@@ -83,6 +83,9 @@ pub enum RedlineExtractError {
         projection: &'static str,
         source: String,
     },
+    /// The package's memory was refused at the machine's floor, or its wait
+    /// or deadline ran out: a well-formed package.
+    Resource(crate::admission::Refusal),
 }
 
 impl fmt::Display for RedlineExtractError {
@@ -100,6 +103,7 @@ impl fmt::Display for RedlineExtractError {
                 f,
                 "numbering error in {part} paragraph {paragraph_index} ({projection} projection): {source}"
             ),
+            Self::Resource(refusal) => write!(f, "{refusal}"),
         }
     }
 }
@@ -112,10 +116,10 @@ impl fmt::Display for RedlineExtractError {
 pub fn extract_redline(docx_bytes: &[u8]) -> Result<RedlineExtract, RedlineExtractError> {
     let cursor = Cursor::new(docx_bytes);
     let mut zip = ZipArchive::new(cursor).map_err(|e| RedlineExtractError::Zip(e.to_string()))?;
-    // One XML budget across every part, charged before any part is parsed.
-    crate::parse_budget::admit_zip(&mut zip).map_err(|bound| {
-        RedlineExtractError::Zip(crate::parse_budget::refusal(bound, bound.limit()))
-    })?;
+    // The trees every part builds, reserved before any part is parsed and
+    // held until the extract is built.
+    let _trees = crate::parse_budget::admit_zip(&mut zip, &crate::admission::Operation::current())
+        .map_err(RedlineExtractError::Resource)?;
     let numbering_defs = read_numbering_definitions(&mut zip)?;
 
     // Extract body from word/document.xml (required).
