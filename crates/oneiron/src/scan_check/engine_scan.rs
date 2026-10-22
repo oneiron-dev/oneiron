@@ -160,11 +160,14 @@ pub enum EngineScan {
     /// The attempt records one dispatch ancestor walk reads, wrappers
     /// included.
     DispatchAncestorRows,
+    /// One TASK's Linear mirror event index rows a provenance page reads,
+    /// its lookahead row included.
+    LinearProvenanceRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 64] = [
+    pub const ALL: [Self; 65] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -229,6 +232,7 @@ impl EngineScan {
         Self::ProjectDepthPredecessors,
         Self::ProjectDepthContributionBytes,
         Self::DispatchAncestorRows,
+        Self::LinearProvenanceRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -307,6 +311,7 @@ impl EngineScan {
             Self::ProjectDepthPredecessors => "project_depth_predecessors",
             Self::ProjectDepthContributionBytes => "project_depth_contribution_bytes",
             Self::DispatchAncestorRows => "dispatch_ancestor_rows",
+            Self::LinearProvenanceRows => "linear_provenance_rows",
         }
     }
 
@@ -333,6 +338,7 @@ impl EngineScan {
             Self::DispatchAncestorRows => {
                 crate::context_projection::CONTEXT_PROJECTION_ANCESTOR_CHECK
             }
+            Self::LinearProvenanceRows => 200,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -403,6 +409,7 @@ impl EngineScan {
             Self::ProjectDepthPredecessors => 89,
             Self::ProjectDepthContributionBytes => 90,
             Self::DispatchAncestorRows => 91,
+            Self::LinearProvenanceRows => 92,
         }]
     }
 }

@@ -59,6 +59,7 @@ mod commitment_doors;
 mod compliance_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
+mod connector_revision_doors;
 mod connector_slate_doors;
 mod consent_doors;
 mod consolidation_doors;
@@ -1428,7 +1429,7 @@ fn facade_rewrite_admit(
         facade_admit_rewritten(&vault, &auth, &original, rewritten)?;
         // A courtesy answer's rewritten reply_to meets its door's own check
         // here, so a bad one gives way to the caller's (FIX 5140).
-        crate::owner::cooperative_deletion::check_rewritten_reply_to(verb, rewritten)
+        crate::owner::courtesy_delete::check_rewritten_reply_to(verb, rewritten)
     })
 }
 

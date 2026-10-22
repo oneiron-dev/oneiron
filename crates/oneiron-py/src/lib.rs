@@ -2556,6 +2556,79 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_connectors_slates_scope_outcome(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.slates.scope_outcome")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.slates.scope_outcome", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_slates_revision_offers(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.connectors.slates.revision_offers")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.slates.revision_offers", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_slates_defer_revision(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.connectors.slates.defer_revision")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.slates.defer_revision", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_slates_accept_revision(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.connectors.slates.accept_revision")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.slates.accept_revision", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_slates_reask_issuer(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.slates.reask_issuer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.slates.reask_issuer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_connectors_subscriptions_put(
         &self,
         py: Python<'_>,
@@ -10068,6 +10141,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.browser.library.draft")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.browser.library.draft", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_demonstration_start(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.demonstration.start")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("self.browser.demonstration.start", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_demonstration_stop(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.demonstration.stop")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("self.browser.demonstration.stop", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

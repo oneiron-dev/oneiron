@@ -1,6 +1,7 @@
 //! ARCH-0072 typed per-capability grant slates. Every row starts at `auto`
 //! and a draft never widens past it. Only an authenticated owner sets the
 //! override columns; the key's holder may only tighten its own rows.
+use super::slate_revision::SlateRevisionCause;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
@@ -302,6 +303,9 @@ pub struct ConnectorGrantSlate {
     /// Rows new or expanded against `prior`, by row key: the only rows the
     /// tap re-asks.
     reask: BTreeSet<String>,
+    /// Why this slate revises `prior` (FIX 988): engine-built from checked
+    /// evidence, never a caller's word. `None` at connector add.
+    cause: Option<SlateRevisionCause>,
     /// The aggregate the last owner stamp bound.
     stamped_aggregate: Option<[u8; 32]>,
 }
@@ -383,6 +387,15 @@ impl ConnectorGrantSlate {
     }
     pub fn reask(&self) -> &BTreeSet<String> {
         &self.reask
+    }
+    /// Why this slate revises its prior, when it is a revision.
+    pub fn cause(&self) -> Option<&SlateRevisionCause> {
+        self.cause.as_ref()
+    }
+    /// This revision, naming why it revises its prior.
+    pub(in crate::connector_key) fn with_cause(mut self, cause: SlateRevisionCause) -> Self {
+        self.cause = Some(cause);
+        self
     }
     /// The setting a call on `tool` meets. A tool the slate never declared
     /// raises the ask rather than dying as a silent deny (DEC-0006 inv. 3).
@@ -826,8 +839,20 @@ pub(in crate::connector_key) fn new_slate(
         holder_facet_narrow: prior.and_then(|slate| slate.holder_facet_narrow.clone()),
         prior: prior_id,
         reask,
+        cause: None,
         stamped_aggregate: None,
     })
+}
+
+/// Persists slate `id` in the caller's writer: a revision drafted beside the
+/// evidence that caused it (FIX 988).
+pub(in crate::connector_key) fn put_slate_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    slate: &ConnectorGrantSlate,
+) -> Result<()> {
+    GRANT_SLATE.put(store, txn, &id, slate)
 }
 
 impl Vault {

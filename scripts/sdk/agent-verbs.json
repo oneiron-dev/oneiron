@@ -4273,6 +4273,81 @@
       "openapi": true
     },
     {
+      "name": "vault.connectors.slates.scope_outcome",
+      "description": "The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted.",
+      "input": "ConnectorScopeOutcomeRequest",
+      "output": "crate::task_verb::sdk::ConnectorScopeOutcomeView",
+      "call": "crate::task_verb::sdk::record_connector_scope_outcome(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.scope_outcome\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.revision_offers",
+      "description": "Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing.",
+      "input": "ConnectorSlateRevisionOffersRequest",
+      "output": "crate::task_verb::sdk::ConnectorSlateRevisionOffersView",
+      "call": "crate::task_verb::sdk::connector_slate_revision_offers(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.revision_offers\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.defer_revision",
+      "description": "The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant.",
+      "input": "ConnectorSlateRevisionDeferRequest",
+      "output": "crate::task_verb::sdk::ConnectorRevisionSnoozeView",
+      "call": "crate::task_verb::sdk::defer_connector_slate_revision(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.defer_revision\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.accept_revision",
+      "description": "The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again.",
+      "input": "ConnectorSlateRevisionAcceptRequest",
+      "output": "crate::task_verb::sdk::ConnectorSlateRevisionAcceptedView",
+      "call": "crate::task_verb::sdk::accept_connector_slate_revision(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.accept_revision\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.reask_issuer",
+      "description": "The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask.",
+      "input": "ConnectorIssuerReaskRequest",
+      "output": "crate::task_verb::sdk::ConnectorCredentialBindingView",
+      "call": "crate::task_verb::sdk::reask_connector_issuer(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.reask_issuer\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.connectors.subscriptions.put",
       "description": "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.",
       "input": "ChannelSubscriptionRequest",
@@ -14165,6 +14240,40 @@
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryDraftInput>",
         "description": "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.browser.demonstration.start",
+      "description": "Starts recording a demonstration in the session's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running.",
+      "input": "crate::task_verb::sdk::BrowserDemonstrationStartInput",
+      "output": "crate::task_verb::sdk::BrowserDemonstrationStartOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.demonstration_start(input)?)",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserDemonstrationStartInput>",
+        "description": "Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.browser.demonstration.stop",
+      "description": "Stops a demonstration, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given; it ends before a send, pay, publish, destructive or unknown press.",
+      "input": "crate::task_verb::sdk::BrowserDemonstrationStopInput",
+      "output": "crate::task_verb::sdk::BrowserDemonstrationStopOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.demonstration_stop(input)?)",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserDemonstrationStopInput>",
+        "description": "Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given.",
         "host_door_caller": true,
         "openapi": true
       }

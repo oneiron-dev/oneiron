@@ -276,6 +276,20 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.connectors.proxy.revoke_write", post(facade_route))
         .route("/vault.connectors.slates.redraft", post(facade_route))
         .route("/vault.connectors.slates.narrow", post(facade_route))
+        .route("/vault.connectors.slates.scope_outcome", post(facade_route))
+        .route(
+            "/vault.connectors.slates.revision_offers",
+            post(facade_route),
+        )
+        .route(
+            "/vault.connectors.slates.defer_revision",
+            post(facade_route),
+        )
+        .route(
+            "/vault.connectors.slates.accept_revision",
+            post(facade_route),
+        )
+        .route("/vault.connectors.slates.reask_issuer", post(facade_route))
         .route("/vault.connectors.subscriptions.put", post(facade_route))
         .route("/vault.connectors.subscriptions.list", post(facade_route))
         .route("/vault.connectors.subscriptions.revoke", post(facade_route))
@@ -1220,6 +1234,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.browser.batch", post(facade_route))
         .route("/self.browser.library.find", post(facade_route))
         .route("/self.browser.library.draft", post(facade_route))
+        .route("/self.browser.demonstration.start", post(facade_route))
+        .route("/self.browser.demonstration.stop", post(facade_route))
         .route("/self.browser.library.propose", post(facade_route))
         .route("/self.browser.library.retire", post(facade_route))
         .route("/self.browser.library.retired", post(facade_route))

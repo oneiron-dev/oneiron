@@ -1326,6 +1326,31 @@ export_facade! {
     let output = client.vault_connectors_slates_narrow(&input)?;
     crate::codec::lift_record("vault.connectors.slates.narrow", &output)
 };
+"vault.connectors.slates.scope_outcome" => fn vault_connectors_slates_scope_outcome(&self, input: ConnectorScopeOutcomeRequest) -> ConnectorScopeOutcomeView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorScopeOutcomeRequest = crate::codec::lower_record("vault.connectors.slates.scope_outcome", input)?;
+    let output = client.vault_connectors_slates_scope_outcome(&input)?;
+    crate::codec::lift_record("vault.connectors.slates.scope_outcome", &output)
+};
+"vault.connectors.slates.revision_offers" => fn vault_connectors_slates_revision_offers(&self, input: ConnectorSlateRevisionOffersRequest) -> ConnectorSlateRevisionOffersView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorSlateRevisionOffersRequest = crate::codec::lower_record("vault.connectors.slates.revision_offers", input)?;
+    let output = client.vault_connectors_slates_revision_offers(&input)?;
+    crate::codec::lift_record("vault.connectors.slates.revision_offers", &output)
+};
+"vault.connectors.slates.defer_revision" => fn vault_connectors_slates_defer_revision(&self, input: ConnectorSlateRevisionDeferRequest) -> ConnectorRevisionSnoozeView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorSlateRevisionDeferRequest = crate::codec::lower_record("vault.connectors.slates.defer_revision", input)?;
+    let output = client.vault_connectors_slates_defer_revision(&input)?;
+    crate::codec::lift_record("vault.connectors.slates.defer_revision", &output)
+};
+"vault.connectors.slates.accept_revision" => fn vault_connectors_slates_accept_revision(&self, input: ConnectorSlateRevisionAcceptRequest) -> ConnectorSlateRevisionAcceptedView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorSlateRevisionAcceptRequest = crate::codec::lower_record("vault.connectors.slates.accept_revision", input)?;
+    let output = client.vault_connectors_slates_accept_revision(&input)?;
+    crate::codec::lift_record("vault.connectors.slates.accept_revision", &output)
+};
+"vault.connectors.slates.reask_issuer" => fn vault_connectors_slates_reask_issuer(&self, input: ConnectorIssuerReaskRequest) -> ConnectorCredentialBindingView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorIssuerReaskRequest = crate::codec::lower_record("vault.connectors.slates.reask_issuer", input)?;
+    let output = client.vault_connectors_slates_reask_issuer(&input)?;
+    crate::codec::lift_record("vault.connectors.slates.reask_issuer", &output)
+};
 "vault.connectors.subscriptions.put" => fn vault_connectors_subscriptions_put(&self, input: ChannelSubscriptionRequest) -> ChannelMessageSubscription = |client| {
     let input: oneiron::task_verb::sdk::ChannelSubscriptionRequest = crate::codec::lower_record("vault.connectors.subscriptions.put", input)?;
     let output = client.vault_connectors_subscriptions_put(&input)?;
@@ -5615,6 +5640,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryDraftInput> = crate::codec::lower_record("self.browser.library.draft", input)?;
     let output = client.self_browser_library_draft(&input)?;
     crate::codec::lift_record("self.browser.library.draft", &output)
+};
+"self.browser.demonstration.start" => fn self_browser_demonstration_start(&self, input: LiveRunRequestDemonstrationStartInput) -> BrowserAnswerDemonstrationStarted = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserDemonstrationStartInput> = crate::codec::lower_record("self.browser.demonstration.start", input)?;
+    let output = client.self_browser_demonstration_start(&input)?;
+    crate::codec::lift_record("self.browser.demonstration.start", &output)
+};
+"self.browser.demonstration.stop" => fn self_browser_demonstration_stop(&self, input: LiveRunRequestDemonstrationStopInput) -> BrowserAnswerDemonstrationOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserDemonstrationStopInput> = crate::codec::lower_record("self.browser.demonstration.stop", input)?;
+    let output = client.self_browser_demonstration_stop(&input)?;
+    crate::codec::lift_record("self.browser.demonstration.stop", &output)
 };
 "self.browser.library.propose" => fn self_browser_library_propose(&self, input: LiveRunRequestProposeInput) -> BrowserAnswerProposeOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryProposeInput> = crate::codec::lower_record("self.browser.library.propose", input)?;

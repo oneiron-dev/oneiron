@@ -20,11 +20,15 @@ this one reuses its pinning, ELF and kernel-archive checks.
               bootstrap's rows cover
   vault-disk  an empty ext4 vault disk with its encrypt feature and a fixed
               UUID: the vault_disk_uuid of the VM profile's provision binding
+  config-disk a fresh read-only ext4 config drive holding an operator's tree
+              as it is, its trusted-organ-builds list among the files (FIX
+              7889): the VM profile's config_disk
   manifest    every artifact's SHA256 and the engine revision, for the host's
               image pin (the provision prelude's, the outbox carrier's with its
               backup-label registration, the restore channel's, the custody
-              anchor channels' and the guest network's build floors), and the
-              guest runtime's revision and descriptor
+              anchor channels' and the guest network's build floors), the
+              guest runtime's revision and descriptor, and the trusted organ
+              builds file's revision
 """
 from __future__ import annotations
 
@@ -82,6 +86,13 @@ VM_NETWORK_REVISION = 1
 # passes the engine their flags, so a host stages them only for an image whose
 # manifest names it.
 VM_MANAGED_PROFILE_REVISION = 1
+# The trusted organ builds file's revision
+# (oneiron_vault_contract::vm::VM_TRUSTED_ORGAN_BUILDS_REVISION, FIX 7889):
+# this image's init passes each line of the config drive's trusted-organ-builds
+# to the engine as its own --trusted-organ-build, so an operator's list is
+# applied only by an image whose manifest names it. It never says a list was
+# staged or an organ started.
+VM_TRUSTED_ORGAN_BUILDS_REVISION = 1
 # The resolver file's mountpoint: empty and 0644 in the image, and covered by
 # oneiron-vm-init's bind mount when the guest's network plan names nameservers.
 RESOLV_CONF = "etc/resolv.conf"
@@ -337,6 +348,8 @@ def build_rootfs(args):
         "source_date_epoch": args.epoch, "size_mib": args.size_mib,
         "vm_guest_runtime_revision": VM_GUEST_RUNTIME_REVISION if descriptor else 0,
         "guest_runtime": descriptor,
+        # The init copied above reads the config drive's trusted-organ-builds.
+        "vm_trusted_organ_builds_revision": VM_TRUSTED_ORGAN_BUILDS_REVISION,
     })
 
 
@@ -358,6 +371,27 @@ def build_vault_disk(args):
     })
 
 
+def build_config_disk(args):
+    """A fresh config drive from the operator's tree, offline: every file in it
+    lands at the drive's root as it is, so <tree>/trusted-organ-builds is the
+    guest's /config/trusted-organ-builds (FIX 7889). No list is derived or
+    checked here: the engine's --trusted-organ-build parser judges each line on
+    boot. Never writes to a drive a VM has attached."""
+    source = Path(args.source_dir).resolve(strict=True)
+    if not source.is_dir():
+        raise ValueError("the config drive's source is not a directory")
+    output = microvm.new_output(args.output)
+    image = output / "config.ext4"
+    with image.open("xb") as stream:
+        stream.truncate(args.size_mib * 1024 * 1024)
+    microvm.run("mke2fs", "-q", "-F", "-t", "ext4", "-d", source,
+                "-E", "root_owner=0:0,lazy_itable_init=0,lazy_journal_init=0", image)
+    image.chmod(0o444)
+    microvm.json_write(output / "config-disk-receipt.json", {
+        "schema": 1, "size_mib": args.size_mib, "config_sha256": microvm.sha256(image),
+    })
+
+
 def make_manifest(args):
     if not re.fullmatch(r"[0-9a-f]{40}", args.engine_revision):
         raise ValueError("the engine revision is a full 40-hex commit")
@@ -371,6 +405,9 @@ def make_manifest(args):
             (runtime_revision == 0 and descriptor is None)
             or (runtime_revision == VM_GUEST_RUNTIME_REVISION and isinstance(descriptor, dict))):
         raise ValueError("the rootfs receipt's guest runtime revision and descriptor disagree")
+    trusted_revision = receipt["vm_trusted_organ_builds_revision"]
+    if type(trusted_revision) is not int or trusted_revision != VM_TRUSTED_ORGAN_BUILDS_REVISION:
+        raise ValueError("the rootfs receipt names another trusted organ builds revision")
     output = Path(args.output)
     with output.open("x") as stream:
         json.dump({"schema": 1, "engine_revision": args.engine_revision,
@@ -382,6 +419,7 @@ def make_manifest(args):
                    "vm_network_revision": VM_NETWORK_REVISION,
                    "vm_managed_profile_revision": VM_MANAGED_PROFILE_REVISION,
                    "vm_guest_runtime_revision": runtime_revision, "guest_runtime": descriptor,
+                   "vm_trusted_organ_builds_revision": trusted_revision,
                    "artifacts": artifacts, "rootfs_files": receipt["files"]},
                   stream, indent=2, sort_keys=True)
         stream.write("\n")
@@ -415,6 +453,12 @@ def main():
     disk.add_argument("--size-mib", type=int, required=True)
     disk.add_argument("--output", required=True)
     disk.set_defaults(action=build_vault_disk)
+    config = commands.add_parser("config-disk", help="make a fresh read-only ext4 config drive from an operator's tree")
+    config.add_argument("--source-dir", required=True,
+                        help="the operator's tree: settings.toml, seal/, trusted-organ-builds and the other files")
+    config.add_argument("--size-mib", type=int, required=True)
+    config.add_argument("--output", required=True)
+    config.set_defaults(action=build_config_disk)
     manifest = commands.add_parser("manifest", help="record the kernel and rootfs hashes and the engine revision for host pinning")
     for name in ("kernel", "rootfs", "rootfs-receipt", "engine-revision", "output"):
         manifest.add_argument("--" + name, required=True)

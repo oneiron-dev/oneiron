@@ -1146,6 +1146,16 @@ export class Oneiron {
         redraft: (input: Facade.ConnectorSlateRedraftRequest): Facade.ConnectorSlateRedraftReply => this.#call(() => this.#client.vaultConnectorsSlatesRedraft(input) as Facade.ConnectorSlateRedraftReply),
         /** The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it. */
         narrow: (input: Facade.ConnectorSlateNarrowRequest): Facade.ConnectorSlateNarrowView => this.#call(() => this.#client.vaultConnectorsSlatesNarrow(input) as Facade.ConnectorSlateNarrowView),
+        /** The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted. */
+        scope_outcome: (input: Facade.ConnectorScopeOutcomeRequest): Facade.ConnectorScopeOutcomeView => this.#call(() => this.#client.vaultConnectorsSlatesScopeOutcome(input) as Facade.ConnectorScopeOutcomeView),
+        /** Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing. */
+        revision_offers: (input: Facade.ConnectorSlateRevisionOffersRequest): Facade.ConnectorSlateRevisionOffersView => this.#call(() => this.#client.vaultConnectorsSlatesRevisionOffers(input) as Facade.ConnectorSlateRevisionOffersView),
+        /** The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant. */
+        defer_revision: (input: Facade.ConnectorSlateRevisionDeferRequest): Facade.ConnectorRevisionSnoozeView => this.#call(() => this.#client.vaultConnectorsSlatesDeferRevision(input) as Facade.ConnectorRevisionSnoozeView),
+        /** The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again. */
+        accept_revision: (input: Facade.ConnectorSlateRevisionAcceptRequest): Facade.ConnectorSlateRevisionAcceptedView => this.#call(() => this.#client.vaultConnectorsSlatesAcceptRevision(input) as Facade.ConnectorSlateRevisionAcceptedView),
+        /** The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask. */
+        reask_issuer: (input: Facade.ConnectorIssuerReaskRequest): Facade.ConnectorCredentialBindingView => this.#call(() => this.#client.vaultConnectorsSlatesReaskIssuer(input) as Facade.ConnectorCredentialBindingView),
       },
       subscriptions: {
         /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
@@ -3101,6 +3111,12 @@ export class Oneiron {
         retired: (input: Facade.LiveRunRequest<Facade.LibraryRetiredInput>): Facade.BrowserLibraryRetiredOutput => this.#call(() => this.#client.selfBrowserLibraryRetired(input) as Facade.BrowserLibraryRetiredOutput),
         /** Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift. */
         run: (input: Facade.LiveRunRequest<Facade.LibraryRunInput>): Facade.BrowserLibraryRunOutput => this.#call(() => this.#client.selfBrowserLibraryRun(input) as Facade.BrowserLibraryRunOutput),
+      },
+      demonstration: {
+        /** Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running. */
+        start: (input: Facade.LiveRunRequest<Facade.DemonstrationStartInput>): Facade.BrowserDemonstrationStartOutput => this.#call(() => this.#client.selfBrowserDemonstrationStart(input) as Facade.BrowserDemonstrationStartOutput),
+        /** Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given. */
+        stop: (input: Facade.LiveRunRequest<Facade.DemonstrationStopInput>): Facade.BrowserDemonstrationStopOutput => this.#call(() => this.#client.selfBrowserDemonstrationStop(input) as Facade.BrowserDemonstrationStopOutput),
       },
       /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
       handover: (input: Facade.LiveRunRequest<Facade.HandoverInput>): Facade.BrowserHandoverOutput => this.#call(() => this.#client.selfBrowserHandover(input) as Facade.BrowserHandoverOutput),

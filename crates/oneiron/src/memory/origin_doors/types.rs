@@ -1,3 +1,7 @@
+//! Origin authority, checkout binding, export, publication, register and mirror records.
+//! `OriginRepoRequest` is the first of its records.
+//! These are local definitions; `memory::origin_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
