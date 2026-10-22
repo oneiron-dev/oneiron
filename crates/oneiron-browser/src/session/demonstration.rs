@@ -20,8 +20,8 @@ use crate::demonstration::{Edited, Recording};
 use crate::driver::recorder::last_edit;
 use crate::{
     BrowserError, DemonstrationOutput, DemonstrationStartInput, DemonstrationStarted,
-    DemonstrationStopCause, DemonstrationStopInput, DraftGapKind, DraftInput, DraftOutcome,
-    DraftStep, RecordedStep, RecordingGapKind, ReplayAction,
+    DemonstrationStopCause, DemonstrationStopInput, DraftGap, DraftGapKind, DraftInput,
+    DraftOutcome, DraftStep, RecordedStep, RecordingGapKind, ReplayAction,
 };
 
 /// A session's demonstrations: the one that runs, those that ended and
@@ -264,7 +264,19 @@ impl BrowserSession {
             through_seq: Some(recording.steps.last().map_or(0, |step| step.seq)),
             past_press: false,
         };
-        let draft = self.draft_over(draft, &steps, url)?;
+        let mut draft = self.draft_over(draft, &steps, url)?;
+        // A navigation no recorded act made leaves the draft incomplete,
+        // not only the recording's gaps (FIX 9413).
+        for gap in &recording.gaps {
+            if gap.gap == RecordingGapKind::UnrecordedNavigation {
+                draft.gaps.push(DraftGap {
+                    seq: gap.seq,
+                    verb: None,
+                    gap: DraftGapKind::UnrecordedNavigation,
+                });
+                draft.complete = false;
+            }
+        }
         Ok(DemonstrationOutput {
             origin: draft.origin.clone().or(recording.origin),
             id: recording.id,

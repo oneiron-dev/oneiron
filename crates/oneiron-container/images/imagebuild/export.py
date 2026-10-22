@@ -1,15 +1,26 @@
 """One assembled tree, exported twice from one deterministic tar.
 
 The tar (rootfs.tar) carries the explicit ownership rule (owners.py), the
-tree's modes and symlinks, and mtimes clamped to SOURCE_DATE_EPOCH, in sorted
-order. The OCI image's single layer is that tar, gzipped. The Firecracker
-rootfs is `mke2fs -d rootfs.tar` from the tools tree: a root-only ext4, no
-partition table, no ESP, no UKI, its kernel kept separate. Both forms carry
-identical owners, modes and bytes.
+tree's modes, symlinks and extended attributes, and mtimes clamped to
+SOURCE_DATE_EPOCH, in sorted order. The OCI image's single layer is that tar,
+gzipped. The Firecracker rootfs is `mke2fs -d rootfs.tar` from the tools
+tree: a root-only ext4, no partition table, no ESP, no UKI, its kernel kept
+separate. Both forms carry identical owners, modes, bytes and exported
+extended attributes.
+
+Only the extended attributes named in XATTR_KEEP are exported (FIX 10349):
+today exactly security.capability, the one name mke2fs's tar import carries
+into ext4, so both forms hold the same set. Anything else the build host's
+filesystem put on a file (an SELinux label, IMA/EVM, an ACL, user.* or
+trusted.*) never reaches the layer, the members listing or the tools-tree
+hash. A kept attribute travels as a PAX `SCHILY.xattr.<name>` record holding
+the raw value bytes; a file capability is written as a v2 value, which names
+no namespace root (the policy at CAPABILITY).
 
 rootfs.members.tsv lists every tar member (path, type, mode, uid, gid, size,
-mtime, and the file's sha256 or the link's target): the payload identity a
-second build compares, independent of tar, gzip and ext4 framing.
+mtime, the file's sha256 or the link's target, and its xattrs as sorted
+`name=<hex>` pairs joined by `;`): the payload identity a second build
+compares, independent of tar, gzip and ext4 framing.
 """
 
 from __future__ import annotations
@@ -20,6 +31,7 @@ import json
 import os
 import shutil
 import stat
+import struct
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +45,16 @@ OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 OCI_INDEX = "application/vnd.oci.image.index.v1+json"
 OCI_CONFIG = "application/vnd.oci.image.config.v1+json"
 OCI_LAYER = "application/vnd.oci.image.layer.v1.tar+gzip"
+# The xattr export policy: only the names in XATTR_KEEP are exported, and
+# security.capability goes out as VFS_CAP_REVISION_2 (magic, permitted and
+# inheritable pairs; no rootid), the form a guest's own root reads. A v3
+# value is translated only when its rootid is the builder's mapped root;
+# any other capability value is refused. A name joins XATTR_KEEP only when a
+# pinned package needs it and both the OCI and the ext4 form carry it.
+CAPABILITY = "security.capability"
+XATTR_KEEP = (CAPABILITY,)
+CAP_REVISION_MASK, CAP_V2, CAP_V3 = 0xFF000000, 0x02000000, 0x03000000
+CAP_V2_BYTES, CAP_V3_BYTES = 20, 24
 
 
 class OverBound(BuildError):
@@ -68,8 +90,49 @@ def entries(tree: Path) -> list[str]:
     return sorted(out)
 
 
+def _builder_roots() -> set[int]:
+    """The ids the builder's own root has: 0 in its namespace, and the invoking
+    uid build.py mapped to it (ONEIRON_IMAGES_UID)."""
+    roots = {0}
+    if os.environ.get("ONEIRON_IMAGES_UID", "").isdigit():
+        roots.add(int(os.environ["ONEIRON_IMAGES_UID"]))
+    return roots
+
+
+def _capability(rel: str, value: bytes) -> bytes:
+    """security.capability as v2 (the export policy at CAPABILITY)."""
+    magic = struct.unpack_from("<I", value)[0] if len(value) >= 4 else 0
+    revision = magic & CAP_REVISION_MASK
+    if revision == CAP_V2 and len(value) == CAP_V2_BYTES:
+        return value
+    if revision == CAP_V3 and len(value) == CAP_V3_BYTES:
+        rootid = struct.unpack_from("<I", value, CAP_V2_BYTES)[0]
+        if rootid in _builder_roots():
+            return struct.pack("<I", CAP_V2 | (magic & ~CAP_REVISION_MASK)) + value[4:CAP_V2_BYTES]
+        raise StepFailed(f"{rel}: its file capability belongs to namespace root uid {rootid}, not the builder's")
+    raise StepFailed(f"{rel}: a file capability of {len(value)} bytes, revision {revision >> 24:#x}, "
+                     "is not one the exporter writes")
+
+
+def xattrs(path: Path, rel: str) -> list[tuple[str, bytes]]:
+    """The entry's exported extended attributes (XATTR_KEEP), sorted by name,
+    never following a symlink; any other name is not even read."""
+    out = []
+    for name in sorted(os.listxattr(path, follow_symlinks=False)):
+        if name not in XATTR_KEEP:
+            continue
+        value = os.getxattr(path, name, follow_symlinks=False)
+        out.append((name, _capability(rel, value) if name == CAPABILITY else value))
+    return out
+
+
+def xattr_text(attrs: list[tuple[str, bytes]]) -> str:
+    """The members-listing form: `name=<hex>` pairs joined by `;`, empty for none."""
+    return ";".join(f"{name}={value.hex()}" for name, value in attrs)
+
+
 def tree_digest(tree: Path) -> str:
-    """Content identity of a tree: path, type, mode, size and bytes or link target.
+    """Content identity of a tree: path, type, mode, size, bytes or link target, and xattrs.
     Ownership is left out: every mkosi tree here is single-uid on disk."""
     digest = hashlib.sha256()
     for rel in entries(tree):
@@ -82,7 +145,9 @@ def tree_digest(tree: Path) -> str:
             body = "d"
         else:
             body = f"o:{st.st_mode:o}"
-        digest.update(f"{rel}\0{stat.S_IMODE(st.st_mode):o}\0{st.st_size if body[0] == 'f' else 0}\0{body}\n".encode())
+        size = st.st_size if body[0] == "f" else 0
+        attrs = xattr_text(xattrs(tree / rel, rel))
+        digest.update(f"{rel}\0{stat.S_IMODE(st.st_mode):o}\0{size}\0{body}\0{attrs}\n".encode())
     return digest.hexdigest()
 
 
@@ -126,8 +191,11 @@ def rootfs_tar(tree: Path, dest: Path, epoch: int, owners: dict) -> dict:
     files = dirs = links = 0
     file_bytes = alloc = 0
     members = dest.with_name("rootfs.members.tsv")
-    with tarfile.open(dest, "w", format=tarfile.PAX_FORMAT) as tar, open(members, "w") as listing:
-        listing.write("# path\ttype\tmode\tuid\tgid\tsize\tmtime\tsha256|target\n")
+    # UTF-8 with surrogateescape: an xattr value that is not UTF-8 goes out
+    # byte for byte under hdrcharset=BINARY.
+    with tarfile.open(dest, "w", format=tarfile.PAX_FORMAT, encoding="utf-8", errors="surrogateescape") as tar, \
+            open(members, "w") as listing:
+        listing.write("# path\ttype\tmode\tuid\tgid\tsize\tmtime\tsha256|target\txattrs\n")
         for rel in entries(tree):
             full = tree / rel
             info = tar.gettarinfo(str(full), arcname=rel)
@@ -136,6 +204,9 @@ def rootfs_tar(tree: Path, dest: Path, epoch: int, owners: dict) -> dict:
             if mode is not None:
                 info.mode = mode
             info.mtime = min(int(info.mtime), epoch)
+            attrs = xattrs(full, rel)
+            for name, value in attrs:
+                info.pax_headers["SCHILY.xattr." + name] = value.decode("utf-8", "surrogateescape")
             body = ""
             if info.isreg():
                 files += 1
@@ -162,7 +233,7 @@ def rootfs_tar(tree: Path, dest: Path, epoch: int, owners: dict) -> dict:
             else:
                 raise StepFailed(f"{rel}: unexpected file type in the image tree")
             listing.write(f"{rel}\t{kind}\t{info.mode & 0o7777:04o}\t{info.uid}\t{info.gid}\t"
-                          f"{info.size if kind == 'f' else 0}\t{info.mtime}\t{body}\n")
+                          f"{info.size if kind == 'f' else 0}\t{info.mtime}\t{body}\t{xattr_text(attrs)}\n")
     return {"path": str(dest), "sha256": sha256_file(dest), "bytes": dest.stat().st_size,
             "files": files, "dirs": dirs, "symlinks": links, "file_bytes": file_bytes,
             "allocated_estimate": alloc, "entries": files + dirs + links,

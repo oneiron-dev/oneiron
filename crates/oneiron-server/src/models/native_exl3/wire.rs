@@ -3,6 +3,12 @@
 //! JSON, the envelope `{v, op, request_id, epoch?, seq?, body}`. Request ids
 //! and sequence numbers are u64; the epoch is the worker's 32-hex
 //! incarnation. Nothing caps a frame's length: a frame is read as it comes.
+//!
+//! Codec v1.1 (`oneiron::llm::SESSION_SCHEMA_MINOR`) adds the session ops
+//! (`oneiron::llm::SessionOp`) inside the same v1 envelope. A worker
+//! advertises them in its hello as `capabilities.sessions` `{minor, ops}`; a
+//! host sends one only to a worker whose hello names that minor and that op
+//! (`session_ops.rs`), and a v1.0 worker never sees one.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
@@ -88,15 +94,21 @@ pub(super) fn generate_body(
     stream: bool,
 ) -> JsonValue {
     json!({
-        "input": {
-            "buffer_id": buffer_id,
-            "fd_index": 0,
-            "offset": 0,
-            "length": length,
-            "encoding": CHAT_JSON,
-        },
+        "input": input(buffer_id, length),
         "params": params,
         "stream": stream,
+    })
+}
+
+/// An input region's description: one `chat_json` region, the first
+/// descriptor of its frame, whole. `buffer_id` names it on its connection.
+pub(super) fn input(buffer_id: u64, length: u64) -> JsonValue {
+    json!({
+        "buffer_id": buffer_id,
+        "fd_index": 0,
+        "offset": 0,
+        "length": length,
+        "encoding": CHAT_JSON,
     })
 }
 

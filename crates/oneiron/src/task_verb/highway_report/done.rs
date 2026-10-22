@@ -220,7 +220,16 @@ impl Memory<'_> {
         // question it cannot ask inside its write.
         let judged = rt
             .judged
+            .as_ref()
             .and_then(|judged| judged.for_report(task_ref, result_ref, brief, principal));
+        // The model whose answer it is becomes the run's judge, in the
+        // report's own write (FIX 1877); a join that fails leaves it unknown.
+        if judged.is_some()
+            && let Some(answer) = rt.judged.as_ref()
+            && let Some(wtxn) = rt.txn.as_deref_mut()
+        {
+            answer.record_judge_in_txn(self.vault(), wtxn);
+        }
         match judged.unwrap_or_else(|| {
             ask(
                 decisions,

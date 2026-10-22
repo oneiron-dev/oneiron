@@ -8,10 +8,12 @@ mod board_observations;
 mod board_setup;
 mod booking_call;
 mod call_meta;
+mod claimed_release;
 mod code_mode_verbs;
 mod device_release;
 mod envelope;
 mod exec_board_verbs;
+mod facade_refusals;
 mod memory_response;
 mod owner_call;
 mod served_rows;
@@ -19,6 +21,7 @@ pub(crate) mod skill_execution;
 mod stream_reads;
 mod tasks_response;
 mod tool_receipt;
+mod type_feedback_release;
 mod verb_hooks;
 mod wakes;
 mod wire;
@@ -38,7 +41,9 @@ use self::board_setup::{
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
     mcp_resolve_page,
 };
-pub(crate) use self::code_mode_verbs::{ReaderChildDoor, RunGuests, VerdictAsker};
+pub(crate) use self::code_mode_verbs::{
+    ReaderChildDoor, RunGuests, VerdictAsker, count_hook_decisions,
+};
 // L09's resident_pump `run_bound` calls the strict preflight (CUA E4).
 pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflow};
 #[cfg(test)]
@@ -62,8 +67,9 @@ pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
 // unused in non-test builds.
 #[cfg(test)]
 pub(crate) use self::envelope::MCP_PROTOCOL_VERSION;
+pub(crate) use self::facade_refusals::mcp_facade_error;
 pub(crate) use self::tasks_response::{
     execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_api_error,
-    mcp_engine_error, mcp_error_response, mcp_facade_error, mcp_scoped_read, mcp_text_content,
+    mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,
 };
 use super::hex_bytes;

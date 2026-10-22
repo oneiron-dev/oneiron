@@ -157,6 +157,7 @@ mod structural_kind_registry;
 mod sync_responses;
 mod training_link;
 pub(crate) mod turn_missing;
+mod usage_sources;
 mod world_pad_custody;
 mod writer_lease;
 
@@ -216,8 +217,8 @@ pub use channel_identity_receipts::*;
 pub(crate) use commitment_due::*;
 // KS-6: credential values and carriers in typed custody.
 pub(crate) use credential_custody::{
-    CredentialLeaf, PlannedCredential, credential_kind, credential_value_leaf_in,
-    plan_credential_value,
+    CredentialFences, CredentialLeaf, FenceLookup, PlannedCredential, credential_erases_staged,
+    credential_kind, credential_value_leaf_in, plan_credential_value,
 };
 pub(crate) use deadline_jobs::DeadlineJobs;
 pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
@@ -284,5 +285,6 @@ pub(crate) use sync_responses::{
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;
 pub(crate) use training_link::TrainingLinkSlot;
+pub(crate) use usage_sources::erase_usage_source_in_txn;
 pub(crate) use world_pad_custody::{PlannedPad, WorldPadCustody, plan_world_pad};
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};

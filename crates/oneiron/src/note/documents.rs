@@ -1,6 +1,6 @@
 //! Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites.
 
-use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn, scan_content_in_txn};
+use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn};
 use crate::error::{Error, RecordError, Result};
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault};
@@ -348,10 +348,10 @@ pub(super) fn stamp(doc: &LoroDoc, actor: EntityId, at: u64, action: &str) {
     doc.set_next_commit_timestamp(at.min(i64::MAX as u64) as i64);
     doc.commit();
 }
-/// The NOTE's current head and head sequence. A NOTE that never switched is
-/// its own head at sequence 0.
+/// The NOTE's current head and head sequence, read through `store` (a room's
+/// view included). A NOTE that never switched is its own head at sequence 0.
 pub(crate) fn head_in(
-    store: &crate::store::Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
 ) -> Result<(EntityId, u64)> {
@@ -381,10 +381,10 @@ pub(crate) fn snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
 }
 /// Proposal-only storage. No caller can advance canonical authority with bytes.
 ///
-/// The proposed text is admitted as live text is (OF-067): each secret the
-/// batch door's text rules place goes to custody, and the fork itself keeps
-/// the handle, so the review record that copies its text does too. Its title
-/// refuses a hit, as a live title does.
+/// The proposed text and title are admitted as live ones are, with one plan
+/// (OF-067; FIX 1098): each secret the batch door's text rules place goes to
+/// custody, and the fork itself keeps the handle, so the review record that
+/// copies its text does too.
 pub(crate) fn store_doc(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -395,18 +395,16 @@ pub(crate) fn store_doc(
     }
     super::ensure_citations_ready(&vault.store, txn, doc.note)?;
     super::verbs::note_core(vault, txn, doc.note)?;
-    let title = super::document::NoteDocument::from_loro(doc.note, doc.doc.fork())?.title()?;
-    if let Some(title) = &title {
-        scan_content_in_txn(&vault.store, txn, title.as_bytes())?;
+    let found = super::document::NoteDocument::from_loro(doc.note, doc.doc.fork())?.title()?;
+    let original = doc.text();
+    let (mut text, mut title) = (original.clone(), found.clone());
+    let mut parts = vec![("text:body", Part::Text(&mut text))];
+    if let Some(title) = &mut title {
+        parts.push(("text:title", Part::Text(title)));
     }
-    let mut text = doc.text();
-    if admit_parts_in_txn(
-        vault,
-        txn,
-        doc.head,
-        &mut [("text:body", Part::Text(&mut text))],
-        &mut Lifted::default(),
-    )? {
+    let admitted = admit_parts_in_txn(vault, txn, doc.head, &mut parts, &mut Lifted::default())?;
+    drop(parts);
+    if admitted && text != original {
         doc.doc
             .get_text(TEXT)
             .update(
@@ -417,6 +415,14 @@ pub(crate) fn store_doc(
                 },
             )
             .map_err(|_| invalid("proposal mask"))?;
+    }
+    if let Some(title) = title.as_deref().filter(|_| admitted && title != found) {
+        doc.doc
+            .get_map("note")
+            .insert("title", title)
+            .map_err(|_| invalid("proposal title mask"))?;
+    }
+    if admitted {
         doc.doc.commit();
     }
     NOTE_PROPOSAL_DOC.put(
@@ -446,10 +452,28 @@ pub(crate) fn live_doc(
     txn: &heed::RoTxn<'_>,
     note: EntityId,
 ) -> Result<NoteDocument> {
-    let canonical = super::document_store::load(vault, txn, note)?;
+    live_doc_in(
+        vault,
+        &vault.store,
+        txn,
+        note,
+        &vault.store.pending_scan_checks,
+    )
+}
+
+/// [`live_doc`] with the NOTE and its document read through `store`, a
+/// room's view included (FIX 4280); its size measurements wait in `pending`.
+pub(crate) fn live_doc_in(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    pending: &crate::scan_check::PendingScanChecks,
+) -> Result<NoteDocument> {
+    let canonical = super::document_store::load_in(vault, store, txn, note, pending)?;
     Ok(NoteDocument {
         note,
-        head: head_in(&vault.store, txn, note)?.0,
+        head: head_in(store, txn, note)?.0,
         doc: canonical.doc,
     })
 }

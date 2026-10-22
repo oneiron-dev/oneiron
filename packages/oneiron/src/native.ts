@@ -484,6 +484,8 @@ vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultRootsRequestsCancel(input: unknown): unknown
 vaultCleanupRun(input: unknown): unknown
+vaultCleanupReview(input: unknown): unknown
+vaultCleanupDecide(input: unknown): unknown
 vaultArchiveDeletePreview(input: unknown): unknown
 vaultArchiveDeleteConfirm(input: unknown): unknown
 vaultUsageEventsUndecodable(input: unknown): unknown
@@ -645,6 +647,7 @@ vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeTypeDiagnostics(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown

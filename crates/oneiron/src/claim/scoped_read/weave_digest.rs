@@ -6,26 +6,34 @@
 //! renders when he opens it. No composition policy lives here. Each
 //! published period with anything in it queues the lens's generate step
 //! (`weave_lens.rs`), whose render lands on the row.
+//! Glossary: `WeaveDigestSchedule` is one reader's digest cadence and due
+//! time; it is not the commitment `Schedule` in `crate::commitment_schedule`.
 use super::weave_lens::{
     KeptLiveLens, WeaveLensRefusal, WeaveLensRender, settle_live_weave_lens, settle_weave_lens_axes,
 };
 use super::{
-    ScopedRead, ScopedReadReceipt, ScopedReadResult, WeaveItem, WeaveReader, WeaveReport,
-    WeaveSection, WeaveSectionKind, WeaveSectionSpec,
+    ScopedRead, ScopedReadResult, WeaveItem, WeaveReader, WeaveReport, WeaveSectionKind,
+    WeaveSectionSpec,
 };
-use crate::claim::{ClaimSubject, decode_claim_body, encode_claim_body};
+use crate::claim::encode_claim_body;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::ports::TombstoneStoreRead;
 use crate::store::Store;
-use crate::{EdgeKind, EntityId, Vault};
+use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+// The test module reaches this through `use super::*`; the wire rows that
+// named it outside tests moved to `wire.rs`, so tests resolve as before.
+#[cfg(test)]
+use crate::EdgeKind;
 
 // An in-Grant agent's ack of an owner's due notice (FIX 5778).
 mod acknowledgements;
+// The weave Admin's digest key, saved reads, kept live render and erase
+// binding (OF-499 A3).
+mod admin;
 // The owner's digest settings and the Coach's changes to them (FIX 5495).
 mod changes;
 mod coach;
@@ -38,6 +46,9 @@ mod rewrite;
 // A due Owner schedule renders as its recorded live Owner (FIX 1259).
 pub(super) mod scheduled_owner;
 mod settings;
+// A saved schedule's and period's stored rows and their conversions.
+mod wire;
+pub use admin::WeaveAdminKey;
 pub use changes::WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER;
 pub use coach::WeaveDigestSettingsDrafter;
 use settings::SettingsEdit;
@@ -45,6 +56,7 @@ pub use settings::{
     WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
     WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings,
 };
+use wire::{WireDigest, WireSchedule, report_sources, source_key};
 
 const SCHEDULE_PREFIX: &[u8] = b"weave:schedule:v1:";
 const DIGEST_PREFIX: &[u8] = b"weave:digest:v1:";
@@ -64,26 +76,35 @@ pub enum WeaveDigestReader {
     Person(EntityId),
     Owner(EntityId),
     Agent(EntityId),
+    /// A weave Admin's namespace (OF-499 A3): keyed by its exact membership
+    /// grant, its person carried beside it. Identity only, taken from a
+    /// checked proof; it authenticates no one.
+    Admin(WeaveAdminKey),
 }
 
 impl WeaveDigestReader {
-    /// The reader's own id.
+    /// The reader's own id: an Admin's person, never its grant.
     #[must_use]
     pub fn id(self) -> EntityId {
         match self {
             Self::Person(id) | Self::Owner(id) | Self::Agent(id) => id,
+            Self::Admin(key) => key.actor(),
         }
     }
 
-    /// The reader's role tag, as its keys and inbox events spell it.
+    /// The reader's role tag, as its keys and inbox events spell it, with
+    /// the id its namespace keys on: an Admin's membership grant.
     pub(super) fn tag(self) -> (&'static str, EntityId) {
         match self {
             Self::Person(id) => ("p", id),
             Self::Owner(id) => ("o", id),
             Self::Agent(id) => ("a", id),
+            Self::Admin(key) => (admin::ADMIN_TAG, key.membership_grant()),
         }
     }
 
+    /// An Admin's tag decodes to no reader: its person is not in its id,
+    /// and no stored tag stands in for its proof.
     pub(super) fn from_tag(tag: &str, id: EntityId) -> Option<Self> {
         match tag {
             "p" => Some(Self::Person(id)),
@@ -94,15 +115,18 @@ impl WeaveDigestReader {
     }
 
     fn key(self, prefix: &[u8]) -> Vec<u8> {
-        let (kind, id) = match self {
-            Self::Person(id) => (b'p', id),
-            Self::Owner(id) => (b'o', id),
-            Self::Agent(id) => (b'a', id),
-        };
-        [prefix, &[kind], id.as_bytes()].concat()
+        [prefix, self.stem().as_slice()].concat()
     }
 
-    /// The reader a schedule key names; `None` for a key of another shape.
+    /// The reader's tag byte and the id its namespace keys on, as every
+    /// family of its keys starts.
+    fn stem(self) -> Vec<u8> {
+        let (kind, id) = self.tag();
+        [kind.as_bytes(), id.as_bytes()].concat()
+    }
+
+    /// The reader a schedule key names; `None` for a key of another shape,
+    /// an Admin's among them (no Admin schedule exists, OF-499 A3).
     fn from_schedule_key(key: &[u8]) -> Option<Self> {
         let (&kind, id) = key.strip_prefix(SCHEDULE_PREFIX)?.split_first()?;
         let id = EntityId::from_bytes(<[u8; 16]>::try_from(id).ok()?).ok()?;
@@ -119,17 +143,15 @@ impl WeaveDigestReader {
             WeaveReader::Person(_) => Self::Person(id),
             WeaveReader::Owner(_) => Self::Owner(id),
             WeaveReader::Agent(_) => Self::Agent(id),
+            WeaveReader::Admin(admin) => Self::Admin(WeaveAdminKey::of(admin)),
         }
     }
 
     /// The reader's inbox event for one period's digest. With the producer
-    /// it derives the NOTIFICATION id, so a replay lands the same row.
+    /// it derives the NOTIFICATION id, so a replay lands the same row. An
+    /// Admin's names its grant and goes to its person.
     pub(super) fn notification(self, scheduled_for: u64, now: u64) -> NotificationEvent {
-        let (kind, id) = match self {
-            Self::Person(id) => ("p", id),
-            Self::Owner(id) => ("o", id),
-            Self::Agent(id) => ("a", id),
-        };
+        let (kind, id) = self.tag();
         NotificationEvent {
             kind: NotificationKind::Digest,
             source: NotificationSource {
@@ -139,7 +161,7 @@ impl WeaveDigestReader {
                 ..NotificationSource::default()
             },
             subject_refs: Vec::new(),
-            recipient: Some(id),
+            recipient: Some(self.id()),
             created_at: now,
             origin_conversation: None,
         }
@@ -194,368 +216,6 @@ pub struct WeaveScheduleHold {
     pub because: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireSectionSpec {
-    kind: WeaveSectionKind,
-    predicates: Vec<String>,
-    edge_kinds: Vec<u8>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireSchedule {
-    cadence: WeaveDigestCadence,
-    next_due_at: u64,
-    recipe: Vec<WireSectionSpec>,
-    /// The timer leaves this row until then: an owner's notice went out, or
-    /// its render failed. The next render or schedule write clears it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    held_until: Option<u64>,
-    /// The refused render that set `held_until`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    held_because: Option<String>,
-}
-
-impl WireSchedule {
-    /// When the timer next serves this row.
-    fn serve_at(&self) -> u64 {
-        self.held_until
-            .map_or(self.next_due_at, |held| held.max(self.next_due_at))
-    }
-
-    /// The first cadence boundary after `now`, counted from `next_due_at`.
-    fn next_boundary_after(&self, now: u64) -> Result<u64> {
-        let periods = now.saturating_sub(self.next_due_at) / self.cadence.seconds() + 1;
-        self.next_due_at
-            .checked_add(
-                periods
-                    .checked_mul(self.cadence.seconds())
-                    .ok_or_else(invalid)?,
-            )
-            .ok_or_else(invalid)
-    }
-
-    fn from_row(row: &WeaveDigestSchedule) -> Self {
-        Self {
-            cadence: row.cadence,
-            next_due_at: row.next_due_at,
-            held_until: None,
-            held_because: None,
-            recipe: row
-                .recipe
-                .iter()
-                .map(|s| WireSectionSpec {
-                    kind: s.kind,
-                    predicates: s.predicates.clone(),
-                    edge_kinds: s.edge_kinds.iter().map(|k| *k as u8).collect(),
-                })
-                .collect(),
-        }
-    }
-    fn into_row(self, reader: WeaveDigestReader) -> Result<WeaveDigestSchedule> {
-        Ok(WeaveDigestSchedule {
-            reader,
-            cadence: self.cadence,
-            next_due_at: self.next_due_at,
-            recipe: self
-                .recipe
-                .into_iter()
-                .map(|s| {
-                    Ok(WeaveSectionSpec {
-                        kind: s.kind,
-                        predicates: s.predicates,
-                        edge_kinds: s
-                            .edge_kinds
-                            .into_iter()
-                            .map(|k| EdgeKind::try_from_u8(k).ok_or_else(invalid))
-                            .collect::<Result<Vec<_>>>()?,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?,
-        })
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireDigest {
-    rendered_at: u64,
-    receipt: ScopedReadReceipt,
-    sections: Vec<WireSection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    lens: Option<WeaveLensRender>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    lens_refused: Option<WeaveLensRefusal>,
-    /// A due Owner schedule's publication (FIX 1259): the schedule basis it
-    /// rendered from, rechecked before the period reaches a model.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    scheduled_basis: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireSection {
-    kind: WeaveSectionKind,
-    items: Vec<WireItem>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-enum WireItem {
-    Claim {
-        id: String,
-        body: Vec<u8>,
-    },
-    Project {
-        id: String,
-        goal: Option<String>,
-    },
-    Budget {
-        project: String,
-        budget_ref: String,
-    },
-    Link {
-        source: String,
-        kind: u8,
-        target: String,
-    },
-    DreamProgress {
-        resident: String,
-        dreamed_at: u64,
-        entries: u64,
-    },
-    AgentHealth {
-        card: crate::dreamer_runner::maintenance::agent_health::AgentHealthCard,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        draft_erased: bool,
-    },
-    SieveAudit {
-        attempt: crate::attempt_queue::AttemptId,
-        audit: crate::dreamer_wake::SieveAuditRecord,
-    },
-    LoopDecision(loop_decisions::WireLoopDecision),
-}
-
-impl WireDigest {
-    fn from_report(rendered_at: u64, report: &ScopedReadResult<WeaveReport>) -> Result<Self> {
-        Ok(Self {
-            rendered_at,
-            receipt: report.receipt.clone(),
-            sections: report
-                .value
-                .sections
-                .iter()
-                .map(|s| {
-                    Ok(WireSection {
-                        kind: s.kind,
-                        items: s
-                            .items
-                            .iter()
-                            .map(|i| {
-                                Ok(match i {
-                                    WeaveItem::Claim { id, body } => WireItem::Claim {
-                                        id: id.to_hex(),
-                                        body: encode_claim_body(body)?,
-                                    },
-                                    WeaveItem::Project { id, goal } => WireItem::Project {
-                                        id: id.to_hex(),
-                                        goal: goal.clone(),
-                                    },
-                                    WeaveItem::Budget {
-                                        project,
-                                        budget_ref,
-                                    } => WireItem::Budget {
-                                        project: project.to_hex(),
-                                        budget_ref: budget_ref.to_hex(),
-                                    },
-                                    WeaveItem::Link {
-                                        source,
-                                        kind,
-                                        target,
-                                    } => WireItem::Link {
-                                        source: source.to_hex(),
-                                        kind: *kind as u8,
-                                        target: target.to_hex(),
-                                    },
-                                    WeaveItem::DreamProgress {
-                                        resident,
-                                        dreamed_at,
-                                        entries,
-                                    } => WireItem::DreamProgress {
-                                        resident: resident.to_hex(),
-                                        dreamed_at: *dreamed_at,
-                                        entries: *entries,
-                                    },
-                                    WeaveItem::AgentHealth { card, draft_erased } => {
-                                        WireItem::AgentHealth {
-                                            card: card.clone(),
-                                            draft_erased: *draft_erased,
-                                        }
-                                    }
-                                    WeaveItem::SieveAudit { attempt, audit, .. } => {
-                                        WireItem::SieveAudit {
-                                            attempt: *attempt,
-                                            audit: audit.clone(),
-                                        }
-                                    }
-                                    WeaveItem::LoopDecision { .. } => WireItem::LoopDecision(
-                                        loop_decisions::WireLoopDecision::of(i)?,
-                                    ),
-                                })
-                            })
-                            .collect::<Result<Vec<_>>>()?,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?,
-            lens: None,
-            lens_refused: None,
-            scheduled_basis: None,
-        })
-    }
-    fn into_report(self) -> Result<ScopedReadResult<WeaveReport>> {
-        Ok(ScopedReadResult {
-            receipt: self.receipt,
-            value: WeaveReport {
-                sections: self
-                    .sections
-                    .into_iter()
-                    .map(|s| {
-                        Ok(WeaveSection {
-                            kind: s.kind,
-                            items: s
-                                .items
-                                .into_iter()
-                                .map(|i| {
-                                    Ok(match i {
-                                        WireItem::Claim { id, body } => WeaveItem::Claim {
-                                            id: EntityId::from_hex(&id).map_err(|_| invalid())?,
-                                            body: Box::new(
-                                                decode_claim_body(&body, true)
-                                                    .map_err(|_| invalid())?,
-                                            ),
-                                        },
-                                        WireItem::Project { id, goal } => WeaveItem::Project {
-                                            id: EntityId::from_hex(&id).map_err(|_| invalid())?,
-                                            goal,
-                                        },
-                                        WireItem::Budget {
-                                            project,
-                                            budget_ref,
-                                        } => WeaveItem::Budget {
-                                            project: EntityId::from_hex(&project)
-                                                .map_err(|_| invalid())?,
-                                            budget_ref: EntityId::from_hex(&budget_ref)
-                                                .map_err(|_| invalid())?,
-                                        },
-                                        WireItem::Link {
-                                            source,
-                                            kind,
-                                            target,
-                                        } => WeaveItem::Link {
-                                            source: EntityId::from_hex(&source)
-                                                .map_err(|_| invalid())?,
-                                            kind: EdgeKind::try_from_u8(kind)
-                                                .ok_or_else(invalid)?,
-                                            target: EntityId::from_hex(&target)
-                                                .map_err(|_| invalid())?,
-                                        },
-                                        WireItem::DreamProgress {
-                                            resident,
-                                            dreamed_at,
-                                            entries,
-                                        } => WeaveItem::DreamProgress {
-                                            resident: EntityId::from_hex(&resident)
-                                                .map_err(|_| invalid())?,
-                                            dreamed_at,
-                                            entries,
-                                        },
-                                        WireItem::AgentHealth { card, draft_erased } => {
-                                            WeaveItem::AgentHealth { card, draft_erased }
-                                        }
-                                        WireItem::SieveAudit { attempt, audit } => {
-                                            WeaveItem::SieveAudit {
-                                                attempt,
-                                                audit,
-                                                redacted: Vec::new(),
-                                            }
-                                        }
-                                        WireItem::LoopDecision(row) => row.into_item(),
-                                    })
-                                })
-                                .collect::<Result<Vec<_>>>()?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?,
-            },
-        })
-    }
-}
-
-/// Include the copied claim and every typed reference carried by its saved
-/// projection. This is an index over byte carriers, not a read authorization.
-/// A loop row's refs and a card's draft sources join only the erase index
-/// (`dependencies::indexed_sources`), never the period's gates.
-fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
-    let mut sources = BTreeSet::new();
-    for section in &report.sections {
-        for item in &section.items {
-            match item {
-                WeaveItem::Claim { id, body } => {
-                    sources.insert(*id);
-                    match body.subject {
-                        ClaimSubject::Entity(subject) => {
-                            sources.insert(subject);
-                        }
-                        ClaimSubject::Edge { source, target, .. } => {
-                            sources.insert(source);
-                            sources.insert(target);
-                        }
-                    }
-                }
-                WeaveItem::Project { id, goal } => {
-                    sources.insert(*id);
-                    if let Some(goal) = goal {
-                        sources.insert(EntityId::from_hex(goal).map_err(|_| invalid())?);
-                    }
-                }
-                WeaveItem::Budget {
-                    project,
-                    budget_ref,
-                } => {
-                    sources.insert(*project);
-                    sources.insert(*budget_ref);
-                }
-                WeaveItem::Link { source, target, .. } => {
-                    sources.insert(*source);
-                    sources.insert(*target);
-                }
-                // The reader's own dreaming time and entry count: no copied
-                // body, and no diary entry's id or text.
-                WeaveItem::DreamProgress { .. } => {}
-                // A card is a side-table row, not a record: a saved period
-                // reads the current card again before it serves one. Its
-                // draft's sources index it apart (`dependencies`).
-                WeaveItem::AgentHealth { .. } => {}
-                // An audit is a side-table row too, read again the same way;
-                // the rows it stands on are records.
-                WeaveItem::SieveAudit { audit, .. } => {
-                    sources.extend(super::weave_report::sieve_score::sieve_audit_rows(audit));
-                }
-                // A loop row's refs index its period for erasure apart
-                // (`dependencies::indexed_sources`): the row is rechecked
-                // whole on its own, so its refs never gate the period.
-                WeaveItem::LoopDecision { .. } => {}
-            }
-        }
-    }
-    Ok(sources)
-}
-
-fn source_key(source: &EntityId, digest_key: &[u8]) -> Vec<u8> {
-    [SOURCE_PREFIX, source.as_bytes(), digest_key].concat()
-}
-
 /// One saved period's row in `txn`, copied out.
 fn digest_row_in(store: &Store, txn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Option<Vec<u8>>> {
     Ok(store.vault_meta.get(txn, key)?.map(|raw| raw.to_vec()))
@@ -597,6 +257,8 @@ fn index_source_in_txn(
 /// A deleted reader's own rows go too: its saved periods (a resident's carry
 /// its dreaming counters, which index no source), its schedule and its kept
 /// live render. So do the wrong labels that name it, as reader or target.
+/// A deleted Admin membership grant takes its Admin namespace and labels,
+/// and a deleted person each Admin namespace its binding names (OF-499 A3).
 pub(crate) fn invalidate_weave_digest_source_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -612,12 +274,16 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
         let digest_key = index_key
             .strip_prefix(prefix.as_slice())
             .ok_or(Error::CorruptedIndex("weave digest source index"))?;
-        if !digest_key.starts_with(DIGEST_PREFIX)
-            || digest_key.len() != DIGEST_PREFIX.len() + 1 + 16 + 8
-        {
-            return Err(Error::CorruptedIndex("weave digest source index"));
+        if let Some(stem) = admin::bound_admin_stem(digest_key) {
+            admin::erase_reader_rows_in_txn(store, txn, stem)?;
+        } else {
+            if !digest_key.starts_with(DIGEST_PREFIX)
+                || digest_key.len() != DIGEST_PREFIX.len() + 1 + 16 + 8
+            {
+                return Err(Error::CorruptedIndex("weave digest source index"));
+            }
+            rewrite::erase_source_in_period_in_txn(store, txn, digest_key, source)?;
         }
-        rewrite::erase_source_in_period_in_txn(store, txn, digest_key, source)?;
         store.vault_meta.delete(txn, &index_key)?;
     }
     for reader in [
@@ -625,17 +291,9 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
         WeaveDigestReader::Owner(*source),
         WeaveDigestReader::Agent(*source),
     ] {
-        let periods = store
-            .vault_meta
-            .prefix_iter(&*txn, &reader.key(DIGEST_PREFIX))?
-            .map(|row| row.map(|(key, _)| key.to_vec()))
-            .collect::<Result<Vec<_>>>()?;
-        for digest_key in periods {
-            erase_weave_digest_in_txn(store, txn, &digest_key)?;
-        }
-        store.vault_meta.delete(txn, &reader.key(SCHEDULE_PREFIX))?;
-        store.vault_meta.delete(txn, &reader.key(LIVE_PREFIX))?;
+        admin::erase_reader_rows_in_txn(store, txn, &reader.stem())?;
     }
+    admin::erase_reader_rows_in_txn(store, txn, &admin::grant_stem(source))?;
     // A deleted owner reader's settings, behaviour and Coach changes.
     settings::erase_owner_weave_digest_settings_in_txn(store, txn, source)?;
     super::weave_correction::erase_weave_labels_in_txn(store, txn, source)
@@ -708,6 +366,9 @@ impl Vault {
                 WeaveDigestReader::Owner(id) if id == actor => WeaveReader::Owner(owner),
                 WeaveDigestReader::Owner(_) => return Err(invalid()),
                 WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
+                // No Admin schedule: an Admin reads in the foreground only,
+                // and an Owner proof never stands for an Admin's (OF-499 A3).
+                WeaveDigestReader::Admin(_) => return Err(invalid()),
             };
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             super::weave_report::validate_weave_recipe(self, txn, &policy, &reader, &row.recipe)?;
@@ -863,6 +524,9 @@ impl Vault {
                 WeaveDigestReader::Agent(id) => self
                     .render_scheduled_weave_digest(id, EdgeActorClass::Agent, now)
                     .map(|stored| stored.is_some()),
+                // No Admin schedule key decodes (OF-499 A3): one would be
+                // held to its boundary, never rendered without its proof.
+                WeaveDigestReader::Admin(_) => Ok(false),
             };
             match outcome {
                 Ok(true) => served += 1,
@@ -964,6 +628,9 @@ impl Vault {
         let (class, lens_reader) = match reader {
             WeaveDigestReader::Person(id) => (EdgeActorClass::Human, WeaveReader::Person(id)),
             WeaveDigestReader::Agent(id) => (EdgeActorClass::Agent, WeaveReader::Agent(id)),
+            // An Admin's period reads only under its current proof, which
+            // the Dreamer never holds (OF-499 A3): withheld before any model.
+            WeaveDigestReader::Admin(_) => return Ok(None),
             WeaveDigestReader::Owner(owner) => {
                 // A due Owner schedule's period reads under its schedule's
                 // binding and the live-owner census (FIX 1259).
@@ -1068,6 +735,11 @@ impl Vault {
         report: &WeaveReport,
         render: &WeaveLensRender,
     ) -> Result<()> {
+        // An Admin's render keeps under its grant, its proof current in the
+        // writer that keeps it (OF-499 A3).
+        if let WeaveReader::Admin(admin) = reader {
+            return self.keep_weave_admin_live_lens(admin, report, render);
+        }
         let id = {
             let txn = self.store.env.read_txn()?;
             reader.id(self, &txn)?
@@ -1162,11 +834,18 @@ impl ScopedRead<'_> {
                 }
                 actor
             }
+            // An Admin binds this lane to its proof in this snapshot (OF-499
+            // A3); its own door builds the lane here too.
+            WeaveReader::Admin(admin) => {
+                self.bind_weave_admin_in(&txn, admin)?;
+                admin.actor()
+            }
         };
         let reader_key = match reader {
             WeaveReader::Person(_) => WeaveDigestReader::Person(id),
             WeaveReader::Owner(_) => WeaveDigestReader::Owner(id),
             WeaveReader::Agent(_) => WeaveDigestReader::Agent(id),
+            WeaveReader::Admin(admin) => WeaveDigestReader::Admin(WeaveAdminKey::of(admin)),
         };
         self.saved_weave_digest_in_txn(&txn, reader_key, scheduled_for, Some(reader))
     }
@@ -1193,6 +872,7 @@ impl ScopedRead<'_> {
             WeaveDigestReader::Person(_) => "person",
             WeaveDigestReader::Owner(_) => "owner",
             WeaveDigestReader::Agent(_) => "agent",
+            WeaveDigestReader::Admin(_) => crate::gate::weave_policy::ADMIN_ROLE,
         };
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         // Even an empty saved report must not reveal historical section names
@@ -1349,19 +1029,8 @@ impl ScopedRead<'_> {
     ) -> Result<Option<StoredWeaveDigest>> {
         let latest = {
             let txn = self.vault.store.env.read_txn()?;
-            let prefix =
-                WeaveDigestReader::of(&reader, reader.id(self.vault, &txn)?).key(DIGEST_PREFIX);
-            let mut latest = None;
-            for row in self.vault.store.vault_meta.prefix_iter(&txn, &prefix)? {
-                let (key, _) = row?;
-                if let Some(at) = key
-                    .strip_prefix(prefix.as_slice())
-                    .and_then(|at| <[u8; 8]>::try_from(at).ok())
-                {
-                    latest = Some(u64::from_be_bytes(at));
-                }
-            }
-            latest
+            let reader_key = WeaveDigestReader::of(&reader, reader.id(self.vault, &txn)?);
+            admin::latest_period_in(&self.vault.store, &txn, reader_key)?
         };
         match latest {
             Some(scheduled_for) => self.read_weave_digest(reader, scheduled_for),
@@ -1395,6 +1064,9 @@ impl ScopedRead<'_> {
             WeaveReader::Person(id) => WeaveDigestReader::Person(*id),
             WeaveReader::Owner(owner) => WeaveDigestReader::Owner(owner.revalidate(self.vault)?),
             WeaveReader::Agent(id) => WeaveDigestReader::Agent(*id),
+            // An Admin reads in the foreground only: no Admin schedule
+            // exists to render, and none publishes (OF-499 A3).
+            WeaveReader::Admin(_) => return Ok(None),
         };
         // Do not turn a non-due probe into a backdoor for inspecting the row:
         // even a skip must be actor-bound (and an owner must still be live).
@@ -1408,6 +1080,8 @@ impl ScopedRead<'_> {
                 self.actor_key.actor_ref() != actor.to_hex()
                     && self.actor_key.actor_ref() != owner.principal_ref_in_txn(self.vault, &txn)?
             }
+            // Returned above: an Admin renders nothing here.
+            WeaveReader::Admin(_) => true,
         } {
             return Err(invalid());
         }

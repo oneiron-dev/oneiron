@@ -47,6 +47,10 @@ mod cohort;
 pub(super) use cohort::cohort_in_txn as cohort_for_offer_in_txn;
 mod cut_audit;
 pub mod doors;
+mod erase;
+pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row};
+mod measurement;
+mod replay_input;
 mod sufficiency;
 
 use std::collections::BTreeSet;
@@ -74,6 +78,13 @@ pub use cut_audit::{
     AuditCase, AuditCoverage, AuditMethodPin, CoverageGap, EvalCutAudit, EvalCutAuditDraft,
     EvalCutAuthor, NearCopyFlag,
 };
+pub use measurement::{
+    EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
+    EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy, JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS,
+    MeasurementMethodPin, MeasurementState, MeasurementUnavailable, ScoreDirection,
+    eval_seat_canary,
+};
+pub use replay_input::EvalTaskInput;
 pub use sufficiency::{
     EvalLabelAsk, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason,
     WaitingDecision, sufficiency_card,
@@ -347,6 +358,12 @@ pub(super) fn put_case_in_txn(
 ) -> Result<bool> {
     let key = [CASE_PREFIX, case.id.as_bytes()].concat();
     let placed = admit_typed(vault, txn, (CASE_PLACE, key.as_slice()), case)?;
+    // A source an erase reached since the case or a label was read does not
+    // come back (FIX 6933).
+    case.source_rows = super::live_source_rows_in(vault, txn, case.source_rows.take())?;
+    for label in &mut case.labels {
+        label.source_rows = super::live_source_rows_in(vault, txn, label.source_rows.take())?;
+    }
     vault.store.vault_meta.put(txn, &key, &encode(case)?)?;
     Ok(placed)
 }

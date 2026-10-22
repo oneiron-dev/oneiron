@@ -75,6 +75,35 @@ impl CancelRejectionPathology {
     }
 }
 
+/// A consult TASK that is a child run's comm widen ask (FIX 3901): the run
+/// that asks, the reach it holds and the reach it asks for. Its answer goes
+/// through the consult's own answer door, as any consult's does.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct ConsultWidening {
+    /// The asking child run's attempt, as 32 hex.
+    pub child: String,
+    /// The reach an earlier approval already gave the child; the comm widen
+    /// record keeps no other, so a child asking from its spawn dial has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<crate::authority::CommReach>,
+    /// The reach it asks to widen to.
+    pub to: crate::authority::CommReach,
+}
+
+impl ConsultWidening {
+    /// The board token: `widening=<from>-><to>`, or `widening=<to>` with no
+    /// earlier approval to widen from.
+    #[must_use]
+    pub fn token(&self) -> String {
+        match self.from {
+            Some(from) => format!("widening={}->{}", from.as_str(), self.to.as_str()),
+            None => format!("widening={}", self.to.as_str()),
+        }
+    }
+}
+
 /// One collapsed TASKS row.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskRow {
@@ -100,6 +129,15 @@ pub struct TaskRow {
     /// ONE-1896: the realizing job that keeps refusing to stop, when one does.
     /// `None` is the ordinary case and leaves every existing row byte-identical.
     pub cancel_pathology: Option<CancelRejectionPathology>,
+    /// FIX 3901: the widening a consult row asks for, when it is a comm
+    /// widen ask; `None` on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widening: Option<ConsultWidening>,
+    /// The persons who `fits:` this open, unassigned task, as the reader's
+    /// board names them. They render as the section's discovery rows, apart
+    /// from [`Self::line`], so they shed with discovery (FIX 9756).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fits: Vec<String>,
 }
 
 impl TaskRow {
@@ -121,6 +159,8 @@ impl TaskRow {
             ladder_disposition: intent.ladder_disposition,
             counter_task_ref: intent.counter_task_ref.clone(),
             cancel_pathology: intent_cancel_pathology(intent),
+            widening: intent.widening.clone(),
+            fits: intent.fits.clone(),
         }
     }
 }
@@ -293,24 +333,51 @@ impl TasksSectionRows {
     /// whose task is not on the board rides as its own row), and lists who
     /// `fits:` each open, unassigned task: the persons who finished tasks of
     /// the same type, most often first.
+    ///
+    /// Every child rides here. A host whose reader or destination is
+    /// narrower than the actor uses [`Self::attach_people_admitted`].
     pub fn attach_people(
         &mut self,
         people: &crate::context_board::PeopleView<'_>,
         children: &[crate::context_board::ChildState],
     ) {
+        let Ok(()) = self.attach_people_admitted(people, children, |_| {
+            Ok::<_, std::convert::Infallible>(true)
+        });
+    }
+
+    /// [`Self::attach_people`], with each child whose task is not among
+    /// these rows judged by `admit` first (FIX 9755): its backing TASK under
+    /// the caller's read and destination ([`Self::task_admitted`]), or, with
+    /// no backing TASK, the child itself. A child `admit` refuses never
+    /// renders, so a TASK the caller's read or destination withheld does not
+    /// come back through its child as a bare row. A child on a task among
+    /// these rows rides that task, which already passed both.
+    pub fn attach_people_admitted<E>(
+        &mut self,
+        people: &crate::context_board::PeopleView<'_>,
+        children: &[crate::context_board::ChildState],
+        mut admit: impl FnMut(&crate::context_board::ChildState) -> std::result::Result<bool, E>,
+    ) -> std::result::Result<(), E> {
         for intent in &mut self.intents {
             intent.who_label = intent.who.map(|who| people.label(who));
         }
         for child in children {
             let task = child.task_ref.as_deref();
             match task.and_then(|task| self.intents.iter_mut().find(|intent| intent.id == task)) {
-                Some(intent) => intent.children.push(child.token(people)),
-                None => self.bare_jobs.push(JobPresence {
-                    id: child.attempt.clone(),
-                    kind: format!("child {}", child.token(people)),
-                    status: child_board_status(child.status),
-                    cancel_pathology: None,
-                }),
+                Some(intent) => intent
+                    .children
+                    .push((child.attempt.clone(), child.token(people))),
+                None => {
+                    if admit(child)? {
+                        self.bare_jobs.push(JobPresence {
+                            id: child.attempt.clone(),
+                            kind: format!("child {}", child.token(people)),
+                            status: child_board_status(child.status),
+                            cancel_pathology: None,
+                        });
+                    }
+                }
             }
         }
         let mut done: std::collections::BTreeMap<
@@ -353,6 +420,33 @@ impl TasksSectionRows {
         for (intent, fits) in self.intents.iter_mut().zip(fits) {
             intent.fits = fits;
         }
+        Ok(())
+    }
+
+    /// Whether `task` passes the reader and destination the TASKS rows pass
+    /// (FIX 9755): toward `memory`'s destination off this device, a TASK a
+    /// world keeps off that machine is withheld, as the board's TASK scan
+    /// passes it over; then `read` judges it as the host's row cut does.
+    /// A TASK that no longer exists withholds nothing, so its child keeps the
+    /// bare row it had before.
+    pub fn task_admitted(
+        memory: &crate::memory::Memory<'_>,
+        read: &crate::claim::ScopedRead<'_>,
+        task: EntityId,
+    ) -> Result<bool> {
+        if !memory.vault().entity_exists(&task)? {
+            return Ok(true);
+        }
+        let destination = memory.destination();
+        if destination.is_off_device()
+            && memory
+                .vault()
+                .off_device_readable_for(vec![task], destination)?
+                .is_empty()
+        {
+            return Ok(false);
+        }
+        read.is_entity_readable(&task)
     }
 }
 
@@ -487,8 +581,12 @@ pub struct TaskIntentPresence {
     /// Persons who did this type of task before, as this reader's board
     /// names them.
     pub fits: Vec<String>,
-    /// Live children realizing this task, as `<agent>:<status>[:lead]`.
-    pub children: Vec<String>,
+    /// Live children realizing this task: each one's attempt id and its
+    /// `<agent>:<status>[:lead]` token, in the order they were attached.
+    pub children: Vec<(String, String)>,
+    /// FIX 3901: the widening this consult asks for, when it is a comm widen
+    /// ask.
+    pub widening: Option<ConsultWidening>,
 }
 
 impl TaskIntentPresence {
@@ -522,6 +620,7 @@ impl TaskIntentPresence {
             who_label: None,
             fits: Vec::new(),
             children: Vec::new(),
+            widening: None,
         }
     }
 

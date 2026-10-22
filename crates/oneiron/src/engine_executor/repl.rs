@@ -6,7 +6,6 @@ mod persistence;
 mod request;
 mod speech;
 
-use super::code_check::ShadowStep;
 use super::continuation::{ContinuationNote, continuation_note, turn_note};
 use super::driver::EngineNativeExecutor;
 use super::host::{
@@ -234,7 +233,8 @@ impl EngineNativeExecutor<'_> {
                 self.legibility,
             )
             .with_recoverable_outputs(&self.storage, &record, recoverable)?
-            .with_skill_executor(&config.model);
+            .with_skill_executor(&config.model)
+            .with_result_share(&self.result_share);
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -242,26 +242,15 @@ impl EngineNativeExecutor<'_> {
                 boundary,
                 determinism: config.determinism,
             };
-            // Shadow mode type-checks the program on its own thread while the
-            // program runs, and acts on nothing it finds: the program never
-            // waits on a check (FIX 8561). A check thread that cannot start
-            // or panics leaves the step unchecked. The report is appended
-            // once the step's own state is durable.
-            let (mut shadow, step_outcome) = std::thread::scope(|scope| {
-                let checking = self.code_check.and_then(|shadow| {
-                    let (run_id, program) = (config.run_id, script.as_str());
-                    std::thread::Builder::new()
-                        .spawn_scoped(scope, move || {
-                            ShadowStep::check(shadow, run_id, completed_steps, program)
-                        })
-                        .ok()
-                });
-                let step_outcome = self
-                    .runtime
-                    .run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
-                let shadow = checking.and_then(|checking| checking.join().ok());
-                (shadow, step_outcome)
-            });
+            // Feedback mode checks the program as its author wrote it, on
+            // its own thread, while the program runs: nothing waits on the
+            // check or is refused for it (FIX 8277). Every way out of the
+            // step leaves its feedback, its preparation note included.
+            let mut checking = self.start_step_check(&record, completed_steps, &prepared);
+            let step_outcome = self
+                .runtime
+                .run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
+            self.keep_step_feedback(&checking);
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {
@@ -286,9 +275,7 @@ impl EngineNativeExecutor<'_> {
                             config,
                         )?
                     {
-                        if let Some(shadow) = &mut shadow {
-                            shadow.ended(Some(&status));
-                        }
+                        checking.ended(Some(&status));
                         return Ok(self.outcome(status, steps_run + 1, record));
                     }
                     // A step a provider outage ended stops on that outage,
@@ -325,9 +312,7 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed(),
                     config,
                 )? {
-                    if let Some(shadow) = &mut shadow {
-                        shadow.ended(Some(&status));
-                    }
+                    checking.ended(Some(&status));
                     return Ok(self.outcome(status, steps_run + 1, record));
                 }
                 return Err(failure.into());
@@ -367,9 +352,7 @@ impl EngineNativeExecutor<'_> {
                             config,
                         )?
                     {
-                        if let Some(shadow) = &mut shadow {
-                            shadow.ended(Some(&status));
-                        }
+                        checking.ended(Some(&status));
                         return Ok(self.outcome(status, steps_run + 1, record));
                     }
                     return Err(err);
@@ -502,7 +485,7 @@ impl EngineNativeExecutor<'_> {
             // beside the bindings they describe, and so does the seal of the
             // code consent wait the step parks on (DOOR-079 1b).
             let parked = parked_wait(&record, terminal_status.as_ref(), bridge_start);
-            let mut next_generation = self
+            let next_generation = self
                 .storage
                 .put_code_run_replay_record_with_receipts_if_generation(
                     &record,
@@ -519,14 +502,7 @@ impl EngineNativeExecutor<'_> {
                 self.emit_trailing_speak_fallback(&record, completed_steps, intent, config)?;
             }
             steps_run += 1;
-            if let Some(shadow) = &mut shadow {
-                shadow.ended(terminal_status.as_ref());
-                if let Some(generation) =
-                    shadow.append_report(&self.storage, &mut record, next_generation)
-                {
-                    next_generation = generation;
-                }
-            }
+            checking.ended(terminal_status.as_ref());
 
             if let Some(status) = terminal_status {
                 // A reply that landed while the step ran resumes the run

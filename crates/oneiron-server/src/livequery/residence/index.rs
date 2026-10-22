@@ -349,6 +349,11 @@ pub(super) fn promote(
         .promoted_pads(&window)
         .map_err(|_| AppError::internal_server_error("window promotion unavailable"))?;
     rows.extend(pads.iter().map(|pad| pad.id));
+    // The snapshot goes in its window pad envelope, sealed for the machine
+    // that asked (FIX 7107); the pad rows still carry each pad.
+    let snapshot =
+        oneiron::sync::window::promotion_window_pads(&server.vault, peer, &window, &snapshot)
+            .map_err(|_| AppError::internal_server_error("window promotion unavailable"))?;
     Ok((
         json!({
             "window": window.as_str(),
@@ -365,7 +370,10 @@ pub(super) fn promote(
 
 /// The home's version vector for a window, on the residence index's gate: a
 /// bound selector and a machine the grant admits. An opened machine demotes
-/// its promoted copy only once this covers every op it holds (OF-534).
+/// its promoted copy only once this covers every op it holds (OF-534). It
+/// lists the rows the vector counts ops of ([`window_vv_rows`], FIX 9494),
+/// so the send door judges it as it judges every answer, and a vector whose
+/// rows may all leave reaches an off-device machine.
 pub(super) fn window_vv(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -381,6 +389,26 @@ pub(super) fn window_vv(
             "window": window.as_str(),
             "vv": base64::engine::general_purpose::STANDARD.encode(doc.oplog_vv().encode()),
         }),
-        None,
+        Some(window_vv_rows(&doc)),
     ))
+}
+
+/// Every row a window document's version vector counts ops of (FIX 9494):
+/// each entity it holds, each row an edge in it joins, and each row it keeps
+/// a tombstone for. The vector is metadata over exactly these.
+fn window_vv_rows(doc: &loro::LoroDoc) -> Vec<EntityId> {
+    let mut rows = Vec::new();
+    let whole = |hex: &str| EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex);
+    for map in ["entities", "tombstones"] {
+        doc.get_map(map).for_each(|key, _| rows.extend(whole(key)));
+    }
+    doc.get_map("edges").for_each(|key, _| {
+        let mut parts = key.splitn(3, ':');
+        let source = parts.next().and_then(whole);
+        let target = parts.nth(1).and_then(whole);
+        rows.extend(source.into_iter().chain(target));
+    });
+    rows.sort_unstable();
+    rows.dedup();
+    rows
 }

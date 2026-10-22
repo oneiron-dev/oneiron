@@ -2,7 +2,8 @@
 use super::*;
 use crate::attempt_queue::{AttemptQueue, AttemptState};
 use crate::surface_event::{
-    SURFACE_EVENT_ATTEMPT_KIND, SurfaceEventAction, decode_surface_event_attempt_payload,
+    SURFACE_EVENT_ATTEMPT_KIND, SurfaceCounterpartyStamp, SurfaceEventAction,
+    decode_surface_event_attempt_payload,
 };
 use crate::thread_passport::canonical_message_id;
 
@@ -42,6 +43,16 @@ impl Vault {
             } else {
                 None
             };
+            // FIX 9745: an inbound message's sender is the known counterparty
+            // its routing admitted. An unknown or unparsed sender has no
+            // admitted provenance, and a typed interaction is no message.
+            let sender = match (&event.action, &event.counterparty) {
+                (
+                    SurfaceEventAction::Message,
+                    SurfaceCounterpartyStamp::Known { counterparty_ref },
+                ) => EntityId::from_hex(counterparty_ref).ok(),
+                _ => None,
+            };
             let item = AgentInboxLensItem {
                 item_id: format!("surface:{}:{}", identity_ref.to_hex(), event.correlation_id),
                 kind: if matches!(event.action, SurfaceEventAction::Message) {
@@ -50,11 +61,11 @@ impl Vault {
                     AgentInboxItemKind::CoordinationUpdate
                 },
                 thread_ref,
-                identity_ref,
+                identity_ref: Some(identity_ref),
                 actor_ref,
                 facet_ref,
                 participants: vec![AgentInboxParticipant {
-                    identity_ref,
+                    identity_ref: Some(identity_ref),
                     actor_ref,
                 }],
                 impact: InboxImpact(match row.state {
@@ -67,6 +78,8 @@ impl Vault {
                 payload_ref: event.payload_ref,
                 concern: None,
                 diary_review: None,
+                sender,
+                widening: None,
             };
             // Retries retain one correlation. Current state/time breaks ties,
             // not physical queue-row order.
@@ -109,7 +122,8 @@ impl Vault {
                 crate::comm::active_thread_refs_in_txn(self, &txn, party).map_err(comm_error)?
             {
                 if out.iter().any(|item| {
-                    item.identity_ref == identity_ref && item.thread_ref.as_deref() == Some(&thread)
+                    item.identity_ref == Some(identity_ref)
+                        && item.thread_ref.as_deref() == Some(&thread)
                 }) {
                     continue;
                 }
@@ -117,11 +131,11 @@ impl Vault {
                     item_id: format!("thread:{}:{thread}", identity_ref.to_hex()),
                     kind: AgentInboxItemKind::Conversation,
                     thread_ref: Some(thread),
-                    identity_ref,
+                    identity_ref: Some(identity_ref),
                     actor_ref,
                     facet_ref,
                     participants: vec![AgentInboxParticipant {
-                        identity_ref,
+                        identity_ref: Some(identity_ref),
                         actor_ref,
                     }],
                     impact: InboxImpact(0),
@@ -130,6 +144,8 @@ impl Vault {
                     payload_ref: None,
                     concern: None,
                     diary_review: None,
+                    sender: None,
+                    widening: None,
                 });
             }
         }

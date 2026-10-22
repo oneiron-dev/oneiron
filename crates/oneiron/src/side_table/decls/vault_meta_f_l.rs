@@ -100,6 +100,11 @@ side_tables! {
     /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
+    /// A Gate decision's scrub an erase owes while a legal hold keeps the decision's own
+    /// partition (FIX 7993, 7994), and when the erase asked: ids and a time only. Key: kind (0 an
+    /// erased claim's skeleton, 1 an erased actor's attribution) + id16 (erased source) + id16
+    /// (decision).
+    GATE_DECISION_PENDING_SCRUB: VaultMeta b"gate_decision:pending_scrub:v1:" Named;
     /// Append-time retention ancestry of one gate decision; the retention-scope module's own
     /// layout. Key: id16 (decision).
     GATE_DECISION_RETENTION_CONTEXT: VaultMeta b"gate_decision:retention_context:v1:" Raw;
@@ -332,8 +337,10 @@ side_tables! {
     /// An audit's label that two pieces of one team's work duplicated each other. Key: string
     /// (team reference "\0" first "\0" second).
     LEARNING_DUPLICATE_LABEL: VaultMeta b"learning:duplicate_label:v1:" Named;
-    /// One admitted anchored outcome for a `learning.*` cell. Key: cell digest + receipt string.
-    LEARNING_EVIDENCE: VaultMeta b"learning:evidence:v1:" Named;
+    /// One admitted anchored outcome for a `learning.*` cell; its pack context is cleared once it
+    /// names an erased entity. Key: cell digest + receipt string.
+    LEARNING_EVIDENCE: VaultMeta b"learning:evidence:v1:" Named
+        => crate::learning::erase_learning_pack_context_in_txn;
     /// A judge swap's fitted score map, applied as a projection. Key: string (old judge revision).
     LEARNING_JUDGE_CONVERSION: VaultMeta b"learning:judge_conversion:v1:" Named;
     /// A `learning.*` cell's engine-written prior (origin, value, weight in runs). Key: cell digest.
@@ -363,7 +370,10 @@ side_tables! {
     /// What a standing host-order hold holds; the value is empty. Key: held key (1 + id16, or 17
     /// zero bytes for the claim-free gate partition) + id16 (hold).
     LEGAL_HOLD_HOST_TARGET: VaultMeta b"legal_hold:host:target:v1:" Raw;
-    /// An owner-confirmed erase a host order keeps waiting; it names no hold. Key: id16 (record).
+    /// An owner erase that waits: one the owner confirmed while a host order keeps it, or the
+    /// owner's plain delete only secret orders keep (FIX 1465), with its request's kind, reason
+    /// and generation, and the `erase` act a shared vault's veto window adds (FIX 9781). It names
+    /// no hold. Key: id16 (record).
     LEGAL_HOLD_PENDING_ERASE: VaultMeta b"legal_hold:pending_erase:v1:" Named;
     /// A customer legal hold naming records or gate-decision partitions (OF-470). Key: id16
     /// (hold).
@@ -426,7 +436,8 @@ side_tables! {
     /// The current immutable catalog revision. Key: ().
     LLM_CATALOG_HEAD: VaultMeta b"llm:catalog_head:v1" Named;
     /// Pinned catalog prices, scores and refresh diffs. Key: revision string.
-    LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named;
+    LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named
+        => crate::llm::catalog_doors::erase_catalog_source_rows_in_txn;
     /// Measured description scores keyed inside one singleton map. Key: ().
     LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored;
     /// Vault-owned description policy. Key: ().
@@ -447,7 +458,8 @@ side_tables! {
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
-    LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored;
+    LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored
+        => crate::llm::registry::erase_registry_source_in_txn;
     /// Per-vault narrow-only resident route overrides, cleared when the manifest is replaced. Key:
     /// ().
     LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson;

@@ -75,6 +75,7 @@ pub use self::owner_work::{
     PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics, ReassertKey,
     ReassertKeyState, ReassertUnread, RelayObservation,
 };
+pub(crate) use self::pad_custody::world_pad_recipients_in_txn;
 #[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
 pub(crate) use self::pad_custody::{
     PAD_CAPTURE_FAULT, PadCaptureFault, PadReferenceProjection, WorldPadRef,
@@ -89,8 +90,7 @@ pub(crate) use self::pad_custody::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::pad_custody::{
-    missing_world_pads_in_txn, row_pad_in_txn, world_pad_recipients_in_txn,
-    world_pad_row_items_in_txn,
+    missing_world_pads_in_txn, row_pad_in_txn, world_pad_row_items_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::pad_custody::{
@@ -103,6 +103,8 @@ pub(crate) use self::pad_image::{
 };
 #[cfg(feature = "sync")]
 pub use self::pads::PromotedWorldPad;
+#[cfg(feature = "sync")]
+pub(crate) use self::pads::reject_held_pad_carrier_in_txn;
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
     destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, note_world_deleted_in_txn,

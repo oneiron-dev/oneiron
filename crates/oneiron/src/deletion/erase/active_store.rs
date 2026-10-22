@@ -78,6 +78,10 @@ impl Vault {
                 crate::world_keys::WorldKeyDestroyCause::LocalDelete,
                 request_id.copied(),
             )?;
+            // An erased custody record is fenced, every key its id names
+            // staged to retire and its kept carriers dropped before its row
+            // goes (KS-6 part 2).
+            self.fence_erased_credential_in_txn(wtxn, id)?;
             // An erased custody record's known-value history goes, its
             // entries' retirement staged; another record's stays (KS-3).
             self.store.stage_known_history_erase_in_txn(wtxn, id)?;
@@ -118,6 +122,9 @@ impl Vault {
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         let citing = crate::note::erase_citations_in_txn(self, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
+        // A solved run's evidence claim takes its group ref and source
+        // authority with it, and moves its group on (CUA E8a).
+        crate::browser_library::invalidate_solved_source_in_txn(self, wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
         // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
@@ -187,8 +194,11 @@ impl Vault {
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         // An erased pack source halts the catalog routes bound to it (FIX 6034).
+        // An erased custody record is fenced before its body is scrubbed (KS-6
+        // part 2).
         if erase {
             self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
+            self.fence_erased_credential_in_txn(wtxn, id)?;
         }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
@@ -236,6 +246,9 @@ impl Vault {
         )?;
         crate::ports::keep_deleted_worlds_in_txn(&self.store, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
+        // A solved run's evidence claim takes its group ref and source
+        // authority with it, and moves its group on (CUA E8a).
+        crate::browser_library::invalidate_solved_source_in_txn(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {

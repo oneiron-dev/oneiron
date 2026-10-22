@@ -114,7 +114,7 @@ impl LiveQuerySource for BoundSource {
                     }
                 }
                 followed.retain(|path| !served.contains(path));
-                serde_json::to_value(pack.items)
+                serde_json::to_value(view_result(pack.items, *pack.narrowing))
             }
             Channel::Receipts => {
                 let rows = oneiron::sync::bridge::scoped_subscription_receipts(
@@ -406,7 +406,17 @@ impl LiveQuerySource for BoundSource {
             .doc
             .lock()
             .map_err(|_| AppError::internal_server_error("cursor document unavailable"))?;
+        // An anchor whose rows no longer read for this caller is no place
+        // to resume from: the resume takes a gap and a fresh snapshot
+        // (FIX 9493).
+        if !self.anchor_readmitted(&state.journal, view, channel, cursor)? {
+            return Ok(None);
+        }
         super::history::History::replay(&state.journal, view, channel, cursor)
+    }
+
+    fn readmits(&self, pushes: &[subscriptions::Push]) -> Result<bool, AppError> {
+        self.readmitted(pushes)
     }
 
     fn withholds(&self, pushes: &[subscriptions::Push]) -> Result<bool, AppError> {
@@ -452,4 +462,27 @@ impl LiveQuerySource for BoundSource {
         }
         export_since(&doc.doc, cursor)
     }
+}
+
+/// A view's result: its items and the recall pack's mandatory narrowing
+/// receipt beside them (FIX 9495), so a subscriber sees that its requested
+/// read was narrowed and on which axes. The receipt keeps no count, nor the
+/// row axis derived from one: a hidden world's rows have no names and no
+/// counts here, and a change in one never pushes through this metadata.
+#[derive(serde::Serialize)]
+struct ViewResult {
+    items: Vec<oneiron::memory::MemoryItem>,
+    narrowing: oneiron::claim::ScopedReadReceipt,
+}
+
+fn view_result(
+    items: Vec<oneiron::memory::MemoryItem>,
+    mut narrowing: oneiron::claim::ScopedReadReceipt,
+) -> ViewResult {
+    narrowing.suppressed_count = 0;
+    narrowing
+        .narrowed_axes
+        .retain(|axis| axis != "row_authority");
+    narrowing.record_axes();
+    ViewResult { items, narrowing }
 }

@@ -88,6 +88,26 @@ impl SocketCallContext {
             )
     }
 
+    /// Whether the call of `method` with `params` serves a room NOTE to
+    /// `auth`'s principal, verified in the session the context names (FIX
+    /// 4280): judged on arrival, before a close drops its hold, and kept to
+    /// the receipt ([`call_receipt::room_notes::room_note_call`]).
+    pub(super) fn room_note_call(
+        &self,
+        server: &SyncServer,
+        auth: &CoreAuth,
+        method: &str,
+        params: &Value,
+    ) -> bool {
+        call_receipt::room_notes::room_note_call(
+            server,
+            self.session_ref(),
+            call_receipt::request_principal(auth),
+            method,
+            Some(params),
+        )
+    }
+
     /// The facade call this context carries for `auth`'s credential, naming
     /// the hook pause it resumes when the context names one (FIX 5526). Its
     /// lens card is held for the subscription instance the socket resolved,
@@ -200,7 +220,12 @@ fn saved(answer: &Answer) -> Option<InvocationOutcome> {
         Err(refusal) => Saving::Refused(refusal),
     };
     let body = serde_json::to_value(saving).ok()?;
-    Some(InvocationOutcome { status: 200, body })
+    // The send door judges the saved rows again for each waiter (DEC-0005).
+    Some(InvocationOutcome {
+        status: 200,
+        body,
+        release: None,
+    })
 }
 
 /// The first call's answer, taken again by a call that waited on it. Its

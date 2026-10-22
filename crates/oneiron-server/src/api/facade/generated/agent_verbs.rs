@@ -511,6 +511,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
         .route("/vault.roots.requests.cancel", post(facade_route))
         .route("/vault.cleanup.run", post(facade_route))
+        .route("/vault.cleanup.review", post(facade_route))
+        .route("/vault.cleanup.decide", post(facade_route))
         .route("/vault.archive.delete.preview", post(facade_route))
         .route("/vault.archive.delete.confirm", post(facade_route))
         .route("/vault.usage.events.undecodable", post(facade_route))
@@ -687,6 +689,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.oplog", post(facade_route))
         .route("/execute_code", post(facade_route))
         .route("/vault.code.model_heal_count", post(facade_route))
+        .route("/vault.code.type_diagnostics", post(facade_route))
         .route("/vault.code.waits.resolve", post(facade_route))
         .route("/vault.code.waits.receipt", post(facade_route))
         .route("/vault.results.status", post(facade_route))
@@ -1267,15 +1270,15 @@ async fn vault_off_record_rooms_export_attachment(
     uri: axum::http::Uri,
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
-) -> Result<impl IntoResponse, FacadeApiError> {
-    let answer = facade_route(auth, State(server), uri, headers, payload).await?;
-    Ok((
-        [(
+) -> Response {
+    let mut answer = facade_route(auth, State(server), uri, headers, payload).await;
+    if answer.extensions().get::<FacadeApiError>().is_none() {
+        answer.headers_mut().insert(
             axum::http::header::CONTENT_DISPOSITION,
-            "attachment; filename=\"off-record-talk.json\"",
-        )],
-        answer,
-    ))
+            HeaderValue::from_static("attachment; filename=\"off-record-talk.json\""),
+        );
+    }
+    answer
 }
 pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
     Router::new().route(

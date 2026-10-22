@@ -1,14 +1,18 @@
-//! Step 4: the concurrent cases, each merged in both landing orders through
-//! the review flow (fork, preflight, land). A case that needs a conflict
-//! must surface it in both orders; any other must land in both, converge,
-//! leave no dangling reference and export.
-//!
-//! This is the live model's fork replay, the merge a review lands. Two Loro
-//! peers converging on one deck document are the engine's binding of this
-//! model, not exercised here; concurrent creations under one parent are
-//! compared as a set, since a review lands them in landing order.
+//! Step 4: the concurrent cases. The review-flow cases merge each pair of
+//! forks in both landing orders (fork, preflight, land): a case that needs a
+//! conflict must surface it in both orders; any other must land in both,
+//! leave no dangling reference and export, and its other checks (the review
+//! names the restyled slide, distinct allocated ids, a remapped or refused
+//! build) hold in each order. That is fork replay, the merge a review lands
+//! in landing order, so the two orders' heads are compared as landing-order
+//! evidence, never as convergence ([`evidence`], FIX 8591). Convergence is
+//! the engine's: two Loro peers of one body merged in both import orders
+//! ([`peers`], FIX 3773). Each order's export is kept as a candidate.
 
-use super::checks::{self, dangling};
+mod evidence;
+mod peers;
+
+use super::checks;
 use super::edits::{self, Anchor, Deck, Ids, Refused, add, apply_all, body, frame, shifted, stamp};
 use super::record::{
     CONCURRENCY, DOCUMENT, Emit, FIXED_POINT, Lane, ORACLE, OfficeCheck, Res, Run, failed, text,
@@ -19,10 +23,12 @@ use crate::deck::{DeckView, TextRange};
 use crate::edit::{EditRefusal, NoAssets, Preset};
 use crate::live::deck_export::{ExportOutcome, ExportProfile, StepOutcome, project};
 use crate::live::{
-    ApproveScope, Conflict, DeckFork, DeckNode, DeckOp, Landing, LiveDeck, LiveError, NodeId,
-    NodeKind, PreflightReport, land, preflight,
+    ApproveScope, Conflict, DeckFork, DeckOp, Landing, LiveDeck, LiveError, NodeId, NodeKind,
+    PreflightReport, land, preflight,
 };
+use crate::resource::Resources;
 use crate::retained_opc::{Limits, Package};
+use evidence::{Evidence, export_over, landed, surfaced};
 use std::collections::BTreeSet;
 
 /// Who lands both forks: never either proposer.
@@ -34,6 +40,8 @@ const ORDERS: [&str; 2] = ["a then b", "b then a"];
 struct Prepared {
     head: LiveDeck,
     package: Package,
+    /// The base's exported bytes: the deck its cases' candidates come from.
+    origin: Vec<u8>,
     slide: NodeId,
     slide2: NodeId,
     group: NodeId,
@@ -78,7 +86,8 @@ pub(super) fn cases(
     Ok(())
 }
 
-/// One merge case over the prepared base, journaled as one case.
+/// One merge case over the prepared base, journaled as one case with the
+/// evidence it captured, on a pass or a failure alike.
 fn merged_case(
     run: &mut Run,
     case: MergeCase,
@@ -86,40 +95,22 @@ fn merged_case(
     animated: Option<&Deck>,
     id: &str,
 ) -> Res<()> {
-    let result = match case {
+    let mut evidence = Evidence::default();
+    let passed = |result: Res<()>| result.map(|()| StepOutcome::Passed);
+    let outcome = match case {
+        MergeCase::LoroPeers => peers::loro_peers(run.peers, prepared, &mut evidence),
         MergeCase::TextAnimationRange => match animated {
-            Some(animated) => text_animation_range(animated, run.limits),
+            Some(animated) => passed(text_animation_range(animated, run.limits, &mut evidence)),
             None => Err("the animated variant was not built".to_owned()),
         },
-        _ => merge_case(case, prepared, run.limits),
+        _ => passed(merge_case(case, prepared, run.limits, &mut evidence)),
     };
-    let baseline = match (case, animated) {
-        (MergeCase::TextAnimationRange, Some(animated)) => animated.defects.clone(),
-        _ => prepared.defects.clone(),
+    let (baseline, origin) = match (case, animated) {
+        (MergeCase::TextAnimationRange, Some(animated)) => (&animated.defects, &animated.bytes),
+        _ => (&prepared.defects, &prepared.origin),
     };
-    match result {
-        Ok(Some(bytes)) => {
-            run.record(CONCURRENCY, id, StepOutcome::Passed);
-            let slides = DeckView::read(&Package::open(&bytes, run.limits).map_err(text)?)
-                .map_err(text)?
-                .slides
-                .len();
-            run.candidate(Emit {
-                id,
-                bytes: &bytes,
-                steps: &[ORACLE],
-                lane: Lane::Core,
-                checks: vec![
-                    OfficeCheck::Slides { count: slides },
-                    OfficeCheck::Pages { count: slides },
-                ],
-                baseline: &baseline,
-            })?;
-        }
-        Ok(None) => run.record(CONCURRENCY, id, StepOutcome::Passed),
-        Err(why) => run.record(CONCURRENCY, id, failed(why)),
-    }
-    Ok(())
+    run.record(CONCURRENCY, id, outcome.unwrap_or_else(failed));
+    evidence.flush(run, id, baseline, origin)
 }
 
 fn prepare(run: &mut Run, base: &Deck, anchor: &Anchor) -> Res<Prepared> {
@@ -144,8 +135,10 @@ fn prepare(run: &mut Run, base: &Deck, anchor: &Anchor) -> Res<Prepared> {
     );
     head.rebind(&outcome)
         .map_err(|error| format!("it does not rebind: {error}"))?;
-    let package = Package::open(&outcome.bytes, run.limits).map_err(text)?;
+    let package =
+        Package::open(&outcome.bytes, run.limits, &Resources::measuring()).map_err(text)?;
     let defects = checks::defects(&outcome.bytes, run.limits);
+    let origin = outcome.bytes.clone();
     let text_checks = [(1, "Free shape"), (1, "Group child"), (2, "Second slide")]
         .into_iter()
         .map(|(slide, contains)| OfficeCheck::Text {
@@ -165,10 +158,12 @@ fn prepare(run: &mut Run, base: &Deck, anchor: &Anchor) -> Res<Prepared> {
         .chain(text_checks)
         .collect(),
         baseline: &base.defects,
+        origin: &base.bytes,
     })?;
     Ok(Prepared {
         head,
         package,
+        origin,
         slide: s,
         slide2: nodes.slide2,
         group: nodes.group,
@@ -324,96 +319,7 @@ fn both(head: &LiveDeck, a: Vec<DeckOp>, b: Vec<DeckOp>) -> Res<[Merged; 2]> {
     Ok([merge(head, &a, &b)?, merge(head, &b, &a)?])
 }
 
-/// The second fork is held in both orders on the expected conflict, and the
-/// held head is whole.
-fn surfaced(orders: &[Merged; 2], what: &str, wanted: impl Fn(&Conflict) -> bool) -> Res<()> {
-    for (order, merged) in ORDERS.iter().zip(orders) {
-        if merged.landed {
-            return Err(format!(
-                "{order}: the second fork landed; no {what} conflict was surfaced"
-            ));
-        }
-        if !merged.second.diff.conflicts.iter().any(&wanted) {
-            return Err(format!(
-                "{order}: expected a {what} conflict, the preflight reports {:?}",
-                merged.second.diff.conflicts
-            ));
-        }
-        dangling(&merged.deck).map_err(|why| format!("{order}: {why}"))?;
-    }
-    Ok(())
-}
-
-/// Both forks land in both orders and leave whole trees that hold the same
-/// nodes, text and opaque parts; `concurrent` creations may differ only in
-/// their order among their siblings.
-fn converged(orders: &[Merged; 2], concurrent: &BTreeSet<NodeId>) -> Res<()> {
-    for (order, merged) in ORDERS.iter().zip(orders) {
-        if !merged.landed {
-            return Err(format!(
-                "{order}: the second fork was held: conflicts {:?}, refusals {:?}",
-                merged.second.diff.conflicts, merged.second.replay_refusals
-            ));
-        }
-        dangling(&merged.deck).map_err(|why| format!("{order}: {why}"))?;
-    }
-    let (a, b) = (&orders[0].deck, &orders[1].deck);
-    if a.texts != b.texts || a.opaque_parts != b.opaque_parts {
-        return Err("the two orders hold different text or opaque parts".to_owned());
-    }
-    let settled = |node: &DeckNode| -> Vec<NodeId> {
-        node.children
-            .iter()
-            .copied()
-            .filter(|child| !concurrent.contains(child))
-            .collect()
-    };
-    let members = |node: &DeckNode| -> BTreeSet<NodeId> { node.children.iter().copied().collect() };
-    let ids: BTreeSet<NodeId> = a.nodes.keys().chain(b.nodes.keys()).copied().collect();
-    for id in ids {
-        let (Some(x), Some(y)) = (a.nodes.get(&id), b.nodes.get(&id)) else {
-            return Err(format!("node {} exists in one order only", id.0));
-        };
-        let own = |node: &DeckNode| DeckNode {
-            children: Vec::new(),
-            ..node.clone()
-        };
-        if own(x) != own(y) {
-            return Err(format!("node {} differs between the orders", id.0));
-        }
-        if settled(x) != settled(y) || members(x) != members(y) {
-            return Err(format!(
-                "node {}'s children differ between the orders",
-                id.0
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn export_over(deck: &LiveDeck, package: &Package, order: &str) -> Res<ExportOutcome> {
-    project(
-        deck,
-        package,
-        DOCUMENT,
-        &ExportProfile::default(),
-        &NoAssets,
-    )
-    .map_err(|error| format!("{order}: the merged head does not export: {error}"))
-}
-
-/// Both orders export the same bytes; those bytes.
-fn agreed(orders: &[Merged; 2], package: &Package) -> Res<Vec<u8>> {
-    let first = export_over(&orders[0].deck, package, ORDERS[0])?;
-    let second = export_over(&orders[1].deck, package, ORDERS[1])?;
-    if first.bytes != second.bytes {
-        return Err("the two landing orders export different bytes".to_owned());
-    }
-    Ok(first.bytes)
-}
-
-fn merge_case(case: MergeCase, p: &Prepared, limits: Limits) -> Res<Option<Vec<u8>>> {
-    let none = BTreeSet::new();
+fn merge_case(case: MergeCase, p: &Prepared, limits: Limits, evidence: &mut Evidence) -> Res<()> {
     match case {
         MergeCase::BothMove => {
             let orders = both(
@@ -425,8 +331,7 @@ fn merge_case(case: MergeCase, p: &Prepared, limits: Limits) -> Res<Option<Vec<u
                 &orders,
                 "both-moved",
                 |c| matches!(c, Conflict::BothMoved { node } if *node == p.free),
-            )?;
-            Ok(None)
+            )
         }
         MergeCase::BothMoveSame => {
             let orders = both(
@@ -434,8 +339,11 @@ fn merge_case(case: MergeCase, p: &Prepared, limits: Limits) -> Res<Option<Vec<u
                 vec![move_to(p.free, p.slide, 0)],
                 vec![move_to(p.free, p.slide, 0)],
             )?;
-            converged(&orders, &none)?;
-            agreed(&orders, &p.package).map(Some)
+            landed(&orders)?;
+            evidence.compare(&orders);
+            evidence.export_both(&orders, &p.package)?;
+            evidence.compare_exports();
+            Ok(())
         }
         MergeCase::DeleteGroupEditChild => {
             let mut ids = Ids::above(&p.head);
@@ -451,8 +359,7 @@ fn merge_case(case: MergeCase, p: &Prepared, limits: Limits) -> Res<Option<Vec<u
                 &orders,
                 "deleted-versus-edited",
                 |c| matches!(c, Conflict::DeletedVsEdited { node, .. } if *node == p.child || *node == p.group),
-            )?;
-            Ok(None)
+            )
         }
         MergeCase::ReparentGeometry => {
             let orders = both(
@@ -467,10 +374,9 @@ fn merge_case(case: MergeCase, p: &Prepared, limits: Limits) -> Res<Option<Vec<u
                 &orders,
                 "geometry-versus-reparent",
                 |c| matches!(c, Conflict::GeometryVsReparent { node } if *node == p.child),
-            )?;
-            Ok(None)
+            )
         }
-        MergeCase::ThemeInheritedStyle => theme_inherited_style(p, limits),
+        MergeCase::ThemeInheritedStyle => theme_inherited_style(p, limits, evidence),
         MergeCase::BothReplaceOpaque => {
             let (theme, old) = theme_of(p)?;
             let replace = |face: &str| -> Res<DeckOp> {
@@ -490,11 +396,12 @@ fn merge_case(case: MergeCase, p: &Prepared, limits: Limits) -> Res<Option<Vec<u
                 &orders,
                 "both-replaced-opaque",
                 |c| matches!(c, Conflict::BothReplacedOpaque { part } if *part == theme),
-            )?;
-            Ok(None)
+            )
         }
-        MergeCase::BothAddShape => both_add_shape(p),
-        MergeCase::TextAnimationRange => Err("routed to the animated variant".to_owned()),
+        MergeCase::BothAddShape => both_add_shape(p, evidence),
+        MergeCase::TextAnimationRange | MergeCase::LoroPeers => {
+            Err("routed to its own case".to_owned())
+        }
     }
 }
 
@@ -525,7 +432,7 @@ fn theme_of(p: &Prepared) -> Res<(String, [u8; 32])> {
 /// Replace the theme on one side while the other sets a run to inherit the
 /// theme's body font: both land, the review shows the restyled slide in
 /// both orders, and the run's effective font follows the new theme.
-fn theme_inherited_style(p: &Prepared, limits: Limits) -> Res<Option<Vec<u8>>> {
+fn theme_inherited_style(p: &Prepared, limits: Limits, evidence: &mut Evidence) -> Res<()> {
     let (theme, old) = theme_of(p)?;
     let new_theme = variants::retheme(&p.package, &theme, "Georgia")?;
     let paragraph = p
@@ -549,7 +456,8 @@ fn theme_inherited_style(p: &Prepared, limits: Limits) -> Res<Option<Vec<u8>>> {
         replacement: *blake3::hash(&new_theme).as_bytes(),
     }];
     let orders = both(&p.head, replace, restyle.clone())?;
-    converged(&orders, &BTreeSet::new())?;
+    landed(&orders)?;
+    evidence.compare(&orders);
     for (order, merged) in ORDERS.iter().zip(&orders) {
         if !merged.second.diff.affected_slides.contains(&p.slide) {
             return Err(format!(
@@ -560,7 +468,8 @@ fn theme_inherited_style(p: &Prepared, limits: Limits) -> Res<Option<Vec<u8>>> {
     }
     let mut rethemed = p.package.clone();
     rethemed.replace_xml_part(&theme, new_theme).map_err(text)?;
-    let merged = agreed(&orders, &rethemed)?;
+    let merged = evidence.export_both(&orders, &rethemed)?;
+    evidence.compare_exports();
     let mut alone = p.head.clone();
     apply_all(&mut alone, &restyle).map_err(text)?;
     let alone = export_over(&alone, &p.package, "the restyle alone")?;
@@ -569,21 +478,21 @@ fn theme_inherited_style(p: &Prepared, limits: Limits) -> Res<Option<Vec<u8>>> {
         .as_ref()
         .ok_or("the free shape is not bound")?;
     let native = bound.native_id.ok_or("the free shape has no native id")?;
-    let (before, after) = (
-        fonts(&alone.bytes, limits, &bound.slide_part, native)?,
-        fonts(&merged, limits, &bound.slide_part, native)?,
-    );
-    if before == after {
-        return Err(format!(
-            "the theme replacement changed no effective font of the restyled run ({after:?})"
-        ));
+    let before = fonts(&alone.bytes, limits, &bound.slide_part, native)?;
+    for (order, outcome) in ORDERS.iter().zip(&merged) {
+        let after = fonts(&outcome.bytes, limits, &bound.slide_part, native)?;
+        if before == after {
+            return Err(format!(
+                "{order}: the theme replacement changed no effective font of the restyled run ({after:?})"
+            ));
+        }
     }
-    Ok(Some(merged))
+    Ok(())
 }
 
 /// The resolved Latin font of each run of one shape.
 fn fonts(bytes: &[u8], limits: Limits, part: &str, native: u32) -> Res<Vec<String>> {
-    let package = Package::open(bytes, limits).map_err(text)?;
+    let package = Package::open(bytes, limits, &Resources::measuring()).map_err(text)?;
     let view = DeckView::read(&package).map_err(text)?;
     let shape = view
         .slides
@@ -607,7 +516,7 @@ fn fonts(bytes: &[u8], limits: Limits, part: &str, native: u32) -> Res<Vec<Strin
 /// Both sides create a shape on one slide: both land, and the merged export
 /// allocates two distinct native ids above the slide's own, whatever ids
 /// each side's own export gave.
-fn both_add_shape(p: &Prepared) -> Res<Option<Vec<u8>>> {
+fn both_add_shape(p: &Prepared, evidence: &mut Evidence) -> Res<()> {
     let mut ids = Ids::above(&p.head);
     let (na, nb) = (ids.mint(), ids.mint());
     let side = |node: NodeId, preset: Preset, y: i64, label: &str, ids: &mut Ids| {
@@ -638,7 +547,8 @@ fn both_add_shape(p: &Prepared) -> Res<Option<Vec<u8>>> {
         );
     }
     let orders = both(&p.head, a, b)?;
-    converged(&orders, &BTreeSet::from([na, nb]))?;
+    landed(&orders)?;
+    evidence.compare(&orders);
     let view = DeckView::read(&p.package).map_err(text)?;
     let slide_part = p.head.nodes[&p.slide]
         .binding
@@ -651,9 +561,9 @@ fn both_add_shape(p: &Prepared) -> Res<Option<Vec<u8>>> {
         .filter(|slide| slide.part == slide_part)
         .flat_map(|slide| slide.shapes.iter().filter_map(|shape| shape.id))
         .collect();
-    let mut first = None;
-    for (order, merged) in ORDERS.iter().zip(&orders) {
-        let outcome = export_over(&merged.deck, &p.package, order)?;
+    let exports = evidence.export_both(&orders, &p.package)?;
+    evidence.compare_exports();
+    for (order, outcome) in ORDERS.iter().zip(&exports) {
         let id = |node: NodeId| {
             outcome
                 .bindings
@@ -668,11 +578,8 @@ fn both_add_shape(p: &Prepared) -> Res<Option<Vec<u8>>> {
                 ));
             }
         }
-        if first.is_none() {
-            first = Some(outcome.bytes);
-        }
     }
-    Ok(first)
+    Ok(())
 }
 
 /// The text edit that moves an animated paragraph, merged with a geometry
@@ -680,7 +587,7 @@ fn both_add_shape(p: &Prepared) -> Res<Option<Vec<u8>>> {
 /// either refuses (the build would target other text) or remaps the build
 /// onto the paragraph it named (ARCH-0077: "Remap within the tested subset
 /// or refuse").
-fn text_animation_range(animated: &Deck, limits: Limits) -> Res<Option<Vec<u8>>> {
+fn text_animation_range(animated: &Deck, limits: Limits, evidence: &mut Evidence) -> Res<()> {
     let anchor = edits::anchor(&animated.deck)?;
     let head = &animated.deck;
     let mut ids = Ids::above(head);
@@ -711,37 +618,54 @@ fn text_animation_range(animated: &Deck, limits: Limits) -> Res<Option<Vec<u8>>>
             geometry: shifted(head.nodes[&anchor.shape].geometry),
         }],
     )?;
-    converged(&orders, &BTreeSet::new())?;
-    let merged = &orders[0].deck;
-    let at = merged
-        .texts
-        .get(&anchor.shape)
-        .and_then(|body| {
-            body.paragraphs
-                .iter()
-                .position(|paragraph| paragraph.id == held)
-        })
-        .ok_or("the built paragraph is gone from the merged text")?;
-    match project(
-        merged,
-        &animated.package,
-        DOCUMENT,
-        &ExportProfile::default(),
-        &NoAssets,
-    ) {
-        Err(error) if animation_refusal(&error) => Ok(None),
-        Err(error) => Err(Refused::Export(error).why()),
-        Ok(outcome) => {
-            let index = u32::try_from(at).map_err(text)?;
-            let ranges = built_ranges(&outcome, limits, &anchor)?;
-            if ranges.iter().all(|range| *range == (index, index)) && !ranges.is_empty() {
-                Ok(Some(outcome.bytes))
-            } else {
-                Err(format!(
-                    "the build targets paragraphs {ranges:?}; its paragraph is now {index}"
-                ))
+    landed(&orders)?;
+    evidence.compare(&orders);
+    // Each order exports, refusing the moved build as canon allows or
+    // remapping it onto the paragraph it named; both are kept.
+    let mut failures = Vec::new();
+    for (order, merged) in ORDERS.into_iter().zip(&orders) {
+        let merged = &merged.deck;
+        let at = merged
+            .texts
+            .get(&anchor.shape)
+            .and_then(|body| {
+                body.paragraphs
+                    .iter()
+                    .position(|paragraph| paragraph.id == held)
+            })
+            .ok_or("the built paragraph is gone from the merged text")?;
+        match project(
+            merged,
+            &animated.package,
+            DOCUMENT,
+            &ExportProfile::default(),
+            &NoAssets,
+        ) {
+            Err(error) if animation_refusal(&error) => {
+                evidence.keep(order, Err(format!("refused as canon allows: {error}")));
+            }
+            Err(error) => {
+                let why = Refused::Export(error).why();
+                failures.push(format!("{order}: {why}"));
+                evidence.keep(order, Err(why));
+            }
+            Ok(outcome) => {
+                let index = u32::try_from(at).map_err(text)?;
+                let ranges = built_ranges(&outcome, limits, &anchor)?;
+                if ranges.is_empty() || ranges.iter().any(|range| *range != (index, index)) {
+                    failures.push(format!(
+                        "{order}: the build targets paragraphs {ranges:?}; its paragraph is now {index}"
+                    ));
+                }
+                evidence.keep(order, Ok(outcome.bytes));
             }
         }
+    }
+    evidence.compare_exports();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
     }
 }
 
@@ -770,7 +694,7 @@ pub(super) fn built_ranges(
     let native = bound
         .native_id
         .ok_or("the animated shape has no native id")?;
-    let package = Package::open(&outcome.bytes, limits).map_err(text)?;
+    let package = Package::open(&outcome.bytes, limits, &Resources::measuring()).map_err(text)?;
     let view = DeckView::read(&package).map_err(text)?;
     let slide = view
         .slides

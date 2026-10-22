@@ -470,11 +470,11 @@ export class Oneiron {
       },
     },
     shape: {
-      /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+      /** The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read. */
       read: (input: Facade.EmptyRequest = {}): Facade.ShapeRead => this.#call(() => this.#client.vaultShapeRead(input) as Facade.ShapeRead),
-      /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+      /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing. */
       plan: (input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan),
-      /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+      /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan. */
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
     companions: {
@@ -1079,7 +1079,7 @@ export class Oneiron {
       sections: {
         /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
         propose: (input: Facade.PluginSectionProposeRequest): Facade.PluginSectionProposal => this.#call(() => this.#client.vaultPacksSectionsPropose(input) as Facade.PluginSectionProposal),
-        /** Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project. */
+        /** Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project. */
         list: (input: Facade.PluginSectionListRequest): Facade.PluginSectionsView => this.#call(() => this.#client.vaultPacksSectionsList(input) as Facade.PluginSectionsView),
         /** The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent. */
         grant: (input: Facade.PluginSectionGrantRequest): Facade.PluginSectionGrant => this.#call(() => this.#client.vaultPacksSectionsGrant(input) as Facade.PluginSectionGrant),
@@ -1577,6 +1577,10 @@ export class Oneiron {
     cleanup: {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
       run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
+      /** The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts. */
+      review: (input: Facade.CleanupReviewRequest): Facade.CleanupReviewView => this.#call(() => this.#client.vaultCleanupReview(input) as Facade.CleanupReviewView),
+      /** The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected. */
+      decide: (input: Facade.CleanupDecideRequest): Facade.CleanupDecideView => this.#call(() => this.#client.vaultCleanupDecide(input) as Facade.CleanupDecideView),
     },
     archive: {
       delete: {
@@ -1603,7 +1607,7 @@ export class Oneiron {
       list: (input: Facade.EmptyRequest = {}): Facade.LegalHold[] => this.#call(() => this.#client.vaultLegalHoldsList(input) as Facade.LegalHold[]),
       /** The owner-visible legal hold log, oldest first. */
       log: (input: Facade.EmptyRequest = {}): Facade.LegalHoldEvent[] => this.#call(() => this.#client.vaultLegalHoldsLog(input) as Facade.LegalHoldEvent[]),
-      /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
+      /** The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
     },
     courtesy_delete: {
@@ -1662,7 +1666,7 @@ export class Oneiron {
         decide: (input: Facade.PolicyOutboundRequest): Facade.PolicyModelEnforcement => this.#call(() => this.#client.vaultPolicyOutboundDecide(input) as Facade.PolicyModelEnforcement),
       },
       relay: {
-        /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
+        /** Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer. */
         decide: (input: Facade.PolicyOutboundRequest): Facade.HostedRelayDecision => this.#call(() => this.#client.vaultPolicyRelayDecide(input) as Facade.HostedRelayDecision),
       },
     },
@@ -2021,6 +2025,8 @@ export class Oneiron {
       oplog: (input: Facade.CodeRepoRequest): Facade.CodeMutationLog => this.#call(() => this.#client.vaultCodeOplog(input) as Facade.CodeMutationLog),
       /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
       model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
+      /** Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again. */
+      type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest): Facade.ProgramStepFeedbackRelease | null => this.#call(() => this.#client.vaultCodeTypeDiagnostics(input) as Facade.ProgramStepFeedbackRelease | null),
       waits: {
         /** Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken. */
         resolve: (input: Facade.CodeWaitResolveRequest): Facade.CodeWaitReceiptView => this.#call(() => this.#client.vaultCodeWaitsResolve(input) as Facade.CodeWaitReceiptView),
@@ -2496,17 +2502,17 @@ export class Oneiron {
       trials: {
         /** Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority. */
         nominate: (input: Facade.ModelTrialNominate): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsNominate(input) as Facade.ModelTrialView),
-        /** Reads a retained held-out trial, its catalog revision, independent labels and measured cost. */
+        /** Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown. */
         get: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsGet(input) as Facade.ModelTrialView),
         /** Approves exploration for a held-out model trial only; leaves its role binding unchanged. */
         approve: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsApprove(input) as Facade.ModelTrialView),
-        /** Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost. */
+        /** Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome. */
         run: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsRun(input) as Facade.ModelTrialView),
         /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
         complete: (input: Facade.ModelTrialComplete): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsComplete(input) as Facade.ModelTrialView),
       },
       bindings: {
-        /** Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it. */
+        /** Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it. */
         propose: (input: Facade.ModelBindingPropose): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsPropose(input) as Facade.ModelBindingProposal),
         /** Reads an owner-reviewed model role-binding proposal and its pinned trial evidence. */
         get: (input: Facade.ModelBindingProposalRef): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsGet(input) as Facade.ModelBindingProposal),
@@ -3028,7 +3034,7 @@ export class Oneiron {
       create: (input: Facade.SavedQueryCreateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryCreate(input) as Facade.SavedQueryRecordView),
       /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
       read: (input: Facade.SavedQueryReadRequest): Facade.SavedQueryReadResult => this.#call(() => this.#client.selfSavedQueryRead(input) as Facade.SavedQueryReadResult),
-      /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+      /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it. */
       update: (input: Facade.SavedQueryUpdateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryUpdate(input) as Facade.SavedQueryRecordView),
       /** Archives a saved query under a definition-version check: it stays readable and is never evaluated again. */
       archive: (input: Facade.SavedQueryArchiveRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryArchive(input) as Facade.SavedQueryRecordView),
@@ -3184,9 +3190,9 @@ export class Oneiron {
       completions: (input: Facade.ChatCompletionRequest): Facade.ChatCompletionResponse => this.#call(() => this.#client.aiChatCompletions(input) as Facade.ChatCompletionResponse),
     },
     steps: {
-      /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
+      /** Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result. */
       submit: (input: Facade.ModelStepSubmit): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsSubmit(input) as Facade.ModelStepReceipt),
-      /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
+      /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain. */
       receipt: (input: Facade.ModelStepReceiptRequest): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsReceipt(input) as Facade.ModelStepReceipt),
     },
     streams: {

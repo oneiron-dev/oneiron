@@ -44,11 +44,14 @@ use crate::server::SyncServer;
 use crate::usage::SeatUsage;
 
 mod check;
+mod choices;
 mod cost;
+mod draft;
 mod pilot;
 mod sources;
 mod unverifiable;
 pub(super) use check::check;
+use choices::{recipe_choices, stock_choices};
 use cost::{candidate_monthly, monthly, payback};
 use sources::Sources;
 use unverifiable::{Alone, Unverifiable};
@@ -235,10 +238,12 @@ pub(super) fn draft(
         else {
             continue;
         };
-        pilot::ground(vault, &mut draft)?;
-        // The offer also reads the pilots it grounds on (FIX 7021): its set
-        // after ground, `None` when any grounding pilot's measurement set is
-        // unknown.
+        // An exact Final paired measurement of this pair supplies its own
+        // card (FIX 574); without one the grounded evidence stands.
+        super::eval_measurement::attach_measured_card(vault, &mut draft, now)?;
+        // The offer also reads the pilots its options were grounded on, each
+        // its own option's exact pilot from the brief (FIX 7021, 9469): its
+        // set, `None` when any such pilot's measurement set is unknown.
         let grounded = draft.source_rows.clone();
         record_read(vault, attempt.id, grounded, &mut read_set_lost);
         match vault.run_coach_training_offer(admitted, draft, now) {
@@ -287,6 +292,10 @@ struct Choice {
     destination: ComputeDestination,
     evidence_refs: Vec<String>,
     data: serde_json::Value,
+    /// The latest pilot of exactly this option for the seat's incumbent: its
+    /// whole candidate and its destination (FIX 9469). `None` when none
+    /// matched.
+    pilot: Option<oneiron::skill_optimize::offer_pilot::OfferPilot>,
 }
 
 /// Everything one seat's offer is drafted from.
@@ -354,133 +363,8 @@ impl Brief {
             sources.set(row.source_rows.as_deref());
         }
         let baseline_monthly = monthly(current, &workload, &usage);
-        let mut stock: Vec<Choice> = registry
-            .iter()
-            .filter(|row| row.catalog.model != current.catalog.model)
-            .filter(|row| {
-                current
-                    .catalog
-                    .capabilities
-                    .iter()
-                    .all(|capability| row.catalog.supports(capability))
-            })
-            .filter_map(|row| {
-                let (pin, backend) = pin(row)?;
-                let licence = licence(row)?;
-                let (monthly, estimate) = candidate_monthly(current, row, &workload, &usage);
-                let label = format!("switch to {}", row.catalog.model.as_str());
-                Some(Choice {
-                    id: String::new(),
-                    label: if estimate {
-                        format!("{label} (estimated price)")
-                    } else {
-                        label
-                    },
-                    candidate: OfferCandidate::Stock {
-                        model: pin.clone(),
-                        licence: licence.clone(),
-                        source: backend.clone(),
-                    },
-                    pin,
-                    monthly,
-                    estimate,
-                    destination: match row.catalog.locality {
-                        ModelLocality::OnDevice => ComputeDestination::OnDevice,
-                        ModelLocality::OwnServer => ComputeDestination::SelfHosted {
-                            host: backend.clone(),
-                        },
-                        ModelLocality::ThirdParty => ComputeDestination::Hosted {
-                            provider: backend.clone(),
-                            rows_leaving: 0,
-                        },
-                    },
-                    evidence_refs: Vec::new(),
-                    data: serde_json::json!({
-                        "kind": "switch",
-                        "model": row.catalog.model.as_str(),
-                        "display_name": row.catalog.display_name,
-                        "locality": row.catalog.locality,
-                        "backend": backend,
-                        "licence": licence,
-                        "context_window_tokens": row.catalog.context_window_tokens,
-                        "monthly_at_list_price": monthly,
-                        "estimate": estimate,
-                        "public_benchmarks": row.scores,
-                    }),
-                })
-            })
-            .collect();
-        // The cheapest first, unknown prices last. Every option rides whole
-        // (Rule 5).
-        stock.sort_by(|a, b| match (a.monthly, b.monthly) {
-            (Some(a), Some(b)) => a.total_cmp(&b),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        });
-        let mut recipes: Vec<Choice> = Vec::new();
-        // A question head trains no seat's role, so no offer recipe names it.
-        let mut seat_runs: Vec<&TrainingRun> = runs
-            .iter()
-            .filter(|run| {
-                run.plan
-                    .target
-                    .role_binding()
-                    .is_some_and(|(run_role, _)| run_role == role)
-                    && run.plan.seat == seat
-            })
-            .collect();
-        seat_runs.sort_by_key(|run| std::cmp::Reverse((run.created_at, run.id)));
-        for run in &seat_runs {
-            // Each seat run is read for its recipe, kept or not (FIX 5760).
-            sources.set(run.source_rows.as_deref());
-            let Some(base) = base_pin(run) else {
-                continue;
-            };
-            if recipes.iter().any(|choice| choice.pin == base) {
-                continue;
-            }
-            let Some(licence) = registry
-                .iter()
-                .find(|row| row.catalog.model == run.plan.starting_checkpoint.model)
-                .and_then(licence)
-            else {
-                continue;
-            };
-            let Some(destination) = destination(run) else {
-                continue;
-            };
-            let recipe_ref = format!("training_run:{}", run.id.to_hex());
-            recipes.push(Choice {
-                id: String::new(),
-                label: format!("train from {}", base.model),
-                candidate: OfferCandidate::TrainRecipe {
-                    base: base.clone(),
-                    recipe_ref: recipe_ref.clone(),
-                    licence: licence.clone(),
-                },
-                pin: base.clone(),
-                // A custom model's serving price is not known before it runs.
-                monthly: None,
-                estimate: false,
-                destination: destination.clone(),
-                evidence_refs: vec![recipe_ref.clone()],
-                data: serde_json::json!({
-                    "kind": "train",
-                    "base": base.model,
-                    "recipe": recipe_ref,
-                    "licence": licence,
-                    "state": run.state,
-                    "destination": destination,
-                    "held_out": run.evaluation.as_ref().map(|evaluation| serde_json::json!({
-                        "cases": evaluation.cases,
-                        "metrics": evaluation.metrics,
-                        "passed": evaluation.passed,
-                    })),
-                    "monthly_at_list_price": null,
-                }),
-            });
-        }
+        let stock = stock_choices(registry, current, &workload, &usage);
+        let (recipes, seat_runs) = recipe_choices(runs, registry, role, &seat, &mut sources);
         let mut choices: Vec<Choice> = stock.into_iter().chain(recipes).collect();
         if choices.is_empty() {
             return Ok(None);
@@ -607,95 +491,6 @@ impl Brief {
             "eval_cohort": self.cohort_data,
             "earlier_offers": self.prior,
             "your_offer_record": self.record,
-        })
-    }
-
-    /// The offer the Coach's answer names, or `None` for no offer: it named
-    /// none, named no option given, or repeats an offer without saying what
-    /// changed.
-    fn draft(
-        mut self,
-        answer: AnswerWire,
-        offer_skill: (EntityId, String),
-        now: u64,
-    ) -> Option<TrainingOfferDraft> {
-        let chosen = answer.offer?;
-        let index = self.choices.iter().position(|choice| choice.id == chosen)?;
-        let what_changed = answer
-            .what_changed
-            .as_deref()
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(str::to_owned);
-        if self.previous.is_some() && what_changed.is_none() {
-            return None;
-        }
-        let choice = self.choices.remove(index);
-        let note = if choice.estimate {
-            ESTIMATE_NOTE
-        } else {
-            PRICING_NOTE
-        };
-        let cost = |monthly: Option<f64>, one_off: Option<f64>| OfferCost {
-            currency: CATALOG_CURRENCY.to_owned(),
-            monthly_before: self.baseline_monthly,
-            monthly_after: monthly,
-            one_off,
-            payback_months: payback(self.baseline_monthly, monthly, one_off),
-        };
-        let baseline = OfferOption {
-            label: format!("keep {}", self.incumbent.model),
-            model: self.incumbent.clone(),
-            // Keeping the seat costs nothing once.
-            cost: cost(self.baseline_monthly, Some(0.0)),
-            score: None,
-            evidence_refs: Vec::new(),
-        };
-        let alternatives = self
-            .choices
-            .iter()
-            .map(|other| OfferOption {
-                label: other.label.clone(),
-                model: other.pin.clone(),
-                cost: cost(other.monthly, None),
-                score: None,
-                evidence_refs: other.evidence_refs.clone(),
-            })
-            .collect();
-        // The risk line carries the price note after the Coach's words.
-        let risk = answer
-            .risk
-            .as_deref()
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map_or_else(|| note.to_owned(), |risk| format!("{risk} {note}"));
-        let mut evidence = self.evidence;
-        evidence.losses = answer
-            .losses
-            .iter()
-            .map(|loss| loss.trim())
-            .filter(|loss| !loss.is_empty())
-            .map(str::to_owned)
-            .collect();
-        evidence.risk = Some(risk);
-        // The offer skill whose body the Coach ran on this brief.
-        let mut sources = self.sources;
-        sources.row(offer_skill.0);
-        Some(TrainingOfferDraft {
-            seat: self.seat,
-            offer_skill: Some(offer_skill),
-            incumbent: self.incumbent,
-            candidate: choice.candidate,
-            baseline,
-            alternatives,
-            workload: self.workload,
-            cost: cost(choice.monthly, None),
-            evidence,
-            destination: choice.destination,
-            previous: self.previous,
-            what_changed: self.previous.and(what_changed),
-            check_at: now.saturating_add(CHECK_AFTER_SECS),
-            source_rows: sources.rows(),
         })
     }
 }

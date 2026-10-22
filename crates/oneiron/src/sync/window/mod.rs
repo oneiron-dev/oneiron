@@ -27,6 +27,7 @@ mod device_only;
 mod egress;
 mod forward;
 mod history_free;
+mod pad_custody;
 mod project_history;
 mod rebootstrap;
 mod replacement;
@@ -67,6 +68,12 @@ pub use self::history_free::{
     WindowExport, export_promotion_snapshot, export_window_replacement,
     export_window_replacement_for, export_window_since, export_window_since_for,
     export_window_updates_since, promotion_baseline, update_reaches_below_root,
+};
+pub(crate) use self::pad_custody::{PersistedWindowPads, persisted_window_pads_form};
+pub use self::pad_custody::{
+    PreparedWindowPads, WINDOW_PAD_PART_REPAIR, WINDOW_PAD_RECEIPT_WITNESS, WindowPadPartRepair,
+    WindowPadReceiptWitness, admit_window_pads, carrier_window_pads, persisted_window_pads,
+    prepare_window_pads, promotion_window_pads,
 };
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
@@ -296,11 +303,13 @@ pub(crate) fn persist_window_doc_in_txn(
     state: &[u8],
     vv: &[u8],
 ) -> Result<()> {
+    // Its pads persist by reference where custody here holds them (FIX 7107).
+    let state = pad_custody::persisted_window_pads(vault, key, state, None);
     WINDOW_SNAPSHOT.put(
         &vault.store,
         wtxn,
         &key.as_str().to_owned(),
-        &state.to_vec(),
+        &state.into_owned(),
     )?;
     WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv.to_vec())?;
     Ok(())

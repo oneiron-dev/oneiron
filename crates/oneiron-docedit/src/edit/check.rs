@@ -6,8 +6,8 @@
 //! new parts carry their declared content types; and a fresh [`DeckView`]
 //! must read the same slides, identities and animation index, plus the
 //! written values.
-use super::media::{notes_body, notes_text, related};
-use super::text::{paragraphs, split};
+use super::media::{ASVG, notes_body, notes_text, related, svg_extension};
+use super::text::{BREAK, font_size, paragraphs, run_span, split};
 use super::xml::{self, A, P, R};
 use super::{EditRefusal, ValueEdit, Written};
 use crate::deck::{AnimationIndex, DeckView, ShapeView};
@@ -86,7 +86,7 @@ pub(super) fn verify(
     op: &ValueEdit<'_>,
     written: &Written,
 ) -> Result<Vec<String>, EditRefusal> {
-    let candidate = Package::open(&next.export()?, input.limits())?;
+    let candidate = Package::open(&next.export()?, input.limits(), input.resources())?;
     let mut changed = Vec::new();
     for part in candidate.names() {
         if input.part(part)? != candidate.part(part)? {
@@ -142,7 +142,7 @@ pub(super) fn verify(
         _ => None,
     };
     same_deck(before, &after, glued)?;
-    reads_back(&candidate, before, &after, op)?;
+    reads_back(input, &candidate, before, &after, op)?;
     Ok(changed)
 }
 
@@ -473,8 +473,10 @@ fn body_paragraphs(
         .collect())
 }
 
-/// The written values read back from the candidate.
+/// The written values read back from the candidate, against the input
+/// where a value is derived from what it held.
 fn reads_back(
+    input: &Package,
     candidate: &Package,
     before: &DeckView,
     after: &DeckView,
@@ -508,12 +510,39 @@ fn reads_back(
                         .collect()
                 }))
             };
+            // The run splits at each U+000B, a piece of no text writing no
+            // run (FIX 5143); text with no break stays one run.
+            let pieces: Vec<String> = if text.contains(BREAK) {
+                text.split(BREAK)
+                    .filter(|piece| !piece.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            } else {
+                vec![text.to_owned()]
+            };
             let mut expected = runs(before)?;
-            if let Some(slot) = expected.get_mut(paragraph).and_then(|p| p.get_mut(run)) {
-                text.clone_into(slot);
+            if let Some(held) = expected.get_mut(paragraph)
+                && run < held.len()
+            {
+                let _replaced: Vec<String> = held.splice(run..=run, pieces).collect();
             }
             if runs(after)? != expected {
                 return fault("the runs do not read as written");
+            }
+            // The body's text, breaks in place, is the input's with the
+            // run's characters replaced.
+            let (_, tree) = xml::read(input, target.slide)?;
+            let at = find_shape(&tree, target.shape)
+                .ok_or(EditRefusal::ReadBack("the target is gone"))?;
+            let body =
+                xml::child(&tree, at, P, "txBody").ok_or(EditRefusal::ReadBack("no text body"))?;
+            let held = paragraphs(&tree, body);
+            let (from, to) =
+                run_span(&held, paragraph, run).ok_or(EditRefusal::ReadBack("the run is gone"))?;
+            let mut written: Vec<Vec<char>> = held.into_iter().map(|p| p.text).collect();
+            let _replaced: Vec<char> = written[paragraph].splice(from..to, text.chars()).collect();
+            if body_paragraphs(candidate, &target)? != written {
+                return fault("the breaks do not read as written");
             }
         }
         ValueEdit::SetRunProps {
@@ -557,7 +586,7 @@ fn reads_back(
                         if at < start || at >= end {
                             return was == now;
                         }
-                        now.0 == props.size.or(was.0)
+                        now.0 == props.size.map(font_size).or(was.0)
                             && now.1 == props.bold.or(was.1)
                             && now.2 == props.italic.or(was.2)
                             && now.3 == props.latin.map(str::to_owned).or_else(|| was.3.clone())
@@ -636,6 +665,33 @@ fn reads_back(
                 || descr != Some(picture.record.description.as_str())
             {
                 return fault("the picture does not read as written");
+            }
+            // No SVG extension draws over the new raster, and every other
+            // extension of the blip reads as the input held it (FIX 6306).
+            let (old_bytes, old_tree) = xml::read(input, target.slide)?;
+            let (new_bytes, _) = xml::read(candidate, target.slide)?;
+            let old_at = find_shape(&old_tree, target.shape)
+                .ok_or(EditRefusal::ReadBack("the target is gone"))?;
+            let blip =
+                |tree: &XmlTree, at: usize| xml::path(tree, at, &[(P, "blipFill"), (A, "blip")]);
+            let (Some(old_blip), Some(new_blip)) = (blip(&old_tree, old_at), blip(&tree, at))
+            else {
+                return fault("the picture has no blip");
+            };
+            let others = |tree: &XmlTree, bytes: &[u8], blip: usize| -> Vec<Vec<u8>> {
+                xml::child(tree, blip, A, "extLst").map_or_else(Vec::new, |list| {
+                    tree.nodes[list]
+                        .children
+                        .iter()
+                        .filter(|&&ext| xml::child(tree, ext, ASVG, "svgBlip").is_none())
+                        .map(|&ext| bytes[tree.nodes[ext].span.clone()].to_vec())
+                        .collect()
+                })
+            };
+            if svg_extension(&tree, new_blip).is_some()
+                || others(&old_tree, &old_bytes, old_blip) != others(&tree, &new_bytes, new_blip)
+            {
+                return fault("the picture keeps an SVG over it or lost an extension");
             }
         }
         ValueEdit::SetPreset { target, preset } => {

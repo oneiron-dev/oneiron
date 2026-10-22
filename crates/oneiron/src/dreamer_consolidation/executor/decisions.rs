@@ -7,14 +7,17 @@ use serde_json::json;
 use super::*;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::provenance::KeptDecision;
+use crate::dreamer_consolidation::settle::decision_pages::{json_len, split_pages};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::decision::{
-    AnswerActor, AskAct, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionBand,
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, HumanAskReason,
-    RoleRank, TypedDecision, cut_text, fit_state,
+    AnswerActor, AskAct, AskRole, AskTo, DecisionAsk, DecisionBand, DecisionBandPolicy,
+    DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, HumanAskReason,
+    MAX_DECISION_STATE_BYTES, RoleRank, TypedDecision,
 };
 
+mod identity_choice;
 mod read;
+pub(super) use identity_choice::FinalChoice;
 pub(in crate::dreamer_consolidation) use read::{Decider, ScopedRead};
 
 /// The answer that names no listed id.
@@ -133,22 +136,6 @@ pub(super) fn id_options(
             (options, shown)
         })
         .collect()
-}
-
-/// The id one set of group answers names: of the ids named, the one read most probable.
-pub(super) fn named_id(decisions: Vec<&KeptDecision>) -> Option<EntityId> {
-    decisions
-        .into_iter()
-        .filter_map(
-            |decision| match (decision.answer(), decision.probability()) {
-                (Some(DecisionAnswer::Choice(label)), Some(probability)) if label != NONE => {
-                    EntityId::from_hex(label).ok().map(|id| (id, probability))
-                }
-                _ => None,
-            },
-        )
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(id, _)| id)
 }
 
 /// Whether the ladder put this decision to a role: its last pin is the person rung's.
@@ -323,65 +310,149 @@ fn verdict_shell(call: &RoleCall<'_>, scope: &crate::llm::Scope) -> Result<LlmRe
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     })
 }
 
-/// A conflict as its pack reads it: the predicate, the prior heads and each candidate,
-/// every value as its JSON text, cut shorter (halving) until the whole fits. Each claim
-/// goes by its label in `labels` (FIX 7506).
-pub(super) fn conflict_state(
-    identity: &ConflictIdentity,
-    members: &[&PromotionCandidate],
-    priors: &[super::super::PriorHead],
-    labels: &mut CallLabelMap,
-) -> Result<serde_json::Value> {
-    let priors: Vec<(String, &str, Option<&str>, String)> = priors
-        .iter()
-        .map(|prior| {
-            (
-                labels.assign(LabelKind::Claim, prior.claim_id).to_string(),
-                prior.body.predicate.as_str(),
-                prior.body.source.map(ClaimSource::as_str),
-                rmpv_to_json(&prior.body.value).to_string(),
-            )
+/// Which read of a pack one state is for: the whole pack, one of its pages,
+/// or a final identity choice (FIX 8693).
+#[derive(Debug, Clone, Copy)]
+pub(super) enum StatePart {
+    Whole,
+    Page { page: usize, pages: usize },
+    Final,
+}
+
+impl StatePart {
+    /// `state` marked as this part's: a page says which of how many, a final
+    /// choice says it is one.
+    pub(super) fn mark(self, mut state: serde_json::Value) -> serde_json::Value {
+        if let serde_json::Value::Object(fields) = &mut state {
+            match self {
+                Self::Whole => {}
+                Self::Page { page, pages } => {
+                    fields.insert("page".to_owned(), json!(page + 1));
+                    fields.insert("pages".to_owned(), json!(pages));
+                }
+                Self::Final => {
+                    fields.insert("final_choice".to_owned(), json!(true));
+                }
+            }
+        }
+        state
+    }
+}
+
+/// A conflict as its pack reads it, every value whole (Rule 5, FIX 7637):
+/// the predicate and the prior heads every read shows, and each candidate.
+/// Each claim goes by its label in the read's map (FIX 7506).
+pub(super) struct ConflictRows {
+    predicate: String,
+    priors: Vec<(EntityId, String, Option<&'static str>, serde_json::Value)>,
+    candidates: Vec<(EntityId, String, serde_json::Value)>,
+}
+
+impl ConflictRows {
+    pub(super) fn of(
+        identity: &ConflictIdentity,
+        members: &[&PromotionCandidate],
+        priors: &[super::super::PriorHead],
+    ) -> Result<Self> {
+        let priors = priors
+            .iter()
+            .map(|prior| {
+                (
+                    prior.claim_id,
+                    prior.body.predicate.clone(),
+                    prior.body.source.map(ClaimSource::as_str),
+                    rmpv_to_json(&prior.body.value),
+                )
+            })
+            .collect();
+        let candidates = members
+            .iter()
+            .map(|member| {
+                let facts = candidate_facts(&member.candidate)?;
+                Ok((member.claim_id, facts.predicate, rmpv_to_json(&facts.value)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            predicate: identity.predicate.clone(),
+            priors,
+            candidates,
         })
-        .collect();
-    let candidates = members
-        .iter()
-        .map(|member| {
-            let facts = candidate_facts(&member.candidate)?;
-            Ok((
-                labels.assign(LabelKind::Claim, member.claim_id).to_string(),
-                facts.predicate.to_string(),
-                rmpv_to_json(&facts.value).to_string(),
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let longest = priors
-        .iter()
-        .map(|prior| prior.3.len())
-        .chain(candidates.iter().map(|candidate| candidate.2.len()))
-        .max()
-        .unwrap_or(0);
-    Ok(fit_state(longest, |cut| {
-        let priors: Vec<_> = priors
+    }
+
+    /// Every candidate's index, in order.
+    pub(super) fn all(&self) -> Vec<usize> {
+        (0..self.candidates.len()).collect()
+    }
+
+    /// The indexes of the candidates `ids` name, in their order.
+    pub(super) fn indexes(&self, ids: &[EntityId]) -> Vec<usize> {
+        ids.iter()
+            .filter_map(|id| self.candidates.iter().position(|row| row.0 == *id))
+            .collect()
+    }
+
+    /// The candidate ids at `shown`, in order.
+    pub(super) fn ids(&self, shown: &[usize]) -> Vec<EntityId> {
+        shown
+            .iter()
+            .filter_map(|at| self.candidates.get(*at).map(|row| row.0))
+            .collect()
+    }
+
+    /// The state one read of the pack takes: the predicate, every prior head
+    /// and the candidates at `shown`, each whole, marked as `part`'s.
+    pub(super) fn state(
+        &self,
+        shown: &[usize],
+        part: StatePart,
+        labels: &mut CallLabelMap,
+    ) -> serde_json::Value {
+        let candidates: Vec<serde_json::Value> = shown
+            .iter()
+            .filter_map(|at| self.candidates.get(*at))
+            .map(|(claim, predicate, value)| {
+                let claim = labels.assign(LabelKind::Claim, *claim).to_string();
+                json!({"claim": claim, "predicate": predicate, "value": value})
+            })
+            .collect();
+        let priors: Vec<serde_json::Value> = self
+            .priors
             .iter()
             .map(|(claim, predicate, source, value)| {
-                json!({"claim": claim, "predicate": predicate, "source": source,
-                    "value": cut_text(value, cut)})
+                let claim = labels.assign(LabelKind::Claim, *claim).to_string();
+                json!({"claim": claim, "predicate": predicate, "source": source, "value": value})
             })
             .collect();
-        let candidates: Vec<_> = candidates
-            .iter()
-            .map(|(claim, predicate, value)| {
-                json!({"claim": claim, "predicate": predicate, "value": cut_text(value, cut)})
-            })
-            .collect();
-        json!({
-            "predicate": identity.predicate,
+        part.mark(json!({
+            "predicate": self.predicate,
             "prior_heads": priors,
             "candidates": candidates,
-            "cut_at_bytes": cut,
-        })
-    }))
+        }))
+    }
+
+    /// The candidates' indexes in pages: all on one when the whole state fits
+    /// the ladder's bound; else split in order, each page beside every prior
+    /// head, a candidate wider than a page on a page of its own. Each is
+    /// measured with its full id.
+    pub(super) fn pages(&self) -> Vec<Vec<usize>> {
+        let all = self.all();
+        let whole = self.state(&all, StatePart::Whole, &mut CallLabelMap::default());
+        if json_len(&whole) <= MAX_DECISION_STATE_BYTES {
+            return vec![all];
+        }
+        let part = StatePart::Page { page: 0, pages: 2 };
+        let frame = json_len(&self.state(&[], part, &mut CallLabelMap::default()));
+        let bytes =
+            |at: usize| {
+                self.candidates.get(at).map_or(0, |(claim, predicate, value)| {
+                json_len(&json!({"claim": claim.to_hex(), "predicate": predicate, "value": value}))
+                    .saturating_add(1)
+            })
+            };
+        split_pages(frame, &all, |_, at| bytes(at), |_, _| true)
+    }
 }

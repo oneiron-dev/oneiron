@@ -21,6 +21,7 @@ use crate::sync::transport::{
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
     LoadedWindow, WindowExport, apply_pending_window_updates, load_window_from_state,
+    persisted_window_pads,
 };
 use crate::sync::window_rows::BULK_TRANSFER_MARKER;
 
@@ -266,6 +267,12 @@ impl SyncClient {
                 "full-window vector exchange on federation lane",
             ));
         }
+        // A window's bytes come in their envelope, its pads installed here first (FIX 7107).
+        let (sub_tag, payload) = match self.accept_window_pad_frame(&key, sub_tag, payload)? {
+            std::ops::ControlFlow::Continue(frame) => frame,
+            std::ops::ControlFlow::Break(answer) => return Ok(answer),
+        };
+        let payload: &[u8] = &payload;
         match sub_tag {
             window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
                 if self.config.residence_mode == SyncResidenceMode::Opened =>
@@ -303,27 +310,8 @@ impl SyncClient {
             window_sub_tags::RESIDENCE_ACK
                 if self.config.residence_mode == SyncResidenceMode::Opened =>
             {
-                let (seq, digest) =
-                    payload
-                        .split_at_checked(8)
-                        .ok_or(TransportError::InvalidPayload(
-                            "short residence acknowledgment",
-                        ))?;
-                let seq = u64::from_be_bytes(seq.try_into().expect("length checked"));
-                let digest: [u8; 32] = digest.try_into().map_err(|_| {
-                    TransportError::InvalidPayload("invalid residence acknowledgment")
-                })?;
-                if seq == 0
-                    || self
-                        .residence_acks
-                        .insert(seq, digest)
-                        .is_some_and(|old| old != digest)
-                {
-                    return Err(TransportError::InvalidPayload(
-                        "conflicting residence acknowledgment",
-                    ));
-                }
-                Ok(Vec::new())
+                // The receipt binds what was sent for the row (FIX 7107).
+                self.accept_window_pad_receipt(window_key, sub_tag, payload)
             }
             window_sub_tags::SELECTOR_DEFERRED => {
                 // The retry resumes a federated selector exchange: the same
@@ -378,16 +366,21 @@ impl SyncClient {
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);
                 };
-                let responses = vec![
-                    transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
-                        .into_result()?,
+                let mut responses = self.window_pad_frames(
+                    window_key,
+                    window_sub_tags::UPDATE,
+                    None,
+                    &delta,
+                    Some(doc),
+                )?;
+                responses.push(
                     transport::encode_window_sync(
                         window_key,
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
                     )
                     .into_result()?,
-                ];
+                );
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
                 self.server_vvs.insert(window_key.to_string(), server_vv);
@@ -474,10 +467,13 @@ impl SyncClient {
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);
                 };
-                let responses = vec![
-                    transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
-                        .into_result()?,
-                ];
+                let responses = self.window_pad_frames(
+                    window_key,
+                    window_sub_tags::UPDATE,
+                    None,
+                    &delta,
+                    Some(&window.doc),
+                )?;
                 self.server_vvs.insert(window_key.to_string(), server_vv);
                 Ok(responses)
             }
@@ -780,6 +776,9 @@ impl SyncClient {
                     return Err(map_delta_export_err(e));
                 }
             };
+            // Its pads persist by reference where custody here holds them
+            // (FIX 7107).
+            let missing = persisted_window_pads(&self.vault, &key, &missing, Some(&window.doc));
             if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
                 self.manager.discard_window(&key);
                 return Err(TransportError::Storage(format!(
@@ -791,8 +790,10 @@ impl SyncClient {
         // Remote imports never fire Observer A (local-only), so persist the
         // accepted update bytes ourselves: without a u:w: row, remote state —
         // including tombstones, whose LMDB purge already ran — would vanish
-        // from the doc on restart.
-        if let Err(e) = persist_window_update(&self.vault, window_key, payload) {
+        // from the doc on restart. Its pads persist by reference where
+        // custody here holds them (FIX 7107).
+        let persisted = persisted_window_pads(&self.vault, &key, payload, Some(&window.doc));
+        if let Err(e) = persist_window_update(&self.vault, window_key, &persisted) {
             // Never leave RAM ahead of durable state on a FAILED persist
             // (client analog of the ONE-1129 server evict-on-persist-failure):
             // the import advanced this doc's version vector, so keeping the
@@ -870,6 +871,9 @@ impl SyncClient {
         let marker_key = window_key.to_owned();
 
         if !doc_state.is_empty() {
+            // The state comes in its envelope, its pads installed here first (FIX 7107).
+            let state = self.bulk_window_state(&WindowKey::new(window_key), doc_state)?;
+            let doc_state = state.as_slice();
             if let Some(window) = self.window(window_key) {
                 // Window is live: import through the observed doc so
                 // Observer B materializes, then persist the merged state.

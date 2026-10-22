@@ -3,6 +3,8 @@
 //! Definitions live here; arrange preserves the old visibility-scoped bindings.
 
 use super::*;
+use crate::ooxml::XmlTree;
+use crate::retained_opc::Relationship;
 
 /// The independent check of every projector verb.
 pub(in crate::edit::structure) fn verify(
@@ -12,7 +14,7 @@ pub(in crate::edit::structure) fn verify(
     op: &StructureEdit<'_>,
     effects: &[Effect],
 ) -> Result<Vec<String>, EditRefusal> {
-    let candidate = Package::open(&next.export()?, input.limits())?;
+    let candidate = Package::open(&next.export()?, input.limits(), input.resources())?;
     let removed = match *op {
         StructureEdit::DeleteSlide { slide, .. } => released(input, &candidate, slide)?,
         _ => Vec::new(),
@@ -170,6 +172,7 @@ pub(in crate::edit::structure) fn verify(
                     return Err(fault("a copied shape is missing"));
                 }
             }
+            copied(input, &candidate, old_source, old, target.shape, effects)?;
         }
         StructureEdit::AddPicture { slide, picture } => {
             let (old, new) = slide_pair(before, &after, slide)?;
@@ -306,6 +309,204 @@ pub(super) fn added(
     }
     kept(old, new)?;
     Ok(*id)
+}
+
+/// One side of a cross-slide copy: a part's bytes, its tree and its
+/// relationships.
+struct Side<'a> {
+    bytes: &'a [u8],
+    tree: &'a XmlTree,
+    links: &'a [Relationship],
+}
+
+/// What a cross-slide copy may change inside the copied element: derived
+/// from its declared effects and the destination as it was, never from the
+/// bytes it wrote.
+struct Remap<'a> {
+    /// Each copied native id and the id its copy holds.
+    ids: BTreeMap<u32, u32>,
+    /// The creation ids the destination held before the copy.
+    held: BTreeSet<&'a str>,
+}
+
+/// The namespace of `xmlns:x` declarations, which are bindings, not
+/// attributes.
+const XMLNS: &str = "http://www.w3.org/2000/xmlns/";
+
+/// The copied element reads as its source (FIX 8582), from the input's
+/// source part and the candidate's destination part: the same expanded
+/// element names, attribute names and values, text and child order, and
+/// the same bytes wherever no remap reaches. The remaps allowed are the
+/// copy's own: the native ids it drew, a creation id the destination held,
+/// relationship ids naming the same kind and target, and glue to a shape
+/// the copy does not carry removed.
+fn copied(
+    input: &Package,
+    candidate: &Package,
+    source: &SlideView,
+    destination: &SlideView,
+    shape: u32,
+    effects: &[Effect],
+) -> Result<(), EditRefusal> {
+    let fault = || EditRefusal::ReadBack("the copy does not read as its source");
+    let ids: BTreeMap<u32, u32> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::ShapeCopied { from, id } => Some((*from, *id)),
+            _ => None,
+        })
+        .collect();
+    let root = source
+        .shapes
+        .iter()
+        .find(|s| s.id == Some(shape))
+        .ok_or_else(fault)?
+        .node
+        .index;
+    let (source_bytes, source_tree) = xml::read(input, &source.part)?;
+    let (copy_bytes, copy_tree) = xml::read(candidate, &destination.part)?;
+    let copy = ids
+        .get(&shape)
+        .and_then(|&id| check::find_shape(&copy_tree, id))
+        .ok_or_else(fault)?;
+    let source_links = input.relationships(&source.part)?;
+    let copy_links = candidate.relationships(&destination.part)?;
+    let remap = Remap {
+        ids,
+        held: destination
+            .shapes
+            .iter()
+            .filter_map(|s| s.creation_id.as_deref())
+            .collect(),
+    };
+    let from = Side {
+        bytes: &source_bytes,
+        tree: &source_tree,
+        links: &source_links,
+    };
+    let into = Side {
+        bytes: &copy_bytes,
+        tree: &copy_tree,
+        links: &copy_links,
+    };
+    if same_copy(&from, &into, (root, copy), &remap) {
+        Ok(())
+    } else {
+        Err(fault())
+    }
+}
+
+/// Whether a copy's remap may reach this element.
+fn remapped(node: &crate::ooxml::Node) -> bool {
+    node.is(P, "cNvPr")
+        || node.is(A16, "creationId")
+        || node.is(A, "stCxn")
+        || node.is(A, "endCxn")
+        || node.attrs_ns.keys().any(|(ns, _)| ns == R)
+}
+
+/// An element's expanded attributes, its namespace declarations aside.
+fn expanded(node: &crate::ooxml::Node) -> BTreeMap<&(String, String), &String> {
+    node.attrs_ns
+        .iter()
+        .filter(|((ns, local), _)| ns != XMLNS && !(ns.is_empty() && local == "xmlns"))
+        .collect()
+}
+
+/// The bytes between `node`'s kept children, in order, from its open tag to
+/// its close tag; a dropped child's bytes go, the bytes around it join.
+fn gaps(side: &Side<'_>, node: usize, kept: &[usize]) -> Vec<Vec<u8>> {
+    let element = &side.tree.nodes[node];
+    let mut out = Vec::new();
+    let mut gap = Vec::new();
+    let mut cursor = element.content.start;
+    for &child in &element.children {
+        let span = &side.tree.nodes[child].span;
+        gap.extend_from_slice(&side.bytes[cursor..span.start]);
+        cursor = span.end;
+        if kept.contains(&child) {
+            out.push(std::mem::take(&mut gap));
+        }
+    }
+    gap.extend_from_slice(&side.bytes[cursor..element.content.end]);
+    out.push(gap);
+    out
+}
+
+fn same_copy(
+    from: &Side<'_>,
+    into: &Side<'_>,
+    (at, copy): (usize, usize),
+    remap: &Remap<'_>,
+) -> bool {
+    let (old, new) = (&from.tree.nodes[at], &into.tree.nodes[copy]);
+    if old.namespace != new.namespace || old.name != new.name || old.text != new.text {
+        return false;
+    }
+    let (old_attrs, new_attrs) = (expanded(old), expanded(new));
+    if old_attrs.len() != new_attrs.len() {
+        return false;
+    }
+    let drawn = |value: &str| {
+        value
+            .parse::<u32>()
+            .ok()
+            .and_then(|id| remap.ids.get(&id))
+            .map(u32::to_string)
+    };
+    let link = |side: &Side<'_>, id: &str| {
+        side.links
+            .iter()
+            .find(|rel| rel.id == id)
+            .map(|rel| (rel.kind.clone(), rel.target.clone(), rel.external))
+    };
+    for (key, value) in &old_attrs {
+        let Some(written) = new_attrs.get(key) else {
+            return false;
+        };
+        let identity = old.is(P, "cNvPr") || old.is(A, "stCxn") || old.is(A, "endCxn");
+        let same = match (key.0.as_str(), key.1.as_str()) {
+            ("", "id") if identity => drawn(value).as_deref() == Some(written.as_str()),
+            ("", "id") if old.is(A16, "creationId") => {
+                value == written
+                    || (remap.held.contains(value.as_str())
+                        && !remap.held.contains(written.as_str()))
+            }
+            (ns, _) if ns == R => {
+                link(from, value).is_some() && link(from, value) == link(into, written)
+            }
+            _ => value == written,
+        };
+        if !same {
+            return false;
+        }
+    }
+    // Glue to a shape the copy does not carry is removed.
+    let kept: Vec<usize> = old
+        .children
+        .iter()
+        .copied()
+        .filter(|&child| {
+            let node = &from.tree.nodes[child];
+            !(node.is(A, "stCxn") || node.is(A, "endCxn"))
+                || node
+                    .attr("id")
+                    .and_then(|id| id.parse::<u32>().ok())
+                    .is_some_and(|id| remap.ids.contains_key(&id))
+        })
+        .collect();
+    if kept.len() != new.children.len() || gaps(from, at, &kept) != gaps(into, copy, &new.children)
+    {
+        return false;
+    }
+    kept.iter().zip(&new.children).all(|(&child, &written)| {
+        if timing::subtree(from.tree, child).any(|n| remapped(&from.tree.nodes[n])) {
+            same_copy(from, into, (child, written), remap)
+        } else {
+            from.bytes[from.tree.nodes[child].span.clone()]
+                == into.bytes[into.tree.nodes[written].span.clone()]
+        }
+    })
 }
 
 /// Every shape `old` held reads back in `new` with its identity and content.

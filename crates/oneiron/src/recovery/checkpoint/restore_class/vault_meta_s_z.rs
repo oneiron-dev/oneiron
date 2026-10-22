@@ -22,12 +22,15 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SCOPE_SUMMARY_PROJECTION, CONTENT),
     (&t::SCOPE_SUMMARY_PURPOSE, LIVE),
     (&t::SCOPE_SUMMARY_RESULT, CONTENT),
+    // An erased credential's fence stands with the custody it closes (KS-6 part 2).
+    (&t::SECRET_CUSTODY_ERASE, LIVE),
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
     (&t::SECRET_CUSTODY_PENDING_REVOKE, LIVE),
     (&t::SECRET_CUSTODY_REBIND, LIVE),
     (&t::SECRET_CUSTODY_TRANSITION, SECRET_CUSTODY),
+    (&t::SECRET_CUSTODY_WITNESS, LIVE),
     (&t::SECRET_EXHAUST_TAINT, CONTENT),
     (&t::SECRET_FOUND_KEY, LIVE),
     (&t::SECRET_FOUND_KEY_DUE, LIVE),
@@ -187,6 +190,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_OPTIMIZE_EVAL_EXPOSURE, LIVE),
     (&t::SKILL_OPTIMIZE_EVAL_FAMILY, CONTENT),
     (&t::SKILL_OPTIMIZE_EVAL_LABEL_ASK, CONTENT),
+    // A restore cannot make a claimed measurement fresh: its exposures were
+    // counted and its legs paid on the live vault.
+    (&t::SKILL_OPTIMIZE_EVAL_MEASUREMENT, LIVE),
     (&t::SKILL_OPTIMIZE_EVAL_ROOT, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_ASK, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_LABEL, CONTENT),

@@ -3,6 +3,7 @@
 //! The code_mode_verbs root defines `RunGuests`, `RunBrowser` and `RunDesktop`.
 
 use super::*;
+use oneiron_browser::PressGrants;
 
 /// Starts one run's guest from a pinned image through the engine's tier
 /// selector, behind the run's egress proxy, on `command`, and receipts its
@@ -95,8 +96,14 @@ pub(super) fn drive_run_guest<S: RunGuestSession>(
 /// and a budgeted grant covers that many sends as one reviewed batch.
 /// No grant leaves the floor: a press per send.
 pub(super) fn browser_send_policy(server: &SyncServer) -> SendPolicy {
+    grants_policy(&server.vault)
+}
+
+/// The press policy `vault`'s standing action grants set now, as
+/// [`browser_send_policy`] reads it; the floor where they cannot be read.
+fn grants_policy(vault: &oneiron::Vault) -> SendPolicy {
     let mut policy = SendPolicy::default();
-    let Ok(grants) = server.vault.active_standing_consent_grants() else {
+    let Ok(grants) = vault.active_standing_consent_grants() else {
         return policy;
     };
     for grant in &grants {
@@ -128,6 +135,67 @@ pub(super) fn browser_send_policy(server: &SyncServer) -> SendPolicy {
         }
     }
     policy
+}
+
+/// A batch's or library run's answer with its row hooks' decisions among
+/// its own (FIX 8042): a library run's `model_free` then reads them too, so
+/// a hook that asked a model leaves it false.
+pub(crate) fn count_hook_decisions(verb: &str, output: &mut Value, hooks: Vec<Value>) {
+    if hooks.is_empty() {
+        return;
+    }
+    // A batch with no decisions of its own answers none: the hooks' start
+    // its list.
+    let batch = match verb {
+        "self.browser.batch" => output.as_object_mut(),
+        "self.browser.library.run" => output.get_mut("batch").and_then(Value::as_object_mut),
+        _ => None,
+    };
+    let Some(batch) = batch else {
+        return;
+    };
+    let decisions = batch
+        .entry("decisions")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Value::Array(decisions) = decisions else {
+        return;
+    };
+    decisions.extend(hooks);
+    let read = oneiron_browser::model_free(decisions);
+    if verb == "self.browser.library.run"
+        && let Some(run) = output.as_object_mut()
+    {
+        let (free, unproven) = match read {
+            Ok(free) => (free, None),
+            Err(index) => (false, Some(index)),
+        };
+        run.insert("model_free".to_owned(), Value::Bool(free));
+        match unproven {
+            Some(index) => run.insert("model_free_unproven".to_owned(), Value::from(index)),
+            None => run.remove("model_free_unproven"),
+        };
+    }
+}
+
+/// A receipt as the host's log shows it (FIX 9267): its act projected to
+/// its verb and locator, never the literal a type typed, the option a
+/// select picked, or a Fill's texts. The answer keeps the receipt whole.
+fn logged_receipt(receipt: &Value) -> Value {
+    let mut logged = receipt.clone();
+    if let Some(action) = logged.get_mut("action").and_then(Value::as_object_mut) {
+        action.retain(|key, _| matches!(key.as_str(), "action" | "locator"));
+    }
+    logged
+}
+
+/// The vault's grants, read again at each classified browser send (FIX
+/// 4613): a grant revoked during the run covers no later send.
+struct VaultPressGrants(Arc<oneiron::Vault>);
+
+impl PressGrants for VaultPressGrants {
+    fn current(&self) -> SendPolicy {
+        grants_policy(&self.0)
+    }
 }
 
 impl FreshGuest for RunFreshGuest {
@@ -163,6 +231,15 @@ impl FreshGuest for RunFreshGuest {
 
     fn state_charge(&self) -> Box<dyn HandleRetention> {
         self.handles.charge()
+    }
+
+    /// A fresh guest abandoned under its replay lands its sandbox's abandon
+    /// receipt, as the run's own guest's does (FIX 7879). The replay's own
+    /// answer stands either way.
+    fn abandoned(&mut self, manifest: &oneiron_container::SessionManifest) {
+        let _ = self
+            .vault
+            .append_sandbox_abandon_receipt(self.run_id, manifest);
     }
 }
 
@@ -229,6 +306,7 @@ impl RunBrowser {
         writer: ReceiptWriter,
         fresh: RunFreshGuest,
         fields: RunFieldWriter,
+        capture: Option<&BrowserCapture<'_, '_>>,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -248,6 +326,9 @@ impl RunBrowser {
         if !self.policy_set.swap(true, Ordering::AcqRel) {
             driver.set_policy(self.guest.policy.clone());
         }
+        // Each classified send reads the grants again (FIX 4613); the sends
+        // a budget paid stay on the session every door shares (FIX 4615).
+        driver.set_press_grants(Box::new(VaultPressGrants(Arc::clone(&self.vault))));
         driver.set_decider(Box::new(decider));
         // A Fill's writer (CUA E6): role-bound calls on the caller's run.
         driver.set_field_writer(Box::new(fields));
@@ -263,7 +344,13 @@ impl RunBrowser {
         // the agent's verbs moved to another tab (one its act opened, or the
         // one a closed tab gave way to) names the move as `switched`. Every
         // answer names the engine that ran it (FIX 6680).
+        let asked = capture.map(|capture| (capture, driver.history_mark(), input.clone()));
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
+        // CUA E8a: what the call solved is kept while its seat is held,
+        // before the run's planner hears how it ended.
+        if let Some((capture, mark, input)) = asked {
+            capture.after_call(driver, verb, &input, &output, mark);
+        }
         self.seats.asked(self.run_id, driver.takeover());
         if let Some(object) = output.as_object_mut() {
             object.insert("engine".into(), Value::from(driver.engine().as_str()));
@@ -326,6 +413,7 @@ impl RunDesktop {
         decider: LadderDecider,
         writer: ReceiptWriter,
         secrets: Arc<dyn SecretCustody>,
+        fields: RunFieldWriter,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -347,6 +435,8 @@ impl RunDesktop {
             driver.set_policy(self.guest.policy.clone());
         }
         driver.set_decider(Box::new(decider));
+        // A Fill's writer (FIX 8899): role-bound calls on the caller's run.
+        driver.set_field_writer(Box::new(fields));
         driver.set_receipt_sink(Box::new(writer));
         driver.set_secret_custody(secrets);
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
@@ -380,6 +470,7 @@ impl RunGuests {
             browser,
             desktop: RunDesktop::new(server, run_id),
             refused: browser_guest::KeptRefusal::default(),
+            payer: None,
         }
     }
 
@@ -391,7 +482,19 @@ impl RunGuests {
             browser,
             desktop: None,
             refused: browser_guest::KeptRefusal::default(),
+            payer: None,
         }
+    }
+
+    /// The same, billing `payer`, the attached live run's (FIX 8902), for a
+    /// call whose door bound no line: its Fill writer bills that payer.
+    #[must_use]
+    pub(crate) fn with_payer(
+        mut self,
+        payer: Option<oneiron::llm::run_admission::PayerPerson>,
+    ) -> Self {
+        self.payer = payer;
+        self
     }
 
     /// The words the run's newest browser call was refused with, for
@@ -419,11 +522,16 @@ impl RunGuests {
         if let Err(refusal) = self.admits(call.verb, server) {
             return Ok(Err(refusal));
         }
-        let hooks = match oneiron::task_verb::verb_hook_boundary::browser_row_pre(
-            memory,
-            call.verb.as_str(),
-            call.input.clone(),
-        ) {
+        // The row's hooks' own decisions count in the run's evidence (FIX
+        // 8042): they run on this thread, and are recorded, never capped.
+        let (pre, mut decided) = crate::hook_verdict::collect_hook_decisions(|| {
+            oneiron::task_verb::verb_hook_boundary::browser_row_pre(
+                memory,
+                call.verb.as_str(),
+                call.input.clone(),
+            )
+        });
+        let hooks = match pre {
             Ok(hooks) => hooks,
             Err(error) => return refused(super::mcp_facade_error(error)),
         };
@@ -439,12 +547,18 @@ impl RunGuests {
                     return Ok(Err(AgentVerbRefusal { code: refused.code }));
                 }
             };
-        match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
-        {
-            Ok(output) => Ok(Ok(AgentVerbAnswer {
-                output,
-                rows: answer.rows,
-            })),
+        let (post, mut after) = crate::hook_verdict::collect_hook_decisions(|| {
+            oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
+        });
+        decided.append(&mut after);
+        match post {
+            Ok(mut output) => {
+                count_hook_decisions(call.verb.as_str(), &mut output, decided);
+                Ok(Ok(AgentVerbAnswer {
+                    output,
+                    rows: answer.rows,
+                }))
+            }
             Err(error) => refused(super::mcp_facade_error(error)),
         }
     }
@@ -499,18 +613,40 @@ impl RunGuests {
         };
         let called = match (&self.desktop, &self.browser) {
             (Some(run), _) if desktop => {
+                // A desktop Fill's writer, as a browser's (FIX 8899).
+                let fields =
+                    RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());
                 let input = call.input.clone();
-                run.call(call.verb, input, decider, writer, secrets)
+                run.call(call.verb, input, decider, writer, secrets, fields)
             }
             (_, Some(run)) if !desktop => {
+                // The library this call files in names the caller's solved
+                // group (CUA E8a).
+                let scope = memory
+                    .solved_run_scope()
+                    .inspect_err(|error| {
+                        tracing::warn!(%error, "browser caller's solved-run scope did not encode");
+                    })
+                    .ok();
                 let library = VaultLibrary {
                     server: Arc::clone(server),
                     by,
+                    scope,
                 };
                 let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets);
-                let fields = RunFieldWriter::new(server, runtime, &decider.asker);
+                let fields =
+                    RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());
                 let input = call.input.clone();
-                run.call(call.verb, input, decider, library, writer, fresh, fields)
+                let capture = BrowserCapture {
+                    vault: &server.vault,
+                    memory,
+                    origin,
+                    run_id,
+                };
+                let capture = Some(&capture);
+                run.call(
+                    call.verb, input, decider, library, writer, fresh, fields, capture,
+                )
             }
             _ => Err(BrowserError::Unbound),
         };
@@ -518,11 +654,15 @@ impl RunGuests {
             Ok(output) => output,
             Err(error) => return Ok(Err(browser_guest::refusal_words(&error))),
         };
-        // An effect's answer carries its receipt, naming the page it acted on.
+        // An effect's answer carries its receipt, naming the page it acted
+        // on. The log shows each receipt's act by its verb and locator only,
+        // never a typed literal or a picked option (FIX 9267).
         if let Some(receipt) = output.get("receipt") {
+            let receipt = logged_receipt(receipt);
             tracing::info!(verb, ?receipt, "browser effect receipt");
         }
-        if let Some(receipts) = output.get("receipts") {
+        if let Some(receipts) = output.get("receipts").and_then(Value::as_array) {
+            let receipts: Vec<Value> = receipts.iter().map(logged_receipt).collect();
             tracing::info!(verb, ?receipts, "browser batch receipts");
         }
         // CUA E5: how a batch or library run ended reaches the run's browser
@@ -531,6 +671,7 @@ impl RunGuests {
             let mut library = VaultLibrary {
                 server: Arc::clone(server),
                 by,
+                scope: None,
             };
             planner.observe(call.verb, &call.input, &output, |workflow| {
                 let filed = library.program(workflow).ok().flatten()?;

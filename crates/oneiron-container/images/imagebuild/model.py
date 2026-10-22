@@ -46,6 +46,8 @@ DEB_NAME = re.compile(r"[a-z0-9][a-z0-9+.-]+")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 SNAPSHOT = re.compile(r"\d{8}T\d{6}Z")
 MODE = re.compile(r"0[0-7]{3,4}")
+# An npm tarball's pin: its registry SRI integrity, sha512 only.
+SRI_SHA512 = re.compile(r"sha512-[A-Za-z0-9+/]{86}==")
 
 
 def load_toml(path: Path) -> dict:
@@ -69,6 +71,7 @@ class Plan:
     payloads: list[dict] = field(default_factory=list)
     trees: list[dict] = field(default_factory=list)
     source_builds: list[dict] = field(default_factory=list)
+    launchers: list[dict] = field(default_factory=list)
     links: list[dict] = field(default_factory=list)
     dirs: list[dict] = field(default_factory=list)
     user: dict | None = None
@@ -165,6 +168,7 @@ class Model:
             payloads=both("payloads", base),
             trees=both("trees", base),
             source_builds=both("source_builds", base),
+            launchers=both("launchers", base),
             links=(list(plumbing_doc.get("links", [])) if plumbing else []) + list(overlay.get("links", [])),
             dirs=both("dirs", base),
             user=plumbing_doc.get("user") if plumbing else overlay.get("user"),
@@ -219,6 +223,8 @@ def _check_values(doc: dict, name: str, problems: list[str]) -> None:
                 problems.append(f"{name}: {path} must be a full 40-hex commit, got {value!r}")
             elif key == "mode" and not MODE.fullmatch(str(value)):
                 problems.append(f"{name}: {path} must be an octal mode string like \"0555\"")
+            elif key == "integrity" and not SRI_SHA512.fullmatch(str(value)):
+                problems.append(f"{name}: {path} must be an npm sha512 SRI integrity, got {value!r}")
         except BadPin as error:
             problems.append(error.message)
 
@@ -279,10 +285,17 @@ def _check_requests(model: Model, problems: list[str]) -> None:
         for entry in [*plan.payloads, *plan.source_builds]:
             if entry.get("pin") not in payloads:
                 problems.append(f"packages.toml: {name} payload pin {entry.get('pin')!r} has no [inputs.payloads] entry")
-        for entry in [*plan.native, *plan.files, *plan.payloads, *plan.trees, *plan.links, *plan.source_builds]:
+        for entry in [*plan.native, *plan.files, *plan.payloads, *plan.trees, *plan.links, *plan.source_builds,
+                      *plan.launchers]:
             dest = entry.get("dest", entry.get("path", ""))
             if not str(dest).startswith("/usr/") and not str(dest).startswith("/opt/"):
                 problems.append(f"packages.toml: {name} places {dest!r} outside /usr or /opt (merged-usr image)")
+        for entry in plan.launchers:
+            for key in ("runtime", "entry"):
+                value = str(entry.get(key, ""))
+                if not value.startswith("/") or any(c in value for c in "\"'$`\\ \n"):
+                    problems.append(f"packages.toml: {name} launcher {entry.get('path')!r} {key} {value!r} "
+                                    "must be an absolute path with no shell metacharacters")
 
 
 def _check_lock(model: Model, problems: list[str], notes: list[str]) -> None:

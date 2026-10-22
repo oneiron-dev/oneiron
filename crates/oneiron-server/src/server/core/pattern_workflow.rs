@@ -16,17 +16,18 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use oneiron::agent_dispatch::{CareLevel, CostEnvelope, SpawnNeed, TeamPlan};
+use oneiron::agent_dispatch::{CareLevel, CostEnvelope, ExpectedSpend, SpawnNeed, TeamPlan};
 use oneiron::llm::{
     BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_BUDGET_RESERVE_UNITS, FinishReason, LlmCapability, LlmError, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
-    ResponseFormat, TierPrecedence, validate_json_schema,
+    ResponseFormat, RetryableLlmError, SpentKind, TierPrecedence, validate_json_schema,
 };
 use oneiron::skill::{LoadedSkillPack, SkillRole};
 use oneiron::team::{PatternLaunchRunner, PatternLaunchSpec, TeamAxis};
-use oneiron::{Error, ErrorKind, Result, Vault};
+use oneiron::{EntityId, Error, ErrorKind, Result, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -64,10 +65,28 @@ const TRUNCATED: &str = "the pattern run's start was cut off before it ended; as
      seat a generative model with more output room";
 const STOPPED: &str = "the pattern run stopped before its model answered; ask again";
 
-/// The house runner: the vault and the AI handle, never the server.
+/// The house runner: the vault and the AI handle, never the server, and for
+/// one owner's call, that caller's clock (FIX 9535).
 struct HostPatternLaunchRunner {
     vault: Arc<Vault>,
     ai: AiHandle,
+    /// `None` on the server-wide runner, which waits as it always has.
+    caller: Option<CallerClock>,
+}
+
+/// One caller's absolute deadline, and the key its fair task-work turn
+/// waits under.
+#[derive(Clone, Copy)]
+struct CallerClock {
+    deadline: Instant,
+    key: EntityId,
+}
+
+impl CallerClock {
+    /// What is left of the caller's time.
+    fn remaining(self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
 }
 
 /// The runner [`SyncServer::with_ai`] binds: none when no rung serves the
@@ -76,7 +95,11 @@ pub(super) fn bind(vault: Arc<Vault>, ai: AiHandle) -> Option<Arc<dyn PatternLau
     if ai.chat_seat().is_none() {
         return None;
     }
-    Some(Arc::new(HostPatternLaunchRunner { vault, ai }))
+    Some(Arc::new(HostPatternLaunchRunner {
+        vault,
+        ai,
+        caller: None,
+    }))
 }
 
 impl SyncServer {
@@ -86,6 +109,28 @@ impl SyncServer {
     #[must_use]
     pub fn pattern_launch_runner(&self) -> Option<&dyn PatternLaunchRunner> {
         self.pattern_launch_runner.as_deref()
+    }
+
+    /// The house runner for one caller's call (FIX 9535): the same seat,
+    /// waiting for an offer back until `deadline`, the caller's absolute
+    /// deadline, where that is later than the host's own longest wait, in a
+    /// fair task-work turn keyed to `caller`. The server-wide runner is left
+    /// as it is. `None` where no rung serves the house seat.
+    #[must_use]
+    pub fn pattern_launch_runner_until(
+        &self,
+        deadline: Instant,
+        caller: EntityId,
+    ) -> Option<Box<dyn PatternLaunchRunner>> {
+        self.pattern_launch_runner.as_ref()?;
+        Some(Box::new(HostPatternLaunchRunner {
+            vault: Arc::clone(&self.vault),
+            ai: self.ai.clone(),
+            caller: Some(CallerClock {
+                deadline,
+                key: caller,
+            }),
+        }))
     }
 }
 
@@ -127,7 +172,11 @@ impl HostPatternLaunchRunner {
     /// reply to a schema, and sent on the house chat turn's line. The ladder
     /// owns its retries and fallback. The call drives its own runtime on a
     /// thread of its own, since a caller may sit inside a runtime, which
-    /// cannot block on another.
+    /// cannot block on another. A caller's call first takes its fair
+    /// task-work turn, waiting no longer than the caller's time and running
+    /// without one past it, as the line's own wait does; it then waits for
+    /// an offer back until the caller's deadline where that is later than
+    /// the host's longest wait (FIX 9535). No transaction is held.
     fn capture(&self, request: LlmRequest, run_id: String) -> Result<LlmResponse> {
         // A running turn to shutdown's grace and the Dreamer's idle sample,
         // until the capture returns on any path (FIX 4639).
@@ -167,6 +216,9 @@ impl HostPatternLaunchRunner {
             BudgetExhaustionPolicy::Suspend,
         );
         let run = self.ai.undeclared_run(run_id, meter);
+        let wait = self.offer_wait();
+        let caller = self.caller;
+        let vault = &self.vault;
         std::thread::scope(|scope| {
             scope
                 .spawn(move || -> Result<LlmResponse> {
@@ -179,12 +231,39 @@ impl HostPatternLaunchRunner {
                             ))
                         })?;
                     reactor
-                        .block_on(call.ladder.generate(&run, call.request, None))
+                        .block_on(async move {
+                            let _work = match caller {
+                                Some(caller) => tokio::time::timeout(
+                                    caller.remaining(),
+                                    vault.admit_task_work(caller.key),
+                                )
+                                .await
+                                .ok(),
+                                None => None,
+                            };
+                            call.ladder
+                                .generate_within(&run, call.request, None, &|| true, wait)
+                                .await
+                        })
                         .map_err(unanswered)
                 })
                 .join()
         })
         .unwrap_or_else(|_| Err(fault(STOPPED)))
+    }
+
+    /// How long the call waits for an offer back: the host's longest wait
+    /// for a cooling chain, as it always has; for a caller's call, until its
+    /// own deadline where that is later.
+    fn offer_wait(&self) -> Duration {
+        let host = Duration::from_secs(
+            self.vault
+                .provider_cooldown_policy()
+                .unwrap_or_default()
+                .max_wait_secs,
+        );
+        self.caller
+            .map_or(host, |caller| host.max(caller.remaining()))
     }
 }
 
@@ -253,8 +332,42 @@ struct LaunchTask<'a> {
     model: &'a ModelId,
     care: CareLevel,
     effort: ReasoningEffort,
-    envelope: &'a CostEnvelope,
+    envelope: LaunchEnvelope<'a>,
     skill: LaunchSkill<'a>,
+}
+
+/// The cost envelope as the pattern run's model reads it (FIX 9536): whole,
+/// by default; without the balance where the ask chose a balance-free
+/// prompt. The host enforces, and the owner's plan receipt shows, the whole
+/// envelope either way.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum LaunchEnvelope<'a> {
+    Whole(&'a CostEnvelope),
+    BalanceFree(BalanceFreeEnvelope<'a>),
+}
+
+/// A [`CostEnvelope`] without its `available_units`.
+#[derive(Serialize)]
+struct BalanceFreeEnvelope<'a> {
+    agent_count: u32,
+    expected_spend_units: u64,
+    hard_cap_units: Option<u64>,
+    per_agent: &'a ExpectedSpend,
+}
+
+impl<'a> LaunchEnvelope<'a> {
+    fn of(envelope: &'a CostEnvelope, asked: &SpawnNeed) -> Self {
+        if !asked.balance_free_prompt {
+            return Self::Whole(envelope);
+        }
+        Self::BalanceFree(BalanceFreeEnvelope {
+            agent_count: envelope.agent_count,
+            expected_spend_units: envelope.expected_spend_units,
+            hard_cap_units: envelope.hard_cap_units,
+            per_agent: &envelope.per_agent,
+        })
+    }
 }
 
 /// The pattern skill revision a run reads, as the plan froze it.
@@ -285,7 +398,7 @@ pub(in crate::server) fn launch_request(
         model: &plan.model,
         care: plan.care,
         effort: plan.effort,
-        envelope: &plan.envelope,
+        envelope: LaunchEnvelope::of(&plan.envelope, asked),
         skill: LaunchSkill {
             reference: skill.entity.to_hex(),
             name: &skill.record.skill_id,
@@ -335,6 +448,7 @@ pub(in crate::server) fn launch_request(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     })
 }
 
@@ -436,9 +550,16 @@ fn no_seat() -> Error {
     ))
 }
 
-/// The ladder answered nothing: its line refused the call, or every rung
-/// failed.
+/// The ladder answered nothing: its line refused the call, every offer
+/// rested past the call's wait, or every rung failed. A wait is typed, not a
+/// refusal (FIX 9535): the launch stays planned under its intent key, and
+/// the same ask continues it once an offer is back.
 fn unanswered(error: LlmError) -> Error {
+    if let LlmError::Retryable(retryable) = &error
+        && let Some(retry_after) = offer_back_in(retryable)
+    {
+        return Error::ProviderUnavailable { retry_after };
+    }
     match &error {
         LlmError::BudgetDenied(_) => stop(format!(
             "the house chat turn's line refused the pattern run: {error}; raise [models.chat] \
@@ -447,6 +568,37 @@ fn unanswered(error: LlmError) -> Error {
         _ => stop(format!(
             "the house generative seat did not answer the pattern run: {error}; ask again"
         )),
+    }
+}
+
+/// Seconds until the soonest known offer is back, for a failure that is a
+/// wait on rested offers (0 where none says when); `None` for one that is
+/// not: spent credit, a server error, a cut stream, an offer kept on the
+/// device with none resting.
+fn offer_back_in(error: &RetryableLlmError) -> Option<u64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let soonest = |retry_after: Option<u64>, resets_at: &[u64]| {
+        retry_after.or_else(|| resets_at.iter().find(|at| **at > now).map(|at| at - now))
+    };
+    match error {
+        RetryableLlmError::RateLimited {
+            retry_after,
+            resets_at,
+        }
+        | RetryableLlmError::QuotaSpent {
+            kind: SpentKind::Window,
+            retry_after,
+            resets_at,
+        } => Some(soonest(*retry_after, resets_at).unwrap_or(0)),
+        RetryableLlmError::KeptOnDevice {
+            retry_after,
+            resets_at,
+            ..
+        } => soonest(*retry_after, resets_at),
+        RetryableLlmError::Timeout => Some(0),
+        _ => None,
     }
 }
 

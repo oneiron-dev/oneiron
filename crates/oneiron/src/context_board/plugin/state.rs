@@ -3,9 +3,11 @@
 //! The session scratchpad itself is the `scratchpad` NOTE (`context_board::scratchpad`);
 //! no production path writes a scratchpad block here.
 
+use super::super::paging::{BoardPageCursor, decode_page_cursor, encode_page_cursor, page_binding};
 use super::admission::{AdmittedPluginSection, PluginSectionRegistry};
 use super::claim::{PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload};
 use super::manifest::SectionId;
+use super::pages::{BoardBlockPage, PluginSectionSnapshotPage};
 use super::render::{PluginSectionRow, PluginSectionSnapshot};
 use super::validate::provenance_matches_record;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -14,8 +16,14 @@ use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
+use std::ops::Bound;
 
-const BLOCK_SCAN_LIMIT: usize = 1024;
+/// Block rows one read snapshot serves: a work-page size, not a cap. A larger
+/// positive request continues through further pages to the end.
+const BLOCK_WORK_PAGE: usize = 1_000;
+
+/// The page kind block cursors bind to, with the actor and section.
+const BLOCK_PAGE_KIND: &str = "context_board.plugin_blocks";
 
 /// Durable actor-scoped plugin block rows. Key: actor id ‖ `section_id.len()`
 /// (u64 big-endian) ‖ `section_id` bytes ‖ block id — length-prefixed so two
@@ -152,6 +160,31 @@ fn block_prefix(actor: EntityId, section: &SectionId) -> Vec<u8> {
     prefix
 }
 
+fn invalid_block_cursor() -> MemoryError {
+    MemoryError::bad_request_with(
+        "cursor is not one an earlier page of this section returned",
+        &["Pass the next_cursor of the previous page, or no cursor to start over."],
+    )
+}
+
+/// Projects one stored block into the renderer's typed row.
+fn block_snapshot_row(row: BoardBlockRecord) -> PluginSectionRow {
+    PluginSectionRow {
+        row_id: row
+            .block_ref
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        cells: vec![
+            row.markdown,
+            row.source_revision_ref
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        ],
+    }
+}
+
 fn block_key(row: &BoardBlockRecord) -> MemoryResult<BlockKey> {
     let actor = EntityId::from_bytes(row.author_ref)?;
     Ok(BlockKey {
@@ -245,27 +278,115 @@ impl Memory<'_> {
         Ok(row)
     }
 
-    /// Reads this actor's durable blocks under a live section registration.
-    /// No caller-chosen owner is accepted and corrupt rows fail closed.
+    /// Reads this actor's durable blocks under a live section registration:
+    /// the first `limit` rows, or all of them when fewer exist. Each 1,000-row
+    /// work page is its own read snapshot with its own actor and admission
+    /// recheck. No caller-chosen owner is accepted and corrupt rows fail
+    /// closed.
     pub fn board_blocks(
         &self,
         registry: &PluginSectionRegistry,
         section_id: &SectionId,
         limit: usize,
     ) -> MemoryResult<Vec<BoardBlockRecord>> {
-        if limit == 0 || limit > BLOCK_SCAN_LIMIT {
+        if limit == 0 {
             return Err(invalid_block());
         }
+        let mut rows = Vec::new();
+        let mut after = None;
+        loop {
+            let take = (limit - rows.len()).min(BLOCK_WORK_PAGE);
+            let txn = self
+                .vault()
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)?;
+            self.check_block_reader(&txn, registry, section_id)?;
+            let page = self.block_rows_in_txn(&txn, section_id, after, take)?;
+            drop(txn);
+            let full = page.len() == take;
+            after = page.last().map(|row| row.block_ref);
+            rows.extend(page);
+            if !full || rows.len() == limit {
+                return Ok(rows);
+            }
+        }
+    }
+
+    /// One page of this actor's durable blocks after `cursor`: at most
+    /// `limit` rows and at most one 1,000-row work page, with the truthful
+    /// total and remaining counts of this read snapshot. The last page has
+    /// `end` set and no cursor.
+    pub fn board_blocks_page(
+        &self,
+        registry: &PluginSectionRegistry,
+        section_id: &SectionId,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> MemoryResult<BoardBlockPage> {
+        if limit == 0 {
+            return Err(invalid_block());
+        }
+        let binding = page_binding(
+            BLOCK_PAGE_KIND,
+            &[self.actor().as_bytes(), section_id.0.as_bytes()],
+        );
+        let after = cursor
+            .map(|token| {
+                decode_page_cursor(&binding, token)
+                    .and_then(|cursor| <[u8; 16]>::try_from(cursor.after.as_slice()).ok())
+                    .ok_or_else(invalid_block_cursor)
+            })
+            .transpose()?;
         let txn = self
             .vault()
             .store
             .env
             .read_txn()
             .map_err(crate::error::Error::from)?;
-        // Actor binding and the private rows share one read snapshot.
-        let actor_raw = crate::ports::EntityStoreRead::port_entity_raw(
+        self.check_block_reader(&txn, registry, section_id)?;
+        let rows = self.block_rows_in_txn(&txn, section_id, after, limit.min(BLOCK_WORK_PAGE))?;
+        let keys = PLUGIN_BLOCK.scan_keys(
             &self.vault().store,
             &txn,
+            &block_prefix(self.actor(), section_id),
+        )?;
+        drop(txn);
+        let last = rows.last().map(|row| row.block_ref).or(after);
+        let remaining = keys
+            .iter()
+            .filter(|key| last.is_none_or(|last| key.block_ref > last))
+            .count();
+        let next_cursor = last.filter(|_| remaining > 0).map(|last| {
+            encode_page_cursor(
+                &binding,
+                &BoardPageCursor {
+                    fence: None,
+                    after: last.to_vec(),
+                },
+            )
+        });
+        Ok(BoardBlockPage {
+            rows,
+            total: u64::try_from(keys.len()).unwrap_or(u64::MAX),
+            remaining: u64::try_from(remaining).unwrap_or(u64::MAX),
+            end: next_cursor.is_none(),
+            next_cursor,
+        })
+    }
+
+    /// Actor binding and the live section registration, in the read snapshot
+    /// the block rows are read from.
+    fn check_block_reader(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        registry: &PluginSectionRegistry,
+        section_id: &SectionId,
+    ) -> MemoryResult<()> {
+        let actor_raw = crate::ports::EntityStoreRead::port_entity_raw(
+            &self.vault().store,
+            txn,
             &self.actor(),
         )?
         .ok_or_else(refused_block)?;
@@ -275,28 +396,57 @@ impl Memory<'_> {
         {
             return Err(refused_block());
         }
-        require_live_section(self.vault(), &txn, registry, section_id)?;
-        let prefix = block_prefix(self.actor(), section_id);
+        require_live_section(self.vault(), txn, registry, section_id)
+    }
+
+    /// Up to `take` of this actor's rows under `section_id`, in block order,
+    /// strictly after `after` when it is set.
+    fn block_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        section_id: &SectionId,
+        after: Option<[u8; 16]>,
+        take: usize,
+    ) -> MemoryResult<Vec<BoardBlockRecord>> {
+        let actor = self.actor();
+        let low = BlockKey {
+            actor,
+            section_id: section_id.clone(),
+            block_ref: after.unwrap_or([0; 16]),
+        };
+        let high = BlockKey {
+            actor,
+            section_id: section_id.clone(),
+            block_ref: [0xff; 16],
+        };
+        let start = if after.is_some() {
+            Bound::Excluded(&low)
+        } else {
+            Bound::Included(&low)
+        };
         let mut rows = Vec::new();
-        for entry in PLUGIN_BLOCK.iter_from(&self.vault().store, &txn, &prefix)? {
+        for entry in
+            PLUGIN_BLOCK.iter_range(&self.vault().store, txn, start, Bound::Included(&high))?
+        {
             let (key, row) = entry.map_err(|_| invalid_block())?;
             validate_block(&row)?;
-            if row.author_ref != *self.actor().as_bytes()
+            if row.author_ref != *actor.as_bytes()
                 || row.section_id != *section_id
                 || block_key(&row)? != key
             {
                 return Err(invalid_block());
             }
             rows.push(row);
-            if rows.len() == limit {
+            if rows.len() == take {
                 break;
             }
         }
         Ok(rows)
     }
 
-    /// Projects stored block rows into the existing typed plugin renderer.
-    /// Content and revision tokens stay quoted data, never board syntax.
+    /// Projects stored block rows into the existing typed plugin renderer:
+    /// the first `limit` rows, or all of them when fewer exist. Content and
+    /// revision tokens stay quoted data, never board syntax.
     pub fn board_block_snapshot(
         &self,
         registry: &PluginSectionRegistry,
@@ -306,24 +456,33 @@ impl Memory<'_> {
         let rows = self
             .board_blocks(registry, section_id, limit)?
             .into_iter()
-            .map(|row| PluginSectionRow {
-                row_id: row
-                    .block_ref
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect(),
-                cells: vec![
-                    row.markdown,
-                    row.source_revision_ref
-                        .iter()
-                        .map(|byte| format!("{byte:02x}"))
-                        .collect(),
-                ],
-            })
+            .map(block_snapshot_row)
             .collect();
         Ok(PluginSectionSnapshot {
             section_id: section_id.clone(),
             rows,
+        })
+    }
+
+    /// [`Self::board_blocks_page`] projected for the renderer, carrying the
+    /// page's truthful total and remaining counts and its end.
+    pub fn board_block_snapshot_page(
+        &self,
+        registry: &PluginSectionRegistry,
+        section_id: &SectionId,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> MemoryResult<PluginSectionSnapshotPage> {
+        let page = self.board_blocks_page(registry, section_id, cursor, limit)?;
+        Ok(PluginSectionSnapshotPage {
+            snapshot: PluginSectionSnapshot {
+                section_id: section_id.clone(),
+                rows: page.rows.into_iter().map(block_snapshot_row).collect(),
+            },
+            total: page.total,
+            remaining: page.remaining,
+            next_cursor: page.next_cursor,
+            end: page.end,
         })
     }
 }

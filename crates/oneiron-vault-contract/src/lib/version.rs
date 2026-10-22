@@ -315,6 +315,85 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// only with installed engines and vault VM images at or after the floor.
 /// No reader of a plan or receipt without them is kept, the restore input
 /// and receipt schemas stay 1, and this version stays 3.
+///
+/// Artifact publication serving blob descriptor (FIX 1195; includes FIX
+/// 9575): an owner device's engine and a serving sync server's engine
+/// exchange `ARTIFACT_PUBLICATION` documents only as bounded parts, each a
+/// fixed header (the change id, the BLAKE3 of the whole serialized
+/// publication, its total length, the part's offset and the part's length)
+/// and at most 256 KiB of that publication. The whole publication requires
+/// its change id and, for a blob, the serving descriptor (`content_hash`,
+/// `export_name` and `export_media_type`, all required), which the pointer
+/// and the owner bind; no blob version record, provenance, run, claim or
+/// history rides it. `ARTIFACT_RECEIPT` names the whole publication's digest
+/// and its outcome only, once it is complete, never a part's acceptance. The
+/// device's outbox marker requires its change id. It carries a build floor,
+/// at the engine revision it merged in, with no `Ping` field: owner devices
+/// and sync servers both run at or after the floor before they publish, and
+/// no reader of a raw blob version publication, a whole-frame publication,
+/// an outbox marker without a change id or a missing field is kept. The
+/// transport frame limits, full-vault sync, the Code arm, pins, tiers and
+/// unpublish are unchanged, and this version stays 3.
+///
+/// Relay retained-generation retirement (FIX 1283; includes FIX 9499 and FIX
+/// 9500): the relay, the supervisor's broker and the vault engine move
+/// together at the engine revision it merged in, proven by
+/// `relay_delete_revision` 2 on `Ping`
+/// ([`RELAY_DELETE_REVISION`](crate::relay_delete::RELAY_DELETE_REVISION)).
+/// `relay_delete_execute` requires `generation`
+/// ([`RelayDeleteGeneration`](crate::relay_delete::RelayDeleteGeneration):
+/// `current`, or `preimage` with its 32-lowercase-hex `generation_id`), and
+/// every answer repeats it with the other six fields. A `held` answer
+/// requires `visibility`
+/// ([`RelayHoldVisibility`](crate::relay_delete::RelayHoldVisibility):
+/// `visible` or `silent_only`); the relay answers a silent-only one with a
+/// neutral `completion_pending` that names no hold, and a visible one with
+/// `held_until_release`. A relay's deferred-delete intent requires its
+/// generation too. The supervisor binds a locker and forwards a relay's
+/// retirements only to an engine boot that proved revision 2; a relay
+/// binary, broker or engine before the floor is not mixed with one after it.
+/// No missing-field default and no reader of an older request, answer or
+/// intent is kept. An engine before the floor, unavailable or unproven,
+/// leaves destruction deferred and never refuses or delays an authenticated
+/// upload, which answers 204 on storage alone. The objects directory binding
+/// is unchanged and this version stays 3.
+///
+/// Wake ledger pages (FIX 9549; includes FIX 9498): a ledger push and a
+/// frozen pull carry one complete report, every wake entry and the training
+/// setting at one revision, in pages of at most
+/// [`MAX_LEDGER_PAGE_ENTRIES`](crate::MAX_LEDGER_PAGE_ENTRIES) entries
+/// ([`LedgerPage`](crate::LedgerPage): `rev`, `report_digest`, `total`,
+/// `offset`, `entries`, `training`, all required), however many entries the
+/// report holds: the old 128-entry bound on a whole list is gone, and no
+/// count, size or time bound replaces it. `ledger_update` requires `page`
+/// in place of `rev`, `entries` and `training`, and the supervisor answers
+/// each page with a [`LedgerAck`](crate::LedgerAck) that requires `report`
+/// and `offset` (each `null` only for a line it could not read) and
+/// `committed`, true only on the last page once the whole report, the
+/// host's fire time for each window included, is durable. `prepare_reap`
+/// answers `quiescent` and `ledger`
+/// ([`LedgerReportHead`](crate::LedgerReportHead): `rev`, `report_digest`,
+/// `total`) in place of `ledger_rev`, `next_wake` and `training`, and
+/// `prepare_idle_reap`'s `idle_reap` requires `ledger` in place of the same
+/// three; the supervisor reads that frozen report with `ledger_page` and
+/// releases it with `ledger_pulled`, both of which carry `vault` and the
+/// spawn `token`, before any snapshot or stop. A report with no entries is
+/// one page with none. It carries a build floor at the engine revision it
+/// merged in, with no `Ping` field: the installed supervisor, its host
+/// library, the vault engine and every vault VM image move together at or
+/// after the floor, both reap pulls and the push consumer included. No
+/// migration, missing-field default, shim or reader of a whole-list push or
+/// pull is kept, and this version stays 3.
+///
+/// Owner shed admission (FIX 10157): the facade's `vault.slim.drop_heavy`
+/// answer (the engine's `slim::public::SlimDropOutcome`) gains the status
+/// `nothing_pending`, with no other key: the owner's request waited while
+/// more than one outbound step was pending, then found none pending on a
+/// FULL vault, so no shed was owed and none ran. It carries a build floor,
+/// at the engine revision it merged in, with no `Ping` field: a client that
+/// reads the status runs against an engine at or after the floor, and no
+/// reader of an answer without it is kept. The supervisor's `Shed` ctl
+/// request and its answers are unchanged, and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

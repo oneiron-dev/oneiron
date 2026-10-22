@@ -14,6 +14,8 @@
 
 mod events;
 mod notice;
+mod pending;
+mod settlement;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -23,6 +25,14 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use events::{host_events_in_txn, log_in_txn, owner_events_in_txn};
 pub(crate) use notice::law_notice;
+pub(crate) use pending::{
+    PendingErase, PendingEraseKind, drop_pending_erase_in_txn, due_erases_in_txn,
+    pending_erase_in_txn, put_pending_erase_in_txn, set_pending_veto_act_in_txn,
+    use_limit_pending_privacy_in_txn,
+};
+pub(crate) use settlement::RefusalBatch;
+#[cfg(feature = "sync")]
+pub(crate) use settlement::is_hold_refusal;
 
 use crate::deletion::{
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind, LegalHoldEventKind,
@@ -48,9 +58,6 @@ const TARGETS: Targets = SideTable::new(&side_table::LEGAL_HOLD_TARGET);
 const HOST_ROWS: Rows = SideTable::new(&side_table::LEGAL_HOLD_HOST_ROW);
 /// What each standing host-order hold holds. Key: held key (17) + id16 (hold).
 const HOST_TARGETS: Targets = SideTable::new(&side_table::LEGAL_HOLD_HOST_TARGET);
-/// An owner erase a host order keeps waiting. Key: id16 (record).
-const PENDING_ERASES: SideTable<EntityId, PendingErase, Named> =
-    SideTable::new(&side_table::LEGAL_HOLD_PENDING_ERASE);
 /// The customer holds an owner's confirm lifted from a record, until its
 /// deletion receipt completes. Key: id16 (record).
 const ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
@@ -61,15 +68,6 @@ const HOST_ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
 /// Records kept after a refused privacy erasure (C6). Key: id16 (record).
 const USE_LIMITS: SideTable<EntityId, LegalHoldUseLimit, Named> =
     SideTable::new(&side_table::LEGAL_HOLD_USE_LIMIT);
-
-/// An owner's confirmed erase that waits on a host order. It names no hold,
-/// so its row tells the owner nothing an order keeps secret.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PendingErase {
-    confirmed_by: Option<String>,
-    confirmed_at: u64,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -157,9 +155,9 @@ impl RefusalNote {
     }
 }
 
-/// Refusals not yet in a hold log. The refusing transaction rolls back, so
-/// the door that owns it logs them in a short write of its own once that
-/// writer has ended, before it returns
+/// Refusals not yet in a hold log, outside any door's own attempt
+/// (`settlement`). The refusing transaction rolls back, so the door that owns
+/// it logs them once that writer has ended, before it returns
 /// ([`Store::flush_legal_hold_refusals_settled`]). A note a failed log write
 /// put back waits here for the next flush. Never persisted.
 #[derive(Debug, Default)]
@@ -382,14 +380,14 @@ impl Store {
                     actor: actor.clone(),
                     at: now,
                 };
-                self.legal_hold_refusals.note(note);
+                settlement::note(self, note);
             }
         }
         Err(notice::held_refusal(&rows, now))
     }
 
     /// Writes the queued refusals to their hold logs in one raw write of its
-    /// own, never through the group commit (whose return flushes here). Only
+    /// own, never through the group commit (whose writer logs its own). Only
     /// on a thread that holds no writer. A failed write puts them back.
     /// Returns how many were written.
     pub(crate) fn flush_legal_hold_refusals_now(&self) -> Result<u64> {
@@ -438,9 +436,9 @@ fn hosts_bytes(store: &Store) -> bool {
 
 /// Writes queued refusals to their hold logs. A refused privacy erasure keeps
 /// the held record for that legal reason only: where Oneiron hosts the bytes
-/// and a standing host order's own terms forbid its use, it gets a use limit
-/// (C5, C6, WILL-PLAN L01 row 03). A customer hold keeps bytes, never use.
-/// Returns how many were written.
+/// it gets a use limit under every standing hold, a customer hold or a host
+/// order whatever its own terms say (C5, C6, WILL-PLAN L01 row 03, FIX
+/// 8849). Returns how many were written.
 pub(crate) fn flush_refusals_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -505,8 +503,7 @@ fn keep_use_limited_in_txn(
 /// A privacy erasure request over `records` (C5): returns the records no
 /// hold names, for the caller to erase, and the held ones it keeps. Each
 /// held record logs a refusal with its reason; where Oneiron hosts the bytes
-/// and an order forbids its use it is kept under a use limit (C6). It never
-/// lifts or skips a hold.
+/// it is kept under a use limit (C6). It never lifts or skips a hold.
 pub(crate) fn split_privacy_erase_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -540,9 +537,10 @@ pub(crate) fn split_privacy_erase_in_txn(
 }
 
 /// The C6 use limit on `record`, if it was kept after a refused privacy
-/// erasure and a standing host order that forbids its use still names it
-/// (WILL-PLAN L01 row 03). A marker no such order backs, the order released
-/// or ended, restricts nothing.
+/// erasure and a standing hold, customer or host order, still keeps it
+/// (WILL-PLAN L01 row 03, FIX 8849): it lasts the whole retention, until the
+/// last hold lifts, narrows or lapses. A marker no standing hold backs
+/// restricts nothing.
 pub(crate) fn use_limit_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,
@@ -551,62 +549,10 @@ pub(crate) fn use_limit_in_txn(
     let Some(limit) = USE_LIMITS.get(dbs, txn, record)? else {
         return Ok(None);
     };
-    if notice::non_use_orders_in_txn(dbs, txn, record)?.is_empty() {
+    if notice::retaining_holds_in_txn(dbs, txn, record)?.is_empty() {
         return Ok(None);
     }
     Ok(Some(limit))
-}
-
-/// Records that an owner confirmed erasing `record` while a host order keeps
-/// it: the erase runs once nothing holds it.
-pub(crate) fn put_pending_erase_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &mut RwTxn<'_>,
-    record: &EntityId,
-    confirmed_by: Option<String>,
-    at: u64,
-) -> Result<()> {
-    PENDING_ERASES.put(
-        dbs,
-        txn,
-        record,
-        &PendingErase {
-            confirmed_by,
-            confirmed_at: at,
-        },
-    )
-}
-
-/// The records whose confirmed erase waits, and that nothing holds now.
-pub(crate) fn due_erases_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
-    let mut due = Vec::new();
-    for record in PENDING_ERASES.scan_keys(dbs, txn, &[])? {
-        if !held_in_txn(dbs, txn, record.as_bytes())? {
-            due.push(record);
-        }
-    }
-    Ok(due)
-}
-
-pub(crate) fn drop_pending_erase_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &mut RwTxn<'_>,
-    record: &EntityId,
-) -> Result<()> {
-    PENDING_ERASES.delete(dbs, txn, record)?;
-    Ok(())
-}
-
-/// Who confirmed the erase of `record` that waits, as its row records them
-/// (FIX 6099): `None` when no erase of it waits.
-pub(crate) fn pending_erase_by_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    record: &EntityId,
-) -> Result<Option<Option<String>>> {
-    Ok(PENDING_ERASES
-        .get(dbs, txn, record)?
-        .map(|pending| pending.confirmed_by))
 }
 
 /// Links `record`'s coming deletion receipt to `hold`, for its "erase
@@ -865,6 +811,5 @@ pub(crate) fn expire_in_txn(dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>, now: u
 /// waiting erase. Its erase links stay for the receipt's completion.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     USE_LIMITS.delete(store, txn, id)?;
-    PENDING_ERASES.delete(store, txn, id)?;
-    Ok(())
+    pending::erase_pending_in_txn(store, txn, id)
 }

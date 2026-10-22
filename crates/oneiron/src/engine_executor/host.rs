@@ -59,6 +59,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
     storage: Option<&'s ExecutorStorage<'a>>,
+    /// The run's share of the result-memory pool, which a callable skill's
+    /// answer check holds its buffers on (FIX 10149).
+    result_share: Option<&'s crate::result_memory::ResultShare>,
     recoverable: Vec<(u64, CodeRunRawOutput, OutputRef)>,
     /// The step's result as the guest streams it, written into the run's
     /// body store frame by frame.
@@ -153,6 +156,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             determinism,
             legibility,
             storage: None,
+            result_share: None,
             recoverable: Vec::new(),
             streamed: StreamedOutputs::default(),
             results: Vec::new(),
@@ -178,6 +182,16 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// are credited to (OF-353).
     pub(super) fn with_skill_executor(mut self, executor: &crate::ModelId) -> Self {
         self.skill_executor = Some(executor.as_str().to_owned());
+        self
+    }
+
+    /// Lends the run's share of the result-memory pool to the callable
+    /// skills its program calls (FIX 10149).
+    pub(super) fn with_result_share(
+        mut self,
+        share: &'s crate::result_memory::ResultShare,
+    ) -> Self {
+        self.result_share = Some(share);
         self
     }
 
@@ -210,6 +224,12 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .filter(|output| is_result_output_path(&output.path))
             .cloned()
             .collect();
+        // Its steps' type diagnostics kept whole, read as its results are
+        // (FIX 8277).
+        if let ExecutorStorage::Canonical(vault) = storage {
+            self.results
+                .extend(vault.type_diagnostics_bodies(record.run_id));
+        }
         self.bindings = record.bindings.clone();
         self.recorded_rows = record.agent_verb_rows();
         self.storage = Some(storage);
@@ -361,7 +381,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
 
 /// The declarations the system prompt teaches, in its order: the WIT host
 /// verbs, the code-mode catalog fragment (every row at its SDK path, with its
-/// typed input and reply), and the interpreter's own functions. A shadow
+/// typed input and reply), and the interpreter's own functions. A feedback
 /// check reads these same texts.
 pub(super) fn executor_declarations() -> [oneiron_code_check::Declaration<'static>; 3] {
     [

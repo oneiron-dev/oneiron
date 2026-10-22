@@ -20,7 +20,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
 pub(crate) use actor_erase::{
-    erase_role_actor_in_txn, erase_run_actor_in_txn, erase_swap_actor_in_txn,
+    erase_role_actor_in_txn, erase_run_id_in_txn, erase_swap_actor_in_txn,
 };
 pub(crate) use authorize::training_run_job_input;
 pub use connector::{TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};

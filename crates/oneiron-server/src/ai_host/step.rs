@@ -87,6 +87,8 @@ pub(super) struct ModelStep<'a> {
 pub(super) struct StepOutput {
     pub(super) bytes: Vec<u8>,
     pub(super) confession: Option<Vec<ObjectiveConfession>>,
+    /// The objectives it was asked to confess against (FIX 9466).
+    pub(super) objectives: Vec<String>,
 }
 
 /// The objectives a step is asked to confess against: the caller's, verbatim,
@@ -264,7 +266,11 @@ impl StepRunner {
         } else {
             parse_confession(&bytes, &objectives)
         };
-        Ok(StepOutput { bytes, confession })
+        Ok(StepOutput {
+            bytes,
+            confession,
+            objectives,
+        })
     }
 
     pub(super) fn generate(
@@ -352,6 +358,7 @@ impl StepRunner {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         // A route the vault narrowed past what this server serves ends the
         // step here, before any call leaves.

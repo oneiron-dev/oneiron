@@ -53,18 +53,23 @@ mod reader;
 mod receipt_evidence;
 mod secret_custody;
 mod session_write;
+mod solved_runs;
 mod task_workflow;
 mod verdict;
 
 // The strict library try a TASK-bound program's run takes before its
 // planner (CUA E4).
 pub(crate) use self::task_workflow::{WorkflowPreflight, preflight_task_workflow};
+// The facade's browser rows count their hooks' decisions as this door's do
+// (FIX 10425).
+pub(crate) use self::guests::count_hook_decisions;
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;
 use self::guests::*;
 use self::receipt_evidence::ReceiptWriter;
 use self::secret_custody::RunSecretCustody;
+use self::solved_runs::BrowserCapture;
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::{
     mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
@@ -139,6 +144,9 @@ pub(crate) struct RunGuests {
     /// The run's browser planner state beside its browser's seat (CUA E5),
     /// fed how each batch and library run ended.
     planner: Option<Arc<BrowserPlannerRun>>,
+    /// The payer the attached live run bills (FIX 8902), for a caller whose
+    /// door bound no line of its own: its Fill writer bills it.
+    payer: Option<oneiron::llm::run_admission::PayerPerson>,
 }
 
 /// One run's browser guest. It starts on the first call that needs it and
@@ -282,6 +290,9 @@ pub(crate) enum VerdictAsker {
 struct VaultLibrary {
     server: Arc<SyncServer>,
     by: oneiron::EntityId,
+    /// The caller's solved-run scope, which a program it files covers its
+    /// group in (CUA E8a); none for a library that files nothing.
+    scope: Option<oneiron::browser_library::SolvedRunScope>,
 }
 
 /// The fresh browser a proposal's replay runs on (CUA E1): a new guest for

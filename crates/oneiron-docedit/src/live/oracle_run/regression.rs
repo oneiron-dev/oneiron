@@ -184,8 +184,12 @@ fn corpus_edit(run: &mut Run, deck: &Deck, id: &str) -> Res<()> {
             };
             match export(deck, &[op], &NoAssets) {
                 Ok(exported) => {
-                    let output = Package::open(&exported.outcome.bytes, run.limits)
-                        .map_err(|error| format!("the export does not reopen: {error}"));
+                    let output = Package::open(
+                        &exported.outcome.bytes,
+                        run.limits,
+                        &crate::resource::Resources::measuring(),
+                    )
+                    .map_err(|error| format!("the export does not reopen: {error}"));
                     let preserved = output.and_then(|output| {
                         allowed(Scope::SLIDE, &exported.touched, &deck.package)
                             .and_then(|allowed| diff_explained(&deck.package, &output, &allowed))
@@ -211,6 +215,7 @@ fn corpus_edit(run: &mut Run, deck: &Deck, id: &str) -> Res<()> {
                             contains: line,
                         }],
                         baseline: &deck.defects,
+                        origin: &deck.bytes,
                     });
                 }
                 Err(super::edits::Refused::Export(error))

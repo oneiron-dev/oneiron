@@ -2261,6 +2261,16 @@ export_facade! {
     let output = client.vault_cleanup_run(&input)?;
     crate::codec::lift_record("vault.cleanup.run", &output)
 };
+"vault.cleanup.review" => fn vault_cleanup_review(&self, input: CleanupReviewRequest) -> CleanupReviewView = |client| {
+    let input: oneiron::vault_cleanup::CleanupReviewRequest = crate::codec::lower_record("vault.cleanup.review", input)?;
+    let output = client.vault_cleanup_review(&input)?;
+    crate::codec::lift_record("vault.cleanup.review", &output)
+};
+"vault.cleanup.decide" => fn vault_cleanup_decide(&self, input: CleanupDecideRequest) -> CleanupDecideView = |client| {
+    let input: oneiron::vault_cleanup::CleanupDecideRequest = crate::codec::lower_record("vault.cleanup.decide", input)?;
+    let output = client.vault_cleanup_decide(&input)?;
+    crate::codec::lift_record("vault.cleanup.decide", &output)
+};
 "vault.archive.delete.preview" => fn vault_archive_delete_preview(&self, input: ArchiveDeletePreviewRequest) -> ArchiveDeletePreviewView = |client| {
     let input: oneiron::memory::ArchiveDeletePreviewRequest = crate::codec::lower_record("vault.archive.delete.preview", input)?;
     let output = client.vault_archive_delete_preview(&input)?;
@@ -3065,6 +3075,11 @@ export_facade! {
     let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest = crate::codec::lower_record("vault.code.model_heal_count", input)?;
     let output = client.vault_code_model_heal_count(&input)?;
     crate::codec::lift_record("vault.code.model_heal_count", &output)
+};
+"vault.code.type_diagnostics" => fn vault_code_type_diagnostics(&self, input: CodeRunTypeDiagnosticsRequest) -> Option<ProgramStepFeedbackRelease> = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest = crate::codec::lower_record("vault.code.type_diagnostics", input)?;
+    let output = client.vault_code_type_diagnostics(&input)?;
+    crate::codec::lift_record("vault.code.type_diagnostics", &output)
 };
 "vault.code.waits.resolve" => fn vault_code_waits_resolve(&self, input: CodeWaitResolveRequest) -> CodeWaitReceiptView = |client| {
     let input: oneiron::memory::code_wait_doors::CodeWaitResolveRequest = crate::codec::lower_record("vault.code.waits.resolve", input)?;

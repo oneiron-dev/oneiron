@@ -15,7 +15,7 @@ use super::decision::{
     GeneratedStep, ProviderPin, Reversibility, TypedDecision,
 };
 use super::registry::ModelWireFormat;
-use super::seat::{DescriptionSource, SeatPolicy};
+use super::seat::DescriptionSource;
 use super::{
     BudgetGuard, CallPurpose, ContentPart, DurableStepContext, DurableStepResult, LlmBackend,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
@@ -28,8 +28,11 @@ use crate::{
 };
 
 mod decisions;
-use decisions::Candidate;
 pub use decisions::{DescriptionDecisions, DescriptionNotes};
+// FIX 9922: every candidate's complete grade rides with each routed outcome.
+mod readings;
+use readings::resolve;
+pub use readings::{DescriptionFitnessReadings, DescriptionGrading};
 
 const POLICY: SideTable<(), DescriptionPolicy, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_POLICY);
@@ -164,7 +167,7 @@ pub struct VerdictExecution<'a> {
     pub guard: &'a BudgetGuard,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutedSeat {
     pub id: String,
@@ -176,6 +179,9 @@ pub struct RoutedSeat {
     pub tier: ModelTierRef,
     pub inference_overrides: BTreeMap<String, serde_json::Value>,
     pub receipt: String,
+    /// Every candidate's complete grade at birth, beside the receipt (FIX 9922).
+    #[serde(default)]
+    pub grading: DescriptionFitnessReadings,
 }
 
 impl RoutedSeat {
@@ -208,8 +214,13 @@ pub struct RoutedVerdict<'a> {
 
 /// What a routed verdict gave its caller.
 pub enum RoutedVerdictOutcome {
-    /// The question's decision, with its receipt.
-    Decided(TypedDecision),
+    /// The question's decision, with its receipt, and the route's complete
+    /// grading when a route was graded for it (FIX 9922); a score question
+    /// goes straight to the ladder, so none.
+    Decided {
+        decision: TypedDecision,
+        grading: Option<DescriptionFitnessReadings>,
+    },
     /// The durable step suspended the attempt; it parked, and replays on resume.
     Trapped,
 }
@@ -411,58 +422,6 @@ fn apply_controls(
     }
     Ok(())
 }
-/// Seats and verdicts share the seat policy's composition, ceiling and
-/// evidence order; this router adds no default of its own. The highest
-/// positive grade wins, with its description line, grade and effort.
-fn resolve<'a>(
-    policy: &'a DescriptionPolicy,
-    seat_policy: &SeatPolicy,
-    measurements: &'a BTreeMap<ModelId, MeasuredDescription>,
-    settings: &SeatSettings,
-    purpose: &CallPurpose,
-    task: &str,
-    decisions: &DescriptionDecisions<'_>,
-) -> Result<(&'a ModelDescription, &'a str, f64, ReasoningEffort)> {
-    let composed = seat_policy.compose_defaults(&purpose_key(purpose), Some(policy))?;
-    let rows: Vec<_> = policy
-        .models
-        .iter()
-        .filter(|row| {
-            settings
-                .allowed_models
-                .as_ref()
-                .is_none_or(|allowed| allowed.contains(&row.model))
-        })
-        .filter_map(|row| {
-            let effort = seat_policy
-                .choose(composed, settings.effort, &row.effort_ladder)
-                .ok()?;
-            row.line(measurements.get(&row.model), &seat_policy.evidence_order)
-                .map(|line| (row, line, effort))
-        })
-        .collect();
-    let fitness = decisions.fitness(
-        task,
-        &rows
-            .iter()
-            .map(|&(row, description, effort)| Candidate {
-                model: &row.model,
-                description,
-                effort,
-            })
-            .collect::<Vec<_>>(),
-    )?;
-    rows.into_iter()
-        .zip(fitness)
-        .filter_map(|((row, line, effort), fitness)| {
-            fitness
-                .filter(|fitness| *fitness > 0.0)
-                .map(|fitness| (row, line, fitness, effort))
-        })
-        .max_by(|a, b| a.2.total_cmp(&b.2))
-        .ok_or_else(|| invalid("no description candidate passed judgment"))
-}
-
 impl Vault {
     pub fn set_description_policy(&self, policy: &DescriptionPolicy) -> Result<()> {
         policy.validate()?;
@@ -621,7 +580,7 @@ impl Vault {
             .map(|bytes| MEASUREMENTS.decode_value(bytes))
             .transpose()?
             .unwrap_or_default();
-        let (chosen, line, fitness, effort) = resolve(
+        let routed = resolve(
             &policy,
             &self.seat_policy()?,
             &measurements,
@@ -630,7 +589,8 @@ impl Vault {
             task,
             decisions,
         )?;
-        let reason = notes.reason(task, &chosen.model, line, effort, fitness)?;
+        let (chosen, effort) = (routed.chosen, routed.effort);
+        let reason = notes.reason(task, &chosen.model, routed.line, effort, routed.fitness)?;
         if reason.trim().is_empty() {
             return Err(invalid("a routed seat needs its reason"));
         }
@@ -652,6 +612,7 @@ impl Vault {
                     .expect("effort is a string"),
                 reason
             ),
+            grading: routed.grading,
         };
         let mut txn = self.store.env.write_txn()?;
         if let Some(seat) = SEATS.get(&self.store, &txn, &id.to_owned())? {
@@ -680,8 +641,9 @@ impl Vault {
             .unwrap_or_default())
     }
     /// Build the one current verdict request a typed read goes out on, before durable
-    /// hashing. Generative history and provider cache references cannot cross this
-    /// boundary; the read adds its question turn and its answer format.
+    /// hashing, with the route's complete grading (FIX 9922). Generative history and
+    /// provider cache references cannot cross this boundary; the read adds its question
+    /// turn and its answer format.
     pub fn routed_verdict_request(
         &self,
         task: &str,
@@ -689,12 +651,12 @@ impl Vault {
         settings: &SeatSettings,
         mut request: LlmRequest,
         instructions: Option<&str>,
-    ) -> Result<LlmRequest> {
+    ) -> Result<(LlmRequest, DescriptionFitnessReadings)> {
         let policy = self
             .description_policy()?
             .ok_or_else(|| invalid("description policy not configured"))?;
         let measurements = self.description_measurements()?;
-        let (chosen, _, _, effort) = resolve(
+        let routed = resolve(
             &policy,
             &self.seat_policy()?,
             &measurements,
@@ -703,6 +665,7 @@ impl Vault {
             task,
             decisions,
         )?;
+        let (chosen, effort) = (routed.chosen, routed.effort);
         request.model = chosen.model.clone();
         request.envelope.locality = chosen.locality;
         request.envelope.tier.per_seat = None;
@@ -728,7 +691,7 @@ impl Vault {
         // pin with this verdict's actual judged effort.
         request.envelope.seat_effort = Some(effort);
         request.messages = verdict_messages(instructions)?;
-        Ok(request)
+        Ok((request, routed.grading))
     }
 
     /// A typed verdict through decide(), routed independently without changing a pinned
@@ -756,9 +719,12 @@ impl Vault {
                 verdict.reversibility,
                 verdict.deadline,
             )?;
-            return Ok(RoutedVerdictOutcome::Decided(decision));
+            return Ok(RoutedVerdictOutcome::Decided {
+                decision,
+                grading: None,
+            });
         }
-        let request =
+        let (request, grading) =
             self.routed_verdict_request(task, decisions, settings, request, verdict.instructions)?;
         let seal = |request: LlmRequest| -> Result<LlmRequest> { Ok(request) };
         let rung = GeneratedRung {
@@ -793,7 +759,10 @@ impl Vault {
             GeneratedDecisions::Decided { decisions, .. } => decisions
                 .into_iter()
                 .next()
-                .map(RoutedVerdictOutcome::Decided)
+                .map(|decision| RoutedVerdictOutcome::Decided {
+                    decision,
+                    grading: Some(grading),
+                })
                 .ok_or_else(|| Error::InvariantViolation("routed verdict decided nothing").into()),
             GeneratedDecisions::Trapped => Ok(RoutedVerdictOutcome::Trapped),
             GeneratedDecisions::Unread(_) => {

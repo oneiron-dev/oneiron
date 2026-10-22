@@ -590,6 +590,8 @@ fn mcp_agent_verb_input(
         "vault.authority.handoff_alarms.acknowledge" => a.spec.clone().ok_or_else(invalid),
         "vault.roots.requests.cancel" => a.spec.clone().ok_or_else(invalid),
         "vault.cleanup.run" => a.spec.clone().ok_or_else(invalid),
+        "vault.cleanup.review" => a.spec.clone().ok_or_else(invalid),
+        "vault.cleanup.decide" => a.spec.clone().ok_or_else(invalid),
         "vault.archive.delete.preview" => a.spec.clone().ok_or_else(invalid),
         "vault.archive.delete.confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.usage.events.undecodable" => a.spec.clone().ok_or_else(invalid),
@@ -751,6 +753,7 @@ fn mcp_agent_verb_input(
         "vault.code.oplog" => a.spec.clone().ok_or_else(invalid),
         "execute_code" => a.spec.clone().ok_or_else(invalid),
         "vault.code.model_heal_count" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.type_diagnostics" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.receipt" => a.spec.clone().ok_or_else(invalid),
         "vault.results.status" => a.spec.clone().ok_or_else(invalid),
@@ -2831,6 +2834,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.cleanup.run" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.cleanup.review" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.cleanup.decide" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.archive.delete.preview" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3298,6 +3307,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.model_heal_count" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.type_diagnostics" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.waits.resolve" => {
@@ -8821,7 +8833,13 @@ async fn execute_agent_verb_row(
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
-            let source = crate::mcp::McpPageSource::complete(1);
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.pending.len(),
+                0,
+                usize::from(output.next_cursor.is_some()),
+                true,
+            )
+            .rows_at("pending");
             mcp_agent_verb_output(output, source)
         }
         "vault.packs.sections.grant" => {
@@ -11746,6 +11764,34 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.cleanup.review" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.cleanup.review", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::vault_cleanup::CleanupReviewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_cleanup_review(server, auth, input).await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.cleanup.decide" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.cleanup.decide", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::vault_cleanup::CleanupDecideRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_cleanup_decide(server, auth, input).await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.archive.delete.preview" => {
             let input: oneiron::memory::ArchiveDeletePreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -14130,6 +14176,21 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_model_heal_count(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.type_diagnostics" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.type_diagnostics", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_type_diagnostics(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));

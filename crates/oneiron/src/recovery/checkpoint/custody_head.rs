@@ -16,9 +16,11 @@
 //! carrying only the legacy untyped marker, drops and names its claim-bound
 //! rows whose keys stayed on the old host; and everything else restores as
 //! before. Archive targets and the kit share the one source and validator:
-//! only the opener differs, the data key the backup unlocked with or the
-//! kit's recovery root.
+//! only the opener differs, the data key the backup unlocked with, the
+//! kit's recovery root, or an admitted machine's key (FIX 9178): a world's
+//! pads open only with the kit or a machine that world admits.
 
+mod pad_worlds;
 mod status;
 
 use std::collections::BTreeSet;
@@ -45,16 +47,18 @@ use crate::store::{
     FileAnchor, FolderTarget, OutboxTarget, Publication, TargetRecipients, route_custody,
     standing_retirements_in_txn,
 };
-use crate::{Result, Vault, VaultConfig};
+use crate::{EntityId, Result, Vault, VaultConfig};
 
 /// Where a restore on a host without its image's custody finds the head:
 /// the folder beside the backup (`<folder>/oneiron-custody/`), the anchor
-/// when one is configured (a root or a door), and the kit's recovery root
-/// when the restore was unlocked with the kit.
+/// when one is configured (a root or a door), the kit's recovery root when
+/// the restore was unlocked with the kit, and an admitted machine's key when
+/// one is given.
 pub struct CustodyRecovery<'a> {
     folder: PathBuf,
     anchor: Option<Box<dyn AnchorStore + 'a>>,
     root: Option<&'a HybridSecretKey>,
+    machine: Option<(EntityId, &'a HybridSecretKey)>,
 }
 
 impl<'a> CustodyRecovery<'a> {
@@ -67,6 +71,7 @@ impl<'a> CustodyRecovery<'a> {
                 .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
             anchor: None,
             root: None,
+            machine: None,
         }
     }
 
@@ -88,9 +93,19 @@ impl<'a> CustodyRecovery<'a> {
     }
 
     /// Opened with the kit's recovery root as well as the backup's data
-    /// key: every compartment, the owner-only ones too.
+    /// key: every compartment, the owner-only ones too, but a world's whose
+    /// current key is not wrapped to that root (FIX 9178).
     pub fn with_kit(mut self, root: &'a HybridSecretKey) -> Self {
         self.root = Some(root);
+        self
+    }
+
+    /// Opened with the key of `machine`, one of the owner's machines, as
+    /// well (FIX 9178): the pad compartments of the worlds that admit it,
+    /// nothing else. It admits no machine; a key the head names no wrap for
+    /// opens nothing.
+    pub fn with_machine(mut self, machine: EntityId, secret: &'a HybridSecretKey) -> Self {
+        self.machine = Some((machine, secret));
         self
     }
 
@@ -106,6 +121,7 @@ impl<'a> CustodyRecovery<'a> {
             folder: &self.folder,
             anchor: self.anchor(),
             root: self.root,
+            machine: self.machine,
         }
     }
 }
@@ -198,16 +214,15 @@ impl Vault {
         let root = self
             .pinned_root_recipient_in_txn(&txn, &fold)?
             .map(|root| (root.id.0, root.key));
+        // Each world's admitted machines and roots (FIX 9178), which alone
+        // its pad compartment is wrapped to.
+        let pad_worlds = self.pad_world_recipients_in_txn(&txn, &fold, &pad_worlds_kept_local);
         Ok(Ok(CustodyRecipients {
             root,
             data_key,
             pad_worlds_kept_local,
             credentials_eligible,
-            // Each world's admitted machines and roots (FIX 6706): filled
-            // from L03's `world_pad_recipients_in_txn` when the head's world
-            // compartments switch on; empty, the head's pads stay
-            // host-readable as today.
-            pad_worlds: Default::default(),
+            pad_worlds,
         }))
     }
 
@@ -427,7 +442,9 @@ impl Vault {
     /// ids) still owes, for its receipt's read: `None` when none of their
     /// keys was ever in custody here. Their claim keys, the body instances
     /// the erase retired or owes (KS-2A) and a custody record's known-value
-    /// history (KS-3) count alike. Each
+    /// history (KS-3) count alike, and so do an erased credential's
+    /// discovery and every key its id names (KS-6 part 2): its discovery
+    /// owed reads pending, even with nothing in custody here. Each
     /// handed-off retirement is complete once the watermark passed it;
     /// until then, every member behind it and the anchor are owed (with no
     /// anchor configured, every member's ack completes it, rollback not
@@ -444,9 +461,18 @@ impl Vault {
                 .store
                 .custody_subject(CustodyKind::ClaimDecision, record)?
             else {
-                return Ok(None);
+                // Unbound: no key was ever in custody here, but an erased
+                // credential's owed discovery still reads pending.
+                for record in erased {
+                    owed.credential(&self.store, txn, record);
+                }
+                let pending = owed.steps.iter().map(CustodyPendingStep::name).collect();
+                return Ok(owed
+                    .found
+                    .then_some((CUSTODY_RETIREMENT_PENDING, pending, None)));
             };
             owed.subject(&self.store, txn, &subject)?;
+            owed.credential(&self.store, txn, record);
             if let Some(history) = self
                 .store
                 .custody_subject(CustodyKind::KnownValueEntry, record)?
@@ -650,6 +676,36 @@ impl EraseOwed {
                 target_id: None,
                 reason: None,
             });
+        }
+    }
+
+    /// Notes what erased credential `record` still owes (KS-6 part 2): its
+    /// discovery while owed, and each key its id names. A read that faults
+    /// is warned and reads pending, never complete.
+    fn credential(&mut self, store: &crate::store::Store, txn: &RoTxn<'_>, record: &[u8; 16]) {
+        let read = (|| -> Result<()> {
+            let credential = EntityId::from_bytes(*record)?;
+            let Some((discovery_owed, subjects)) =
+                store.credential_erase_debt_in_txn(txn, &credential)?
+            else {
+                return Ok(());
+            };
+            if discovery_owed {
+                self.found = true;
+                self.step(CUSTODY_RETIREMENT_PENDING);
+            }
+            for subject in &subjects {
+                self.subject(store, txn, subject)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = read {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "an erased credential's custody did not read; its erase reads pending"
+            );
+            self.found = true;
+            self.step(CUSTODY_RETIREMENT_PENDING);
         }
     }
 

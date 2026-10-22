@@ -37,7 +37,8 @@ pub(super) struct Deck {
 
 impl Deck {
     pub(super) fn load(id: &str, bytes: Vec<u8>, limits: Limits) -> Res<Self> {
-        let package = Package::open(&bytes, limits).map_err(text)?;
+        let package = Package::open(&bytes, limits, &crate::resource::Resources::measuring())
+            .map_err(text)?;
         let deck = LiveDeck::import(&package).map_err(text)?;
         let defects = checks::defects(&bytes, limits);
         Ok(Self {
@@ -277,6 +278,8 @@ pub(super) struct Scope {
     presentation: bool,
     /// Parts the baseline did not have.
     new_parts: bool,
+    /// The parts the touched slides relate, rewritten in place.
+    related: bool,
 }
 
 impl Scope {
@@ -286,6 +289,7 @@ impl Scope {
         types: false,
         presentation: false,
         new_parts: false,
+        related: false,
     };
     /// A new media, chart or workbook part related from the slide.
     pub(super) const RELATED: Self = Self {
@@ -293,6 +297,7 @@ impl Scope {
         types: true,
         presentation: false,
         new_parts: true,
+        related: false,
     };
     /// A new slide in the slide list.
     pub(super) const LISTED: Self = Self {
@@ -300,6 +305,15 @@ impl Scope {
         types: true,
         presentation: true,
         new_parts: true,
+        related: false,
+    };
+    /// A held part the slide relates (a SmartArt's data) rewritten.
+    pub(super) const HELD: Self = Self {
+        rels: true,
+        types: true,
+        presentation: false,
+        new_parts: true,
+        related: true,
     };
 }
 
@@ -325,6 +339,18 @@ pub(super) fn allowed(scope: Scope, touched: &BTreeSet<String>, package: &Packag
     parts.extend(app_part(package)?);
     if scope.types {
         parts.insert("[Content_Types].xml".to_owned());
+    }
+    if scope.related {
+        for part in touched {
+            parts.extend(
+                package
+                    .relationships(part)
+                    .map_err(text)?
+                    .into_iter()
+                    .filter(|rel| !rel.external)
+                    .map(|rel| rel.target),
+            );
+        }
     }
     if scope.presentation {
         let presentation = presentation_part(package)?;
@@ -458,7 +484,54 @@ pub(super) fn edit_case(
     assets: &OracleAssets,
 ) -> Res<()> {
     let case = format!("{}.edit.{}", subject.deck.id, recipe.name());
-    run.case(&case, |run| edit_body(run, &case, subject, recipe, assets))
+    run.case(&case, |run| {
+        let mut ids = Ids::above(&subject.deck.deck);
+        match super::recipes::stage(recipe, subject, &mut ids) {
+            None => edit_body(run, &case, subject, recipe, assets),
+            Some(stage) => staged(run, &case, subject, &stage, recipe, assets),
+        }
+    })
+}
+
+/// A mutation over the subject as it is once it took `stage`, exported and
+/// imported again so what the stage added is held (FIX 5670); its probes
+/// and anchor read again from that deck.
+fn staged(
+    run: &mut Run,
+    case: &str,
+    subject: &Subject<'_>,
+    stage: &[DeckOp],
+    recipe: Recipe,
+    assets: &OracleAssets,
+) -> Res<()> {
+    let held = export(subject.deck, stage, assets)
+        .map_err(|refused| refused.why())
+        .and_then(|exported| {
+            Deck::load(
+                &format!("{}.staged", subject.deck.id),
+                exported.outcome.bytes,
+                run.limits,
+            )
+        })
+        .and_then(|deck| {
+            let probes = checks::probes(&deck.package)?;
+            let anchor = anchor(&deck.deck)?;
+            Ok((deck, probes, anchor))
+        });
+    match held {
+        Ok((deck, probes, anchor)) => {
+            let subject = Subject {
+                deck: &deck,
+                anchor: &anchor,
+                probes: &probes,
+            };
+            edit_body(run, case, &subject, recipe, assets)
+        }
+        Err(why) => {
+            run.record(EDIT, case, failed(format!("the stage it needs: {why}")));
+            Ok(())
+        }
+    }
 }
 
 fn edit_body(
@@ -487,7 +560,11 @@ fn edit_body(
             return Ok(());
         }
     };
-    let output = match Package::open(&exported.outcome.bytes, run.limits) {
+    let output = match Package::open(
+        &exported.outcome.bytes,
+        run.limits,
+        &crate::resource::Resources::measuring(),
+    ) {
         Ok(output) => output,
         Err(error) => {
             run.record(
@@ -523,5 +600,6 @@ fn edit_body(
         lane: Lane::Core,
         checks: owed,
         baseline: &subject.deck.defects,
+        origin: &subject.deck.bytes,
     })
 }

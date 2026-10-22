@@ -77,7 +77,7 @@ pub(super) fn render(
         let rels = match graph.parts.get(&part) {
             Some(parsed) => parsed.rels.clone(),
             None if hash == [0; 32] => Vec::new(),
-            None => relationships(package, &part, graph.limits)?,
+            None => relationships(package, &part)?,
         };
         parts.insert(part.clone(), hash);
         let master = graph.parts.get(&part).is_some_and(|parsed| {
@@ -88,12 +88,20 @@ pub(super) fn render(
                 .is_some_and(|root| root.is(P, "sldMaster"))
         });
         for rel in rels {
-            let Some(target) = rel.target else {
-                continue;
-            };
             if NOT_RENDERED.contains(&rel.kind.as_str()) || (master && rel.kind == "slideLayout") {
                 continue;
             }
+            let Some(target) = rel.target else {
+                // An external target the slide renders through (a linked
+                // picture or media) is an edge as written, never fetched; a
+                // hyperlink shows nothing (FIX 8576). `:` is in no part name.
+                if let Some(url) = rel.external
+                    && rel.kind != "hyperlink"
+                {
+                    edges.insert((part.clone(), rel.id, format!("external:{}:{url}", rel.kind)));
+                }
+                continue;
+            };
             edges.insert((part.clone(), rel.id, target.clone()));
             queue.push(target);
         }

@@ -29,6 +29,8 @@ use super::connector_call::{
     ACKNOWLEDGED_CALLS, AcknowledgedConnectorCall, ConnectorAwaitingInput, ConnectorCallOutcome,
     PENDING_CALLS, PendingConnectorCall, SettledConnectorCall,
 };
+use super::connector_call_input_resume::ConnectorInputResume;
+use super::connector_elicitation_consent::ElicitationOwnerConsent;
 
 /// The round of questions one call's connector asked, on the call's row:
 /// ids and counts, never the questions' text.
@@ -49,6 +51,13 @@ pub(super) struct PendingConnectorInput {
     /// delivery is uncertain.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) uncertain: bool,
+    /// The owner's consent ask on the round's frozen answer under `always
+    /// ask`, and the owner's press on it (FIX 8808).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) owner_consent: Option<ElicitationOwnerConsent>,
+    /// The round's sealed resume state, once the host kept it (FIX 9157).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) resume: Option<ConnectorInputResume>,
 }
 
 impl PendingConnectorInput {
@@ -61,6 +70,8 @@ impl PendingConnectorInput {
             intent,
             live_until_ms: input.live_until_ms,
             uncertain: false,
+            owner_consent: None,
+            resume: None,
         }
     }
 
@@ -140,6 +151,8 @@ impl Vault {
             input.asked = asked;
             input.live_until_ms = live_until_ms;
             input.uncertain = false;
+            input.owner_consent = None;
+            input.resume = None;
             true
         })
     }
@@ -161,6 +174,7 @@ impl Vault {
                 intent: input.intent,
             });
             input.uncertain = false;
+            input.resume = None;
             true
         })
     }
@@ -185,12 +199,14 @@ impl Vault {
                 reasons: vec![reason.to_owned()],
             });
             input.uncertain = false;
+            input.resume = None;
             true
         })
     }
 
     /// Marks the questions `handle` names on the call `call_ref` uncertain:
-    /// their live exchange ended unanswered. `true` when it marked them.
+    /// their live exchange ended unanswered, so its resume state goes too
+    /// (FIX 9157). `true` when it changed them.
     ///
     /// # Errors
     ///
@@ -201,8 +217,9 @@ impl Vault {
         handle: &str,
     ) -> Result<bool, IntentLedgerError> {
         self.update_connector_input(call_ref, handle, |input, _| {
-            let marked = !input.uncertain;
+            let marked = !input.uncertain || input.resume.is_some();
             input.uncertain = true;
+            input.resume = None;
             marked
         })
     }
@@ -242,7 +259,9 @@ impl Vault {
 
     /// Marks every unanswered call's questions uncertain, and returns how
     /// many it marked: what a server starting with no live exchange calls
-    /// before it serves, since none of their exchanges survived.
+    /// before it serves, since none of their exchanges survived. Each
+    /// round keeps its resume state, which the settler takes the exchange
+    /// up again from (FIX 9157).
     ///
     /// # Errors
     ///
@@ -257,7 +276,11 @@ impl Vault {
             let Some(input) = row.input.filter(|_| row.settled.is_none()) else {
                 continue;
             };
-            if self.mark_connector_input_uncertain(&call_ref, &input.handle)? {
+            if self.update_connector_input(&call_ref, &input.handle, |input, _| {
+                let marked = !input.uncertain;
+                input.uncertain = true;
+                marked
+            })? {
                 marked += 1;
             }
         }
@@ -268,7 +291,7 @@ impl Vault {
     /// call `call_ref`'s row, read again in the writer, and writes the row
     /// when it changed something. Anything else (no row, no questions,
     /// another handle's, an answered call) is left as it is.
-    fn update_connector_input(
+    pub(super) fn update_connector_input(
         &self,
         call_ref: &EntityId,
         handle: &str,

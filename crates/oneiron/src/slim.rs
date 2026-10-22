@@ -29,9 +29,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 mod outbound_wait;
+mod owner_admission;
 pub mod public;
 pub mod supervisor;
 pub use outbound_wait::OutboundWaitHost;
+pub use owner_admission::{OwnerShedAttempt, OwnerShedStep};
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -231,6 +233,8 @@ pub(crate) struct SlimController {
     /// persisted.
     last_wait_id: AtomicU64,
     wait_host: Mutex<Option<Arc<dyn OutboundWaitHost>>>,
+    /// The owner's own shed requests, in turn (FIX 10157).
+    owner_line: owner_admission::OwnerShedLine,
 }
 
 /// One live outbound wait: a journaled model call the engine is polling, or
@@ -485,10 +489,14 @@ impl Vault {
     pub fn resume_from_slim_on_inbound(&self) -> Result<InboundResumeOutcome> {
         let mut state = self.slim.lock_state();
         // `take` restores the `Full` default, which is exactly the transition.
-        match std::mem::take(&mut *state) {
-            SlimState::Full => Ok(InboundResumeOutcome::AlreadyFull),
-            SlimState::Slim(residue) => Ok(InboundResumeOutcome::Resumed { residue }),
-        }
+        let outcome = match std::mem::take(&mut *state) {
+            SlimState::Full => InboundResumeOutcome::AlreadyFull,
+            SlimState::Slim(residue) => InboundResumeOutcome::Resumed { residue },
+        };
+        drop(state);
+        // The owner's waiting shed looks again, woken outside the lock.
+        self.wake_owner_shed();
+        Ok(outcome)
     }
 
     /// Engine truth at shed time, with the transition lock held: one live

@@ -2,7 +2,8 @@
 //! owner door as every other owner route. The peer-facing routes live in
 //! `api::courtesy_delete`, outside it. The owner's
 //! `vault.courtesy_delete.*` rows are host doors over these same calls
-//! (`api::facade::courtesy_delete_doors`).
+//! (`api::facade::courtesy_delete_doors`), and each route runs its row's
+//! verb hooks once around the call, as the owner in person (FIX 8201).
 
 use std::sync::Arc;
 
@@ -12,15 +13,15 @@ use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{
-    CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
-    CourtesyDeleteSent,
+    CourtesyDeleteAnswerRequest, CourtesyDeleteSendRequest, EmptyRequest,
 };
+use serde_json::Value;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, blocking, hooked_owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
 use crate::error::ApiErrorEnvelope;
-use crate::owner::courtesy_delete;
+use crate::owner::{courtesy_delete, hooked_row, hooked_row_admitting};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -46,10 +47,19 @@ pub(crate) async fn send(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CourtesyDeleteSendRequest>, JsonRejection>,
-) -> OwnerReply<CourtesyDeleteSent> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let sent = blocking(move || courtesy_delete::send(&server, &owner, &request)).await?;
+    let sent = blocking(move || {
+        hooked_row(
+            server.vault(),
+            actor,
+            "vault.courtesy_delete.send",
+            request,
+            |request: CourtesyDeleteSendRequest| courtesy_delete::send(&server, &owner, &request),
+        )
+    })
+    .await?;
     Ok(Json(sent))
 }
 
@@ -62,9 +72,18 @@ pub(crate) async fn send(
 pub(crate) async fn sent(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Vec<CourtesyDeleteSent>> {
-    owner(&auth, &server)?;
-    let sent = blocking(move || courtesy_delete::sent(&server)).await?;
+) -> OwnerReply<Value> {
+    let (_, actor) = hooked_owner(&auth, &server)?;
+    let sent = blocking(move || {
+        hooked_row(
+            server.vault(),
+            actor,
+            "vault.courtesy_delete.sent",
+            EmptyRequest {},
+            |_| courtesy_delete::sent(&server),
+        )
+    })
+    .await?;
     Ok(Json(sent))
 }
 
@@ -77,9 +96,18 @@ pub(crate) async fn sent(
 pub(crate) async fn incoming(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Vec<CourtesyDeleteIncoming>> {
-    owner(&auth, &server)?;
-    let incoming = blocking(move || courtesy_delete::incoming(&server)).await?;
+) -> OwnerReply<Value> {
+    let (_, actor) = hooked_owner(&auth, &server)?;
+    let incoming = blocking(move || {
+        hooked_row(
+            server.vault(),
+            actor,
+            "vault.courtesy_delete.incoming",
+            EmptyRequest {},
+            |_| courtesy_delete::incoming(&server),
+        )
+    })
+    .await?;
     Ok(Json(incoming))
 }
 
@@ -97,9 +125,26 @@ pub(crate) async fn answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CourtesyDeleteAnswerRequest>, JsonRejection>,
-) -> OwnerReply<CourtesyDeleteIncoming> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let answered = blocking(move || courtesy_delete::answer(&server, &owner, &request)).await?;
+    // A rewritten `reply_to` meets the answer's own check, as the row's
+    // facade door admits it (FIX 5140).
+    let admit: oneiron::memory::RewriteAdmit = Arc::new(|verb: &str, rewritten: &Value| {
+        courtesy_delete::check_rewritten_reply_to(verb, rewritten)
+    });
+    let answered = blocking(move || {
+        hooked_row_admitting(
+            server.vault(),
+            actor,
+            "vault.courtesy_delete.answer",
+            request,
+            Some(admit),
+            |request: CourtesyDeleteAnswerRequest| {
+                courtesy_delete::answer(&server, &owner, &request)
+            },
+        )
+    })
+    .await?;
     Ok(Json(answered))
 }

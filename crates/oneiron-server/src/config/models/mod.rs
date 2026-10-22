@@ -21,8 +21,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use oneiron::ModelLocality;
 use oneiron::llm::manifest::ModelRole;
-use oneiron_code_check::{BackendKind, CheckMode};
+use oneiron_code_check::{BackendKind, CheckMode, DEFAULT_INPUT_BYTES};
 use serde::Deserialize;
 
 mod browser_planner;
@@ -73,6 +74,9 @@ pub(crate) struct ModelsFile {
     default: Option<String>,
     prompt: Option<String>,
     prompt_file: Option<PathBuf>,
+    /// Where a turn's context sits in its request (FIX 6676): one of the
+    /// names `PromptLayout::from_setting` takes.
+    prompt_layout: Option<String>,
     local: Option<String>,
     cloud: Option<String>,
     prefer_local: Option<bool>,
@@ -187,6 +191,7 @@ struct CodeCheckFile {
     mode: Option<String>,
     backend: Option<String>,
     microsoft_tsc: Option<PathBuf>,
+    max_input_bytes: Option<usize>,
 }
 
 /// The resolved `[models]` section: providers plus one ladder per role.
@@ -201,6 +206,11 @@ pub struct ModelsConfig {
     /// as a stock vendor model name, and the configured model it calls.
     /// None is built in.
     pub aliases: BTreeMap<String, oneiron::ModelId>,
+    /// `prompt_layout`: where each turn's context sits in its request (FIX
+    /// 6676), `early_system` or `stable_history_then_turn_context`. `None`,
+    /// unset or unknown, leaves the host's `ONEIRON_PROMPT_LAYOUT`, then
+    /// today's order (`oneiron::prompt::effective_prompt_layout`).
+    pub prompt_layout: Option<oneiron::prompt::PromptLayout>,
     /// Owner opt-in for the Dreamer's extraction calls to leave the device.
     /// Off by default: personal-data extraction stays local unless the owner
     /// says otherwise (ARCH-0036 counter-arrow).
@@ -346,18 +356,34 @@ pub struct CodeModeSettings {
     pub check: CodeCheckSettings,
 }
 
-/// `[models.code_mode.check]`: an optional type check of each generated
-/// program, run beside it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// `[models.code_mode.check]`: the type check of each generated program,
+/// run beside it as feedback (FIX 8277).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeCheckSettings {
-    /// `off` (the default), or `shadow`: check every program and record what
-    /// the check found, blocking nothing. `enforce` is reserved.
+    /// `feedback` (the default): check every program beside its run and hand
+    /// what the check found back with its step, never waiting on it or
+    /// refusing for it; or `off`, where each step's feedback answers
+    /// unavailable. `enforce` is reserved.
     pub mode: CheckMode,
     /// `tsrs` in process (the default), `tsc-rs` in process, or `microsoft`.
     pub backend: BackendKind,
     /// Microsoft's native `tsc` at the pinned version: the `microsoft`
     /// backend, and the in-process backends' fallback when it is set.
     pub microsoft_tsc: Option<PathBuf>,
+    /// The most declaration and program text one check takes, 4 MiB by
+    /// default: past it the step's check fails, typed, and its run goes on.
+    pub max_input_bytes: usize,
+}
+
+impl Default for CodeCheckSettings {
+    fn default() -> Self {
+        Self {
+            mode: CheckMode::Feedback,
+            backend: BackendKind::Tsrs,
+            microsoft_tsc: None,
+            max_input_bytes: DEFAULT_INPUT_BYTES,
+        }
+    }
 }
 
 const DEFAULT_SESSION_CEILING_SECS: u64 = 12 * 60 * 60;
@@ -365,8 +391,13 @@ const DEFAULT_PASS_BUDGET_UNITS: u64 = 400_000;
 const DEFAULT_TURN_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_RETRY_BACKOFF_SECS: u64 = 30;
-pub(crate) const DEFAULT_RAW_BUDGET_UNITS: u64 = 10_000_000;
-const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = 10_000_000;
+/// An omitted process-lifetime meter (`models.raw_budget_units`,
+/// `models.code_mode.budget_units`, `models.media.budget_units`) is uncapped
+/// (FIX 9482): the type's maximum, which no spend reaches. A configured value
+/// keeps its cap.
+pub(crate) const UNCAPPED_LIFETIME_UNITS: u64 = u64::MAX;
+pub(crate) const DEFAULT_RAW_BUDGET_UNITS: u64 = UNCAPPED_LIFETIME_UNITS;
+const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = UNCAPPED_LIFETIME_UNITS;
 /// Two scorings of a 50-candidate block at about 300 tokens a candidate.
 const DEFAULT_RERANK_BUDGET_UNITS: u64 = 32_000;
 const DEFAULT_HISTORY_TURNS: usize = 24;
@@ -527,6 +558,18 @@ impl ModelsFile {
             roles,
             stays_on_device,
             aliases,
+            // An unknown name never fails boot: it warns, and the host's
+            // layout stands.
+            prompt_layout: self.prompt_layout.as_deref().and_then(|name| {
+                let layout = oneiron::prompt::PromptLayout::from_setting(name);
+                if layout.is_none() {
+                    tracing::warn!(
+                        value = name,
+                        "models.prompt_layout names no layout; the host's layout stands"
+                    );
+                }
+                layout
+            }),
             extraction_egress: self.extraction_egress.unwrap_or(false),
             raw_budget_units,
             dreamer,
@@ -590,7 +633,7 @@ impl BrokerFile {
 impl CodeCheckFile {
     fn resolve(self, base: Option<&Path>) -> anyhow::Result<CodeCheckSettings> {
         let mode = match self.mode.as_deref() {
-            None => CheckMode::Off,
+            None => CheckMode::Feedback,
             Some(mode) => mode
                 .parse()
                 .map_err(|error| anyhow::anyhow!("models.code_mode.check.mode: {error}"))?,
@@ -612,6 +655,7 @@ impl CodeCheckFile {
             mode,
             backend,
             microsoft_tsc,
+            max_input_bytes: self.max_input_bytes.unwrap_or(DEFAULT_INPUT_BYTES),
         })
     }
 }
@@ -740,5 +784,13 @@ impl ModelsConfig {
             .get(&role)
             .map(Vec::as_slice)
             .filter(|ladder| !ladder.is_empty())
+    }
+
+    /// Whether a rung at `locality` may serve `role`: a role whose work never
+    /// leaves the device (`leave_device = "never"`) takes no third-party rung,
+    /// first or as a fallback. The owner's own server and this device serve it.
+    #[must_use]
+    pub(crate) fn role_permits(&self, role: ModelRole, locality: ModelLocality) -> bool {
+        !(self.stays_on_device.contains(&role) && locality == ModelLocality::ThirdParty)
     }
 }

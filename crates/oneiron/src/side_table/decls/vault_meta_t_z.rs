@@ -139,7 +139,7 @@ side_tables! {
         => crate::training_pack::erase_role_actor_in_txn;
     /// Pinned corpus, compute, dispatch and evaluation of one training job. Key: id16 (run).
     TRAINING_PACK_RUN: VaultMeta b"training_pack:run:v1:" Named
-        => crate::training_pack::erase_run_actor_in_txn;
+        => crate::training_pack::erase_run_id_in_txn;
     /// Immutable owner-approved role-swap receipt. Key: id16 (receipt).
     TRAINING_PACK_SWAP: VaultMeta b"training_pack:swap:v1:" Named
         => crate::training_pack::erase_swap_actor_in_txn;
@@ -228,7 +228,7 @@ side_tables! {
     /// string "attempt".
     VAULT_CLEANUP_SCAN_CURSOR: VaultMeta b"vault_cleanup.scan.v1:" Raw;
     /// Index of archived attempts under one TASK, used to restore them together when the task is
-    /// touched. Key: string (task hex) "/" id16 (AttemptId).
+    /// touched. Key: BLAKE3 derive_key of the task reference (32) then id16 (AttemptId).
     VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.task_attempt_archive.v1/" Raw;
     /// Owner-adjustable retention period for completed TASK queue records before archival
     /// eligibility. Key: ().

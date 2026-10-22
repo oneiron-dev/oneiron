@@ -1,3 +1,7 @@
+//! Secret detection and custody filtering at batch and release boundaries.
+//! The entry point is `scan_batch_ops`.
+//! Child modules own masking, container handling, lift history and read-release rules.
+
 mod container;
 mod lift_history;
 mod mask;
@@ -15,7 +19,7 @@ pub(crate) use self::container::{
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
     SecretLiftClose, SecretLiftHistoryProposal, SecretLiftProgress, SecretLiftReceipt,
-    SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner,
+    SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner, secret_lift_as_owner_toward,
 };
 pub(crate) use self::lift_history::{
     enqueue_known_remark_in_txn, enqueue_lift_in_txn, run_lift_pass,

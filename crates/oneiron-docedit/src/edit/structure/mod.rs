@@ -425,14 +425,19 @@ fn highest_id(tree: &XmlTree) -> u32 {
 }
 
 /// A version-4-shaped GUID from BLAKE3 over the seed and a draw counter,
-/// uppercase and braced; drawn again while it collides with `taken`.
+/// uppercase and braced; drawn again while it collides with `taken`, with
+/// no bound on the draws but the counter's own range (FIX 8581). A draw
+/// that fits in 32 bits hashes as it always has, so a replay mints the same.
 pub(crate) fn mint_guid(seed: &[u8], taken: &[&str]) -> Result<String, EditRefusal> {
-    (0u32..64)
+    (0u64..=u64::MAX)
         .map(|draw| {
             let mut hasher =
                 blake3::Hasher::new_derive_key("oneiron-docedit 2026-10-16 creationId");
             hasher.update(seed);
-            hasher.update(&draw.to_le_bytes());
+            match u32::try_from(draw) {
+                Ok(draw) => hasher.update(&draw.to_le_bytes()),
+                Err(_) => hasher.update(&draw.to_le_bytes()),
+            };
             let mut b = [0u8; 16];
             b.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
             b[6] = (b[6] & 0x0f) | 0x40;
@@ -560,7 +565,7 @@ fn delete_shape(
             .map(|&at| (tree.nodes[at].span.clone(), Vec::new()))
             .collect(),
     )?;
-    let kept = XmlTree::parse(&out, next.limits().xml)?;
+    let kept = XmlTree::parse(&out, next.resources())?;
     let used: Vec<&str> = kept
         .nodes
         .iter()
@@ -656,7 +661,7 @@ fn reparent(
     )?;
     let edits = transform::write(&bytes, &tree, shape.node.index, shape.kind, &xfrm)?;
     let written = xml::splice(&bytes, edits)?;
-    let tree = XmlTree::parse(&written, next.limits().xml)?;
+    let tree = XmlTree::parse(&written, next.resources())?;
     let at = check::find_shape(&tree, id).ok_or(EditRefusal::Missing("shape"))?;
     let container = match parent {
         None => shape_tree(&tree)?,

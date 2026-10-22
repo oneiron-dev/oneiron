@@ -313,7 +313,8 @@ impl Vault {
     /// erase committed refuses a hold until its key is destroyed. A
     /// host-facing door: the partition's own row in the one legal-hold store
     /// (OF-470), logged; releasing it lifts that hold alone, never another
-    /// hold naming the same claim.
+    /// hold naming the same claim. Once a release commits, the due legal-hold
+    /// pass settles what the hold kept from an erase (FIX 7993, 7994).
     pub fn set_gate_decision_partition_hold(
         &self,
         claim_partition: Option<[u8; 16]>,
@@ -329,9 +330,11 @@ impl Vault {
             let target = LegalHoldTarget::GatePartition(claim);
             legal_hold::set_partition_hold_in_txn(&self.store, txn, target, held, now)
         })?;
-        // A released partition hold may free a deferred delete (FIX 1488).
+        // A released partition hold may free a deferred delete (FIX 1488),
+        // and the decision scrubs it kept (FIX 7993, 7994).
         if !held {
             self.note_backup_hold_recheck();
+            self.run_due_legal_hold_erases()?;
         }
         Ok(())
     }
@@ -374,6 +377,8 @@ impl Vault {
         self.finish_body_custody_retirements_after_commit();
         self.finish_known_history_retirements_after_commit();
         self.finish_world_pad_retirements_after_commit();
+        // KS-6 part 2: an erased credential's discovery and keys.
+        self.finish_credential_retirements_after_commit();
     }
 
     /// Post-commit door for an erase that staged a world's pad retirements

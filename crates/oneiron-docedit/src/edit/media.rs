@@ -13,6 +13,8 @@ use crate::ooxml::{CONTENT_TYPES, XmlTree};
 use crate::retained_opc::{Package, rels_name};
 
 const TYPES: &str = "[Content_Types].xml";
+/// Office's SVG blip namespace (`asvg:svgBlip`).
+pub(super) const ASVG: &str = "http://schemas.microsoft.com/office/drawing/2016/SVG/main";
 const NOTES_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml";
 
@@ -29,9 +31,9 @@ pub(super) fn set_picture(
         return Err(EditRefusal::Invalid("set_picture takes a PNG or JPEG"));
     }
     let (bytes, tree) = xml::read(next, slide)?;
-    let blip = xml::path(&tree, shape.node.index, &[(P, "blipFill"), (A, "blip")])
+    let blip_at = xml::path(&tree, shape.node.index, &[(P, "blipFill"), (A, "blip")])
         .ok_or(EditRefusal::Missing("picture fill"))?;
-    let blip = &tree.nodes[blip];
+    let blip = &tree.nodes[blip_at];
     if blip.attr_ns(R, "link").is_some() {
         return Err(EditRefusal::Invalid("a linked picture"));
     }
@@ -50,7 +52,7 @@ pub(super) fn set_picture(
     else {
         return Err(EditRefusal::Missing("picture bounds"));
     };
-    let (extension, content_type, _) = admit(picture, Rect { x, y, cx, cy })?;
+    let (extension, content_type, _) = admit(picture, Rect { x, y, cx, cy }, next.resources())?;
     let media = xml::next_part(next, "ppt/media/image", &format!(".{extension}"))?;
     let mut allowed = vec![slide.to_owned(), rels_name(slide), media.clone()];
     if !default_names(next, extension, content_type)? {
@@ -60,38 +62,76 @@ pub(super) fn set_picture(
     let id = next.relate(slide, &format!("{R}/image"), &media)?;
     let c_nv_pr =
         xml::c_nv_pr(&tree, shape.node.index).ok_or(EditRefusal::Missing("shape properties"))?;
-    let edits = vec![
+    let mut edits = vec![
         (
             blip.attr_spans[&embed].clone(),
             format!(r#"{embed}="{id}""#).into_bytes(),
         ),
         xml::set_attribute(&bytes, &tree.nodes[c_nv_pr], "descr", &record.description),
     ];
-    next.replace_xml_part(slide, xml::splice(&bytes, edits)?)?;
     let shape_id = shape.id.ok_or(EditRefusal::Missing("shape id"))?;
+    let mut declared = vec![
+        Declared::attribute(
+            slide,
+            shape_id,
+            &[(P, "nvPicPr"), (P, "cNvPr")],
+            ("", "descr"),
+        ),
+        Declared::attribute(
+            slide,
+            shape_id,
+            &[(P, "blipFill"), (A, "blip")],
+            (R, "embed"),
+        ),
+    ];
+    let mut effects = vec![Effect::PreviousMedia {
+        relationship: previous,
+    }];
+    // PowerPoint draws a blip's Office SVG extension over its raster, so
+    // the extension goes with the old media (FIX 6306): its `a:ext`, and
+    // the `a:extLst` with it when it held nothing else. Every other
+    // extension keeps its bytes; the SVG's relationship stays, unreferenced.
+    if let Some((gone, svg)) = svg_extension(&tree, blip_at) {
+        edits.push((tree.nodes[gone].span.clone(), Vec::new()));
+        declared.push(Declared::element(
+            slide,
+            Some(shape_id),
+            &[(P, "blipFill"), (A, "blip"), (A, "extLst")],
+        ));
+        if let Some(relationship) = tree.nodes[svg].attr_ns(R, "embed") {
+            effects.push(Effect::PreviousMedia {
+                relationship: relationship.to_owned(),
+            });
+        }
+    }
+    next.replace_xml_part(slide, xml::splice(&bytes, edits)?)?;
     Ok(Written {
         allowed,
-        declared: vec![
-            Declared::attribute(
-                slide,
-                shape_id,
-                &[(P, "nvPicPr"), (P, "cNvPr")],
-                ("", "descr"),
-            ),
-            Declared::attribute(
-                slide,
-                shape_id,
-                &[(P, "blipFill"), (A, "blip")],
-                (R, "embed"),
-            ),
-        ],
+        declared,
         relationships: vec![Added::new(slide, "image", &media)],
         created: vec![(media, content_type)],
-        effects: vec![Effect::PreviousMedia {
-            relationship: previous,
-        }],
+        effects,
         fit: None,
     })
+}
+
+/// The blip's Office SVG extension: the element dropping it removes (its
+/// `a:ext`, or its `a:extLst` when that holds nothing else) and its
+/// `asvg:svgBlip`.
+pub(super) fn svg_extension(tree: &XmlTree, blip: usize) -> Option<(usize, usize)> {
+    let list = xml::child(tree, blip, A, "extLst")?;
+    let (ext, svg) = tree.nodes[list].children.iter().find_map(|&ext| {
+        if !tree.nodes[ext].is(A, "ext") {
+            return None;
+        }
+        xml::child(tree, ext, ASVG, "svgBlip").map(|svg| (ext, svg))
+    })?;
+    let gone = if tree.nodes[list].children.len() == 1 {
+        list
+    } else {
+        ext
+    };
+    Some((gone, svg))
 }
 
 /// The admitted raster's extension and content type, and where it sits
@@ -100,19 +140,23 @@ pub(super) fn set_picture(
 pub(super) fn admit(
     picture: &Picture<'_>,
     bounds: Rect,
+    resources: &crate::resource::Resources,
 ) -> Result<(&'static str, &'static str, Rect), EditRefusal> {
     let record = picture.record;
-    let compiled = compile_graphic(&GraphicInput {
-        binding: &AssetBinding {
-            handle: record.artifact.clone(),
-            media: record.media,
+    let compiled = compile_graphic(
+        &GraphicInput {
+            binding: &AssetBinding {
+                handle: record.artifact.clone(),
+                media: record.media,
+            },
+            requested: picture.requested,
+            record,
+            bytes: Some(picture.bytes),
+            bounds,
+            limits: picture.limits,
         },
-        requested: picture.requested,
-        record,
-        bytes: Some(picture.bytes),
-        bounds,
-        limits: picture.limits,
-    })
+        resources,
+    )
     .map_err(EditRefusal::Picture)?;
     let (extension, content_type) = match compiled.output {
         Output::Image(image) if image.media == MediaType::Png => ("png", "image/png"),

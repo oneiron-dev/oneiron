@@ -1,3 +1,7 @@
+//! Reflection gaps: missed follow-ups, open threads, unacted intents, contradictions.
+//! Entry: `ReflectionGap`, with `scan_reflection_gaps`.
+//! Definitions are local; intent handling sits in the intent child.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
@@ -317,7 +321,8 @@ pub(super) fn upsert_scanned_gap_queue(
         }
         Ok(())
     };
-    upsert_gap_projection(vault, gaps, recheck, now, PRIVATE_GAP, |gap| {
+    // The separate global queue decays its whole table.
+    upsert_gap_projection(vault, gaps, recheck, now, PRIVATE_GAP, &[], |gap| {
         gap_hash(gap.kind, &gap.subject, "")
     })
 }
@@ -406,7 +411,10 @@ pub(super) fn upsert_branch_gap_queue(
         crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
         fence.validate_in_txn(vault, wtxn)
     };
-    upsert_gap_projection(vault, gaps, recheck, now, BRANCH_GAP, move |gap| {
+    // A branch decays only its own scope's rows (FIX 8694): every other
+    // branch's projection is another scope's to refresh or let go.
+    let decays = scope_text.clone().into_bytes();
+    upsert_gap_projection(vault, gaps, recheck, now, BRANCH_GAP, &decays, move |gap| {
         BranchGapKey {
             scope_text: scope_text.clone(),
             gap_hash: gap_hash(gap.kind, &gap.subject, ""),
@@ -415,12 +423,15 @@ pub(super) fn upsert_branch_gap_queue(
 }
 
 /// `recheck` runs first in the write transaction; an error writes nothing.
+/// The decay pass reads only the rows of `table` whose key starts with
+/// `decays`: the whole table for an empty prefix.
 fn upsert_gap_projection<K: SideKey>(
     vault: &Vault,
     gaps: Vec<ReflectionGap>,
     recheck: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     now: u64,
     table: SideTable<K, ReflectionGap, Raw>,
+    decays: &[u8],
     key_of: impl Fn(&ReflectionGap) -> K,
 ) -> Result<GapQueueDelta> {
     let mut delta = GapQueueDelta::default();
@@ -459,9 +470,9 @@ fn upsert_gap_projection<K: SideKey>(
         }
     }
 
-    // Decay pass over stored gaps that were NOT re-observed this round.
+    // Decay pass over this scope's stored gaps NOT re-observed this round.
     let stale: Vec<(K, ReflectionGap)> = table
-        .scan(&vault.store, &wtxn)?
+        .scan_from(&vault.store, &wtxn, decays)?
         .into_iter()
         .filter(|(key, stored)| {
             !observed.contains(&table.key_bytes(key))

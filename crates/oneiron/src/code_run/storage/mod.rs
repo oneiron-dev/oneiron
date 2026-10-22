@@ -17,6 +17,7 @@ mod response_owners;
 mod routing;
 mod session_write;
 mod speech_identity;
+mod type_diagnostics;
 mod wait_delivery;
 mod wait_holders;
 
@@ -49,7 +50,7 @@ pub(crate) use self::replay_bodies::{
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::{
     ForkRows, capsule_request, capsule_start_body, erase_capsule_actor_in_txn, finalize_capsule,
-    fork_response, fork_rows, put_fork, put_staged_capsule, put_unavailable,
+    fork_response, fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
     step_replay_capsules_in_txn, store_fork_response,
 };
 pub(crate) use self::response_erase::{actor_gone, retire_actor_responses_in_txn};
@@ -65,6 +66,9 @@ pub(super) use self::speech_identity::executor_speech_turn_id;
 pub(crate) use self::speech_identity::{
     ResultSpeech, executor_compaction_session_id, executor_speech_message_id_in_run,
     executor_speech_turn_id_for_run,
+};
+pub(crate) use self::type_diagnostics::{
+    StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn, runs_program_steps,
 };
 pub use self::wait_delivery::{
     WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap, park_and_bind_wait_trap,

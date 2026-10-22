@@ -29,12 +29,13 @@ use super::super::identity::{CustodyKind, CustodySubject};
 use super::super::log::{AEAD, CRYPTO_EPOCH, CustodyPosition, open_sym, seal_refused, seal_sym};
 use super::{BodyWire, EntryWire, FactWire, KEM, TO_ROOT, WrapWire, serde_bytes_vec, wrap_policy};
 
-/// Whether a head seals its worlds' pads in world compartments. Off: a cold
-/// restore opens pads with the vault data key alone (the host-readable
-/// compartment), and no offline source of a world's current pads exists
-/// yet; flipping it before one does would lose that restore. The scoped
-/// capsule API works either way.
-pub(crate) const WORLD_PAD_COMPARTMENTS: bool = false;
+/// Whether a head seals its worlds' pads in world compartments: on (FIX
+/// 9178; DEC-0005 #world-privacy-bundle-erase, ARCH-0038 #key-store). A
+/// world's pads open only with the key of a machine admitted to it or a kit
+/// root it admits, never the vault data key alone; a restore opened with the
+/// data key alone lands its worlds' pad rows locked, named, for the kit or
+/// an admitted machine. The scoped capsule API works either way.
+pub(crate) const WORLD_PAD_COMPARTMENTS: bool = true;
 
 /// A world compartment key's wrap to an admitted machine; a root's is
 /// [`TO_ROOT`] under the tagged recipient, apart from the generic root wrap.

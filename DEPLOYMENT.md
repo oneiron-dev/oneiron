@@ -289,6 +289,7 @@ seal_sign_asks = 3                # signature asks one seal call makes (still on
 seal_fetch_asks = 32              # fetch asks (timestamps, CRLs) one seal call makes; past it each allowlisted fetch runs and the row asks
 seal_asks = 36                    # asks of every verb one seal call makes; past it they are answered and the row asks
 seal_answer_bytes = 67108864      # answer bytes one seal call is lent (identity, signatures, fetched bodies); past it the call's booking grows and the row asks
+seal_memory_asks = 256            # memory.grow asks one seal call makes, its own buffers reserved, counted apart from seal_asks and seal_answer_bytes; past it each is answered and the row asks
 seal_crl_bytes = 8388608          # bytes of one CRL a seal fetches; past it the CRL is read whole and the row asks
 seal_tsa_bytes = 1048576          # bytes of one timestamp reply a seal fetches; past it the reply is read whole and the row asks
 seal_report_json_bytes = 8388608  # bytes of one seal verdict's report JSON; past it the report is carried whole and the row asks
@@ -403,13 +404,26 @@ GH_TOKEN = "cli:gh"
 
 ## Prompt layout
 
-`ONEIRON_PROMPT_LAYOUT` chooses where a turn's context (activated memory, the
-`ai.reply` board, a chat answer's craft) sits in the request (FIX 6676).
-`early_system`, the default, keeps today's order: the context joins the early
-system text, before the history. `stable_history_then_turn_context` puts the
-stable system and the append-only history first and the turn's context in one
-request-only message right before the latest user turn, so a provider's
-prompt cache can reuse the prefix. Any other value keeps the default. The
+A vault's `[models] prompt_layout` key chooses where a turn's context
+(activated memory, the `ai.reply` board, a chat answer's craft) sits in the
+request (FIX 6676). Each turn is assembled under it. `early_system`, the
+default, keeps today's order: the context joins the early system text, before
+the history. `stable_history_then_turn_context` puts the stable system and the
+append-only history first and the turn's context in one request-only message
+right before the latest user turn, so a provider's prompt cache can reuse the
+prefix.
+
+```toml
+[models]
+prompt_layout = "stable_history_then_turn_context"
+```
+
+When the key is set, it wins over `ONEIRON_PROMPT_LAYOUT`. That variable takes
+the same two values and is the host-level fallback for a vault that sets no
+key. A hosted engine starts with a cleared environment, so on a hosted engine
+the key is how a vault chooses. A key with any other value logs one warning at
+boot and falls back to the env variable, then to the default; it never stops
+the server. An env value that names neither layout keeps the default. The
 answer-quality screen decides whether the default flips.
 
 ## CJK Dictionaries

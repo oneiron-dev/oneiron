@@ -71,6 +71,8 @@ pub(crate) use step::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
     retire_step_claim_in_txn, step_claim_carriage, step_state_carriage, step_state_owners,
 };
+// FIX 9929: a public model-step submission's kept copies.
+pub(crate) use step::{erase_submissions_in_txn, submission_carriage, submission_owners};
 // FIX 6225: an oversize step response's exact-version pins.
 pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
@@ -108,6 +110,18 @@ pub use oneiron_model::llm::{
 pub use oneiron_model::llm::{InferenceCallObservation, InferenceObservationId};
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use oneiron_model::llm::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
+// DESIGN-V2 R2: the typed segment manifest and the worker session contracts.
+pub use oneiron_model::llm::{
+    BranchHandle, ByteSpan, CanonicalCheckpointRef, ConditioningDigest, ConversationAnchor,
+    DisclosureLabel, ManifestDigest, MessageDigest, MessageStamp, SESSION_HANDLE_BYTES,
+    SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, ScopeDigest, Segment, SegmentClass, SegmentClock,
+    SegmentKind, SegmentLocator, SegmentManifest, SessionAppend, SessionAppended, SessionBinding,
+    SessionCapability, SessionCheckpoint, SessionCheckpointed, SessionCreate, SessionCreated,
+    SessionDrop, SessionFork, SessionForked, SessionGenerate, SessionHandle, SessionInvalidation,
+    SessionKey, SessionOp, SessionOpStamp, SessionReleased, SessionResidency, SessionRestore,
+    SessionRestored, SessionSuffixCommit, SessionSuffixStaged, SessionTarget, SourceRevision,
+    TokenDigest, TrustFence, VaultRef, message_digest, role_name,
+};
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 

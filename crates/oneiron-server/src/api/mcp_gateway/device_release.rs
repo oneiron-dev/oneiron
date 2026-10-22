@@ -72,6 +72,9 @@ pub(super) fn mcp_release_result(
     continued: bool,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
+    // A claimed call keeps the result it is about to judge, for the calls
+    // waiting on it (FIX 7914).
+    super::claimed_release::record(&result, Some(rows));
     let refused = |hold: ReleaseHold| {
         if continued {
             mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
@@ -105,7 +108,8 @@ pub(super) fn mcp_release_result(
 /// scope name, a whole id or a short ref among them. Off this device one
 /// naming a row a device-local world keeps now, or a short ref that resolves
 /// to no row, or whose call's rows are unknown (`None`), leaves as its code
-/// alone, with no scope.
+/// alone, with no scope. A failed run's type feedback, released apart
+/// (FIX 10390), is never among its words and stays as it is.
 pub(super) fn mcp_release_error(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -142,14 +146,17 @@ pub(super) fn mcp_release_error(
     let Some(hold) = hold else {
         return error;
     };
-    McpGatewayError::new(
-        error.code,
-        error.kind,
-        format!(
-            "the call failed; its detail stays on this device: {}",
-            hold.reason()
-        ),
-    )
+    McpGatewayError {
+        program_steps: error.program_steps,
+        ..McpGatewayError::new(
+            error.code,
+            error.kind,
+            format!(
+                "the call failed; its detail stays on this device: {}",
+                hold.reason()
+            ),
+        )
+    }
 }
 
 /// The rows a code run's verb answers name by short ref inside the JSON
@@ -281,6 +288,9 @@ pub(super) fn mcp_release_listed(
     continued: bool,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
+    if rows.is_none() {
+        super::claimed_release::record(&result, None);
+    }
     match rows {
         Some(rows) => mcp_release_result(server, actor, rows, continued, result),
         None if !actor.destination().is_off_device() => Ok(result),

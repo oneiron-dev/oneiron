@@ -79,6 +79,16 @@ pub(super) fn frontier(bytes: &[u8]) -> Result<Frontiers> {
     Frontiers::decode(bytes).map_err(|_| invalid("invalid NOTE frontier"))
 }
 
+/// What a store-aware entrance measures of a NOTE document (`note::scan`):
+/// its body's UTF-8 bytes, its pins and its authorship entries.
+pub(super) fn document_sizes(doc: &LoroDoc) -> [usize; 3] {
+    [
+        doc.get_text(BODY).len_utf8(),
+        doc.get_map("pins").len(),
+        doc.get_map("authorship").len(),
+    ]
+}
+
 impl NotePin {
     pub fn validate(&self) -> Result<()> {
         if self.quote_text.len() > MAX_NOTE_BYTES
@@ -123,10 +133,9 @@ impl NoteDocument {
     /// `author`: a live one, or no one once erased (FIX 6072, Engine R2). The
     /// record names that author and nothing more; no authenticated class or
     /// writer is made from it, and an erased author stamps and records no one.
+    /// No body length refuses a birth (rule 5): the store-aware entrances
+    /// measure it (`EngineScan::NoteDocumentBytes`, `note::scan`).
     pub(super) fn birth_by(id: EntityId, body: &str, author: super::NoteActor) -> Result<Self> {
-        if body.len() > MAX_NOTE_BYTES {
-            return Err(invalid("NOTE body exceeds bound"));
-        }
         let doc = LoroDoc::new();
         // The birth record is immutable, so lazy creation on different peers
         // must give its initial operations the same identity.
@@ -190,12 +199,8 @@ impl NoteDocument {
             };
             validate_title(&title)?;
         }
-        if doc.get_text(BODY).len_utf8() > MAX_NOTE_BYTES
-            || doc.get_map("pins").len() > 256
-            || doc.get_map("authorship").len() > 4096
-        {
-            return Err(invalid("NOTE document exceeds bounds"));
-        }
+        // No body length, pin count or authorship count refuses a load (rule
+        // 5): the store-aware entrances measure them (`note::scan`).
         let found = doc.get_map(META).get("id").and_then(|v| match v {
             loro::ValueOrContainer::Value(loro::LoroValue::String(value)) => {
                 Some(value.to_string())
@@ -266,6 +271,19 @@ impl NoteDocument {
                 },
             )
             .map_err(|_| invalid("NOTE mask update"))?;
+        self.doc
+            .commit_with(CommitOptions::new().commit_msg("oneiron.note/v1 mask_on_write"));
+        Ok(())
+    }
+
+    /// Sets the live title to `title`, a mask on write's reading of it: a
+    /// handle in place of each secret it held (OF-067; FIX 1098).
+    pub(super) fn mask_title(&self, title: &str) -> Result<()> {
+        validate_title(title)?;
+        self.doc
+            .get_map(META)
+            .insert("title", title)
+            .map_err(|_| invalid("NOTE title mask"))?;
         self.doc
             .commit_with(CommitOptions::new().commit_msg("oneiron.note/v1 mask_on_write"));
         Ok(())

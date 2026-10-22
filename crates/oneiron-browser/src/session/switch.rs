@@ -6,7 +6,7 @@
 //! act's fact. The agent must have the browser and give its reason; the
 //! engine already running answers `unchanged`. Otherwise the source page's
 //! state is read (its URL, scroll, cookies, and the local and session
-//! storage of its current top-level origin, within [`switch_state_limits`]),
+//! storage of its current top-level origin, whole, piece by piece, FIX 8008),
 //! every other origin the tab visited is taken from the session's snapshots
 //! (`storage`), all charged to the host's retained line, a guest is started
 //! on the target engine through the host's starter and attached as every
@@ -30,8 +30,8 @@
 use super::BrowserSession;
 use super::guest::{BrowserGuestStarter, EngineGuest};
 use super::storage::{
-    Items, OriginSnapshots, STORES, Sink, SwitchStateLimits, export_stores, not_held, store_bytes,
-    store_loss, switch_state_limits, switch_storage_scope,
+    Items, OriginSnapshots, STORES, Sink, export_stores, not_held, store_bytes, store_loss,
+    switch_state_limits, switch_storage_scope,
 };
 use crate::cdp::{Visits, web_origin};
 use crate::driver::CdpDriver;
@@ -264,12 +264,11 @@ fn cookie_id(cookie: &Value) -> String {
     format!("{}@{}", field("name"), field("domain"))
 }
 
-/// Reads the source page's state, its scroll only `with_scroll`, within
-/// `limits`, after receipt `after`; what it cannot read, or what is past a
-/// bound, is listed in `losses`.
+/// Reads the source page's state, its scroll only `with_scroll`, after
+/// receipt `after`, whole (FIX 8008): what it cannot read is listed in
+/// `losses`.
 fn export(
     driver: &CdpDriver,
-    limits: &SwitchStateLimits,
     after: u64,
     with_scroll: bool,
     losses: &mut Vec<SwitchNotCarried>,
@@ -292,14 +291,15 @@ fn export(
         None => None,
     };
     let cookies = match driver.all_cookies() {
-        Ok(listed) => Some(bound_cookies(listed, limits, losses)),
+        // Every cookie the source lists is carried (FIX 8008).
+        Ok(listed) => Some(listed),
         Err(_) => {
             losses.push(lost(SwitchComponent::Cookies, None, SwitchLoss::ReadFailed));
             None
         }
     };
     let stores = match &origin {
-        Some(origin) => export_stores(driver, origin, limits, after, losses),
+        Some(origin) => export_stores(driver, origin, after, losses),
         None => [None, None],
     };
     Exported {
@@ -311,38 +311,6 @@ fn export(
         stores,
         others: Vec::new(),
     }
-}
-
-/// The cookies within the switch's bounds, in the order listed; the rest
-/// are listed in `losses`.
-fn bound_cookies(
-    listed: Vec<Value>,
-    limits: &SwitchStateLimits,
-    losses: &mut Vec<SwitchNotCarried>,
-) -> Vec<Value> {
-    let mut kept = Vec::new();
-    let mut over = Vec::new();
-    let mut bytes = 0;
-    for cookie in listed {
-        let size: usize = ["name", "value", "domain", "path"]
-            .iter()
-            .map(|field| cookie[*field].as_str().map_or(0, str::len))
-            .sum();
-        if kept.len() < limits.cookies && bytes + size <= limits.cookie_bytes {
-            bytes += size;
-            kept.push(cookie);
-        } else {
-            over.push(cookie_id(&cookie));
-        }
-    }
-    if !over.is_empty() {
-        losses.push(SwitchNotCarried {
-            count: Some(over.len() as u64),
-            cookies: over,
-            ..lost(SwitchComponent::Cookie, None, SwitchLoss::Limit)
-        });
-    }
-    kept
 }
 
 /// Charges what the switch holds of the page to the host's retained line.
@@ -442,7 +410,9 @@ fn stage(
         custody.clone(),
         secrets.clone(),
     );
+    starter.observe_attach(record.to, attached.as_ref().map(|guest| &guest.manifest));
     let mut target = switch_commit_policy(SwitchStage::Attach, attached)?;
+    target.driver.book_inbound(starter.state_charge());
     let (kept, losses) = (&mut record.carried, &mut record.not_carried);
     seed_state(&target.driver, record.to, state, kept, losses)?;
     if state.origin.is_some() {
@@ -651,7 +621,7 @@ impl BrowserSession {
         let shown = drained.get(&tab).map(|shown| shown.origins.clone());
         self.history.absorb(drained, limits.origins);
         let after = self.landed_seq();
-        let mut state = export(&self.driver, &limits, after, with_scroll, losses);
+        let mut state = export(&self.driver, after, with_scroll, losses);
         let visited = self.history.tabs.get(&tab);
         if let Some(collector) = &self.snapshots {
             let current = state.origin.as_deref();
@@ -756,8 +726,10 @@ impl BrowserSession {
             action: None,
             source_url: None,
             source_origin: None,
+            source_title: None,
             tab: None,
             result_tab: None,
+            result_unread: None,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };

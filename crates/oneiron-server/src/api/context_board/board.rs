@@ -32,6 +32,25 @@ pub(crate) struct ContextBoardRoomControls {
     /// Hex Channel Conversation id the caller sits in.
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     conversation_id: String,
+    /// The `room_page.next_cursor` a previous board answered, to render the
+    /// room's next page of members and rules; absent for its first page.
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+/// Where the ROOM rows this board rendered sit in the room's whole stream
+/// (FIX 9746, 9747): its members by actor id, then its rules by claim id.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ContextBoardRoomPage {
+    /// Members on the room's whole roster.
+    roster_total: u64,
+    /// Rules the caller reads in the room, on every page together.
+    rules_total: u64,
+    /// Pass as `room.cursor` for the room's next page; absent once `end`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
+    /// No member or rule of the room is past this page.
+    end: bool,
 }
 
 /// Names the project whose view rides TASKS.
@@ -79,6 +98,8 @@ struct RoomTarget {
     /// that only rides the retrieval request renders when the caller sits
     /// in it, and is otherwise the retrieval's audience alone.
     explicit: bool,
+    /// Where in the room's stream the page starts.
+    cursor: Option<String>,
 }
 
 /// What a hydration asks of its board beyond retrieval, checked before any
@@ -132,7 +153,11 @@ pub(super) fn board_targets(
                     Some("room"),
                 ));
             }
-            Some(RoomTarget { id, explicit: true })
+            Some(RoomTarget {
+                id,
+                explicit: true,
+                cursor: room.cursor.clone(),
+            })
         }
         None => retrieval_room
             .filter(|_| actor.is_some())
@@ -140,6 +165,7 @@ pub(super) fn board_targets(
             .map(|id| RoomTarget {
                 id,
                 explicit: false,
+                cursor: None,
             }),
     };
     let project = project
@@ -164,6 +190,8 @@ pub(super) struct BoardParts {
     pub(super) worlds: Vec<String>,
     pub(super) tasks: Vec<String>,
     pub(super) room: Option<Vec<String>>,
+    /// Where the ROOM rows sit in the room's whole stream.
+    pub(super) room_page: Option<ContextBoardRoomPage>,
     pub(super) skills: Vec<String>,
     /// The task intents, worlds, room, room rules and project the board
     /// named: rows a keyed replay re-admits.
@@ -231,10 +259,15 @@ pub(super) fn board_parts(
     });
 
     // ROOM, read fresh through the caller's own facade handle, with its host
-    // among the board session's present participants.
+    // among the board session's present participants: one page of the
+    // room's rows, its next page behind `room_page.next_cursor`.
     let room = match (&targets.room, &memory) {
         (Some(target), Some(memory)) => {
-            match memory.rooms_render_hosted(target.id, targets.session) {
+            match memory.rooms_render_page_hosted(
+                target.id,
+                targets.session,
+                target.cursor.as_deref(),
+            ) {
                 Ok(room) => Some(room),
                 Err(error) if !target.explicit && caller_fault(&error) => None,
                 Err(error) => {
@@ -253,6 +286,13 @@ pub(super) fn board_parts(
         .map(|room| room.board_section(people))
         .transpose()
         .map_err(board_frame_error)?;
+    let room_page = room.as_ref().map(|page| ContextBoardRoomPage {
+        roster_total: page.roster_total,
+        rules_total: page.rules_total,
+        next_cursor: page.next_cursor.clone(),
+        end: page.end,
+    });
+    let room = room.map(|page| page.section);
     if let Some(room) = &room {
         named.push(room.room);
         named.extend(
@@ -277,7 +317,19 @@ pub(super) fn board_parts(
                 ),
                 None => (Vec::new(), Vec::new()),
             };
-            rows.attach_people(people, &children);
+            // A child joins only under the reader and destination its TASK
+            // rows passed (FIX 9755): one whose TASK they withheld never
+            // renders as a bare row. A child with no TASK is an attempt no
+            // entity read proves, kept exactly where the bare jobs are.
+            rows.attach_people_admitted(people, &children, |child| {
+                match child.task_ref.as_deref().map(EntityId::from_hex) {
+                    Some(Ok(task)) => {
+                        oneiron::context_board::TasksSectionRows::task_admitted(memory, read, task)
+                    }
+                    _ => Ok(auth.verified_slip().is_none()),
+                }
+            })
+            .map_err(|error| core_engine_error("board children failed", error))?;
             let you = oneiron::context_board::render_you_line(&forks, &rows.intents);
             let mut tasks = rows.render();
             tasks.pin_hook_tasks(&rows.intents, hook_pins);
@@ -358,21 +410,42 @@ pub(super) fn board_parts(
             let slice = vault
                 .agent_inbox_slice(actor, BOARD_INBOX_CAP, None)
                 .map_err(|error| core_engine_error("board inbox failed", error))?;
-            for item in slice {
+            for mut item in slice {
                 let mut admitting = Vec::new();
                 for participant in item
                     .participants
                     .iter()
                     .filter(|row| row.actor_ref == actor)
                 {
+                    // A row no identity carries (a digest, a comm widen ask)
+                    // is admitted by the record it names (FIX 1261, 3901).
+                    let Some(source) = participant.identity_ref.or_else(|| {
+                        item.payload_ref
+                            .as_deref()
+                            .and_then(|record| EntityId::from_hex(record).ok())
+                    }) else {
+                        continue;
+                    };
                     if read
-                        .is_ref_readable(&participant.identity_ref)
+                        .is_ref_readable(&source)
                         .map_err(|error| core_engine_error("board inbox failed", error))?
                     {
-                        admitting.push(participant.identity_ref);
+                        admitting.push(source);
                     }
                 }
                 if !admitting.is_empty() {
+                    // FIX 9745: the sender renders only while the caller's
+                    // read reads it; otherwise the row names no sender.
+                    if let Some(sender) = item.sender {
+                        if read
+                            .is_ref_readable(&sender)
+                            .map_err(|error| core_engine_error("board inbox failed", error))?
+                        {
+                            inbox_sources.push(sender);
+                        } else {
+                            item.sender = None;
+                        }
+                    }
                     inbox_sources.extend(admitting);
                     inbox_sources.extend(inbox_named_sources(read, &item, actor)?);
                     rows.push(item);
@@ -403,6 +476,7 @@ pub(super) fn board_parts(
         worlds: worlds.detail_rows().to_vec(),
         tasks: tasks_section.detail_rows().to_vec(),
         room: room_section.map(|room| room.pinned_rows().to_vec()),
+        room_page,
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
         named,
         hook_blocks,
@@ -593,4 +667,92 @@ pub(super) fn board_frame_error(error: BoardFrameError) -> ApiError {
         format!("context board render failed: {error}"),
         Some("board"),
     )
+}
+
+/// What one rendered board section was read from (DESIGN-V2 R2): its
+/// rendered name, the fence it renders behind, and the memory rows (at the
+/// revision each was served at, where the read pinned one) and skills (at
+/// the version the session loaded, where it did) it shows. It rides beside
+/// the board's text and never changes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BoardSectionSource {
+    pub(crate) name: String,
+    pub(crate) fence: oneiron::llm::TrustFence,
+    pub(crate) dependencies: Vec<oneiron::llm::SegmentLocator>,
+}
+
+/// The rendered board's sections, in the order the frame renders them:
+/// every first-party section in frame order inside the authoritative
+/// wrapper, then each foreign world's MEMORIES section after it, as guest
+/// evidence. A section's dependencies are its own rows; the SKILLS section
+/// names every skill the session loaded and every capability hit.
+pub(super) fn section_sources(
+    sections: &[BoardSection],
+    memories: Option<&oneiron::MemoriesSection>,
+    hits: &[CapabilityHit],
+    reads: &SessionReadSet,
+) -> Vec<BoardSectionSource> {
+    use oneiron::llm::{SegmentLocator, SourceRevision, TrustFence};
+    let mut first_party = Vec::new();
+    let mut guest = Vec::new();
+    for section in sections {
+        let name = section.name().to_owned();
+        let world = name.strip_prefix("MEMORIES world=");
+        let foreign = world
+            .and_then(|world| EntityId::from_hex(world).ok())
+            .is_some_and(oneiron::entity_id::is_foreign_world_id_range);
+        let mut dependencies = Vec::new();
+        if let (Some(world), Some(memories)) = (world, memories) {
+            dependencies.extend(
+                memories
+                    .rows
+                    .iter()
+                    .filter(|row| row.world.as_deref().unwrap_or("unscoped") == world)
+                    .filter_map(|row| {
+                        Some(SegmentLocator::Memory {
+                            id: EntityId::from_hex(&row.id).ok()?,
+                            revision: row
+                                .source_revision
+                                .map(|revision| SourceRevision(revision.0)),
+                        })
+                    }),
+            );
+        }
+        if name == "SKILLS" {
+            let loaded: Vec<(EntityId, String)> = reads
+                .loaded_skills()
+                .filter_map(|(id, version)| {
+                    Some((EntityId::from_hex(id).ok()?, version.to_owned()))
+                })
+                .collect();
+            dependencies.extend(loaded.iter().map(|(id, version)| SegmentLocator::Skill {
+                id: *id,
+                version: Some(version.clone()),
+            }));
+            dependencies.extend(
+                hits.iter()
+                    .filter(|hit| !loaded.iter().any(|(id, _)| *id == hit.id))
+                    .map(|hit| SegmentLocator::Skill {
+                        id: hit.id,
+                        version: None,
+                    }),
+            );
+        }
+        let source = BoardSectionSource {
+            name,
+            fence: if foreign {
+                TrustFence::Guest
+            } else {
+                TrustFence::Authoritative
+            },
+            dependencies,
+        };
+        if foreign {
+            guest.push(source);
+        } else {
+            first_party.push(source);
+        }
+    }
+    first_party.extend(guest);
+    first_party
 }

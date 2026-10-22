@@ -38,9 +38,11 @@ pub(crate) use room::scope_worlds;
 pub use room::{
     RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
 };
+pub use room_verbs::RoomSectionPage;
 pub(crate) use room_verbs::{
-    off_room_reader_clearance_in, room_ceiling_in, room_clearance_in, room_facets_axis_in,
-    room_reader_in, room_roster_in, thread_ceiling_in, thread_reader_in,
+    off_room_reader_clearance_in, public_thread_live_speakers_in, room_ceiling_in,
+    room_clearance_in, room_facets_axis_in, room_reader_in, room_roster_in, thread_ceiling_in,
+    thread_reader_in,
 };
 pub use worlds::{WorldPresence, WorldsSection, world_set_scope};
 mod frame;
@@ -64,6 +66,7 @@ pub use hook_pins::{HookPin, HookShare};
 mod notifications;
 pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
+mod paging;
 mod plugin;
 mod readers;
 mod scratchpad;
@@ -75,7 +78,9 @@ pub use scratchpad::{
     SCRATCHPAD_LINE_MAX_BYTES, SCRATCHPAD_RECALL_LINES, ScratchpadAppendReceipt, ScratchpadBoard,
     ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine,
 };
-pub(crate) use scratchpad::{erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists};
+pub(crate) use scratchpad::{
+    erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists, seal_session_pad_in_txn,
+};
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
 pub use stream::{
@@ -110,26 +115,29 @@ pub use notifications::{
     caller_marker_contains, notification_body_json, notification_scoped_to_caller,
 };
 pub use plugin::{
-    AdmittedPluginSection, AuthorityLaneRef, BoardBlockKind, BoardBlockRecord, BoardBlockScope,
-    BoardBlockWriteEnvelope, CORE_SECTION_IDS, EngineSectionBindings,
-    PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION, PLUGIN_PROPOSALS_SECTION_NAME,
-    PREDICATE_PLUGIN_SECTION_INSTALL, PackSectionRegistration, PluginInstallClaimPayload,
-    PluginInstallExecutor, PluginInstallOrigin, PluginInstallSource, PluginInstallTarget,
-    PluginProposalRow, PluginResult, PluginSectionAdmission, PluginSectionError,
-    PluginSectionInstallProposal, PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot,
+    AdmittedPluginSection, ApprovedPluginIdentity, AuthorityLaneRef, BoardBlockKind,
+    BoardBlockPage, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope, CORE_SECTION_IDS,
+    EngineSectionBindings, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION, PLUGIN_PROPOSAL_PAGE_DEFAULT,
+    PLUGIN_PROPOSALS_SECTION_NAME, PREDICATE_PLUGIN_SECTION_INSTALL, PackSectionRegistration,
+    PluginInstallClaimPayload, PluginInstallExecutor, PluginInstallOrigin, PluginInstallSource,
+    PluginInstallTarget, PluginProposalPage, PluginProposalRow, PluginResult,
+    PluginSectionAdmission, PluginSectionError, PluginSectionInstallProposal,
+    PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot, PluginSectionSnapshotPage,
     PluginSuggestionKey, SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver, SectionId,
     SectionManifest, SectionManifestEnvelope, SectionManifestProvenance, SectionVerbAllowlist,
     SectionVerbRef, SkillLifecycleSource, StateFamilyRef, ValidatedSectionManifest,
     VaultPluginInstallExecutor, VaultPluginInstallSource, decode_section_manifest, digest_to_hex,
-    encode_section_manifest, execute_approved_plugin_section_install, pending_plugin_proposal_rows,
-    propose_plugin_section_install, propose_plugin_section_install_with_evidence, quoted_leaf,
-    render_pack_sections, render_plugin_proposal_row, render_plugin_proposal_section,
-    render_plugin_row, render_plugin_sections, section_manifest_digest,
-    validate_manifest_for_admission, validate_manifest_for_proposal,
+    encode_section_manifest, execute_approved_plugin_section_install, pending_plugin_proposal_page,
+    pending_plugin_proposal_rows, propose_plugin_section_install,
+    propose_plugin_section_install_with_evidence, quoted_leaf, render_pack_sections,
+    render_plugin_proposal_page, render_plugin_proposal_row, render_plugin_proposal_section,
+    render_plugin_row, render_plugin_section_pages, render_plugin_sections,
+    section_manifest_digest, validate_manifest_for_admission, validate_manifest_for_proposal,
 };
 pub use tasks::{
-    CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow,
-    TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status, render_tasks_section,
+    CancelRejectionPathology, ConsultWidening, JobPresence, TaskBoardStatus, TaskIntentPresence,
+    TaskRow, TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status,
+    render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
 

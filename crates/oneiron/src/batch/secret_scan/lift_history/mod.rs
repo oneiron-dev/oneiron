@@ -3,7 +3,7 @@
 //! existed, is read again by the batch door's rules. Each secret they place
 //! goes to custody through the row's own writer door, which leaves its handle
 //! where the secret was. A hit the sweep cannot place is never skipped: it
-//! files a value-free lift proposal for the owner ([`SecretLiftProposal`]).
+//! files a value-free lift proposal for the owner ([`SnapshotSecretLiftProposal`]).
 //!
 //! A run is queued when the switch goes from off to on, in the switch's own
 //! transaction, or when the owner asks ([`Vault::start_secret_lift`]). A
@@ -27,11 +27,14 @@ mod authored;
 mod carriers;
 mod loro_blocks;
 mod notice;
+mod projection;
 mod proposals;
 mod record_text;
 mod records;
 mod retained;
 mod side_rows;
+
+pub use self::projection::secret_lift_as_owner_toward;
 
 use std::borrow::Cow;
 use std::ops::Bound;
@@ -45,7 +48,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, GateError, Result};
 use crate::secret_custody::KnownValues;
-use crate::secret_snapshot::SecretLiftProposal;
+use crate::secret_snapshot::SnapshotSecretLiftProposal;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
@@ -313,7 +316,7 @@ pub struct SecretLiftHistoryProposal {
     /// The record or row (`record:<id>`, `side:<table>:<key>`,
     /// `carrier:<table>:<key>`), the detector's reason and a suggested
     /// custody name. No value.
-    pub proposal: SecretLiftProposal,
+    pub proposal: SnapshotSecretLiftProposal,
     pub run_id: String,
     pub filed_at: u64,
     /// When it closed; none while it is open.
@@ -870,7 +873,7 @@ fn file_in_txn(
             id: hex(&row_key),
             family,
             cause,
-            proposal: SecretLiftProposal {
+            proposal: SnapshotSecretLiftProposal {
                 suggested_secret_name: format!("lifted.{}.{}", family.code(), short(&path)),
                 path,
                 detector_reason: reason.to_owned(),
@@ -1009,61 +1012,7 @@ impl Vault {
     /// The lift sweep's state: the run in progress, the last receipt and the
     /// proposals still open.
     pub fn secret_lift_status(&self) -> Result<SecretLiftStatus> {
-        // Every result body is pinned before the snapshot opens (FIX 7201).
-        let _bodies = self.pin_all_result_bodies();
-        let txn = self.store.env.read_txn()?;
-        let mode = secret_scan_mode_in_txn(&self.store, &txn)?;
-        let running = RUN
-            .get_lenient(&self.store, &txn, &())?
-            .map(|run| SecretLiftProgress {
-                run_id: run.run_id.to_hex(),
-                trigger: run.trigger,
-                requested_at: run.requested_at,
-                family: run.family,
-                retrying: u64::try_from(run.retry.len()).unwrap_or(u64::MAX),
-                counts: run.counts,
-            });
-        let last = RECEIPTS
-            .iter_rev_from(&self.store, &txn, &[])?
-            .next()
-            .transpose()?
-            .map(|(_, receipt)| receipt);
-        let mut open_proposals = 0_u64;
-        let mut closed_proposals = 0_u64;
-        let mut open_by_cause: Vec<LiftCauseCount> = Vec::new();
-        let mut proposals = Vec::new();
-        for row in PROPOSALS.iter_from(&self.store, &txn, &[])? {
-            let (key, mut proposal) = row?;
-            if !proposal.is_open() {
-                closed_proposals += 1;
-                continue;
-            }
-            open_proposals += 1;
-            match open_by_cause
-                .iter_mut()
-                .find(|count| count.cause == proposal.cause)
-            {
-                Some(count) => count.open += 1,
-                None => open_by_cause.push(LiftCauseCount {
-                    cause: proposal.cause,
-                    open: 1,
-                }),
-            }
-            if proposals.len() < STATUS_PROPOSALS {
-                proposal.id = hex(&key);
-                proposals.push(proposal);
-            }
-        }
-        Ok(SecretLiftStatus {
-            paused: mode == SecretScanMode::Off && running.is_some(),
-            mode,
-            running,
-            last,
-            open_proposals,
-            open_by_cause,
-            closed_proposals,
-            proposals,
-        })
+        projection::status_where(self, &|_| true)
     }
 
     /// The owner closes one open lift proposal with a reason: `not_a_secret`,

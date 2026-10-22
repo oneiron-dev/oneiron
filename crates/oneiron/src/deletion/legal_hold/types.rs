@@ -127,8 +127,10 @@ pub struct LegalHold {
     /// when its silence ended).
     #[serde(default)]
     pub owner_told: bool,
-    /// A host order also forbids using what it keeps (C6). Never set on a
-    /// customer hold.
+    /// A host order's own terms also forbid using what it keeps (C6), kept
+    /// as the order's data. Never set on a customer hold. A record a hosted
+    /// privacy erasure kept is use-limited under any standing hold either way
+    /// (FIX 8849).
     #[serde(default)]
     pub requires_non_use: bool,
 }
@@ -157,7 +159,7 @@ impl LegalHold {
     }
 }
 
-/// The six hold events (C3).
+/// The seven hold events (C3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldEventKind {
@@ -165,6 +167,10 @@ pub enum LegalHoldEventKind {
     ScopeChanged,
     DeleteRefused,
     LiftAndEraseConfirmed,
+    /// The owner's plain delete of a record only secret orders keep was
+    /// accepted: erase confirmed, completion pending, no hold lifted (FIX
+    /// 1465).
+    EraseConfirmed,
     EraseCompleted,
     Lifted,
 }
@@ -248,9 +254,9 @@ pub struct HostOrderHold {
     pub jurisdiction: Option<String>,
     /// Who issued the order, as an opaque ref.
     pub issuing_authority_ref: Option<String>,
-    /// The order also forbids using what it keeps: a refused privacy
-    /// erasure keeps the record under a use limit while the order stands
-    /// (C6). `false` keeps the bytes only.
+    /// The order's own terms also forbid using what it keeps (C6), recorded
+    /// as its term. A refused hosted privacy erasure keeps the record under a
+    /// use limit while any hold stands, whether this is set or not (FIX 8849).
     pub requires_non_use: bool,
 }
 
@@ -287,6 +293,10 @@ pub enum ErasePendingReason {
     /// Its sweep finished or none was queued, and a custody retirement it
     /// bound has not finished on every required target yet (FIX 5844).
     CustodyRetirement,
+    /// Nothing is erased yet: in a shared vault with two or more Owners the
+    /// erase waits out the vault's `erase` veto window first, through the
+    /// record's own `erase` act, and runs once that act completes (FIX 9781).
+    VetoWindow,
 }
 
 /// The owner's one confirm's result.
@@ -295,12 +305,17 @@ pub struct LiftAndEraseOutcome {
     /// The customer holds lifted, or narrowed to what is left.
     pub holds: Vec<EntityId>,
     pub records: Vec<(EntityId, LiftAndEraseStatus)>,
+    /// What the owner confirmed is not what the vault holds now: nothing was
+    /// lifted or erased, and this is what the confirm shows now, to confirm
+    /// again in one step (FIX 1462).
+    pub changed: Option<super::LiftAndEraseShownState>,
 }
 
 /// A record kept after a refused privacy erasure: it serves only the legal
-/// reason that kept it (C6, hosted only), while a standing host order that
-/// forbids its use ([`HostOrderHold::requires_non_use`]) still names it. Read
-/// enforcement is the scope checks' (L02).
+/// reason that kept it (C6, hosted only), while any standing hold, customer
+/// or host order, still names it, for that hold's whole retention (FIX 8849).
+/// A host order's [`HostOrderHold::requires_non_use`] is its own term, not
+/// what makes this limit. Read enforcement is the scope checks' (L02).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldUseLimit {

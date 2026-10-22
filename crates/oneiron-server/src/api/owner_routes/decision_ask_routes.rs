@@ -108,6 +108,15 @@ async fn answer(
                 request.seq.to_string(),
             ));
         }
+        // A connector elicitation's decisive ask mints the owner's consent
+        // first (FIX 8808); a press that fails records no answer, so the ask
+        // stays open for the owner to press again.
+        crate::connector_elicitation::press_owner_consent(
+            &server,
+            &owner,
+            request.seq,
+            &request.answer,
+        )?;
         asks.answer_with_reason(
             &owner,
             request.seq,

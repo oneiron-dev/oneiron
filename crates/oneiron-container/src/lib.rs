@@ -13,8 +13,8 @@ pub use egress::{
     LoopbackRefusalReason,
 };
 pub use host_net_floor::{
-    HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit, UnmeteredFloor,
-    floor_saturated, known_floor, saturated_floor,
+    HOST_NET_BYTE_FLOOR, HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit,
+    UnmeteredFloor, floor_saturated, known_floor, saturated_floor,
 };
 pub use relay_protocol::{RelayReply, RelayRequest, read_relay, write_relay};
 pub use transport::{SessionLease, SessionTransport};
@@ -227,10 +227,9 @@ impl ContainerRuntime {
             digest.update(arg.as_encoded_bytes());
             digest.update(&[0]);
         }
-        let image_release = image_release::observe_release(
-            None,
+        let image_release = image_release::observe_bound_release(
+            image_release::SelectedImage::Oci(&spec.image),
             &image_release::ObservedArtifacts::from_image_ref(&spec.image),
-            &image_release::HostCapabilities::default(),
             &image_release::NoVerifierConfigured,
         );
         let mut child = oneiron_spawn::command(&self.program)
@@ -309,10 +308,9 @@ impl ContainerRuntime {
                 digest.update(arg.as_encoded_bytes());
                 digest.update(&[0]);
             }
-            let image_release = image_release::observe_release(
-                None,
+            let image_release = image_release::observe_bound_release(
+                image_release::SelectedImage::Oci(&spec.image),
                 &image_release::ObservedArtifacts::from_image_ref(&spec.image),
-                &image_release::HostCapabilities::default(),
                 &image_release::NoVerifierConfigured,
             );
             let mut child = oneiron_spawn::command(&self.program)

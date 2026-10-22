@@ -46,91 +46,146 @@ pub(crate) fn placeholder_xml(placeholder: &Placeholder) -> String {
     out + "/>"
 }
 
+/// What a native table shows (FIX 8577), shared by creation and by the
+/// layout estimate so both read one table: every cell's own displayed text,
+/// header row 0 first (a number as its column shows it, a missing cell as
+/// the dataset's missing meaning), and each cell's place in the merges. A
+/// cell a merge covers keeps its own text under the merge.
+#[derive(Debug, Clone)]
+pub(crate) struct TableLayout {
+    /// Displayed text by row, then column.
+    pub(crate) text: Vec<Vec<String>>,
+    /// `(rowSpan, gridSpan)` of an anchor or a plain cell.
+    spans: Vec<Vec<(usize, usize)>>,
+    /// `(hMerge, vMerge)` of a cell a merge covers.
+    covered: Vec<Vec<Option<(bool, bool)>>>,
+}
+
+impl TableLayout {
+    pub(crate) fn of(dataset: &Dataset, merges: &[Merge]) -> Result<Self, NativeRefusal> {
+        let cols = dataset.columns.len();
+        let missing = dataset.missing.clone().unwrap_or_default();
+        let mut text: Vec<Vec<String>> = vec![dataset.columns.iter().map(header).collect()];
+        for row in &dataset.rows {
+            if row.len() != cols {
+                return Err(NativeRefusal::Invalid("dataset is not rectangular"));
+            }
+            text.push(
+                row.iter()
+                    .zip(&dataset.columns)
+                    .map(|(cell, column)| match cell {
+                        Cell::Missing => missing.clone(),
+                        Cell::Number(value) => column.display(*value),
+                        Cell::Text(text) | Cell::Date(text) => text.clone(),
+                    })
+                    .collect(),
+            );
+        }
+        let rows = text.len();
+        let mut covered = vec![vec![None::<(bool, bool)>; cols]; rows];
+        let mut spans = vec![vec![(1usize, 1usize); cols]; rows];
+        for merge in merges {
+            if merge.rows == 0
+                || merge.cols == 0
+                || merge.rows.saturating_mul(merge.cols) < 2
+                || merge.row >= rows
+                || merge.col >= cols
+                || merge.rows > rows - merge.row
+                || merge.cols > cols - merge.col
+            {
+                return Err(NativeRefusal::UnsupportedMergeTopology(
+                    "merge outside the grid",
+                ));
+            }
+            for r in merge.row..merge.row + merge.rows {
+                for c in merge.col..merge.col + merge.cols {
+                    if covered[r][c].is_some() || spans[r][c] != (1, 1) {
+                        return Err(NativeRefusal::UnsupportedMergeTopology(
+                            "overlapping merges",
+                        ));
+                    }
+                    if (r, c) == (merge.row, merge.col) {
+                        continue;
+                    }
+                    covered[r][c] = Some((c > merge.col, r > merge.row));
+                }
+            }
+            spans[merge.row][merge.col] = (merge.rows, merge.cols);
+        }
+        Ok(Self {
+            text,
+            spans,
+            covered,
+        })
+    }
+
+    pub(crate) fn rows(&self) -> usize {
+        self.text.len()
+    }
+
+    pub(crate) fn cols(&self) -> usize {
+        self.text.first().map_or(0, Vec::len)
+    }
+
+    /// The cells that show their text, each over its whole merged
+    /// rectangle: `(row, col, rows, cols, text)`. A covered cell shows none.
+    pub(crate) fn shown(&self) -> impl Iterator<Item = (usize, usize, usize, usize, &str)> + '_ {
+        self.text.iter().enumerate().flat_map(move |(r, line)| {
+            line.iter().enumerate().filter_map(move |(c, text)| {
+                let (rows, cols) = self.spans[r][c];
+                self.covered[r][c]
+                    .is_none()
+                    .then_some((r, c, rows, cols, text.as_str()))
+            })
+        })
+    }
+}
+
+/// `total` EMU shared by `count` grid columns or rows as creation writes
+/// them: equal shares, the last taking the remainder. `None` when there is
+/// no line or a share would be under one EMU.
+pub(crate) fn grid(total: i64, count: usize) -> Option<Vec<i64>> {
+    let lines = i64::try_from(count).ok()?;
+    if lines == 0 || total < lines {
+        return None;
+    }
+    let share = total / lines;
+    Some(
+        (0..count)
+            .map(|at| {
+                if at + 1 == count {
+                    total - share * (lines - 1)
+                } else {
+                    share
+                }
+            })
+            .collect(),
+    )
+}
+
 /// A table frame: a header row of column names, then the dataset rows.
 pub(super) fn frame_xml(
     frame: &Frame<'_>,
     dataset: &Dataset,
     merges: &[Merge],
 ) -> Result<String, NativeRefusal> {
-    let cols = dataset.columns.len();
-    // `None` is a missing cell; it shows the dataset's missing meaning.
-    let mut grid: Vec<Vec<Option<String>>> =
-        vec![dataset.columns.iter().map(|c| Some(header(c))).collect()];
-    for row in &dataset.rows {
-        if row.len() != cols {
-            return Err(NativeRefusal::Invalid("dataset is not rectangular"));
-        }
-        grid.push(
-            row.iter()
-                .zip(&dataset.columns)
-                .map(|(cell, column)| match cell {
-                    Cell::Missing => None,
-                    Cell::Number(value) => Some(column.display(*value)),
-                    Cell::Text(text) | Cell::Date(text) => Some(text.clone()),
-                })
-                .collect(),
-        );
-    }
-    let rows = grid.len();
-    let (Ok(cx), Ok(cy)) = (i64::try_from(cols), i64::try_from(rows)) else {
-        return Err(NativeRefusal::Invalid("table size"));
-    };
-    if cols == 0 || frame.bounds.cx < cx || frame.bounds.cy < cy {
+    let layout = TableLayout::of(dataset, merges)?;
+    let (Some(widths), Some(heights)) = (
+        grid(frame.bounds.cx, layout.cols()),
+        grid(frame.bounds.cy, layout.rows()),
+    ) else {
         return Err(NativeRefusal::Invalid("table bounds"));
-    }
-    // (anchor, rowSpan, gridSpan) for an anchor; (hMerge, vMerge) otherwise.
-    let mut role = vec![vec![None::<(bool, bool)>; cols]; rows];
-    let mut spans = vec![vec![(1usize, 1usize); cols]; rows];
-    for merge in merges {
-        if merge.rows == 0
-            || merge.cols == 0
-            || merge.rows.saturating_mul(merge.cols) < 2
-            || merge.row >= rows
-            || merge.col >= cols
-            || merge.rows > rows - merge.row
-            || merge.cols > cols - merge.col
-        {
-            return Err(NativeRefusal::UnsupportedMergeTopology(
-                "merge outside the grid",
-            ));
-        }
-        for r in merge.row..merge.row + merge.rows {
-            for c in merge.col..merge.col + merge.cols {
-                if role[r][c].is_some() || spans[r][c] != (1, 1) {
-                    return Err(NativeRefusal::UnsupportedMergeTopology(
-                        "overlapping merges",
-                    ));
-                }
-                if (r, c) == (merge.row, merge.col) {
-                    continue;
-                }
-                role[r][c] = Some((c > merge.col, r > merge.row));
-            }
-        }
-        spans[merge.row][merge.col] = (merge.rows, merge.cols);
-    }
-    let width = frame.bounds.cx / cx;
-    let height = frame.bounds.cy / cy;
+    };
     let mut xml = String::from("<a:tbl><a:tblPr firstRow=\"1\"/><a:tblGrid>");
-    for c in 0..cols {
-        let w = if c + 1 == cols {
-            frame.bounds.cx - width * (cx - 1)
-        } else {
-            width
-        };
+    for w in &widths {
         xml.push_str(&format!("<a:gridCol w=\"{w}\"/>"));
     }
     xml.push_str("</a:tblGrid>");
-    for (r, line) in grid.iter().enumerate() {
-        let h = if r + 1 == rows {
-            frame.bounds.cy - height * (cy - 1)
-        } else {
-            height
-        };
-        xml.push_str(&format!("<a:tr h=\"{h}\">"));
+    for (r, line) in layout.text.iter().enumerate() {
+        xml.push_str(&format!("<a:tr h=\"{}\">", heights[r]));
         for (c, text) in line.iter().enumerate() {
             let mut attrs = String::new();
-            match (role[r][c], spans[r][c]) {
+            match (layout.covered[r][c], layout.spans[r][c]) {
                 (Some((h_merge, v_merge)), _) => {
                     if h_merge {
                         attrs.push_str(" hMerge=\"1\"");
@@ -148,10 +203,6 @@ pub(super) fn frame_xml(
                     }
                 }
             }
-            let text = text
-                .as_deref()
-                .or(dataset.missing.as_deref())
-                .unwrap_or_default();
             let body = if text.is_empty() {
                 "<a:p/>".to_owned()
             } else {
@@ -177,7 +228,7 @@ pub(crate) fn insert_frame(
     let bytes = package
         .part(slide)?
         .ok_or(NativeRefusal::Stale("slide part missing"))?;
-    let tree = XmlTree::parse(&bytes, package.limits().xml)?;
+    let tree = XmlTree::parse(&bytes, package.resources())?;
     let id = id.to_string();
     if tree
         .nodes
@@ -223,9 +274,8 @@ fn span(node: &Node, name: &str) -> Result<usize, NativeRefusal> {
     })
 }
 
-/// Replace one cell's paragraphs, keeping the first paragraph's and first
-/// run's properties. A cell a merge covers takes its own text under the
-/// merge.
+/// Replace one cell's text, keeping what the text does not change. A cell
+/// a merge covers takes its own text under the merge.
 pub(super) fn set_cell(
     package: &mut Package,
     slide: &str,
@@ -237,7 +287,7 @@ pub(super) fn set_cell(
     let bytes = package
         .part(slide)?
         .ok_or(NativeRefusal::Stale("slide part missing"))?;
-    let tree = XmlTree::parse(&bytes, package.limits().xml)?;
+    let tree = XmlTree::parse(&bytes, package.resources())?;
     let id = table.to_string();
     let frame = tree
         .nodes
@@ -348,6 +398,30 @@ pub(super) fn set_cell(
     if current != expected {
         return Err(NativeRefusal::Stale("cell text changed"));
     }
+    // The cell's text through the deck's retained text mapping (FIX 8595):
+    // its paragraphs' and runs' properties, attributes, namespace bindings,
+    // `a:endParaRPr` and the bytes between paragraphs are kept, and only the
+    // changed text is written. Where that mapping refuses (a change cutting
+    // into a field, content it does not know), the cell is rebuilt from its
+    // first paragraph's and first run's properties, as it was before.
+    let out = match crate::edit::cell_text(&bytes, &tree, body, value) {
+        Some(out) => out,
+        None => rebuilt(&bytes, &tree, body, (first, first_node), last_node, value)?,
+    };
+    package.replace_xml_part(slide, out)?;
+    Ok(())
+}
+
+/// The cell's paragraphs replaced by `value`'s lines, each with the first
+/// paragraph's `a:pPr` and the first run's `a:rPr`.
+fn rebuilt(
+    bytes: &[u8],
+    tree: &XmlTree,
+    body: usize,
+    (first, first_node): (usize, &Node),
+    last_node: &Node,
+    value: &str,
+) -> Result<Vec<u8>, NativeRefusal> {
     let piece = |node: Option<(usize, &Node)>| {
         node.map_or("", |(_, node)| {
             std::str::from_utf8(&bytes[node.span.clone()]).unwrap_or("")
@@ -355,7 +429,7 @@ pub(super) fn set_cell(
     };
     let p_pr = piece(tree.child(first, DML, "pPr")?);
     let r_pr = piece(
-        within(&tree, body)
+        within(tree, body)
             .find(|(_, node)| node.is(DML, "r"))
             .map(|(run, _)| tree.child(run, DML, "rPr"))
             .transpose()?
@@ -373,6 +447,5 @@ pub(super) fn set_cell(
         out.extend_from_slice(format!("<{p}>{p_pr}{run}</{p}>").as_bytes());
     }
     out.extend_from_slice(&bytes[last_node.span.end..]);
-    package.replace_xml_part(slide, out)?;
-    Ok(())
+    Ok(out)
 }
