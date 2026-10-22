@@ -130,8 +130,9 @@ pub struct Memory<'v> {
         Option<std::sync::Arc<dyn crate::repo_mutation::external_import::ExternalGitSourceHost>>,
     /// The host bound this handle to an MCP tool call (FIX 8961,
     /// `for_repo_tool_recipient`): repo bytes read masked whatever
-    /// credential rides it. Mask-only; off on every other handle.
-    pub(super) repo_tool_recipient: bool,
+    /// credential rides it, with the actual recipient when the host proved
+    /// one (FIX 7608 2b-ii). Off on every other handle.
+    pub(super) repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient,
 }
 
 /// A door's admission of a verb hook's rewritten args, run on the verb's name

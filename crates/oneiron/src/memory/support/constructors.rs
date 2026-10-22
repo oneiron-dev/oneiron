@@ -47,7 +47,7 @@ impl Vault {
             rewrite_admit: None,
             task_work_turn: None,
             external_git_source_host: None,
-            repo_tool_recipient: false,
+            repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
         }
     }
 
@@ -99,7 +99,7 @@ impl Vault {
             rewrite_admit: None,
             task_work_turn: None,
             external_git_source_host: None,
-            repo_tool_recipient: false,
+            repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
         }
     }
 }
@@ -161,7 +161,7 @@ impl<'v> Memory<'v> {
                 task_work_turn: self.task_work_turn.clone(),
                 // A call's import transport never crosses into a turn.
                 external_git_source_host: None,
-                repo_tool_recipient: self.repo_tool_recipient,
+                repo_tool_recipient: self.repo_tool_recipient.clone(),
             },
         })
     }

@@ -84,7 +84,7 @@ impl BrowserSession {
     pub fn set_fresh_guest(&mut self, fresh: Box<dyn FreshGuest>) {
         if self.snapshots.is_none() {
             let collector = OriginSnapshots::collector(fresh.state_charge());
-            OriginSnapshots::landed(&collector, self.receipt_seq);
+            OriginSnapshots::landed(&collector, self.landed_seq());
             self.driver.collect(OriginSnapshots::sink(&collector));
             self.snapshots = Some(collector);
         }

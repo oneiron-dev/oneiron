@@ -35,8 +35,12 @@ The receipt names its worker: kind `exl3`, that identity, and its build as
 report, not the binaries. Its queue waits are the two the scheduler already
 measures, in whole microseconds: `worker_us` from submission to admission,
 `engine_us` each Job's enqueue-to-start with the answer pass's wait for
-pages. Its first-token time, end, output count and drafts are left out, the
-drafts because the scheduler reads a missing draft count as zero. The engine
+pages. The R3 counters ride in the same record (FIX 8317): `ttft_us`, the
+request's acceptance to its first generated token, measured at the worker;
+`end_reason`, its native end in the closed set; `output_tokens`, the native
+count of generated tokens; and `drafts_proposed` / `drafts_accepted`. A
+count is a total over the request's passes only when every pass reported
+it (`pass_totals`); one any pass left out is absent, never zero. The engine
 model the call was admitted for is the engine's to stamp.
 """
 import hashlib
@@ -176,6 +180,67 @@ def micros(seconds):
     return int(round(seconds * 1_000_000))
 
 
+def native_seconds(final, key):
+    """A non-negative finite time in seconds the final event carries, else
+    None."""
+    value = final.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) and value >= 0 else None
+
+
+# Each Job final's measurements a request totals, with how each is read.
+PASS_TOTALS = (
+    ("new_tokens", native_count),
+    ("accepted_draft_tokens", native_count),
+    ("rejected_draft_tokens", native_count),
+    ("time_prefill", native_seconds),
+    ("time_enqueued", native_seconds),
+    ("time_generate", native_seconds),
+)
+
+
+def pass_totals(totals, final):
+    """`totals` with one more Job final added: a measure stays a sum only
+    while every pass so far reported it, and is None from the first pass
+    that did not. `totals` None starts the request's first pass."""
+    values = {key: read(final, key) for key, read in PASS_TOTALS}
+    if totals is None:
+        return values
+    return {key: None if totals[key] is None or values[key] is None else totals[key] + values[key]
+            for key, _ in PASS_TOTALS}
+
+
+# The request's end, by the native `eos_reason` of its last Job (R1: absent
+# is unknown; a closed category keeps no provider text).
+END_REASONS = {
+    "stop_token": "stop",
+    "stop_string": "stop",
+    "end_filter": "stop",
+    "max_new_tokens": "length",
+}
+
+
+def end_reason(eos_reason):
+    """A native `eos_reason` as the receipt's `end_reason`: stop, length, or
+    other for any other reason given; None when none was given."""
+    if eos_reason is None:
+        return None
+    return END_REASONS.get(eos_reason, "other")
+
+
+def drafts(totals):
+    """`(proposed, accepted)` over the request's passes: accepted plus
+    rejected, and accepted, only when every pass reported both; else
+    `(None, None)`. Never inferred from speed or depth."""
+    if totals is None:
+        return None, None
+    accepted, rejected = totals["accepted_draft_tokens"], totals["rejected_draft_tokens"]
+    if accepted is None or rejected is None:
+        return None, None
+    return accepted + rejected, accepted
+
+
 def job_pass(phase, thinking, final):
     """One Job's pass, from its final event: the scheduler's `phase`, read as
     the reasoning pass, the answer pass that re-encodes a closed thought, or
@@ -205,13 +270,16 @@ def job_pass(phase, thinking, final):
 
 
 def add_evidence(usage, prompt_tokens, passes, identity, worker_wait_s=None, engine_wait_s=None,
-                 build_evidence="reported_version", launch_manifest=None):
+                 build_evidence="reported_version", launch_manifest=None, ttft_us=None,
+                 end=None, output_tokens=None, drafts_proposed=None, drafts_accepted=None):
     """Writes the request's receipt into `usage`, and the standard cached count
     when its first pass ran over its own prompt with counts that agree.
     `worker_wait_s` and `engine_wait_s` are the scheduler's own waits, in
     seconds; one it did not measure is None and left out. `launch_manifest`,
     the digest of the supervisor's launch manifest, is echoed under
-    `LAUNCH_MANIFEST_KEY` when the server was given one."""
+    `LAUNCH_MANIFEST_KEY` when the server was given one. The R3 counters
+    (`ttft_us`, `end`, `output_tokens`, the drafts) go in as given; None is
+    left out."""
     first = passes[0] if passes else None
     if (first is not None and first["phase"] in ("prompt", "reasoning")
             and first.get("input_tokens") == prompt_tokens and first["outcome"] != "unknown"):
@@ -226,6 +294,10 @@ def add_evidence(usage, prompt_tokens, passes, identity, worker_wait_s=None, eng
                   if value is not None}
     if queue_wait:
         receipt["queue_wait"] = queue_wait
+    for key, value in (("ttft_us", ttft_us), ("end_reason", end), ("output_tokens", output_tokens),
+                       ("drafts_proposed", drafts_proposed), ("drafts_accepted", drafts_accepted)):
+        if value is not None:
+            receipt[key] = value
     usage[INFERENCE_CALLS_KEY] = [receipt]
     if launch_manifest is not None:
         usage[LAUNCH_MANIFEST_KEY] = launch_manifest

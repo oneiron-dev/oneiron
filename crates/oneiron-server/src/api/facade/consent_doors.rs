@@ -14,7 +14,7 @@ use oneiron::consent::lifecycle::{
 use oneiron::consent::{AuthenticatedOwner, ConsentRegistry, ConsentRegistryQuery};
 use oneiron::failure_signals::HeldFailureSignalBatchView;
 use oneiron::memory::MemoryResult;
-use oneiron::task_verb::sdk::EmptyRequest;
+use oneiron::task_verb::sdk::{self, ConnectorCallApproveOnceRequest, EmptyRequest};
 
 use super::host_doors::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
@@ -48,6 +48,22 @@ pub(crate) async fn vault_consent_approve_once(
         auth,
         "vault.consent.approve_once",
         move |vault, owner| lifecycle::approve_once(vault, owner, input),
+    )
+    .await
+}
+
+/// `vault.connectors.calls.approve_once` (FIX 990): the owner's press on
+/// exactly one held connector call's current ask, by its call ref.
+pub(crate) async fn vault_connectors_calls_approve_once(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ConnectorCallApproveOnceRequest,
+) -> Listed<ConsentActReceipt> {
+    as_owner(
+        server,
+        auth,
+        "vault.connectors.calls.approve_once",
+        move |vault, owner| sdk::approve_connector_call_once(vault, owner, input),
     )
     .await
 }
