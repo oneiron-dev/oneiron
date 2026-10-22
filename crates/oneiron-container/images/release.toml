@@ -492,7 +492,8 @@ cold_boot = "MCP and display usable <= 3 s"
 ram = "3 GiB runtime default retained (crates/oneiron-server/src/config/desktop.rs:33-35)"
 
 [variants.desktop-cua.outputs."linux/amd64"]
-state = "built-candidate"
+state = "boot-proved"
+note = "L11-B image-legs smoke (harness imglegs/img_legs.py): kel, 2026-10-22 21:36 JST, fleet job 1022-213637-f012, OCI container run with --network none of run p5's image, image sha256:675ecb661643b1d42d85ec7bb0254fa6329afc8f6d4a5d54945e398ed6131fa3 (kel's store id; this output's manifest digest). 7 of 7 legs PASS: image id, MCP initialize on stdio (cua-driver 0.36.0), tools/list (64 tools), the X99 display (Xvfb, openbox, dbus, at-spi), get_screen_size (1366x900), get_desktop_state (image and text). Peak 58.1 MiB (job cgroup). Openbox warns of a missing menu file on stderr, harmlessly. Firecracker and cold boot not measured."
 builder_commit = "0c86704876ba9ac8fd42f6b78a6a6821327a08f5"
 engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
 host = "kelly"
@@ -536,7 +537,8 @@ cold_boot = "helper ready <= 2 s; compilation timed separately"
 ram = "32 GiB memory / 16 GiB scratch retained (crates/oneiron-server/src/config/merge_queue.rs:23-36)"
 
 [variants.checker.outputs."linux/amd64"]
-state = "built-candidate"
+state = "boot-proved"
+note = "L11-A acceptance smoke (script checker-smoke/smoke-p5.sh): kel, 2026-10-22 21:4x JST, OCI container run of run p5's image, image sha256:f57f8a42c3a86288694411df755218814c012edaad90f7ad95a533836aff49e8 (kel's store id; this output's manifest digest), against engine 79a82238e3. 5 of 5 legs PASS: image id, contents (Rust 1.96, no rustup), helper hash (75d94024ab2f... in the image and at the source), source copy, and an offline `cargo check --locked --workspace --all-features` (--network none) from a scratch copy of the store, rc=0 in 670 s. Peak RAM not sampled. Firecracker and cold boot not measured."
 builder_commit = "0c86704876ba9ac8fd42f6b78a6a6821327a08f5"
 engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
 host = "kelly"
@@ -581,7 +583,8 @@ cold_boot = "exec usable <= 1 s"
 ram = "explicit 512 MiB - 2 GiB sizes"
 
 [variants.generic-agent.outputs."linux/amd64"]
-state = "built-candidate"
+state = "boot-proved"
+note = "L11-B image-legs smoke (harness imglegs/img_legs.py): kel, 2026-10-22 21:35 JST, fleet job 1022-213506-506b, OCI container run with --network none of run p5's image, image sha256:02daa36b48650a8fbd6c1e3808e3ab2f0d55640309fa25e4c155e05c10d8abeb (kel's store id; this output's manifest digest). 9 of 9 legs PASS: image id, python3 3.13.5, bun 1.4.3, and for each of tsrs native and tsrs-wasm: --version (tsrs 0.18.0, TypeScript 7.1.0-dev.20260930.4), a clean .ts rc=0, and a bad .ts rc=2 with TS2322. Peak 188.6 MiB (job cgroup). Firecracker and cold boot not measured."
 builder_commit = "0c86704876ba9ac8fd42f6b78a6a6821327a08f5"
 engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
 host = "kelly"
