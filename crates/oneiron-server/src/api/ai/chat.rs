@@ -587,7 +587,7 @@ fn start_turn(
     }
     // DESIGN-V2 R2: the call's typed segments, set once it is admitted and
     // only when they describe the admitted messages exactly.
-    let reader = segments::Reader {
+    let session_reader = segments::Reader {
         vault: Arc::clone(&vault),
         auth: auth.clone(),
         actor,
@@ -595,7 +595,7 @@ fn start_turn(
         locality,
     };
     let turn_segments = segments::admitted(
-        &reader,
+        &session_reader,
         segments::Assembled {
             layout: segments::Layout {
                 system_end,
@@ -806,7 +806,7 @@ fn start_turn(
     // stages its canonical successor.
     let answering = segments::commit_on_answer(
         turn_segments,
-        &reader,
+        &session_reader,
         &credential,
         written.as_deref(),
         turn,
