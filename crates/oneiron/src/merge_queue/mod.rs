@@ -79,9 +79,10 @@ pub use source_types::ServedQueueSource;
 // The tested-revision seal at green (FIX 6868, G2 PR3).
 pub(crate) use tested_types::QueueRevisionSeal;
 pub use tested_types::{
-    CodePushSourceLink, GreenQueueRevision, QueueAppliedSource, QueueExportHold,
-    QueueExportHoldReason, QueueGreenExportView, QueueReceiptLink, QueueRevisionIntent,
-    QueueRevisionLink, QueueSealTarget, QueueTestedRevision, QueueTestedTarget,
+    CodePushProjectionSourceLink, CodePushSourceLink, GreenQueueRevision, QueueAppliedSource,
+    QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueReceiptLink,
+    QueueRevisionIntent, QueueRevisionLink, QueueSealTarget, QueueTestedRevision,
+    QueueTestedTarget,
 };
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,

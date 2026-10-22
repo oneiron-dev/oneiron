@@ -1129,13 +1129,24 @@ impl Vault {
             }
         };
         let proposed = match &proposal {
-            Some(proposal) => Some(self.retain_edit_proposal(
-                &wake.artifact,
-                proposal,
-                wake.made_by.as_ref(),
-                actor,
-                now,
-            )?),
+            Some(proposal) => {
+                // The carried envelope is admitted through the principal's
+                // own read as the fresh proposal waits (FIX 1229).
+                let reader = match &wake.made_by {
+                    Some(_) => Some(super::MadeByReader::Lane(
+                        crate::llm::decision::questions::principal_lane(self, wake.principal)?,
+                    )),
+                    None => None,
+                };
+                Some(self.retain_edit_proposal(
+                    &wake.artifact,
+                    proposal,
+                    wake.made_by.as_ref(),
+                    reader,
+                    actor,
+                    now,
+                )?)
+            }
             None => None,
         };
         Ok((proposed, reask_ref))

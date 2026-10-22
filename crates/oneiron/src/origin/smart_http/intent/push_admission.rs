@@ -49,5 +49,11 @@ pub(super) fn recovered_stamp(intent: &ReceivePackIntent) -> Result<DoorAdmissio
         operation_id: EntityId::from_hex(&intent.operation_id)
             .map_err(|_| Error::CorruptedIndex("receive-pack operation id"))?,
         push: intent.push.clone(),
+        ingress_proof: intent
+            .ingress_proof
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()
+            .map_err(|_| Error::CorruptedIndex("receive-pack ingress proof id"))?,
     })
 }
