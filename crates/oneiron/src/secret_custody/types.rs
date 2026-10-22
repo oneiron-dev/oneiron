@@ -318,9 +318,10 @@ pub const SECRET_CUSTODY_BODY_KEYS: [&str; 13] = [
 
 /// The schema version of a record and of its plaintext DTO, the body with
 /// its value in the clear under `value_bytes`: the owner archive's, a
-/// register's protected input's and a transition's body, and a checkpoint
-/// image's carrier. Unchanged by KS-6, so every carrier wire stays byte for
-/// byte as before (CUSTODY_CARRIER_LEAF_WIRE off).
+/// register's protected input's and a transition's body; never a row at
+/// rest, nor a checkpoint image's (KS-6 part 2). Unchanged by KS-6, so every
+/// carrier wire stays byte for byte as before (CUSTODY_CARRIER_LEAF_WIRE
+/// off).
 pub const SECRET_CUSTODY_SCHEMA_VERSION: u16 = 1;
 
 /// The schema version a stored custody row is stamped with (KS-6, CALLS

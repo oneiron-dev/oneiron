@@ -22,6 +22,7 @@ mod authority_plane;
 mod body_bind;
 mod carried_bodies;
 mod commitment;
+mod credential_custody;
 mod custody_head;
 mod decisions;
 mod host_holds;
@@ -53,6 +54,7 @@ pub use admission::{
 pub(crate) use admission::{Rejected, because};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey, CheckpointSequenceBelowFloor};
 pub use commitment::CheckpointSigner;
+pub use credential_custody::CredentialRestoreNote;
 pub use custody_head::*;
 pub use host_holds::{BackupHolds, HostOrderHolds};
 use image::{CheckpointImage, read_image, read_image_required};
@@ -88,6 +90,10 @@ const RESTORE_EPOCH: SideTable<u64, RestoreEpoch, Named> =
 enum Custody<'a> {
     /// The restored vault takes its source's place and keeps its custody.
     Keep,
+    /// As `Keep`, for custody a head landed beside it on a host its custody
+    /// is not on (`CustodyRoute::Landed`): a credential whose keys that head
+    /// does not carry is named, never refused (KS-6 part 2).
+    Landed,
     /// As `Keep`, for the replacement of the vault at `home`: archived until
     /// a swap puts it there ([`Vault::swap_in_replacement`]). It re-elects
     /// its MACRO home over the host's own candidacy the vault it replaces
@@ -293,6 +299,10 @@ pub struct RestoreReport {
     /// carried sealed and landed exactly as they rested (FIX 6227): a step
     /// claim among them indexes nothing and is not embedded again.
     pub opaque_responses: usize,
+    /// The credential values its rows commit to that it did not land
+    /// readable, by handle and generation, each with its remedy (KS-6 part
+    /// 2, CALLS `KS-6 restore note form`); empty when every one landed.
+    pub credential_notes: Vec<CredentialRestoreNote>,
 }
 /// What a restore over a live vault says about a table a home move carries
 /// (FIX 5661 C2b).
@@ -596,7 +606,8 @@ impl Vault {
         crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
         let archive = Self::open_owned(path, config.clone())?;
-        let (dropped_gate_decisions, erased_pads) = archive.store.activate_archived(&live)?;
+        let (dropped_gate_decisions, erased_pads, credentials) =
+            archive.store.activate_archived(&live)?;
         let restored_at = archive.now_recorded_at();
         drop(archive);
         // Reopened, it reads what it holds under its own custody.
@@ -617,6 +628,7 @@ impl Vault {
             pad_notes: erased_pads.iter().map(PadRestoreNote::erased).collect(),
             checkpoint_sequence: None,
             opaque_responses: 0,
+            credential_notes: credential_custody::notes(&vault.store, credentials),
         })
     }
     /// Historical content restore beside a live vault: the image's content

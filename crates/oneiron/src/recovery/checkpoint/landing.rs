@@ -57,13 +57,13 @@ impl Vault {
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
         let (fork, source, home) = match custody {
-            Custody::Keep | Custody::NewHost => (false, None, None),
+            Custody::Keep | Custody::Landed | Custody::NewHost => (false, None, None),
             Custody::Replace(home, _) => (false, None, Some(home)),
             Custody::Fork(source) => (true, source.map(|(live, _)| live), None),
         };
         let candidacy = match custody {
             Custody::Replace(_, candidacy) => candidacy,
-            Custody::Keep | Custody::NewHost | Custody::Fork(_) => None,
+            Custody::Keep | Custody::Landed | Custody::NewHost | Custody::Fork(_) => None,
         };
         let new_host = matches!(custody, Custody::NewHost);
         let mut gate_custody = if new_host {
@@ -95,6 +95,12 @@ impl Vault {
         // live one forks with the rest, and a bare reference rests again
         // once the rows land.
         let pads = super::pad_custody::require(&mut image, gate_custody.plan_mut(), custody)?;
+        // Every credential value a row commits to, by exact id through the
+        // same plan (KS-6 part 2): a row rides sealed as it rests, and a
+        // fork copies its value's key with the rest, no older generation
+        // besides. A row carried in the clear lands withheld.
+        let credentials =
+            super::credential_custody::require(&mut image, gate_custody.plan_mut(), custody)?;
         let body_custody = gate_custody.plan_mut().source().cloned();
         // The responses that never decoded and land as they rested (FIX
         // 6227): a claim among them is never decoded, indexed or embedded.
@@ -243,11 +249,9 @@ impl Vault {
         // custody holds, or is withheld by its world's setting; any other is
         // refused before the vault is kept (KS-5).
         let pad_notes = super::pad_custody::land(&vault, pads)?;
-        // A credential row the image carried in the clear rests sealed again
-        // under this vault's custody, one row per writer (KS-6 part 1). One
-        // custody cannot take a key for stays pending, never opened from its
-        // carrier on a custody fault; the restore goes on as on main.
-        vault.reseal_credential_carriers_warned();
+        // Each credential value reads back from the custody this vault now
+        // holds; each it did not land readable is named (KS-6 part 2).
+        let credential_notes = super::credential_custody::land(&vault, credentials);
         room.admit_derived(destination)?;
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
             rebuild::rebuild(&vault, &opaque_claims)?;
@@ -288,6 +292,7 @@ impl Vault {
             pad_notes,
             checkpoint_sequence,
             opaque_responses,
+            credential_notes,
         };
         Ok((made, forked, vault, report))
     }

@@ -93,13 +93,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/fleet/tests.rs` | test | s | — | — | Small falsification fixtures; smoke is never accepted as a fleet baseline |
 | `src/fleet/wire.rs` | src | m | 8 crate-vis | — | Real app-tier WebSocket client using the shipped server protocol version |
 | `src/fleet/workload.rs` | src | m | 2 crate-vis | — | Closed-loop authenticated fleet traffic against one real loopback server and vault |
-| `src/infer/args.rs` | src | s | 9 crate-vis | — | `infer run` and `infer summarize` flags, parsed by hand like the other subcommands: every flag takes one… |
-| `src/infer/arms.rs` | src | s | 5 crate-vis | — | The two production paths a call takes, each an `LlmBackend` the measurement loop drives the same way |
+| `src/infer/args.rs` | src | m | 9 crate-vis | — | `infer run` and `infer summarize` flags, parsed by hand like the other subcommands: every flag takes one… |
+| `src/infer/arms.rs` | src | s | 6 crate-vis | — | The two production paths a call takes, each an `LlmBackend` the measurement loop drives the same way |
 | `src/infer/cases.rs` | src | s | 5 crate-vis | — | Case packets, read at run time from a JSONL file outside the source tree |
 | `src/infer/config.rs` | src | s | 3 crate-vis | — | The `--models-toml` file as the server reads its `[models]` section |
 | `src/infer/engine.rs` | src | s | 8 crate-vis | — | An engine the bench starts itself (`--engine-cmd`), in its own process group, with stdout and stderr… |
-| `src/infer/measure.rs` | src | s | 4 crate-vis | — | One call driven through `LlmBackend::stream`, timed with `Instant` |
+| `src/infer/measure.rs` | src | m | 4 crate-vis | — | One call driven through `LlmBackend::stream`, timed with `Instant` |
 | `src/infer/mod.rs` | src | m | 1 crate-vis | — | `infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an… |
+| `src/infer/native.rs` | src | m | 2 crate-vis | — | An external EXL3 worker over codec v1 |
 | `src/infer/request.rs` | src | s | 4 crate-vis | — | The request one case sends, and what of it the row records |
 | `src/infer/rows.rs` | src | s | 11 crate-vis | — | Result rows: one JSON line per finished (arm, case, rep), appended to `--out` and flushed and fsynced one by… |
 | `src/infer/scoring.rs` | src | s | 3 crate-vis | — | The quality check: does the reply keep the Dreamer's reply contract, and how much of the case's gold does it… |

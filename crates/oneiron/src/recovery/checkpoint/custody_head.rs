@@ -557,7 +557,7 @@ impl Vault {
         )?;
         let (custody, landing) = match route {
             CustodyRoute::Local => (Custody::Keep, None),
-            CustodyRoute::Landed(landing) => (Custody::Keep, Some(landing)),
+            CustodyRoute::Landed(landing) => (Custody::Landed, Some(landing)),
             CustodyRoute::Absent => (Custody::NewHost, None),
         };
         let (made, forked, mut vault, mut report) = Self::restore_image(
