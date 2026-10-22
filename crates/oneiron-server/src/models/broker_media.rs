@@ -86,6 +86,7 @@ pub(super) fn broker_media_backend(
             Ok(Arc::new(OpenAiMediaBackend::new(
                 BrokerMedia::new(name, provider, &provider.base_url, site, keys)?,
                 wire_models,
+                provider.base_url.clone(),
             )))
         }
         kind => anyhow::bail!(
