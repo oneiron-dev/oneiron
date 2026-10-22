@@ -38587,7 +38587,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 11,
       "re-export": 21
      }
@@ -38625,19 +38625,33 @@
      "path": "src/llm/model_trials.rs",
      "purpose": "Per-question held-out trials nominated by external benchmark scores",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 9,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/model_trials/evidence.rs",
      "purpose": "Freeze the question's own labels, check backend reads and bind the sufficiency card",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TrialProgressCounts"
+     ],
+     "path": "src/llm/model_trials/progress.rs",
+     "purpose": "A trial's paid arms, kept one by one inside its own row (FIX 9920)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -38649,11 +38663,16 @@
       "HeldOutSelection",
       "ModelTrial",
       "ModelTrialAction",
+      "ModelTrialExecutionState",
       "ModelTrialPolicy",
       "ModelTrialReceipt",
       "ModelTrialRequest",
       "PairedQualityInterval",
       "TrialAdmission",
+      "TrialArm",
+      "TrialArmFailure",
+      "TrialArmOutcome",
+      "TrialArmProgress",
       "TrialAssessment",
       "TrialCaseInput",
       "TrialEvidence",
@@ -38666,8 +38685,8 @@
      "path": "src/llm/model_trials/types.rs",
      "purpose": "The held-out selection and sufficiency card are supplied by eval authoring",
      "surface": {
-      "enum": 3,
-      "struct": 15
+      "enum": 7,
+      "struct": 16
      }
     },
     {
@@ -38766,7 +38785,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DescriptionPolicy",
@@ -38788,7 +38807,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 13,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 10
      }
     },
@@ -38805,6 +38824,21 @@
       "crate-vis": 2,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DescriptionFitnessReadings",
+      "DescriptionGrading"
+     ],
+     "path": "src/llm/routing/readings.rs",
+     "purpose": "The route's complete typed grading, carried with each routed outcome (FIX 9922): every candidate's decision…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -39115,13 +39149,14 @@
      "kind": "src",
      "notable": [
       "SeatDecisions",
-      "SeatNotes"
+      "SeatNotes",
+      "SeatPickReadings"
      ],
      "path": "src/llm/seat/decisions.rs",
      "purpose": "The seat pick as typed decisions through the host's ladder, and the note seam beside it",
      "surface": {
       "fn": 1,
-      "struct": 1,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -39200,7 +39235,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -39211,7 +39246,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 5
      }
@@ -39277,6 +39312,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/step/retry.rs",
+     "purpose": "Transport retries for one durable model call: the ONE retry authority",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/step/schema.rs",
      "purpose": "One-shot structured-output policy",
      "surface": {
@@ -39289,7 +39334,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/schema_guard.rs",
-     "purpose": "Structural input bounds before serialization into the validator compartment",
+     "purpose": "The nesting bound before serialization into the validator compartment",
      "surface": {
       "crate-vis": 1
      }
@@ -39355,6 +39400,16 @@
      "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side…",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/submission_custody.rs",
+     "purpose": "A public model-step submission's kept copies under body custody (FIX 9929)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -75327,7 +75382,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 129,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76034,9 +76089,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 144,
+   "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4954,
+   "source_files": 4958,
    "test_files": 902
   },
   "oneiron-android": {
@@ -107891,6 +107946,7 @@
       "ModelTrialAction",
       "ModelTrialComplete",
       "ModelTrialEvidence",
+      "ModelTrialExecutionState",
       "ModelTrialNominate",
       "ModelTrialPolicy",
       "ModelTrialReceipt",
@@ -109800,7 +109856,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1007,
+      "enum": 1008,
       "struct": 3104
      }
     },
