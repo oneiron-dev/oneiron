@@ -60578,6 +60578,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/world_pad_custody/current.rs",
+     "purpose": "One world's current pads, moved between the owner's machines (KS-5, FIX 6706, L04 leaf): what pad hydration…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -61513,6 +61523,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/bundle/refill.rs",
+     "purpose": "A kept object's read, typed, and a kept pad object's refill (FIX 9362, L03 half)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -61594,6 +61614,16 @@
      "purpose": "The machine-claim history this machine is owed, from the home (FIX 3820)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/pad_custody.rs",
+     "purpose": "Pad hydration from the home (KS-5, FIX 6706): a world's current pads as capsules sealed to this machine…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -62748,7 +62778,7 @@
       "const": 2,
       "crate-vis": 13,
       "fn": 14,
-      "re-export": 19,
+      "re-export": 20,
       "struct": 2
      }
     },
@@ -62794,10 +62824,10 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 12,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -62851,6 +62881,21 @@
      "purpose": "The home's admission of the install the owner asked to publish the vault's sealed bundle here (WILL L04 row…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PadObjectRefill"
+     ],
+     "path": "src/sync/residence/bundle/refill.rs",
+     "purpose": "A kept pad object's bytes filled again from a machine's upload (FIX 9362, L03 half)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -62994,14 +63039,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "KitPadIndexFetch"
+      "KitPadIndexFetch",
+      "KitPadIndexPage"
      ],
      "path": "src/sync/residence/kit_fetch/pad_index.rs",
      "purpose": "The kit's read of the home's current index (FIX 7106): the generations a publisher named the kit's root for…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "fn": 3,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -63018,6 +63064,24 @@
       "enum": 1,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorldPadCapsule",
+      "WorldPadFetch",
+      "WorldPadPage",
+      "WorldPadSelection"
+     ],
+     "path": "src/sync/residence/pad_custody.rs",
+     "purpose": "Pad hydration through the home (KS-5, FIX 6706): one world's current pads, sealed for the one machine of the…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -72039,7 +72103,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 3,
       "re-export": 21,
       "struct": 2
@@ -72146,7 +72210,17 @@
      "path": "src/world_keys/pad_custody.rs",
      "purpose": "A world key's pad at rest and on the move (KS-5, FIX 5686)",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/pad_custody/recipients.rs",
+     "purpose": "Who one world's pads go to, and what this machine holds of them, for pad hydration (KS-5, FIX 6706, L04…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -74622,7 +74696,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 139,
+     "files": 140,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74650,7 +74724,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 247,
+     "files": 251,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74839,7 +74913,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74855,7 +74929,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4852,
+   "source_files": 4858,
    "test_files": 902
   },
   "oneiron-android": {
@@ -94431,7 +94505,7 @@
      "path": "src/api/recovery_bundle.rs",
      "purpose": "The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -98407,8 +98481,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/livequery/residence/pad_custody.rs",
+     "purpose": "`residence.pad.fetch` (KS-5, FIX 6706): one page of a world's current pads, sealed for the machine this…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/livequery/residence/pad_objects.rs",
      "purpose": "A kept pad object a get finds missing or short below its length (FIX 7106): a typed answer, never the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/residence/pad_refill.rs",
+     "purpose": "`residence.bundle.pads.refill` (FIX 9362, L03 half): the end of a machine's upload of a kept pad object…",
      "surface": {
       "crate-vis": 1
      }
@@ -103574,7 +103668,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 38,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -103758,7 +103852,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1179,
+   "source_files": 1181,
    "test_files": 182
   },
   "oneiron-spawn": {
