@@ -35,5 +35,8 @@ pub(super) fn caller_input_error(reason: String) -> napi::Error {
         .unwrap_or("the input")
         .trim_end_matches([':', ',', ';']);
     let suggestion = format!("Correct {field} as the message says, then call again.");
-    facade_error(MemoryError::bad_request_with(reason, &[suggestion.as_str()]))
+    facade_error(MemoryError::bad_request_with(
+        reason,
+        &[suggestion.as_str()],
+    ))
 }

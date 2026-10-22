@@ -27,7 +27,9 @@
 use heed::RoTxn;
 
 use super::RawEntityPut;
+use crate::Vault;
 use crate::affect::Vad;
+use crate::batch::BatchBuilder;
 use crate::batch::BatchOp;
 use crate::claim::ClaimSource;
 use crate::edge::{EdgeInfo, EdgeKind};
@@ -40,8 +42,6 @@ use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarge
 use crate::store::SessionStoreView;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
-use crate::Vault;
-use crate::batch::BatchBuilder;
 
 /// One raw write as its room stages it.
 pub(super) enum RawOp<'a> {
@@ -108,6 +108,8 @@ impl Memory<'_> {
             start: now,
             end: now,
         };
+        // FIX 3103: each op keeps the run whose envelope wrote it.
+        let source_run = crate::skill_attribution::current_run_write_token();
         let mut entries = Vec::with_capacity(ops.len());
         let mut agent_puts = Vec::new();
         for op in ops {
@@ -166,6 +168,7 @@ impl Memory<'_> {
                 learned_at,
                 occurred,
                 op,
+                source_run: source_run.clone(),
             });
         }
         let mut refusal = None;
@@ -341,7 +344,10 @@ impl Memory<'_> {
         };
         Ok(session.read_composed(|view, txn| {
             let mut edges = Vec::new();
-            for (scanned, row) in view.port_edges(txn, center, direction, None, None)?.enumerate() {
+            for (scanned, row) in view
+                .port_edges(txn, center, direction, None, None)?
+                .enumerate()
+            {
                 if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
                     return Err(Error::IndexOverflow("edge neighbors"));
                 }
