@@ -105,11 +105,15 @@ impl EventStream {
 /// Whether a read failed only because nothing came within the client's
 /// per-read bound: the body itself is still readable.
 fn timed_out(error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::TimedOut
-        || error
-            .get_ref()
-            .and_then(|inner| inner.downcast_ref::<reqwest::Error>())
-            .is_some_and(reqwest::Error::is_timeout)
+    if error.kind() == std::io::ErrorKind::TimedOut {
+        return true;
+    }
+    match error.get_ref() {
+        Some(inner) => inner
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_timeout),
+        None => false,
+    }
 }
 
 /// Opens one reply body, JSON or an event stream. A JSON body is read whole,

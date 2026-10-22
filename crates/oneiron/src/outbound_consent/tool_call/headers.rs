@@ -88,7 +88,7 @@ fn governed_keys<'a>(
         .collect();
     let additional = fields
         .get("additionalProperties")
-        .filter(|rule| rule.is_object());
+        .filter(|rule| matches!(rule, Value::Object(_)));
     let mut governed = Vec::new();
     if patterns.is_empty() && additional.is_none() {
         return governed;
@@ -148,14 +148,15 @@ pub(super) fn dynamic_header(
     if !value.bytes().all(|c| c == b'\t' || (32..=126).contains(&c)) {
         return None;
     }
-    let mut names = names
-        .iter()
-        .filter_map(|name| canonical_header(name).ok())
-        .collect::<BTreeSet<_>>()
-        .into_iter();
-    let (Some(name), None) = (names.next(), names.next()) else {
-        return None;
-    };
+    let mut found: Option<String> = None;
+    for name in names.iter().filter_map(|name| canonical_header(name).ok()) {
+        match &found {
+            Some(kept) if *kept == name => {}
+            Some(_) => return None,
+            None => found = Some(name),
+        }
+    }
+    let name = found?;
     (!headers.contains_key(&name)).then(|| (name, value.to_owned()))
 }
 
