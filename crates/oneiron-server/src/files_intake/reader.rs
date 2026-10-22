@@ -40,8 +40,12 @@ use super::markdown::{self, Front, Link};
 const MAX_NOTE_BYTES: usize = 1024 * 1024;
 
 /// What joins a file's path to a continuation part's number in the part's
-/// path: `<path>#part<n>`. No file the walk reads ends that way.
-const PART_MARK: &str = "#part";
+/// path: `<path>#part<n>`. No file a notes walk reads ends that way.
+pub(super) const PART_MARK: &str = "#part";
+
+/// A Files source's part mark (FIX 6942): `<path>/#part<n>`. Its walk reads
+/// files of every name, but none below a file, so no real path is one.
+pub(super) const FILES_PART_MARK: &str = "/#part";
 
 /// The longest title a note keeps.
 const MAX_TITLE_BYTES: usize = 256;
@@ -213,7 +217,14 @@ pub(crate) fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Res
         };
         let bytes = read_all(file, shown)?;
         // A file with no text is passed over, and counted.
-        read_text(path, bytes, written_at(&metadata), kind, counts, &mut notes);
+        read_text(
+            (path, PART_MARK),
+            bytes,
+            written_at(&metadata),
+            kind,
+            counts,
+            &mut notes,
+        );
         Ok(())
     })?;
     Ok(notes)
@@ -242,10 +253,10 @@ pub(super) fn written_at(metadata: &std::fs::Metadata) -> u64 {
 }
 
 /// The notes one file's `bytes` hold, pushed onto `notes` (a file past the
-/// note bound as its parts), or why it holds none: no text, or none that
-/// reads.
+/// note bound as its parts, each at `path` and `mark`), or why it holds
+/// none: no text, or none that reads.
 pub(super) fn read_text(
-    path: String,
+    (path, mark): (String, &str),
     bytes: Vec<u8>,
     written_at: u64,
     kind: TextKind,
@@ -350,7 +361,7 @@ pub(super) fn read_text(
             counts.parts += 1;
             let number = at + 1;
             Note {
-                path: format!("{path}{PART_MARK}{number}"),
+                path: format!("{path}{mark}{number}"),
                 raw_hash: raw_hash.clone(),
                 written_at,
                 title: Some(format!("{named} (part {number})")),
@@ -392,11 +403,11 @@ fn parts(text: &str, bound: usize) -> Vec<Range<usize>> {
     parts
 }
 
-/// The file a ledger path names: a continuation part's
-/// (`<file>#part<n>`) file, else the path itself. A Files source's part may
-/// continue a file of any name, its text or code as well as its notes.
-pub(super) fn file_of(path: &str) -> &str {
-    path.rsplit_once(PART_MARK)
+/// The file a ledger path names: a continuation part's (`<file><mark><n>`)
+/// file, else the path itself. A Files source's part may continue a file of
+/// any name, its text or code as well as its notes.
+pub(super) fn file_of<'a>(path: &'a str, mark: &str) -> &'a str {
+    path.rsplit_once(mark)
         .filter(|(file, number)| {
             !file.is_empty()
                 && !number.is_empty()

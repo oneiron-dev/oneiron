@@ -235,7 +235,14 @@ pub(crate) fn walk(
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut left = wanted.entries;
-    walk_below(dir, shown, 0, (wanted, &nothing_excluded), &mut left, visit)
+    walk_below(
+        dir,
+        shown,
+        0,
+        (wanted, &nothing_excluded, &mut nothing_unopened),
+        &mut left,
+        visit,
+    )
 }
 
 /// A walk that excludes nothing beyond its own profile.
@@ -243,13 +250,18 @@ fn nothing_excluded(_: &Path) -> bool {
     false
 }
 
+/// A walk whose every unopened file refuses it never names one.
+fn nothing_unopened(_: &Path) {}
+
 /// Visits every regular file under `root` a Files source reads (FIX 6942),
 /// hidden ones too: the path shown, and the file. An entry `excluded` names
 /// by its shown path is passed over before it is opened, a folder before
-/// anything under it is listed.
+/// anything under it is listed. A file that does not open (no read
+/// permission) is named to `unopened` and the walk goes on.
 pub(crate) fn walk_files(
     root: &Path,
     excluded: &dyn Fn(&Path) -> bool,
+    unopened: &mut dyn FnMut(&Path),
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut left = FILES.entries;
@@ -257,7 +269,7 @@ pub(crate) fn walk_files(
         &open_root(root)?,
         root,
         0,
-        (FILES, excluded),
+        (FILES, excluded, unopened),
         &mut left,
         visit,
     )
@@ -269,7 +281,7 @@ fn walk_below(
     dir: &OwnedFd,
     shown: &Path,
     depth: usize,
-    (wanted, excluded): (Wanted, &dyn Fn(&Path) -> bool),
+    (wanted, excluded, unopened): (Wanted, &dyn Fn(&Path) -> bool, &mut dyn FnMut(&Path)),
     left: &mut usize,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
@@ -316,10 +328,23 @@ fn walk_below(
                             path.display()
                         )
                     })?;
-                walk_below(&child, &path, depth + 1, (wanted, excluded), left, visit)?;
+                walk_below(
+                    &child,
+                    &path,
+                    depth + 1,
+                    (wanted, excluded, &mut *unopened),
+                    left,
+                    visit,
+                )?;
             }
             FileType::RegularFile if wanted.visits(&name) => {
-                visit(&path, open_file(dir, &name, &path)?)?;
+                match open_file(dir, &name, &path) {
+                    Ok(file) => visit(&path, file)?,
+                    // A Files walk holds such a file by its name; any other
+                    // walk refuses.
+                    Err(_) if wanted.every_file => unopened(&path),
+                    Err(error) => return Err(error),
+                }
             }
             _ => {}
         }

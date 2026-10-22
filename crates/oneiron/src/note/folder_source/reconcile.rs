@@ -267,20 +267,28 @@ impl Vault {
         let (row, retracted) = {
             let txn = self.store.env.read_txn()?;
             let row = FILES.get(&self.store, &txn, &key)?;
-            // The import archived the note: its file left, or had no text.
+            // The import archived the note: its file left, or had no text. A
+            // row that names no note holds none the import archived.
             let retracted = row.as_ref().is_some_and(|row| {
-                matches!(
-                    row.state,
-                    FolderFileState::Retracted | FolderFileState::NameOnly { .. }
-                )
+                row.note.is_some()
+                    && matches!(
+                        row.state,
+                        FolderFileState::Retracted | FolderFileState::NameOnly { .. }
+                    )
             });
             if !retracted && let Some(same) = row.as_ref().filter(|row| row.file_hash == hash) {
                 report.unchanged += 1;
-                if same.raw_hash == raw_hash {
+                let facts_moved = facts.is_some_and(|facts| {
+                    same.meta.is_none_or(|meta| {
+                        (meta.bytes, meta.modified_at) != (facts.bytes, facts.modified_at)
+                    })
+                });
+                if same.raw_hash == raw_hash && !facts_moved {
                     return Ok(());
                 }
-                // Only the bytes moved (a PDF's metadata): the ledger takes
-                // their revision, and the note keeps its text.
+                // Only the bytes moved (a PDF's metadata, a file written again
+                // with the same text): the ledger takes their revision, and
+                // the note keeps its text.
                 let mut same = same.clone();
                 same.raw_hash = raw_hash;
                 drop(txn);
@@ -444,8 +452,13 @@ impl Vault {
                 row.state,
                 FolderFileState::Landed | FolderFileState::Proposed { .. }
             );
-            if lost_text && let Some(note) = row.note {
-                self.archive_retracted_note_in_txn(txn, &note, at)?;
+            // A note the owner deleted or archived himself stays as he left
+            // it: the ledger no longer names it, so no rescan restores it.
+            if lost_text
+                && let Some(note) = row.note
+                && !self.archive_retracted_note_in_txn(txn, &note, at)?
+            {
+                row.note = None;
             }
             row.state = state;
             row.meta = meta;
@@ -483,12 +496,16 @@ impl Vault {
             if row.state == FolderFileState::Retracted {
                 return Ok(false);
             }
-            // A name-only file's earlier note is in the archive already.
+            // A name-only file's earlier note is in the archive already. A
+            // note the owner deleted or archived himself stays as he left it:
+            // the ledger no longer names it, so no rescan restores it.
             if !matches!(row.state, FolderFileState::NameOnly { .. })
                 && let Some(note) = row.note
             {
                 let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-                self.archive_retracted_note_in_txn(txn, &note, at)?;
+                if !self.archive_retracted_note_in_txn(txn, &note, at)? {
+                    row.note = None;
+                }
             }
             row.state = FolderFileState::Retracted;
             FILES.put(&self.store, txn, &key, &row)?;

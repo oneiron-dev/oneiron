@@ -22,8 +22,8 @@ use serde::Serialize;
 
 use super::ImportWarning;
 use super::reader::{
-    NoteCounts, TitleCounts, choose_title, crossed_rows, earlier_titles, file_of, read_folder,
-    resolve_links,
+    FILES_PART_MARK, NoteCounts, PART_MARK, TitleCounts, choose_title, crossed_rows,
+    earlier_titles, file_of, read_folder, resolve_links,
 };
 
 /// One rescan as stdout shows it: its counts, or why it read nothing.
@@ -144,6 +144,11 @@ pub(crate) fn rescan(
     // host's path when the source is a Files source's.
     let namespace = source.namespace();
     let mut counts = NoteCounts::default();
+    let mark = if source.files.is_some() {
+        FILES_PART_MARK
+    } else {
+        PART_MARK
+    };
     let (mut notes, mut name_only, facts) = match &source.files {
         Some(files) => {
             let read = super::files::read_files(folder, &files.exclude, &mut counts)?;
@@ -178,7 +183,7 @@ pub(crate) fn rescan(
         .filter(|file| file.state != FolderFileState::Retracted)
         .filter(|file| !seen.contains(file.path.as_str()))
         .filter(|file| {
-            let read_from = file_of(&file.path);
+            let read_from = file_of(&file.path, mark);
             (read_from != file.path && seen.contains(read_from))
                 || std::fs::symlink_metadata(folder.join(read_from)).is_err()
         })

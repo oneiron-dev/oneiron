@@ -11,7 +11,9 @@ use std::path::Path;
 
 use oneiron::note::{FILES_TEXT_EXTENSIONS, FileFacts, NameOnlyFile, NameOnlyReason};
 
-use super::reader::{Note, NoteCounts, TextKind, read_all, read_text, relative, written_at};
+use super::reader::{
+    FILES_PART_MARK, Note, NoteCounts, TextKind, read_all, read_text, relative, written_at,
+};
 
 /// What one read of a Files source holds.
 #[derive(Default)]
@@ -60,7 +62,9 @@ pub(super) fn read_files(
     let mut read = FilesRead::default();
     let excluded =
         |shown: &Path| relative(folder, shown).is_some_and(|path| excludes(exclude, &path));
-    super::walk_files(folder, &excluded, &mut |shown, file| {
+    let mut unopened = Vec::new();
+    let mut unopened_at = |shown: &Path| unopened.push(shown.to_path_buf());
+    super::walk_files(folder, &excluded, &mut unopened_at, &mut |shown, file| {
         let Some(path) = relative(folder, shown) else {
             counts.unreadable_name += 1;
             return Ok(());
@@ -80,7 +84,7 @@ pub(super) fn read_files(
                 None => Some(NameOnlyReason::Unsupported),
                 Some(kind) => match read_all(file, shown) {
                     Ok(bytes) => read_text(
-                        path.clone(),
+                        (path.clone(), FILES_PART_MARK),
                         bytes,
                         facts.modified_at,
                         kind,
@@ -99,6 +103,29 @@ pub(super) fn read_files(
         }
         Ok(())
     })?;
+    // A file that did not open (no read permission) is held by its name,
+    // with what its metadata says.
+    for shown in unopened {
+        let Some(path) = relative(folder, &shown) else {
+            counts.unreadable_name += 1;
+            continue;
+        };
+        let facts = std::fs::symlink_metadata(&shown).map_or(
+            FileFacts {
+                bytes: 0,
+                modified_at: 0,
+            },
+            |metadata| FileFacts {
+                bytes: metadata.len(),
+                modified_at: written_at(&metadata),
+            },
+        );
+        read.name_only.push(NameOnlyFile {
+            path,
+            why: NameOnlyReason::Unreadable,
+            facts,
+        });
+    }
     // A part carries its file's facts.
     for note in &read.notes {
         if let Some(file) = &note.part_of
