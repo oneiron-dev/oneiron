@@ -82,6 +82,13 @@ impl ScopedRead<'_> {
                 }
                 None
             }
+            // A weave Admin binds this lane to its proof, current in `txn`
+            // (OF-499 A3): a vault-global shape inside its own Scope, never
+            // the Owner's key.
+            WeaveReader::Admin(admin) => {
+                self.bind_weave_admin_in(txn, admin)?;
+                None
+            }
         };
         let id = reader.id(self.vault, txn)?;
         let bound = Bound {
@@ -309,8 +316,8 @@ impl ScopedRead<'_> {
                         && weave_card_admitted(self.vault, txn, &card, id)?
                     {
                         items.push(WeaveItem::AgentHealth {
+                            draft_erased: card.coach_draft_erased(),
                             card,
-                            draft_erased: false,
                         });
                     }
                 }

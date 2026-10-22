@@ -73,6 +73,12 @@ INPUT_ENCODINGS = ("chat_json",)
 OPS = ("hello", "generate", "cancel", "stats", "drain", "shutdown")
 # Generate fields v1 takes and does not act on yet (R4 enforces them).
 RESERVED_FIELDS = ("priority", "deadline", "work_class")
+# Linux's memfd seal ABI (fcntl.h: F_LINUX_SPECIFIC_BASE + 10, F_SEAL_*),
+# for a Python built without the names; the kernel's values never change.
+F_GET_SEALS = getattr(fcntl, "F_GET_SEALS", 1034)
+F_SEAL_SHRINK = getattr(fcntl, "F_SEAL_SHRINK", 0x0002)
+F_SEAL_GROW = getattr(fcntl, "F_SEAL_GROW", 0x0004)
+F_SEAL_WRITE = getattr(fcntl, "F_SEAL_WRITE", 0x0008)
 # Ancillary room per read: a v1 frame carries at most one descriptor; the
 # room for more lets a frame that carries more be seen and refused.
 FD_ROOM = 8
@@ -236,11 +242,12 @@ def map_region(fd, offset, length):
     if sys.platform.startswith("linux"):
         if not stat.S_ISREG(mode):
             raise Refusal("invalid_input", "the input is not a memory region")
-        get_seals = getattr(fcntl, "F_GET_SEALS", None)
-        if get_seals is None:
-            raise Refusal("invalid_input", "this Python cannot read a region's seals")
-        needed = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK
-        if fcntl.fcntl(fd, get_seals) & needed != needed:
+        try:
+            seals = fcntl.fcntl(fd, F_GET_SEALS)
+        except OSError as error:
+            raise Refusal("invalid_input", f"the input region's seals cannot be read: {error}") from error
+        needed = F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK
+        if seals & needed != needed:
             raise Refusal("invalid_input", "the input region is not sealed read-only")
         if info.st_size != end:
             raise Refusal("invalid_input", f"the input region holds {info.st_size} bytes, not {end}")
@@ -382,7 +389,12 @@ class Connection:
         self.calls = {}
 
     def send(self, op, request_id, body, seq=None):
-        """Writes one frame, whole; False once the connection is gone."""
+        """Writes one frame, whole; False once the connection is gone. Every
+        refusal, error terminal and failed write reaches the log with its
+        cause."""
+        if op == "refused" or (op == "final" and body.get("outcome") == "error"):
+            detail = body if op == "refused" else body.get("error")
+            print(f"NATIVE_REPLY_ERROR op={op} request_id={request_id} detail={detail!r}", flush=True)
         envelope = {"v": SCHEMA_VERSION, "op": op, "request_id": request_id,
                     "epoch": self.state.identity.epoch, "body": body}
         if seq is not None:
@@ -394,7 +406,9 @@ class Connection:
             try:
                 self.sock.sendall(frame)
                 return True
-            except OSError:
+            except OSError as error:
+                print(f"NATIVE_SEND_ERROR op={op} request_id={request_id} {type(error).__name__}: {error}",
+                      flush=True)
                 self.closed = True
                 return False
 

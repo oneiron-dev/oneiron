@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1155 facade rows, 4100 declarations.
-Inputs: 1090 of 1155 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1041 of 1155 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 101; unread shapes: 0.
+Census: 1157 facade rows, 4128 declarations.
+Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -412,6 +412,9 @@ class NotificationSource(TypedDict):
     run: NotRequired[str | None]
     result: NotRequired[str | None]
     detail: NotRequired[str | None]
+class NotificationAction(TypedDict):
+    verb: str
+    args: Any
 class NotificationRow(TypedDict):
     id: str
     learned_at: int
@@ -422,6 +425,7 @@ class NotificationRow(TypedDict):
     origin_conversation: NotRequired[str | None]
     seen: bool
     acked: bool
+    actions: NotRequired[list[NotificationAction]]
 class NotificationPage(TypedDict):
     rows: list[NotificationRow]
     next_after: NotRequired[str | None]
@@ -472,6 +476,9 @@ class AgentHealthCoachAnswer(TypedDict):
     at: int
     pads: AgentHealthPadRead
     draft: NotRequired[AgentHealthCoachDraft | None]
+    source_rows: NotRequired[list[EntityId] | None]
+    source_rows_complete: NotRequired[bool | None]
+    draft_erased: NotRequired[bool | None]
 AgentHealthApplicationState = Literal["pending", "admitted", "rejected"]
 class AgentHealthCoachApplication(TypedDict):
     by: EntityId
@@ -1342,6 +1349,8 @@ class CancelRejectionPathology(TypedDict):
     rejections: int
     threshold: int
     last_status: NotRequired[str | None]
+CommReach = Literal["parent", "subtree", "project", "vault"]
+ConsultWidening = TypedDict("ConsultWidening", {"child": str, "from": NotRequired[CommReach | None], "to": CommReach})
 class TaskRow(TypedDict):
     id: str
     line: str
@@ -1356,6 +1365,8 @@ class TaskRow(TypedDict):
     ladder_disposition: NotRequired[LadderTerminalDisposition | None]
     counter_task_ref: NotRequired[str | None]
     cancel_pathology: NotRequired[CancelRejectionPathology | None]
+    widening: NotRequired[ConsultWidening | None]
+    fits: NotRequired[list[str]]
 class TasksOverflow(TypedDict):
     known_omitted_rows: int
     source_exhausted: bool
@@ -1658,7 +1669,7 @@ class AskUpReasonStrict(TypedDict):
 class AskUpReasonReobserve(TypedDict):
     why: Literal["reobserve"]
 AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict | AskUpReasonReobserve
-ClockScope = Literal["wait", "navigation", "decision"]
+ClockScope = Literal["wait", "navigation", "decision", "protocol"]
 TextSource = Literal["supplied", "reference", "template", "generated"]
 class FieldTextReasonNoText(TypedDict):
     why: Literal["no_text"]
@@ -3371,7 +3382,6 @@ class FederationDirectionScope(TypedDict):
 class CredentialPactCeiling(TypedDict):
     grant_ref: ScopeId
     ceiling: FederationDirectionScope
-CommReach = Literal["parent", "subtree", "project", "vault"]
 class CredentialCaveat(TypedDict):
     scope: NotRequired[CredentialCeiling | None]
     expires_at: NotRequired[int | None]
@@ -4505,7 +4515,7 @@ class DreamerAttemptRef(TypedDict):
     job_ref: str
     state: str
     existing: bool
-WeaveReaderKind = Literal["person", "owner", "agent"]
+WeaveReaderKind = Literal["person", "owner", "agent", "admin"]
 class WeaveReaderRef(TypedDict):
     kind: WeaveReaderKind
     reader_ref: str
@@ -4559,10 +4569,10 @@ class InboxLensRequest(TypedDict):
     before_impact: NotRequired[int | None]
     before_at: NotRequired[int | None]
     before_id: NotRequired[str | None]
-InboxLensKind = Literal["conversation", "waiting_on_you", "coordination_update", "concern"]
+InboxLensKind = Literal["conversation", "waiting_on_you", "coordination_update", "concern", "digest"]
 InboxLensPile = Literal["conversations", "waiting_on_you", "updates"]
 class InboxLensParticipant(TypedDict):
-    identity: str
+    identity: NotRequired[str | None]
     actor: str
 class InboxLensConcern(TypedDict):
     agent: str
@@ -4578,7 +4588,7 @@ class InboxLensRow(TypedDict):
     kind: InboxLensKind
     pile: InboxLensPile
     thread_ref: NotRequired[str | None]
-    identity: str
+    identity: NotRequired[str | None]
     actor: str
     facet: NotRequired[str | None]
     participants: list[InboxLensParticipant]
@@ -4588,6 +4598,8 @@ class InboxLensRow(TypedDict):
     payload_ref: NotRequired[str | None]
     concern: NotRequired[InboxLensConcern | None]
     diary_review: NotRequired[InboxLensDiaryReview | None]
+    sender: NotRequired[str | None]
+    widening: NotRequired[ConsultWidening | None]
 class InboxConcernGroup(TypedDict):
     agent: str
     items: list[str]
@@ -5518,6 +5530,7 @@ class PluginSectionProposal(TypedDict):
     manifest: SectionManifestEnvelope
 class PluginSectionListRequest(TypedDict):
     limit: NotRequired[int | None]
+    cursor: NotRequired[str | None]
 class PluginSectionPendingRow(TypedDict):
     claim_ref: str
     pack_id: str
@@ -5537,6 +5550,10 @@ class PluginSectionPackRow(TypedDict):
     section: PackSection
 class PluginSectionsView(TypedDict):
     pending: list[PluginSectionPendingRow]
+    pending_total: int
+    pending_remaining: int
+    next_cursor: NotRequired[str | None]
+    end: bool
     admitted: list[PluginSectionAdmittedRow]
     pack_sections: list[PluginSectionPackRow]
     rendered_pack_sections: list[str]
@@ -7370,10 +7387,12 @@ class RecordEraseConfirmRequest(TypedDict):
     record: EntityId
     preview_digest: str
     also_same_bytes: NotRequired[bool]
+DeleteRequestState = Literal["applied", "completion_pending"]
 class DeleteReceipt(TypedDict):
     existed: bool
     reason: str
     receipt_ref: NotRequired[str | None]
+    state: DeleteRequestState
 class EraseSameBytesRow(TypedDict):
     record: str
     outcome: str
@@ -7641,13 +7660,13 @@ class SufficiencyInput(TypedDict):
     detectable_effect: NotRequired[float | None]
     set_changed: bool
     rubric_changed: bool
-    canary_diverged: bool
+    canary_diverged: NotRequired[bool | None]
 class UnknownReasonTooFewFamiliesBody(TypedDict):
     slice: str
     families: int
 class UnknownReasonTooFewFamilies(TypedDict):
     too_few_families: UnknownReasonTooFewFamiliesBody
-UnknownReason = Literal["no_retest_noise", "no_interval", "interval_spans_margin", "set_changed", "rubric_changed", "canary_diverged"] | UnknownReasonTooFewFamilies
+UnknownReason = Literal["no_retest_noise", "no_interval", "interval_spans_margin", "set_changed", "rubric_changed", "canary_diverged", "no_canary"] | UnknownReasonTooFewFamilies
 class SufficiencyVerdictUnknown(TypedDict):
     unknown: list[UnknownReason]
 SufficiencyVerdict = Literal["not_worse", "worse"] | SufficiencyVerdictUnknown
@@ -8589,6 +8608,67 @@ class CleanupRunView(TypedDict):
     proposal: NotRequired[EntityId | None]
     archived: list[EntityId]
     digest: NotRequired[EntityId | None]
+class CleanupReviewRequest(TypedDict):
+    proposal: EntityId
+class CleanupReviewCounts(TypedDict):
+    total: int
+    claimless_extraction_persons: int
+    empty_summaries: int
+    completed_tasks: int
+    completed_attempts: int
+    retained_notes: int
+    erased: int
+CleanupItemState = Literal["erased", "eligible", "changed", "gone", "unreadable"]
+class CleanupReviewEvidence(TypedDict):
+    rule: str
+    holds_now: bool
+    live_claims: NotRequired[int | None]
+    linked_edges: list[str]
+    extraction_minted: NotRequired[bool | None]
+    since: NotRequired[int | None]
+    keep_days: NotRequired[int | None]
+class CleanupReviewContent(TypedDict):
+    record: NotRequired[ScopedReadResult[EntityView | None] | None]
+    note: NotRequired[ScopedReadResult[NoteReadView | None] | None]
+    attempt: NotRequired[Any | None]
+    refused: list[str]
+CleanupAcceptEffect = Literal["archive", "skip", "nothing", "fails"]
+class CleanupReviewItem(TypedDict):
+    slot: int
+    state: CleanupItemState
+    entity: NotRequired[EntityId | None]
+    kind: NotRequired[CleanupKind | None]
+    revision: NotRequired[str | None]
+    evidence: NotRequired[CleanupReviewEvidence | None]
+    content: NotRequired[CleanupReviewContent | None]
+    accept: CleanupAcceptEffect
+class CleanupReviewView(TypedDict):
+    proposal: EntityId
+    attempt: str
+    created_at: int
+    read_at: int
+    revision: str
+    task_retention_days: int
+    counts: CleanupReviewCounts
+    items: list[CleanupReviewItem]
+CleanupItemDecision = Literal["accept", "reject"]
+class CleanupItemChoice(TypedDict):
+    slot: int
+    decision: CleanupItemDecision
+class CleanupDecideRequest(TypedDict):
+    proposal: EntityId
+    choices: list[CleanupItemChoice]
+    expected_revision: NotRequired[str | None]
+CleanupItemResult = Literal["archived", "skipped", "rejected", "erased"]
+class CleanupItemOutcome(TypedDict):
+    slot: int
+    entity: NotRequired[EntityId | None]
+    kind: NotRequired[CleanupKind | None]
+    outcome: CleanupItemResult
+class CleanupDecideView(TypedDict):
+    proposal: EntityId
+    items: list[CleanupItemOutcome]
+    digest: NotRequired[EntityId | None]
 class ArchiveDeletePreviewRequest(TypedDict):
     targets: list[str]
 class ArchiveDeleteExpectation(TypedDict):
@@ -8709,7 +8789,7 @@ class LegalHold(TypedDict):
 class LegalHoldWidenRequest(TypedDict):
     hold_id: EntityId
     targets: list[LegalHoldTarget]
-LegalHoldEventKind = Literal["placed", "scope_changed", "delete_refused", "lift_and_erase_confirmed", "erase_completed", "lifted"]
+LegalHoldEventKind = Literal["placed", "scope_changed", "delete_refused", "lift_and_erase_confirmed", "erase_confirmed", "erase_completed", "lifted"]
 LegalHoldReason = Literal["owner_placed", "host_placed", "legal_order", "scope_widened", "scope_narrowed_by_erase", "end_date_changed", "held_record", "privacy_erase_kept", "owner_confirmed", "completion_pending", "receipt_completed", "authority_released", "order_ended", "host_released", "secrecy_ended"]
 class LegalHoldEvent(TypedDict):
     hold_id: EntityId
@@ -8722,9 +8802,23 @@ class LegalHoldEvent(TypedDict):
     reason: LegalHoldReason
     matter_ref: NotRequired[str | None]
     request_id: NotRequired[str | None]
+class ShownCustomerHold(TypedDict):
+    hold_id: EntityId
+    targets: list[LegalHoldTarget]
+    placed_by: NotRequired[str | None]
+    placed_at: int
+    matter_ref: NotRequired[str | None]
+class LiftAndEraseShownState(TypedDict):
+    title: str
+    prompt: str
+    records: list[EntityId]
+    claim_free_partition: NotRequired[bool]
+    holds: list[ShownCustomerHold]
 class LegalHoldLiftAndEraseRequest(TypedDict):
     records: list[EntityId]
-ErasePendingReason = Literal["historical_sweep", "custody_retirement"]
+    claim_free_partition: NotRequired[bool]
+    shown_state: LiftAndEraseShownState
+ErasePendingReason = Literal["historical_sweep", "custody_retirement", "veto_window"]
 LegalHoldBoundKind = Literal["law"]
 class LegalHoldBound(TypedDict):
     kind: LegalHoldBoundKind
@@ -8755,6 +8849,7 @@ class LegalHoldErasedRecord(TypedDict):
 class LegalHoldLiftAndErased(TypedDict):
     holds: list[EntityId]
     records: list[LegalHoldErasedRecord]
+    changed: NotRequired[LiftAndEraseShownState | None]
 class CourtesyDeleteSendRequest(TypedDict):
     pact: str
     worlds: NotRequired[list[str]]
@@ -8773,12 +8868,23 @@ class CourtesyDeleteAskedWorld(TypedDict):
     stale: NotRequired[str | None]
     stale_epoch: NotRequired[int | None]
 CooperativeDeletionDispositionKind = Literal["delete", "redact", "restrict_pending_review", "retain_under_basis", "legal_hold", "decline"]
+class CourtesyDeleteHold(TypedDict):
+    hold: str
+    status: str
+    records: list[str]
+    lifted: NotRequired[str | None]
+class CourtesyDeleteRecordProgress(TypedDict):
+    record: str
+    state: str
 class CourtesyDeleteChoice(TypedDict):
     choice: CooperativeDeletionDispositionKind
     reason_code: NotRequired[str | None]
     review: NotRequired[str | None]
     deleted: list[str]
     recorded: str
+    holds: list[CourtesyDeleteHold]
+    excluded: list[str]
+    progress: list[CourtesyDeleteRecordProgress]
 class CourtesyDeleteIncoming(TypedDict):
     request: str
     pact: str
@@ -8791,6 +8897,7 @@ class CourtesyDeleteIncoming(TypedDict):
     received: str
     answer: NotRequired[CourtesyDeleteChoice | None]
     reply_status: NotRequired[str | None]
+    holds: list[CourtesyDeleteHold]
 class CourtesyDeleteAnswerRequest(TypedDict):
     pact: str
     request: str
@@ -14989,7 +15096,9 @@ class ModelStepResultFailed(TypedDict):
 class ModelStepResultBudgetDenied(TypedDict):
     status: Literal["budget_denied"]
     trap_ref: str
-ModelStepResult = ModelStepResultFinished | ModelStepResultFailed | ModelStepResultBudgetDenied
+class ModelStepResultErased(TypedDict):
+    status: Literal["erased"]
+ModelStepResult = ModelStepResultFinished | ModelStepResultFailed | ModelStepResultBudgetDenied | ModelStepResultErased
 class ModelStepReceipt(TypedDict):
     step_ref: str
     step_hash: str
@@ -15514,6 +15623,7 @@ class FrozenTrialCase(TypedDict):
     noise_weight: float
     derived_from: list[EntityId]
 TrialAdmission = Literal["ready", "ask_exploration"]
+ModelTrialExecutionState = Literal["not_started", "running", "interrupted", "measured"]
 class ModelTrialEvidence(TypedDict):
     measurements_hash: list[int]
     incumbent_loss: NotRequired[float | None]
@@ -15522,6 +15632,7 @@ class ModelTrialEvidence(TypedDict):
     incumbent_cost_per_thousand: float
     candidate_cost_per_thousand: float
     trial_cost: float
+    unknown_arms: int
 class PairedQualityInterval(TypedDict):
     low: float
     high: float
@@ -15558,6 +15669,10 @@ class ModelTrialView(TypedDict):
     admission: TrialAdmission
     prepared_at: int
     execution_started: bool
+    execution: ModelTrialExecutionState
+    arms_completed: int
+    arms_unknown: int
+    arms_total: int
     evidence: NotRequired[ModelTrialEvidence | None]
     receipt: NotRequired[ModelTrialReceipt | None]
 class ModelTrialRef(TypedDict):
@@ -18324,6 +18439,7 @@ class DeckDiff(TypedDict):
     renders: NotRequired[RenderPair | None]
 class DeckReviewView(TypedDict):
     head: list[int]
+    fork_head: list[int]
     head_version: int
     ok: bool
     diff: DeckDiff
@@ -18335,6 +18451,7 @@ class DeckForkMergeRequest(TypedDict):
     artifact_ref: str
     fork_ref: str
     reviewed_head: list[int]
+    reviewed_fork: list[int]
     scope: NotRequired[ApproveScope | None]
     landing: NotRequired[Landing | None]
     made_by: NotRequired[Any | None]
@@ -20345,12 +20462,16 @@ class ConnectorAnswerRequest(TypedDict):
     answers: list[ConnectorQuestionAnswer]
 class OpenInput(TypedDict):
     url: str
+class DestinationRefusal(TypedDict):
+    reason: str
+    message: str
 class TakeoverRecord(TypedDict):
     by: str
     asked: NotRequired[str | None]
     taken_at_ms: int
     returned_at_ms: int
     inputs: int
+    refusal: NotRequired[DestinationRefusal | None]
 TabSwitchCause = Literal["opened", "closed"]
 TabSwitch = TypedDict("TabSwitch", {"tab": str, "url": str, "title": str, "from": str, "why": TabSwitchCause})
 BrowserEngine = Literal["lightpanda", "chromium"]
@@ -20380,6 +20501,7 @@ class FieldSpec(TypedDict):
     generate: NotRequired[bool]
     instruction: NotRequired[str | None]
     enum_values: NotRequired[list[str] | None]
+    secret: NotRequired[str | None]
 class ReplayActionOpen(TypedDict):
     action: Literal["open"]
     url: str
@@ -20425,7 +20547,9 @@ class RecordingGapKindUncovered(TypedDict):
     target: str
 class RecordingGapKindCaptureLost(TypedDict):
     why: Literal["capture_lost"]
-RecordingGapKind = RecordingGapKindNoLocator | RecordingGapKindGesture | RecordingGapKindUncovered | RecordingGapKindCaptureLost
+class RecordingGapKindUnrecordedNavigation(TypedDict):
+    why: Literal["unrecorded_navigation"]
+RecordingGapKind = RecordingGapKindNoLocator | RecordingGapKindGesture | RecordingGapKindUncovered | RecordingGapKindCaptureLost | RecordingGapKindUnrecordedNavigation
 class RecordingGap(TypedDict):
     seq: NotRequired[int | None]
     tab: NotRequired[str | None]
@@ -20545,6 +20669,10 @@ class DraftGapKindForeignOrigin(TypedDict):
     origin: NotRequired[str | None]
 class DraftGapKindTabChange(TypedDict):
     why: Literal["tab_change"]
+class DraftGapKindGeneratedFill(TypedDict):
+    why: Literal["generated_fill"]
+class DraftGapKindUnrecordedNavigation(TypedDict):
+    why: Literal["unrecorded_navigation"]
 class DraftGapKindMissingContext(TypedDict):
     why: Literal["missing_context"]
 class DraftGapKindCheckUnknownRef(TypedDict):
@@ -20558,7 +20686,7 @@ class DraftGapKindNoPostcondition(TypedDict):
     why: Literal["no_postcondition"]
 class DraftGapKindNoSubgoal(TypedDict):
     why: Literal["no_subgoal"]
-DraftGapKind = DraftGapKindPrePress | DraftGapKindUnknownPress | DraftGapKindNoAction | DraftGapKindSecretWithheld | DraftGapKindFailed | DraftGapKindNoEffect | DraftGapKindMissingOpening | DraftGapKindEmptySpan | DraftGapKindNoLiveOrigin | DraftGapKindForeignOrigin | DraftGapKindTabChange | DraftGapKindMissingContext | DraftGapKindCheckUnknownRef | DraftGapKindCheckSecretWithheld | DraftGapKindNoPostcondition | DraftGapKindNoSubgoal
+DraftGapKind = DraftGapKindPrePress | DraftGapKindUnknownPress | DraftGapKindNoAction | DraftGapKindSecretWithheld | DraftGapKindFailed | DraftGapKindNoEffect | DraftGapKindMissingOpening | DraftGapKindEmptySpan | DraftGapKindNoLiveOrigin | DraftGapKindForeignOrigin | DraftGapKindTabChange | DraftGapKindGeneratedFill | DraftGapKindUnrecordedNavigation | DraftGapKindMissingContext | DraftGapKindCheckUnknownRef | DraftGapKindCheckSecretWithheld | DraftGapKindNoPostcondition | DraftGapKindNoSubgoal
 class DraftGap(TypedDict):
     seq: NotRequired[int | None]
     verb: NotRequired[str | None]
@@ -20587,6 +20715,24 @@ class DemonstrationOutput(TypedDict):
     stopped_at_ms: int
     stop_cause: DemonstrationStopCause
     draft: DraftOutput
+SessionSeccomp = Literal["runtime_default", "guest_sandbox", "engine_fence"]
+class SessionFenceProof(TypedDict):
+    ruleset_hash: str
+    seccomp_hash: str
+    network_routes: list[str]
+    network_evidence_digest: str
+    sandbox_generation: str
+    launcher_digest: str
+class SessionManifest(TypedDict):
+    backend: str
+    runtime: str
+    image: str
+    argv_digest: str
+    network: str
+    seccomp: SessionSeccomp
+    generation: str
+    fence_proof: NotRequired[SessionFenceProof | None]
+    fence_unproven: NotRequired[bool]
 BrowserAnswerItem = dict[str, Any]
 BrowserAnswer = BrowserAnswerItem[T]
 class RowSplice(TypedDict):
@@ -20661,7 +20807,7 @@ class ActionFactNavigateNoEffect(TypedDict):
     window_ms: int
 ActionFact = ActionFactClickNoEffect | ActionFactTypeNoEffect | ActionFactNavigateNoEffect
 SwitchComponent = Literal["url", "cookies", "cookie", "local_storage", "session_storage", "storage", "scroll", "tab"]
-StoragePhase = Literal["pre_input", "post_act", "exit", "hand_back", "switch_export"]
+StoragePhase = Literal["pre_input", "post_act", "exit", "hand_back", "switch_export", "fresh_export"]
 class SwitchCarried(TypedDict):
     component: SwitchComponent
     origin: NotRequired[str | None]
@@ -20712,8 +20858,10 @@ class EffectReceipt(TypedDict):
     action: NotRequired[ReplayAction | None]
     source_url: NotRequired[str | None]
     source_origin: NotRequired[str | None]
+    source_title: NotRequired[str | None]
     tab: NotRequired[str | None]
     result_tab: NotRequired[str | None]
+    result_unread: NotRequired[str | None]
     duration_ms: int
 class SecretParam(TypedDict):
     name: str
@@ -20740,6 +20888,11 @@ class PartialTree(TypedDict):
     visited: int
     pending: int
     walk_ms: int
+class DialogAnswerFailure(TypedDict):
+    tab: NotRequired[str | None]
+    kind: str
+    accept: bool
+    error: str
 class Observation2(TypedDict):
     seq: int
     scope: str
@@ -20757,6 +20910,7 @@ class Observation2(TypedDict):
     walk_next: NotRequired[str | None]
     rebound: NotRequired[Rebound | None]
     fact: NotRequired[ActionFact | None]
+    dialogs: NotRequired[list[DialogAnswerFailure]]
 class ObservationPage(Observation2):
     next: NotRequired[str | None]
 BrowserObservationPage = BrowserAnswer[ObservationPage]
@@ -20870,6 +21024,8 @@ class FailedStepReceipt(TypedDict):
     missed: NotRequired[list[CheckReceipt]]
     observation: NotRequired[Observation2 | None]
     error: NotRequired[str | None]
+    refusal: NotRequired[DestinationRefusal | None]
+    next: NotRequired[str | None]
 class StepRebound(TypedDict):
     step: int
     rebound: Rebound
@@ -20951,6 +21107,7 @@ class ProposeOutput(TypedDict):
     refused_by: NotRequired[WorkflowCheck | None]
     refusal: NotRequired[AdmissionRefusal | None]
     unmet: NotRequired[list[int]]
+    missed: NotRequired[list[CheckReceipt]]
     replay: NotRequired[BatchOutput | None]
     replay_guest: NotRequired[ReplayGuest | None]
     superseded: NotRequired[SupersedeOutcome | None]
@@ -20972,11 +21129,17 @@ class LibraryRetiredOutput(TypedDict):
     retired: list[RetiredCard]
 BrowserLibraryRetiredOutput = BrowserAnswer[LibraryRetiredOutput]
 LibraryRunMode = Literal["strict", "assisted"]
+class SecretArgHandle(TypedDict):
+    handle: str
+class SecretArgText(TypedDict):
+    text: str
+SecretArg = SecretArgHandle | SecretArgText
 class LibraryRunInput(TypedDict):
     workflow: str
     args: NotRequired[dict[str, str]]
     base: NotRequired[ObservationBase | None]
     mode: NotRequired[LibraryRunMode | None]
+    secret_args: NotRequired[dict[str, SecretArg]]
 class LibraryRunOutput(TypedDict):
     workflow: str
     status: SubgoalStatus

@@ -514,7 +514,7 @@ pub(crate) fn craft_candidate_inbox_items(vault: &Vault) -> Result<Vec<AgentInbo
     let participants: Vec<_> = crate::policy_model::owners_in_txn(vault, &rtxn)?
         .into_iter()
         .map(|owner| AgentInboxParticipant {
-            identity_ref: owner,
+            identity_ref: Some(owner),
             actor_ref: owner,
         })
         .collect();
@@ -527,7 +527,7 @@ pub(crate) fn craft_candidate_inbox_items(vault: &Vault) -> Result<Vec<AgentInbo
             item_id: format!("craft:{}", card.candidate_id),
             kind: AgentInboxItemKind::ApprovalRequired,
             thread_ref: None,
-            identity_ref: resident,
+            identity_ref: Some(resident),
             actor_ref: resident,
             facet_ref: None,
             participants: participants.clone(),
@@ -537,6 +537,8 @@ pub(crate) fn craft_candidate_inbox_items(vault: &Vault) -> Result<Vec<AgentInbo
             payload_ref: Some(card.candidate_id),
             concern: None,
             diary_review: None,
+            sender: None,
+            widening: None,
         })
         .collect())
 }

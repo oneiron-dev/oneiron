@@ -379,21 +379,23 @@ fn compiled(pattern: &str) -> Result<regex::Regex> {
         .map_err(|_| invalid_schema())
 }
 
-/// The `properties` maps that apply to `value` under `schema`: the root's,
-/// then those of every `anyOf`/`oneOf` variant, taken `if`/`then`/`else`
-/// branch and `dependentSchemas` entry the value meets, nested ones too, as
+/// The object schemas that apply to `value` under `schema`: the root, then
+/// every `anyOf`/`oneOf` variant, taken `if`/`then`/`else` branch and
+/// `dependentSchemas` entry the value meets, nested ones too, as
 /// [`validate`] reads them (FIX 8810). With no value, every branch counts:
-/// the properties a call can meet at all.
-pub(super) fn applicable_properties<'a>(
+/// the schemas a call can meet at all. Each one's `properties`,
+/// `patternProperties` and `additionalProperties` govern the value's keys
+/// together (FIX 9284).
+pub(super) fn applicable_schemas<'a>(
     schema: &'a Value,
     value: Option<(&Value, &str)>,
 ) -> Result<Vec<&'a serde_json::Map<String, Value>>> {
     let mut found = Vec::new();
-    collect_properties(schema, value, &mut found)?;
+    collect_schemas(schema, value, &mut found)?;
     Ok(found)
 }
 
-fn collect_properties<'a>(
+fn collect_schemas<'a>(
     schema: &'a Value,
     value: Option<(&Value, &str)>,
     found: &mut Vec<&'a serde_json::Map<String, Value>>,
@@ -401,7 +403,7 @@ fn collect_properties<'a>(
     let Some(fields) = schema.as_object() else {
         return Ok(());
     };
-    found.extend(fields.get("properties").and_then(Value::as_object));
+    found.push(fields);
     let meets =
         |branch: &Value| value.map_or(Ok(true), |(value, tool)| matches(branch, value, tool));
     let mut branches = Vec::new();
@@ -431,9 +433,16 @@ fn collect_properties<'a>(
         );
     }
     for branch in branches {
-        collect_properties(branch, value, found)?;
+        collect_schemas(branch, value, found)?;
     }
     Ok(())
+}
+
+/// A `patternProperties` key compiled as [`validate`] compiles it, or
+/// `None` when this host cannot compile it: the pattern then governs no key
+/// it can name (FIX 9284).
+pub(super) fn key_pattern(pattern: &str) -> Option<regex::Regex> {
+    compiled(pattern).ok()
 }
 
 /// Refuses a `$ref` or `allOf` left in any schema position of `schema`. A
