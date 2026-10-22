@@ -1,3 +1,7 @@
+//! Calendar transcript normalization and ingest.
+//! Entry: `FileDropTranscriptSource`.
+//! Defines its own items.
+
 use crate::edge::EdgeActorClass;
 use crate::ingest::{
     FILE_DROP_TRANSCRIPT_SOURCE_ID, IngestError, IngestResult, IngestSource, NormalizedIngestBatch,

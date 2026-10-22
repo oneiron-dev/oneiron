@@ -166,6 +166,9 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
     })
 }
 
+/// Attaches `flat`'s descendants under it, in order, repairing each parent
+/// cycle on the path. The walk keeps one frame per open node on a heap
+/// stack, so a deep chain never deepens the call stack (FIX 10067).
 fn attach_children(
     flat: FlatRunTreeNode,
     children_by_parent: &mut BTreeMap<String, Vec<FlatRunTreeNode>>,
@@ -173,35 +176,60 @@ fn attach_children(
     repairs: &mut Vec<RunTreeRepair>,
     path: &mut Vec<String>,
 ) -> RunTreeNode {
+    // An open node and the children it has still to attach.
+    struct Frame {
+        node: RunTreeNode,
+        pending: std::vec::IntoIter<FlatRunTreeNode>,
+    }
+
     let attempt_id = flat.node.attempt_id.clone();
     if !emitted.insert(attempt_id.clone()) {
         return flat.node;
     }
-
     path.push(attempt_id.clone());
-    let mut node = flat.node;
-    let children = children_by_parent.remove(&attempt_id).unwrap_or_default();
-    node.children = children
-        .into_iter()
-        .filter_map(|child| {
-            if path.contains(&child.node.attempt_id) {
-                repairs.push(RunTreeRepair::ParentCycle {
-                    attempt_id: child.node.attempt_id,
-                    parent_id: attempt_id.clone(),
-                });
-                return None;
-            }
-            Some(attach_children(
-                child,
-                children_by_parent,
-                emitted,
-                repairs,
-                path,
-            ))
-        })
-        .collect();
-    path.pop();
-    node
+    let mut current = Frame {
+        node: flat.node,
+        pending: children_by_parent
+            .remove(&attempt_id)
+            .unwrap_or_default()
+            .into_iter(),
+    };
+    let mut parents: Vec<Frame> = Vec::new();
+    loop {
+        let Some(mut child) = current.pending.next() else {
+            path.pop();
+            let Some(mut parent) = parents.pop() else {
+                return current.node;
+            };
+            parent.node.children.push(current.node);
+            current = parent;
+            continue;
+        };
+        if path.contains(&child.node.attempt_id) {
+            repairs.push(RunTreeRepair::ParentCycle {
+                attempt_id: std::mem::take(&mut child.node.attempt_id),
+                parent_id: current.node.attempt_id.clone(),
+            });
+            continue;
+        }
+        let child_id = child.node.attempt_id.clone();
+        if !emitted.insert(child_id.clone()) {
+            current.node.children.push(child.node);
+            continue;
+        }
+        path.push(child_id.clone());
+        let pending = children_by_parent
+            .remove(&child_id)
+            .unwrap_or_default()
+            .into_iter();
+        parents.push(std::mem::replace(
+            &mut current,
+            Frame {
+                node: child.node,
+                pending,
+            },
+        ));
+    }
 }
 
 fn next_remaining_node(

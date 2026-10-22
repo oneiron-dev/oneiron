@@ -1,3 +1,7 @@
+//! Booking request counters and the slot-list cache.
+//! Entry: `observe_book_request`.
+//! Defines its own items.
+
 use std::num::{NonZeroU32, NonZeroU64};
 
 use serde::{Deserialize, Serialize};

@@ -92,8 +92,14 @@ impl IdempotencyStore {
         else {
             return Ok(IdempotencyLookup::Miss);
         };
+        // The erased marker of a retired entry that never decoded is that
+        // entry erased: answered so, before any decode or expiry, never a
+        // miss and never a second run (FIX 9390).
+        let Ok(raw) = oneiron::store::http_response_read(store_key.as_bytes(), &raw) else {
+            return Ok(IdempotencyLookup::Erased);
+        };
 
-        let stored = StoredIdempotencyEntry::decode(&raw).map_err(IdempotencyStoreError::decode)?;
+        let stored = StoredIdempotencyEntry::decode(raw).map_err(IdempotencyStoreError::decode)?;
         // Expiry is a delete, never an erase: the entry's instance keeps its
         // key, and the binding goes at the next checkpoint (KS-2B2).
         if self.now_secs().saturating_sub(stored.created_at_secs) >= IDEMPOTENCY_TTL.as_secs() {
@@ -398,6 +404,7 @@ impl fmt::Display for IdempotencyStoreError {
     }
 }
 
+mod body_read;
 mod caller;
 mod intent;
 mod reclaim;

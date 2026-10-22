@@ -16,7 +16,7 @@ use crate::error::Result;
 
 use super::AttemptQueue;
 use super::types::{
-    AttemptId, AttemptInterventionKind, AttemptRecord, AttemptState, InterveneAttempt,
+    AttemptId, AttemptInterventionKind, AttemptPause, AttemptRecord, AttemptState, InterveneAttempt,
 };
 
 /// The intervention actor of an annotation-hold pause and of its release.
@@ -67,23 +67,25 @@ pub struct AnnotationHoldSweep {
 
 impl AttemptRecord {
     /// The annotation hold this row is paused for. `None` unless the row is
-    /// paused and its newest pause is the engine's hold: a row a person paused
-    /// reads `None` even while a hold also applies, so nothing resumes it.
+    /// paused and the pause it is held under is the engine's hold: a row a
+    /// person paused reads `None` even while a hold also applies, so nothing
+    /// resumes it. Read from the row's held pause, never from its pruned
+    /// event history (FIX 9579).
     #[must_use]
     pub fn annotation_hold(&self) -> Option<AnnotationHold> {
         if self.state != AttemptState::Paused {
             return None;
         }
-        let event = self.events.iter().rev().find(|event| {
-            matches!(
-                event.kind,
-                AttemptInterventionKind::Pause | AttemptInterventionKind::Resume
-            )
-        })?;
-        if event.kind != AttemptInterventionKind::Pause || event.actor != ANNOTATION_HOLD_ACTOR {
-            return None;
+        match self.active_pause? {
+            AttemptPause::Annotation {
+                artifact_id,
+                thread_id,
+            } => Some(AnnotationHold {
+                artifact_id,
+                thread_id,
+            }),
+            AttemptPause::Person | AttemptPause::Budget | AttemptPause::Fanout { .. } => None,
         }
-        AnnotationHold::from_note(event.note.as_deref()?)
     }
 }
 

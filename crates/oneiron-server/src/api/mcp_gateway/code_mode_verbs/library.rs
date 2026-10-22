@@ -49,11 +49,14 @@ impl WorkflowLibrary for VaultLibrary {
         let Ok(supersedes) = supersedes.map(oneiron::EntityId::from_hex).transpose() else {
             return Ok(Admitted::Refused(SupersedeRefusal::Malformed));
         };
+        // An admission job's filing is placed by rule alone (CUA E8b): the
+        // job makes no model call.
         let deadline = RetrievalDeadline::hard(Instant::now(), PLACEMENT_BUDGET);
-        let decisions = self
-            .server
-            .decision_host()
-            .placement_decisions(self.by, &deadline);
+        let decisions = self.admission.is_none().then(|| {
+            self.server
+                .decision_host()
+                .placement_decisions(self.by, &deadline)
+        });
         // The program covers its caller's solved group at its origin (CUA
         // E8a).
         let filed_scope = self
@@ -68,9 +71,10 @@ impl WorkflowLibrary for VaultLibrary {
             program,
             proof,
             self.server.vault.now_recorded_at(),
-            Some(&decisions),
+            decisions.as_ref(),
             supersedes,
             filed_scope,
+            self.admission.as_ref(),
         )
         .map_err(library_failed)?;
         Ok(match filing {

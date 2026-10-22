@@ -5,6 +5,7 @@
 mod admission;
 mod agent_verb;
 mod binding;
+mod browser_admission;
 mod connector_answer;
 mod coordination;
 mod dispatch;

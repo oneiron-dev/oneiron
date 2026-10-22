@@ -34,10 +34,10 @@ use super::super::types::WindowKey;
 use super::super::window_rows::{WINDOW_FULL_RESYNC_MARKER, WINDOW_UPDATE};
 use super::{persist_window_doc_in_txn, write_window_svf_in_txn};
 use crate::Vault;
-use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result, SyncEngineContext};
 use crate::ports::{WindowAddress, WindowDeletionRows};
-use crate::store::legal_hold::HoldActor;
+use crate::store::legal_hold::{HoldActor, is_hold_refusal};
+use crate::sync::carrier_holds::CarrierInventory;
 
 /// A rebuilt window cut and ready to install; nothing is persisted yet.
 pub(crate) struct PreparedRebootstrap {
@@ -51,9 +51,9 @@ pub(crate) struct PreparedRebootstrap {
     /// install transaction.
     read_snapshot: Option<Vec<u8>>,
     read_updates: BTreeSet<Vec<u8>>,
-    /// Every row the window carries, live or tombstoned: the cut drops each
-    /// one's history.
-    carried: Vec<EntityId>,
+    /// Every row id and pad the window's carriers held before the cut, its
+    /// history's too: the cut drops each one's bytes (FIX 3061).
+    holds: CarrierInventory,
     /// Root-map keys whose value the rebuilt state changed or removed.
     pub(crate) rewritten: usize,
     /// Whether the cut failed its proof (FIX 6520): the install then owes the
@@ -96,7 +96,7 @@ pub(crate) fn prepare_rebootstrap(
     for (_, bytes) in &rows {
         import_doc(&doc, bytes)?;
     }
-    let carried = carried_ids(&doc);
+    let holds = CarrierInventory::of_window(&doc);
     let rewritten = write_rebuilt_state(&doc, rebuilt)?;
     // With no key rewritten the window can keep several heads: the strict cut
     // merges them first, so the root is still its newest operation (FIX 6520).
@@ -113,7 +113,7 @@ pub(crate) fn prepare_rebootstrap(
             .iter()
             .map(|(row, _)| WINDOW_UPDATE.key_bytes(row))
             .collect(),
-        carried,
+        holds,
         rewritten,
     })
 }
@@ -123,9 +123,10 @@ impl PreparedRebootstrap {
     /// snapshot and version, every pending update it folded in retired, the
     /// state vector fresh and the full-resync marker a shallow cut sets.
     /// Refused with nothing written when the window's carriers changed since
-    /// the cut read them, or a legal hold names a row whose history it drops
-    /// (OF-470, as the compaction refuses). A cut that failed its proof owes
-    /// the erasure sweep the window, in the same transaction.
+    /// the cut read them, or a legal hold names a row whose history it drops,
+    /// or the world of a pad it drops (OF-470, as the compaction refuses). A
+    /// cut that failed its proof owes the erasure sweep the window, in the
+    /// same transaction.
     pub(crate) fn install(self, vault: &Vault, actor: &HoldActor) -> Result<LoroDoc> {
         let window = self.key.as_str().to_owned();
         let prefix = format!("{window}:");
@@ -152,9 +153,7 @@ impl PreparedRebootstrap {
                     "window updates changed during re-bootstrap",
                 ));
             }
-            vault
-                .store
-                .reject_legal_holds_in_txn(wtxn, &self.carried, actor)?;
+            self.holds.reject_held_in_txn(&vault.store, wtxn, actor)?;
             persist_window_doc_in_txn(vault, wtxn, &self.key, &self.state, &self.version)?;
             WINDOW_UPDATE.delete_from(&vault.store, wtxn, prefix.as_bytes())?;
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &window, &[1u8])?;
@@ -168,16 +167,28 @@ impl PreparedRebootstrap {
 }
 
 /// Refuses, before any work, a re-bootstrap whose cut a legal hold would
-/// stop: one naming any row `doc` carries.
+/// stop: one naming any row `doc` carries or carried, or the world of a pad
+/// it holds or held (FIX 3061). A held refusal is in its hold log before
+/// this returns: once the read snapshot ended, and only then, it takes a
+/// writer of its own (FIX 2433). No materializer lock is held here.
 pub(crate) fn reject_held_rebootstrap(
     vault: &Vault,
     doc: &LoroDoc,
     actor: &HoldActor,
 ) -> Result<()> {
-    let rtxn = vault.store.env.read_txn()?;
-    vault
+    let holds = CarrierInventory::of_window(doc);
+    let refusals = vault.store.begin_refusal_attempt();
+    let checked = vault
         .store
-        .reject_legal_holds_in_txn(&rtxn, &carried_ids(doc), actor)
+        .env
+        .read_txn()
+        .map_err(Error::from)
+        .and_then(|rtxn| holds.reject_held_in_txn(&vault.store, &rtxn, actor));
+    let refusals = refusals.finish();
+    if checked.as_ref().is_err_and(is_hold_refusal) {
+        refusals.settle_now();
+    }
+    checked
 }
 
 /// Writes into `doc` the rebuilt value of every root-map key it differs on,
@@ -230,19 +241,6 @@ fn root_rows(doc: &LoroDoc) -> Result<BTreeMap<String, BTreeMap<String, LoroValu
         maps.insert(name.clone(), kept);
     }
     Ok(maps)
-}
-
-/// Every row id window `doc` carries, live or tombstoned.
-fn carried_ids(doc: &LoroDoc) -> Vec<EntityId> {
-    let mut ids = BTreeSet::new();
-    for map in ["entities", "tombstones"] {
-        doc.get_map(map).for_each(|key, _| {
-            if let Ok(id) = EntityId::from_hex(key) {
-                ids.insert(id);
-            }
-        });
-    }
-    ids.into_iter().collect()
 }
 
 fn not_installable(reason: &'static str) -> Error {
