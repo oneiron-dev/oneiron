@@ -10,6 +10,7 @@
 //! Bulk and hydration reads never come here: they stay mask-only.
 
 use super::super::{Memory, MemoryResult};
+use crate::blob_artifact::ArtifactExport;
 use crate::codebase::CodebaseSnapshotMount;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -94,14 +95,14 @@ impl Memory<'_> {
     /// One per-file read of the ORIGINAL `original` whose readable marks are
     /// `marks`, through `door`: the stored bytes for a reader of stored
     /// bytes, else the masked reader's read with `why` (CALL 3) through the
-    /// file reveal. `readmit` re-admits the door's pins after the reveal's
-    /// receipts commit.
+    /// file reveal ([`Self::repo_file_read_projected`]). `readmit` re-admits
+    /// the door's pins after the reveal's receipts commit.
     ///
     /// # Errors
     /// The read's own, a refused `why`, or a store failure.
     pub(crate) fn repo_file_read_sighted<F, R>(
         &self,
-        original: &RepoFileOriginal,
+        original: Option<&RepoFileOriginal>,
         marks: &RepoBlobMarks,
         why: Option<&str>,
         door: RepoReadDoor,
@@ -113,27 +114,76 @@ impl Memory<'_> {
         R: FnOnce() -> Result<()>,
     {
         if !self.repo_reads_masked()? {
-            let exact = read_exact()?;
-            return Ok(RepoFileRevealRead {
-                projection: RepoBodyProjection::Exact(exact),
-                proof: None,
-                byte_route: None,
-            });
+            return Ok(projected(RepoBodyProjection::Exact(read_exact()?)));
         }
-        let disclosure = self.repo_file_disclosure(why)?;
-        if disclosure == RepoFileReadDisclosure::Masked {
-            let projection =
-                project_repo_blob(self.vault, marks, &RepoSecretAudience::Masked, read_exact)?;
-            return Ok(RepoFileRevealRead {
-                projection,
-                proof: None,
-                byte_route: None,
-            });
-        }
-        Ok(read_repo_file_with_reveal(
-            self.vault, original, marks, disclosure, door, read_exact, readmit,
-        )?)
+        self.repo_file_read_projected(original, marks, why, door, read_exact, readmit)
     }
+
+    /// An artifact version's export for this handle, when the version's
+    /// stored bytes are a repo-marked blob (FIX 8960): the masked copy, or,
+    /// with a why from a proven recipient, the stored bytes through the file
+    /// reveal; the stored bytes for a reader of stored bytes. `None` for a
+    /// version no repo mark covers, which exports as before. The version is
+    /// pinned once: an ask is never on one version and an export of another.
+    ///
+    /// # Errors
+    /// The export's own, a refused `why`, or a store failure.
+    pub(crate) fn export_repo_marked_artifact(
+        &self,
+        artifact: &EntityId,
+        version: Option<u64>,
+        why: Option<&str>,
+    ) -> MemoryResult<Option<Option<ArtifactExport>>> {
+        let vault = self.vault;
+        let metadata = match version {
+            Some(version) => {
+                let txn = vault.store.env.read_txn().map_err(Error::from)?;
+                vault.blob_artifact_version_metadata_in_txn(&txn, artifact, version)?
+            }
+            None => vault.blob_artifact_head(artifact)?,
+        };
+        let Some(metadata) = metadata else {
+            return Ok(None);
+        };
+        let marks = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            repo_secret_marks_for_hash_in_txn(vault, &txn, &metadata.content_hash)?
+        };
+        if marks.is_empty() {
+            return Ok(None);
+        }
+        let Some(mut file) = vault.export_blob_artifact_raw(artifact, Some(metadata.version))?
+        else {
+            return Ok(Some(None));
+        };
+        let original = match why {
+            Some(_) => repo_file_original(*artifact, None, &file.name, &marks)?,
+            None => None,
+        };
+        let stored = std::mem::take(&mut file.bytes);
+        let readmit = || -> Result<()> {
+            let txn = vault.store.env.read_txn()?;
+            let again =
+                vault.blob_artifact_version_metadata_in_txn(&txn, artifact, metadata.version)?;
+            if again.is_none_or(|again| {
+                again.content_hash != metadata.content_hash || again.claim_id != metadata.claim_id
+            }) {
+                return Err(Error::ConcurrentWrite("the artifact version changed"));
+            }
+            Ok(())
+        };
+        let read = self.repo_file_read_sighted(
+            original.as_ref(),
+            &marks,
+            why,
+            RepoReadDoor::Bytes,
+            || Ok(stored),
+            readmit,
+        )?;
+        file.bytes = vault.resolve_docx_authors(read.projection.into_bytes())?;
+        Ok(Some(Some(file)))
+    }
+
     /// One per-file read through a door that chose the projection (a run's
     /// door, or a tool's projected sibling of an owner door), whatever this
     /// handle's own credential reads: no why, no proven recipient or no
@@ -182,13 +232,7 @@ impl Memory<'_> {
             Ok(())
         };
         Ok(read_repo_file_with_reveal(
-            vault,
-            original,
-            marks,
-            disclosure,
-            door,
-            read_exact,
-            readmit,
+            vault, original, marks, disclosure, door, read_exact, readmit,
         )?)
     }
 
@@ -218,7 +262,8 @@ impl Memory<'_> {
             return Ok(None);
         };
         let original = repo_file_original(repo, Some(mount.code_artifact_id()), path, &marks)?;
-        let read_exact = || mount.read_file(path)?.ok_or(Error::EntityNotFound);
+        let read_exact =
+            || -> Result<Vec<u8>> { mount.read_file(path)?.ok_or(Error::EntityNotFound) };
         self.repo_file_read_projected(original.as_ref(), &marks, why, door, read_exact, readmit)
             .map(Some)
     }

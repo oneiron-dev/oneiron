@@ -11396,6 +11396,7 @@ class CodeViewRequest(TypedDict):
 class CodeViewReadRequest(TypedDict):
     view: CodeViewRequest
     path: str
+    why: NotRequired[str | None]
 class CodeViewFileBytes(TypedDict):
     path: str
     bytes: list[int]
@@ -11462,6 +11463,7 @@ class CodeSnapshotReadRequest(TypedDict):
     repo: EntityId
     snapshot: str
     path: str
+    why: NotRequired[str | None]
 class CodeSnapshotPinnedFile(TypedDict):
     repo: EntityId
     snapshot: str
@@ -11825,6 +11827,7 @@ class RepoSnapshotsReadInput(TypedDict):
     ref: str
     snapshot: str
     path: str
+    why: NotRequired[str | None]
 class RepoSnapshotsReadOutput(TypedDict):
     repo: EntityId
     ref: str
@@ -11859,6 +11862,7 @@ RepoViewsGetOutput = RepoWorkView
 class RepoViewsReadInput(TypedDict):
     work: EntityId
     path: str
+    why: NotRequired[str | None]
 class RepoViewsReadOutput(TypedDict):
     work: EntityId
     path: str

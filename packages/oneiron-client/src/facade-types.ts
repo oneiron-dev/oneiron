@@ -4637,7 +4637,7 @@ export type CodeWorkingView = { view: EntityId; repo: EntityId; base: EntityId; 
 /** `oneiron::memory::code_view_doors::types::CodeViewRequest` */
 export type CodeViewRequest = { view: EntityId; repo: EntityId; tested: EntityId; account: EntityId }
 /** `oneiron::memory::code_view_doors::types::CodeViewReadRequest` */
-export type CodeViewReadRequest = { view: CodeViewRequest; path: string }
+export type CodeViewReadRequest = { view: CodeViewRequest; path: string; why?: string | null }
 /** `oneiron::memory::code_view_doors::types::CodeViewFileBytes` */
 export type CodeViewFileBytes = { path: string; bytes: number[]; sha256: string; projection?: RepoFileProjectionView | null }
 /** `oneiron::memory::code_view_doors::types::CodeSecretTaintRef` */
@@ -4673,7 +4673,7 @@ export type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: s
 /** `oneiron::memory::codebase_doors::types::CodeSnapshotRequest` */
 export type CodeSnapshotRequest = { repo: EntityId; snapshot: string }
 /** `oneiron::memory::codebase_doors::types::CodeSnapshotReadRequest` */
-export type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string }
+export type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string; why?: string | null }
 /** `oneiron::memory::codebase_doors::types::CodeSnapshotPinnedFile` */
 export type CodeSnapshotPinnedFile = { repo: EntityId; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string }
 /** `oneiron::memory::codebase_doors::types::CodeSnapshotDefinitionsRequest` */
@@ -4827,7 +4827,7 @@ export type RepoSnapshotView = { repo: EntityId; ref: string; commit: string; sn
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsGetOutput` */
 export type RepoSnapshotsGetOutput = RepoSnapshotView
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsReadInput` */
-export type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string }
+export type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string; why?: string | null }
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsReadOutput` */
 export type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string }
 /** `oneiron::memory::repo_doors::types::RepoSymbolsDefinitionsInput` */
@@ -4843,7 +4843,7 @@ export type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_g
 /** `oneiron::memory::repo_doors::types::RepoViewsGetOutput` */
 export type RepoViewsGetOutput = RepoWorkView
 /** `oneiron::memory::repo_doors::types::RepoViewsReadInput` */
-export type RepoViewsReadInput = { work: EntityId; path: string }
+export type RepoViewsReadInput = { work: EntityId; path: string; why?: string | null }
 /** `oneiron::memory::repo_doors::types::RepoViewsReadOutput` */
 export type RepoViewsReadOutput = { work: EntityId; path: string; bytes: number[]; sha256: string }
 /** `oneiron::memory::repo_doors::types::RepoMergeQueueObserveInput` */

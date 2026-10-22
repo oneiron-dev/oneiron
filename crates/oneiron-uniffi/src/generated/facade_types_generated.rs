@@ -35449,6 +35449,8 @@ pub struct CodeViewReadRequest {
     pub view: CodeViewRequest,
     #[serde(rename = "path")]
     pub path: String,
+    #[serde(rename = "why", default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `oneiron::memory::code_view_doors::types::CodeViewFileBytes`.
@@ -35679,6 +35681,8 @@ pub struct CodeSnapshotReadRequest {
     pub snapshot: String,
     #[serde(rename = "path")]
     pub path: String,
+    #[serde(rename = "why", default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotPinnedFile`.
@@ -36921,6 +36925,8 @@ pub struct RepoSnapshotsReadInput {
     pub snapshot: String,
     #[serde(rename = "path")]
     pub path: String,
+    #[serde(rename = "why", default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoSnapshotsReadInput`.
@@ -37041,6 +37047,8 @@ pub struct RepoViewsReadInput {
     pub work: String,
     #[serde(rename = "path")]
     pub path: String,
+    #[serde(rename = "why", default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoViewsReadInput`.

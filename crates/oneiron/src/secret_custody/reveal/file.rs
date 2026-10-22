@@ -743,6 +743,7 @@ fn deliver_file_in_txn(
 mod lfs;
 mod repo;
 
+pub use self::repo::RepoFileRevealScope;
 pub(crate) use self::repo::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
     RepoFileRevealTarget, RepoFileSight,

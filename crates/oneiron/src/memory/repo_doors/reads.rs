@@ -16,8 +16,8 @@ use super::{
     RepoSymbolsDefinitionsOutput, RepoViewsGetInput, RepoViewsGetOutput, RepoViewsReadInput,
     RepoViewsReadOutput, refusal_error, repo_target,
 };
-use crate::EntityId;
 use crate::EdgeActorClass;
+use crate::EntityId;
 use crate::code_view::CodeViewSet;
 use crate::codebase::{CodebaseSnapshotMount, snapshot_asset_entity_id};
 use crate::entity_id::bytes_to_hex_lower;
@@ -256,15 +256,16 @@ impl Memory<'_> {
             ));
         };
         let set = CodeViewSet::open(self.vault)?;
-        let mut bytes =
-            crate::code_view::read_view_file(&set.view_path(input.work)?, &input.path)?;
+        let mut bytes = crate::code_view::read_view_file(&set.view_path(input.work)?, &input.path)?;
         if blake3::hash(&bytes).as_bytes() != expected {
             return Err(Error::CorruptedIndex("work file was modified").into());
         }
         // A read that says why may get the base file's stored bytes, while
         // the work still holds that file's masked copy (FIX 8960).
         if let Some(why) = input.why.as_deref() {
-            if let Some(revealed) = self.repo_view_base_reveal(binding, &own, &input.path, &bytes, why)? {
+            if let Some(revealed) =
+                self.repo_view_base_reveal(binding, &own, &input.path, &bytes, why)?
+            {
                 bytes = revealed;
             }
         }

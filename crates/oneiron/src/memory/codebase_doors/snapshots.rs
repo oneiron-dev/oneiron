@@ -150,7 +150,8 @@ impl Memory<'_> {
         let (read, byte_route) = match early {
             Some(read) => (read, None),
             None => {
-                let changed = || crate::Error::ConcurrentWrite("the snapshot read's admission changed");
+                let changed =
+                    || crate::Error::ConcurrentWrite("the snapshot read's admission changed");
                 let artifact = mount.code_artifact_id();
                 let readmit = || -> crate::error::Result<()> {
                     self.codebase_owner(owner).map_err(|_| changed())?;
