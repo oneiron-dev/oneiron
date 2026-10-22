@@ -44,6 +44,8 @@ pub type SnapshotFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait SnapshotRuntime: Send + Sync {
     /// The bound `vault`'s release answers within: the owner's lock release
     /// timeout. The lock waits that long and [`LOCK_RELEASE_MARGIN`] more.
+    /// It takes no lock the release path holds: a hung release never
+    /// blocks it.
     fn release_bound(&self, vault: VaultRef) -> Duration;
 
     /// Releases every copy of `vault`'s snapshot state the host holds, for a
@@ -87,6 +89,10 @@ pub struct SnapshotWorkerAbort {
 pub struct SnapshotLockReceipt {
     /// The admission generation the lock closed.
     pub closed_generation: u64,
+    /// The bound the lock waited for the runtime's answer, in milliseconds:
+    /// its release bound and [`LOCK_RELEASE_MARGIN`]; `None` with no
+    /// runtime attached.
+    pub bound_ms: Option<u64>,
     /// The runtime's answer; `None` with no runtime attached.
     pub release: Option<SnapshotRelease>,
 }
@@ -240,6 +246,7 @@ impl Vault {
         let Some(runtime) = lifecycle.attached() else {
             return SnapshotLockReceipt {
                 closed_generation,
+                bound_ms: None,
                 release: None,
             };
         };
@@ -249,11 +256,11 @@ impl Vault {
             elapsed_ms: elapsed_ms(started),
             ..SnapshotRelease::default()
         };
+        let vault = self.snapshot_vault_ref();
+        let bound = runtime
+            .release_bound(vault)
+            .saturating_add(LOCK_RELEASE_MARGIN);
         let release = if tokio::runtime::Handle::try_current().is_ok() {
-            let vault = self.snapshot_vault_ref();
-            let bound = runtime
-                .release_bound(vault)
-                .saturating_add(LOCK_RELEASE_MARGIN);
             let answer = runtime.release_vault(vault, closed_generation);
             match tokio::time::timeout(bound, answer).await {
                 Ok(release) => release,
@@ -271,6 +278,7 @@ impl Vault {
         }
         SnapshotLockReceipt {
             closed_generation,
+            bound_ms: Some(u64::try_from(bound.as_millis()).unwrap_or(u64::MAX)),
             release: Some(release),
         }
     }
