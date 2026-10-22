@@ -5,9 +5,10 @@
 //! history is missing rather than reading newer state. A fact hook replays
 //! over its sources, a verb hook over its newest saved runs.
 
+mod body;
+
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,7 +22,7 @@ use super::body::{HookBodyRuntime, HookVerdict};
 use super::filter;
 use super::grant::{HookGrant, effective_grant};
 use super::read;
-use super::runner::{Verdict, ask_verdict, bounded, input_json, judge};
+use super::runner::{Verdict, bounded};
 use super::source::{self, FactEntry, FactKind, FactPosition, FactPositionHex, FactSource};
 use super::store::{self, HookReadPin, HookRunRecord, HookRunRef, HookVerdictPin, RunKey};
 use super::verb::{HookVerbRunRecord, VERB_RUNS};
@@ -434,144 +435,6 @@ impl Replay<'_> {
                 result: self.verb_run(lane, saved),
             },
         }
-    }
-
-    /// A run pinned this entry: its input as it was, each read only when it
-    /// answers what it answered then, and each verdict as the run heard it.
-    fn from_memo(&self, lane: &ScopedRead<'_>, memo: &HookRunRecord) -> HookReplayResult {
-        let Some(input) = memo.input_json.as_deref() else {
-            return input_too_large();
-        };
-        if !memo.verdicts_complete {
-            return HookReplayResult::MissingHistory {
-                reason: "the run's verdicts were too large to pin".to_owned(),
-            };
-        }
-        let mut reads = PinnedReads::new(&memo.reads);
-        let mut verdicts = PinnedVerdicts::new(&memo.verdicts);
-        let result = match &self.body {
-            Ok(body) => self.runtime.run_fact_hook(
-                body,
-                input,
-                self.binding.selector.budget_ms,
-                &mut |request: &str| reads.answer(lane, self.grant, request),
-                &mut |request: &str| {
-                    let (reply, evidence) = verdicts.answer(request);
-                    self.heard(evidence);
-                    reply
-                },
-            ),
-            Err(reason) => Err(Error::InvalidConfig(reason.clone())),
-        };
-        self.served(&memo.reads);
-        self.served(&reads.scratch);
-        if let Some(reason) = reads.missing.or(verdicts.missing) {
-            return HookReplayResult::MissingHistory { reason };
-        }
-        ran(
-            judge(self.binding, result),
-            Some(memo.outcome.as_str()),
-            memo.outcome_json.as_deref(),
-            true,
-            false,
-        )
-    }
-
-    /// A verb run saved this case: its input as it was, a post-hook's view
-    /// of the result in it, and each read only when it answers what it
-    /// answered then. A verb hook calls no model.
-    fn verb_run(&self, lane: &ScopedRead<'_>, saved: &HookVerbRunRecord) -> HookReplayResult {
-        let Some(input) = saved.input_json.as_deref() else {
-            return input_too_large();
-        };
-        let mut reads = PinnedReads::new(&saved.reads);
-        let result = match &self.body {
-            Ok(body) => self.runtime.run_hook(
-                body,
-                input,
-                self.binding.selector.budget_ms,
-                &mut |request: &str| reads.answer(lane, self.grant, request),
-            ),
-            Err(reason) => Err(Error::InvalidConfig(reason.clone())),
-        };
-        self.served(&saved.reads);
-        self.served(&reads.scratch);
-        if let Some(reason) = reads.missing {
-            return HookReplayResult::MissingHistory { reason };
-        }
-        ran(
-            judge(self.binding, result),
-            Some(saved.outcome.as_str()),
-            saved.outcome_json.as_deref(),
-            true,
-            false,
-        )
-    }
-
-    /// No run pinned this entry. The live entity stands in only while its
-    /// body is the one the entry wrote; a generative hook's verdicts ask the
-    /// live ladder, as the runner would.
-    fn live(&self, lane: &ScopedRead<'_>, entry: &FactEntry) -> Result<Option<HookReplayResult>> {
-        let Some(seen) = read::fact_row(lane, self.grant, entry.entity)? else {
-            return Ok(None);
-        };
-        let actor = filter::actor_class(self.vault, entry.actor)?;
-        if !filter::fact_matches(
-            self.vault,
-            &self.binding.selector,
-            entry.kind,
-            entry.entity,
-            seen.claim.as_ref(),
-            actor,
-        )? {
-            return Ok(None);
-        }
-        if entry.body_hash != Some(seen.body_hash) {
-            return Ok(Some(HookReplayResult::MissingHistory {
-                reason: "the entity changed after this entry and no run pinned its input"
-                    .to_owned(),
-            }));
-        }
-        self.rows.borrow_mut().push(entry.actor);
-        let now = self
-            .vault
-            .store
-            .clock
-            .now_recorded_at()
-            .saturating_mul(1_000);
-        let input = input_json(
-            self.binding_id,
-            self.binding,
-            entry,
-            actor,
-            &seen.claim_json,
-            now,
-        )?;
-        let budget_ms = self.binding.selector.budget_ms;
-        let deadline = Instant::now() + Duration::from_millis(u64::from(budget_ms));
-        let mut pins = Vec::new();
-        let result = match &self.body {
-            Ok(body) => {
-                let mut answer = |request: &str| read::answer(lane, self.grant, request, &mut pins);
-                let mut verdict = |request: &str| {
-                    let (reply, evidence) =
-                        ask_verdict(self.binding, self.grant, self.verdict, request, deadline);
-                    self.heard(evidence.as_deref());
-                    reply
-                };
-                self.runtime
-                    .run_fact_hook(body, &input, budget_ms, &mut answer, &mut verdict)
-            }
-            Err(reason) => Err(Error::InvalidConfig(reason.clone())),
-        };
-        self.served(&pins);
-        Ok(Some(ran(
-            judge(self.binding, result),
-            None,
-            None,
-            false,
-            true,
-        )))
     }
 }
 
