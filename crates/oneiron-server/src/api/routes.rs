@@ -101,7 +101,14 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))
         .route("/run-tree/observe", get(core_run_tree_observe))
-        .route("/run-tree/intervene", post(core_run_tree_intervene))
+        // FIX 6056: a keyed intervention runs once and replays its effect.
+        .route(
+            "/run-tree/intervene",
+            post(core_run_tree_intervene).route_layer(middleware::from_fn_with_state(
+                idempotency.clone(),
+                intervene_idempotency,
+            )),
+        )
         .route("/memory/{id}/timeline", get(core_memory_timeline))
         .route(
             "/memory/{id}/watch",
