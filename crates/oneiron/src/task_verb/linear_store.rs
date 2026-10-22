@@ -408,7 +408,14 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
                     pushed.push(receipt);
                 }
                 Err(error) => {
-                    first_failure.get_or_insert(error);
+                    // A push that waits for its Rate window (FIX 8788) keeps
+                    // its dirty revision and yields to a later real failure.
+                    if first_failure
+                        .as_ref()
+                        .is_none_or(|first| matches!(first, LinearSyncError::Waiting(_)))
+                    {
+                        first_failure = Some(error);
+                    }
                 }
             }
         }

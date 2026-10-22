@@ -8290,6 +8290,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
+ "serde",
  "serde_json",
  "tempfile",
 ]

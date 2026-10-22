@@ -1,10 +1,12 @@
 //! Linear mutations through the vault's replay-first outbound dispatch door.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use oneiron::linear_sync::{
-    LinearEffectHold, LinearEffectKind, LinearEffectRequest, LinearRoleApproval, LinearTaskStore,
-    VaultLinearTaskStore,
+    LINEAR_RATE_WINDOW_REASON, LinearEffectHold, LinearEffectKind, LinearEffectRequest,
+    LinearRateTurn, LinearRoleApproval, LinearTaskStore, VaultLinearTaskStore,
 };
 use oneiron::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
@@ -12,12 +14,15 @@ use oneiron::outbound::{
     OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
     OutboundIntentTrigger,
 };
-use oneiron::{LinearSyncError, LinearSyncResult, Vault};
+use oneiron::{EntityId, LinearSyncError, LinearSyncResult, Vault};
 use serde_json::Value;
 
 use crate::egress::{CREATE, LinearMutation, UPDATE};
-use crate::journal::LinearResponseJournal;
-use crate::{GraphQlCall, GraphQlExecutor, GraphQlTransportError, LinearOutboundDoor, invalid};
+use crate::journal::{LinearResponseJournal, request_ref};
+use crate::{
+    GraphQlCall, GraphQlExecutor, GraphQlTransportError, LinearBodyLine, LinearOutboundDoor,
+    invalid,
+};
 
 /// The credential-bearing host connector bound to the engine's ordinary
 /// ExternalEffect gate, budget, intent ledger and receipt. A standalone HTTP
@@ -27,16 +32,21 @@ use crate::{GraphQlCall, GraphQlExecutor, GraphQlTransportError, LinearOutboundD
 /// remote mutation charges each distinct connector key once (OF-427).
 pub struct VaultLinearOutboundDoor<'v, T> {
     vault: &'v Vault,
-    journal: LinearResponseJournal<T>,
+    journal: LinearResponseJournal<'v, T>,
     actor: OutboundDispatchActor,
     gate: OutboundDispatchGate,
     now: u64,
+    /// How long a dispatch waits for a full Rate window (FIX 8788): none for
+    /// a background pass.
+    rate_wait: Duration,
 }
 
 impl<'v, T> VaultLinearOutboundDoor<'v, T> {
     /// Creates the host door. `actor` is the authenticated actor whose policy
     /// governs the effect; `gate` holds today's opt-in and permission facts.
-    /// The directory is a host-private durable response store, not vault data.
+    /// The directory keeps the host's content-free delivery state; the
+    /// request and response bytes are the mirrored TASK's body custody in
+    /// the vault (FIX 8609).
     ///
     /// # Errors
     /// Refuses a missing response directory.
@@ -50,11 +60,30 @@ impl<'v, T> VaultLinearOutboundDoor<'v, T> {
     ) -> LinearSyncResult<Self> {
         Ok(Self {
             vault,
-            journal: LinearResponseJournal::new(transport, journal_dir)?,
+            journal: LinearResponseJournal::new(vault, transport, journal_dir)?,
             actor,
             gate,
             now,
+            rate_wait: Duration::ZERO,
         })
+    }
+
+    /// This door, decoding each kept request and response on the host's
+    /// memory `line` (FIX 8610).
+    #[must_use]
+    pub fn with_body_line(mut self, line: Arc<dyn LinearBodyLine>) -> Self {
+        self.journal.set_body_line(line);
+        self
+    }
+
+    /// This door, waiting up to `wait` for a full Rate window before each
+    /// dispatch, at its fair turn among the verified writers waiting (FIX
+    /// 8788). A door without one returns a full window at once as
+    /// [`LinearSyncError::Waiting`].
+    #[must_use]
+    pub fn with_rate_wait(mut self, wait: Duration) -> Self {
+        self.rate_wait = wait;
+        self
     }
 
     pub fn into_transport(self) -> T {
@@ -62,10 +91,11 @@ impl<'v, T> VaultLinearOutboundDoor<'v, T> {
     }
 
     /// Resolves a `content_ref` on an ordinary outbound receipt to the exact
-    /// host-private GraphQL request frozen before gate evaluation.
+    /// GraphQL request frozen before gate evaluation, while its TASK lives.
     ///
     /// # Errors
-    /// Returns an error if the host custody file cannot be read or decoded.
+    /// Returns an error if the request cannot be read or decoded, or was
+    /// erased with its TASK.
     pub fn request_by_ref(&self, reference: &str) -> LinearSyncResult<Option<Value>> {
         self.journal.read_request(reference)
     }
@@ -92,15 +122,16 @@ pub fn held_approve_once(error: &LinearSyncError) -> Option<&str> {
         .strip_prefix(HELD_DIGEST)
 }
 
-struct LinearSink<'a, T> {
-    journal: &'a mut LinearResponseJournal<T>,
+struct LinearSink<'a, 'v, T> {
+    journal: &'a mut LinearResponseJournal<'v, T>,
     operation_id: [u8; 32],
+    task: EntityId,
     call: &'a GraphQlCall,
     intent_ref: &'a str,
     content_ref: &'a str,
 }
 
-impl<T: GraphQlExecutor> OutboundExecutionSink for LinearSink<'_, T> {
+impl<T: GraphQlExecutor> OutboundExecutionSink for LinearSink<'_, '_, T> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         if request.intent_ref != self.intent_ref
             || request.intent.channel != "linear"
@@ -110,22 +141,21 @@ impl<T: GraphQlExecutor> OutboundExecutionSink for LinearSink<'_, T> {
         {
             return OutboundExecutionOutcome::failed("linear frozen call mismatch");
         }
-        match self.journal.dispatch(self.operation_id, self.call) {
-            Ok(response) => {
-                let key = if self.call.query == CREATE {
-                    "issueCreate"
-                } else {
-                    "issueUpdate"
-                };
-                let provider = response["data"][key]["issue"]["id"]
-                    .as_str()
-                    .unwrap_or_default();
-                OutboundExecutionOutcome::delivered_to_channel(provider)
-            }
+        match self
+            .journal
+            .dispatch(self.operation_id, self.task, self.call)
+        {
+            Ok(issue) => OutboundExecutionOutcome::delivered_to_channel(issue),
             Err(GraphQlTransportError::NotSent) => {
                 OutboundExecutionOutcome::failed("linear transport not started")
             }
-            Err(GraphQlTransportError::Uncertain) => {
+            // FIX 8611: the endpoint refused the credential and ran nothing:
+            // a definite non-delivery, kept with its status alone.
+            Err(GraphQlTransportError::Rejected { status }) => {
+                OutboundExecutionOutcome::failed("linear credential rejected")
+                    .with_receipt_field("linear_http_status", status.to_string())
+            }
+            Err(GraphQlTransportError::Uncertain | GraphQlTransportError::Waiting) => {
                 OutboundExecutionOutcome::failed("linear delivery uncertain")
                     .with_possible_delivery()
             }
@@ -243,7 +273,7 @@ impl<T> VaultLinearOutboundDoor<'_, T> {
         call: &GraphQlCall,
     ) -> LinearSyncResult<[LinearRoleApproval; 2]> {
         let (effect, verb, target) = self.mutation_effect(mutation, call)?;
-        let content_ref = LinearResponseJournal::<T>::request_ref(&effect.operation_id);
+        let content_ref = request_ref(&effect.operation_id);
         let (request, _) = self.door_request(effect.operation_id, verb, target, &content_ref);
         self.vault
             .linear_outbound_door_approval_digests(&request, &effect)
@@ -259,19 +289,41 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
         let operation_id = mutation.operation_id;
         let (effect, verb, target) = self.mutation_effect(mutation, call)?;
         self.vault.recheck_admitted_linear_effect(&effect)?;
-        let content_ref = self.journal.stage_request(&operation_id, call)?;
-        let (request, intent_ref) = self.door_request(operation_id, verb, target, &content_ref);
-        let mut sink = LinearSink {
-            journal: &mut self.journal,
-            operation_id,
-            call,
-            intent_ref: &intent_ref,
-            content_ref: &content_ref,
+        let content_ref = self
+            .journal
+            .stage_request(&operation_id, effect.task_ref, call)?;
+        // FIX 8788: a full Rate window waits before each dispatch, up to the
+        // door's wait, and a dispatch that met one at its admission waits
+        // again; a door without a wait leaves it for a later pass.
+        let now = Instant::now();
+        let deadline = now.checked_add(self.rate_wait).unwrap_or(now);
+        let mut turn = LinearRateTurn::default();
+        let result = loop {
+            turn = self.vault.linear_rate_turn(&effect, deadline, turn)?;
+            let (request, intent_ref) = self.door_request(operation_id, verb, target, &content_ref);
+            let mut sink = LinearSink {
+                journal: &mut self.journal,
+                operation_id,
+                task: effect.task_ref,
+                call,
+                intent_ref: &intent_ref,
+                content_ref: &content_ref,
+            };
+            let result = self
+                .vault
+                .dispatch_linear_outbound_intent_recorded(request, &effect, &mut sink)
+                .map_err(|_| invalid("Linear outbound dispatch failed"))?;
+            if result.outcome != OutboundDispatchOutcome::DeliveredToChannel
+                && result
+                    .gate_reason_codes
+                    .iter()
+                    .any(|code| code == LINEAR_RATE_WINDOW_REASON)
+            {
+                continue;
+            }
+            break result;
         };
-        let result = self
-            .vault
-            .dispatch_linear_outbound_intent_recorded(request, &effect, &mut sink)
-            .map_err(|_| invalid("Linear outbound dispatch failed"))?;
+        drop(turn);
         if result.outcome != OutboundDispatchOutcome::DeliveredToChannel {
             // FIX 6424 part 2a: the same refusal; a hold for the owner's
             // press names the blocking actor's digest, copied from the
@@ -289,8 +341,7 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
             self.vault.note_linear_outbound_gate(&effect, gate_ref)?;
         }
         self.journal
-            .read_committed(&operation_id, call)
-            .map_err(oneiron::LinearSyncError::from)?
+            .response(&operation_id, effect.task_ref)?
             .ok_or_else(|| invalid("Linear delivered effect has no response receipt"))
     }
 }

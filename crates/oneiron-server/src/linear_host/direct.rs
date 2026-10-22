@@ -2,20 +2,21 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::linear_sync::ServedLinearEgress;
+use oneiron::linear_sync::{LinearWait, ServedLinearEgress};
 use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate, OutboundDispatchPolicyRisk};
 use oneiron::{EntityId, LinearSyncError};
 use oneiron_linear::{
-    HttpLinearClient, LinearHostChangeSource, LinearHostEgress, LinearTrackerConfig,
-    VaultLinearOutboundDoor,
+    HttpLinearClient, LinearBodyLine, LinearHostChangeSource, LinearHostEgress,
+    LinearTrackerConfig, VaultLinearOutboundDoor,
 };
 
 use super::PassCredential;
 use crate::config::LinearConfig;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
-/// The direct mirror the checked `settings` name. The response directory is
-/// private host custody, outside the replicated vault graph.
+/// The direct mirror the checked `settings` name. The response directory
+/// keeps the host's content-free delivery state, outside the replicated vault
+/// graph; the request and response bytes are the TASK's body custody.
 pub(super) async fn spawn(
     server: Arc<SyncServer>,
     settings: &LinearConfig,
@@ -49,6 +50,10 @@ pub(super) async fn spawn(
         })
         .await??;
     }
+    // FIX 8610: a tracker body's decode takes its bytes on the server's
+    // retained-memory line.
+    let body_line: Arc<dyn LinearBodyLine> =
+        Arc::new(super::body_line::ServerBodyLine::of(&server));
     Ok(Some(tokio::spawn(async move {
         let mut wait = Duration::ZERO;
         let mut interval = policy.poll_interval_secs;
@@ -64,6 +69,7 @@ pub(super) async fn spawn(
             let tracker = tracker.clone();
             let responses = responses.clone();
             let endpoint = endpoint.clone();
+            let body_line = Arc::clone(&body_line);
             let outcome = tokio::task::spawn_blocking(move || {
                 // Held through the policy and budget reads, every Linear
                 // request, the response journal and the cursor and receipt
@@ -78,7 +84,8 @@ pub(super) async fn spawn(
                         key,
                         endpoint,
                         Duration::from_secs(policy.request_timeout_secs),
-                    )?;
+                    )?
+                    .with_body_line(Arc::clone(&body_line));
                     let inbound = LinearHostChangeSource::new(client.clone(), tracker.clone())?;
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -98,7 +105,11 @@ pub(super) async fn spawn(
                             policy_risk: OutboundDispatchPolicyRisk::Normal,
                         },
                         now,
-                    )?;
+                    )?
+                    // It decodes on the same line, and as a background pass
+                    // waits for no Rate window (FIX 8788): a full one leaves
+                    // the TASK dirty for a later pass.
+                    .with_body_line(body_line);
                     let outbound = ServedLinearEgress::new(
                         &vault,
                         scheduler,
@@ -122,6 +133,19 @@ pub(super) async fn spawn(
                         pushed = pushed.len(),
                         pulled = pulled.applied,
                         "Linear direct mirror pass"
+                    );
+                }
+                Ok(Err(LinearSyncError::Waiting(waiting))) => {
+                    // FIX 8788, 8610: nothing was refused; the TASK stays
+                    // dirty and a later pass sends it.
+                    tracing::debug!(
+                        reason = match waiting {
+                            LinearWait::RateWindow { .. } => {
+                                oneiron::linear_sync::LINEAR_RATE_WINDOW_REASON
+                            }
+                            LinearWait::BodyMemory => "linear_body_memory_wait",
+                        },
+                        "Linear mutation waits; it stays pending"
                     );
                 }
                 Ok(Err(LinearSyncError::RemoteChanged)) => {

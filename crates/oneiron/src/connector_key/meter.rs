@@ -17,6 +17,9 @@ use super::record::{
 };
 use super::txn::suspend_connector_key_in_txn;
 
+mod rate_window;
+pub(crate) use self::rate_window::{BudgetBlock, budget_block_pooled};
+
 /// Compiled-charter cap usage rows live at `0x8000 | i` (GOV-10); key budget
 /// rows live at `0..=15`.
 pub const CONNECTOR_KEY_CHARTER_ROW_BASE: u16 = 0x8000;

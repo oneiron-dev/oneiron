@@ -17,11 +17,13 @@ use crate::memory::{
     MemoryResult,
 };
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::scan_check::{EngineScan, ScanCount};
+use crate::task_verb::{TaskActor, TaskCallReceipt};
 
 use super::facade_types::{
-    LINEAR_PROVENANCE_PAGE_DEFAULT, LINEAR_PROVENANCE_PAGE_MAX, LinearLinkView, LinearMappingEdit,
-    LinearMappingEditReceipt, LinearMappingOp, LinearMappingRequest, LinearMappingView,
-    LinearProvenanceEntry, LinearProvenancePage, LinearProvenanceRequest,
+    LINEAR_PROVENANCE_PAGE_DEFAULT, LinearLinkView, LinearMappingEdit, LinearMappingEditReceipt,
+    LinearMappingOp, LinearMappingRequest, LinearMappingView, LinearProvenanceEntry,
+    LinearProvenancePage, LinearProvenanceRequest,
 };
 use super::mirror_event::{
     EventCursor, EventDirection, EventKey, LinearMirrorEvent, control_in, event_in, mapping_key,
@@ -82,16 +84,35 @@ fn payload_artifact(payload_ref: &str) -> Option<EntityId> {
     EntityId::from_hex(artifact).ok()
 }
 
-/// The vault rows one event row names by ref.
+/// The typed receipt a title edit's row keeps (FIX 8789): `None` for any
+/// other row, and for a receipt that does not read as one.
+fn edit_receipt(row: &LinearMirrorEvent) -> Option<TaskCallReceipt> {
+    if row.direction != EventDirection::TaskEdit.token() {
+        return None;
+    }
+    serde_json::from_str(row.receipt.as_deref()?).ok()
+}
+
+/// The actor a title edit's receipt names in its lifecycle record.
+fn receipt_actor(row: &LinearMirrorEvent) -> Option<EntityId> {
+    edit_receipt(row)?.lifecycle?.actor.id()
+}
+
+/// The vault rows one event row names by ref, the actor inside a title
+/// edit's receipt included.
 fn named_rows(row: &LinearMirrorEvent) -> impl Iterator<Item = EntityId> {
     row.writer_actor
         .as_deref()
         .and_then(|hex| EntityId::from_hex(hex).ok())
         .into_iter()
         .chain(row.payload_ref.as_deref().and_then(payload_artifact))
+        .chain(receipt_actor(row))
 }
 
-/// `row` without the refs `readable` does not hold.
+/// `row` without the refs `readable` does not hold. A title edit's receipt
+/// is projected through its type: an actor the caller does not read names no
+/// one there, as an erased one does, and a receipt that does not read as a
+/// title edit's is left out of this row. The stored row keeps its receipt.
 fn withhold(row: &mut LinearMirrorEvent, readable: &BTreeSet<EntityId>) {
     let unread = |id: Option<EntityId>| id.is_some_and(|id| !readable.contains(&id));
     if unread(
@@ -104,6 +125,16 @@ fn withhold(row: &mut LinearMirrorEvent, readable: &BTreeSet<EntityId>) {
     }
     if unread(row.payload_ref.as_deref().and_then(payload_artifact)) {
         row.payload_ref = None;
+    }
+    if row.direction == EventDirection::TaskEdit.token() && row.receipt.is_some() {
+        row.receipt = edit_receipt(row).and_then(|mut receipt| {
+            if let Some(lifecycle) = receipt.lifecycle.as_mut()
+                && unread(lifecycle.actor.id())
+            {
+                lifecycle.actor = TaskActor::Erased;
+            }
+            serde_json::to_string(&receipt).ok()
+        });
     }
 }
 
@@ -199,21 +230,33 @@ impl Memory<'_> {
         input: &LinearProvenanceRequest,
     ) -> MemoryResult<LinearProvenancePage> {
         let task = self.mirror_task(&input.task_ref)?;
-        let limit = input.limit.unwrap_or(LINEAR_PROVENANCE_PAGE_DEFAULT);
-        if limit == 0 || limit > LINEAR_PROVENANCE_PAGE_MAX {
-            return Err(MemoryError::bad_request(format!(
-                "limit must be 1 to {LINEAR_PROVENANCE_PAGE_MAX}"
-            )));
-        }
+        // Any positive count is the page's; the cursor resumes the rest
+        // (FIX 8787).
+        let limit = match input.limit {
+            None | Some(0) => LINEAR_PROVENANCE_PAGE_DEFAULT,
+            Some(limit) => limit,
+        };
         let after = input.cursor.as_deref().map(parse_cursor).transpose()?;
         let vault = self.vault();
-        let (rows, next) = {
+        let (rows, next, mut count) = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             if vault.get_entity_type_in_txn(&txn, &task)? != Some(ENTITY_TYPE_TASK) {
                 return Err(MemoryError::from(Error::EntityNotFound));
             }
-            task_events_in(vault, &txn, task, after, limit as usize)?
+            let count = ScanCount::start(
+                &vault.store,
+                &txn,
+                EngineScan::LinearProvenanceRows,
+                task.as_bytes(),
+            )?;
+            let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+            let (rows, next) = task_events_in(vault, &txn, task, after, limit)?;
+            (rows, next, count)
         };
+        // The index rows the page read: its own, and the lookahead that
+        // found more.
+        count.rows(rows.len() + usize::from(next.is_some()));
+        count.finish(vault);
         let named: Vec<EntityId> = rows.iter().flat_map(|(_, row)| named_rows(row)).collect();
         let readable = self.credential_readable_ids(&named)?;
         let events: Vec<LinearProvenanceEntry> = rows

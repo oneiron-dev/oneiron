@@ -11,11 +11,29 @@ use crate::gate::{
 };
 use crate::linear_sync::{
     LinearEffectAdmission, LinearIssueRef, LinearSyncDirection, LinearSyncError, LinearSyncResult,
-    MirroredTaskFields, linear_operation_id,
+    LinearWait, MirroredTaskFields, linear_operation_id,
 };
 use crate::task_verb::linear_effect_state_in_txn;
 
 const EFFECT_AUTH_KEY: &[u8] = b"linear:effect_authorized:v1/";
+
+/// What the admission closure returns to drop its transaction when every
+/// full budget row only paces (FIX 8788); never surfaces as an error.
+const PACED: LinearSyncError = LinearSyncError::Waiting(LinearWait::RateWindow {
+    next_eligible_at: 0,
+});
+
+/// Whether `operation_id`'s frozen binding is stored in `txn`'s snapshot: an
+/// operation admitted before, whose replay charges no budget again.
+pub(super) fn effect_bound_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    operation_id: &[u8; 32],
+) -> crate::error::Result<bool> {
+    let mut key = EFFECT_AUTH_KEY.to_vec();
+    key.extend_from_slice(operation_id);
+    Ok(vault.store.vault_meta.get(txn, &key)?.is_some())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinearEffectKind {
@@ -181,25 +199,54 @@ impl Vault {
     /// and the approve-once digest that actor's press names;
     /// [`Self::authorize_linear_effect_outcome`] returns that hold typed.
     ///
+    /// A host's background pass waits for no Rate window (FIX 8788): a full
+    /// one returns at once as [`LinearSyncError::Waiting`], and the TASK's
+    /// dirty revision stays for a pass after it opens.
+    ///
     /// # Errors
     /// [`LinearSyncError::AuthorizationDenied`] when the request is not the
     /// exact current mirror operation, the TASK revision has no verified
-    /// writer, or either actor's grant or connector budget refuses it.
+    /// writer, or either actor's grant or a connector budget row that does
+    /// not pace refuses it; [`LinearSyncError::Waiting`] while a Rate window
+    /// of either actor's key is full.
     pub fn authorize_linear_effect(
         &self,
         request: &LinearEffectRequest,
     ) -> LinearSyncResult<String> {
-        match self.authorize_linear_effect_outcome(request)? {
-            LinearEffectAdmission::Admitted { gate_ref } => Ok(gate_ref),
-            LinearEffectAdmission::Held(hold) => {
-                tracing::info!(
-                    role = hold.role.as_str(),
-                    gate_decision = %hold.gate_decision_ref,
-                    gate_outcome = %hold.gate_outcome,
-                    approval_digest = ?hold.approval_digest,
-                    "Linear mutation not admitted; a pending one names the approve-once digest to press"
-                );
-                Err(LinearSyncError::AuthorizationDenied)
+        self.authorize_linear_effect_within(request, std::time::Duration::ZERO)
+    }
+
+    /// [`Self::authorize_linear_effect`] for a caller that waits up to `wait`
+    /// for a full Rate window (FIX 8788): its fair turn among the verified
+    /// writers waiting, then the window itself, with no transaction open,
+    /// and then everything is checked again in a fresh one and each key is
+    /// charged once. A window that opens after `wait` returns at once.
+    ///
+    /// # Errors
+    /// As [`Self::authorize_linear_effect`].
+    pub fn authorize_linear_effect_within(
+        &self,
+        request: &LinearEffectRequest,
+        wait: std::time::Duration,
+    ) -> LinearSyncResult<String> {
+        let deadline = super::rate_wait::deadline_after(wait);
+        let mut turn = super::LinearRateTurn::default();
+        loop {
+            match self.authorize_linear_effect_outcome(request)? {
+                LinearEffectAdmission::Admitted { gate_ref } => return Ok(gate_ref),
+                LinearEffectAdmission::Held(hold) => {
+                    tracing::info!(
+                        role = hold.role.as_str(),
+                        gate_decision = %hold.gate_decision_ref,
+                        gate_outcome = %hold.gate_outcome,
+                        approval_digest = ?hold.approval_digest,
+                        "Linear mutation not admitted; a pending one names the approve-once digest to press"
+                    );
+                    return Err(LinearSyncError::AuthorizationDenied);
+                }
+                LinearEffectAdmission::Paced { .. } => {
+                    turn = self.linear_rate_turn(request, deadline, turn)?;
+                }
             }
         }
     }
@@ -211,6 +258,10 @@ impl Vault {
     /// actor's admission of this operation spent is kept once that admission
     /// committed, and a retry of the same operation reuses it; an Allow the
     /// other actor did not match spends none.
+    ///
+    /// A mutation whose only full budget rows are Rate windows that refuse is
+    /// [`LinearEffectAdmission::Paced`] (FIX 8788): its transaction is
+    /// dropped, so nothing is recorded or charged, and it does not wait.
     ///
     /// # Errors
     /// [`LinearSyncError::AuthorizationDenied`] when the request is not the
@@ -293,7 +344,7 @@ impl Vault {
             } else {
                 [None, None]
             };
-            let pair = gate::check_external_effect_policy_pair(
+            let Some(pair) = gate::check_external_effect_policy_pair(
                 &self.store,
                 txn,
                 &host_effect,
@@ -301,7 +352,12 @@ impl Vault {
                 &policy,
                 !previously_authorized,
                 retries,
-            )?;
+            )?
+            else {
+                // Paced: the error drops the transaction, so the evaluation
+                // leaves nothing behind.
+                return Err(PACED);
+            };
             let Some(id) = pair.admitted else {
                 let hold = super::approval::held(
                     &pair,
@@ -323,8 +379,19 @@ impl Vault {
                 pair.spent_presses,
             ))
         });
+        let (admission, spent) = match admitted {
+            Err(LinearSyncError::Waiting(LinearWait::RateWindow {
+                next_eligible_at: 0,
+            })) => {
+                // FIX 8788: when the window opens, read after the writer.
+                let next_eligible_at = self
+                    .linear_rate_window(request)?
+                    .map_or_else(|| self.now_recorded_at(), |window| window.next_eligible_at);
+                return Ok(LinearEffectAdmission::Paced { next_eligible_at });
+            }
+            admitted => admitted?,
+        };
         // FIX 6424 part 2a: the presses it spent, kept once it committed.
-        let (admission, spent) = admitted?;
         super::approval::keep_spent_presses(self, request.operation_id, spent)?;
         Ok(admission)
     }
@@ -342,11 +409,9 @@ impl Vault {
         &self,
         request: &LinearEffectRequest,
     ) -> LinearSyncResult<()> {
-        let mut key = EFFECT_AUTH_KEY.to_vec();
-        key.extend_from_slice(&request.operation_id);
         let admitted = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
-            self.store.vault_meta.get(&txn, &key)?.is_some()
+            effect_bound_in(self, &txn, &request.operation_id)?
         };
         // The binding row is never removed, so this admission observes it
         // too and charges no budget.

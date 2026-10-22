@@ -583,6 +583,9 @@ impl Vault {
                 crate::work_line::TASK_WORK_BOUND,
                 crate::work_line::TASK_WORK_WAIT,
             ),
+            linear_rate_line: crate::work_line::WorkLine::exclusive(
+                crate::work_line::TASK_WORK_WAIT,
+            ),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),

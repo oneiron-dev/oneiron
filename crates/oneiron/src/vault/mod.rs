@@ -84,6 +84,9 @@ pub struct Vault {
     /// Task work's one fair line on this vault, whichever door the work came
     /// in by ([`Vault::admit_task_work`]).
     pub(crate) task_work: crate::work_line::WorkLine<crate::EntityId>,
+    /// Linear mutations waiting for a full Rate window, one turn at a time,
+    /// fair across their verified writers (FIX 8788).
+    pub(crate) linear_rate_line: crate::work_line::WorkLine<crate::EntityId>,
     /// World privacy P6b: this install's this-device-only keystore, the world
     /// keys this machine opened, and their OF-520 questions. In memory only,
     /// never persisted, and never shared across vaults.

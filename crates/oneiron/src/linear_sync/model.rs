@@ -376,9 +376,39 @@ pub enum LinearSyncError {
     /// for good from its first verified preflight.
     #[error("linear webhook delivery id or body is already bound to another delivery")]
     DeliveryReused,
+    /// The mutation waits its turn and was not refused (FIX 8788, 8610): its
+    /// TASK's dirty revision and frozen operation stay, and a later pass
+    /// sends it.
+    #[error("linear work waits: {0}")]
+    Waiting(LinearWait),
     /// Engine storage or invariant failure.
     #[error(transparent)]
     Store(#[from] crate::error::Error),
+}
+
+/// Why a Linear mutation waits rather than goes now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinearWait {
+    /// A Rate window of either actor's connector key has no room until
+    /// `next_eligible_at`, Unix seconds on the engine's clock
+    /// (`gate.pending.connector_rate_window`).
+    RateWindow { next_eligible_at: u64 },
+    /// The host's memory line had no room to decode a tracker body before
+    /// its wait ran out; the body itself is kept.
+    BodyMemory,
+}
+
+impl std::fmt::Display for LinearWait {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RateWindow { next_eligible_at } => write!(
+                f,
+                "{} until {next_eligible_at}",
+                super::rate_wait::LINEAR_RATE_WINDOW_REASON
+            ),
+            Self::BodyMemory => f.write_str("the host's memory line for a tracker body"),
+        }
+    }
 }
 
 /// One page of normalized inbound changes.
