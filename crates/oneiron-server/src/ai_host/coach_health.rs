@@ -133,6 +133,7 @@ impl CoachHealthHost for HostModel<'_> {
             "measured": card.measured,
             "dial": card.dial,
             "counter_evidence": card.counter_evidence,
+            "causes": card.causes,
             "agent_said_stuck": card.agent_blocked,
             "evidence_count": card.evidence.len(),
             "window": [card.window_from, card.window_to],

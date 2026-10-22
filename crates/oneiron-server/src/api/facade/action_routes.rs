@@ -336,13 +336,16 @@ impl ActionBound {
 /// structured action argument (the row route's own body ceiling, past the
 /// REST route's). Every other write runs its row's own door, as its REST
 /// route always admitted it. The route chooses here, before it writes; a
-/// refused action is never written again another way.
+/// refused action is never written again another way. A hosted operator's
+/// root gets its typed refusal here, before any branch (FIX 8210): a room
+/// turn's header or an oversized input never lets it reach a row's door.
 pub(crate) fn rest_action_bound<T: serde::Serialize>(
     server: &SyncServer,
     auth: &CoreAuth,
     headers: &HeaderMap,
     input: &T,
 ) -> Result<Option<ActionBound>, FacadeApiError> {
+    crate::api::host_action::facade_host_action(server, auth)?;
     if headers.contains_key(super::ROOM_TURN_HEADER) {
         return Ok(None);
     }

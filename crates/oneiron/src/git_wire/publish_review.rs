@@ -18,6 +18,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::argv::FrozenGitArgv;
 use super::failure::invalid;
+use super::publish_review_trees::GitTreeReadMode;
 use super::{GitOid, GitWire, GitWireFailure, GitWireFailureClass, GitWireOperation, GitWireRepo};
 use crate::error::Result;
 
@@ -65,13 +66,44 @@ impl GitWire<'_> {
         exclude: &[GitOid],
         visit: &mut dyn FnMut(GitReviewItem) -> Result<()>,
     ) -> Result<()> {
+        self.for_each_review_item_in(repo, tip, exclude, GitTreeReadMode::Captured, visit)
+    }
+
+    /// [`Self::for_each_review_item`] with no read bound at all (FIX 7608
+    /// slice 2b-i, Rule 5): the same walk, but a page whose listing passes
+    /// its bound is read whole through a retained spool, and a commit
+    /// reviewed tree by tree reads its trees retained.
+    ///
+    /// # Errors
+    /// A missing commit or tree, a failed read, or `visit`'s own.
+    pub fn for_each_review_item_retained(
+        &self,
+        repo: &GitWireRepo,
+        tip: &GitOid,
+        exclude: &[GitOid],
+        visit: &mut dyn FnMut(GitReviewItem) -> Result<()>,
+    ) -> Result<()> {
+        self.for_each_review_item_in(repo, tip, exclude, GitTreeReadMode::Retained, visit)
+    }
+
+    fn for_each_review_item_in(
+        &self,
+        repo: &GitWireRepo,
+        tip: &GitOid,
+        exclude: &[GitOid],
+        mode: GitTreeReadMode,
+        visit: &mut dyn FnMut(GitReviewItem) -> Result<()>,
+    ) -> Result<()> {
         let mut pending = BTreeSet::from([tip.clone()]);
         let mut page_size = COMMIT_PAGE;
         while !pending.is_empty() {
             let positives: Vec<GitOid> = pending.iter().cloned().collect();
             let argv = FrozenGitArgv::commit_page(&positives, exclude, page_size);
-            let output = match self.run_read_classified(repo, &argv)? {
-                Ok(output) => output,
+            let listing = match self.run_read_classified(repo, &argv)? {
+                Ok(output) => output.stdout,
+                Err(failure) if mode == GitTreeReadMode::Retained && past_bound(&failure) => {
+                    self.read_spooled(repo, argv.clone())?.read_all()?
+                }
                 Err(failure)
                     if failure.class() == GitWireFailureClass::OutputOverflow && page_size > 1 =>
                 {
@@ -80,7 +112,7 @@ impl GitWire<'_> {
                 }
                 Err(failure) => return Err(failure.error(GitWireOperation::ReachableObjects)),
             };
-            let page = parse_commit_page(&output.stdout)?;
+            let page = parse_commit_page(&listing)?;
             if page.is_empty() {
                 break;
             }
@@ -96,7 +128,7 @@ impl GitWire<'_> {
                 }
             }
             for slice in page.chunks(DIFF_SLICE_COMMITS) {
-                self.review_slice(repo, slice, visit)?;
+                self.review_slice(repo, slice, mode, visit)?;
             }
         }
         Ok(())
@@ -108,6 +140,7 @@ impl GitWire<'_> {
         &self,
         repo: &GitWireRepo,
         slice: &[PagedCommit],
+        mode: GitTreeReadMode,
         visit: &mut dyn FnMut(GitReviewItem) -> Result<()>,
     ) -> Result<()> {
         let argv = FrozenGitArgv::review_diffs(slice);
@@ -130,11 +163,13 @@ impl GitWire<'_> {
             }
             Err(failure) if past_bound(&failure) => match slice {
                 [] => Ok(()),
-                [(commit, parents)] => self.review_commit_by_trees(repo, commit, parents, visit),
+                [(commit, parents)] => {
+                    self.review_commit_by_trees(repo, commit, parents, mode, visit)
+                }
                 _ => {
                     let (left, right) = slice.split_at(slice.len() / 2);
-                    self.review_slice(repo, left, visit)?;
-                    self.review_slice(repo, right, visit)
+                    self.review_slice(repo, left, mode, visit)?;
+                    self.review_slice(repo, right, mode, visit)
                 }
             },
             Err(failure) => Err(failure.error(GitWireOperation::ReviewDiffs)),

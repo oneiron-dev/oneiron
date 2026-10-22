@@ -685,10 +685,11 @@ fn kept_status(seen: &[LegalHold], now: u64) -> LiftAndEraseStatus {
 }
 
 /// What an owner erase that ran reads as (C4, WILL-PLAN L01 row 04), one
-/// rule wherever the bytes live: erased once its receipt has both
-/// completion times, else completion pending with the receipt and, while
-/// its historical sweep is queued, that reason. No receipt: nothing was
-/// there to erase.
+/// rule wherever the bytes live: erased once its receipt's signed final row
+/// is appended (its hard purge, its historical sweep and every custody
+/// retirement it bound finished, FIX 5844), else completion pending with
+/// the receipt and what it still waits on: its queued sweep, or its
+/// custody. No receipt: nothing was there to erase.
 fn erase_status(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
@@ -700,23 +701,22 @@ fn erase_status(
     let request = RecordEraseSweepRequest {
         receipt_ref: receipt_ref.clone(),
     };
-    let sweep = memory.record_erase_sweep_as(owner, request);
-    let (complete, queued) = match &sweep {
-        Ok(Some(sweep)) => (
-            sweep.sweep_complete_at.is_some() || sweep.sweep_queued_at.is_none(),
-            sweep.sweep_queued_at.is_some(),
-        ),
+    let reason = match memory.record_erase_sweep_as(owner, request) {
+        Ok(Some(sweep)) if sweep.erase_complete_at.is_some() => {
+            return LiftAndEraseStatus::Erased {
+                receipt_ref: Some(receipt_ref),
+            };
+        }
+        Ok(Some(sweep)) if sweep.sweep_queued_at.is_some() && sweep.sweep_complete_at.is_none() => {
+            Some(ErasePendingReason::HistoricalSweep)
+        }
+        Ok(Some(_)) => Some(ErasePendingReason::CustodyRetirement),
         // An unreadable receipt proves nothing complete.
-        _ => (false, false),
+        _ => None,
     };
-    if complete {
-        return LiftAndEraseStatus::Erased {
-            receipt_ref: Some(receipt_ref),
-        };
-    }
     LiftAndEraseStatus::CompletionPending {
         receipt_ref: Some(receipt_ref),
-        reason: queued.then_some(ErasePendingReason::HistoricalSweep),
+        reason,
     }
 }
 
