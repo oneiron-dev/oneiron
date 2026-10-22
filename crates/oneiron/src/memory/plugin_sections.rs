@@ -22,9 +22,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::{
     EngineSectionBindings, PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload,
-    PluginInstallTarget, PluginSectionAdmission, PluginSectionError,
-    PluginSectionRegistry, SectionManifestEnvelope, VaultPluginInstallExecutor,
-    VaultPluginInstallSource, execute_approved_plugin_section_install,
+    PluginInstallTarget, PluginSectionAdmission, PluginSectionError, PluginSectionRegistry,
+    SectionManifestEnvelope, VaultPluginInstallExecutor, VaultPluginInstallSource,
+    execute_approved_plugin_section_install,
 };
 use crate::dreamer_plugin_suggest::{
     LocalSkillHubPackCatalog, PluginSuggestJob, PluginSuggestionDisposition, WorkflowPatternNotice,

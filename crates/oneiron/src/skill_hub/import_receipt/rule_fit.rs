@@ -151,11 +151,7 @@ fn rule_fit(
     if !missing.is_empty() {
         return (
             MarketplaceFit::Ask,
-            bounded_list(
-                "it requests ",
-                &missing,
-                ", which the caller does not hold",
-            ),
+            bounded_list("it requests ", &missing, ", which the caller does not hold"),
         );
     }
     (
@@ -194,9 +190,7 @@ impl Vault {
     /// the owner-asked fit.
     pub fn marketplace_skill_fit(&self) -> Result<SkillFitSetting> {
         let txn = self.store.env.read_txn()?;
-        Ok(SKILL_FIT
-            .get(&self.store, &txn, &())?
-            .unwrap_or_default())
+        Ok(SKILL_FIT.get(&self.store, &txn, &())?.unwrap_or_default())
     }
 
     /// The owner picks which fit an ordinary skill install runs. The change
@@ -231,9 +225,10 @@ impl Vault {
         &self,
         caller: &'a dyn CallerPermissions,
     ) -> Result<Box<dyn MarketplaceFitEvaluator + 'a>> {
-        Ok(match self.marketplace_skill_fit()? {
+        let fit: Box<dyn MarketplaceFitEvaluator + 'a> = match self.marketplace_skill_fit()? {
             SkillFitSetting::RuleFit => Box::new(RuleSkillFit::new(caller)),
             SkillFitSetting::OwnerAsked => Box::new(OwnerAskedSkillFit),
-        })
+        };
+        Ok(fit)
     }
 }

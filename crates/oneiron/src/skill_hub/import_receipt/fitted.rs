@@ -189,8 +189,8 @@ impl Vault {
             Some(id) => id,
             None => self.store.clock.entity_id()?,
         };
-        let entity =
-            self.import_skill_from_hub_in_txn(txn, source, parsed, preferred, occurred, learned_at)?;
+        let entity = self
+            .import_skill_from_hub_in_txn(txn, source, parsed, preferred, occurred, learned_at)?;
         for scan in advisory_scans {
             self.ingest_skill_scan_verdict_in_txn(txn, &entity, hash, scan, occurred, learned_at)?;
         }
