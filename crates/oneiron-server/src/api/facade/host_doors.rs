@@ -1768,6 +1768,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.results.read"
         | "vault.results.slice"
         | "vault.code.model_heal_count"
+        | "vault.code.type_diagnostics"
         | "vault.code.waits.resolve"
         | "vault.code.waits.receipt"
         | "vault.code.export"

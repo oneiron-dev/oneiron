@@ -936,6 +936,11 @@ impl Child {
         if let Some(seat) = &seat {
             executor = executor.with_model_seat(seat);
         }
+        // A child's steps get type feedback from the host's one service, as
+        // every run's do (FIX 8277).
+        if let Some(feedback) = provider.code_check() {
+            executor = executor.with_code_check(feedback);
+        }
         loop {
             // Its cutoff and its parent's live clock bound each entry, and a
             // lost parent lease admits none.
