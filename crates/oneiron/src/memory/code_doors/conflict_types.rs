@@ -1,3 +1,7 @@
+//! Code conflict and proposal-settlement request and view records.
+//! `CodeConflictRecordRequest` is the first of its records.
+//! These are local definitions; `memory::code_doors` re-exports them.
+
 use super::CodeProposalSubmitRequest;
 use crate::EntityId;
 use crate::critic::{CritiqueSeverity, CritiqueVerdict};

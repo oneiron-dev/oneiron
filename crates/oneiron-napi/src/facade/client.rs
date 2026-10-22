@@ -16,7 +16,7 @@ use super::dtos::{
 use super::input_error::witness_input_error;
 use super::numeric::{claim_input_to_engine, dimensions_to_engine, limit_to_engine};
 use super::pairing::{NapiCheckpointPin, pin_from_engine};
-use crate::vault::host_device_class;
+use crate::boundary::host_device_class;
 
 // ── ONE-1441 WIRE-P1: the shared-backend client behind the `oneiron` npm
 //    package ───────────────────────────────────────────────────────────────

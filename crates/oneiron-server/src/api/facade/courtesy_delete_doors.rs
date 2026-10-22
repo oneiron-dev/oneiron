@@ -4,7 +4,7 @@
 //! the MCP dispatcher call them by the name every host door has. Each takes
 //! the vault owner's proof as `/v1/owner/courtesy-delete/*` takes it
 //! (`owner_routes::owner`) and runs the same call that route runs
-//! (`owner::cooperative_deletion`): this host's own authority key signs, and
+//! (`owner::courtesy_delete`): this host's own authority key signs, and
 //! its courtesy outbox delivers. A former peer's signed ingress is peer HTTP,
 //! with no row.
 //!
@@ -26,7 +26,7 @@ use super::host_doors::{Listed, internal};
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
-use crate::owner::cooperative_deletion;
+use crate::owner::courtesy_delete;
 use crate::server::SyncServer;
 
 /// The owner route's refusal as the row's: the same statuses, in the
@@ -68,7 +68,7 @@ pub(crate) async fn vault_courtesy_delete_send(
         auth,
         VERB,
         move |server, owner| {
-            cooperative_deletion::send(server, owner, &input).map_err(|error| refusal(VERB, error))
+            courtesy_delete::send(server, owner, &input).map_err(|error| refusal(VERB, error))
         },
         |_| Vec::new(),
     )
@@ -86,7 +86,7 @@ pub(crate) async fn vault_courtesy_delete_sent(
         server,
         auth,
         VERB,
-        |server, _owner| cooperative_deletion::sent(server).map_err(|error| refusal(VERB, error)),
+        |server, _owner| courtesy_delete::sent(server).map_err(|error| refusal(VERB, error)),
         |_| Vec::new(),
     )
     .await
@@ -103,9 +103,7 @@ pub(crate) async fn vault_courtesy_delete_incoming(
         server,
         auth,
         VERB,
-        |server, _owner| {
-            cooperative_deletion::incoming(server).map_err(|error| refusal(VERB, error))
-        },
+        |server, _owner| courtesy_delete::incoming(server).map_err(|error| refusal(VERB, error)),
         |asks| asks.iter().flat_map(incoming_rows).collect(),
     )
     .await
@@ -124,8 +122,7 @@ pub(crate) async fn vault_courtesy_delete_answer(
         auth,
         VERB,
         move |server, owner| {
-            cooperative_deletion::answer(server, owner, &input)
-                .map_err(|error| refusal(VERB, error))
+            courtesy_delete::answer(server, owner, &input).map_err(|error| refusal(VERB, error))
         },
         |ask| incoming_rows(ask).collect(),
     )

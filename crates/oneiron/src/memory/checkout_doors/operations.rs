@@ -1,3 +1,7 @@
+//! Checkout lease operations: claim, renew, reclaim, take over, publish, settle and tear down.
+//! `Memory::checkout_claim_through` and its sibling `checkout_*` methods are its call surface.
+//! `memory::checkout_doors::types` defines the inputs and views; `crate::checkout` the leases.
+
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::checkout::lease::teardown::{TeardownStep, prepare_teardown_in_txn, teardown_through};

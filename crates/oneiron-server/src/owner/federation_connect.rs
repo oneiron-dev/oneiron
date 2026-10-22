@@ -20,7 +20,7 @@ use oneiron::task_verb::sdk::{
     RescopeConnect, RescopeOffer,
 };
 
-use super::cooperative_deletion::with_issuer;
+use super::courtesy_delete::with_issuer;
 use super::vault_key::hex;
 use super::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;

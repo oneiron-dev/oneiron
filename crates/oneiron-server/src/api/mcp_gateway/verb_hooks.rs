@@ -155,7 +155,7 @@ fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContex
         mcp_verb_gate(&server, tool, &arguments, &actor).map_err(refused)?;
         // A courtesy answer's rewritten reply_to meets its door's own check
         // here, so a bad one gives way to the caller's (FIX 5140).
-        crate::owner::cooperative_deletion::check_rewritten_reply_to(verb, rewritten)
+        crate::owner::courtesy_delete::check_rewritten_reply_to(verb, rewritten)
     })
 }
 

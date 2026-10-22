@@ -1,3 +1,7 @@
+//! The raw N-API addon root: module registrations and the crate-level native exports.
+//! `NapiVault`, `VaultBridge` and `ActorScopedVault` are its call surface.
+//! `boundary` holds the shared guards; `vault` and `facade` define the exported classes.
+
 mod boundary;
 mod codebase;
 mod email;

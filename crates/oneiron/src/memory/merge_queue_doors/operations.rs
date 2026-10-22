@@ -1,3 +1,7 @@
+//! Merge queue operations: enqueue, stage, requeue, land, settle slow batches and recover.
+//! `Memory::merge_queue_enqueue_as` is its call surface.
+//! `memory::merge_queue_doors::types` defines the records these take and return.
+
 use super::*;
 use crate::merge_queue::{MergeFile, MergeProposal};
 use crate::repo_mutation::mount::RepoMountRef;

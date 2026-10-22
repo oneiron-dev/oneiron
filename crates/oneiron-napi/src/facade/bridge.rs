@@ -5,8 +5,8 @@ use oneiron::{EntityId, Memory, Vault, VaultConfig, parse_actor_key};
 use std::sync::Arc;
 
 use super::boundary::{boundary_error, facade_error};
+use crate::boundary::host_device_class;
 use crate::host_root::HostRootOpenOptions;
-use crate::vault::host_device_class;
 
 // ── classes ─────────────────────────────────────────────────────────────
 

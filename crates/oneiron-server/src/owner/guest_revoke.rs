@@ -22,7 +22,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::receipt::{GuestDeletionRequestStatus, GuestRevokeResponse};
 use oneiron::task_verb::sdk::CourtesyDeleteSendRequest;
 
-use super::{OwnerResult, cooperative_deletion};
+use super::{OwnerResult, courtesy_delete};
 use crate::server::SyncServer;
 
 /// Why a committed revoke sent no courtesy-delete ask: its hook-rewritten
@@ -35,7 +35,7 @@ pub(crate) const COURTESY_PEER_INVALID: &str = "courtesy notice not sent: peer o
 /// as sent, never on a hook's rewrite, so a hook can never stop a revoke.
 /// No `peer` passes.
 pub(crate) fn check_peer(peer: Option<&str>) -> OwnerResult<()> {
-    peer.map_or(Ok(()), cooperative_deletion::check_peer)
+    peer.map_or(Ok(()), courtesy_delete::check_peer)
 }
 
 /// A committed revoke whose `peer` fails the origin check: every target
@@ -75,7 +75,7 @@ pub(crate) fn queue_courtesy_deletes(
     let Some(peer) = peer else {
         return;
     };
-    if cooperative_deletion::check_peer(peer).is_err() {
+    if courtesy_delete::check_peer(peer).is_err() {
         skip_courtesy_deletes(server, owner, revoked);
         return;
     }
@@ -87,7 +87,7 @@ pub(crate) fn queue_courtesy_deletes(
             peer: peer.to_owned(),
             signed: None,
         };
-        match cooperative_deletion::send(server, owner, &ask) {
+        match courtesy_delete::send(server, owner, &ask) {
             Ok(sent) => {
                 target.deletion_request_status = GuestDeletionRequestStatus::Queued;
                 target.request = Some(sent.request);

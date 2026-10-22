@@ -1,3 +1,7 @@
+//! Code proposal resolution: resolve, review, settle and read a proposal's settlement.
+//! `Memory::code_proposal_resolve_as` is its call surface.
+//! `memory::code_doors::conflict_types` defines the records these take and return.
+
 use super::proposals::{fork_hex, owner_submission};
 use super::*;
 use crate::critic::{CritiqueArtifact, CritiqueProvenance};

@@ -2,23 +2,9 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use oneiron::MemoryError;
 
 use super::dtos::NapiOutboundDraftInput;
-
-pub(crate) type BoundaryResult<T> = std::result::Result<T, String>;
-
-pub(crate) fn facade_error(err: MemoryError) -> napi::Error {
-    napi::Error::from_reason(serde_json::to_string(&err).unwrap_or_else(|_| err.to_string()))
-}
-
-pub(crate) fn boundary_error(reason: String) -> napi::Error {
-    napi::Error::from_reason(reason)
-}
-
-pub(crate) fn ts_to_engine(value: i64, field: &str) -> BoundaryResult<u64> {
-    u64::try_from(value).map_err(|_| format!("{field} must be a non-negative Unix timestamp"))
-}
+pub(crate) use crate::boundary::{BoundaryResult, boundary_error, facade_error, ts_to_engine};
 
 pub(super) fn ts_opt_to_engine(value: Option<i64>, field: &str) -> BoundaryResult<Option<u64>> {
     value.map(|v| ts_to_engine(v, field)).transpose()

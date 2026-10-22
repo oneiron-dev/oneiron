@@ -1,3 +1,7 @@
+//! Thread passport and mask reads for a channel thread.
+//! `ThreadPassportRequest` and `Memory::channel_thread_passport` are its call surface.
+//! Its request and view records are local definitions; `memory::channel_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 use super::*;

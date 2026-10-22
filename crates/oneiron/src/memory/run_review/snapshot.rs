@@ -1,3 +1,7 @@
+//! The run review snapshot: the claim author, the member binding and the in-transaction review.
+//! `review_in_txn` is its call surface.
+//! `memory::run_review` defines the review records it builds.
+
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};

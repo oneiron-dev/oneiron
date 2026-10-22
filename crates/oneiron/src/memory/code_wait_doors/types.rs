@@ -1,3 +1,7 @@
+//! Code wait request, answer, settlement and receipt records.
+//! `CodeWaitReceiptRequest` is the first of its records.
+//! These are local definitions; `memory::code_wait_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;

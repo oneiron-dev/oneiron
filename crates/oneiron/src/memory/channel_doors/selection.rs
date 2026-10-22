@@ -1,3 +1,7 @@
+//! Channel identity selection: the selection rules, their updates and the identity pick.
+//! `ChannelSelectionRuleInput` and `Memory::channel_identity_select` are its call surface.
+//! Its request and view records are local definitions; `memory::channel_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 use super::*;

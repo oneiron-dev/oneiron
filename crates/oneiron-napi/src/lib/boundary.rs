@@ -1,8 +1,9 @@
 //! Shared caps, parse/validate helpers and napi error mapping for the legacy surface.
 
 use napi::bindgen_prelude::*;
+use oneiron::authority::MachineDeviceClass;
 use oneiron::codebase::CODEBASE_FILE_PATH_MAX_BYTES;
-use oneiron::{CODEBASE_CONTENT_HASH_LEN, EdgeKind, EntityId};
+use oneiron::{CODEBASE_CONTENT_HASH_LEN, EdgeKind, EntityId, MemoryError};
 
 pub(super) const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 
@@ -261,4 +262,31 @@ pub(super) fn entity_ids_to_buffers(ids: Vec<EntityId>) -> Vec<Buffer> {
     ids.into_iter()
         .map(|id| Buffer::from(id.as_bytes().as_slice()))
         .collect()
+}
+
+pub(crate) fn facade_error(err: MemoryError) -> napi::Error {
+    napi::Error::from_reason(serde_json::to_string(&err).unwrap_or_else(|_| err.to_string()))
+}
+
+pub(crate) fn boundary_error(reason: String) -> napi::Error {
+    napi::Error::from_reason(reason)
+}
+
+pub(crate) fn ts_to_engine(value: i64, field: &str) -> BoundaryResult<u64> {
+    u64::try_from(value).map_err(|_| format!("{field} must be a non-negative Unix timestamp"))
+}
+
+/// The class a host declares on a raw open (FIX 3833; CALLS:
+/// HOST_OPEN_DEVICE_CLASS = ExplicitHostInput): `"computer"`, the generic
+/// default when omitted, or `"phone"`. Never read off the operating system.
+pub(crate) fn host_device_class(
+    device_class: Option<&str>,
+) -> std::result::Result<MachineDeviceClass, String> {
+    match device_class {
+        None | Some("computer") => Ok(MachineDeviceClass::Computer),
+        Some("phone") => Ok(MachineDeviceClass::Phone),
+        Some(other) => Err(format!(
+            "unknown deviceClass {other:?}; pass \"computer\" or \"phone\""
+        )),
+    }
 }

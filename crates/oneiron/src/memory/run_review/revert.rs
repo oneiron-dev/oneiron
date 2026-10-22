@@ -1,3 +1,7 @@
+//! Owner revert of a run's reviewed changes, with their compensation.
+//! `Memory::revert_run_as_owner` is its call surface.
+//! `memory::run_review` defines the review and settlement records.
+
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::identity_topology::{IdentityOpOutcome, IdentityOpWrite, TopologySeal};
