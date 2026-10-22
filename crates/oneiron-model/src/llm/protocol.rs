@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use super::{CallEnvelope, ModelId};
+use super::{CallEnvelope, ModelId, ReplyAssertions};
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -100,6 +100,10 @@ pub struct LlmResponse {
     pub message: LlmMessage,
     pub usage: LlmUsage,
     pub finish_reason: FinishReason,
+    /// The records this reply cited or created, which only its host fills
+    /// (OF-063, FIX 3416); empty from every provider.
+    #[serde(default, skip_serializing_if = "ReplyAssertions::is_empty")]
+    pub reply_assertions: ReplyAssertions,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -237,6 +241,10 @@ pub enum LlmStreamEvent {
         message: LlmMessage,
         usage: LlmUsage,
         finish_reason: FinishReason,
+        /// [`LlmResponse::reply_assertions`]: the host's alone, empty from
+        /// every provider.
+        #[serde(default, skip_serializing_if = "ReplyAssertions::is_empty")]
+        reply_assertions: ReplyAssertions,
     },
 }
 
