@@ -29,12 +29,13 @@ use crate::agent_dispatch::codec::record_dispatch_input;
 use crate::agent_dispatch::workflow_record::is_wrapper;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::claim::{ScopedRead, ScopedReadActorKey, decode_claim_body};
-use crate::context_projection::{CONTEXT_PROJECTION_MAX_ANCESTORS, ResolvedContextProjection};
+use crate::context_projection::ResolvedContextProjection;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::write_envelope::WriteActor;
 
 /// The keys a turn body names its speaker under, first non-empty one wins:
@@ -165,19 +166,41 @@ impl AgentDispatcher<'_> {
 
     /// The member and binders of the chain above `attempt`, found as the
     /// context fold finds them: the first wrapper's member, every wrapper's
-    /// binder, crossing each wrapper to its real parent.
+    /// binder, crossing each wrapper to its real parent. Every ancestor is
+    /// read, however many (rule 5): past its threshold row the walk asks
+    /// whether everything is okay, counted on every way out. No read
+    /// transaction is held here; like each ancestor read, the threshold read
+    /// opens its own.
     fn step_readers(&self, attempt: AttemptId) -> Result<StepReaders> {
+        let mut walk = ScanCount::start_at(
+            EngineScan::DispatchAncestorRows,
+            attempt.as_bytes(),
+            self.vault
+                .scan_threshold(EngineScan::DispatchAncestorRows)?,
+        );
+        let mut seen = HashSet::new();
+        let readers = self.step_readers_walk(attempt, &mut seen);
+        walk.rows(seen.len());
+        walk.finish(self.vault);
+        readers
+    }
+
+    /// The walk [`Self::step_readers`] counts, each attempt it reads in
+    /// `seen`.
+    fn step_readers_walk(
+        &self,
+        attempt: AttemptId,
+        seen: &mut HashSet<AttemptId>,
+    ) -> Result<StepReaders> {
         let queue = AttemptQueue::new(self.vault);
         let mut readers = StepReaders {
             member: None,
             binders: Vec::new(),
         };
-        let mut seen = HashSet::new();
-        let mut levels = 0_usize;
         let mut cursor = Some(attempt);
         while let Some(id) = cursor {
-            if levels >= CONTEXT_PROJECTION_MAX_ANCESTORS || !seen.insert(id) {
-                return Err(Error::InvariantViolation("context ancestor bound or cycle"));
+            if !seen.insert(id) {
+                return Err(Error::InvariantViolation("context ancestor cycle"));
             }
             let record = queue
                 .get(id)?
@@ -195,7 +218,6 @@ impl AgentDispatcher<'_> {
                     "context ancestor is not dispatch lineage",
                 ));
             }
-            levels += 1;
             cursor = decode_dreamer_attempt_payload(&record.payload)?.parent_attempt;
         }
         Ok(readers)
