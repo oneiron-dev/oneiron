@@ -450,6 +450,8 @@ impl super::RetrievalIndexMaintenance for Vault {
     ) -> Result<bool> {
         let had_vector = self.store.vectors.delete(txn, id.as_bytes())?;
         crate::embed::record_embedding_device_in_txn(&self.store, txn, id, None)?;
+        // FIX 8983: its media vectors and their device marks go in the same write.
+        crate::embed::delete_media_vectors_in_txn(&self.store, txn, id)?;
         crate::hnsw::hnsw_deindex(&self.store, txn, id)?;
         Ok(had_vector)
     }
