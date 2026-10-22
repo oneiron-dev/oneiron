@@ -25,6 +25,13 @@ pub(super) fn reply_committed(
     commit: ReplyCommit,
     authority: Arc<dyn CheckpointAuthority>,
 ) {
+    // A vault a lock closed advances nothing: its sessions are going.
+    if manifest
+        .anchor()
+        .is_some_and(|anchor| !super::lifecycle::admits(&anchor.vault))
+    {
+        return;
+    }
     let Some(claimed) = claim(manifest.digest()) else {
         return;
     };
@@ -103,6 +110,7 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
         pending,
     } = claimed;
     let base = pending.base.clone();
+    let path = pending.path.clone();
     let outcome = stage(&place, &target, generation, base.as_ref(), &commit, pending).await;
     let staged = match outcome {
         Ok(Some(staged)) => staged,
@@ -180,6 +188,7 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
         session.published = published.checkpoint;
         session.generation = published.generation;
         session.residency = published.residency;
+        session.path = path;
     }
 }
 

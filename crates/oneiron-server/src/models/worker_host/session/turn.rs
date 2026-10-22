@@ -2,12 +2,20 @@
 //! working branch forked at the frontier the worker verified for the turn's
 //! canonical path, and the `session` field its `session.generate` carries.
 //! Any step that does not hold leaves the turn to run as it always did.
+//!
+//! A turn whose canonical path no longer starts with the path its
+//! session's published checkpoint succeeded (the history window slid, so
+//! the attach would fall below every retained snapshot) runs as a plain
+//! generate, with no create, fork or suffix commit, and so does every next
+//! turn on that binding until one's path extends the last one's: a cached
+//! turn never costs more than a plain one there (FIX 10632). A vault whose
+//! snapshot admission a lock closed gets no session at all.
 use std::path::Path;
 
 use oneiron::llm::{
-    CanonicalCheckpointRef, SegmentManifest, SessionBinding, SessionCreate, SessionCreated,
-    SessionFork, SessionForked, SessionGenerate, SessionInvalidation, SessionKey, SessionOp,
-    SessionOpStamp, SessionResidency, SessionRestore, SessionRestored, SessionTarget,
+    CanonicalCheckpointRef, MessageStamp, SegmentManifest, SessionBinding, SessionCreate,
+    SessionCreated, SessionFork, SessionForked, SessionGenerate, SessionInvalidation, SessionKey,
+    SessionOp, SessionOpStamp, SessionResidency, SessionRestore, SessionRestored, SessionTarget,
     WorkerDescriptor,
 };
 use serde_json::Value as JsonValue;
@@ -42,6 +50,9 @@ pub(in crate::models) async fn open_turn(
 ) -> Option<JsonValue> {
     let messages = conversation.get("messages")?.as_array()?;
     let anchor = manifest.anchor()?;
+    if !super::lifecycle::admits(&anchor.vault) {
+        return None;
+    }
     let cut = policy::canonical_cut(manifest)?;
     let newest = policy::newest_user(manifest).filter(|index| *index >= cut)?;
     if !policy::describes(manifest, messages) {
@@ -60,6 +71,10 @@ pub(in crate::models) async fn open_turn(
         worker: route.worker.clone(),
     };
     let restore = serves(&worker_id, &place).await?;
+    let path = manifest.messages().get(..cut)?.to_vec();
+    if !attaches(&worker_id, &place, &key, &path) {
+        return None;
+    }
     let opened = session(&worker_id, &place, &key, restore).await?;
     let binding = key.binding();
     let fork = SessionFork {
@@ -91,6 +106,7 @@ pub(in crate::models) async fn open_turn(
         session.pending = Some(PendingTurn {
             manifest: *manifest.digest(),
             canonical: messages[..cut].to_vec(),
+            path,
             newest: messages.get(newest)?.clone(),
             tools,
             base: opened.published,
@@ -102,6 +118,42 @@ pub(in crate::models) async fn open_turn(
         op_id: policy::next_op_id(),
     })
     .ok()
+}
+
+/// Whether a turn on `key` whose canonical path is `path` may run on a
+/// session (FIX 10632). A binding marked sliding runs plain until a turn's
+/// path extends the marked one, which clears the mark. A session whose
+/// published checkpoint succeeded a path this one does not start with
+/// cannot be attached at all: it is retired, the binding is marked, and
+/// the turn runs plain.
+fn attaches(worker_id: &str, place: &Place, key: &SessionKey, path: &[MessageStamp]) -> bool {
+    let binding = key.binding();
+    let retired = {
+        let mut workers = registry::lock();
+        let worker = registry::bind(&mut workers, worker_id, place);
+        if let Some(marked) = worker.sliding.get(&binding) {
+            let extends = path.starts_with(marked);
+            if extends {
+                worker.sliding.remove(&binding);
+            } else {
+                worker.sliding.insert(binding, path.to_vec());
+            }
+            return extends;
+        }
+        let slid = worker
+            .sessions
+            .get(&binding)
+            .is_some_and(|session| session.published.is_some() && !path.starts_with(&session.path));
+        if !slid {
+            return true;
+        }
+        worker.sliding.insert(binding, path.to_vec());
+        worker.retire(&binding)
+    };
+    if let Some((target, at)) = retired {
+        registry::release_later(target, at, SessionInvalidation::PathChanged);
+    }
+    false
 }
 
 /// Whether the incarnation at `place` serves sessions, from its hello the
@@ -258,6 +310,7 @@ async fn create(worker_id: &str, place: &Place, key: &SessionKey) -> Option<Open
         residency: SessionResidency::default(),
         pending: None,
         stale: None,
+        path: Vec::new(),
     };
     let opened = Opened {
         target: session.target(),

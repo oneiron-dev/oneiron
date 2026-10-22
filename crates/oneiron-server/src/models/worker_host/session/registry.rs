@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use oneiron::llm::{
-    CanonicalCheckpointRef, ManifestDigest, SessionBinding, SessionDrop, SessionHandle,
-    SessionInvalidation, SessionKey, SessionOp, SessionReleased, SessionResidency, SessionTarget,
+    CanonicalCheckpointRef, ManifestDigest, MessageStamp, SessionBinding, SessionDrop,
+    SessionHandle, SessionInvalidation, SessionKey, SessionOp, SessionReleased, SessionResidency,
+    SessionTarget, VaultRef,
 };
 use oneiron_driver::InferenceWorker;
 use serde_json::Value as JsonValue;
@@ -49,6 +50,10 @@ pub(super) struct Worker {
     /// Sessions dropped whose release the worker has not yet answered:
     /// their bytes stay charged until it does.
     releasing: BTreeMap<SessionHandle, SessionResidency>,
+    /// FIX 10632: the bindings whose history window slid, each with the
+    /// canonical path (message stamps) its last turn read. Their turns run
+    /// plain until a turn's path extends the one marked.
+    pub(super) sliding: BTreeMap<SessionBinding, Vec<MessageStamp>>,
 }
 
 /// One session: its key, its handle on the incarnation, the generation the
@@ -63,6 +68,10 @@ pub(super) struct Session {
     /// Why its published checkpoint stopped serving, seen at a fork: it is
     /// dropped instead of advanced.
     pub(super) stale: Option<SessionInvalidation>,
+    /// The canonical path (message stamps) of the turn its published
+    /// checkpoint succeeded: a later turn's path attaches only when it
+    /// starts with it (FIX 10632).
+    pub(super) path: Vec<MessageStamp>,
 }
 
 impl Session {
@@ -80,6 +89,8 @@ impl Session {
 pub(super) struct PendingTurn {
     pub(super) manifest: ManifestDigest,
     pub(super) canonical: Vec<JsonValue>,
+    /// The canonical messages' stamps, the published path's once it is.
+    pub(super) path: Vec<MessageStamp>,
     pub(super) newest: JsonValue,
     pub(super) tools: Option<JsonValue>,
     pub(super) base: Option<CanonicalCheckpointRef>,
@@ -112,6 +123,7 @@ pub(super) fn bind<'a>(
                 serves: Serves::Unasked,
                 sessions: BTreeMap::new(),
                 releasing: BTreeMap::new(),
+                sliding: BTreeMap::new(),
             },
         );
     }
@@ -174,6 +186,15 @@ impl Worker {
 /// release; only then does it leave the accounting. A worker that does not
 /// answer keeps it charged until its incarnation ends.
 pub(super) async fn release(target: SessionTarget, place: Place, reason: SessionInvalidation) {
+    let _ = release_acked(target, place, reason).await;
+}
+
+/// [`release`], answering whether the worker acknowledged it.
+pub(super) async fn release_acked(
+    target: SessionTarget,
+    place: Place,
+    reason: SessionInvalidation,
+) -> bool {
     let handle = target.handle;
     let body = SessionDrop {
         target,
@@ -196,7 +217,7 @@ pub(super) async fn release(target: SessionTarget, place: Place, reason: Session
     };
     if !released {
         tracing::info!(?reason, "a model session's release was not answered");
-        return;
+        return false;
     }
     let mut workers = lock();
     if let Some(worker) = workers
@@ -210,6 +231,46 @@ pub(super) async fn release(target: SessionTarget, place: Place, reason: Session
             "a model session was released"
         );
     }
+    true
+}
+
+/// Takes every session of `vault`, on every worker, out of service: each
+/// one's target and place, for its release, which is owed from now on.
+pub(super) fn retire_vault(vault: &VaultRef) -> Vec<(SessionTarget, Place)> {
+    let mut workers = lock();
+    let mut retired = Vec::new();
+    for worker in workers.values_mut() {
+        let bindings: Vec<SessionBinding> = worker
+            .sessions
+            .iter()
+            .filter(|(_, session)| session.key.anchor.vault == *vault)
+            .map(|(binding, _)| *binding)
+            .collect();
+        for binding in bindings {
+            retired.extend(worker.retire(&binding));
+        }
+    }
+    retired
+}
+
+/// Forgets `worker_id`'s incarnation `epoch`, which an abort ended: its
+/// sessions and owed releases went with its process.
+pub(super) fn forget(worker_id: &str, epoch: &str) {
+    let mut workers = lock();
+    if workers
+        .get(worker_id)
+        .is_some_and(|worker| worker.place.epoch == epoch)
+    {
+        workers.remove(worker_id);
+    }
+}
+
+/// The releases sent and not yet acknowledged, over every worker.
+pub(super) fn release_owed() -> u64 {
+    lock()
+        .values()
+        .map(|worker| worker.releasing.len() as u64)
+        .sum()
 }
 
 /// [`release`] on a task of its own.
