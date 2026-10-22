@@ -29,6 +29,7 @@ use super::connector_call::{
     ACKNOWLEDGED_CALLS, AcknowledgedConnectorCall, ConnectorAwaitingInput, ConnectorCallOutcome,
     PENDING_CALLS, PendingConnectorCall, SettledConnectorCall,
 };
+use super::connector_call_input_resume::ConnectorInputResume;
 use super::connector_elicitation_consent::ElicitationOwnerConsent;
 
 /// The round of questions one call's connector asked, on the call's row:
@@ -54,6 +55,9 @@ pub(super) struct PendingConnectorInput {
     /// ask`, and the owner's press on it (FIX 8808).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) owner_consent: Option<ElicitationOwnerConsent>,
+    /// The round's sealed resume state, once the host kept it (FIX 9157).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) resume: Option<ConnectorInputResume>,
 }
 
 impl PendingConnectorInput {
@@ -67,6 +71,7 @@ impl PendingConnectorInput {
             live_until_ms: input.live_until_ms,
             uncertain: false,
             owner_consent: None,
+            resume: None,
         }
     }
 
@@ -147,6 +152,7 @@ impl Vault {
             input.live_until_ms = live_until_ms;
             input.uncertain = false;
             input.owner_consent = None;
+            input.resume = None;
             true
         })
     }
@@ -275,7 +281,7 @@ impl Vault {
     /// call `call_ref`'s row, read again in the writer, and writes the row
     /// when it changed something. Anything else (no row, no questions,
     /// another handle's, an answered call) is left as it is.
-    fn update_connector_input(
+    pub(super) fn update_connector_input(
         &self,
         call_ref: &EntityId,
         handle: &str,
