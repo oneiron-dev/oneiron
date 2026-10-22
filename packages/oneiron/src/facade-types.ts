@@ -5939,7 +5939,7 @@ export type ContextPackRetrievalBudgetControls = { claims?: number | null; turns
 /** `oneiron_contracts::code_run::vault_read::context_pack::ContextPackBudgetControls` */
 export type ContextPackBudgetControls = { token_budget?: number | null; max_item_tokens?: number | null; max_field_chars?: number | null; retrieval?: ContextPackRetrievalBudgetControls | null }
 /** `oneiron::verbs::reply::AiReplyCompanion` */
-export type AiReplyCompanion = { person_ref?: string | null; persona_ref?: string | null; expression?: string | null }
+export type AiReplyCompanion = { person_ref?: string | null; counterpart_person_ref?: string | null; expression?: string | null }
 /** `oneiron::verbs::reply::AiReplyStanding` */
 export type AiReplyStanding = { world_ref?: string | null; token_budget: number; block_tokens?: number | null }
 /** `oneiron::verbs::reply::AiReplyRequest` */

@@ -2987,7 +2987,7 @@ declare namespace Sdk {
   type AiReplyReader = { definition: string; task_family?: string | null };
   type ContextPackRetrievalBudgetControls = { claims?: number | null; turns?: number | null; summaries?: number | null; facets?: number | null; other?: number | null; selected_edges?: number | null };
   type ContextPackBudgetControls = { token_budget?: number | null; max_item_tokens?: number | null; max_field_chars?: number | null; retrieval?: ContextPackRetrievalBudgetControls | null };
-  type AiReplyCompanion = { person_ref?: string | null; persona_ref?: string | null; expression?: string | null };
+  type AiReplyCompanion = { person_ref?: string | null; counterpart_person_ref?: string | null; expression?: string | null };
   type AiReplyStanding = { world_ref?: string | null; token_budget: number; block_tokens?: number | null };
   type AiReplyRequest = { model: string; conversation_id: string; message: string; session_id?: string | null; reader?: AiReplyReader | null; budget?: ContextPackBudgetControls | null; limit?: number | null; pinned_refs?: string[]; companion?: AiReplyCompanion | null; standing?: AiReplyStanding | null; reasoning_effort?: string | null };
   type AiReplyL2Base = { content_hash: string; body: string };

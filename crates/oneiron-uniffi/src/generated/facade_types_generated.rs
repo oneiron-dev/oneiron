@@ -46587,11 +46587,11 @@ pub struct AiReplyCompanion {
     )]
     pub person_ref: Option<String>,
     #[serde(
-        rename = "persona_ref",
+        rename = "counterpart_person_ref",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub persona_ref: Option<String>,
+    pub counterpart_person_ref: Option<String>,
     #[serde(
         rename = "expression",
         default,

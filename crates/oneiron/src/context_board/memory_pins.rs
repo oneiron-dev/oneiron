@@ -1,6 +1,8 @@
 //! Explicit memory pins bypass query relevance and render shedding, never read authority.
 use super::memories::{MemoriesSection, MemoryRow, MemorySource, MemoryTier};
-use super::memories_projection::{finish_projection, foreign_row, memory_asset_ref, memory_slot};
+use super::memories_projection::{
+    constraint_predicate, finish_projection, foreign_row, memory_asset_ref, memory_slot,
+};
 use crate::Result;
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, decode_claim_body};
 use crate::ports::ShortIdStoreRead;
@@ -18,6 +20,7 @@ impl MemoriesSection {
 
     /// Board callers apply their audience disclosure clamp as well as the
     /// actor's read ceiling. Pins bypass query relevance, never either authority.
+    /// Every row the section then holds is fenced by its WORLD's kind.
     pub fn include_pinned_refs_with_disclosure(
         &mut self,
         reader: &ScopedRead<'_>,
@@ -53,6 +56,7 @@ impl MemoriesSection {
             }
         }
         self.refinish();
+        self.fence_fiction_worlds(reader)?;
         Ok(receipts)
     }
 
@@ -76,6 +80,7 @@ impl MemoriesSection {
             }
         }
         self.refinish();
+        self.fence_fiction_worlds(reader)?;
         Ok(receipts)
     }
 
@@ -170,6 +175,10 @@ pub(super) fn pinned_row(
         question: claim
             .as_ref()
             .and_then(crate::context_pack::source_ranking::question_key),
+        fiction: false,
+        constraint: claim
+            .as_ref()
+            .is_some_and(|claim| constraint_predicate(&claim.predicate)),
     };
     if !foreign_row(&row)
         && let Some(claim) = claim
