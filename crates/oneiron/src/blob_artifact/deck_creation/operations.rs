@@ -1,11 +1,11 @@
 //! Credential-bound admission; every write rechecks its inputs in its writer.
 use super::*;
+use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::consent::AuthenticatedOwner;
 use crate::edit_roundtrip::deck_create::{
     DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DirectionOutcome,
 };
-use crate::batch::secret_scan::LiftedKeys;
 use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
 use crate::secret_custody::SecretSight;
 use crate::typed_body::LiftedSources;
@@ -86,7 +86,10 @@ fn view_error(_: serde_json::Error) -> MemoryError {
 }
 
 /// `view` with each lifted value its strings hold as its handle.
-fn masked_json<T: Serialize + DeserializeOwned>(view: &mut T, keys: &LiftedKeys) -> MemoryResult<()> {
+fn masked_json<T: Serialize + DeserializeOwned>(
+    view: &mut T,
+    keys: &LiftedKeys,
+) -> MemoryResult<()> {
     let mut value = serde_json::to_value(&*view).map_err(view_error)?;
     if keys.mask_json(&mut value) {
         *view = serde_json::from_value(value).map_err(view_error)?;
@@ -166,7 +169,10 @@ impl Memory<'_> {
         // live outline's, and the kept outline's at its keep (FIX 9605).
         let lifted = if self.reads_lifted_keys_masked_in_txn(&txn)? {
             let mut texts = vec![document.markdown.clone()];
-            if let Some(held) = kept.as_ref().filter(|held| held.frontier != document.frontier) {
+            if let Some(held) = kept
+                .as_ref()
+                .filter(|held| held.frontier != document.frontier)
+            {
                 match crate::note::deck_outline_markdown_at_in_txn(
                     self.vault(),
                     &txn,

@@ -25,7 +25,9 @@
 
 use std::collections::BTreeMap;
 
+mod evidence_pins;
 mod store;
+use evidence_pins::{EngineSpan, cited_lifecycle, engine_span, hex, note_pin, pins, pins_mut};
 pub(crate) use store::outline_pins;
 
 use oneiron_docedit::design_plan::{
@@ -733,91 +735,4 @@ fn outline_text(markdown: &str) -> &str {
         .split_once("```json")
         .and_then(|(_, rest)| rest.split_once("```"))
         .map_or(markdown.trim(), |(block, _)| block.trim())
-}
-
-/// A pin this engine can map: a cited CLAIM and a note document by entity
-/// id, its frontier and cursors in hex.
-fn note_pin(pin: &Value) -> Option<NotePin> {
-    let text = |key: &str| pin.get(key).and_then(Value::as_str);
-    let quote_hash = unhex(text("quote_hash")?)?;
-    Some(NotePin {
-        claim: EntityId::from_hex(text("claim")?).ok()?,
-        document: EntityId::from_hex(text("document")?).ok()?,
-        frontier: unhex(text("version")?)?,
-        start_cursor: unhex(text("start")?)?,
-        end_cursor: unhex(text("end")?)?,
-        quote_hash: quote_hash.try_into().ok()?,
-        quote_text: text("quote")?.to_owned(),
-    })
-}
-
-/// A note document span this engine can address, a cited CLAIM named or
-/// not: the document (and claim) by entity id, its cursors and quote hash in
-/// hex (FIX 9814).
-pub(super) struct EngineSpan {
-    pub(super) document: EntityId,
-    pub(super) claim: Option<EntityId>,
-    pub(super) start: Vec<u8>,
-    pub(super) end: Vec<u8>,
-    pub(super) quote_hash: [u8; 32],
-}
-
-fn engine_span(pin: &Value) -> Option<EngineSpan> {
-    let text = |key: &str| pin.get(key).and_then(Value::as_str);
-    let claim = match pin.get("claim") {
-        None | Some(Value::Null) => None,
-        Some(_) => Some(EntityId::from_hex(text("claim")?).ok()?),
-    };
-    Some(EngineSpan {
-        document: EntityId::from_hex(text("document")?).ok()?,
-        claim,
-        start: unhex(text("start")?)?,
-        end: unhex(text("end")?)?,
-        quote_hash: unhex(text("quote_hash")?)?.try_into().ok()?,
-    })
-}
-
-fn cited_lifecycle(status: crate::ClaimLifecycleStatus) -> CitedClaimLifecycle {
-    match status {
-        crate::ClaimLifecycleStatus::Active => CitedClaimLifecycle::Active,
-        crate::ClaimLifecycleStatus::Superseded => CitedClaimLifecycle::Superseded,
-        crate::ClaimLifecycleStatus::Retracted => CitedClaimLifecycle::Retracted,
-    }
-}
-
-/// Every evidence pin in document order: an object with a quote hash.
-fn pins(value: &Value, visit: &mut impl FnMut(&Value)) {
-    match value {
-        Value::Object(map) if map.contains_key("quote_hash") => visit(value),
-        Value::Object(map) => map.values().for_each(|child| pins(child, visit)),
-        Value::Array(items) => items.iter().for_each(|child| pins(child, visit)),
-        _ => {}
-    }
-}
-
-fn pins_mut(value: &mut Value, visit: &mut impl FnMut(&mut Value)) {
-    match value {
-        Value::Object(map) if map.contains_key("quote_hash") => visit(value),
-        Value::Object(map) => map.values_mut().for_each(|child| pins_mut(child, visit)),
-        Value::Array(items) => items.iter_mut().for_each(|child| pins_mut(child, visit)),
-        _ => {}
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
-}
-
-fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect()
 }

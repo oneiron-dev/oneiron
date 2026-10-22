@@ -204,7 +204,10 @@ fn swap_tokens(
         if node.namespace != W_MAIN || !REVISION_ELEMENTS.contains(&node.name.as_str()) {
             continue;
         }
-        let Some(value) = node.attr_ns(W_MAIN, "author").filter(|value| is_token(value)) else {
+        let Some(value) = node
+            .attr_ns(W_MAIN, "author")
+            .filter(|value| is_token(value))
+        else {
             continue;
         };
         let Some(author) = authors.get(value.as_bytes()) else {

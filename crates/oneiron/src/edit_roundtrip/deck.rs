@@ -272,11 +272,10 @@ pub fn run_deck_transaction(
 /// each must name its renderer and slide.
 fn validate_context(context: &DeckEditContext) -> Result<()> {
     if context.renders.iter().any(|render| {
-            render.renderer.trim().is_empty()
-                || render.renderer.len() > MAX_RENDERER_BYTES
-                || render.slide.is_empty()
-        })
-    {
+        render.renderer.trim().is_empty()
+            || render.renderer.len() > MAX_RENDERER_BYTES
+            || render.slide.is_empty()
+    }) {
         return Err(invalid("deck review renders are invalid"));
     }
     Ok(())

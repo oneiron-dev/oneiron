@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{ConflictKind, OfficeBodyDiff, invalid, loro_kind, open_fork, three_way, validate};
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, ComposedEffect, ConsentDecision, EffectFacts,
     GrantBound, StandingConsentGrant, evaluate_consent, load_active_standing_grants,
@@ -33,7 +34,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::attempt_queue::AttemptId;
 use crate::typed_body::{
     BodyActor, TypedBodyFork, discard_admitted_typed_body_fork_in_txn,
     merge_admitted_typed_body_fork_in_txn,
@@ -626,8 +626,7 @@ fn covers(scope: &ApproveScope, header: &ProposalHeader, member: &ProposalMember
         ApproveScope::ThisActor(actor) => member.opener.id().is_some_and(|id| named(&id, actor)),
         // The stamped try, never a run a caller named (FIX 3551).
         ApproveScope::ThisRunAndChildren(run) => member.origin.is_some_and(|origin| {
-            crate::entity_id::bytes_to_hex_lower(origin.as_bytes())
-                .eq_ignore_ascii_case(run.trim())
+            crate::entity_id::bytes_to_hex_lower(origin.as_bytes()).eq_ignore_ascii_case(run.trim())
         }),
         ApproveScope::OneItem(proposal) => named(&header.proposal, proposal),
     }

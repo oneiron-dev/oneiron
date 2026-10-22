@@ -53,10 +53,7 @@ pub fn review_slides(
     }
     let band_policy = policy.resolve(question, reversibility, dial.band)?;
     labels.validate()?;
-    if dial.first > dial.ceiling
-        || dial.ceiling == DecisionRung::Human
-        || budget.is_zero()
-    {
+    if dial.first > dial.ceiling || dial.ceiling == DecisionRung::Human || budget.is_zero() {
         return Err(invalid("invalid slide review selection or dial").into());
     }
     let inspection = inspect_pptx(base.bytes)?;
@@ -125,7 +122,9 @@ pub fn review_slides(
                 || unit.image.len() > limits.max_image_bytes
                 || unit.renderer.len() > 256
             {
-                return Err(invalid("invalid slide review unit or exceeded evidence budget").into());
+                return Err(
+                    invalid("invalid slide review unit or exceeded evidence budget").into(),
+                );
             }
             if !reached {
                 refused.push(refusal(target, SlideUnitRefusalReason::RunDeadline));
@@ -211,7 +210,9 @@ pub fn review_slides(
                 .map_err(|_| invalid("slide review unit state"))?;
             let state_bytes =
                 serde_json::to_vec(&state).map_err(|_| invalid("slide review unit state"))?;
-            if read.text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES {
+            if read.text.len() > limits.max_text_bytes
+                || state_bytes.len() > MAX_DECISION_STATE_BYTES
+            {
                 refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
                 continue;
             }
@@ -231,22 +232,22 @@ pub fn review_slides(
             };
             // A Box or Point question asks presence first: its coordinates stand
             // with the presence step beside them, or a confident no stands alone.
-            let (mut decision, mut presence, answered, answer_contract) = if question.contract.locates()
-            {
-                let located = decider.decide_located(&unit_call)?;
-                let answered = located.answer != DecisionAnswer::Abstain;
-                let contract = if located.location.is_some() {
-                    question.contract.clone()
+            let (mut decision, mut presence, answered, answer_contract) =
+                if question.contract.locates() {
+                    let located = decider.decide_located(&unit_call)?;
+                    let answered = located.answer != DecisionAnswer::Abstain;
+                    let contract = if located.location.is_some() {
+                        question.contract.clone()
+                    } else {
+                        AnswerContract::Noul
+                    };
+                    let (decision, presence) = located.split();
+                    (decision, presence, answered, contract)
                 } else {
-                    AnswerContract::Noul
+                    let decision = decider.decide_unit(&unit_call)?;
+                    let answered = decision.answer != DecisionAnswer::Abstain;
+                    (decision, None, answered, question.contract.clone())
                 };
-                let (decision, presence) = located.split();
-                (decision, presence, answered, contract)
-            } else {
-                let decision = decider.decide_unit(&unit_call)?;
-                let answered = decision.answer != DecisionAnswer::Abstain;
-                (decision, None, answered, question.contract.clone())
-            };
             // The deck at its frontier, then each other version an image the
             // ladder was shown is of (a rendered image is of the deck itself).
             let pin_versions = |decision: &mut TypedDecision| {
