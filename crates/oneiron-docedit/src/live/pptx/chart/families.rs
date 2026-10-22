@@ -26,6 +26,13 @@ impl ChartKind {
         )
     }
 
+    /// Whether a plot of the family is drawn through the chart's 3D view: a
+    /// 3D plot, and a 2D surface (contour), which Office draws looking
+    /// straight down on its surface (FIX 9376).
+    pub(crate) fn takes_view(self) -> bool {
+        self.is_3d() || self == Self::Surface
+    }
+
     /// Whether a plot of this family, laid out as `grouping`, stands its
     /// series on a depth (series) axis as well: a 3D line plot and a
     /// surface plot (2D or 3D) always, a 3D bar or area plot whose series
@@ -343,10 +350,20 @@ pub struct ChartView {
 
 impl ChartView {
     /// The view a chart that holds none takes when a plot of `kind` makes
-    /// it 3D: a pie tilted 30 degrees and unturned, any other family tilted
-    /// 15 and turned 20 with right-angle axes (CALLS, D9b fresh 3D view).
+    /// it 3D: a pie tilted 30 degrees and unturned, a contour (a 2D
+    /// surface) looked straight down on with no perspective, as Office
+    /// writes it (FIX 9376), any other family tilted 15 and turned 20 with
+    /// right-angle axes (CALLS, D9b fresh 3D view).
     pub(crate) fn fresh(kind: ChartKind) -> Self {
-        if kind == ChartKind::Pie3D {
+        if kind == ChartKind::Surface {
+            Self {
+                rot_x: Some(90),
+                rot_y: Some(0),
+                r_ang_ax: Some(false),
+                perspective: Some(0),
+                ..Self::default()
+            }
+        } else if kind == ChartKind::Pie3D {
             Self {
                 rot_x: Some(30),
                 rot_y: Some(0),

@@ -787,6 +787,18 @@ pub trait ConsolidationSink {
             "sink does not support scoped consolidation",
         ))
     }
+
+    /// [`Self::accept_scoped`] for an async caller (FIX 9110): a sink whose
+    /// promotion takes an auto checker's turn awaits that turn here, before
+    /// its synchronous writes, so no executor thread waits in line. The
+    /// default accepts as [`Self::accept_scoped`] does, on the caller's thread.
+    fn accept_scoped_in_line(
+        &mut self,
+        write: super::ScopedConsolidationWrite,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+        let accepted = self.accept_scoped(write);
+        Box::pin(std::future::ready(accepted))
+    }
 }
 
 /// Lattice meet (most restrictive wins) over the D10 order

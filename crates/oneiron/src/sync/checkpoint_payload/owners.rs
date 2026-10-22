@@ -9,16 +9,21 @@
 //! message. A value naming a live actor no split here takes out, a nested
 //! history, and a map no adapter reads stay unclassified, named. A Loro
 //! PeerID is the writer of an operation, never an owner of what it wrote.
+//!
+//! KS7-3b also asks which keys may stand plaintext in a skeleton
+//! ([`key_refusal`]) and how a split value takes its opened actors back
+//! ([`root_fill`]).
 
 use loro::LoroValue;
 
 use super::rows::named;
-use super::{KindPlacement, Placement, SyncPayloadOwners, SyncUnclassified};
+use super::{KeyClass, KindPlacement, Placement, SyncPayloadOwners, SyncUnclassified};
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef};
-use crate::sync::bridge::parse_edge_key;
+use crate::error::Result;
+use crate::store::checkpoint_payload::rows::{OtherClient, OwnerRef, bad_part};
+use crate::sync::bridge::{format_edge_key, parse_edge_key};
 use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
@@ -28,14 +33,46 @@ use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
 use crate::sync::withdrawn_cutoffs::{
-    CarriedCutoff, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
+    CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
 };
+
+/// Every window root map an adapter here reads: the roots a capture admits.
+pub(super) const WINDOW_ROOTS: [&str; 19] = [
+    "entities",
+    "edges",
+    "tombstones",
+    "retained_claim_worlds",
+    ROW_BIRTHS_MAP,
+    PEER_ORIGIN_MAP,
+    WITHDRAWN_CUTOFFS_MAP,
+    "documents",
+    "document_heads",
+    "head_move_receipts",
+    "note_forks",
+    "note_proposals",
+    "entity_documents",
+    CUSTODY_MAP,
+    ROOM_TURNS_MAP,
+    ROOM_FACTS_MAP,
+    DOCUMENT_PINS_MAP,
+    MESSAGE_DOCS_MAP,
+    ASSET_BODY_REFS_MAP,
+];
+
+/// Whether a key holding a digest of what it carries (a pin's, a part's, a
+/// protected input's) may stand plaintext in a skeleton. A digest commits to
+/// its value and would outlive the value's erase, so it does not, and its
+/// window stays under the vault-wide seal. Call, behind this one constant.
+const DIGEST_KEYS_ARE_PLAIN: bool = false;
 
 /// An `authored_by` edge, whose key names its actor.
 const AUTHORED_BY: &str = "an authored_by edge names its actor";
 
-/// A row birth, which names the actor that made its row.
-const ROW_BIRTH: &str = "a row birth names the actor that made its row";
+/// A key that spells payload, not an opaque id or a schema name.
+const PAYLOAD_KEY: &str = "a window map key that is not an opaque id or a schema name";
+
+/// A key holding a digest of what it carries.
+const DIGEST_KEY: &str = "a window map key holding a digest of what it carries";
 
 /// An entity's whole document (a deck body's `tables` and `charts` roots
 /// among its nested containers), whose history only its own split takes
@@ -72,12 +109,7 @@ pub(crate) fn root_entry(
             Some(id) if value.len() == 16 => structure(vec![OwnerRef::entity(&id)]),
             _ => undecodable(),
         },
-        ROW_BIRTHS_MAP => entity.map_or_else(undecodable, |id| {
-            Placement::unclassified(
-                Some(OwnerRef::entity(&id)),
-                SyncUnclassified::ActorSplit(ROW_BIRTH),
-            )
-        }),
+        ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::entry(key, value),
         PEER_ORIGIN_MAP => match (entity, admit_peer_origin_carrier(key, &binary(value))) {
             (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
             _ => undecodable(),
@@ -125,4 +157,75 @@ pub(super) fn entity_row(id: EntityId, value: &[u8], owners: &dyn SyncPayloadOwn
 /// `value` as the window map holds it.
 fn binary(value: &[u8]) -> LoroValue {
     LoroValue::Binary(value.to_vec().into())
+}
+
+/// Why `key` of the window root map `root` cannot stand plaintext in a
+/// skeleton; `None` for an opaque id or a schema name. Every key a capture
+/// meets is asked, a deleted one's too.
+pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
+    let class = match root {
+        "entities"
+        | "tombstones"
+        | "retained_claim_worlds"
+        | "entity_documents"
+        | ROW_BIRTHS_MAP
+        | PEER_ORIGIN_MAP
+        | ROOM_TURNS_MAP
+        | ASSET_BODY_REFS_MAP => id_key(key),
+        "edges" => match parse_edge_key(key) {
+            Some((_, EdgeKind::AuthoredBy, _)) => {
+                return Some(SyncUnclassified::ActorSplit(AUTHORED_BY));
+            }
+            Some((source, kind, target)) if format_edge_key(&source, kind, &target) == key => {
+                KeyClass::Opaque
+            }
+            _ => KeyClass::Payload,
+        },
+        WITHDRAWN_CUTOFFS_MAP => id_key(key.strip_prefix(EPOCH_FLOOR).unwrap_or(key)),
+        "documents" | "document_heads" | "head_move_receipts" | "note_forks" | "note_proposals" => {
+            crate::sync::note::checkpoint::key_class(root, key)
+        }
+        CUSTODY_MAP => crate::sync::custody::checkpoint::key_class(key),
+        DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::key_class(key),
+        MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::key_class(key),
+        // A side row's key may spell a platform handle.
+        ROOM_FACTS_MAP => KeyClass::Payload,
+        _ => return Some(SyncUnclassified::UnknownRoot),
+    };
+    match class {
+        KeyClass::Opaque => None,
+        KeyClass::Digest if DIGEST_KEYS_ARE_PLAIN => None,
+        KeyClass::Digest => Some(SyncUnclassified::ActorSplit(DIGEST_KEY)),
+        KeyClass::Payload => Some(SyncUnclassified::ActorSplit(PAYLOAD_KEY)),
+    }
+}
+
+/// A key that is an id in its one canonical spelling.
+fn id_key(key: &str) -> KeyClass {
+    if named(key).is_some() {
+        KeyClass::Opaque
+    } else {
+        KeyClass::Payload
+    }
+}
+
+/// The value `no_one`, a split of the value under `key` in `root`, with
+/// each of `opened` (a field and its actor) back: `None` when its family
+/// drops it for an actor that did not open. A field the family does not
+/// spell refuses.
+pub(super) fn root_fill(
+    root: &str,
+    key: &str,
+    no_one: &[u8],
+    opened: &[(&str, EntityId)],
+) -> Result<Option<Vec<u8>>> {
+    match root {
+        ROOM_TURNS_MAP => crate::sync::room_turns::checkpoint::fill(no_one, opened),
+        "head_move_receipts" | "note_forks" | "note_proposals" => {
+            crate::sync::note::checkpoint::fill(root, no_one, opened)
+        }
+        DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::fill(no_one, opened),
+        ROW_BIRTHS_MAP => crate::sync::row_birth::checkpoint::fill(key, no_one, opened),
+        _ => Err(bad_part()),
+    }
 }
