@@ -35,8 +35,7 @@ use std::time::Duration;
 use oneiron::attempt_queue::{AttemptId, AttemptQueue};
 use oneiron::checkout::{
     CheckoutError, CheckoutFactMutation, CheckoutFactSink, CheckoutId, CheckoutLeaseAct,
-    CheckoutLeaseService, CheckoutLiveness, CheckoutLivenessPulse, CheckoutRepoOps,
-    CheckoutResult,
+    CheckoutLeaseService, CheckoutLiveness, CheckoutLivenessPulse, CheckoutRepoOps, CheckoutResult,
 };
 use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
@@ -80,7 +79,9 @@ impl SyncServer {
             return None;
         }
         let server = Arc::clone(self);
-        Some(tokio::spawn(async move { server.host_seats_forever().await }))
+        Some(tokio::spawn(
+            async move { server.host_seats_forever().await },
+        ))
     }
 
     async fn host_seats_forever(self: Arc<Self>) {
@@ -152,13 +153,8 @@ impl SyncServer {
             destinations: held.as_ref().map(|held| held.handle.clone()),
         };
         let checkouts = CheckoutLeaseService::new(vault, ReadOnly, ReadOnly);
-        let ran = dispatcher.execute_cli(
-            &fence,
-            SEAT_RUN_BUDGET,
-            &checkouts,
-            &mut executor,
-            now_ts(),
-        );
+        let ran =
+            dispatcher.execute_cli(&fence, SEAT_RUN_BUDGET, &checkouts, &mut executor, now_ts());
         // The run's processes are done: what was delivered for them goes.
         drop(held);
         let (disposition, exhaust, reason) = match ran {
@@ -166,7 +162,11 @@ impl SyncServer {
             Err(error) => {
                 tracing::warn!(%error, "a seat run failed; its failure is captured");
                 let reason = Some(error.to_string());
-                (ByoaTerminalDisposition::Failed, ByoaExhaust::default(), reason)
+                (
+                    ByoaTerminalDisposition::Failed,
+                    ByoaExhaust::default(),
+                    reason,
+                )
             }
         };
         let captured = dispatcher.capture_terminal_exhaust(CaptureByoaExhaust {

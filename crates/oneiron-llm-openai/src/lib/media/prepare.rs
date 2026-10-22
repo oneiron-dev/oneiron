@@ -76,8 +76,7 @@ pub(super) fn prepare_image(request: &MediaRequest, wire: &str) -> LlmResult<Pre
 /// `voice` param together are refused) and a format the wire names.
 pub(super) fn prepare_speech(request: &MediaRequest, wire: &str) -> LlmResult<PreparedSpeech> {
     let input = request.text();
-    if request.operation != AiOperation::Speech || input.trim().is_empty() || !only_text(request)
-    {
+    if request.operation != AiOperation::Speech || input.trim().is_empty() || !only_text(request) {
         return Err(FatalLlmError::InvalidRequest.into());
     }
     let characters = u64::try_from(input.chars().count()).unwrap_or(u64::MAX);
@@ -159,7 +158,10 @@ pub(super) fn prepare_embed(request: &MediaRequest, wire: &str) -> LlmResult<Emb
         EmbedPlan::Texts => "input",
         EmbedPlan::Parts => "messages",
     };
-    with_params([("model", json!(wire)), (field, Value::Null)], &request.params)?;
+    with_params(
+        [("model", json!(wire)), (field, Value::Null)],
+        &request.params,
+    )?;
     Ok(plan)
 }
 

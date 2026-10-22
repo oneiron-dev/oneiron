@@ -19,8 +19,7 @@ use std::{future::Future, pin::Pin};
 mod prepare;
 
 use prepare::{
-    PreparedImage, PreparedVideo, VIDEO_REFERENCE_SLOTS, inline_image, prepare_image,
-    prepare_video,
+    PreparedImage, PreparedVideo, VIDEO_REFERENCE_SLOTS, inline_image, prepare_image, prepare_video,
 };
 
 /// Finish reasons that mean the provider withheld the answer.

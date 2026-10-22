@@ -203,7 +203,9 @@ impl OwnServerTransport for MeshLlmTransport {
         let task = self
             .runtime
             .spawn(async move { leg.stream(request, &pump).await });
-        Ok(LlmStream::new(end.guarded(AbortOnDrop(task.abort_handle()))))
+        Ok(LlmStream::new(
+            end.guarded(AbortOnDrop(task.abort_handle())),
+        ))
     }
 }
 
@@ -581,6 +583,8 @@ impl OwnServerTransport for MeshPeerTransport {
                     .await;
             }
         });
-        Ok(LlmStream::new(end.guarded(AbortOnDrop(task.abort_handle()))))
+        Ok(LlmStream::new(
+            end.guarded(AbortOnDrop(task.abort_handle())),
+        ))
     }
 }

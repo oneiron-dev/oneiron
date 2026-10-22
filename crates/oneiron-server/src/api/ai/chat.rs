@@ -1520,7 +1520,10 @@ impl TerminalSink for AssistantMessage {
             .streamed
             .lock()
             .map_or_else(|_| String::new(), |text| text.clone());
-        let partial = matches!(terminal.finish_reason, oneiron::FinishReason::Incomplete { .. });
+        let partial = matches!(
+            terminal.finish_reason,
+            oneiron::FinishReason::Incomplete { .. }
+        );
         if !partial
             && let Some(rest) = text.strip_prefix(streamed.as_str())
             && !rest.is_empty()
