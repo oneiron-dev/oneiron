@@ -105,7 +105,7 @@ use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::federation::FederationGrantScope;
@@ -271,6 +271,9 @@ pub fn window_index_projection_with(
     mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Vec<WindowIndexEntry>> {
     let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
+    // FIX 7608 slice 4: a marked repo item is listed by its copy id and
+    // titled by its copy, never by its raw body.
+    let copies = super::selector::secret_projection::IndexCopies::read(vault)?;
     let mut entries = Vec::new();
     let mut result = Ok(());
     map_for_each_value_bytes(&selected.get_map("entities"), |key, blob| {
@@ -288,8 +291,8 @@ pub fn window_index_projection_with(
         };
         match readable(id) {
             Ok(true) => entries.push(WindowIndexEntry {
-                entity_id: key.to_owned(),
-                title: title_from_body(&blob[ENTITY_METADATA_HEADER_LEN..], title_max_chars),
+                entity_id: copies.shown(&id, key),
+                title: copies.title(&id, blob, |body| title_from_body(body, title_max_chars)),
                 learned_at: header.learned_at,
             }),
             Ok(false) => {}
@@ -297,10 +300,6 @@ pub fn window_index_projection_with(
         }
     });
     result?;
-    // FIX 7608 slice 4: a marked repo item is listed by its copy id and title.
-    super::selector::secret_projection::alias_index_entries(vault, &mut entries, |body| {
-        title_from_body(body, title_max_chars)
-    })?;
     entries.sort_unstable_by(|a, b| a.entity_id.cmp(&b.entity_id));
     Ok(entries)
 }

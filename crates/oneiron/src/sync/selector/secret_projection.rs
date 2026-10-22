@@ -63,11 +63,11 @@ use crate::origin::secret_projection::index::{RepoIndexCopyKind, RepoIndexMarks}
 use crate::ports::EntityStoreRead;
 use crate::secret_custody::KeyPlaces;
 
-pub use documents::{RepoCopyAliases, repo_document_copy_vector, repo_document_source};
 pub(crate) use documents::{
-    alias_index_entries, document_copy_in_txn, import_document_copy, stored_item_in_txn,
-    with_copy_generation_in_txn,
+    IndexCopies, document_copy_in_txn, erase_copy_lineage_in_txn, import_document_copy,
+    stored_item_in_txn, with_copy_generation_in_txn,
 };
+pub use documents::{RepoCopyAliases, repo_document_copy_vector, repo_document_source};
 pub(crate) use history::ProjectedHistory;
 pub use release::{
     RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame, repo_copy_generation,

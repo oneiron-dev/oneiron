@@ -28,8 +28,9 @@ use std::collections::BTreeMap;
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, LoroDoc, UpdateOptions, VersionVector};
 
-use super::{GENERATION_CONTEXT, SyncSecretProjection, copy_id};
+use super::{CopyRow, GENERATION_CONTEXT, SyncSecretProjection, copy_id};
 use crate::Vault;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext};
 use crate::origin::secret_projection::edit::{
@@ -39,8 +40,8 @@ use crate::origin::secret_projection::index::{RepoIndexCopyKind, RepoIndexMarks}
 use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
 use crate::secret_custody::KeyPlaces;
+use crate::store::Store;
 use crate::sync::documents::storage;
-use crate::sync::residence::WindowIndexEntry;
 
 /// The text root of an entity document.
 const BODY: &str = "body";
@@ -365,33 +366,39 @@ impl RepoCopyAliases {
     }
 }
 
-/// `entries`, a window index, as a peer is shown it: a marked source under
-/// its copy id, titled by its copy. Ordering is the caller's.
-///
-/// # Errors
-/// A store failure, or a mark that does not decode.
-pub(crate) fn alias_index_entries<F>(
-    vault: &Vault,
-    entries: &mut [WindowIndexEntry],
-    title: F,
-) -> Result<()>
-where
-    F: Fn(&[u8]) -> Option<String>,
-{
-    let projection = SyncSecretProjection::read(vault)?;
-    if projection.is_empty() {
-        return Ok(());
+/// One residence index pass's marked repo copies.
+pub(crate) struct IndexCopies(SyncSecretProjection);
+
+impl IndexCopies {
+    /// The copies this vault releases now.
+    ///
+    /// # Errors
+    /// A store failure, or a mark that does not decode.
+    pub(crate) fn read(vault: &Vault) -> Result<Self> {
+        SyncSecretProjection::read(vault).map(Self)
     }
-    for entry in entries.iter_mut() {
-        let Ok(id) = EntityId::from_hex(&entry.entity_id) else {
-            continue;
+
+    /// The id row `id`, stored under `key`, is listed by: a marked source's
+    /// copy id, else `key`.
+    pub(crate) fn shown(&self, id: &EntityId, key: &str) -> String {
+        self.0
+            .copy_of(id)
+            .map_or_else(|| key.to_owned(), |copy| copy.to_hex())
+    }
+
+    /// The title of `row`, stored under `id`, taken by `title` from the body
+    /// a peer gets: the copy's for a marked item (none for the sealed-file
+    /// placeholder), never the raw marked body.
+    pub(crate) fn title<F>(&self, id: &EntityId, row: &[u8], title: F) -> Option<String>
+    where
+        F: Fn(&[u8]) -> Option<String>,
+    {
+        let released = match self.0.project_row(id, row) {
+            CopyRow::Copy { row, .. } => row,
+            CopyRow::Keep => row.to_vec(),
         };
-        if let Some(blob) = projection.blob_of_source(&id) {
-            entry.entity_id = blob.id.copy.to_hex();
-            entry.title = title(&blob.copy);
-        }
+        released.get(ENTITY_METADATA_HEADER_LEN..).and_then(title)
     }
-    Ok(())
 }
 
 /// `frontier`, a residence selection witness, folded with the generation
@@ -414,6 +421,27 @@ pub(crate) fn with_copy_generation_in_txn(
     hasher.update(&frontier);
     hasher.update(&generation);
     Ok(*hasher.finalize().as_bytes())
+}
+
+/// Erase reach (owner ruling KEY STORE = A): the copy lineage kept for
+/// `source`'s document goes with that document. Its rows and floors are
+/// deleted by key under the derived copy id; nothing is read or decoded, so
+/// an unreadable copy row never fails the erase.
+///
+/// # Errors
+/// A store failure deleting the rows.
+pub(crate) fn erase_copy_lineage_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    source: &EntityId,
+) -> Result<()> {
+    let copy = copy_id(source)?;
+    let slot = DocumentSlot::of(copy);
+    store.port_document_rows_delete(txn, slot, &DocumentRow::ALL)?;
+    store.port_document_updates_delete(txn, slot)?;
+    let floors = format!("{}:", copy.to_hex()).into_bytes();
+    crate::sync::documents::AD_E.delete_from(store, txn, &floors)?;
+    Ok(())
 }
 
 /// The stored item a residence request's `id` stands for: a copy id is
