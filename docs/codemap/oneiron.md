@@ -5404,19 +5404,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/transactions/sync_state_delete.rs` | src | s | 1 fn | — | One host row's delete in its caller's writer (FIX 6476): a host that reads a row, decides on its bytes and… |
 | `src/vault/transactions/sync_state_reclaim.rs` | src | s | 1 fn | — | One page of a host cache's expiry reclaim through the generic host door (FIX 5951): a host table with no… |
 | `src/vault/vector_evidence.rs` | src | s | 3 fn · 6 crate-vis | — | Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it |
-| `src/vault_cleanup/attempt_retention.rs` | src | m | 3 fn · 10 crate-vis | — | Reversible retention for private queue records; the serialized attempt is never changed |
-| `src/vault_cleanup/cleanup_types.rs` | src | m | 7 struct · 3 enum · 7 fn · 13 const · 17 crate-vis | ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupImpactPreview, CleanupKind, CleanupPosture +2 | Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs |
+| `src/vault_cleanup/attempt_retention.rs` | src | m | 3 fn · 13 crate-vis | — | Reversible retention for private queue records; the serialized attempt is never changed |
+| `src/vault_cleanup/cleanup_types.rs` | src | m | 7 struct · 3 enum · 7 fn · 15 const · 18 crate-vis | ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest, CleanupImpactPreview, CleanupKind, CleanupPosture +2 | Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs |
 | `src/vault_cleanup/codec_receipts.rs` | src | m | 2 fn · 16 crate-vis | — | vault_meta row codecs and the digest receipt projector |
 | `src/vault_cleanup/erase.rs` | src | s | 2 crate-vis | — | An erase reaches cleanup's own rows (FIX 7517) |
 | `src/vault_cleanup/marks.rs` | src | s | 15 crate-vis | — | Cleanup marks keyed by id16: a run's archive mark on a completed attempt, and the owner's kept mark on an… |
-| `src/vault_cleanup/mod.rs` | src | s | 1 mod · 6 re-export · 6 crate-vis | — | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
-| `src/vault_cleanup/owner_doors.rs` | src | s | 7 fn | — | The owner's cleanup doors for a transport |
+| `src/vault_cleanup/mod.rs` | src | s | 1 mod · 8 re-export · 6 crate-vis | — | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
+| `src/vault_cleanup/owner_doors.rs` | src | s | 8 fn | — | The owner's cleanup doors for a transport |
 | `src/vault_cleanup/person_provenance.rs` | src | s | 1 fn · 4 crate-vis | — | Mint-time evidence for the extraction-only PERSON cleanup arm |
-| `src/vault_cleanup/proposals_archive.rs` | src | m | 7 fn · 5 crate-vis | — | Proposal accept/reject lane plus the archived query and restore door |
+| `src/vault_cleanup/proposal_review.rs` | src | s | 3 crate-vis | — | The owner's per-item cleanup decision (FIX 1758): one complete verdict, an Accept or a Reject for every slot… |
+| `src/vault_cleanup/proposals_archive.rs` | src | m | 7 fn · 6 crate-vis | — | Proposal accept/reject lane plus the archived query and restore door |
 | `src/vault_cleanup/qodo_tests.rs` | test | m | — | — | Correctness regressions for the Qodo cleanup repair |
 | `src/vault_cleanup/repair_tests.rs` | test | m | — | — | Focused continuation fixtures for the three previously absent seams |
-| `src/vault_cleanup/retention.rs` | src | s | 2 fn · 4 crate-vis | — | Owner-adjustable completed-TASK retention |
+| `src/vault_cleanup/retention.rs` | src | s | 2 fn · 5 crate-vis | — | Owner-adjustable completed-TASK retention |
 | `src/vault_cleanup/retention_tests.rs` | test | s | — | — | — |
+| `src/vault_cleanup/review_types.rs` | src | s | 10 struct · 4 enum | CleanupAcceptEffect, CleanupDecideRequest, CleanupDecideView, CleanupItemChoice, CleanupItemDecision, CleanupItemOutcome, CleanupItemResult, CleanupItemState +6 | The per-item cleanup review and decision vocabulary (FIX 1758): what the owner reads about each slot of one… |
+| `src/vault_cleanup/review_view.rs` | src | m | 1 fn · 2 crate-vis | — | The per-item cleanup review (FIX 1758; ARCH-0073: a proposal is "reviewed per item with full disclosure")… |
 | `src/vault_cleanup/rollout.rs` | src | s | 2 crate-vis | — | Release gate for automatic cleanup |
 | `src/vault_cleanup/run_record.rs` | src | s | 11 crate-vis | — | Durable cleanup results close the job-commit → queue-settlement crash gap |
 | `src/vault_cleanup/run_revert.rs` | src | m | 2 struct · 3 enum · 3 fn · 2 crate-vis | CleanupRevertEntry, CleanupRevertOutcome, CleanupRevertReason, CleanupRunRevert, CleanupRunRevertAnswer | The owner reverts one whole cleanup run (OF-449) |
@@ -5424,7 +5427,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_cleanup/scan.rs` | src | s | 3 crate-vis | — | Whole-index scans |
 | `src/vault_cleanup/surface.rs` | src | s | 2 struct · 1 fn | CleanupRunRequest, CleanupRunView | Typed owner trigger for the existing archive cron |
 | `src/vault_cleanup/tests.rs` | test | m | — | — | ARCH-0073 vault auto-cleanup fixtures (ONE-1931) |
-| `src/vault_cleanup/tripwire.rs` | src | m | 6 fn · 1 const · 7 crate-vis | — | Closed-form cleanup checks, the posture door, and the job body |
+| `src/vault_cleanup/tripwire.rs` | src | m | 6 fn · 1 const · 9 crate-vis | — | Closed-form cleanup checks, the posture door, and the job body |
 | `src/vault_cleanup/visibility.rs` | src | s | 1 crate-vis | — | Local archive visibility |
 | `src/vault_shape/apply.rs` | src | L | 3 struct · 2 enum · 6 fn · 4 crate-vis | ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState | Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has |
 | `src/vault_shape/card.rs` | src | s | 1 struct · 1 fn | ShapeCard | `describe(vault)`'s card (ARCH-0070 doors): the arrangement at a glance and what its actors can send, a free… |
@@ -5474,7 +5477,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/files.rs` | src | m | 16 struct · 1 enum · 9 fn | FilesFileState, FilesFileView, FilesLimitCrossed, FilesRescanAnswer, FilesRescanCounts, FilesRescanView, FilesSourceAttachAnswer, FilesSourceAttachRequest +9 | The inputs and answers of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.rescan`… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1186 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1188 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 7 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 15 struct · 14 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +7 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
