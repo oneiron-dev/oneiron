@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1206 code-mode rows (1166 host rows, 40 run rows), 4155 declarations.
-// Replies: 1086 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4169 declarations.
+// Replies: 1087 fully typed, 117 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1729,6 +1729,20 @@ declare namespace Sdk {
   type CleanupKind = "claimless_extraction_person" | "empty_summary" | "completed_task" | "completed_attempt" | "retained_note";
   type CleanupCandidate = { entity: EntityId; kind: CleanupKind };
   type CleanupRunView = { attempt: string; posture: CleanupPosture; candidates: CleanupCandidate[]; proposal?: EntityId | null; archived: EntityId[]; digest?: EntityId | null };
+  type CleanupReviewRequest = { proposal: EntityId };
+  type CleanupReviewCounts = { total: number; claimless_extraction_persons: number; empty_summaries: number; completed_tasks: number; completed_attempts: number; retained_notes: number; erased: number };
+  type CleanupItemState = "erased" | "eligible" | "changed" | "gone" | "unreadable";
+  type CleanupReviewEvidence = { rule: string; holds_now: boolean; live_claims?: number | null; linked_edges: string[]; extraction_minted?: boolean | null; since?: number | null; keep_days?: number | null };
+  type CleanupReviewContent = { record?: ScopedReadResult<EntityView | null> | null; note?: ScopedReadResult<NoteReadView | null> | null; attempt?: unknown | null; refused: string[] };
+  type CleanupAcceptEffect = "archive" | "skip" | "nothing" | "fails";
+  type CleanupReviewItem = { slot: number; state: CleanupItemState; entity?: EntityId | null; kind?: CleanupKind | null; revision?: string | null; evidence?: CleanupReviewEvidence | null; content?: CleanupReviewContent | null; accept: CleanupAcceptEffect };
+  type CleanupReviewView = { proposal: EntityId; attempt: string; created_at: number; read_at: number; revision: string; task_retention_days: number; counts: CleanupReviewCounts; items: CleanupReviewItem[] };
+  type CleanupItemDecision = "accept" | "reject";
+  type CleanupItemChoice = { slot: number; decision: CleanupItemDecision };
+  type CleanupDecideRequest = { proposal: EntityId; choices: CleanupItemChoice[]; expected_revision?: string | null };
+  type CleanupItemResult = "archived" | "skipped" | "rejected" | "erased";
+  type CleanupItemOutcome = { slot: number; entity?: EntityId | null; kind?: CleanupKind | null; outcome: CleanupItemResult };
+  type CleanupDecideView = { proposal: EntityId; items: CleanupItemOutcome[]; digest?: EntityId | null };
   type ArchiveDeletePreviewRequest = { targets: string[] };
   type ArchiveDeleteExpectation = { record_hash: string; archive_marker: string };
   type ArchiveDeletePreviewRow = { record_bytes: number; expected: ArchiveDeleteExpectation };
@@ -5108,6 +5122,10 @@ declare const vault: Sdk.VaultHost & {
     vetting(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
   };
   cleanup: {
+    /** The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected. */
+    decide(input: Sdk.CleanupDecideRequest): Promise<Sdk.CleanupDecideView | StoredResult>;
+    /** The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts. */
+    review(input: Sdk.CleanupReviewRequest): Promise<Sdk.CleanupReviewView | StoredResult>;
     /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
     run(input: Sdk.CleanupRunRequest): Promise<Sdk.CleanupRunView | StoredResult>;
   };
