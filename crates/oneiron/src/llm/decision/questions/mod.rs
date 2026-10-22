@@ -54,7 +54,7 @@ pub(crate) use refresh::answer_records_in_txn;
 pub use refresh::{
     RefreshBatch, RefreshFailure, answer_records, refresh_due_questions,
     refresh_due_questions_by_role, refresh_due_questions_by_role_while, refresh_due_questions_with,
-    refresh_question, refresh_question_with, standing_ask_route,
+    refresh_question, refresh_question_with, refresh_standing_question_with, standing_ask_route,
 };
 pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
