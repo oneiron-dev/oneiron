@@ -395,4 +395,24 @@ impl Store {
             },
         )
     }
+
+    /// Carries out every staged connector resume key retirement (FIX 9157),
+    /// an interrupted process's included, in the custody finisher's order.
+    /// Only an erase's intent runs: a resume key retires with its call's
+    /// row and for nothing else.
+    ///
+    /// # Errors
+    /// An archived vault with a retirement standing, an intent of another
+    /// cause, and custody faults.
+    pub(crate) fn finish_connector_resume_retirements(&self) -> Result<()> {
+        self.finish_custody_retirements(CustodyKind::ConnectorResume, |_, intent| {
+            if intent.cause == RetireCause::Erase {
+                Ok(true)
+            } else {
+                Err(Error::CorruptedIndex(
+                    "connector resume keys retire for an erase only",
+                ))
+            }
+        })
+    }
 }

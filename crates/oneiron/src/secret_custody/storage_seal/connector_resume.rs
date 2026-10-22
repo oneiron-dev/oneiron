@@ -14,10 +14,6 @@ use crate::store::Store;
 /// Seals `state` for the connector call `call_ref` at `generation` under the
 /// vault's own custody (FIX 9157): the call's ConnectorResume leaf, minted in
 /// `wtxn` on first use and journaled before this row commits.
-#[allow(
-    dead_code,
-    reason = "the connector call row seals its resume state next (FIX 9157)"
-)]
 pub(crate) fn seal_connector_resume_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -32,10 +28,6 @@ pub(crate) fn seal_connector_resume_in_txn(
 /// Opens what `seal_connector_resume_in_txn` sealed for `call_ref` at
 /// `generation`: a strict read; a retired, damaged or missing leaf is an
 /// error. The caller holds a writer or the custody read guard.
-#[allow(
-    dead_code,
-    reason = "the connector call row opens its resume state next (FIX 9157)"
-)]
 pub(crate) fn open_connector_resume_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -52,10 +44,6 @@ pub(crate) fn open_connector_resume_in_txn(
 /// `wtxn`, the writer that deletes its PENDING_CALLS row; the custody
 /// finisher retires the keys after commit, so a restored pre-erase image
 /// cannot open them.
-#[allow(
-    dead_code,
-    reason = "the PENDING_CALLS row delete stages its retirement next (FIX 9157)"
-)]
 pub(crate) fn retire_connector_resume_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
