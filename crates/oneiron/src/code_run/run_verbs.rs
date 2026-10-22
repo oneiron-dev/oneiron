@@ -222,6 +222,11 @@ pub struct AgentSpawnInput {
     /// clamped to the parent's reach.
     #[serde(default)]
     pub comm: Option<crate::agent_dispatch::CommReach>,
+    /// Leave the balance out of the cost envelope a planned team's pattern
+    /// run reads (FIX 9536). Off by default: the run reads the whole
+    /// envelope, which the host enforces either way.
+    #[serde(default)]
+    pub balance_free_prompt: bool,
 }
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
@@ -349,6 +354,7 @@ impl AgentSpawnInput {
                 })
                 .transpose()?,
             budget_cap_units: self.budget.map(|knob| knob.map(Ok)).transpose()?,
+            balance_free_prompt: self.balance_free_prompt,
         };
         Ok(super::SelfAgentSpawnCall {
             target: self

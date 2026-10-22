@@ -527,14 +527,17 @@ impl Writer<'_> {
             .find(|brief| brief.id == asset)
             .map(|brief| brief.kind)
             .ok_or_else(unknown)?;
-        compile_graphic(&GraphicInput {
-            binding,
-            requested,
-            record: stored.record,
-            bytes: stored.bytes,
-            bounds,
-            limits: self.inputs.limits,
-        })
+        compile_graphic(
+            &GraphicInput {
+                binding,
+                requested,
+                record: stored.record,
+                bytes: stored.bytes,
+                bounds,
+                limits: self.inputs.limits,
+            },
+            self.package.resources(),
+        )
         .map_err(|error| EmitError::Graphic {
             block: block.to_owned(),
             error,
@@ -589,7 +592,7 @@ fn layout_name(package: &Package, node: &RetainedNode) -> Result<Option<String>,
     let Some(bytes) = package.part(&node.part)? else {
         return Ok(None);
     };
-    let tree = XmlTree::parse(&bytes, package.limits().xml)?;
+    let tree = XmlTree::parse(&bytes, package.resources())?;
     let Some(end) = tree.nodes.get(node.index).map(|shape| shape.span.end) else {
         return Ok(None);
     };

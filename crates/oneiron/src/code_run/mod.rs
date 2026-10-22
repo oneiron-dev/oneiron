@@ -164,9 +164,10 @@ pub(crate) use self::storage::{
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 pub use self::type_diagnostics::{
-    DiagnosticCollection, DiagnosticMeasures, ProgramPreparationNote, ProgramStepFeedback,
-    ProgramStepIdentity, TYPE_CHECK_INTERRUPTED, TYPE_CHECK_NOT_ATTACHED, TYPE_CHECK_NOT_LOADED,
-    TYPE_CHECK_NOT_STARTED, TYPE_CHECK_OFF, TYPE_FEEDBACK_NOT_KEPT, TypeCheckFacts, TypeDiagnostic,
+    DiagnosticCollection, DiagnosticMeasures, FeedbackWithheldReason, KeptProgramSteps,
+    ProgramPreparationNote, ProgramStepFeedback, ProgramStepFeedbackRelease, ProgramStepIdentity,
+    TYPE_CHECK_INTERRUPTED, TYPE_CHECK_NOT_ATTACHED, TYPE_CHECK_NOT_LOADED, TYPE_CHECK_NOT_STARTED,
+    TYPE_CHECK_OFF, TYPE_FEEDBACK_NOT_KEPT, TypeCheckFacts, TypeCheckState, TypeDiagnostic,
     TypeDiagnostics,
 };
 pub(crate) use self::type_diagnostics::{measure, parse_check_ref};
