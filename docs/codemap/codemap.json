@@ -32019,7 +32019,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "fn": 5,
       "struct": 1
      }
@@ -32452,7 +32452,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 50
+      "crate-vis": 53
      }
     },
     {
@@ -32543,7 +32543,7 @@
      "path": "src/gate/room_thread.rs",
      "purpose": "Manifest-owned room working-set policy with restrictive composition",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 1
      }
