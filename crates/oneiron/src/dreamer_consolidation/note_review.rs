@@ -203,9 +203,10 @@ impl ConsolidationExecutor<'_> {
         scope.project = Some(note.project);
         scope.readable.insert(note.version.clone());
         // The people a reply declares are minted under the review's queued
-        // parent, from the NOTE's own axes (FIX 7506).
+        // parent, else its lineage's first try (FIX 7579), from the NOTE's own
+        // axes (FIX 7506).
         let namespace = MintNamespace::new(
-            run.attempt_id,
+            super::extracted_people::original_try(ctx.vault, run.attempt_id)?,
             attempt.status.payload.parent_attempt,
             None,
             Some(note.facet),

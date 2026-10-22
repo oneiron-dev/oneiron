@@ -58030,6 +58030,8 @@ pub struct WakeRecipePolicy {
     pub thing_child_instruction: String,
     #[serde(rename = "thing_child_input_window_divisor")]
     pub thing_child_input_window_divisor: u32,
+    #[serde(rename = "thing_child_fallback_window_tokens")]
+    pub thing_child_fallback_window_tokens: u64,
 }
 
 /// `oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest`.
