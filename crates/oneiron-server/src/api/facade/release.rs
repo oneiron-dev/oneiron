@@ -85,7 +85,10 @@ pub(crate) fn replayed_value(
     release: InvocationRelease,
 ) -> serde_json::Value {
     if release.peer != auth.peer() {
-        tracing::debug!(verb, "invocation answer reprojected for the waiter's machine");
+        tracing::debug!(
+            verb,
+            "invocation answer reprojected for the waiter's machine"
+        );
     }
     if let Some(rows) = release.rows.as_deref()
         && !rows_still_admitted(vault, auth, rows)
@@ -115,8 +118,8 @@ pub(crate) fn rows_still_admitted(
     rows: &[EntityId],
 ) -> bool {
     rows.iter().all(|row| {
-        let erased = oneiron::sync::bridge::local_deletion_is_materialized(vault, row)
-            .unwrap_or(false);
+        let erased =
+            oneiron::sync::bridge::local_deletion_is_materialized(vault, row).unwrap_or(false);
         !erased && auth.can_read_entity(vault, row).unwrap_or(true)
     })
 }

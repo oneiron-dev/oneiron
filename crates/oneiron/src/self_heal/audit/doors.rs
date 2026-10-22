@@ -172,9 +172,8 @@ pub fn pending_sourced_as_owner(
         )?;
         sourced.extend(pending.map(|request| (request, rows.clone())));
     }
-    sourced.sort_by(|(a, _), (b, _)| {
-        (a.created_at, &a.reference).cmp(&(b.created_at, &b.reference))
-    });
+    sourced
+        .sort_by(|(a, _), (b, _)| (a.created_at, &a.reference).cmp(&(b.created_at, &b.reference)));
     Ok(sourced)
 }
 
@@ -192,7 +191,9 @@ fn seal_source_rows_in_txn(
     result_ref: &str,
 ) -> Result<Vec<EntityId>> {
     let named = |reference: &str| {
-        let reference = reference.split_once('@').map_or(reference, |(head, _)| head);
+        let reference = reference
+            .split_once('@')
+            .map_or(reference, |(head, _)| head);
         reference
             .rsplit(':')
             .next()

@@ -249,9 +249,11 @@ pub(super) async fn mcp_endpoint(
                     )
                     .await
                     {
-                        Ok(waiter) if waiter.auth.as_ref().is_some_and(|auth| {
-                            !auth.credential_is_live(server.vault())
-                        }) =>
+                        Ok(waiter)
+                            if waiter
+                                .auth
+                                .as_ref()
+                                .is_some_and(|auth| !auth.credential_is_live(server.vault())) =>
                         {
                             Err(super::super::actor_dispatch::mcp_proof_error())
                         }
