@@ -580,11 +580,8 @@ impl AiHost {
         // staffed its ladder; the Dreamer's next pass and the pump's next
         // wave cut ask through it.
         let _ = host.handle.decisions.set(server.decision_host().clone());
-        // From the pump's next leaf on, a leaf that ran is judged on its
-        // execution context through the same ladder (OF-540).
         if let Some(pump) = &host.workflows {
-            pump.with_attribution_ladder(server.decision_host().ladder().clone());
-            // And each queued project question runs on it from the next pass
+            // Each queued project question runs on it from the next pass
             // (OF-501), up to the big rung: the card it drafts is the
             // person's ask, so the ladder queues none of its own.
             let decisions = server.decision_host();

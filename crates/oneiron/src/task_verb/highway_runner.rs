@@ -251,7 +251,7 @@ pub(crate) fn wake_settled_tasks(vault: &Vault, tasks: &BTreeSet<EntityId>, now:
 }
 
 /// How a runner's queue door settles the try it holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RunnerSettle<'a> {
     /// The try finished. Its row's result, when it names a durable entity,
     /// is the TASK's result; without one no TASK report is made.
@@ -383,8 +383,8 @@ pub(crate) fn report_leased_task_in_txn(
     if record.task_ref.is_none() || !record.state.is_running() {
         return Ok(());
     }
-    let judged = match settle {
-        RunnerSettle::Judged(answer) => Some(answer),
+    let judged = match &settle {
+        RunnerSettle::Judged(answer) => Some(answer.clone()),
         RunnerSettle::Done | RunnerSettle::Failed { .. } => None,
     };
     let (transition, body) = match settle {

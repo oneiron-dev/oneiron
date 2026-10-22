@@ -10,7 +10,7 @@ use crate::receipt::ReceiptRecord;
 use crate::side_table::{self, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::skill::SkillRecord;
 
-use super::amended::{amended_receipt_shares_in_txn, amended_shares_in_txn, is_amended};
+use super::amended::{amended_receipt_shares_in_txn, amended_shares_in_txn};
 use super::codec::{
     KEY_AT, KEY_SCHEMA_VERSION, KEY_WIN, decode_value, encode_value, invalid, map_entry, map_u64,
 };
@@ -739,15 +739,6 @@ enum Counted {
     Loss,
     /// An amended attempt: a loss weighted by its `skill_defect` share.
     Share(f32),
-}
-
-/// Whether `outcome` is a row this vault's own ledger holds, attempt lane or amendment.
-pub(super) fn outcome_is_local(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    outcome: &OutcomeRef,
-) -> Result<bool> {
-    Ok(outcome.contains(vault, rtxn)? || is_amended(vault, rtxn, outcome)?)
 }
 
 /// One executor's records for the learning projection. A retained but

@@ -120,7 +120,7 @@ pub(super) fn put_attribution_cause_in_txn(
         source: source_id(&evidence.receipt_ref, sequence)?,
         sequence,
         receipt: evidence.receipt_ref.clone(),
-        actor: Some(evidence.actor),
+        actor: evidence.actor,
         skill: evidence.skill,
         label: label.as_str().to_owned(),
         share,

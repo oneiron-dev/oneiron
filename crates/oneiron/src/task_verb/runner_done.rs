@@ -5,18 +5,20 @@
 //! A runner instead reads the question first, has the host's decisions
 //! answer it on its own thread, and carries the answer into the completion.
 //! The answer binds the TASK, result, brief version and principal it judged;
-//! a report that finds any of them changed asks up as before.
+//! a report that finds any of them changed asks up as before. It also names
+//! the try it was asked for and the model whose answer stands, so the report
+//! that takes it records that model as the run's judge (FIX 1877).
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::ClaimReadStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::decision::Reversibility;
+use crate::llm::decision::{ProviderPin, Reversibility};
 
 use super::brief::StoredBrief;
 use super::browser_workflow::task_workflow_binding_in_txn;
-use super::decision_port::{PortAnswer, TaskDecisions, TaskQuestion, ask};
+use super::decision_port::{PortAnswer, TaskDecisions, TaskQuestion, ask_traced};
 use super::highway_report::done_question_inputs;
 use super::highway_runner::workflow_try::WorkflowRunEnd;
 use super::highway_runner::{runner_refusal, runner_task_in};
@@ -31,14 +33,21 @@ pub struct RunnerDoneQuestion {
     evidence: Vec<EntityId>,
     state: serde_json::Value,
     reversibility: Reversibility,
+    /// The leased try that asks it and its lease generation; `None` for a
+    /// question no live lease asks.
+    attempt: Option<(AttemptId, u32)>,
 }
 
 /// The answer to a [`RunnerDoneQuestion`], for the completion that reports
 /// its Done.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerDoneAnswer {
     judged: Judged,
     answer: PortAnswer,
+    /// The try the question was asked for, at its lease generation.
+    attempt: Option<(AttemptId, u32)>,
+    /// The model whose answer stands; `None` when no model answered.
+    answered_by: Option<ProviderPin>,
 }
 
 /// The report an answer was given for.
@@ -56,16 +65,19 @@ impl RunnerDoneQuestion {
     /// call answers "ask up".
     #[must_use]
     pub fn decide(&self, decisions: &TaskDecisions<'_>) -> RunnerDoneAnswer {
+        let traced = ask_traced(
+            Some(decisions),
+            TaskQuestion::DoneMet,
+            self.judged.principal,
+            &self.evidence,
+            &self.state,
+            self.reversibility,
+        );
         RunnerDoneAnswer {
             judged: self.judged,
-            answer: ask(
-                Some(decisions),
-                TaskQuestion::DoneMet,
-                self.judged.principal,
-                &self.evidence,
-                &self.state,
-                self.reversibility,
-            ),
+            answer: traced.answer,
+            attempt: self.attempt,
+            answered_by: traced.answered_by,
         }
     }
 }
@@ -87,6 +99,22 @@ impl RunnerDoneAnswer {
             principal,
         };
         (judged == self.judged).then_some(self.answer)
+    }
+
+    /// Records the model whose answer stands as the judge of the try this
+    /// answer was asked for (FIX 1877), in the report's writer `txn`, once
+    /// [`Self::for_report`] took it. An answer no model gave records none. A
+    /// join that fails is logged and leaves the judge unknown: it never fails
+    /// the report or changes its answer.
+    pub(super) fn record_judge_in_txn(&self, vault: &Vault, txn: &mut heed::RwTxn<'_>) {
+        let (Some((attempt, generation)), Some(judge)) = (self.attempt, &self.answered_by) else {
+            return;
+        };
+        if let Err(error) = crate::skill_attribution::finalize_run_judge_in_txn(
+            vault, txn, attempt, generation, judge,
+        ) {
+            tracing::warn!(kind = ?error.kind(), "a run's Done judge was not recorded; it stays unknown");
+        }
     }
 }
 
@@ -118,7 +146,8 @@ pub fn runner_done_question(
     if vault.get_entity_type_in_txn(&txn, &result_ref)?.is_none() {
         return Ok(None);
     }
-    done_question_in(vault, &txn, task_ref, result_ref, &[])
+    let attempt = Some((record.id, record.attempt_count));
+    done_question_in(vault, &txn, task_ref, result_ref, &[], attempt)
 }
 
 /// A bound try's typed Done (CUA E4; Engine C1), given with no question
@@ -178,6 +207,9 @@ pub fn runner_workflow_done_answer(
             principal: authority.owner_ref,
         },
         answer: PortAnswer::Yes,
+        // A structural proof, which no model answered.
+        attempt: None,
+        answered_by: None,
     }))
 }
 
@@ -242,7 +274,8 @@ pub(super) fn workflow_done_question(
             }
         }
     }
-    let mut question = done_question_in(vault, &txn, end.task, note, &readable)?;
+    // The run's wrapper closed before its TASK settles: no live lease asks.
+    let mut question = done_question_in(vault, &txn, end.task, note, &readable, None)?;
     let leaf_results: Vec<serde_json::Value> = end
         .results
         .iter()
@@ -304,14 +337,16 @@ fn leaf_text(
 
 /// The question a Done on `task_ref` with the durable `result_ref` asks, in
 /// `txn`, over `leaves` too: a leased runner's, or an ended workflow run's
-/// over its report NOTE (FIX 4391). `None` when it asks none: no brief, or
-/// an ask already holds the TASK.
+/// over its report NOTE (FIX 4391), asked for `attempt` when a live lease
+/// asks it. `None` when it asks none: no brief, or an ask already holds the
+/// TASK.
 fn done_question_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,
     result_ref: EntityId,
     leaves: &[EntityId],
+    attempt: Option<(AttemptId, u32)>,
 ) -> Result<Option<RunnerDoneQuestion>> {
     let Some(body) = task_verb_body_in(vault, txn, task_ref)? else {
         return Ok(None);
@@ -344,5 +379,6 @@ fn done_question_in(
         evidence,
         state,
         reversibility: brief.brief.escalation.reversibility,
+        attempt,
     }))
 }

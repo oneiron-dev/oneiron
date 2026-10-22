@@ -16,8 +16,8 @@ use crate::entity_id::EntityId;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_attribution::{
-    ContributionCandidate, ContributionFork, ContributionPair, contribution_check_candidates_after,
-    record_contribution_pair,
+    ContributionCandidate, ContributionFork, ContributionPair, ContributionRecord,
+    contribution_check_candidates_after, record_contribution_pair,
 };
 use crate::{Result, Vault};
 
@@ -160,7 +160,8 @@ fn measure(
         tried += 1;
         let pair = ContributionPair {
             attempt_receipt: candidate.attempt_receipt.clone(),
-            skill: candidate.skill,
+            outcome_receipt: candidate.outcome_receipt.clone(),
+            skill: Some(candidate.skill),
             axis: candidate.axis.clone(),
             goal_revision: candidate.goal_revision.clone(),
             anchor: candidate.anchor,
@@ -168,8 +169,16 @@ fn measure(
             without_skill: forks.without_skill,
             at: now,
         };
-        if let Err(error) = record_contribution_pair(vault, &pair, now) {
-            tracing::warn!(kind = ?error.kind(), "contribution check was not recorded");
+        // A pair its kept forks do not prove is recorded unmatched and
+        // measures nothing (FIX 3610).
+        match record_contribution_pair(vault, &pair, now) {
+            Ok(ContributionRecord::Matched(_)) => {}
+            Ok(ContributionRecord::Unmatched { reasons }) => {
+                tracing::debug!(?reasons, "contribution pair recorded unmatched");
+            }
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "contribution check was not recorded");
+            }
         }
     }
     (tried > 0, examined)

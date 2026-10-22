@@ -29,6 +29,7 @@ pub mod estimate;
 pub mod evidence;
 pub mod honesty;
 pub mod judge;
+mod pack_erase;
 pub mod prior;
 pub mod project;
 pub mod read;
@@ -58,6 +59,7 @@ pub use read::{LearningRead, learning_estimate, learning_estimate_with_sources, 
 pub use retest::{Retest, RetestScore, record_retest};
 
 pub(crate) use evidence::record_evidence_in_txn;
+pub(crate) use pack_erase::{erase_learning_pack_context_in_txn, pack_attribution_names};
 pub(crate) use project::validate_learning_claim_structure;
 
 /// How often a thing worked.

@@ -139,7 +139,10 @@ impl AttributionDecisions<'_> {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
-        let evidence: Vec<EntityId> = std::iter::once(request.evidence.actor)
+        let evidence: Vec<EntityId> = request
+            .evidence
+            .actor
+            .into_iter()
             .chain(request.evidence.skill)
             .collect();
         let decisions = self.ladder.run_pack(
@@ -474,7 +477,7 @@ pub(super) fn verdict_subject(
     evidence: &OutcomeEvidence,
 ) -> Option<EntityId> {
     match verdict {
-        AttributionVerdict::ExecutionLapse => Some(evidence.actor),
+        AttributionVerdict::ExecutionLapse => evidence.actor,
         AttributionVerdict::SkillDefect | AttributionVerdict::Discovery => evidence.skill,
         AttributionVerdict::Environment
         | AttributionVerdict::PreferenceShift

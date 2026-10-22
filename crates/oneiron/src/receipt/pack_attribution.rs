@@ -45,12 +45,15 @@ pub struct CreditOptions {
 
 /// Execution context is stamped once; actual-use lists may only grow while
 /// the lease is live. Every model string is an id pinned as `id@revision`.
+/// The judge is unknown until the model whose answer to the run's Done stands
+/// is recorded, once, under the live lease (FIX 1877); a run no model judged
+/// keeps it unknown.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PackAttributionFields {
     #[serde(rename = "typeRef")]
     pub type_ref: TypeRef,
     pub executor: String,
-    pub judge: String,
+    pub judge: Option<String>,
     pub pattern: EntityId,
     pub team_shape: Vec<String>,
     pub decider: EntityId,
@@ -73,7 +76,7 @@ pub struct PackLearningContext {
 impl PackAttributionFields {
     pub fn validate(&self) -> Result<()> {
         self.type_ref.validate()?;
-        for model in [&self.executor, &self.judge] {
+        for model in std::iter::once(&self.executor).chain(&self.judge) {
             reference(model)?;
             if !model
                 .rsplit_once('@')
@@ -120,6 +123,10 @@ impl PackAttributionFields {
         if previous.output.is_none() {
             fixed.output = None;
         }
+        // An unknown judge is recorded once (FIX 1877); a recorded one stays.
+        if previous.judge.is_none() {
+            fixed.judge = None;
+        }
         fixed == *previous
             && self.contributions.starts_with(&previous.contributions)
             && self.used_edges.starts_with(&previous.used_edges)
@@ -151,6 +158,28 @@ pub(crate) fn put_attempt_pack_attribution_in_txn(
         ));
     }
     ATTEMPT_ATTRIBUTION.put(store, txn, &key, fields)
+}
+
+/// Records `judge` as the unknown judge of attempt `id`'s live attribution
+/// row (FIX 1877), the one change its execution context takes, through the
+/// attribution door. Its one caller holds `id`'s live lease in `txn`.
+/// Returns whether the judge was recorded now: a row with a judge already
+/// keeps it, and no row records nothing.
+pub(crate) fn finalize_attempt_pack_judge_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: AttemptId,
+    judge: &str,
+) -> Result<bool> {
+    let Some(mut fields) = ATTEMPT_ATTRIBUTION.get(store, txn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    if fields.judge.is_some() {
+        return Ok(false);
+    }
+    fields.judge = Some(judge.to_owned());
+    put_attempt_pack_attribution_in_txn(store, txn, id, &fields)?;
+    Ok(true)
 }
 
 /// The live attribution row of attempt `id`, before its close takes it.
