@@ -43,8 +43,11 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
     let resources = &resources;
     match op {
         Op::Describe => Ok(Done::reply(Reply::Described(super::describe()))),
+        // The DOCX arms read and parse within the operation's port (FIX 8570).
         Op::DocxRead(args) => {
-            let blocks = read_docx_blocks(input(inputs, args.document)?, args.limits.archive())
+            let document = input(inputs, args.document)?;
+            let blocks = resources
+                .docx(|| read_docx_blocks(document, args.limits.archive()))
                 .map_err(docedit)?;
             Ok(Done::reply(Reply::DocxBlocks { blocks }))
         }
@@ -52,8 +55,9 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
             let document = input(inputs, args.document)?;
             let prepared =
                 prepare_revision_transaction(&args.transaction.to_string()).map_err(docedit)?;
-            let (bytes, notes) =
-                revise_with_notes(document, &prepared, args.limits.archive()).map_err(docedit)?;
+            let (bytes, notes) = resources
+                .docx(|| revise_with_notes(document, &prepared, args.limits.archive()))
+                .map_err(docedit)?;
             let transaction = serde_json::from_str(&prepared).map_err(internal)?;
             Ok(Done::with(
                 Reply::DocxRevised {
@@ -68,17 +72,16 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
             if let Some(transaction) = &args.transaction {
                 validate_revision_transaction(&transaction.to_string()).map_err(docedit)?;
             }
-            validate_blocking_with_limits(document, args.limits.archive()).map_err(runtime)?;
+            resources
+                .docx(|| validate_blocking_with_limits(document, args.limits.archive()))
+                .map_err(runtime)?;
             Ok(Done::reply(Reply::Checked))
         }
         Op::DocxProject(args) => {
-            let bytes = project_docx(
-                input(inputs, args.source)?,
-                &args.changes,
-                &args.revision,
-                args.limits.archive(),
-            )
-            .map_err(docedit)?;
+            let source = input(inputs, args.source)?;
+            let bytes = resources
+                .docx(|| project_docx(source, &args.changes, &args.revision, args.limits.archive()))
+                .map_err(docedit)?;
             Ok(Done::with(
                 Reply::Written,
                 Output::new("document", DOCX_MEDIA_TYPE, bytes),
@@ -443,7 +446,10 @@ fn deck_create(
                 figure: &args.names.figure,
                 sheet: &args.names.sheet,
             },
-            limits: GraphicLimits::default(),
+            // The host's graphic ceilings, when it set them (FIX 5355).
+            limits: args
+                .graphics
+                .map_or_else(GraphicLimits::default, super::GraphicSettings::graphic),
         },
     )
     .map_err(emit_error)?;
@@ -495,6 +501,12 @@ fn docedit(error: DoceditError) -> ContractError {
 }
 
 fn runtime(error: RuntimeError) -> ContractError {
+    if let Some(refusal) = crate::docx_resource(&error) {
+        return ContractError::resource(refusal);
+    }
+    if let Some(hit) = crate::docx_capacity(&error) {
+        return ContractError::capacity(hit);
+    }
     let code = match error.code {
         DocxCode::StaleEdit => ErrorCode::Stale,
         DocxCode::InvalidDocx | DocxCode::InvalidSnapshot => ErrorCode::InvalidDocument,
@@ -509,6 +521,7 @@ fn package_code(error: &retained_opc::Error) -> ErrorCode {
         retained_opc::Error::Invalid(_) => ErrorCode::InvalidDocument,
         retained_opc::Error::Edit(_) => ErrorCode::Refused,
         retained_opc::Error::Resource(refusal) => ContractError::resource(*refusal).code,
+        retained_opc::Error::Capacity(_) => ErrorCode::CapacityExceeded,
     }
 }
 
@@ -516,12 +529,23 @@ fn package(error: retained_opc::Error) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
     }
+    if let Some(hit) = error.capacity() {
+        return ContractError::capacity(hit);
+    }
     ContractError::new(package_code(&error), error.to_string())
+}
+
+/// The ceiling a wrapped package error passed, when it did (FIX 5354).
+fn package_capacity(error: Option<&retained_opc::Error>) -> Option<ContractError> {
+    error
+        .and_then(retained_opc::Error::capacity)
+        .map(ContractError::capacity)
 }
 
 fn pptx(error: PptxError) -> ContractError {
     let code = match error {
         PptxError::Resource(refusal) => return ContractError::resource(refusal),
+        PptxError::Capacity(hit) => return ContractError::capacity(hit),
         PptxError::InvalidPackage | PptxError::InvalidXml | PptxError::InvalidReference => {
             ErrorCode::InvalidDocument
         }
@@ -544,12 +568,24 @@ fn deck_error(error: DeckError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
     }
+    if let Some(capacity) = package_capacity(match &error {
+        DeckError::Package(error) => Some(error),
+        _ => None,
+    }) {
+        return capacity;
+    }
     ContractError::new(ErrorCode::InvalidDocument, error.to_string())
 }
 
 fn xlsx(error: XlsxBodyError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
+    }
+    if let Some(capacity) = package_capacity(match &error {
+        XlsxBodyError::Package(error) => Some(error),
+        _ => None,
+    }) {
+        return capacity;
     }
     let code = match &error {
         XlsxBodyError::Package(error) => package_code(error),
@@ -562,6 +598,12 @@ fn xlsx(error: XlsxBodyError) -> ContractError {
 fn transaction_error(error: TransactionError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
+    }
+    if let Some(capacity) = package_capacity(match &error {
+        TransactionError::Package(error) => Some(error),
+        _ => None,
+    }) {
+        return capacity;
     }
     let code = match &error {
         TransactionError::Invalid(_) => ErrorCode::BadRequest,
@@ -593,6 +635,12 @@ fn compile(error: CompileError) -> ContractError {
 fn emit_error(error: EmitError) -> ContractError {
     if let Some(refusal) = error.resource() {
         return ContractError::resource(refusal);
+    }
+    if let Some(capacity) = package_capacity(match &error {
+        EmitError::Package(error) => Some(error),
+        _ => None,
+    }) {
+        return capacity;
     }
     let code = match &error {
         EmitError::Plan(error) => return compile(error.clone()),

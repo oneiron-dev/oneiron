@@ -36,8 +36,10 @@ use crate::llm::decision::DecisionWireLabels;
 
 mod decision_rungs;
 mod relationships;
+mod subject;
 pub(super) use decision_rungs::LabelledRungs;
 pub(super) use relationships::{CandidateRel, relationship_lines};
+pub(super) use subject::subject_label;
 
 /// The key a call's label binding rides under in the host's own
 /// provider-options namespace.

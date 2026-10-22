@@ -1,22 +1,23 @@
 //! The rooms.* facade family delegates to existing reads, witness and claim gates.
 
-use super::room::{
-    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_clearance, room_worlds,
-};
+use super::room::{RoomPresence, room_clearance, room_worlds};
 use crate::claim::{PointRead, RoomTerms, RoomTurnCeiling};
 use crate::federation::Scope;
-use crate::memory::{ClaimListFilter, Memory, MemoryError, MemoryResult};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
 
 mod ceiling;
 mod live_audience;
+mod projection;
 mod thread_readers;
 mod upkeep_posture;
 
 pub(crate) use ceiling::room_facets_axis_in;
+pub use projection::RoomSectionPage;
 pub(crate) use thread_readers::{
-    off_room_reader_clearance_in, thread_ceiling_in, thread_reader_in,
+    off_room_reader_clearance_in, public_thread_live_speakers_in, thread_ceiling_in,
+    thread_reader_in,
 };
 
 impl Memory<'_> {
@@ -307,174 +308,6 @@ impl Memory<'_> {
             self.actor(),
             members,
         )?)
-    }
-
-    /// Roster, scope, posture and rules, all read fresh. No copy of the board
-    /// or of posture is stored anywhere.
-    pub fn rooms_render(&self, room: EntityId) -> MemoryResult<RoomSection> {
-        let roster = self.room_roster(room)?;
-        // One rendered row per member: the board section keeps its own bound.
-        if roster.len() > 1000 {
-            return Err(MemoryError::bad_request_with(
-                "room roster exceeds bound",
-                &[],
-            ));
-        }
-        let terms = self.turn_terms_now(room, &roster)?;
-        let scope = terms.room_scope();
-        let read = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
-        // Each rule must also pass every present peer's ordinary read.
-        let present: Vec<_> = roster
-            .iter()
-            .filter(|member| member.present)
-            .map(|member| member.actor)
-            .collect();
-        let peers: Vec<_> = self
-            .peer_read_keys(&present)?
-            .into_iter()
-            .map(|key| self.vault().scoped_read(key))
-            .collect();
-        let crate::claim::ScopedReadResult {
-            value: listed,
-            mut receipt,
-        } = self.claim_list(&ClaimListFilter {
-            subject_ref: Some(room.to_hex()),
-            predicate: None,
-            lifecycle: Some("active".into()),
-            // The native subject scan fails closed at its work bound. Room
-            // output spends its own cap only after all visibility predicates.
-            limit: crate::vault::MAX_EDGE_QUERY_RESULTS,
-        })?;
-        let reads = listed
-            .iter()
-            .map(|claim| EntityId::from_hex(&claim.claim_ref).map(PointRead::id))
-            .collect::<crate::Result<Vec<_>>>()?;
-        let own = read.read(&reads, None)?;
-        receipt.restrict_with(&own.receipt);
-        let peer_rows = peers
-            .iter()
-            .map(|peer| Ok(peer.read(&reads, None)?.value))
-            .collect::<MemoryResult<Vec<_>>>()?;
-        let mut claims = Vec::new();
-        let mut posture = RoomPosture::default();
-        let mut has_bar = false;
-        for (index, claim) in listed.into_iter().enumerate() {
-            let world = claim
-                .world_ref
-                .as_deref()
-                .map(EntityId::from_hex)
-                .transpose()?
-                .unwrap_or_else(crate::claim::base_world_id);
-            if own.value[index].is_none()
-                || !terms
-                    .worlds
-                    .worlds
-                    .contains(&crate::federation::ScopeId(world))
-            {
-                continue;
-            }
-            // A clearance in the meet holds each rule to P7 as well.
-            if peer_rows.iter().any(|rows| rows[index].is_none())
-                || !self.room_discloses(
-                    room,
-                    &terms,
-                    &present,
-                    EntityId::from_hex(&claim.claim_ref)?,
-                )?
-            {
-                receipt.add_suppressed(1);
-                continue;
-            }
-            if claims.len() == 1000 {
-                return Err(crate::Error::IndexOverflow("visible room claims").into());
-            }
-            match (claim.predicate.as_str(), claim.value.as_str()) {
-                ("room.posture.mode", Some(mode)) => {
-                    posture.mode = posture.mode.max(match mode {
-                        "chime" => RoomMode::Chime,
-                        "asked_only" => RoomMode::AskedOnly,
-                        "silent" => RoomMode::Silent,
-                        _ => {
-                            return Err(MemoryError::bad_request_with(
-                                "invalid room posture mode",
-                                &[],
-                            ));
-                        }
-                    });
-                }
-                ("room.posture.bar", Some(bar)) => {
-                    let bar = match bar {
-                        "low" => RoomBar::Low,
-                        "med" => RoomBar::Med,
-                        "high" => RoomBar::High,
-                        _ => {
-                            return Err(MemoryError::bad_request_with(
-                                "invalid room posture bar",
-                                &[],
-                            ));
-                        }
-                    };
-                    posture.bar = if has_bar { posture.bar.max(bar) } else { bar };
-                    has_bar = true;
-                }
-                _ => {}
-            }
-            claims.push(claim);
-        }
-        claims.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
-        // FIX 1163: whom this reader may bring in by a roster write it could
-        // sign, among the PERSONs it reads; in an ordinary room, by the
-        // invitation it may file there (OF-529).
-        let mut invitable = std::collections::BTreeSet::new();
-        let vault = self.vault();
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let reader = crate::WriteActor::new(self.actor(), self.actor_class());
-        if crate::workspace_roster::files_roster_joins_in_txn(vault, &txn, room, reader)?
-            || crate::workspace_roster::invites_into_room_in_txn(vault, &txn, room, reader)?
-        {
-            let persons = vault
-                .store
-                .port_entity_ids_by_type(&txn, crate::registry::ENTITY_TYPE_PERSON, None)?
-                .collect::<crate::Result<Vec<_>>>()?;
-            let readable = read.entities_readable_in_txn(&txn, &persons)?;
-            for (person, readable) in persons.into_iter().zip(readable) {
-                if readable
-                    && crate::workspace_roster::roster_invitee_in_txn(vault, &txn, room, person)?
-                {
-                    invitable.insert(person);
-                }
-            }
-        }
-        drop(txn);
-        Ok(RoomSection {
-            room,
-            roster,
-            scope,
-            posture,
-            claims,
-            offers: self.rooms_open_offers(room)?,
-            receipt,
-            host: None,
-            invitable,
-        })
-    }
-
-    /// [`Self::rooms_render`] with the room's host read among `session`'s
-    /// present participants and the caller ([`Self::rooms_host`]). A session
-    /// the vault holds no SESSION row for names no present set, so the
-    /// section carries no host, as it does with no session at all.
-    pub fn rooms_render_hosted(
-        &self,
-        room: EntityId,
-        session: Option<EntityId>,
-    ) -> MemoryResult<RoomSection> {
-        let mut section = self.rooms_render(room)?;
-        if let Some(session) = session
-            && self.vault().session_presence(session).is_ok()
-        {
-            section.host = Some(self.rooms_host(room, Some(session))?.hosting);
-        }
-        Ok(section)
     }
 }
 

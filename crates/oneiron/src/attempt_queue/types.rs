@@ -20,10 +20,14 @@ use super::validate::validate_result_ref;
 use crate::error::ArtifactError;
 
 mod cleanup;
+mod exhaust;
+mod hold;
 pub use cleanup::{
     AttemptQueueCleanupReport, AttemptQueueRetryReason, AttemptQueueRetryReasonCount,
     CleanupAttemptLeases,
 };
+pub use exhaust::AttemptTerminalExhaust;
+pub(crate) use hold::AttemptPause;
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
@@ -446,6 +450,18 @@ pub struct AttemptRecord {
     /// FIX 5240: each failure a same-intent requeue kept, oldest first.
     #[serde(default)]
     pub history: Vec<super::RequeuedFailure>,
+    /// FIX 9579: the pause this row is held under while paused, kept here so
+    /// a pruned event history never loses it. `None` while not paused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) active_pause: Option<AttemptPause>,
+    /// FIX 9578: what this try left behind, written with the row that
+    /// settles it. `None` until it settles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) terminal_exhaust: Option<AttemptTerminalExhaust>,
+    /// FIX 10066: the keyed fingerprint of each signal the side-row wall
+    /// masked, by its key, so an identical retry still matches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) signal_intents: Vec<crate::run_tree::SignalIntent>,
 }
 
 impl AttemptRecord {

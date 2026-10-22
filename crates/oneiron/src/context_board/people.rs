@@ -184,7 +184,10 @@ impl People {
                 continue;
             }
             let row = match agent_of.get(&person) {
-                Some((agent, def)) => PersonRow {
+                // The definition's id, name and role are its own rows: the
+                // reader's read admits it too before the PERSON shows them
+                // (FIX 9749).
+                Some((agent, def)) if admit(*agent)? => PersonRow {
                     person,
                     actors: vec![*agent],
                     name: def
@@ -202,11 +205,9 @@ impl People {
                     .to_owned(),
                     about: None,
                 },
+                Some(_) => person_row_without_definition(vault, at, person, handle, &body),
                 None => {
-                    let model = matches!(
-                        vault.person_substrate(&person, at),
-                        Ok(Some(crate::subject_model::PersonSubstrate::Model))
-                    );
+                    let model = person_is_model(vault, at, person);
                     PersonRow {
                         person,
                         actors: vec![person],
@@ -511,6 +512,40 @@ fn live_agent(
 }
 
 /// A PERSON body's `display_name`, or its persona baseline's.
+/// The row of an admitted PERSON whose anchored definition the reader's
+/// read does not admit (FIX 9749): the PERSON's own handle, its own name
+/// (else the bare handle) and the kind its own substrate gives. No
+/// definition id, name or role shows, and the PERSON is not dropped.
+fn person_row_without_definition(
+    vault: &Vault,
+    at: u64,
+    person: EntityId,
+    handle: String,
+    body: &[u8],
+) -> PersonRow {
+    PersonRow {
+        person,
+        actors: vec![person],
+        name: person_name(body).unwrap_or_else(|| handle.clone()),
+        handle,
+        kind: if person_is_model(vault, at, person) {
+            PersonKind::Agent
+        } else {
+            PersonKind::Human
+        },
+        role: String::new(),
+        about: None,
+    }
+}
+
+/// Whether PERSON `person` is model-backed at `at`, by its own substrate.
+fn person_is_model(vault: &Vault, at: u64, person: EntityId) -> bool {
+    matches!(
+        vault.person_substrate(&person, at),
+        Ok(Some(crate::subject_model::PersonSubstrate::Model))
+    )
+}
+
 fn person_name(body: &[u8]) -> Option<String> {
     let fields = crate::companion::persona_body_fields(body).ok()?;
     let top = fields
