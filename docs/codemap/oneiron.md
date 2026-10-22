@@ -1668,9 +1668,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/delete/preview.rs` | src | s | 1 struct · 6 fn · 3 crate-vis | DeleteEntityPreview | Snapshot-bound impact preview for the one-action, confirmed delete door |
 | `src/deletion/derived_rows.rs` | src | s | 2 crate-vis | — | Rows a record feeds outside the generic index set, torn with the record |
 | `src/deletion/erase/active_store.rs` | src | m | 4 crate-vis | — | — |
+| `src/deletion/erase/corrupt.rs` | src | m | 1 enum · 8 crate-vis | CorruptClaimRepair | The audited escape for a corrupt CLAIM's hard erase (FIX 7800, ARCH-0038) |
 | `src/deletion/erase/markers.rs` | src | s | 7 crate-vis | — | — |
-| `src/deletion/erase/mod.rs` | src | s | 5 crate-vis | — | — |
-| `src/deletion/erase/provenance.rs` | src | s | 3 crate-vis | — | — |
+| `src/deletion/erase/mod.rs` | src | s | 1 re-export · 9 crate-vis | — | — |
+| `src/deletion/erase/provenance.rs` | src | s | 4 crate-vis | — | — |
 | `src/deletion/erase/redirect_shells.rs` | src | s | 2 crate-vis | — | — |
 | `src/deletion/erase/replay.rs` | src | m | 5 crate-vis | — | — |
 | `src/deletion/erase/scope_probes.rs` | src | s | 4 crate-vis | — | One decision-ledger scan for a tombstone batch's missing-id probes (SCAN C049) |
@@ -1678,12 +1679,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/identity_event_stamps.rs` | src | s | 2 crate-vis | — | Erase independent author-attribution carriers without changing decisions |
 | `src/deletion/legal_hold/mod.rs` | src | m | 14 fn · 1 re-export · 3 crate-vis | — | Legal hold doors (OF-470, design B; owner ruling 2026-10-17: "B, and that stuff is for cloud only + we… |
 | `src/deletion/legal_hold/types.rs` | src | m | 6 struct · 7 enum · 4 fn · 7 const | ErasePendingReason, HostOrderHold, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance +5 | The legal-hold vocabulary (OF-470, design B; ARCH-0038 #legal-hold, BIZ-LEGAL-0004 §12, owner ruling… |
-| `src/deletion/mod.rs` | src | s | 11 re-export · 32 crate-vis | — | ARCH-0038 deletion/redaction contract types |
+| `src/deletion/mod.rs` | src | s | 12 re-export · 33 crate-vis | — | ARCH-0038 deletion/redaction contract types |
 | `src/deletion/publish.rs` | src | L | 5 crate-vis | — | — |
-| `src/deletion/receipt.rs` | src | m | 20 crate-vis | — | — |
+| `src/deletion/receipt.rs` | src | m | 21 crate-vis | — | — |
+| `src/deletion/receipt/capture.rs` | src | s | 5 crate-vis | — | The audited classification of a corrupt CLAIM (FIX 7800, ARCH-0038) |
 | `src/deletion/receipt_completion.rs` | src | s | 4 crate-vis | — | The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10) |
 | `src/deletion/receipt_final.rs` | src | s | 2 fn · 3 crate-vis | — | An erase's overall final REDACTION_AUDIT row (FIX 5844, C-ERASE-FINAL) |
-| `src/deletion/receipt_grammar.rs` | src | m | 2 crate-vis | — | The pinned REDACTION_AUDIT body grammar (ONE-1134, ONE-1140, FIX 5844): the one structural validator every… |
+| `src/deletion/receipt_grammar.rs` | src | m | 5 crate-vis | — | The pinned REDACTION_AUDIT body grammar (ONE-1134, ONE-1140, FIX 5844): the one structural validator every… |
 | `src/deletion/rendezvous.rs` | src | s | 15 crate-vis | — | — |
 | `src/deletion/sweep_queue.rs` | src | m | 1 fn · 25 crate-vis | — | — |
 | `src/deletion/tests.rs` | test | m | — | — | — |
@@ -2992,9 +2994,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/m8_forward_oracle/r1691_ledger.rs` | src | s | — | — | ONE-1691 RT-11: intent-ledger exactly-once/crash-recovery oracles, ledger transports, and drive_* helpers |
 | `src/m8_forward_oracle/shared.rs` | src | s | 4 crate-vis | — | Common vault/actor helpers plus the scoped-MCP fixture shared by the 1690 and 1691 oracles |
 | `src/maintain/attempt_lease.rs` | src | s | 1 crate-vis | — | ONE-1896 §3: the attempt-queue LEASE lane of one maintenance pass |
-| `src/maintain/builder.rs` | src | m | 2 struct · 12 fn · 1 crate-vis | MaintenanceBuilder, MaintenanceReport | Builder flags, run() dispatch, and the aggregate maintenance report |
+| `src/maintain/builder.rs` | src | m | 2 struct · 13 fn · 1 crate-vis | MaintenanceBuilder, MaintenanceReport | Builder flags, run() dispatch, and the aggregate maintenance report |
 | `src/maintain/hnsw_rebuild.rs` | src | s | 7 crate-vis | — | HNSW prepare/validate/commit rebuilds plus the SLIM dropped-marker rehydrate |
-| `src/maintain/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
+| `src/maintain/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | — |
 | `src/maintain/tests.rs` | test | XL | — | — | — |
 | `src/maintain/text_ops.rs` | src | s | 4 crate-vis | — | Text-index clear, PPR cleanup, and postings compaction |
 | `src/memory/affect.rs` | src | s | 4 struct · 2 fn | AffectAnnotationPut, AffectClaimConsolidateRequest, AffectClaimConsolidation, AffectTurnEvidence | Typed affect evidence setup through ordinary claim admission and VAD consolidation |
@@ -4732,6 +4734,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/surface_event/tests.rs` | test | L | — | — | — |
 | `src/surface_event/tests/cc_intake.rs` | test | s | — | — | — |
 | `src/sweep/compact.rs` | src | L | 5 crate-vis | — | Window shallow-snapshot compaction and erased-id scrub |
+| `src/sweep/corrupt.rs` | src | s | 1 crate-vis | — | The full-carrier pass a corrupt CLAIM's erase asks of the sweep (FIX 7800, ARCH-0038) |
 | `src/sweep/finalize.rs` | src | m | 5 crate-vis | — | Job finalize, retry rewrite, and dropped-obligation audit |
 | `src/sweep/mod.rs` | src | s | 3 crate-vis | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
 | `src/sweep/owed.rs` | src | s | 4 crate-vis | — | Window compactions an erase owes (FIX 6387) |

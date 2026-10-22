@@ -21334,6 +21334,19 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CorruptClaimRepair"
+     ],
+     "path": "src/deletion/erase/corrupt.rs",
+     "purpose": "The audited escape for a corrupt CLAIM's hard erase (FIX 7800, ARCH-0038)",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -21350,7 +21363,8 @@
      "path": "src/deletion/erase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9,
+      "re-export": 1
      }
     },
     {
@@ -21360,7 +21374,7 @@
      "path": "src/deletion/erase/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -21459,8 +21473,8 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 32,
-      "re-export": 11
+      "crate-vis": 33,
+      "re-export": 12
      }
     },
     {
@@ -21480,7 +21494,17 @@
      "path": "src/deletion/receipt.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/receipt/capture.rs",
+     "purpose": "The audited classification of a corrupt CLAIM (FIX 7800, ARCH-0038)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -21511,7 +21535,7 @@
      "path": "src/deletion/receipt_grammar.rs",
      "purpose": "The pinned REDACTION_AUDIT body grammar (ONE-1134, ONE-1140, FIX 5844): the one structural validator every…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -38608,7 +38632,7 @@
      "purpose": "Builder flags, run() dispatch, and the aggregate maintenance report",
      "surface": {
       "crate-vis": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -38630,7 +38654,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -60318,6 +60342,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sweep/corrupt.rs",
+     "purpose": "The full-carrier pass a corrupt CLAIM's erase asks of the sweep (FIX 7800, ARCH-0038)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -73116,7 +73150,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 38,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73991,7 +74025,7 @@
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)"
     },
     "sweep": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74203,7 +74237,7 @@
    },
    "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4797,
+   "source_files": 4800,
    "test_files": 902
   },
   "oneiron-android": {
