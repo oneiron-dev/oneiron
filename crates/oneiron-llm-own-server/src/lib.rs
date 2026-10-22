@@ -316,6 +316,7 @@ impl CheckedStream<'_> {
                 finish_reason: oneiron::FinishReason::Incomplete {
                     reason: oneiron::IncompleteReason::TerminalDisagreement,
                 },
+                reply_assertions: Default::default(),
             });
         }
         validate_terminal(&message, &finish_reason)?;
@@ -326,6 +327,7 @@ impl CheckedStream<'_> {
             message,
             usage,
             finish_reason,
+            reply_assertions: Default::default(),
         })
     }
 }
@@ -341,10 +343,13 @@ impl futures_core::Stream for CheckedStream<'_> {
             return Poll::Ready(None);
         }
         match std::pin::Pin::new(&mut this.source).poll_next(cx) {
+            // A peer's terminal is a raw boundary: whatever records it
+            // names are no evidence here, so its reply asserts none (FIX 3416).
             Poll::Ready(Some(Ok(oneiron::LlmStreamEvent::Done {
                 message,
                 usage,
                 finish_reason,
+                ..
             }))) => Poll::Ready(Some(this.terminal(message, usage, finish_reason))),
             Poll::Ready(Some(Ok(event))) => match this.validate_event(&event) {
                 Ok(()) => {
