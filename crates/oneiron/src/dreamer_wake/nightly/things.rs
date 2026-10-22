@@ -5,32 +5,29 @@
 //! conversations; every exposure boundary stays in it, and a private
 //! thread's turns share a thing only with turns of that same thread.
 //!
-//! Every TURN lands in exactly one thing: the entity of its highest scored
-//! bound span, else its partition's topic. Each spent span rides with its
-//! TURN's thing. A bound thing's child holds it across every conversation it
-//! appears in (FIX 7524): one part per conversation, combined only where the
-//! parts' exposure agrees (`exposure`), and past `CHILD_TURNS` of total TURN
-//! work into sibling children of that size. A structural topic, a private
-//! thread's thing and a part whose exposure does not agree stay in their own
-//! conversation's child. Each child names its thing in its payload. Nothing
-//! is dropped, and the number of entities, things or conversations is not
-//! bounded.
+//! Each spent span is its OWN bound entity's (FIX 8723): a TURN whose spans
+//! bind several entities lands in each of their things, so no entity loses
+//! its thing or the neighbourhood its child reads. An unbound span rides
+//! with its TURN's highest scored bound entity, and a TURN none of whose
+//! spans is bound is its partition's topic's. Each thing is one child per
+//! project it is read in (FIX 8724, `slices`), so each child lists its own
+//! project's priors: every conversation it appears in is one part, and the
+//! lines its parts are sliced in keep each exposure boundary inside the
+//! child, where a slice never crosses one. Each child names its thing in
+//! its payload. Nothing is dropped, and the number of entities, things or
+//! conversations is not bounded.
 
 use std::collections::BTreeMap;
 
 use super::exposure::Exposure;
 use crate::dreamer_consolidation::{
-    ConsolidationBranchPlan, ConsolidationPartitionKey, ConsolidationPartitionPlan,
-    ConversationPart, DEFAULT_MESO_ROUND_TURN_CAP, PartitionThing, WorkingSetTurn,
+    ConsolidationBranchPlan, ConsolidationPartitionKey, ConsolidationPartitionPlan, PartitionThing,
+    WorkingSetTurn,
 };
 use crate::dreamer_wake::sieve::SieveSpan;
 use crate::{EntityId, Result, Vault};
 
-/// The most TURNs one child carries: what one wake prepares at its head
-/// (the wake plan's prepared-TURN bound is this same round size). A child
-/// past it would make a wake read it whole, so a thing past it splits. The
-/// child's extraction slices its TURNs again, as it did before.
-const CHILD_TURNS: usize = DEFAULT_MESO_ROUND_TURN_CAP;
+mod slices;
 
 /// What one nightly thing is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -58,11 +55,12 @@ impl NightlyThingKey {
 #[derive(Debug)]
 pub(super) struct NightlyThingPlan {
     pub(super) key: NightlyThingKey,
-    /// Every spent span whose TURN is this thing's, in queue order.
+    /// Every spent span that is this thing's, in queue order.
     pub(super) spans: Vec<SieveSpan>,
-    /// The thing's TURNs as branches over its conversation parts, in the
-    /// partitions' spending order, each part in partition order and every
-    /// child cut at `CHILD_TURNS` of total work.
+    /// The thing's TURNs as branches over its conversation parts, one per
+    /// project they are read in (a part of no known project on its own), in
+    /// the partitions' spending order, each part on its slice line (FIX
+    /// 8724).
     pub(super) children: Vec<ConsolidationBranchPlan>,
 }
 
@@ -172,23 +170,37 @@ pub(super) fn plan_things(
     let mut slots = BTreeMap::new();
     let mut drafts = Vec::new();
     for span in spans.iter().filter(|span| span.owed.is_empty()) {
-        if let Some(&(index, entity)) = homes.get(&span.turn) {
-            let key = thing_key(&partitions[index].key, audience(&span.turn), entity);
+        if let Some(home) = homes.get(&span.turn) {
+            let key = thing_key(
+                &partitions[home.partition].key,
+                audience(&span.turn),
+                home.thing_of(span),
+            );
             let at = slot(&mut slots, &mut drafts, key);
             drafts[at].spans.push(span.clone());
         }
     }
     for (index, partition) in partitions.iter().enumerate() {
         for turn in &partition.turns {
-            let entity = homes.get(&turn.turn_id).and_then(|&(_, entity)| entity);
-            let key = thing_key(&partition.key, audience(&turn.turn_id), entity);
-            let at = slot(&mut slots, &mut drafts, key);
-            drafts[at].turns.entry(index).or_default().push(*turn);
+            let bound = homes
+                .get(&turn.turn_id)
+                .map_or(&[][..], |home| home.entities.as_slice());
+            // Each entity its spans bind holds it; with none, its topic does.
+            let entities: Vec<Option<EntityId>> = if bound.is_empty() {
+                vec![None]
+            } else {
+                bound.iter().copied().map(Some).collect()
+            };
+            for entity in entities {
+                let key = thing_key(&partition.key, audience(&turn.turn_id), entity);
+                let at = slot(&mut slots, &mut drafts, key);
+                drafts[at].turns.entry(index).or_default().push(*turn);
+            }
         }
     }
     drafts
         .into_iter()
-        .map(|draft| cut(partitions, draft, exposures))
+        .map(|draft| slices::cut(partitions, draft, exposures))
         .collect()
 }
 
@@ -205,24 +217,46 @@ fn thing_key(
     }
 }
 
-/// Each planned TURN's partition, by index, and the entity of its highest
-/// scored bound spent span. A TURN no spent span of which is bound keeps
-/// `None`: the structural topic.
+/// Where a planned TURN sits: its partition, by index, and every entity its
+/// spent spans bind, highest scored first. None bound is the structural
+/// topic.
+struct Home {
+    partition: usize,
+    entities: Vec<EntityId>,
+}
+
+impl Home {
+    /// The thing `span`, one of this TURN's, is spent in: its own bound
+    /// entity's; an unbound span's, its TURN's highest scored bound entity,
+    /// else its topic (`None`).
+    fn thing_of(&self, span: &SieveSpan) -> Option<EntityId> {
+        span.entity.or_else(|| self.entities.first().copied())
+    }
+}
+
+/// Each planned TURN's [`Home`].
 fn turn_homes(
     partitions: &[ConsolidationPartitionPlan],
     spans: &[SieveSpan],
-) -> BTreeMap<EntityId, (usize, Option<EntityId>)> {
+) -> BTreeMap<EntityId, Home> {
     let mut homes = BTreeMap::new();
     for (index, partition) in partitions.iter().enumerate() {
         for turn in &partition.turns {
-            homes.insert(turn.turn_id, (index, None));
+            homes.insert(
+                turn.turn_id,
+                Home {
+                    partition: index,
+                    entities: Vec::new(),
+                },
+            );
         }
     }
     for span in spans.iter().filter(|span| span.owed.is_empty()) {
-        if let Some((_, entity)) = homes.get_mut(&span.turn)
-            && entity.is_none()
+        if let Some(home) = homes.get_mut(&span.turn)
+            && let Some(entity) = span.entity
+            && !home.entities.contains(&entity)
         {
-            *entity = span.entity;
+            home.entities.push(entity);
         }
     }
     homes
@@ -242,94 +276,4 @@ fn slot(
         });
         drafts.len() - 1
     })
-}
-
-/// A drafted thing, its TURNs as one part per partition, and its parts
-/// combined into children past `CHILD_TURNS` of total work. A bound thing
-/// off any private thread combines the parts whose exposure agrees; any
-/// other part keeps a child line of its own, as a structural topic's and a
-/// private thread's do. A child's axes are its thing's.
-fn cut(
-    partitions: &[ConsolidationPartitionPlan],
-    draft: Draft,
-    exposures: &BTreeMap<EntityId, Option<Exposure>>,
-) -> NightlyThingPlan {
-    let combines = draft.key.entity.is_some() && draft.key.audience.is_none();
-    let mut lines: Vec<Vec<ConversationPart>> = Vec::new();
-    let mut classes: BTreeMap<Exposure, usize> = BTreeMap::new();
-    for (index, turns) in draft.turns {
-        let partition = &partitions[index];
-        let class = if combines {
-            let of: Vec<Option<&Exposure>> = turns
-                .iter()
-                .map(|turn| exposures.get(&turn.turn_id).and_then(Option::as_ref))
-                .collect();
-            Exposure::of_part(&of)
-        } else {
-            None
-        };
-        let part = ConversationPart {
-            conversation_ref: partition.key.conversation_ref,
-            turns,
-            watermark_last_learned_at: partition.watermark_last_learned_at,
-        };
-        match class {
-            Some(class) => {
-                let at = *classes.entry(class).or_insert_with(|| {
-                    lines.push(Vec::new());
-                    lines.len() - 1
-                });
-                lines[at].push(part);
-            }
-            None => lines.push(vec![part]),
-        }
-    }
-    let thing = Some(draft.key.payload());
-    let mut children = Vec::new();
-    for parts in lines {
-        children.extend(
-            sized(parts)
-                .into_iter()
-                .map(|parts| ConsolidationBranchPlan {
-                    world_ref: draft.key.world,
-                    facet_ref: draft.key.facet,
-                    thing,
-                    parts,
-                }),
-        );
-    }
-    NightlyThingPlan {
-        key: draft.key,
-        spans: draft.spans,
-        children,
-    }
-}
-
-/// `parts` cut into children of at most `CHILD_TURNS` TURNs in total, in
-/// order: a part that does not fit continues in the next child.
-fn sized(parts: Vec<ConversationPart>) -> Vec<Vec<ConversationPart>> {
-    let mut children = Vec::new();
-    let mut child = Vec::new();
-    let mut size = 0_usize;
-    for part in parts {
-        let mut rest = part.turns.as_slice();
-        while !rest.is_empty() {
-            let (taken, left) = rest.split_at(rest.len().min(CHILD_TURNS - size));
-            child.push(ConversationPart {
-                conversation_ref: part.conversation_ref,
-                turns: taken.to_vec(),
-                watermark_last_learned_at: part.watermark_last_learned_at,
-            });
-            size += taken.len();
-            rest = left;
-            if size == CHILD_TURNS {
-                children.push(std::mem::take(&mut child));
-                size = 0;
-            }
-        }
-    }
-    if !child.is_empty() {
-        children.push(child);
-    }
-    children
 }

@@ -5,7 +5,9 @@
 //!
 //! The id is `EntityId::derive` under [`DREAMER_PERSON`] over the parent
 //! extraction namespace (the nightly parent when the attempt has one, so
-//! its children and retry chunks share it; else the attempt itself), the
+//! its children and retry chunks share it; else the first try of the
+//! attempt's retry lineage, so a fresh `retry_of` try keeps the ids its
+//! original minted, FIX 7579), the
 //! exposure axes the source is admitted under, the normalized name, and
 //! the declaration's canonical mention anchor: the smallest of its sources,
 //! with the byte range of the name's first exact occurrence in the text the
@@ -18,15 +20,15 @@
 //! skipped as `PersonBindingUnavailable`. Whether a bound person is written
 //! stays the writer's (`super::mint_extracted_people`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::EntityId;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::dreamer_consolidation::call_labels::{CallSources, new_person};
 use crate::dreamer_consolidation::executor::extraction::ExtractedPerson;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::entity_id::derived_domains::DREAMER_PERSON;
 use crate::error::Result;
+use crate::{EntityId, Vault};
 
 /// Where one extraction's people are minted: the parent extraction it
 /// belongs to and the exposure axes its sources are admitted under. The
@@ -41,7 +43,8 @@ pub(in crate::dreamer_consolidation) struct MintNamespace {
 
 impl MintNamespace {
     /// The namespace of an attempt whose queued parent is `parent`: that
-    /// parent's when it has one, else `attempt`'s own.
+    /// parent's when it has one, else `attempt`'s own; a caller passes the
+    /// first try of its retry lineage ([`original_try`]) as `attempt`.
     pub(in crate::dreamer_consolidation) fn new(
         attempt: AttemptId,
         parent: Option<AttemptId>,
@@ -65,6 +68,37 @@ impl MintNamespace {
         }
         bytes
     }
+}
+
+/// The try `attempt`'s retry lineage began at (FIX 7579): `attempt` itself
+/// when it retries none. Each `retry_of` hop is followed while its row
+/// reads, so every try of one lineage names the same first try, and the
+/// people a reply declares in the original and in a fresh retry bind one
+/// id. A compaction relinks `retry_of` past the tries it folds; a lineage
+/// whose first try it folded begins at its oldest kept try. A cycle ends
+/// where it closes.
+///
+/// # Errors
+///
+/// The queue's read errors.
+pub(in crate::dreamer_consolidation) fn original_try(
+    vault: &Vault,
+    attempt: AttemptId,
+) -> Result<AttemptId> {
+    let queue = AttemptQueue::new(vault);
+    let txn = vault.store.env.read_txn()?;
+    let mut seen = BTreeSet::from([*attempt.as_bytes()]);
+    let mut first = attempt;
+    while let Some(record) = queue.get_in_txn(&txn, first)? {
+        let Some(previous) = record.retry_of else {
+            break;
+        };
+        if !seen.insert(*previous.as_bytes()) {
+            break;
+        }
+        first = previous;
+    }
+    Ok(first)
 }
 
 /// One declaration's binding.
