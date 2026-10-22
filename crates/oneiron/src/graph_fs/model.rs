@@ -431,6 +431,9 @@ pub struct GraphFsResolver<'read, 'vault> {
     pub(super) scoped_read: &'read ScopedRead<'vault>,
     pub(super) options: GraphFsOptions,
     pub(super) snapshot: Option<(crate::entity_id::EntityId, [u8; 32])>,
+    /// The mounting handle reads repo bytes masked (FIX 7608 2b-ii, FIX
+    /// 8964): a byte-recipient hint, never a scoped-read key or authority.
+    pub(super) repo_masked: bool,
 }
 
 impl<'vault> ScopedRead<'vault> {

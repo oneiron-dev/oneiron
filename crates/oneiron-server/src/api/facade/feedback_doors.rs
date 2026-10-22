@@ -187,8 +187,9 @@ fn send_subject(
     let issue = sdk::report_issue_as_owner(vault, owner, &input.issue_ref)?;
     let publisher_ref = sdk::subject_feedback_publisher(&issue)?;
     // Beside the bundle approval, quoted vault text crosses only while the
-    // issue's own disclosure stands approved for its publisher.
-    sdk::subject_feedback_send_allowed(vault, &issue, input.include_text)?;
+    // issue's own disclosure stands approved for its publisher: here, and
+    // live again just before the bytes reach the transport (FIX 8747).
+    let report_text = sdk::subject_feedback_send_allowed(vault, &issue, input.include_text)?;
     // FIX 5212: the bytes go as the preview kept them; only the unfiltered
     // bundle is rebuilt, so a request naming another issue, category or text
     // choice than the preview's is refused, and no filter runs.
@@ -203,6 +204,7 @@ fn send_subject(
         &input.digest,
         &input.approval,
         input.previewed_at,
+        report_text.as_ref(),
     )
     .map_err(owner_error)?;
     Ok(FeedbackSubjectSent {

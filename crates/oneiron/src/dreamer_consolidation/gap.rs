@@ -15,6 +15,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Raw, RawValue, SideKey, SideTable};
 
+mod intent;
+
 /// Global reflection-gap queue row keyed by a hash of (kind, subject). Key: hash32.
 const PRIVATE_GAP: SideTable<[u8; 32], ReflectionGap, Raw> =
     SideTable::new(&side_table::DREAMER_GAP);
@@ -326,15 +328,24 @@ pub(super) fn upsert_scanned_gap_queue(
 /// at the write's recheck, defers the whole scan until the promotion brings
 /// it back (FIX 3861): no gap of the set is written from part of it, and
 /// none is left to decay for it.
+///
+/// A new stated intent raises the owner's optional ask, and each yes he
+/// gave one lands his words as his intent (FIX 8949, `intent`); neither
+/// holds or fails the scan.
 pub(super) fn run_gap_scan(
     vault: &Vault,
     working_set: &[WorkingSetTurn],
     now_ms: u64,
 ) -> Result<crate::dreamer_wake::DreamerAttemptExecution> {
-    let scanned = scan_with_texts(vault, working_set, now_ms)
-        .and_then(|(gaps, texts)| upsert_scanned_gap_queue(vault, gaps, &texts, now_ms));
+    let scanned = scan_with_texts(vault, working_set, now_ms).and_then(|(gaps, texts)| {
+        upsert_scanned_gap_queue(vault, gaps, &texts, now_ms).map(|delta| (delta, texts))
+    });
     match scanned {
-        Ok(_) => Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed { completed_units: 0 }),
+        Ok((delta, texts)) => {
+            intent::ask_stated_intents(vault, &delta.escalations, &texts);
+            intent::land_answered_intents(vault);
+            Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed { completed_units: 0 })
+        }
         Err(error) if super::residency::waits_on_residency(&error) => {
             Ok(super::residency::residency_deferral(now_ms, 0))
         }

@@ -111,8 +111,8 @@ pub use self::model_id::{ModelId, ModelIdError};
 // JSON bytes across the crate line.
 pub use self::protocol::canonical_json_bytes;
 pub use self::protocol::{
-    ContentPart, FinishReason, ImageContent, LlmInputUsage, LlmMessage, LlmMessageRole,
-    LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
+    ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage,
+    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
 };
 pub use self::safeguard::{
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, SafeguardModelBinding,

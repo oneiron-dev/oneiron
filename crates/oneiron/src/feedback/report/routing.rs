@@ -1,4 +1,6 @@
 //! Maker routing and disclosure. Text never enters the content-free publisher payload.
+//! A remembered publisher is a standing grant in the consent registry, never a
+//! stored flag (FIX 8747, the `disclosure` child).
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -17,8 +19,6 @@ pub(super) const IMPORTS: SideTable<(EntityId, EntityId, [u8; 32]), HubImportRec
 
 const ROUTES: SideTable<String, ReportRoute, Named> =
     SideTable::new(&side_table::FEEDBACK_REPORT_ROUTE);
-const DISCLOSURES: SideTable<String, bool, Named> =
-    SideTable::new(&side_table::FEEDBACK_REPORT_DISCLOSURE);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "destination", rename_all = "snake_case", deny_unknown_fields)]
@@ -50,7 +50,8 @@ pub struct ReportSignature {
 }
 
 /// The transport consumes this only after resolving the stored maker route.
-/// `disclosed` is absent unless the owner approved this publisher's text.
+/// `disclosed` is absent unless the owner's disclosure of this report's text
+/// stands now: approved once, or by a standing grant still live.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportRoutedPayload {
@@ -133,33 +134,6 @@ impl Vault {
         }))
     }
 
-    pub(super) fn report_disclosure_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        route: &ReportRoute,
-        carries_text: bool,
-    ) -> Result<ReportDisclosure> {
-        if matches!(route, ReportRoute::OwnerInbox) {
-            return Ok(ReportDisclosure::Local);
-        }
-        if !carries_text {
-            return Ok(ReportDisclosure::ContentFree);
-        }
-        let ReportRoute::Publisher { publisher_ref } = route else {
-            unreachable!()
-        };
-        Ok(
-            if DISCLOSURES
-                .get(&self.store, txn, publisher_ref)?
-                .unwrap_or(false)
-            {
-                ReportDisclosure::Approved
-            } else {
-                ReportDisclosure::NeedsApproval
-            },
-        )
-    }
-
     /// No transport runs here. The owner decides whether the report's exact
     /// text may cross the maker's boundary, once or for that publisher.
     pub fn decide_report_disclosure(
@@ -174,14 +148,16 @@ impl Vault {
             let ReportRoute::Publisher { publisher_ref } = &issue.route else {
                 return Err(invalid("a local report needs no publisher disclosure"));
             };
-            issue.disclosure = match choice {
-                ReportDisclosureChoice::ApproveOnce => ReportDisclosure::Approved,
-                ReportDisclosureChoice::StopAskingForPublisher => {
-                    DISCLOSURES.put(&self.store, txn, publisher_ref, &true)?;
-                    ReportDisclosure::Approved
-                }
-                ReportDisclosureChoice::Deny => ReportDisclosure::Denied,
-            };
+            // Stop-asking mints the publisher's standing grant in this writer.
+            let (disclosure, basis) = self.report_disclosure_choice_in_txn(
+                txn,
+                owner,
+                publisher_ref,
+                &issue.request,
+                choice,
+            )?;
+            issue.disclosure = disclosure;
+            issue.disclosure_basis = basis;
             self.write_report_in_txn(txn, &issue)?;
             Ok(issue)
         })
@@ -190,8 +166,28 @@ impl Vault {
     /// The outbound view of an ISSUE. The host uses the existing publisher
     /// channel; this door cannot run repairs, open tasks or send unapproved text.
     /// A report whose text still waits on the owner's disclosure answers its
-    /// content-free signature with no `disclosed` request (FIX 4630).
+    /// content-free signature with no `disclosed` request (FIX 4630). The text
+    /// it shows is the owner's live disclosure; text that leaves is checked
+    /// again, and receipted, where a send hands it to the transport.
     pub fn report_routed_payload(&self, id: &EntityId) -> Result<Option<ReportRoutedPayload>> {
+        self.routed_payload(id, true)
+    }
+
+    /// [`Self::report_routed_payload`] with no text: the content-free
+    /// signature lane's projection, which never carries a report's text and
+    /// spends no disclosure receipt.
+    pub(super) fn report_signature_payload(
+        &self,
+        id: &EntityId,
+    ) -> Result<Option<ReportRoutedPayload>> {
+        self.routed_payload(id, false)
+    }
+
+    fn routed_payload(
+        &self,
+        id: &EntityId,
+        with_text: bool,
+    ) -> Result<Option<ReportRoutedPayload>> {
         let txn = self.store.env.read_txn()?;
         let Some(issue) = super::store::read(self, &txn, id)? else {
             return Ok(None);
@@ -205,14 +201,9 @@ impl Vault {
         {
             return Ok(None);
         }
-        let standing = match &issue.route {
-            ReportRoute::Publisher { publisher_ref } => DISCLOSURES
-                .get(&self.store, &txn, publisher_ref)?
-                .unwrap_or(false),
-            ReportRoute::OwnerInbox => false,
-        };
-        let approved = issue.disclosure == ReportDisclosure::Approved
-            || (issue.disclosure == ReportDisclosure::NeedsApproval && standing);
+        // The read gave the live view: an issue-once approval, or a standing
+        // grant live now.
+        let approved = with_text && issue.disclosure == ReportDisclosure::Approved;
         Ok(Some(ReportRoutedPayload {
             signature: ReportSignature {
                 issue_ref: issue.issue_ref,
@@ -223,6 +214,16 @@ impl Vault {
             route: issue.route,
             disclosed: approved.then_some(issue.request),
         }))
+    }
+}
+
+/// A new report's disclosure before the owner's choices are read: local, a
+/// content-free signature, or text that waits on the owner.
+pub(super) fn report_disclosure(route: &ReportRoute, carries_text: bool) -> ReportDisclosure {
+    match route {
+        ReportRoute::OwnerInbox => ReportDisclosure::Local,
+        ReportRoute::Publisher { .. } if !carries_text => ReportDisclosure::ContentFree,
+        ReportRoute::Publisher { .. } => ReportDisclosure::NeedsApproval,
     }
 }
 

@@ -144,6 +144,21 @@ impl Vault {
         owner: &AuthenticatedOwner,
         consent: &ConnectorToolConsent,
     ) -> Result<Vec<ConnectorToolGrant>> {
+        let at = crate::unix_seconds_now();
+        self.with_write_txn_grouped(|wtxn| {
+            self.consent_connector_tools_in_txn(wtxn, owner, consent, at)
+        })
+    }
+    /// [`Self::consent_connector_tools`] in the caller's writer, at `at`: an
+    /// accepted scope revision mints its widened grant beside the owner's
+    /// stamp of it (FIX 988).
+    pub(in crate::connector_key) fn consent_connector_tools_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        consent: &ConnectorToolConsent,
+        at: u64,
+    ) -> Result<Vec<ConnectorToolGrant>> {
         let mut seen = BTreeSet::new();
         if consent.rows.is_empty() || !consent.rows.iter().all(|row| seen.insert(&row.tool)) {
             return Err(invalid("name each tool once, and at least one"));
@@ -155,100 +170,96 @@ impl Vault {
         {
             return Err(invalid("a ceiling is public, personal or secret"));
         }
-        let at = crate::unix_seconds_now();
-        self.with_write_txn_grouped(|wtxn| {
-            let owner_actor = owner.revalidate_in_txn(self, wtxn)?;
-            let actor = match consent.target {
-                ConnectorConsentTarget::Owner => owner_actor,
-                ConnectorConsentTarget::Actor(actor) => actor,
-                ConnectorConsentTarget::HeldCall(call_ref) => {
-                    let (principal, name, _) = crate::outbound_consent::held_connector_call_in_txn(
-                        &self.store,
-                        wtxn,
-                        &call_ref,
-                    )?
-                    .ok_or_else(|| invalid("no held call by that ref"))?;
-                    if normalize_connector_key(&name) != normalize_connector_key(&consent.connector)
-                    {
-                        return Err(invalid("the held call names another connector"));
-                    }
-                    EntityId::from_hex(&principal)?
-                }
-            };
-            let principal_ref = actor.to_hex();
-            let admitted = admitted_catalog_in_txn(self, wtxn, &consent.connector)?;
-            let mut granted = Vec::with_capacity(consent.rows.len());
-            for row in &consent.rows {
-                if !admitted
-                    .slate
-                    .row(&row.tool)
-                    .is_some_and(|slate_row| slate_row.enabled())
-                {
-                    return Err(invalid("the slate allows no such tool"));
-                }
-                let manifest = tool_snapshot(&admitted.slate, &row.tool)?;
-                self.retire_actor_tool_grants_in_txn(
-                    wtxn,
-                    &principal_ref,
-                    &admitted.server,
-                    &row.tool,
-                    at,
-                )?;
-                let grant_id = EntityId::now();
-                let mut tool_data_classes = vec![ToolGrantDataClass::Arguments];
-                if row.headers {
-                    tool_data_classes.push(ToolGrantDataClass::XMcpHeader);
-                }
-                self.mint_scoped_mcp_outbound_grant_in_txn(
-                    wtxn,
-                    &grant_id,
-                    &ScopedMcpGrantMintIntent {
-                        principal_ref: principal_ref.clone(),
-                        origin_component_id: CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID.to_owned(),
-                        origin_action_id: CONNECTOR_CONSENT_ORIGIN_ACTION_ID.to_owned(),
-                        origin_receipt_ref: None,
-                        server: admitted.server.clone(),
-                        tool: row.tool.clone(),
-                        data_class_ceiling: row.data_class_ceiling,
-                        tool_data_classes,
-                        endpoint_allowlist: vec![consent.endpoint.clone()],
-                    },
-                    at,
-                )?;
-                let capability = ScopedCapabilityProvenance::mint(&admitted.server, &grant_id)
-                    .ok_or_else(|| invalid("the connector name has no scoped identity"))?;
-                // The grant exists in this transaction, so the per-grant key
-                // registers Pending; the derived admission then activates it.
-                let key_id = EntityId::now();
-                let pending = ConnectorKeyRecord {
-                    status: ConnectorKeyStatus::Pending,
-                    ..ConnectorKeyRecord::active(capability.connector(), None, Vec::new(), at)
-                };
-                self.register_connector_key_in_txn(wtxn, &key_id, &pending)?;
-                let active = ConnectorKeyRecord {
-                    status: ConnectorKeyStatus::Active,
-                    status_changed_at: Some(at),
-                    ..derived_admission(pending, manifest, &admitted, at)?
-                };
-                active.validate()?;
-                rewrite_connector_key_in_txn(&self.store, wtxn, &key_id, &active)?;
-                append_op(
+        let owner_actor = owner.revalidate_in_txn(self, wtxn)?;
+        let actor = match consent.target {
+            ConnectorConsentTarget::Owner => owner_actor,
+            ConnectorConsentTarget::Actor(actor) => actor,
+            ConnectorConsentTarget::HeldCall(call_ref) => {
+                let (principal, name, _) = crate::outbound_consent::held_connector_call_in_txn(
                     &self.store,
                     wtxn,
-                    &key_id,
-                    "gate.connector_key.consent",
-                    &active,
-                    at,
-                )?;
-                granted.push(ConnectorToolGrant {
-                    tool: row.tool.clone(),
-                    grant_id: grant_id.to_hex(),
-                    key_id: key_id.to_hex(),
-                    key_connector: active.connector,
-                });
+                    &call_ref,
+                )?
+                .ok_or_else(|| invalid("no held call by that ref"))?;
+                if normalize_connector_key(&name) != normalize_connector_key(&consent.connector) {
+                    return Err(invalid("the held call names another connector"));
+                }
+                EntityId::from_hex(&principal)?
             }
-            Ok(granted)
-        })
+        };
+        let principal_ref = actor.to_hex();
+        let admitted = admitted_catalog_in_txn(self, wtxn, &consent.connector)?;
+        let mut granted = Vec::with_capacity(consent.rows.len());
+        for row in &consent.rows {
+            if !admitted
+                .slate
+                .row(&row.tool)
+                .is_some_and(|slate_row| slate_row.enabled())
+            {
+                return Err(invalid("the slate allows no such tool"));
+            }
+            let manifest = tool_snapshot(&admitted.slate, &row.tool)?;
+            self.retire_actor_tool_grants_in_txn(
+                wtxn,
+                &principal_ref,
+                &admitted.server,
+                &row.tool,
+                at,
+            )?;
+            let grant_id = EntityId::now();
+            let mut tool_data_classes = vec![ToolGrantDataClass::Arguments];
+            if row.headers {
+                tool_data_classes.push(ToolGrantDataClass::XMcpHeader);
+            }
+            self.mint_scoped_mcp_outbound_grant_in_txn(
+                wtxn,
+                &grant_id,
+                &ScopedMcpGrantMintIntent {
+                    principal_ref: principal_ref.clone(),
+                    origin_component_id: CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID.to_owned(),
+                    origin_action_id: CONNECTOR_CONSENT_ORIGIN_ACTION_ID.to_owned(),
+                    origin_receipt_ref: None,
+                    server: admitted.server.clone(),
+                    tool: row.tool.clone(),
+                    data_class_ceiling: row.data_class_ceiling,
+                    tool_data_classes,
+                    endpoint_allowlist: vec![consent.endpoint.clone()],
+                },
+                at,
+            )?;
+            let capability = ScopedCapabilityProvenance::mint(&admitted.server, &grant_id)
+                .ok_or_else(|| invalid("the connector name has no scoped identity"))?;
+            // The grant exists in this transaction, so the per-grant key
+            // registers Pending; the derived admission then activates it.
+            let key_id = EntityId::now();
+            let pending = ConnectorKeyRecord {
+                status: ConnectorKeyStatus::Pending,
+                ..ConnectorKeyRecord::active(capability.connector(), None, Vec::new(), at)
+            };
+            self.register_connector_key_in_txn(wtxn, &key_id, &pending)?;
+            let active = ConnectorKeyRecord {
+                status: ConnectorKeyStatus::Active,
+                status_changed_at: Some(at),
+                ..derived_admission(pending, manifest, &admitted, at)?
+            };
+            active.validate()?;
+            rewrite_connector_key_in_txn(&self.store, wtxn, &key_id, &active)?;
+            append_op(
+                &self.store,
+                wtxn,
+                &key_id,
+                "gate.connector_key.consent",
+                &active,
+                at,
+            )?;
+            granted.push(ConnectorToolGrant {
+                tool: row.tool.clone(),
+                grant_id: grant_id.to_hex(),
+                key_id: key_id.to_hex(),
+                key_connector: active.connector,
+            });
+        }
+        Ok(granted)
     }
 
     /// What the owner is asked about one catalog connector, with `actor`'s
@@ -792,7 +803,7 @@ fn tool_snapshot(slate: &ConnectorGrantSlate, tool: &str) -> Result<ResolvedConn
     }])
 }
 
-fn catalog_key_in_txn(
+pub(in crate::connector_key) fn catalog_key_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     name: &str,

@@ -136,6 +136,7 @@ mod brief;
 mod decisions;
 mod dials;
 mod eval_set;
+pub(crate) mod exploration_trial;
 mod gate;
 mod goal_axes;
 mod goal_binding;
@@ -241,6 +242,7 @@ pub use self::tradeoff_route::{
     TRADEOFF_ROUTE_NOTIFICATION_PRODUCER, TradeoffRouteChannel, TradeoffRouteIssue,
     TradeoffRouteReport,
 };
+pub(crate) use gate::project_axes;
 pub use gate::{
     AnchorLabelScore, AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind,
     GoalAxisScore, GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR,

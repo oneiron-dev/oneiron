@@ -38,6 +38,10 @@ pub(crate) struct Restored {
     /// pending as in the vault it replaced.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) pad_notes: Vec<String>,
+    /// The credential values the restore did not land readable (KS-6), by
+    /// handle and generation, each with its remedy.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) credential_notes: Vec<String>,
 }
 
 /// Restores `backup` over the stopped vault at `vault_path`.
@@ -292,6 +296,11 @@ fn restore_over_with(
         durability_warning,
         training_note: report.training_note,
         pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
+        credential_notes: report
+            .credential_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
     })
 }
 
@@ -323,6 +332,10 @@ pub(crate) struct RestoredFresh {
     /// pending as in the vault it replaced.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) pad_notes: Vec<String>,
+    /// The credential values the restore did not land readable (KS-6), by
+    /// handle and generation, each with its remedy.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) credential_notes: Vec<String>,
 }
 
 /// Why a new-host restore of a backup that names no custody head left a
@@ -381,6 +394,11 @@ pub(crate) fn restore_fresh(
             custody_note: report.custody_note,
             training_note: report.training_note,
             pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
+            credential_notes: report
+                .credential_notes
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
         },
     ))
 }
@@ -411,6 +429,10 @@ pub(crate) struct Activated {
     /// replaced it erased them since (KS-5).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) pad_notes: Vec<String>,
+    /// The credential values the activation did not land readable (KS-6),
+    /// by handle and generation, each with its remedy.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) credential_notes: Vec<String>,
 }
 
 /// Activates the archived vault a restore over `vault_path` set aside at
@@ -437,6 +459,11 @@ pub(crate) fn activate(
         custody_note: report.custody_note,
         training_note: report.training_note,
         pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
+        credential_notes: report
+            .credential_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
     })
 }
 
