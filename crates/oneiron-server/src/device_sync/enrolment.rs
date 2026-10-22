@@ -191,6 +191,14 @@ pub(crate) fn enrol(
         })?;
     let mut base = reqwest::Url::parse(&origin)
         .map_err(|_| anyhow::anyhow!("the pairing link's origin is not a URL"))?;
+    // The code and the signed request go to a verified HTTPS origin, or over
+    // HTTP only to this machine named as itself (FIX 8633).
+    anyhow::ensure!(
+        redeemable(&base),
+        "the pairing link's origin must be https://, or http:// on this machine (localhost or \
+         a loopback address): over http:// to another machine its one-use code would cross \
+         in cleartext"
+    );
     let home_url = home_url(&base)?;
     if !base.path().ends_with('/') {
         base.set_path(&format!("{}/", base.path()));
@@ -228,6 +236,10 @@ pub(crate) fn enrol(
         },
     });
     let response = reqwest::blocking::Client::builder()
+        // A redirect would send the code and the signed request on to
+        // another origin, so none is followed, as renewal follows none
+        // (FIX 8634).
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(REDEEM_TIMEOUT)
         .build()?
         .post(base.join("v1/core/pairing/redeem")?)
@@ -274,6 +286,20 @@ pub(crate) fn enrol(
     record.validate()?;
     files.write(&format!("v2.cred.{slip}.{}", hex(key.as_bytes())), &record)?;
     Ok(record)
+}
+
+/// Whether a redemption may go to `origin`: `https`, whose certificate and
+/// name the client verifies, or `http` to a loopback host named as one, by
+/// the rule renewal sends its credential under.
+fn redeemable(origin: &reqwest::Url) -> bool {
+    let loopback = origin.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    matches!((origin.scheme(), loopback), ("https", _) | ("http", true))
 }
 
 /// The home's sync endpoint at the link's origin: `wss` for `https`, `ws` for

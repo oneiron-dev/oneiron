@@ -70,8 +70,8 @@ impl HomeSearch {
     }
 
     /// The home's hits when it is reachable, else this device's opened items
-    /// alone, marked local-only and incomplete. A page larger than the home
-    /// answers at once asks for the home's cap.
+    /// alone, marked local-only and incomplete. More hits than the home
+    /// answers at once come a page at a time (FIX 8865).
     pub async fn search(
         &self,
         query: &str,
@@ -117,10 +117,6 @@ impl HomeSearch {
         scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
         caller: Option<&crate::authority::ForwardedCallerProof>,
     ) -> Result<ResidenceSearch, TransportError> {
-        let limit = match self.vault.residence_operation_budgets() {
-            Ok(Some(budgets)) => limit.min(budgets.search_limit),
-            _ => limit,
-        };
         let mut config = self.config.clone();
         config.residence_mode = *self.mode.borrow();
         crate::sync::client::search_resident(&self.vault, &config, query, limit, scope, caller)

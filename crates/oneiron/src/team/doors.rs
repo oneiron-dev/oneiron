@@ -28,7 +28,7 @@ use crate::llm::ReasoningEffort;
 use crate::llm::decision::{DecisionRung, ProviderPin};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::task_type::{ROOT_NODE_ID, TaskTypeNode, TaskTypeRef, TaskTypeTree, TreeScope};
-use crate::team::{PatternSkillRef, SpawnPhase, TeamAxis, TeamPattern};
+use crate::team::{PatternSkillRef, SpawnErasure, SpawnPhase, TeamAxis, TeamPattern};
 use crate::{EntityId, Vault};
 
 pub use spawn::{SpawnAskKnob, SpawnIntentReply, SpawnIntentRequest, spawn_as_owner};
@@ -505,6 +505,9 @@ pub enum ObservationIssue {
 pub struct PlannedSpawnObservation {
     pub spawn_ref: EntityId,
     pub phase: SpawnPhase,
+    /// `target_erased` once an erase took the AGENT_DEF the spawn runs as.
+    #[serde(default)]
+    pub erasure: Option<SpawnErasure>,
     /// The type stamp the dispatch froze, placed once at spawn.
     pub type_ref: TypeStamp,
     /// The frozen plan; `None` for a spawn that was not planned.

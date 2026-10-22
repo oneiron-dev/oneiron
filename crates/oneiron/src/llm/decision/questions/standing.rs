@@ -703,15 +703,7 @@ fn backfill_answer(
                 now,
             )
             .apply(txn)?;
-        QUESTION_ANSWER.put(
-            &vault.store,
-            txn,
-            &AnswerKey {
-                question,
-                claim: answer.claim,
-            },
-            &answer,
-        )?;
+        super::ask_history::put_graph_answer_in_txn(vault, txn, question, principal, &answer)?;
         super::arrival::watch_sources(
             &vault.store,
             txn,

@@ -40,6 +40,7 @@ use crate::task_type::TaskTypeRef;
 use crate::team::{LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch, PlannedSpawnHost};
 use crate::workspace_roster::RoomWork;
 
+use super::erase::put_intent_in_txn;
 use super::{Asker, INTENTS, IntentAsk, IntentName, IntentPhase, Reserved};
 
 /// Domain of a leased intent's request digest.
@@ -202,7 +203,8 @@ impl AgentDispatcher<'_> {
     /// leader's dispatch dedupe key names the intent, and a retry or
     /// continuation of the leader, which carries the same key, leads it too.
     /// `None` for an attempt that leads no planned team: a planned solo, a
-    /// member carrying the same plan, or any other run.
+    /// member carrying the same plan, or any other run. An erased intent's
+    /// team answers its ids with no start or pack (Engine 10-22).
     ///
     /// # Errors
     ///
@@ -227,7 +229,9 @@ impl AgentDispatcher<'_> {
     /// append keeps every row), the executor that runs it when the attempt
     /// names none yet, and `exposure`, where the run put the pack's SKILL.md
     /// in its task, under the run's own id, which a continuation of the run
-    /// reuses. Another run's exposure stays as it was.
+    /// reuses. Another run's exposure stays as it was. An erased intent's
+    /// team records nothing: its run keeps what it already read, and no
+    /// write brings the pack back.
     ///
     /// # Errors
     ///
@@ -251,7 +255,9 @@ impl AgentDispatcher<'_> {
         let (key, launch) = self
             .planned_leader_in_txn(&txn, leased.id)?
             .ok_or_else(|| invalid(NOT_A_LEADER))?;
-        let pack = &launch.pack;
+        let Some(pack) = &launch.pack else {
+            return Ok(());
+        };
         let entry = ManifestEntry::new(ManifestKind::Skill, pack.skill_id(), pack.version(), at);
         if exposure.skill != pack.entity()
             || exposure.revision != entry.wire_form()
@@ -266,7 +272,7 @@ impl AgentDispatcher<'_> {
             .ok_or_else(|| invalid(LEADER_DAMAGED))?;
         row.leader_exposures.insert(run, exposure.clone());
         row.updated_at = at;
-        INTENTS.put(&self.vault.store, &mut txn, &key, &row)?;
+        put_intent_in_txn(&self.vault.store, &mut txn, &key, &mut row)?;
         txn.commit()?;
         Ok(())
     }
@@ -286,8 +292,9 @@ impl AgentDispatcher<'_> {
         };
         let row = INTENTS
             .get(&self.vault.store, txn, &key)?
-            .filter(|row| row.phase == IntentPhase::Launched)
+            .filter(|row| matches!(row.phase, IntentPhase::Launched | IntentPhase::Erased))
             .ok_or_else(|| invalid(LEADER_DAMAGED))?;
+        let erased = row.phase == IntentPhase::Erased;
         let root = row.root_attempt.ok_or_else(|| invalid(LEADER_DAMAGED))?;
         if !self.leads_in_txn(txn, &record, root)? {
             return Err(invalid(LEADER_DAMAGED));
@@ -296,18 +303,23 @@ impl AgentDispatcher<'_> {
             .plan
             .as_ref()
             .and_then(|plan| plan.plan.pattern_skill.as_ref());
-        let (team_ref, start, pack) = match (row.team_ref, row.pattern_launch, row.pattern_pack) {
+        let (team_ref, frozen) = match (row.team_ref, row.pattern_launch, row.pattern_pack) {
             // A planned solo leads no team.
             (None, None, None) => return Ok(None),
-            (Some(team_ref), Some(start), Some(pack)) => (team_ref, start, pack),
+            (Some(team_ref), Some(start), Some(pack)) => (team_ref, Some((start, pack))),
+            // An erased intent's team keeps its ids, and no start or pack.
+            (Some(team_ref), None, None) if erased => (team_ref, None),
             _ => return Err(invalid(LEADER_DAMAGED)),
         };
-        let frozen = pattern.is_some_and(|pattern| {
-            pattern.skill == pack.entity() && pattern.version == pack.version()
-        });
-        if !frozen || !pack.holds_body() {
-            return Err(invalid(PACK_DAMAGED));
+        if let Some((_, pack)) = &frozen {
+            let held = pattern.is_some_and(|pattern| {
+                pattern.skill == pack.entity() && pattern.version == pack.version()
+            });
+            if !held || !pack.holds_body() {
+                return Err(invalid(PACK_DAMAGED));
+            }
         }
+        let (start, pack) = frozen.unzip();
         let launch = PlannedLeaderLaunch {
             root,
             team_ref,

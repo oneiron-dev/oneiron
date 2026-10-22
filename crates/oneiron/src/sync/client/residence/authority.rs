@@ -45,8 +45,8 @@ use crate::sync::residence::{
 };
 use crate::sync::transport::TransportError;
 
-/// The most pages one catch-up takes, or appends, before it stops for this
-/// round.
+/// The most pages one catch-up takes before it stops for this round, and the
+/// pages an append sends before it yields.
 const MAX_PAGES: usize = 1024;
 
 /// The most signed bytes one append page carries: inside the request frame
@@ -270,7 +270,9 @@ pub(super) async fn fetch_authority_checkpoint(
 /// may not read, its key records, stays here (FIX 922 item 11); nothing
 /// outside the world names it. A world's settings edits are main-log
 /// metadata and go to every linked home (the Engine call "OwnerAct world
-/// metadata to every linked machine"). Returns how many it sent.
+/// metadata to every linked machine"). Every page goes, however many: the
+/// page count is a work slice past which it yields (FIX 8887). Returns how
+/// many entries the home took.
 async fn append_authority(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
@@ -323,17 +325,54 @@ async fn append_authority(
     if !page.is_empty() {
         pages.push(page);
     }
-    let mut sent = 0;
-    for page in pages.into_iter().take(MAX_PAGES) {
+    let mut accepted = 0;
+    for (index, page) in pages.into_iter().enumerate() {
+        if index > 0 && index % MAX_PAGES == 0 {
+            tokio::task::yield_now().await;
+        }
         let entries: Vec<String> = page
             .iter()
             .map(|entry| base64::engine::general_purpose::STANDARD.encode(entry))
             .collect();
-        rpc.request("residence.authority.append", json!({ "entries": entries }))
-            .await?;
-        sent += page.len();
+        let reply: AuthorityAppendReply = serde_json::from_value(
+            rpc.request("residence.authority.append", json!({ "entries": entries }))
+                .await?,
+        )
+        .map_err(|_| refused())?;
+        // Each entry's outcome: a refused one waits for the next round.
+        let took = packed_count(&reply.accepted)?;
+        let held_back = packed_count(&reply.refused)?;
+        if took + held_back > page.len() {
+            return Err(refused());
+        }
+        if held_back > 0 {
+            tracing::debug!(
+                refused = held_back,
+                "the home refused appended authority entries"
+            );
+        }
+        accepted += took;
     }
-    Ok(sent)
+    Ok(accepted)
+}
+
+/// What the home did with one append page (FIX 8887): the entries that stand
+/// there now and those it refused, as concatenated 32-byte hashes in base64.
+#[derive(Deserialize)]
+struct AuthorityAppendReply {
+    accepted: String,
+    refused: String,
+}
+
+/// How many hashes one packed list holds.
+fn packed_count(packed: &str) -> Result<usize, TransportError> {
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(packed)
+        .map_err(|_| refused())?;
+    if raw.len() % 32 != 0 {
+        return Err(refused());
+    }
+    Ok(raw.len() / 32)
 }
 
 /// Fetches the history this machine's rows name and it lacks, by exact hash,
