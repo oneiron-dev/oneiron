@@ -12,7 +12,7 @@ use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron::code_sandbox::wasmtime_runtime::{ComponentBudget, WasmtimeComponentRuntime};
 use oneiron::engine_executor::{
     EngineExecutorConfig, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
-    RunCompaction,
+    RunCompaction, TypeFeedback,
 };
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{PayerPerson, RunReceiptSink};
@@ -20,7 +20,6 @@ use oneiron::llm::seat::SeatDecisions;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, ModelId, ModelLocality, Vault,
 };
-use oneiron_code_check::ShadowCheck;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::ai_host::browser_planner::BrowserPlannerRuns;
@@ -84,7 +83,8 @@ pub struct McpQuickJsProvider {
     /// The host's own model and meter, when the host injected them: rebound
     /// to the server's run receipts when the server takes this provider.
     injected: Option<(Arc<dyn SingleRouteBackend>, BudgetGuard)>,
-    code_check: Option<Arc<ShadowCheck>>,
+    /// The host's one type-feedback service, shared by every run.
+    code_check: Option<TypeFeedback>,
     /// Builds each reader child's backend on its own meter; none runs no
     /// child.
     reader_meter: Option<ReaderMeter>,
@@ -297,11 +297,12 @@ impl McpQuickJsProvider {
         self
     }
 
-    /// Shadow mode: type-check every generated program before it runs and
-    /// record the diagnostics beside its step. Nothing is blocked.
+    /// Feedback mode: type-check every generated program beside its run
+    /// and hand what the check found back with its step (FIX 8277). Nothing
+    /// waits on a check or is refused for it.
     #[must_use]
-    pub fn with_code_check(mut self, shadow: Arc<ShadowCheck>) -> Self {
-        self.code_check = Some(shadow);
+    pub fn with_code_check(mut self, feedback: TypeFeedback) -> Self {
+        self.code_check = Some(feedback);
         self
     }
 
@@ -374,8 +375,8 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     fn browser_planner(&self) -> Option<&BrowserPlannerRuns> {
         self.browser_planner.as_deref()
     }
-    fn code_check(&self) -> Option<&ShadowCheck> {
-        self.code_check.as_deref()
+    fn code_check(&self) -> Option<&TypeFeedback> {
+        self.code_check.as_ref()
     }
     fn backend(&self) -> &dyn LlmBackend {
         self.backend.as_ref()
