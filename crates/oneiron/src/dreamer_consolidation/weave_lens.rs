@@ -176,6 +176,7 @@ fn lens_request(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     })
 }
 

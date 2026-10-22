@@ -108,6 +108,7 @@ fn sample_request() -> LlmRequest {
         }],
         params,
         provider_options,
+        host_segments: None,
     }
 }
 

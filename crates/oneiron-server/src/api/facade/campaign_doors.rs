@@ -2,7 +2,7 @@
 //! verified owner proof. Machine evidence still acts as its credential's own
 //! principal, through the same campaign-owned facade as enrollment.
 
-use super::host_doors::{Listed, credential_listing};
+use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::campaign::claims::EvidenceBasis;
@@ -26,7 +26,7 @@ pub(crate) async fn vault_campaign_stage_evidence(
         move |server, auth, memory| {
             let owner = match input.evidence.basis {
                 EvidenceBasis::Machine => None,
-                EvidenceBasis::OwnerAttested => Some(super::host_doors::owner_proof(
+                EvidenceBasis::OwnerAttested => Some(super::host_doors::support::owner_proof(
                     auth,
                     server,
                     "vault.campaign.stage.evidence",

@@ -1,6 +1,7 @@
 //! Connects typed MEMORIES projections to the shared board frame and shed ladder.
 use super::frame::{BoardFrameError, BoardSection, MAX_BOARD_ROW_BYTES, SectionPolicy, ShedRank};
 use super::memories::{MemoriesSection, MemoryRow, MemoryTier};
+use super::worlds::fiction_marker;
 use std::collections::BTreeMap;
 
 /// One MEMORIES row as the board renders it. A foreign row shows no snippet.
@@ -19,8 +20,9 @@ const PART_TAG_BYTES: usize = " (part /) ".len() + 2 * 20;
 
 /// [`memory_row_text`] as the board rows it renders in. A row over
 /// [`MAX_BOARD_ROW_BYTES`] carries its snippet across numbered rows, the
-/// first led by the row's head and each later one by its reference, cut only
-/// at character boundaries: a pinned text is never truncated (Rule 5).
+/// first led by the row's head and each later one by its bare handle (and
+/// its FICTION marker), cut only at character boundaries: a pinned text is
+/// never truncated (Rule 5).
 fn memory_board_rows(row: &MemoryRow, foreign: bool) -> Vec<String> {
     let text = memory_row_text(row, foreign);
     let snippet = match &row.snippet {
@@ -28,7 +30,7 @@ fn memory_board_rows(row: &MemoryRow, foreign: bool) -> Vec<String> {
         _ => return vec![text],
     };
     let head = memory_row_head(row, foreign);
-    let reference = format!("{}:{}", row.short_id, row.content_hash);
+    let reference = format!("{}{}", row.short_id, fiction_marker(row.fiction));
     let room = MAX_BOARD_ROW_BYTES
         .saturating_sub(head.len() + PART_TAG_BYTES)
         .max(4);
@@ -50,7 +52,9 @@ fn memory_board_rows(row: &MemoryRow, foreign: bool) -> Vec<String> {
         .collect()
 }
 
-/// A MEMORIES row's reference, trust, tier and hook tag, before its snippet.
+/// A MEMORIES row's bare short handle, trust, tier, FICTION marker and hook
+/// tag, before its snippet. The content hash stays internal reference
+/// metadata, never an agent-facing suffix (FIX 7982, ARCH-0067).
 fn memory_row_head(row: &MemoryRow, foreign: bool) -> String {
     let label = row
         .claim_source
@@ -61,8 +65,11 @@ fn memory_row_head(row: &MemoryRow, foreign: bool) -> String {
         _ => "index-only",
     };
     let mut text = format!(
-        "{}:{} trust={} tier={}",
-        row.short_id, row.content_hash, label, tier
+        "{} trust={} tier={}{}",
+        row.short_id,
+        label,
+        tier,
+        fiction_marker(row.fiction)
     );
     if let Some(hook) = &row.hook {
         text.push_str(" hook=");
@@ -72,9 +79,14 @@ fn memory_row_head(row: &MemoryRow, foreign: bool) -> String {
 }
 
 /// The board section a MEMORIES row in `world` renders in, one per world;
-/// a row with no world renders in `unscoped`.
-pub(super) fn memories_section_name(world: Option<&str>) -> String {
-    format!("MEMORIES world={}", world.unwrap_or("unscoped"))
+/// a row with no world renders in `unscoped`. A fenced world's section
+/// carries the FICTION marker (FIX 7756).
+pub(super) fn memories_section_name(world: Option<&str>, fiction: bool) -> String {
+    format!(
+        "MEMORIES world={}{}",
+        world.unwrap_or("unscoped"),
+        fiction_marker(fiction)
+    )
 }
 
 pub fn assemble_memories_sections(
@@ -99,8 +111,9 @@ pub fn assemble_memories_sections(
                 details.extend(texts);
             }
         }
+        let fiction = rows.iter().any(|row| row.fiction);
         let mut board = BoardSection::new(
-            memories_section_name(world),
+            memories_section_name(world, fiction),
             pinned,
             details,
             vec![format!("count: {}", rows.len())],

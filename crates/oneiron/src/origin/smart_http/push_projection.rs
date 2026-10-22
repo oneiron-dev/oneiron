@@ -23,7 +23,7 @@
 
 #![allow(
     dead_code,
-    reason = "FIX 7608 2b-ii-A: the serve, intent and landing seams call it in 2b-ii-B"
+    reason = "FIX 7608: the exact-forward classification waits for its forward arm (FIX line)"
 )]
 
 use std::collections::BTreeSet;
@@ -46,6 +46,8 @@ use crate::origin::secret_projection::git::RepoGitProjection;
 
 pub(crate) mod forward;
 pub(crate) mod recovery;
+
+use self::recovery::RepoProjectionIngressRecovery;
 
 /// Domain of the canonical authority digest an ingress proof binds.
 const INGRESS_AUTHORITY_DOMAIN: &[u8] = b"oneiron.repo_projection.ingress_authority.v1";
@@ -82,6 +84,25 @@ impl RepoProjectionIngressProof {
     /// The canonical store the copy stands for.
     pub(crate) const fn canonical_store(&self) -> EntityId {
         self.ingress.canonical_store
+    }
+
+    /// The proof recovery reopened from its record, at the physical
+    /// ingress `ingress_root` the caller observed (FIX 7608 2b-ii-B2): only
+    /// [`validate_projection_ingress_in_txn`] then says whether it stands.
+    pub(crate) fn reopen(recovered: RepoProjectionIngressRecovery, ingress_root: &Path) -> Self {
+        Self {
+            claim: RepoProjectionClaim::of(
+                recovered.graph,
+                RepoProjectionRecord::Ingress(recovered.ingress.clone()),
+            ),
+            ingress: recovered.ingress,
+            ingress_root: ingress_root.to_path_buf(),
+        }
+    }
+
+    /// The private ingress store's identity the proof names.
+    pub(crate) fn ingress_store(&self) -> &str {
+        &self.ingress.ingress_store
     }
 }
 

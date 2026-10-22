@@ -44,6 +44,7 @@ mod operation;
 mod plan;
 mod process;
 mod projected_checkout;
+mod projected_ingress;
 mod projected_object;
 mod publish_push;
 mod publish_review;

@@ -32,11 +32,13 @@ pub(super) fn erase_source_in_period_in_txn(
         .and_then(|mut wire| {
             let rendered_at = wire.rendered_at;
             let lens_refused = wire.lens_refused.take();
+            // A scheduled Owner period keeps its schedule basis (FIX 1259).
+            let scheduled_basis = wire.scheduled_basis.take();
             wire.into_report()
                 .ok()
-                .map(|report| (rendered_at, lens_refused, report))
+                .map(|report| (rendered_at, (lens_refused, scheduled_basis), report))
         });
-    let Some((rendered_at, lens_refused, mut report)) = decoded else {
+    let Some((rendered_at, (lens_refused, scheduled_basis), mut report)) = decoded else {
         return erase_weave_digest_in_txn(store, txn, digest_key);
     };
     let (Ok(gates), Ok(before)) = (
@@ -65,6 +67,7 @@ pub(super) fn erase_source_in_period_in_txn(
     let after = dependencies::indexed_sources(&report.value)?;
     let mut wire = WireDigest::from_report(rendered_at, &report)?;
     wire.lens_refused = lens_refused;
+    wire.scheduled_basis = scheduled_basis;
     let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
     for gone in before.difference(&after) {
         index_source_in_txn(store, txn, gone, digest_key, false)?;

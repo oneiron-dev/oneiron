@@ -44,10 +44,14 @@ impl MergeQueue<'_> {
     pub(super) fn enqueue_unreviewed_received_candidates(&self) -> Result<usize> {
         let green = self.queue()?.pointers.green;
         let mut formed = 0_usize;
-        for (provenance, row) in self
-            .vault
-            .received_code_ingress_rows(&self.repo.identity().as_hex())?
-        {
+        let canonical = self.repo.identity().as_hex();
+        let mut rows = self.vault.received_code_ingress_rows(&canonical)?;
+        // Pushes received into a masked copy's private ingress for this
+        // store enter its queue the same way (FIX 7608 2b-ii-B2).
+        for ingress in self.vault.projected_ingress_stores(&canonical)? {
+            rows.extend(self.vault.received_code_ingress_rows(&ingress)?);
+        }
+        for (provenance, row) in rows {
             let Some((candidate, proposal)) = row.candidate.and_then(|attached| {
                 attached
                     .resolved
@@ -124,6 +128,12 @@ impl MergeQueue<'_> {
                 queue_review_requirement_in_txn(self.vault, txn, &row.review)?,
                 QueueReviewRequirement::LandOnGreen
             )
+            // A masked copy's uncleared typed cause keeps it out, as its
+            // candidate's hold says (FIX 7608 2b-ii-B2, CALL H).
+            || self
+                .vault
+                .projected_candidate_clearance_in_txn(txn, provenance, candidate)?
+                .is_some()
         {
             return Ok(false);
         }

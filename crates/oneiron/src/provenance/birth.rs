@@ -573,8 +573,10 @@ pub(crate) fn erase_birth_actor_in_txn(
 
 /// The births a legal hold kept from the scrubs of the hard-erased ids
 /// `erased`, once nothing holds their rows (FIX 6280): each goes, with its
-/// born-from index row, and when one did, every window carrier of a birth
-/// one of them made whose row no hold keeps. A row still held keeps both.
+/// born-from index row, and so does every window carrier of a birth one of
+/// them made whose row no hold keeps, whether or not its birth landed here
+/// (FIX 6386): a carrier whose row was never born here, or whose stamp was
+/// refused, has no local birth to drop first. A row still held keeps both.
 ///
 /// # Errors
 ///
@@ -584,30 +586,49 @@ pub(crate) fn release_held_births_in_txn(
     wtxn: &mut RwTxn<'_>,
     erased: &BTreeSet<EntityId>,
 ) -> Result<()> {
-    if drop_actor_births_in_txn(vault, wtxn, erased)? {
-        #[cfg(feature = "sync")]
-        crate::sync::row_birth::actor_erase::erase_birth_carriers_in_txn(vault, wtxn, erased)?;
-    }
+    drop_actor_births_in_txn(vault, wtxn, erased)?;
+    #[cfg(feature = "sync")]
+    crate::sync::row_birth::actor_erase::erase_birth_carriers_in_txn(vault, wtxn, erased)?;
     Ok(())
 }
 
 /// Drops each birth whose process actor is in `actors`, but for a born row a
-/// legal hold keeps. Whether any went.
+/// legal hold keeps.
 fn drop_actor_births_in_txn(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
     actors: &BTreeSet<EntityId>,
-) -> Result<bool> {
-    let mut dropped = false;
+) -> Result<()> {
     for (row, birth) in ROW_BIRTH.scan(&vault.store, wtxn)? {
         if actors.contains(&birth.made_by.process.actor)
             && !birth_held_in_txn(&vault.store, wtxn, &row)?
         {
             erase_row_birth_in_txn(&vault.store, wtxn, &row)?;
-            dropped = true;
         }
     }
-    Ok(dropped)
+    Ok(())
+}
+
+/// Whether a birth one of `actors` made is still stored here: one a legal
+/// hold kept from its actor's scrub, or one a lifted hold kept until the
+/// next due pass drops it (FIX 6386). An erase of one of `actors` is not
+/// complete while one is.
+///
+/// # Errors
+///
+/// Storage errors, or a stored birth that does not decode.
+pub(crate) fn births_made_by_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    actors: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    for row in ROW_BIRTH.iter_from(store, txn, &[])? {
+        let (_, birth) = row?;
+        if actors.contains(&birth.made_by.process.actor) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether a legal hold keeps `row`'s birth: a hold on the row itself or,

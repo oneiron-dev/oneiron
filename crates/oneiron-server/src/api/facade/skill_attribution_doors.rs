@@ -9,7 +9,7 @@ use oneiron::task_verb::sdk::{
     ProposalDeltaReadRequest, ProposalDeltaSettleRequest, ProposalDeltaSettlement,
 };
 
-use super::host_doors::{internal, owner_proof};
+use super::host_doors::support::{internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
