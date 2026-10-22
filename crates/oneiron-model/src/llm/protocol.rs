@@ -322,7 +322,9 @@ pub enum FinishReason {
     ToolCalls,
     ContentFiltered,
     Cancelled,
-    Other { name: String },
+    Other {
+        name: String,
+    },
     /// The answer is what its stream already showed, and it is not whole
     /// (FIX 8617): the provider's terminal disagreed with it. Never a stop,
     /// never a refusal; nothing shown is taken back or sent again.

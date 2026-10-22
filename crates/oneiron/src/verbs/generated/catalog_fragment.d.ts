@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1198 code-mode rows (1158 host rows, 40 run rows), 4101 declarations.
+// Census: 1198 code-mode rows (1158 host rows, 40 run rows), 4106 declarations.
 // Replies: 1078 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
@@ -2371,7 +2371,7 @@ declare namespace Sdk {
   type CodeViewFile = { path: string; content_hash_blake3: string; frontier: CodeDocumentFrontier; text_sha256: string };
   type CodeWorkingView = { view: EntityId; repo: EntityId; base: EntityId; account: EntityId; fork_hash: string; files: CodeViewFile[]; receipt: EntityId; host_path: string };
   type CodeViewRequest = { view: EntityId; repo: EntityId; tested: EntityId; account: EntityId };
-  type CodeViewReadRequest = { view: CodeViewRequest; path: string };
+  type CodeViewReadRequest = { view: CodeViewRequest; path: string; why?: string | null };
   type CodeViewFileBytes = { path: string; bytes: number[]; sha256: string; projection?: RepoFileProjectionView | null };
   type CodeSecretTaintRef = { secret_ref: string; rotation_generation: number };
   type CodeBuildClass = "build" | "verify";
@@ -2389,7 +2389,7 @@ declare namespace Sdk {
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
   type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[] };
   type CodeSnapshotRequest = { repo: EntityId; snapshot: string };
-  type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string };
+  type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string; why?: string | null };
   type CodeSnapshotPinnedFile = { repo: EntityId; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
   type CodeSnapshotDefinitionsRequest = { repo: EntityId; snapshot: string; name: string };
   type CodeSnapshotDefinition = { symbol: EntityId; path: string; name: string; kind: string; fingerprint: string; start_line: number; end_line: number };
@@ -2466,7 +2466,7 @@ declare namespace Sdk {
   type RepoSnapshotsGetInput = { repo: EntityId; ref: string; snapshot: string };
   type RepoSnapshotView = { repo: EntityId; ref: string; commit: string; snapshot: string; artifact: EntityId; files: CodeSnapshotFile[] };
   type RepoSnapshotsGetOutput = RepoSnapshotView;
-  type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string };
+  type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string; why?: string | null };
   type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
   type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string };
   type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] };
@@ -2474,7 +2474,7 @@ declare namespace Sdk {
   type RepoWorkFile = { path: string; content_hash_blake3: string };
   type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_green: string; base_snapshot: string; fork_hash: string; files: RepoWorkFile[] };
   type RepoViewsGetOutput = RepoWorkView;
-  type RepoViewsReadInput = { work: EntityId; path: string };
+  type RepoViewsReadInput = { work: EntityId; path: string; why?: string | null };
   type RepoViewsReadOutput = { work: EntityId; path: string; bytes: number[]; sha256: string };
   type RepoMergeQueueObserveInput = { work: EntityId };
   type RepoQueueEntryView = { batch: string; work: EntityId; proposals: EntityId[]; declaration?: EntityId | null; state: BatchState; base_green: string; expected_head: string; landed_head?: string | null; blockers: EntityId[] };
@@ -3526,7 +3526,7 @@ declare namespace Sdk {
   type HeldMedia = { part: string; hash: Digest };
   type TableMerge = { first_row: NodeId; first_column: NodeId; last_row: NodeId; last_column: NodeId };
   type TableBody = { rows: NodeId[]; columns: NodeId[]; cells?: Record<string, Record<string, string>>; merges?: TableMerge[] };
-  type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar" | "bar_3d" | "line_3d" | "pie_3d" | "area_3d" | "bubble";
+  type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar" | "bar_3d" | "line_3d" | "pie_3d" | "area_3d" | "bubble" | "stock" | "surface" | "surface_3d" | "of_pie";
   type ChartCategory = { id?: NodeId | null; levels?: (string | null)[] };
   type ChartCategories = { level_count?: number; points?: ChartCategory[] };
   type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null };
@@ -3535,7 +3535,12 @@ declare namespace Sdk {
   type PlotGrouping = "standard" | "clustered" | "stacked" | "percent_stacked";
   type BarShape = "box" | "cone" | "cone_to_max" | "cylinder" | "pyramid" | "pyramid_to_max";
   type SizeRepresents = "area" | "width";
-  type ChartPlot = { family: ChartKind; nth?: number; bar_dir?: BarDirection | null; grouping?: PlotGrouping | null; shape?: BarShape | null; gap_depth?: number | null; bubble_3d?: boolean | null; bubble_scale?: number | null; show_neg_bubbles?: boolean | null; size_represents?: SizeRepresents | null };
+  type StockOrder = "hlc" | "ohlc";
+  type StockRoles = { order: StockOrder; open?: NodeId | null; high?: NodeId | null; low?: NodeId | null; close?: NodeId | null };
+  type SurfaceBand = { index: number; fill?: string | null };
+  type OfPieType = "pie" | "bar";
+  type SplitType = "auto" | "cust" | "percent" | "pos" | "val";
+  type ChartPlot = { family: ChartKind; nth?: number; bar_dir?: BarDirection | null; grouping?: PlotGrouping | null; shape?: BarShape | null; gap_depth?: number | null; bubble_3d?: boolean | null; bubble_scale?: number | null; show_neg_bubbles?: boolean | null; size_represents?: SizeRepresents | null; stock?: StockRoles | null; hi_low_lines?: boolean | null; up_down_bars?: boolean | null; up_down_gap_width?: number | null; up_fill?: string | null; down_fill?: string | null; wireframe?: boolean | null; bands?: SurfaceBand[] | null; of_pie_type?: OfPieType | null; split_type?: SplitType | null; split_pos?: number | null; custom_split?: NodeId[] | null; second_pie_size?: number | null; gap_width?: number | null; ser_lines?: boolean | null };
   type ChartView = { rot_x?: number | null; h_percent?: number | null; rot_y?: number | null; depth_percent?: number | null; r_ang_ax?: boolean | null; perspective?: number | null };
   type ConnectorPreset = "straight" | "elbow" | "curved";
   type ConnectorEnd = { node: NodeId; site: number };

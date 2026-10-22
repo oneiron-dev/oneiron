@@ -25,6 +25,8 @@
 //! target answers covered, and the pass acks nothing for its older position,
 //! moves no watermark, advances no anchor and records no status.
 
+mod pending;
+
 use crate::error::Result;
 use crate::store::Store;
 

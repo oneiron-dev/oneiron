@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::embed::{
     EgressPredicate, EmbedderLocality, InputKind, MediaEmbedReport, MediaEmbedder,
     MediaEmbeddingInput, SpaceMove, SpaceMoveOutcome, SpaceMoveState, SpaceProbeAuthor,
@@ -593,17 +594,20 @@ impl SyncServer {
         runtime: &tokio::runtime::Handle,
         moving: &SpaceMove,
     ) -> Result<SpaceMoveOutcome, MediaEmbedRefusal> {
-        self.check_space_move_listing(runtime, moving)
+        self.check_space_move_listing(runtime, moving, None)
             .map(|(outcome, _)| outcome)
     }
 
     /// [`Self::check_space_move`], beside the rows its reading stands on
     /// ([`oneiron::Vault::check_space_move_listing`]). A check it waited on
     /// lists none: it answers from the move's stored check, a side table.
+    /// At the owner's request, `owner` is the request's proof, checked again
+    /// as the check concludes (FIX 8982); `None` for the backfill's own check.
     pub(crate) fn check_space_move_listing(
         &self,
         runtime: &tokio::runtime::Handle,
         moving: &SpaceMove,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<(SpaceMoveOutcome, Option<Vec<oneiron::EntityId>>), MediaEmbedRefusal> {
         let lock = Arc::clone(
             MOVE_CHECKS
@@ -637,9 +641,15 @@ impl SyncServer {
             candidate_egress,
             runtime,
         };
-        Ok(self
-            .vault
-            .check_space_move_listing(&moving.candidate, &encoder)?)
+        Ok(match owner {
+            Some(owner) => {
+                self.vault
+                    .check_space_move_listing_as(owner, &moving.candidate, &encoder)?
+            }
+            None => self
+                .vault
+                .check_space_move_listing(&moving.candidate, &encoder)?,
+        })
     }
 
     /// The reading the check that just finished left on `moving`, for a

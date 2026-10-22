@@ -46,7 +46,7 @@ pub(super) fn fresh(
         {
             style.extend(copied(bytes, tree, at));
         }
-        if let Some(at) = child("dLbls") {
+        if let Some(at) = child("dLbls").filter(|_| !crate::live::pptx::surface(kind)) {
             let family = tree.nodes[ser]
                 .parent
                 .and_then(|plot| held::plot_family(&tree.nodes[plot].name));
