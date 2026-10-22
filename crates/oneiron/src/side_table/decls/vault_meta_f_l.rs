@@ -100,6 +100,11 @@ side_tables! {
     /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
+    /// A Gate decision's scrub an erase owes while a legal hold keeps the decision's own
+    /// partition (FIX 7993, 7994), and when the erase asked: ids and a time only. Key: kind (0 an
+    /// erased claim's skeleton, 1 an erased actor's attribution) + id16 (erased source) + id16
+    /// (decision).
+    GATE_DECISION_PENDING_SCRUB: VaultMeta b"gate_decision:pending_scrub:v1:" Named;
     /// Append-time retention ancestry of one gate decision; the retention-scope module's own
     /// layout. Key: id16 (decision).
     GATE_DECISION_RETENTION_CONTEXT: VaultMeta b"gate_decision:retention_context:v1:" Raw;
