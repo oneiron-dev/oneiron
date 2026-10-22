@@ -184,7 +184,9 @@ struct AssertionRead<'a, 'l> {
 /// The pointer of the first record `assertions` names that `lane` does not
 /// read in `txn`, cited before created: a malformed id, a missing row and an
 /// unreadable one are one answer. Every id is judged in the one snapshot.
-fn unread_assertion_in(
+/// A model stream's continuation terminal judges its own through it too
+/// (FIX 3416).
+pub(super) fn unread_assertion_in(
     lane: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     assertions: &WitnessAssertions,
@@ -731,7 +733,7 @@ impl Memory<'_> {
     /// is (`admit_row_references`), and returns the refusal; if the receipt
     /// cannot be written, the store's error instead. Inside an anonymous
     /// off-record session the refusal stands with no receipt.
-    fn settle_refused_assertion(&self, pointer: &str) -> MemoryError {
+    pub(super) fn settle_refused_assertion(&self, pointer: &str) -> MemoryError {
         let facts = crate::receipt::ReferenceRefusalFacts {
             actor: self.actor,
             actor_class: self.actor_class,
