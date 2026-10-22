@@ -15,6 +15,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from . import payloads
 from .fetch import Mirror, install_rust
 from .model import HERE, Model, Plan
 from .util import NotYetSupported, StepFailed, host_env, run
@@ -28,9 +29,15 @@ HOOKS = {
 # The snapshot sources sandbox_tree() writes, relative to its root; the
 # finished tools tree carries the same file and no other source list.
 SNAPSHOT_SOURCES = Path("etc/apt/sources.list.d/mkosi.sources")
-# What write_plan() can install today; anything else is refused before a fetch.
-SUPPORTED_PAYLOADS = ("file", "rust-toolchain")
+# What write_plan() can install today, one installer per kind (INSTALLERS
+# below); anything else is refused before a fetch.
+SUPPORTED_PAYLOADS = ("file", "rust-toolchain", "archive", "npm")
 SUPPORTED_TREES = ("cargo-store",)
+# An external source build: a pinned archive compiled by Cargo in the build
+# overlay, offline, from its own lock and store. These pin fields must be set.
+SOURCE_BUILD_KIND = "source-build"
+SOURCE_BUILD_FIELDS = ("archive_url", "archive_sha256", "extract", "workdir", "cargo_lock_sha256", "package",
+                       "bin", "rust", "licence_files", "licence_dest")
 
 
 def sandbox_tree(model: Model, work: Path) -> Path:
@@ -66,13 +73,16 @@ def _tsv(path: Path, rows) -> None:
 def check_supported(model: Model, plan: Plan) -> None:
     """Refuses a plan write_plan() cannot install. Side-effect free: build.py
     calls it for every requested plan before its namespace or any download."""
-    if plan.source_builds:
-        names = ", ".join(sb["pin"] for sb in plan.source_builds)
-        raise NotYetSupported(f"{plan.name} needs an external source build ({names}); the CUA build lands with its phase")
+    for entry in plan.source_builds:
+        payload = model.payload(entry["pin"])
+        missing = [k for k in SOURCE_BUILD_FIELDS if k not in payload]
+        if payload["kind"] != SOURCE_BUILD_KIND or missing:
+            raise NotYetSupported(f"source build {entry['pin']} has kind {payload['kind']!r} and lacks {missing}; "
+                                  f"only a pinned {SOURCE_BUILD_KIND} archive with its own Cargo.lock is built")
     for entry in plan.payloads:
         kind = model.payload(entry["pin"])["kind"]
         if kind not in SUPPORTED_PAYLOADS:
-            raise NotYetSupported(f"payload {entry['pin']} has kind {kind!r}; its install lands with phase {plan.phase}")
+            raise NotYetSupported(f"payload {entry['pin']} has kind {kind!r}, which no installer handles")
     for entry in plan.trees:
         if entry["kind"] not in SUPPORTED_TREES:
             raise NotYetSupported(f"tree kind {entry['kind']!r} is not supported")
@@ -95,22 +105,63 @@ def write_plan(model: Model, plan: Plan, *, engine: Path, mirror: Mirror, work: 
     trees = []
     for entry in plan.payloads:
         payload = model.payload(entry["pin"])
-        kind = payload["kind"]
-        if kind == "file":
-            shutil.copyfile(mirror.blob(payload["sha256"]), root / "files" / entry["pin"])
-            files.append((f"files/{entry['pin']}", entry["dest"], entry.get("mode", "0555")))
-        else:
-            install_rust(model, mirror, payload["components"], root / "trees" / entry["pin"])
-            trees.append((f"plan/trees/{entry['pin']}", entry["dest"]))
+        INSTALLERS[payload["kind"]](model, mirror, entry, payload, root, files, trees)
+    for entry in plan.launchers:
+        name = "launcher-" + entry["path"].rsplit("/", 1)[-1]
+        (root / "files" / name).write_bytes(payloads.launcher(entry))
+        files.append((f"files/{name}", entry["path"], "0555"))
+    sources = []
+    for entry in plan.source_builds:
+        sb = model.payload(entry["pin"])
+        if any("\t" in e or " " in e for e in sb.get("build_env", [])):
+            raise StepFailed(f"source build {entry['pin']}: a build_env entry holds a space or tab")
+        sources.append((entry["pin"], sb["workdir"], sb["package"], sb["bin"], entry["dest"],
+                        entry.get("mode", "0555"), " ".join(sb.get("build_env", [])) or "-"))
+        # Its licence texts, from the mounted source tree (/work/src/source-<pin>).
+        for rel in sb["licence_files"]:
+            files.append((f"../source-{entry['pin']}/{rel}", f"{sb['licence_dest']}/{rel.rsplit('/', 1)[-1]}", "0644"))
     for entry in plan.trees:
         trees.append(("cargo-home", entry["dest"]))
     _tsv(root / "files.tsv", files)
     _tsv(root / "trees.tsv", trees)
+    _tsv(root / "sources.tsv", sources)
     _tsv(root / "links.tsv", [(link["path"], link["target"]) for link in plan.links])
     _tsv(root / "dirs.tsv", [(d["path"], d.get("mode", "0755")) for d in plan.dirs])
     user = plan.user
     _tsv(root / "user.tsv", [(user["name"], user["uid"], user["gid"], user["home"], user["shell"])] if user else [])
     return root
+
+
+def _install_file(model, mirror, entry, payload, root, files, trees) -> None:
+    shutil.copyfile(mirror.blob(payload["sha256"]), root / "files" / entry["pin"])
+    files.append((f"files/{entry['pin']}", entry["dest"], entry.get("mode", "0555")))
+
+
+def _install_rust_toolchain(model, mirror, entry, payload, root, files, trees) -> None:
+    install_rust(model, mirror, payload["components"], root / "trees" / entry["pin"])
+    trees.append((f"plan/trees/{entry['pin']}", entry["dest"]))
+
+
+def _install_archive_member(model, mirror, entry, payload, root, files, trees) -> None:
+    payloads.archive_member(mirror.blob(payload["sha256"]), payload["member"], root / "files" / entry["pin"],
+                            what=f"payload {entry['pin']}")
+    files.append((f"files/{entry['pin']}", entry["dest"], entry.get("mode", "0555")))
+
+
+def _install_npm(model, mirror, entry, payload, root, files, trees) -> None:
+    payloads.npm_package(mirror.sri_blob(payload["integrity"]), root / "trees" / entry["pin"],
+                         package=payload["package"], version=payload["version"], what=f"payload {entry['pin']}")
+    trees.append((f"plan/trees/{entry['pin']}", entry["dest"]))
+
+
+# The one dispatch from a payload's kind to its installer (SUPPORTED_PAYLOADS).
+INSTALLERS = {
+    "file": _install_file,
+    "rust-toolchain": _install_rust_toolchain,
+    "archive": _install_archive_member,
+    "npm": _install_npm,
+}
+assert set(INSTALLERS) == set(SUPPORTED_PAYLOADS)
 
 
 def _setting(key: str, values) -> list[str]:

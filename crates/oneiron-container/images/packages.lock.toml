@@ -19,6 +19,36 @@ requests_sha256 = "5f8defea0c6e016d3ca2c345a785fcc826d690782c5e947d39bc2ea8c1897
 [scopes.checker]
 requests_sha256 = "fb8c02da4f9a6d555bf75264f66bb7ef75ddf6c306e8ec9503460b963e79268a"
 
+[scopes.desktop-cua]
+requests_sha256 = "7aefa996e6287c71be7a993af0713fcb10a7d444c19d88cf4213d5587180a807"
+
+[scopes.generic-agent]
+requests_sha256 = "3d56eb8abca0e8c77feb02feb669a323c5a6847f0969dc21b39653e3a6472bff"
+
+[[package]]
+name = "abiword"
+version = "3.0.6~dfsg-1"
+arch = "amd64"
+filename = "abiword_3.0.6~dfsg-1_amd64.deb"
+size = 946980
+sha256 = "ee1a7508971aa5de9a8548866915a5f421e8ce9b1c31dc2fcf2ccaaba4900983"
+
+[[package]]
+name = "abiword-common"
+version = "3.0.6~dfsg-1"
+arch = "all"
+filename = "abiword-common_3.0.6~dfsg-1_all.deb"
+size = 1658008
+sha256 = "9068ef620d42f7d1863fd7c4760ea03b2019e6b7fa0386b0f6ac3bf25bc89d5f"
+
+[[package]]
+name = "adduser"
+version = "3.152"
+arch = "all"
+filename = "adduser_3.152_all.deb"
+size = 190932
+sha256 = "e50984d2e1ef6300e3fd51303839842189a077b10cb5cadff1923df10c61c493"
+
 [[package]]
 name = "adwaita-icon-theme"
 version = "48.1-1"
@@ -42,6 +72,14 @@ arch = "all"
 filename = "at-spi2-common_2.56.2-1+deb13u2_all.deb"
 size = 170748
 sha256 = "a2a7b53c9925ec33a471d56dd60f5effe35cece109ec4296cc8d98a1250213b4"
+
+[[package]]
+name = "at-spi2-core"
+version = "2.56.2-1+deb13u2"
+arch = "amd64"
+filename = "at-spi2-core_2.56.2-1+deb13u2_amd64.deb"
+size = 62124
+sha256 = "5378aee8237adb78c0c523b74ec90dff71a52d31f20bb86fdd55841ae3200a21"
 
 [[package]]
 name = "b3sum"
@@ -292,6 +330,14 @@ size = 52128
 sha256 = "0f9aa775a708b28b1a3ad784e9d1f0c96227521bc29e99ddbfe05ff008b5d246"
 
 [[package]]
+name = "dbus-x11"
+version = "1.16.2-2"
+arch = "amd64"
+filename = "dbus-x11_1.16.2-2_amd64.deb"
+size = 65144
+sha256 = "7d06cc4b3f0c9e4761cdd64772cd86a845b11ab1fcd073caaf4c34b459dc7cd3"
+
+[[package]]
 name = "dconf-gsettings-backend"
 version = "0.40.0-5"
 arch = "amd64"
@@ -380,6 +426,14 @@ size = 13636
 sha256 = "8b164951c11937eae26b0528f65d75d5dda64985ec8ccf0cb48605842b4d5495"
 
 [[package]]
+name = "evolution-data-server-common"
+version = "3.56.2-0+deb13u1"
+arch = "all"
+filename = "evolution-data-server-common_3.56.2-0+deb13u1_all.deb"
+size = 1444412
+sha256 = "5a217df61bf07fd06ec8cd045dab4c5a59bb34c5ddaeff437c9e6df5e6d55111"
+
+[[package]]
 name = "findutils"
 version = "4.10.0-3"
 arch = "amd64"
@@ -428,6 +482,14 @@ size = 1475396
 sha256 = "3d5c47480067b9615f6bf9b0eda6eefcab9d837af609827015445e8e759b5b8c"
 
 [[package]]
+name = "fonts-urw-base35"
+version = "20200910-8"
+arch = "all"
+filename = "fonts-urw-base35_20200910-8_all.deb"
+size = 10802992
+sha256 = "4ac978a355a84024ec94d0249d411de9eb50c89c8e39d292e303e61d1afa3f84"
+
+[[package]]
 name = "g++"
 version = "4:14.2.0-1"
 arch = "amd64"
@@ -458,6 +520,14 @@ arch = "amd64"
 filename = "g++-x86-64-linux-gnu_4%3a14.2.0-1_amd64.deb"
 size = 1200
 sha256 = "15e10fc3948ec76be8d51b23e75ad9df9c39588c94f1f47059cee02c117c7583"
+
+[[package]]
+name = "galculator"
+version = "2.1.4-2"
+arch = "amd64"
+filename = "galculator_2.1.4-2_amd64.deb"
+size = 170720
+sha256 = "bd80f82dd1f505c23efb2be6e8810e5b4e2791d71a1dbd758a87ef7ab0fa9122"
 
 [[package]]
 name = "gcc"
@@ -660,6 +730,22 @@ size = 12332
 sha256 = "545f6d24809a79f3b527ec37c30dee0b2c3b18c1466e7983d8e7b0a2cc3a4431"
 
 [[package]]
+name = "gnumeric"
+version = "1.12.57-1.1+b1"
+arch = "amd64"
+filename = "gnumeric_1.12.57-1.1+b1_amd64.deb"
+size = 2400516
+sha256 = "704f386cade1117db04c11ee7ab62d9f6fef8d09974ce701f7a0148bcb2d309b"
+
+[[package]]
+name = "gnumeric-common"
+version = "1.12.57-1.1"
+arch = "all"
+filename = "gnumeric-common_1.12.57-1.1_all.deb"
+size = 2030088
+sha256 = "39abddcb8ee558d7f023564cd3e06a42774913ddbbc8f5eba0415cfb6f50c419"
+
+[[package]]
 name = "grep"
 version = "3.11-4"
 arch = "amd64"
@@ -772,6 +858,14 @@ size = 49952
 sha256 = "104ae4e0d63a40491d2ce6b04d389e246d841bbb09f0e5228de144c0dcdc5560"
 
 [[package]]
+name = "libabiword-3.0"
+version = "3.0.6~dfsg-1"
+arch = "amd64"
+filename = "libabiword-3.0_3.0.6~dfsg-1_amd64.deb"
+size = 2334364
+sha256 = "a28490f0bf63997ccf2f396db2bb090cfb6b9b5b85a1cf4b497069ccda62dbd2"
+
+[[package]]
 name = "libabsl20240722"
 version = "20240722.0-4"
 arch = "amd64"
@@ -874,6 +968,14 @@ arch = "amd64"
 filename = "libasyncns0_0.8-6+b5_amd64.deb"
 size = 12028
 sha256 = "e7958777b0e3586349c57ac759a95b68f80d28e5bd1c4225705198b39b436115"
+
+[[package]]
+name = "libatk-adaptor"
+version = "2.56.2-1+deb13u2"
+arch = "amd64"
+filename = "libatk-adaptor_2.56.2-1+deb13u2_amd64.deb"
+size = 11804
+sha256 = "e32626fd96121efede1a8b8747ff916904c76d22783e3b27f2e4e88325d108fc"
 
 [[package]]
 name = "libatk-bridge2.0-0t64"
@@ -1132,6 +1234,14 @@ size = 43404
 sha256 = "50bb7f5dbe565caf754dc65c5b9de3d63b2458b4388544ea30b328eae5290d8d"
 
 [[package]]
+name = "libcamel-1.2-64t64"
+version = "3.56.2-0+deb13u1"
+arch = "amd64"
+filename = "libcamel-1.2-64t64_3.56.2-0+deb13u1_amd64.deb"
+size = 466384
+sha256 = "5deac7183bda0af621fe8daa20edf20c62e5d8f98f5a10fa4cdca53d8cdeed9f"
+
+[[package]]
 name = "libcap-dev"
 version = "1:2.75-10+deb13u1+b3"
 arch = "amd64"
@@ -1324,6 +1434,14 @@ size = 41796
 sha256 = "6e7f670e1cf493ae8f60dea52f5a4aef56605d5b06d921113d7c2a2800ff5af1"
 
 [[package]]
+name = "libde265-0"
+version = "1.0.15-1+deb13u2"
+arch = "amd64"
+filename = "libde265-0_1.0.15-1+deb13u2_amd64.deb"
+size = 190116
+sha256 = "4a76cf0ff4502176e780bfedfc848aedf4a1a55b1d154b27164ca4ce698c1aad"
+
+[[package]]
 name = "libdebconfclient0"
 version = "0.280"
 arch = "amd64"
@@ -1410,6 +1528,22 @@ arch = "amd64"
 filename = "libdv4t64_1.0.0-17.1+b1_amd64.deb"
 size = 71672
 sha256 = "37b3b65e0aa3a84068015db5beea69d85cc6d507f40ebfe948820953727f82aa"
+
+[[package]]
+name = "libebook-contacts-1.2-4t64"
+version = "3.56.2-0+deb13u1"
+arch = "amd64"
+filename = "libebook-contacts-1.2-4t64_3.56.2-0+deb13u1_amd64.deb"
+size = 70040
+sha256 = "d9c62ab3f366af67b0f620073db8788291b19c77f42b87ced6df740fdcc36e09"
+
+[[package]]
+name = "libedataserver-1.2-27t64"
+version = "3.56.2-0+deb13u1"
+arch = "amd64"
+filename = "libedataserver-1.2-27t64_3.56.2-0+deb13u1_amd64.deb"
+size = 274656
+sha256 = "d10ad59591a812fe62b848435f384e95c0b85d2469ef1c4ad7eb9c01599ea11c"
 
 [[package]]
 name = "libedit2"
@@ -1572,6 +1706,14 @@ size = 391576
 sha256 = "7ae91ec59857cc8e375eb2bdd371a4a69daea38f7787d06d474a847867d852b1"
 
 [[package]]
+name = "libfontenc1"
+version = "1:1.1.8-1+b2"
+arch = "amd64"
+filename = "libfontenc1_1%3a1.1.8-1+b2_amd64.deb"
+size = 23328
+sha256 = "49f7330e1bbe3f48946fee5c07870df660374f9f77b378840d6edf1a3b3444cd"
+
+[[package]]
 name = "libfreetype-dev"
 version = "2.13.3+dfsg-1+deb13u1"
 arch = "amd64"
@@ -1690,6 +1832,14 @@ arch = "all"
 filename = "libgdk-pixbuf2.0-common_2.42.12+dfsg-4+deb13u1_all.deb"
 size = 311852
 sha256 = "9f0c64e33cf5bb3226a5a6ddf630dd76530596e476e6b47a8b27da444ff43a03"
+
+[[package]]
+name = "libgif7"
+version = "5.2.2-1+deb13u1"
+arch = "amd64"
+filename = "libgif7_5.2.2-1+deb13u1_amd64.deb"
+size = 44052
+sha256 = "619328ccf9ad6c621298f9daf5e695ff50e993a6d45dd0d7f6217e1bd2d1c4ce"
 
 [[package]]
 name = "libgio-2.0-dev"
@@ -1868,6 +2018,22 @@ size = 1469024
 sha256 = "18a8bdfd91c7e3bcb01719d55a2b56849c7160b34f1f52b1c4fdfdd41bf1352b"
 
 [[package]]
+name = "libgoffice-0.10-10-common"
+version = "0.10.57-2"
+arch = "all"
+filename = "libgoffice-0.10-10-common_0.10.57-2_all.deb"
+size = 900008
+sha256 = "581b2cb5981c1fdf5ba85a2e7876cba88c32d3c1105551c4e0addef93fb616ef"
+
+[[package]]
+name = "libgoffice-0.10-10t64"
+version = "0.10.57-2"
+arch = "amd64"
+filename = "libgoffice-0.10-10t64_0.10.57-2_amd64.deb"
+size = 1789180
+sha256 = "5f436b826a882c5231f9ab7b5b7593e4e4f1e7aad378a7bddec192cb5f376e10"
+
+[[package]]
 name = "libgomp1"
 version = "14.2.0-19"
 arch = "amd64"
@@ -1914,6 +2080,62 @@ arch = "amd64"
 filename = "libgraphite2-dev_1.3.14-2+deb13u1_amd64.deb"
 size = 20140
 sha256 = "95285830ac3b4d672cdf05651de1c47884ca135a7601a365b9e5060ed18dee26"
+
+[[package]]
+name = "libgs-common"
+version = "10.05.1~dfsg-1+deb13u2"
+arch = "all"
+filename = "libgs-common_10.05.1~dfsg-1+deb13u2_all.deb"
+size = 148632
+sha256 = "dd519a35716935071ad846f9fe03a0f6be8a80deff6990831cb854657d447990"
+
+[[package]]
+name = "libgs10"
+version = "10.05.1~dfsg-1+deb13u2"
+arch = "amd64"
+filename = "libgs10_10.05.1~dfsg-1+deb13u2_amd64.deb"
+size = 2567392
+sha256 = "110fe36d3757c9f6279c9f9b7e2aa3b785ac469641367172843008ddce263591"
+
+[[package]]
+name = "libgs10-common"
+version = "10.05.1~dfsg-1+deb13u2"
+arch = "all"
+filename = "libgs10-common_10.05.1~dfsg-1+deb13u2_all.deb"
+size = 479096
+sha256 = "1a16ba7e8e1b7269bcde04eedd9d23dbd8dcbf84098b5a01562f4bc1e3075e1a"
+
+[[package]]
+name = "libgsf-1-114"
+version = "1.14.53-1"
+arch = "amd64"
+filename = "libgsf-1-114_1.14.53-1_amd64.deb"
+size = 152884
+sha256 = "5e17ffb14343ee891da0abce4e32511c2d07dac964dc293ec740e78f89ed061c"
+
+[[package]]
+name = "libgsf-1-common"
+version = "1.14.53-1"
+arch = "all"
+filename = "libgsf-1-common_1.14.53-1_all.deb"
+size = 162132
+sha256 = "a88b404a8f8e03a8db306c71a523856d3bee7977bb41990a7fc425539e2992e2"
+
+[[package]]
+name = "libgspell-1-3"
+version = "1.14.0-2+b1"
+arch = "amd64"
+filename = "libgspell-1-3_1.14.0-2+b1_amd64.deb"
+size = 51508
+sha256 = "1a37eaf89f3f8ba0645f975df5548534add6c49248e3b796f6859e2cbf20f39b"
+
+[[package]]
+name = "libgspell-1-common"
+version = "1.14.0-2"
+arch = "all"
+filename = "libgspell-1-common_1.14.0-2_all.deb"
+size = 36516
+sha256 = "d0a10ca850f6f2532541719eed90797742d1891a272490c219c7729996a3b4db"
 
 [[package]]
 name = "libgssapi-krb5-2"
@@ -1980,6 +2202,22 @@ size = 1129372
 sha256 = "ef1bfe031d104529017da683ea0a6f1c3e487315c932764eb1ba84c297a25548"
 
 [[package]]
+name = "libgtksourceview-4-0"
+version = "4.8.4-6"
+arch = "amd64"
+filename = "libgtksourceview-4-0_4.8.4-6_amd64.deb"
+size = 218612
+sha256 = "37ed8c408c3d06756aa49bf3e49440b6ddaf9bcff8829723c857951b69c230ea"
+
+[[package]]
+name = "libgtksourceview-4-common"
+version = "4.8.4-6"
+arch = "all"
+filename = "libgtksourceview-4-common_4.8.4-6_all.deb"
+size = 532924
+sha256 = "affcc851a156ce8f2da91e4b83ebf23ba578153b1c1f037992da1992b57a0b45"
+
+[[package]]
 name = "libgudev-1.0-0"
 version = "238-6"
 arch = "amd64"
@@ -2036,6 +2274,30 @@ size = 478952
 sha256 = "932165b933e5eb633293afe984a983ebe89cb27c923ce7208626f1da6c0c7941"
 
 [[package]]
+name = "libheif-plugin-dav1d"
+version = "1.23.4-1~deb13u1"
+arch = "amd64"
+filename = "libheif-plugin-dav1d_1.23.4-1~deb13u1_amd64.deb"
+size = 22716
+sha256 = "d5914b5ca3fd9793b6cde5110908a9f5dc8ed467ffe4f2bdcfd1d92ff1d4892b"
+
+[[package]]
+name = "libheif-plugin-libde265"
+version = "1.23.4-1~deb13u1"
+arch = "amd64"
+filename = "libheif-plugin-libde265_1.23.4-1~deb13u1_amd64.deb"
+size = 20220
+sha256 = "e2ef1345e6bbc74ad922de9db01108522591edb2579a0b72d3fe50c4df7376df"
+
+[[package]]
+name = "libheif1"
+version = "1.23.4-1~deb13u1"
+arch = "amd64"
+filename = "libheif1_1.23.4-1~deb13u1_amd64.deb"
+size = 812372
+sha256 = "b1e37ecd9d6aca2114c332a04d5b728cab24703aa0aeb807b81e19f4284fecfd"
+
+[[package]]
 name = "libhidapi-hidraw0"
 version = "0.14.0-1+b2"
 arch = "amd64"
@@ -2084,6 +2346,14 @@ size = 30664
 sha256 = "fa9dca7b8cf1381fd52800c44a385c5725a78a88bd705f7c39b1046a5293435e"
 
 [[package]]
+name = "libical3t64"
+version = "3.0.20-1+b1"
+arch = "amd64"
+filename = "libical3t64_3.0.20-1+b1_amd64.deb"
+size = 287824
+sha256 = "8982cba1a8092533d9792205a3ab4ba4bc0a53ebf7dd5fba4fe8d005a19576ea"
+
+[[package]]
 name = "libice-dev"
 version = "2:1.1.1-1"
 arch = "amd64"
@@ -2116,6 +2386,22 @@ size = 9722072
 sha256 = "c1bf762996de9ecba9b9d871e4928a8090f023a3e9e7fa3240b3d90f892a01dc"
 
 [[package]]
+name = "libid3tag0"
+version = "0.16.3-1"
+arch = "amd64"
+filename = "libid3tag0_0.16.3-1_amd64.deb"
+size = 34984
+sha256 = "ca25bf355e247fbe3447ff7d9a09a94ff370ec077cdf074b9ca6adc6a61d4bcd"
+
+[[package]]
+name = "libidn12"
+version = "1.43-1"
+arch = "amd64"
+filename = "libidn12_1.43-1_amd64.deb"
+size = 47740
+sha256 = "c87472105da3da12481627412aeb6088062c945cce2ee259c447fd27385a4850"
+
+[[package]]
 name = "libidn2-0"
 version = "2.3.8-2"
 arch = "amd64"
@@ -2130,6 +2416,22 @@ arch = "amd64"
 filename = "libiec61883-0_1.2.0-7_amd64.deb"
 size = 30580
 sha256 = "688dd2a0f65997d915acbd4ee5415e3b7704caf7854f20fd6b685bc56e254944"
+
+[[package]]
+name = "libijs-0.35"
+version = "0.35-15.2"
+arch = "amd64"
+filename = "libijs-0.35_0.35-15.2_amd64.deb"
+size = 14772
+sha256 = "96b0d4bf4123e79e4202fbf79bb5689d981e00250042c6beeb4fefeb8c778381"
+
+[[package]]
+name = "libimlib2t64"
+version = "1.12.4-2"
+arch = "amd64"
+filename = "libimlib2t64_1.12.4-2_amd64.deb"
+size = 218740
+sha256 = "0abd807eb797a05bbcaa52f30b31f95c348859a110f5f680d7370661158267a4"
 
 [[package]]
 name = "libisl23"
@@ -2188,6 +2490,14 @@ size = 32116
 sha256 = "95cbc44561651e1b3385454df08e8f2efe84498f6963a85259be2cc2fe798709"
 
 [[package]]
+name = "libjbig2dec0"
+version = "0.20-1+deb13u1"
+arch = "amd64"
+filename = "libjbig2dec0_0.20-1+deb13u1_amd64.deb"
+size = 64876
+sha256 = "7d3f9b4e62b8ec477dd781234be02b8649dc563f8e67f91bbc02691a7ea3d4e3"
+
+[[package]]
 name = "libjpeg-dev"
 version = "1:2.1.5-4"
 arch = "amd64"
@@ -2210,6 +2520,22 @@ arch = "amd64"
 filename = "libjpeg62-turbo-dev_1%3a2.1.5-4_amd64.deb"
 size = 291604
 sha256 = "e687e3c8b24a3aa74974928b8e0b07f6df2442187492d85cbcea7dacd91e3aba"
+
+[[package]]
+name = "libjson-glib-1.0-0"
+version = "1.10.6+ds-2"
+arch = "amd64"
+filename = "libjson-glib-1.0-0_1.10.6+ds-2_amd64.deb"
+size = 64440
+sha256 = "2d5d71fe1f2b6b05b25aa4306cf22773d7bad669c04ce53b5745b0ed8d911d06"
+
+[[package]]
+name = "libjson-glib-1.0-common"
+version = "1.10.6+ds-2"
+arch = "all"
+filename = "libjson-glib-1.0-common_1.10.6+ds-2_all.deb"
+size = 62300
+sha256 = "2c6352e0b10b3bf2fe184eeaa5f4e8cfa69b82053dc2e5ef137f951ba59315c8"
 
 [[package]]
 name = "libjsoncpp26"
@@ -2348,6 +2674,14 @@ size = 1204164
 sha256 = "a0df07da76287a45e665d584363dc2a6a1c4e240aee41b8bbc0f67cdff97cd68"
 
 [[package]]
+name = "libltdl7"
+version = "2.5.4-4"
+arch = "amd64"
+filename = "libltdl7_2.5.4-4_amd64.deb"
+size = 415648
+sha256 = "ab38167fc5aba8d133309fa98ca0a8b4e8b3c31588214ea70803a2bf3c6aa5ba"
+
+[[package]]
 name = "liblz4-1"
 version = "1.10.0-4"
 arch = "amd64"
@@ -2396,6 +2730,14 @@ size = 36272
 sha256 = "7244ec3839b61fac0c1884fe08aaa040f26e8f1f35f1f5d3482eacefd30d1b44"
 
 [[package]]
+name = "libmhash2"
+version = "0.9.9.9-10"
+arch = "amd64"
+filename = "libmhash2_0.9.9.9-10_amd64.deb"
+size = 92436
+sha256 = "dee230ca116f5bf8728988f66a0d1e55571fd61baedc40bca32ca2ce65a7b8f0"
+
+[[package]]
 name = "libminizip1t64"
 version = "1:1.3.dfsg+really1.3.1-1+b1"
 arch = "amd64"
@@ -2418,6 +2760,14 @@ arch = "amd64"
 filename = "libmount1_2.41.5-0+deb13u1_amd64.deb"
 size = 210408
 sha256 = "6d00f45f2e80e078e906e3eedecd3ba6913e39fef49bff361ee583f17f00ec05"
+
+[[package]]
+name = "libmousepad0"
+version = "0.6.3-1"
+arch = "amd64"
+filename = "libmousepad0_0.6.3-1_amd64.deb"
+size = 128696
+sha256 = "3246c402025996d922737a967368dcd9d4dd346983fa508c9ae2ef7cc454dd80"
 
 [[package]]
 name = "libmp3lame0"
@@ -2532,6 +2882,22 @@ size = 1394236
 sha256 = "8d20d0754039e15e9bd2c8484e98dc9c2982907d4f20834da29a9501913d00b5"
 
 [[package]]
+name = "libobrender32v5"
+version = "3.6.1-12+b2"
+arch = "amd64"
+filename = "libobrender32v5_3.6.1-12+b2_amd64.deb"
+size = 66432
+sha256 = "f84c607b744f672429f310a95e3c85bad58a6002781283af62ea2a74e36c70b1"
+
+[[package]]
+name = "libobt2v5"
+version = "3.6.1-12+b2"
+arch = "amd64"
+filename = "libobt2v5_3.6.1-12+b2_amd64.deb"
+size = 55440
+sha256 = "f590a93c50bf7587ba8e6d9999df430566d04dc7447b2135bc7f2eb5ffc34c5a"
+
+[[package]]
 name = "libogg0"
 version = "1.3.5-3+b2"
 arch = "amd64"
@@ -2602,6 +2968,14 @@ arch = "amd64"
 filename = "liborc-0.4-0t64_1%3a0.4.41-1_amd64.deb"
 size = 189604
 sha256 = "5b9afe78be0dd71399c0d4d7e5f26beb6ddf207279997942d8280be1b20bd58c"
+
+[[package]]
+name = "libots0"
+version = "0.5.0-9+b1"
+arch = "amd64"
+filename = "libots0_0.5.0-9+b1_amd64.deb"
+size = 36560
+sha256 = "fa08132cc1796e4199931bf9255746a649d11a0509e5027ab92603d089223de5"
 
 [[package]]
 name = "libp11-kit0"
@@ -2692,6 +3066,14 @@ size = 27560
 sha256 = "ef26d9fb780d39489a10dcec2da9b51ca4cceb2ee58cccd694a1dd36e7d403ef"
 
 [[package]]
+name = "libpaper2"
+version = "2.2.5-0.3+b2"
+arch = "amd64"
+filename = "libpaper2_2.2.5-0.3+b2_amd64.deb"
+size = 16652
+sha256 = "59a0dfce63ebc91dad24a5237d7f8c22b93d990b00c7fdc2f4edc9fa4ebb07e1"
+
+[[package]]
 name = "libpciaccess0"
 version = "0.17-3+b3"
 arch = "amd64"
@@ -2748,6 +3130,14 @@ size = 4325996
 sha256 = "e44777ff47ad248d1debd57e1f96ab5e89061a341008ae39880ba3b5fc15f273"
 
 [[package]]
+name = "libphonenumber8"
+version = "8.13.51+ds-4.2"
+arch = "amd64"
+filename = "libphonenumber8_8.13.51+ds-4.2_amd64.deb"
+size = 223356
+sha256 = "049293a9aa85be3801e0be5a1ee9550b5686bad2ae5445b7f3faf5cb49a676b8"
+
+[[package]]
 name = "libpixman-1-0"
 version = "0.44.0-3"
 arch = "amd64"
@@ -2794,6 +3184,14 @@ arch = "amd64"
 filename = "libproc2-0_2%3a4.0.4-9_amd64.deb"
 size = 65596
 sha256 = "c9d61caab1b2ddfc3f17edb95be31b9809fcb2daf27d853dff615bc4ebd08b4b"
+
+[[package]]
+name = "libprotobuf32t64"
+version = "3.21.12-11+deb13u1"
+arch = "amd64"
+filename = "libprotobuf32t64_3.21.12-11+deb13u1_amd64.deb"
+size = 981280
+sha256 = "38c43ec79a043d2b2659fed321725049a7e457096a66691cf6eb0d3a1a8f0e85"
 
 [[package]]
 name = "libproxy1v5"
@@ -2860,6 +3258,22 @@ size = 145068
 sha256 = "f5b51cf0ece3ec3bb7494d0cdbff3ce715ae00cfb2b6ed787f7db91319d64a7b"
 
 [[package]]
+name = "libraptor2-0"
+version = "2.0.16-6"
+arch = "amd64"
+filename = "libraptor2-0_2.0.16-6_amd64.deb"
+size = 176844
+sha256 = "793ba88f9bf9e2a7e16d980a06865e686fbceafaabbeb322e83c5fa4049dc087"
+
+[[package]]
+name = "librasqal3t64"
+version = "0.9.33-2.1+b2"
+arch = "amd64"
+filename = "librasqal3t64_0.9.33-2.1+b2_amd64.deb"
+size = 190772
+sha256 = "9d3b3ea9901d57d50dcd9c0335bba3f0ae95bfba11cb2a5331f1c9b40591ea9f"
+
+[[package]]
 name = "librav1e0.7"
 version = "0.7.1-9+b2"
 arch = "amd64"
@@ -2876,6 +3290,14 @@ size = 38788
 sha256 = "f6f4f76b427f2caa2ed0905e64f13c2a8902fba04c08060e806b32bc35d6daf8"
 
 [[package]]
+name = "librdf0t64"
+version = "1.0.17-4+b1"
+arch = "amd64"
+filename = "librdf0t64_1.0.17-4+b1_amd64.deb"
+size = 106632
+sha256 = "d41105f9fed3fea6a0edb6d13dddb9f6fb3fdd611fb38ab23227ccf482596cd7"
+
+[[package]]
 name = "libreadline8t64"
 version = "8.2-6"
 arch = "amd64"
@@ -2884,12 +3306,28 @@ size = 168832
 sha256 = "eeadf2b5e755c9f183883feea2d9b5b28560284275d5f54d3e55d0923b1d0967"
 
 [[package]]
+name = "librevenge-0.0-0"
+version = "0.0.5-3+b2"
+arch = "amd64"
+filename = "librevenge-0.0-0_0.0.5-3+b2_amd64.deb"
+size = 295176
+sha256 = "ffd9f02a7d86a68a9cedae8c789012b903bc724389f09790e3c2bf4102d46d35"
+
+[[package]]
 name = "librhash1"
 version = "1.4.5-1"
 arch = "amd64"
 filename = "librhash1_1.4.5-1_amd64.deb"
 size = 132184
 sha256 = "9bf56d7d8ce3e7680a0dd8e3cfe8acdf50e0aa3b98b0a907cf744a4d1711af72"
+
+[[package]]
+name = "librsvg2-2"
+version = "2.60.0+dfsg-1"
+arch = "amd64"
+filename = "librsvg2-2_2.60.0+dfsg-1_amd64.deb"
+size = 1789296
+sha256 = "81fd7a825f06e344dc42fb7af92577ec242b6d24237b8a0bf79ea203a7f377c9"
 
 [[package]]
 name = "librtmp1"
@@ -2954,6 +3392,22 @@ arch = "amd64"
 filename = "libselinux1-dev_3.8.1-1_amd64.deb"
 size = 169104
 sha256 = "0107595c65dd5cfe7ce3643d400e7b2be2c2528bcd110ad5af8605711a858921"
+
+[[package]]
+name = "libsemanage-common"
+version = "3.8.1-1"
+arch = "all"
+filename = "libsemanage-common_3.8.1-1_all.deb"
+size = 7812
+sha256 = "65375d886749c236bd1da4d9990b7c2469d2fe66019a28e5614f6814376d3dcb"
+
+[[package]]
+name = "libsemanage2"
+version = "3.8.1-1"
+arch = "amd64"
+filename = "libsemanage2_3.8.1-1_amd64.deb"
+size = 95284
+sha256 = "f97da7505d17ad3bdd8fc56302256df7e158e5e0d8b02cb766654199cbc406a9"
 
 [[package]]
 name = "libsensors-config"
@@ -3084,6 +3538,14 @@ size = 115140
 sha256 = "e2d2cdbf850786e7c0ad943ba3c19e6c3da5d35ad6aaae40d7f9cd1f2f66d5df"
 
 [[package]]
+name = "libspectre1"
+version = "0.2.12-1+b2"
+arch = "amd64"
+filename = "libspectre1_0.2.12-1+b2_amd64.deb"
+size = 50812
+sha256 = "aa795368f23990b617b4268c05bd4bc0a71bc124f1642e75f4389cc489958f78"
+
+[[package]]
 name = "libspeex1"
 version = "1.2.1-3"
 arch = "amd64"
@@ -3130,6 +3592,14 @@ arch = "amd64"
 filename = "libssl3t64_3.5.7-1~deb13u3_amd64.deb"
 size = 2458176
 sha256 = "ff16bc048bcd7d1b256094450b79c77947d8e76fe2a24bd99b91021d591fa074"
+
+[[package]]
+name = "libstartup-notification0"
+version = "0.12-8"
+arch = "amd64"
+filename = "libstartup-notification0_0.12-8_amd64.deb"
+size = 20960
+sha256 = "d02a019eb07cd4fac80e356b9ad6d162869a4436df81cf081c0150aee4460ff4"
 
 [[package]]
 name = "libstdc++-14-dev"
@@ -3260,6 +3730,14 @@ size = 108424
 sha256 = "ce795eba6cdb510a52cd158dee7930a23667ffb4bdf07fbc44d4590edbf6f503"
 
 [[package]]
+name = "libtidy58"
+version = "2:5.8.0-2"
+arch = "amd64"
+filename = "libtidy58_2%3a5.8.0-2_amd64.deb"
+size = 222344
+sha256 = "1eae58728b9a21670426829ed7321c419ff98bc6d52687f158438580f231bcb9"
+
+[[package]]
 name = "libtiff-dev"
 version = "4.7.0-3+deb13u3"
 arch = "amd64"
@@ -3330,6 +3808,14 @@ arch = "amd64"
 filename = "libunistring5_1.3-2_amd64.deb"
 size = 476768
 sha256 = "6dd3490bef06ea1096f32d10766b7e016cf579bfae8451d1b7df15ce05b8aa46"
+
+[[package]]
+name = "libunwind8"
+version = "1.8.1-0.1"
+arch = "amd64"
+filename = "libunwind8_1.8.1-0.1_amd64.deb"
+size = 56252
+sha256 = "db21a86dd05c93413f0ef36282a9c64d32410d240f332273a53be1408bec1f62"
 
 [[package]]
 name = "libuuid1"
@@ -3516,6 +4002,46 @@ size = 126140
 sha256 = "8bc86d509406ad496b6414c7068b3dadc0f8c502027973cbf1765c7bb54fabdf"
 
 [[package]]
+name = "libwmf-0.2-7"
+version = "0.2.13-1.1+b3"
+arch = "amd64"
+filename = "libwmf-0.2-7_0.2.13-1.1+b3_amd64.deb"
+size = 118776
+sha256 = "0dbb59ca974b46400ed65b7ab116f9f14e7e4b74952e26782ec214987a2fd1e9"
+
+[[package]]
+name = "libwmflite-0.2-7"
+version = "0.2.13-1.1+b3"
+arch = "amd64"
+filename = "libwmflite-0.2-7_0.2.13-1.1+b3_amd64.deb"
+size = 75600
+sha256 = "9a65aa8dc490e1cdd5fb704c3034b0128c0f991bebd9bd8c172e829c3f7b6586"
+
+[[package]]
+name = "libwpd-0.10-10"
+version = "0.10.3-2+b2"
+arch = "amd64"
+filename = "libwpd-0.10-10_0.10.3-2+b2_amd64.deb"
+size = 262988
+sha256 = "a657efb4aa21da98bec42979755609bec01b4f896280488e76d07706c71e32b0"
+
+[[package]]
+name = "libwpg-0.3-3"
+version = "0.3.4-3+b2"
+arch = "amd64"
+filename = "libwpg-0.3-3_0.3.4-3+b2_amd64.deb"
+size = 81328
+sha256 = "1cf2ef9b79563b1d13dc31e81aee09b81e180767f53868223fb42a446504d909"
+
+[[package]]
+name = "libwv-1.2-4t64"
+version = "1.2.9-8+b1"
+arch = "amd64"
+filename = "libwv-1.2-4t64_1.2.9-8+b1_amd64.deb"
+size = 113596
+sha256 = "47978dfe09601dc83dadb8972ba8c7dd085eb4029def0eb1b6e58a12cb7d71f6"
+
+[[package]]
 name = "libx11-6"
 version = "2:1.8.12-1"
 arch = "amd64"
@@ -3652,6 +4178,14 @@ size = 108688
 sha256 = "0ce4770ed1505be9ddc6473045e4662d062aff2f3077ee684265f01cfb543559"
 
 [[package]]
+name = "libxcb-util1"
+version = "0.4.1-1"
+arch = "amd64"
+filename = "libxcb-util1_0.4.1-1_amd64.deb"
+size = 23520
+sha256 = "c242371fdfc806aa5599290150c6008a723c9b0fdb34ac6688f1a4083682172a"
+
+[[package]]
 name = "libxcb-xfixes0"
 version = "1.17.0-2+b1"
 arch = "amd64"
@@ -3756,6 +4290,46 @@ size = 50448
 sha256 = "fc618ec40465e5ce48622606299cb47833efc3fb235ba15543b81f850722f443"
 
 [[package]]
+name = "libxfce4ui-2-0"
+version = "4.20.1-1"
+arch = "amd64"
+filename = "libxfce4ui-2-0_4.20.1-1_amd64.deb"
+size = 79132
+sha256 = "785fb9a47008f5fb8085f65cb927c1d59c26a082b49ed10cbf6fa81aa75edd51"
+
+[[package]]
+name = "libxfce4ui-common"
+version = "4.20.1-1"
+arch = "all"
+filename = "libxfce4ui-common_4.20.1-1_all.deb"
+size = 229268
+sha256 = "5a4d3e1e20677e3ad1a53385c6e813e55415a15c9cdf0653c3b8aa58696cb322"
+
+[[package]]
+name = "libxfce4util-common"
+version = "4.20.1-1"
+arch = "all"
+filename = "libxfce4util-common_4.20.1-1_all.deb"
+size = 63620
+sha256 = "5ab783ba4ac8a2cfc378ff9808ab86abece59a87a557146e819d102f8093d196"
+
+[[package]]
+name = "libxfce4util7"
+version = "4.20.1-1"
+arch = "amd64"
+filename = "libxfce4util7_4.20.1-1_amd64.deb"
+size = 39404
+sha256 = "bf1e9723e7249b9e83e50b76a2a698d3461cfcb5a3662b13c1772fdc87999adf"
+
+[[package]]
+name = "libxfconf-0-3"
+version = "4.20.0-1"
+arch = "amd64"
+filename = "libxfconf-0-3_4.20.0-1_amd64.deb"
+size = 46640
+sha256 = "836b43967d1f55b06df5cb61479c581592685b3935cd55ea5b5df5c358345340"
+
+[[package]]
 name = "libxfixes-dev"
 version = "1:6.0.0-2+b4"
 arch = "amd64"
@@ -3770,6 +4344,14 @@ arch = "amd64"
 filename = "libxfixes3_1%3a6.0.0-2+b4_amd64.deb"
 size = 20228
 sha256 = "3fdd95d86d8e9d63e11f52070935c8f9f912c36aa3b17338d969f7685f3ed4fb"
+
+[[package]]
+name = "libxfont2"
+version = "1:2.0.6-1+deb13u1"
+arch = "amd64"
+filename = "libxfont2_1%3a2.0.6-1+deb13u1_amd64.deb"
+size = 132904
+sha256 = "79a7f56e4a0c7b1defa706c7b1f3076f7d80aaeea9de253b2a87406253319681"
 
 [[package]]
 name = "libxft-dev"
@@ -3988,6 +4570,14 @@ size = 27096
 sha256 = "81da7064d56fc044f5db4bb3c1e80ff50a4986dcbbf80d958eeca565b44c157f"
 
 [[package]]
+name = "libyajl2"
+version = "2.1.0-5+b2"
+arch = "amd64"
+filename = "libyajl2_2.1.0-5+b2_amd64.deb"
+size = 23340
+sha256 = "98497e30d6672298111b74e59890b3232b947abe4ecf04e39f480413b755e4f5"
+
+[[package]]
 name = "libyuv0"
 version = "0.0.1904.20250204-1"
 arch = "amd64"
@@ -4026,6 +4616,14 @@ arch = "all"
 filename = "linux-libc-dev_6.12.111-1_all.deb"
 size = 2988444
 sha256 = "b9055566f71a6fa2e818174dcc3622aa0fb5d16cdff1bc5346e52492ba27b57c"
+
+[[package]]
+name = "login.defs"
+version = "1:4.17.4-2"
+arch = "all"
+filename = "login.defs_1%3a4.17.4-2_all.deb"
+size = 186124
+sha256 = "b4bbb8242cbf5588de7aafeb9d578a3dee1db2891f444ab454fd30bd80ccf2b4"
 
 [[package]]
 name = "logsave"
@@ -4076,6 +4674,14 @@ size = 163208
 sha256 = "eb70a615114ac40123768beb20e302554d5cb7edb33290be7e418ebe1075c878"
 
 [[package]]
+name = "mousepad"
+version = "0.6.3-1"
+arch = "amd64"
+filename = "mousepad_0.6.3-1_amd64.deb"
+size = 315748
+sha256 = "62a2cece44b23e69240cea6c9bb2f36550faf978633b53bf78ae8ef69241ddf2"
+
+[[package]]
 name = "native-architecture"
 version = "0.2.6"
 arch = "all"
@@ -4108,6 +4714,14 @@ size = 12436
 sha256 = "76bafa92947ebd37b0a6f9ec6570412041f56edebc1c66d323731216d318471e"
 
 [[package]]
+name = "openbox"
+version = "3.6.1-12+b2"
+arch = "amd64"
+filename = "openbox_3.6.1-12+b2_amd64.deb"
+size = 301676
+sha256 = "2250f7758694066d67b622b9612e942a9c0a06edb92c72bb948928320f891853"
+
+[[package]]
 name = "openssl"
 version = "3.5.7-1~deb13u3"
 arch = "amd64"
@@ -4130,6 +4744,14 @@ arch = "amd64"
 filename = "pango1.0-tools_1.56.3-1_amd64.deb"
 size = 44284
 sha256 = "e98d70a45462063bbcffa5e65a856913d9998a612ec15acd53408e58ebac86ca"
+
+[[package]]
+name = "passwd"
+version = "1:4.17.4-2"
+arch = "amd64"
+filename = "passwd_1%3a4.17.4-2_amd64.deb"
+size = 1228860
+sha256 = "c5eaef41c6947d2888fa3462f787a7e02158b997bd0119154283f425ba57b8b8"
 
 [[package]]
 name = "patch"
@@ -4188,12 +4810,28 @@ size = 30220
 sha256 = "54efef2aef4db5fcb5e0f5b7746465000c6a779b06f3686d0ec3d2a901b20aeb"
 
 [[package]]
+name = "poppler-data"
+version = "0.4.12-1"
+arch = "all"
+filename = "poppler-data_0.4.12-1_all.deb"
+size = 1601364
+sha256 = "7951512a24fc4ea05c246a0f9891dd1ec9844a886de6550ebd8c50e57db5441d"
+
+[[package]]
 name = "procps"
 version = "2:4.0.4-9"
 arch = "amd64"
 filename = "procps_2%3a4.0.4-9_amd64.deb"
 size = 882088
 sha256 = "4db90bb6776772fc52585d6b1fbfc52ec2a85480e1b4363b743fbb2ffa2a5375"
+
+[[package]]
+name = "pxlib1"
+version = "0.6.9-1+b1"
+arch = "amd64"
+filename = "pxlib1_0.6.9-1+b1_amd64.deb"
+size = 41128
+sha256 = "9e268587153027cb82a4f1b2776c186762363b9c5680100d367e3f01b78db008"
 
 [[package]]
 name = "python3"
@@ -4258,6 +4896,14 @@ arch = "amd64"
 filename = "sed_4.9-2+deb13u1_amd64.deb"
 size = 330696
 sha256 = "7071270ed4f6adda55bc4f926347fb847bacaffbdee3dff917bc6006ed7e3775"
+
+[[package]]
+name = "sensible-utils"
+version = "0.0.25"
+arch = "all"
+filename = "sensible-utils_0.0.25_all.deb"
+size = 24992
+sha256 = "873a9b73c3478cc3148cdbf5cc2084949a0a8e4fa16131d1cbc895d2f1f3470e"
 
 [[package]]
 name = "sgml-base"
@@ -4364,12 +5010,28 @@ size = 181524
 sha256 = "239d8a87b464cbe370d63029820218a52c5bfa1f0dfeb74f7cfe7d0df017046b"
 
 [[package]]
+name = "x11-xkb-utils"
+version = "7.7+9"
+arch = "amd64"
+filename = "x11-xkb-utils_7.7+9_amd64.deb"
+size = 158552
+sha256 = "745e29c79bb435d057cdbf8bb59a35fa33e818e566cb754674f44d381ccd4317"
+
+[[package]]
 name = "x11proto-dev"
 version = "2024.1-1"
 arch = "all"
 filename = "x11proto-dev_2024.1-1_all.deb"
 size = 602628
 sha256 = "6a6764500eb8171d3cd6d793c09902974f8ea87bd20c68d9eac5f1eeaf3fc407"
+
+[[package]]
+name = "xauth"
+version = "1:1.1.2-1.1"
+arch = "amd64"
+filename = "xauth_1%3a1.1.2-1.1_amd64.deb"
+size = 35856
+sha256 = "14687bc8e3af350738f61e5a872bcdd83725694cb09d448d75077abd6249679a"
 
 [[package]]
 name = "xdg-dbus-proxy"
@@ -4386,6 +5048,30 @@ arch = "all"
 filename = "xdg-utils_1.2.1-2_all.deb"
 size = 75840
 sha256 = "01dd31db093f1e810824519200112ec3fd447ba0341f7213244525eaa289355e"
+
+[[package]]
+name = "xfconf"
+version = "4.20.0-1"
+arch = "amd64"
+filename = "xfconf_4.20.0-1_amd64.deb"
+size = 128136
+sha256 = "84cf28a22c060073254f9e83e418edad88ce6146c3114556fa2f8470662cfd16"
+
+[[package]]
+name = "xfonts-encodings"
+version = "1:1.0.4-2.2"
+arch = "all"
+filename = "xfonts-encodings_1%3a1.0.4-2.2_all.deb"
+size = 577104
+sha256 = "56143f317d241b6dee0275aa1066df936a776810d3bb83fe58563965d9bbe3d3"
+
+[[package]]
+name = "xfonts-utils"
+version = "1:7.7+7"
+arch = "amd64"
+filename = "xfonts-utils_1%3a7.7+7_amd64.deb"
+size = 93340
+sha256 = "36e77ba3fd25a42d4b807808de93eba87c0bd53981ee94d27da4cee502387f35"
 
 [[package]]
 name = "xkb-data"
@@ -4412,12 +5098,28 @@ size = 22064
 sha256 = "168345058319094e475a87ace66f5fb6ae802109650ea8434d672117982b5d0a"
 
 [[package]]
+name = "xserver-common"
+version = "2:21.1.16-1.3+deb13u4"
+arch = "all"
+filename = "xserver-common_2%3a21.1.16-1.3+deb13u4_all.deb"
+size = 2410256
+sha256 = "94bc0dcceeefabd4f706af19b3424de7f827758d0ebad5c18c52e73365d7f3ab"
+
+[[package]]
 name = "xtrans-dev"
 version = "1.4.0-1"
 arch = "all"
 filename = "xtrans-dev_1.4.0-1_all.deb"
 size = 98740
 sha256 = "9ce1af9464faee0c679348dd11cdf63934c12e734a64e0903692b0cb5af38e06"
+
+[[package]]
+name = "xvfb"
+version = "2:21.1.16-1.3+deb13u4"
+arch = "amd64"
+filename = "xvfb_2%3a21.1.16-1.3+deb13u4_amd64.deb"
+size = 3198660
+sha256 = "893d87bf159b6de077a929fc796a73c39f837d45310b2076e3eeebebb80552b6"
 
 [[package]]
 name = "xz-utils"

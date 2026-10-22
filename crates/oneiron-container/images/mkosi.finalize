@@ -45,14 +45,16 @@ done
 # fetches of the same lock goes (FIX 9353).
 # - .global-cache is cargo's SQLite record of last-use times; a check's
 #   scratch copy of the store (checks.json) recreates it.
+# - Each checkout's index (stat data) and reflogs (times) go FIRST: they are
+#   roots the bare db does not have, so a repack that still saw them chose a
+#   few different deltas and the pair stopped matching (FIX 10348).
 # - Every git object store (each git/db repo and each checkout's .git) is
-#   repacked from its refs by the image's own pinned git, with fixed
+#   then repacked from its refs by the image's own pinned git, with fixed
 #   single-thread options, so the server's pack and delta choices do not
 #   reach the image. `mkosi-chroot` runs it inside the image with /dev and
-#   /proc mounted; the tools tree carries no git.
-# - Then each checkout's index (stat data) and reflogs (times) go, and a
-#   checkout pack identical to its db's is linked to it again, as the fetch
-#   left them.
+#   /proc mounted; the tools tree carries no git. No gc and no prune runs.
+# - Last, a checkout pack byte-identical to its db's is linked to it again,
+#   as the fetch left them.
 # The checkouts keep their sources, .cargo-ok, HEAD, refs and objects.
 image_git() {
   mkosi-chroot env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null /usr/bin/git \
@@ -63,6 +65,10 @@ image_git() {
 normalize_cargo_store() {
   local store=$root$1 repo git db pack twin
   rm -f "$store/.global-cache" "$store/.global-cache-wal" "$store/.global-cache-shm"
+  for git in "$store"/git/checkouts/*/*/.git; do
+    [ -d "$git" ] || continue
+    rm -rf "$git/index" "$git/logs"
+  done
   for repo in "$store"/git/db/* "$store"/git/checkouts/*/*/.git; do
     [ -d "$repo/objects" ] || continue
     image_git --git-dir="${repo#"$root"}" repack -a -d -f -F -n -q --no-write-bitmap-index
@@ -71,7 +77,6 @@ normalize_cargo_store() {
   done
   for git in "$store"/git/checkouts/*/*/.git; do
     [ -d "$git" ] || continue
-    rm -rf "$git/index" "$git/logs"
     db=$store/git/db/$(basename "$(dirname "$(dirname "$git")")")
     for pack in "$git"/objects/pack/pack-*; do
       twin=$db/objects/pack/${pack##*/}
