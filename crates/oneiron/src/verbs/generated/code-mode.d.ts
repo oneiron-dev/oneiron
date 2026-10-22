@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1193 code-mode rows (1153 host rows, 40 run rows), 4082 declarations.
-// Replies: 1073 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1198 code-mode rows (1158 host rows, 40 run rows), 4100 declarations.
+// Replies: 1078 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1148,6 +1148,24 @@ declare namespace Sdk {
   type ConnectorSlateRedraftReply = { status: "proposed"; slate_ref: string; expected_revision: number; proposed: Record<string, SlateDisposition>; rationale: Record<string, string> } | { status: "unavailable"; code: string; reason: string };
   type ConnectorSlateNarrowRequest = { key_ref: string; expected_revision: number; narrows?: Record<string, SlateDisposition>; facets?: string[] | null };
   type ConnectorSlateNarrowView = { key_ref: string; slate_ref: string; slate_revision: number; settings: Record<string, SlateDisposition>; facets?: string[] | null; narrows: Record<string, SlateHolderNarrow> };
+  type ConnectorScopeOutcome = "approved_untouched" | "approved_amended" | "rejected";
+  type ConnectorScopeOutcomeRequest = { signal_ref: string; linked_ruling: string; outcome: ConnectorScopeOutcome };
+  type ConnectorScopeExceed = { endpoint: { requested: string } } | { payload_class: { requested: DataClass; ceiling: DataClass } } | { tool_data_class: { requested: string } };
+  type ConnectorScopeSignalView = { signal_ref: string; call_ref: string; connector: string; tool: string; key_ref: string; grant_id: string; actor: string; exceed: ConnectorScopeExceed; observed_at: number; ruling?: ConnectorScopeOutcome | null; proposal_ref?: string | null };
+  type ConnectorScopeOutcomeView = { signal: ConnectorScopeSignalView; untouched_streak: number; amended: number; rejected: number; proposal_ref?: string | null };
+  type ConnectorSlateRevisionOffersRequest = { connector?: string | null };
+  type ConnectorSlateRevisionCauseView = { kind: "manifest_drift" } | { kind: "scope_exceed"; signal_ref: string; key_ref: string; actor: string; generation: string; tool: string; exceed: ConnectorScopeExceed } | { kind: "credential_issuer_changed"; binding_ref: string; expected_generation: number; old_issuer: string; new_issuer: string; proposed_credential_ref: string; dependent_rows: string[] };
+  type ConnectorSlateRevisionOfferView = { proposal_ref?: string | null; proposal_revision?: number | null; prior_ref?: string | null; connector: string; reask: string[]; cause: ConnectorSlateRevisionCauseView };
+  type ConnectorSlateRevisionOffersView = { offers: ConnectorSlateRevisionOfferView[] };
+  type ConnectorRevisionDeferral = "not_now" | "manual_pinned" | "unpin";
+  type ConnectorSlateRevisionDeferRequest = { signal_ref: string; deferral: ConnectorRevisionDeferral };
+  type ConnectorRevisionSnoozeView = { state: "surfacing" } | { state: "snoozed"; count: number; next_eligible_at: number } | { state: "manual_pinned" };
+  type ConnectorSlateRevisionAcceptRequest = { slate_ref: string; expected_revision: number };
+  type ConnectorRevisionGrantView = { tool: string; grant_id: string; key_id: string; key_connector: string };
+  type ConnectorSlateRevisionAcceptedView = { slate_ref: string; revision: number; cause: ConnectorSlateRevisionCauseView; grants: ConnectorRevisionGrantView[] };
+  type ConnectorBindingDependentView = { key_ref: string; tool?: string | null };
+  type ConnectorIssuerReaskRequest = { connector: string; slot: string; issuer: string; credential_ref: string; expected_generation: number; dependents?: ConnectorBindingDependentView[]; witness: string };
+  type ConnectorCredentialBindingView = { binding_ref: string; connector: string; slot: string; issuer: string; credential_ref: string; generation: number; dependents: ConnectorBindingDependentView[]; changed_to?: string | null; change_state?: string | null; proposal_ref?: string | null };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
   type ChannelSubscriptionsRequest = { agent: string };
@@ -5311,10 +5329,20 @@ declare const vault: Sdk.VaultHost & {
       revoke_write(input: Sdk.ProxyConnectorRevokeWriteRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
     };
     slates: {
+      /** The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again. */
+      accept_revision(input: Sdk.ConnectorSlateRevisionAcceptRequest): Promise<Sdk.ConnectorSlateRevisionAcceptedView | StoredResult>;
+      /** The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant. */
+      defer_revision(input: Sdk.ConnectorSlateRevisionDeferRequest): Promise<Sdk.ConnectorRevisionSnoozeView | StoredResult>;
       /** The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it. */
       narrow(input: Sdk.ConnectorSlateNarrowRequest): Promise<Sdk.ConnectorSlateNarrowView | StoredResult>;
+      /** The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask. */
+      reask_issuer(input: Sdk.ConnectorIssuerReaskRequest): Promise<Sdk.ConnectorCredentialBindingView | StoredResult>;
       /** The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable. */
       redraft(input: Sdk.ConnectorSlateRedraftRequest): Promise<Sdk.ConnectorSlateRedraftReply | StoredResult>;
+      /** Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing. */
+      revision_offers(input: Sdk.ConnectorSlateRevisionOffersRequest): Promise<Sdk.ConnectorSlateRevisionOffersView | StoredResult>;
+      /** The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted. */
+      scope_outcome(input: Sdk.ConnectorScopeOutcomeRequest): Promise<Sdk.ConnectorScopeOutcomeView | StoredResult>;
     };
     subscriptions: {
       /** An agent's connector event subscriptions, standing and revoked, for the owner. */
