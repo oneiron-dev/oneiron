@@ -307,7 +307,14 @@ impl Vault {
                             text_document_of(self, &self.store, &rtxn, id, &mut read)?
                         }
                         InputKind::Image | InputKind::Audio => {
-                            asset_document_in(&self.store, &rtxn, id, &kinds, &mut read)?
+                            super::repo_projection::asset_document_projected_in(
+                                self,
+                                &self.store,
+                                &rtxn,
+                                id,
+                                &kinds,
+                                &mut read,
+                            )?
                         }
                     };
                     documents.extend(document);
@@ -352,7 +359,14 @@ impl Vault {
             let moved = match document.text_hash {
                 Some(hash) => super::media::text_document_in_txn(self, &wtxn, &document.id)?
                     .is_none_or(|text| super::space::text_hash(&text) != hash),
-                None => false,
+                None => {
+                    super::repo_projection::media_copy_hash_in(
+                        self,
+                        &self.store,
+                        &wtxn,
+                        &document.id,
+                    )? != Some(*blake3::hash(&document.bytes).as_bytes())
+                }
             };
             if moved
                 || self
@@ -449,7 +463,15 @@ fn family_targets_in(
                     && text_document_of(vault, &vault.store, txn, peer, &mut read)?.is_some()
             }
             InputKind::Image | InputKind::Audio => {
-                asset_document_in(&vault.store, txn, peer, &kinds, &mut read)?.is_some()
+                super::repo_projection::asset_document_projected_in(
+                    vault,
+                    &vault.store,
+                    txn,
+                    peer,
+                    &kinds,
+                    &mut read,
+                )?
+                .is_some()
             }
         };
         if answers {

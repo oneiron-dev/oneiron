@@ -31,7 +31,7 @@ use super::space::{
     set_kind_slot_in_txn, slot_setup_id, space_setup_id,
 };
 use super::space_card::{ProbeRetest, probe_versions, read_cards, record_space_retests};
-use super::space_probe::{ProbeCohortLedger, SpaceProbe, media_query_in, space_probes_in_txn};
+use super::space_probe::{ProbeCohortLedger, SpaceProbe, space_probes_in_txn};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -852,10 +852,13 @@ impl Vault {
                 // A media query runs on its document as stored now; one gone does not run.
                 let query = match probe.query_media {
                     None => None,
-                    Some(media) => match media_query_in(&self.store, &rtxn, media)? {
-                        Some(document) => Some(document),
-                        None => continue,
-                    },
+                    Some(media) => {
+                        match super::repo_projection::media_query_projected_in(self, &rtxn, media)?
+                        {
+                            Some(document) => Some(document),
+                            None => continue,
+                        }
+                    }
                 };
                 probes.push((*id, probe.clone(), query));
             }

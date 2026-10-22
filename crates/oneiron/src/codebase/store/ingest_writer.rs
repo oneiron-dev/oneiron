@@ -19,8 +19,11 @@ use super::super::snapshot::{CodebaseFileEntry, CodebaseSnapshot};
 use super::{codebase_asset_entity_id, codebase_snapshot_entity_id};
 use crate::Vault;
 use crate::code_artifact::CodeArtifactBody;
-use crate::code_symbol::{CodeSymbolSource, prepare_code_symbol_graph};
+use crate::code_symbol::{
+    CodeSymbolSource, masked_repo_symbol_texts_in_txn, prepare_code_symbol_graph,
+};
 use crate::error::{CodeError, Error, Result};
+use crate::origin::secret_projection::index::RepoIndexMarks;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
 use crate::temporal::TimeRange;
@@ -271,8 +274,11 @@ impl Vault {
             if let Err(refused) = admit(wtxn)? {
                 return Ok(Err(refused));
             }
+            // Repo-marked files stay in the snapshot; their index copies
+            // are masked (FIX 7608 slice 3).
+            let repo_marks = RepoIndexMarks::read_in_txn(self, wtxn)?;
             let (files, custody_report) =
-                self.apply_custody_to_snapshot(wtxn, snapshot, contents)?;
+                self.repo_snapshot_inputs_in_txn(wtxn, &repo_marks, snapshot, contents)?;
             let filtered_snapshot = CodebaseSnapshot::new(
                 snapshot.project_id.clone(),
                 snapshot.repo_ref.clone(),
@@ -350,13 +356,19 @@ impl Vault {
                 &filtered_snapshot,
                 custody_report,
             )?;
-            let symbol_sources = blobs
+            // Each full source is projected before any symbol is parsed.
+            let symbol_texts = masked_repo_symbol_texts_in_txn(
+                self,
+                wtxn,
+                &repo_marks,
+                blobs
+                    .iter()
+                    .filter(|blob| retained_paths.contains(blob.path.as_str()))
+                    .map(|blob| (blob.path.as_str(), blob.data.as_slice())),
+            )?;
+            let symbol_sources = symbol_texts
                 .iter()
-                .filter(|blob| retained_paths.contains(blob.path.as_str()))
-                .filter_map(|blob| {
-                    let text = std::str::from_utf8(&blob.data).ok()?;
-                    Some(CodeSymbolSource::new(blob.path.as_str(), text))
-                })
+                .map(|(path, text)| CodeSymbolSource::new(path, text))
                 .collect::<Vec<_>>();
             // Symbol rows first, then every edge a working batch at a time.
             let symbol_graph = prepare_code_symbol_graph(

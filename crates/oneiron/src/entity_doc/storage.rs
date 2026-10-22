@@ -17,6 +17,9 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+mod repo_index;
+pub(crate) use repo_index::reindex_repo_document_in_txn;
+
 /// Location of the body text. Editable metadata shares its owning document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextField {
@@ -202,7 +205,13 @@ fn index_document(
     head: &Head,
     doc: &EntityDoc,
 ) -> Result<()> {
-    let fields = document_text_fields(doc, &head.field)?;
+    // Repo-derived fields index as their copies (FIX 7608 slice 3).
+    let fields = crate::origin::secret_projection::index::masked_repo_index_fields_in_txn(
+        vault,
+        txn,
+        entity,
+        document_text_fields(doc, &head.field)?,
+    )?;
     match crate::bm25::index_text(&vault.store, txn, &vault.analyzer, entity, &fields) {
         // A large document remains authoritative even when it is not searchable.
         Err(Error::Store(StoreError::IndexedTextTooLarge { .. })) => {

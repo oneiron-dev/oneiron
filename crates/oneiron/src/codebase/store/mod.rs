@@ -26,6 +26,7 @@ pub(crate) mod checkpoint;
 mod index_rows;
 mod ingest_writer;
 mod lift;
+mod repo_index;
 use self::index_rows::{
     codebase_ids_by_index, delete_exact_index_rows_for_snapshot, delete_index_rows_for_id,
     fork_has_other_snapshot, put_scope_index_rows_for_snapshot,
@@ -310,8 +311,10 @@ impl Vault {
         scan_codebase_snapshot_metadata(snapshot)?;
         let mut wtxn = self.store.env.write_txn()?;
         // Evaluate custody exclusions in the transaction that persists the snapshot.
+        let repo_marks =
+            crate::origin::secret_projection::index::RepoIndexMarks::read_in_txn(self, &wtxn)?;
         let (files, custody_report) =
-            self.apply_custody_to_snapshot(&wtxn, snapshot, file_contents)?;
+            self.repo_snapshot_inputs_in_txn(&wtxn, &repo_marks, snapshot, file_contents)?;
         let filtered_snapshot = CodebaseSnapshot::new(
             snapshot.project_id.clone(),
             snapshot.repo_ref.clone(),

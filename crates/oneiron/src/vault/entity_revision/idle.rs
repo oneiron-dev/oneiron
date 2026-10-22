@@ -77,6 +77,8 @@ impl Vault {
         embedder: Option<&dyn IndexedRevisionEmbedder>,
         published: &mut dyn FnMut(IndexedPublication),
     ) -> Result<IndexedRefreshReport> {
+        // Each input is a repo blob's copy where it is one (FIX 7608 slice 3).
+        let repo_marks = super::repo_projection::pass_marks(self)?;
         let candidates = {
             let txn = self.store.env.read_txn()?;
             let delay = DEBOUNCE.get(&self.store, &txn, &())?.ok_or_else(|| {
@@ -100,13 +102,19 @@ impl Vault {
                         continue;
                     }
                 }
-                candidates.push(IndexedRevisionInput {
-                    entity: id,
-                    entity_type: raw[0],
-                    source_revision_ref: current.live,
-                    fields: revision_text_fields(&self.store, &txn, &id, current.live, &body)?,
-                    body,
-                });
+                let fields = revision_text_fields(&self.store, &txn, &id, current.live, &body)?;
+                candidates.push(super::repo_projection::project_revision_input_in_txn(
+                    self,
+                    &txn,
+                    &repo_marks,
+                    IndexedRevisionInput {
+                        entity: id,
+                        entity_type: raw[0],
+                        source_revision_ref: current.live,
+                        fields,
+                        body,
+                    },
+                )?);
             }
             candidates
         };
@@ -119,9 +127,10 @@ impl Vault {
             let (staged, epoch) = {
                 let txn = self.store.env.read_txn()?;
                 (
-                    super::pending_index::load(
-                        &self.store,
+                    super::repo_projection::staged_inputs_in_txn(
+                        self,
                         &txn,
+                        &repo_marks,
                         &input.entity,
                         input.source_revision_ref,
                     )?,
@@ -173,9 +182,22 @@ impl Vault {
                 report.superseded.push(input.entity);
                 continue;
             }
-            let staged = super::pending_index::load(
-                &self.store,
+            // The copy the work was done on is still the record's.
+            let Some(repo_marks) = super::repo_projection::revision_copy_current_in_txn(
+                self,
                 &txn,
+                &repo_marks,
+                &input,
+                ReadMode::Live,
+            )?
+            else {
+                report.superseded.push(input.entity);
+                continue;
+            };
+            let staged = super::repo_projection::staged_inputs_in_txn(
+                self,
+                &txn,
+                &repo_marks,
                 &input.entity,
                 input.source_revision_ref,
             )?;
@@ -198,14 +220,8 @@ impl Vault {
                 }
                 None => generated.map(|(vector, provenance)| (vector, Some(provenance))),
             };
-            let codes = super::phonetic::take_phonetic(
-                &self.store,
-                &mut txn,
-                &input.entity,
-                input.source_revision_ref,
-                input.entity_type,
-                &input.body,
-            )?;
+            let codes =
+                super::repo_projection::take_phonetic_in_txn(self, &mut txn, &repo_marks, &input)?;
             crate::batch::delete_from_phonetic_postings(&self.store, &mut txn, &input.entity)?;
             // Publish the stamp before the batch vector door in this SAME
             // transaction. On any text/vector failure LMDB rolls all back.
@@ -321,6 +337,7 @@ impl Vault {
         report: &mut IndexedRefreshReport,
     ) -> Result<()> {
         let mut gone = Vec::new();
+        let repo_marks = super::repo_projection::pass_marks(self)?;
         let (candidates, epoch) = {
             let txn = self.store.env.read_txn()?;
             let mut candidates = Vec::new();
@@ -338,13 +355,19 @@ impl Vault {
                     continue;
                 };
                 let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-                candidates.push(IndexedRevisionInput {
-                    entity: id,
-                    entity_type: raw[0],
-                    source_revision_ref: revision,
-                    fields: revision_text_fields(&self.store, &txn, &id, revision, &body)?,
-                    body,
-                });
+                let fields = revision_text_fields(&self.store, &txn, &id, revision, &body)?;
+                candidates.push(super::repo_projection::project_revision_input_in_txn(
+                    self,
+                    &txn,
+                    &repo_marks,
+                    IndexedRevisionInput {
+                        entity: id,
+                        entity_type: raw[0],
+                        source_revision_ref: revision,
+                        fields,
+                        body,
+                    },
+                )?);
             }
             let epoch = crate::hnsw::read_embedding_model_epoch(&self.store, &txn)?;
             (candidates, epoch)
@@ -381,7 +404,16 @@ impl Vault {
                 },
             };
             let mut txn = self.store.env.write_txn()?;
-            if !self.refill_still_due(&txn, &input.entity, input.source_revision_ref, epoch)? {
+            if !self.refill_still_due(&txn, &input.entity, input.source_revision_ref, epoch)?
+                || super::repo_projection::revision_copy_current_in_txn(
+                    self,
+                    &txn,
+                    &repo_marks,
+                    &input,
+                    ReadMode::Indexed,
+                )?
+                .is_none()
+            {
                 report.superseded.push(input.entity);
                 continue;
             }

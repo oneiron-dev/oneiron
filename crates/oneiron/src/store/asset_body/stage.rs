@@ -395,9 +395,16 @@ impl crate::Vault {
                 mime: staged.mime.clone(),
             }
             .encode()?;
-            return batch
+            batch
                 .put_asset_file(id, occurred, learned_at, &manifest, staged.facts)
-                .apply(txn);
+                .apply(txn)?;
+            // A file's new mask spans refresh the repo index copies its bytes
+            // derive (FIX 7608 slice 3).
+            return crate::origin::secret_projection::index::refresh_repo_index_projection_in_txn(
+                self,
+                txn,
+                &[staged.facts.blake3],
+            );
         }
         let bytes = match &staged.body {
             Staged::Inline(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),
@@ -465,6 +472,13 @@ impl crate::Vault {
             batch.put_replicated(id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
         };
         put.apply(txn)?;
+        if matches!(staged.body, Staged::File(_)) {
+            crate::origin::secret_projection::index::refresh_repo_index_projection_in_txn(
+                self,
+                txn,
+                &[staged.facts.blake3],
+            )?;
+        }
         if let Some(birth) = birth
             && crate::vault::live_entity_row_in_txn(&self.store, txn, id)?.is_live()
         {

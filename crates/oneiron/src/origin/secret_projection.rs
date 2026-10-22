@@ -30,6 +30,7 @@ pub(crate) mod disposal;
 pub(crate) mod edit;
 pub(crate) mod git;
 pub(crate) mod graph_objects;
+pub(crate) mod index;
 pub(crate) mod recipient;
 pub(crate) mod reveal;
 pub(crate) mod types;
