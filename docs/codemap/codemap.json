@@ -60468,7 +60468,17 @@
      "path": "src/sync/client/residence/bundle/entries.rs",
      "purpose": "The home's list of the generations it keeps, newest first by the order it committed them in (FIX 8885)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/bundle/pad_sweep.rs",
+     "purpose": "Erase's proofs against the home's kept pad objects (FIX 8868, 7192, 7294)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -60482,13 +60492,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/bundle/sweep.rs",
-     "purpose": "Erase's sweep of every pad object the home keeps (FIX 922): each world whose keys were destroyed here leaves…",
+     "purpose": "Erase's sweep of every pad object the home keeps (FIX 922): each world whose keys were destroyed here, and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -60545,14 +60555,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/kit_fetch.rs",
      "purpose": "A restore's read of the sealed cloud bundle from the home with the kit alone (FIX 922): no session, slip or…",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -61715,7 +61725,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 14,
       "re-export": 19,
       "struct": 2
@@ -61763,10 +61773,10 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 11,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 12,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -61795,6 +61805,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BundlePartRead",
+      "PadObjectUnavailable",
+      "SealedBundleIndex"
+     ],
+     "path": "src/sync/residence/bundle/pad_objects.rs",
+     "purpose": "The home's current pad objects as one read names them (FIX 7106, its copy half): each kept generation's…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 14,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -61816,7 +61844,7 @@
      "path": "src/sync/residence/bundle_access.rs",
      "purpose": "A late joiner's access to the kept pad objects (FIX 4271): the home's custody of the grants, and the outbox…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -61937,6 +61965,21 @@
      "surface": {
       "const": 3,
       "fn": 4,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KitPadIndexFetch"
+     ],
+     "path": "src/sync/residence/kit_fetch/pad_index.rs",
+     "purpose": "The kit's read of the home's current index (FIX 7106): the generations a publisher named the kit's root for…",
+     "surface": {
+      "const": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -70745,7 +70788,7 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "const": 3,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 34,
       "re-export": 1,
       "struct": 8
@@ -70784,6 +70827,16 @@
      "purpose": "A holder's sealed-copy setting, apart from the section a world rides in (FIX 8886): one rule for a private…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/bundle/key_erase.rs",
+     "purpose": "Erase's rewrite of the kept pad objects for one key alone (FIX 7192, 7294): a hard erase of one world key…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -70914,7 +70967,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 22,
       "fn": 3,
       "re-export": 21,
       "struct": 2
@@ -71021,7 +71074,17 @@
      "path": "src/world_keys/pad_custody.rs",
      "purpose": "A world key's pad at rest and on the move (KS-5, FIX 5686)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/pad_custody/reference.rs",
+     "purpose": "A world key pad row as its reference alone, for the bytes that persist (KS-5, the 02A projector agreed with…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -73515,7 +73578,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 240,
+     "files": 243,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73704,7 +73767,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 44,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73720,7 +73783,7 @@
    },
    "over_bar": 154,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4753,
+   "source_files": 4758,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92778,13 +92841,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/recovery_bundle.rs",
      "purpose": "The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 9
      }
     },
     {
@@ -96605,6 +96668,16 @@
      "notable": [],
      "path": "src/livequery/residence/machine_history.rs",
      "purpose": "`residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/residence/pad_objects.rs",
+     "purpose": "A kept pad object a get finds missing or short below its length (FIX 7106): a typed answer, never the…",
      "surface": {
       "crate-vis": 1
      }
@@ -101633,7 +101706,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -101817,7 +101890,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1116,
+   "source_files": 1117,
    "test_files": 182
   },
   "oneiron-spawn": {
