@@ -7,7 +7,10 @@ use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
-use oneiron::prompt::{PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptRecompileStamp};
+use oneiron::prompt::{
+    PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptLayout, PromptRecompileStamp, place_turn_context,
+    session_prompt_layout,
+};
 use oneiron::receipt::ContextReceiptFields;
 use oneiron::task_verb::sdk::{AiReply, AiReplyL2Base, AiReplyRequest};
 use oneiron::{
@@ -144,14 +147,33 @@ async fn reply(
         .map(|base| base.body.as_str())
         .unwrap_or("");
     let prefix = [standing, evidence].join("\n\n");
-    let system = format!(
-        "{prefix}\n\n{}",
-        serde_json::to_string(&dynamic).map_err(|_| internal())?
-    );
-    request.messages = vec![
-        text_message(LlmMessageRole::System, system.clone()),
-        text_message(LlmMessageRole::User, input.message),
-    ];
+    let board = serde_json::to_string(&dynamic).map_err(|_| internal())?;
+    // Everything the model reads beside the caller's message, in either
+    // layout: what the egress check below reads.
+    let outgoing = format!("{prefix}\n\n{board}");
+    // FIX 6676: the standing block and the L2 base stay in the early system
+    // text. The standing block holds for its session's epoch; the L2 base is
+    // content-addressed over its subjects' admitted evidence, score-free,
+    // with no clock and the same for every query, so its lifetime makes it
+    // a stable prefix whatever its tier's name. The board, read again for
+    // every message, rides the request-only turn context right before the
+    // caller's message, which is sent as the caller wrote it and retrieval
+    // read it.
+    request.messages = match session_prompt_layout() {
+        PromptLayout::EarlySystem => vec![
+            text_message(LlmMessageRole::System, outgoing.clone()),
+            text_message(LlmMessageRole::User, input.message),
+        ],
+        PromptLayout::StableHistoryThenTurnContext => {
+            let mut messages = Vec::with_capacity(3);
+            if !prefix.trim().is_empty() {
+                messages.push(text_message(LlmMessageRole::System, prefix.clone()));
+            }
+            messages.push(text_message(LlmMessageRole::User, input.message));
+            place_turn_context(&mut messages, &[board]);
+            messages
+        }
+    };
     // Include the configured route prompt in the fingerprint without sending
     // it twice: the exact ladder prepends this same message itself.
     let mut actual = request.clone();
@@ -199,7 +221,7 @@ async fn reply(
     let prompt_for =
         crate::device_local::prompt_destination(auth.destination(), request.envelope.locality);
     if let Some(hold) =
-        crate::device_local::retained_hold(&server.vault, &prompt_for, rows, system.as_bytes())
+        crate::device_local::retained_hold(&server.vault, &prompt_for, rows, outgoing.as_bytes())
             .map_err(MemoryError::from)?
     {
         return Err(MemoryError::new(
