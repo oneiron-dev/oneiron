@@ -180,6 +180,11 @@ pub(crate) async fn start_desktop_workers(
         &sync_server,
         crate::server::admit_every_pass(),
     ));
+    // Queued browser program admissions run as their source caller (CUA E8b).
+    workers.push(crate::ai_host::browser_program_admission::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     // An accepted Coach person-threshold row goes live on the ladder (Q3).
     workers.extend(crate::decision_host::spawn_person_threshold(&sync_server));
     // Failure signals reach the deployment's publisher (OF-380).

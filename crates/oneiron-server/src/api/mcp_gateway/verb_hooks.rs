@@ -104,7 +104,7 @@ fn mcp_verb_ask_credential(
 /// BLAKE3 of the registration a connector call came in by: its actor, its
 /// world and facet scope and its bound verbs. A call settlement runs again
 /// must find the same (ARCH-0080 §3 Ask).
-fn mcp_adapter_ceiling(actor: &McpResolvedActor) -> [u8; 32] {
+pub(super) fn mcp_adapter_ceiling(actor: &McpResolvedActor) -> [u8; 32] {
     let ceiling = format!(
         "{:?}|{:?}|{:?}|{:?}",
         actor.actor_ref, actor.actor_class, actor.scope, actor.bound_verbs

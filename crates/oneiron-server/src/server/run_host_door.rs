@@ -161,6 +161,22 @@ impl RunHostDoor {
         });
         *self.line.lock().unwrap_or_else(PoisonError::into_inner) = line;
     }
+
+    /// CUA E8b: what this run's browser reached for TASK `task`, kept as
+    /// the agent's solved-run evidence when its done-means' browser checks
+    /// hold on the page (`goal`, under the run's recorded `type_ref`), under
+    /// the run's write `origin`. Logs what it came to; never fails the run.
+    pub(crate) fn capture_task_run(
+        &self,
+        origin: &HostWriteOrigin,
+        task: EntityId,
+        type_ref: oneiron::learning::TypeRef,
+        goal: &oneiron::task_verb::DoneMeans,
+    ) {
+        let memory = agent_memory(&self.server, self.actor, origin, InvocationId::mint());
+        self.guests
+            .capture_task_run(&self.server, &memory, origin, task, type_ref, goal);
+    }
 }
 
 impl AgentVerbDoor for RunHostDoor {

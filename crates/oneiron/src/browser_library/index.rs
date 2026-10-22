@@ -324,6 +324,41 @@ pub(crate) fn invalidate_solved_source_in_txn(
     touch_dirty_in_txn(vault, wtxn, &caller.group)
 }
 
+/// The source authority evidence `id` was captured under, read in `txn`
+/// (CUA E8b): none once its claim or its actor was erased.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn saved_caller_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<SavedBrowserCaller>> {
+    AUTHORITY.get(&vault.store, txn, id)
+}
+
+/// Drops the signed binding evidence `id`'s source authority kept, in
+/// `wtxn` (CUA E8b): an admission job that used it ended. The reference
+/// and the digest stay.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn drop_witness_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(mut caller) = AUTHORITY.get(&vault.store, wtxn, id)? else {
+        return Ok(());
+    };
+    if caller.witness.take().is_some() {
+        AUTHORITY.put(vault, wtxn, id, &caller)?;
+    }
+    Ok(())
+}
+
 /// Erasing `actor` from the solved-run index (CUA E8a): each evidence it
 /// was captured under loses its source authority and its group ref, so no
 /// work is induced or admitted for it; its claims go with their own erase.
@@ -494,7 +529,7 @@ pub fn solved_runs_in_group(
 }
 
 /// The evidence a `browser.solved_run` claim's body holds.
-fn evidence_of(entity_type: u8, body: &[u8]) -> Option<SolvedRunEvidence> {
+pub(super) fn evidence_of(entity_type: u8, body: &[u8]) -> Option<SolvedRunEvidence> {
     if entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return None;
     }
