@@ -1,3 +1,7 @@
+// Explicit code-memory anchor transfers and gated Blocks edges.
+// The transfer entry is `transfer_code_memory_anchor`.
+// This fragment defines items in `code_memory::implementation`, not a child module.
+
 // ---------------------------------------------------------------------------
 // Section 3 — explicit rename/copy anchor transfer
 // ---------------------------------------------------------------------------

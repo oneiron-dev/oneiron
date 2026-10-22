@@ -252,14 +252,9 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
             super::types::KEY_ROOM => room = Some(super::room_join::decode_room(value)?),
             super::types::KEY_JOIN => join = Some(super::room_join::decode_join(value)?),
             KEY_DEPTH_REMAINING => {
-                let depth = value.as_u64().ok_or(Error::Artifact(
+                depth_remaining = Some(value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("depth_remaining must be an integer"),
-                ))?;
-                depth_remaining = Some(u8::try_from(depth).map_err(|_| {
-                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "depth_remaining must fit in a u8",
-                    ))
-                })?);
+                ))?);
             }
             // Read by `dispatch_origin_conversation`; checked here so a
             // malformed stamp fails the codec like any other key.

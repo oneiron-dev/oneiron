@@ -399,6 +399,11 @@ vaultGuestsMintSlip(input: unknown): unknown
 vaultSupportGrantsMint(input: unknown): unknown
 vaultSupportGrantsList(input: unknown): unknown
 vaultSupportGrantsRevoke(input: unknown): unknown
+vaultFilesSourcesAttach(input: unknown): unknown
+vaultFilesSourcesRescan(input: unknown): unknown
+vaultFilesSourcesDetach(input: unknown): unknown
+vaultFilesSourcesList(input: unknown): unknown
+vaultFilesSourcesFiles(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
@@ -1160,6 +1165,8 @@ selfBrowserZoom(input: unknown): unknown
 selfBrowserBatch(input: unknown): unknown
 selfBrowserLibraryFind(input: unknown): unknown
 selfBrowserLibraryDraft(input: unknown): unknown
+selfBrowserDemonstrationStart(input: unknown): unknown
+selfBrowserDemonstrationStop(input: unknown): unknown
 selfBrowserLibraryPropose(input: unknown): unknown
 selfBrowserLibraryRetire(input: unknown): unknown
 selfBrowserLibraryRetired(input: unknown): unknown

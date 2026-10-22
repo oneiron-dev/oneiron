@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1198 code-mode rows (1158 host rows, 40 run rows), 4107 declarations.
-// Replies: 1078 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1205 code-mode rows (1165 host rows, 40 run rows), 4142 declarations.
+// Replies: 1085 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1407,6 +1407,26 @@ declare namespace Sdk {
   type SupportGrantList = { grants: SupportGrantView[] };
   type SupportGrantRevokeRequest = { grant_ref: string };
   type SupportGrantRevokeAnswer = { grant_ref: string; holder: EntityId; changed: boolean; revoked_at?: number | null; decision_ref?: string | null; delivered_recallable: boolean };
+  type FilesSourceAttachRequest = { path: string; include?: string[]; exclude?: string[] | null; kind?: string | null };
+  type FilesWorldView = { world: EntityId; machine: EntityId };
+  type FilesSourceView = { source: EntityId; folder: string; world: EntityId; machine: EntityId; include?: string[]; exclude: string[]; kind: string; attached_at: number; last_rescan_at?: number | null; files: number; name_only: number; retracted: number; proposed: number };
+  type FilesRescanCounts = { landed: number; links: number; unchanged: number; superseded: number; proposed: number; retracted: number; restored: number; removed: number; name_only: number; failed: number; first_error?: string | null };
+  type FilesLimitCrossed = { row: string; limit: number; observed: number };
+  type FilesRescanView = { source: EntityId; folder: string; counts?: FilesRescanCounts | null; error?: string | null; limits_crossed?: FilesLimitCrossed[] };
+  type FilesSourceAttachAnswer = { world: FilesWorldView; source: FilesSourceView; rescan: FilesRescanView };
+  type FilesSourceRescanRequest = { source?: EntityId | null };
+  type FilesRescanAnswer = { rescans: FilesRescanView[] };
+  type FilesSourceDetachRequest = { source: EntityId };
+  type FilesSourceDetachAnswer = { source: EntityId; folder?: string | null; detached: boolean };
+  type FilesSourceListRequest = Record<string, never>;
+  type FilesSourceList = { world?: FilesWorldView | null; sources: FilesSourceView[] };
+  type FilesSourceFilesRequest = { source: EntityId };
+  type FileHandle = { source: EntityId; path: string };
+  type FilesFileState = "landed" | "proposed" | "retracted" | "name_only";
+  type NameOnlyReason = "unsupported" | "not_text" | "unreadable" | "empty" | "linked";
+  type FileReadiness = "text" | { name_only: { why: NameOnlyReason } };
+  type FilesFileView = { handle: FileHandle; state: FilesFileState; readiness: FileReadiness; note?: EntityId | null; fork?: EntityId | null; revision?: string | null; bytes?: number | null; modified_at?: number | null; first_seen_at?: number | null; indexed_at?: number | null };
+  type FilesSourceFiles = { source: EntityId; files: FilesFileView[] };
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
   type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
@@ -2915,7 +2935,9 @@ declare namespace Sdk {
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelRoleInput = { kind: "generate"; request: LlmRequest } | { kind: "embed"; text: string } | { kind: "tag"; text: string };
   type ModelRoleInvoke = { role: ModelRole; input: ModelRoleInput };
-  type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
+  type ReplyAssertionRecord = { entity_type: number; id: EntityId };
+  type ReplyAssertions = { cited?: ReplyAssertionRecord[]; created?: ReplyAssertionRecord[] };
+  type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
   type NerSpan = { message: number; start: number; end: number; label: string; confidence: number };
   type CorefLink = { span: number; antecedent: number; confidence?: number | null };
   type Vad = { valence: number; arousal: number; dominance: number };
@@ -2978,7 +3000,7 @@ declare namespace Sdk {
   type ModelStreamSubscribe = { stream_key: string };
   type ModelStreamSubscribed = { stream_ref: string; stream_key: string; handle: string; status: ModelStreamStatus };
   type ModelStreamEventsRequest = { stream_key: string; handle: string; limit?: number | null };
-  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
+  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
   type ModelStreamEvents = { stream_ref: string; stream_key: string; handle: string; events: LlmStreamEvent[]; closed: boolean; status: ModelStreamStatus };
   type ModelStreamDetach = { stream_key: string; handle: string };
   type ModelStreamDetached = { stream_ref: string; stream_key: string; handle: string; detached: boolean };
@@ -3139,8 +3161,8 @@ declare namespace Sdk {
   type ScheduledBackfill = { question: string; version: number; due_at: number };
   type QuestionReadRequest = { id: EntityId; version?: number | null };
   type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
-  type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" };
-  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null };
+  type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" };
+  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
   type QuestionAnswersReply = QuestionAnswer[] | QuestionAnswersPage;
@@ -3530,7 +3552,7 @@ declare namespace Sdk {
   type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar" | "bar_3d" | "line_3d" | "pie_3d" | "area_3d" | "bubble" | "stock" | "surface" | "surface_3d" | "of_pie";
   type ChartCategory = { id?: NodeId | null; levels?: (string | null)[] };
   type ChartCategories = { level_count?: number; points?: ChartCategory[] };
-  type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null };
+  type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; x_labels?: (string | null)[] | null; plot?: number | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null };
   type ChartSource = "workbook" | "literal" | "cached";
   type BarDirection = "bar" | "col";
   type PlotGrouping = "standard" | "clustered" | "stacked" | "percent_stacked";
@@ -3998,7 +4020,22 @@ declare namespace Sdk {
   type IdentityPairProposals = { a: EntityId; b: EntityId; proposals: EntityId[]; distinct_claims: EntityId[] };
   type TabSwitchCause = "opened" | "closed";
   type TabSwitch = { tab: string; url: string; title: string; from: string; why: TabSwitchCause };
-  type BrowserAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: TabSwitch | null; engine?: BrowserEngine | null };
+  type DemonstrationId = string;
+  type DemonstrationSource = "agent" | "takeover";
+  type RecordedStep = { seq: number; verb: string; tab?: string | null; result_tab?: string | null; source_url?: string | null; result_url?: string | null; target_name?: string | null; effect_class?: string | null; receipt?: number | null; action?: ReplayAction | null; failed?: BatchStopCause | null; no_effect?: boolean };
+  type LocatorGap = "no_target" | "document_gone" | "not_in_front" | "no_match" | "ambiguous" | "no_outline";
+  type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" };
+  type RecordingGap = { seq?: number | null; tab?: string | null; gap: RecordingGapKind };
+  type DemonstrationStopCause = "stopped" | "handed_over" | "handed_back" | "abandoned" | "guest_lost" | "engine_switched" | "session_closed";
+  type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
+  type SlotField = "text" | "option";
+  type SlotCandidate = { step: number; seq: number; field: SlotField; literal: string; suggested_param: string };
+  type DraftGapKind = { why: "pre_press"; effect_class: string } | { why: "unknown_press" } | { why: "no_action" } | { why: "secret_withheld"; kind?: SecretKind | null; cause: OperandGap } | { why: "failed"; cause: BatchStopCause } | { why: "no_effect" } | { why: "missing_opening" } | { why: "empty_span" } | { why: "no_live_origin" } | { why: "foreign_origin"; origin?: string | null } | { why: "tab_change" } | { why: "missing_context" } | { why: "check_unknown_ref"; check: number } | { why: "check_secret_withheld"; check: number; cause: OperandGap } | { why: "no_postcondition" } | { why: "no_subgoal" };
+  type DraftGap = { seq?: number | null; verb?: string | null; gap: DraftGapKind };
+  type PressedThrough = { seq: number; effect_class: string };
+  type DraftOutput = { site?: string | null; origin?: string | null; after_seq: number; through_seq: number; proposal: ProposeInput; slot_candidates?: SlotCandidate[]; gaps?: DraftGap[]; pressed_through?: PressedThrough[]; complete: boolean };
+  type DemonstrationOutput = { id: DemonstrationId; source: DemonstrationSource; label?: string | null; origin?: string | null; steps: RecordedStep[]; gaps?: RecordingGap[]; started_at_ms: number; stopped_at_ms: number; stop_cause: DemonstrationStopCause; draft: DraftOutput };
+  type BrowserAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: TabSwitch | null; engine?: BrowserEngine | null; demonstration?: DemonstrationOutput | null };
   type BrowserObservationPage = BrowserAnswer<ObservationPage>;
   type BrowserFindOutput = BrowserAnswer<FindOutput>;
   type BrowserWaitForOutput = BrowserAnswer<WaitForOutput>;
@@ -4010,14 +4047,12 @@ declare namespace Sdk {
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type BrowserLibraryFindOutput = BrowserAnswer<LibraryFindOutput>;
   type DraftInput = { subgoal: string; postcondition?: ExpectInput[]; after_seq?: number | null; through_seq?: number | null; past_press?: boolean };
-  type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
-  type SlotField = "text" | "option";
-  type SlotCandidate = { step: number; seq: number; field: SlotField; literal: string; suggested_param: string };
-  type DraftGapKind = { why: "pre_press"; effect_class: string } | { why: "unknown_press" } | { why: "no_action" } | { why: "secret_withheld"; kind?: SecretKind | null; cause: OperandGap } | { why: "failed"; cause: BatchStopCause } | { why: "no_effect" } | { why: "missing_opening" } | { why: "empty_span" } | { why: "no_live_origin" } | { why: "foreign_origin"; origin?: string | null } | { why: "tab_change" } | { why: "missing_context" } | { why: "check_unknown_ref"; check: number } | { why: "check_secret_withheld"; check: number; cause: OperandGap } | { why: "no_postcondition" } | { why: "no_subgoal" };
-  type DraftGap = { seq?: number | null; verb?: string | null; gap: DraftGapKind };
-  type PressedThrough = { seq: number; effect_class: string };
-  type DraftOutput = { site?: string | null; origin?: string | null; after_seq: number; through_seq: number; proposal: ProposeInput; slot_candidates?: SlotCandidate[]; gaps?: DraftGap[]; pressed_through?: PressedThrough[]; complete: boolean };
   type BrowserLibraryDraftOutput = BrowserAnswer<DraftOutput>;
+  type DemonstrationStartInput = { label?: string | null };
+  type DemonstrationStarted = { id: DemonstrationId; source: DemonstrationSource; label?: string | null; started_at_ms: number; origin?: string | null; url: string; already_running?: boolean };
+  type BrowserDemonstrationStartOutput = BrowserAnswer<DemonstrationStarted>;
+  type DemonstrationStopInput = { id: DemonstrationId; subgoal?: string; postcondition?: ExpectInput[] };
+  type BrowserDemonstrationStopOutput = BrowserAnswer<DemonstrationOutput>;
   type WorkflowCheck = "solved" | "replay" | "secret_replay" | "held_out" | "fresh_guest" | "supersedes";
   type SupersedeRefusal = "malformed" | "not_on_site" | "same_record" | "not_filer";
   type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string; detail: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal } | { cause: "secret_replay"; slots: string[] };
@@ -4332,6 +4367,12 @@ declare namespace self {
     click_at(input: Sdk.PointInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
     /** Crops a held image to a rectangle. */
     crop(input: Sdk.CropInput): Promise<Sdk.BrowserImageOutput | StoredResult>;
+    demonstration: {
+      /** Starts recording a demonstration in the session's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running. */
+      start(input: Sdk.DemonstrationStartInput): Promise<Sdk.BrowserDemonstrationStartOutput | StoredResult>;
+      /** Stops a demonstration, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given; it ends before a send, pay, publish, destructive or unknown press. */
+      stop(input: Sdk.DemonstrationStopInput): Promise<Sdk.BrowserDemonstrationStopOutput | StoredResult>;
+    };
     /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
     expect(input: Sdk.ExpectInput): Promise<Sdk.BrowserExpectOutput | StoredResult>;
     /** Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page. */
@@ -5720,6 +5761,20 @@ declare const vault: Sdk.VaultHost & {
       share_consent(input: Sdk.CoreferenceShareConsentRequest): Promise<Sdk.CoreferenceShareConsentReceipt | StoredResult>;
       /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
       unlink(input: Sdk.CoreferencePairRequest): Promise<Sdk.CoreferenceUnlinkReceipt | StoredResult>;
+    };
+  };
+  files: {
+    sources: {
+      /** The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current. */
+      attach(input: Sdk.FilesSourceAttachRequest): Promise<Sdk.FilesSourceAttachAnswer | StoredResult>;
+      /** The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay. */
+      detach(input: Sdk.FilesSourceDetachRequest): Promise<Sdk.FilesSourceDetachAnswer | StoredResult>;
+      /** The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates. */
+      files(input: Sdk.FilesSourceFilesRequest): Promise<Sdk.FilesSourceFiles | StoredResult>;
+      /** The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts. */
+      list(input: Sdk.FilesSourceListRequest): Promise<Sdk.FilesSourceList | StoredResult>;
+      /** The owner rescans one Files source now, or every one: new files land, changed files supersede, files with no text are held by name, missing files retract. */
+      rescan(input: Sdk.FilesSourceRescanRequest): Promise<Sdk.FilesRescanAnswer | StoredResult>;
     };
   };
   /** Commits the stream as final and releases its handle, returning the immutable terminal receipt. */

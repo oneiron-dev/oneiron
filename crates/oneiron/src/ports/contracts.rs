@@ -335,6 +335,11 @@ pub trait BlobStore: Transactions {
         read(&mut bytes.as_slice())?;
         Ok(true)
     }
+    /// Releases the named `reference` to the bytes under `hash`, for every delete reason:
+    /// `reason` authorizes no other record's release (ERASE-SHARED=B). Sibling references and
+    /// their records stay; a cross-record erase is the explicit same-bytes door's. `true` when
+    /// this release removed the bytes themselves, their last holder gone; `false` when the
+    /// reference was not there or another holder keeps them.
     fn port_blob_delete(
         &self,
         txn: &mut Self::Write<'_>,

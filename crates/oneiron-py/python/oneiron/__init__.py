@@ -604,6 +604,9 @@ class Oneiron:
         def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs":
             return Oneiron._VaultSupportGrantsVerbs(self._client)
         @property
+        def files(self) -> "Oneiron._VaultFilesVerbs":
+            return Oneiron._VaultFilesVerbs(self._client)
+        @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs":
             return Oneiron._VaultResidenceVerbs(self._client)
         @property
@@ -2573,6 +2576,30 @@ class Oneiron:
         def revoke(self, spec):
             """The owner revokes one support grant; what support already read is not recalled."""
             return json.loads(_translate(lambda: self._client.vault_support_grants_revoke(json.dumps(spec))))
+    class _VaultFilesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def sources(self) -> "Oneiron._VaultFilesSourcesVerbs":
+            return Oneiron._VaultFilesSourcesVerbs(self._client)
+    class _VaultFilesSourcesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def attach(self, spec):
+            """The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_attach(json.dumps(spec))))
+        def rescan(self, spec):
+            """The owner rescans one Files source now, or every one: new files land, changed files supersede, files with no text are held by name, missing files retract."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_rescan(json.dumps(spec))))
+        def detach(self, spec):
+            """The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_detach(json.dumps(spec))))
+        def list(self, spec):
+            """The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_list(json.dumps(spec))))
+        def files(self, spec):
+            """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_files(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5574,6 +5601,9 @@ class Oneiron:
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs":
             return Oneiron._SelfBrowserLibraryVerbs(self._client)
+        @property
+        def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs":
+            return Oneiron._SelfBrowserDemonstrationVerbs(self._client)
         def handover(self, spec):
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
             return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
@@ -5601,6 +5631,15 @@ class Oneiron:
         def run(self, spec):
             """Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift."""
             return json.loads(_translate(lambda: self._client.self_browser_library_run(json.dumps(spec))))
+    class _SelfBrowserDemonstrationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def start(self, spec):
+            """Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running."""
+            return json.loads(_translate(lambda: self._client.self_browser_demonstration_start(json.dumps(spec))))
+        def stop(self, spec):
+            """Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."""
+            return json.loads(_translate(lambda: self._client.self_browser_demonstration_stop(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

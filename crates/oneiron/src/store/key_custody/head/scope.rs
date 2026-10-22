@@ -62,10 +62,12 @@ impl CompartmentScope {
             // A credential's value and its carriers' keys (KS-6, CALLS
             // `KS-6 entry eligibility`): only the owner's kit opens them; a
             // head carries one only where [`CustodyRecipients::keeps_local`]
-            // lets it.
+            // lets it. A connector call's resume (FIX 9157) is owner-only
+            // the same way, and no head carries one.
             CustodyKind::CredentialValue
             | CustodyKind::CustodyTransition
-            | CustodyKind::CustodyRequestInput => Self::OwnerOnly,
+            | CustodyKind::CustodyRequestInput
+            | CustodyKind::ConnectorResume => Self::OwnerOnly,
         })
     }
 
@@ -129,7 +131,8 @@ impl CustodyRecipients {
     /// world [`Self::pad_worlds_kept_local`] names, or (world compartments
     /// on) of a world no admitted machine or root receives; or a
     /// credential's value or carrier key unless a root is pinned and the
-    /// credential is one [`Self::credentials_eligible`] names (KS-6).
+    /// credential is one [`Self::credentials_eligible`] names (KS-6). A
+    /// connector call's resume (FIX 9157) is always left out.
     pub(crate) fn keeps_local(&self, id: &CustodyId) -> bool {
         if crate::store::credential_kind(id.kind()) {
             return self.root.is_none()
@@ -153,7 +156,8 @@ impl CustodyRecipients {
     /// Whether the head leaves the retirement fact of `id` out: a
     /// credential's kept off this member (KS-6), or (world compartments on)
     /// a pad of a world no admitted machine or root receives, which has no
-    /// compartment to ride in.
+    /// compartment to ride in. A connector call's resume fact (FIX 9157) is
+    /// always left out.
     pub(crate) fn keeps_fact_local(&self, id: &CustodyId) -> bool {
         if crate::store::credential_kind(id.kind()) {
             return self.keeps_local(id);

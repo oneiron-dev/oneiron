@@ -3,20 +3,23 @@
 //! `c:idx` and `c:order` values, name, categories or x values, values and
 //! bubble sizes written in place, its data points' formatting and labels
 //! carried to their points' new places, the children only its old family
-//! holds dropped when its family changes, and everything else (its
-//! attributes, extensions, unknown children and the bytes between them)
-//! kept. A moved series declares the namespace bindings its bytes use that
-//! its old plot declared. A template is only for a genuinely new series
-//! ([`series::fresh`]).
+//! holds dropped when its family changes (its points' and labels' too,
+//! each label's text and other settings kept, FIX 9276), and everything
+//! else (its attributes, extensions, unknown children and the bytes
+//! between them) kept. A moved series declares the namespace bindings its
+//! bytes use that its old plot declared. A template is only for a
+//! genuinely new series ([`series::fresh`]).
 //! Entry: `retained`.
 
 use super::families::{applied, bit, written};
+use super::retype;
 use super::series::bindings;
 use super::*;
+use crate::edit::xml::Splice;
 
 /// A series' children in schema order for a `kind` plot; `cat` and `val`
 /// stand for `xVal` and `yVal` too.
-fn order(kind: ChartKind) -> &'static [&'static str] {
+pub(super) fn order(kind: ChartKind) -> &'static [&'static str] {
     match kind {
         ChartKind::Bar | ChartKind::Bar3D => &[
             "idx",
@@ -160,8 +163,10 @@ pub(super) struct Slots<'a> {
 /// `to` plot (`moved` out of the plot element that held it): its `idx`
 /// and `order` values set, its slots written in place (a slot it lacks
 /// inserted in schema order), its points' formatting and labels carried
-/// ([`Points`]), a data label position and the children `to` does not hold
-/// dropped when its family changes. Everything else keeps its bytes.
+/// ([`Points`]), and, when its family changes, the children `to` does not
+/// hold dropped, and each data label position and point child `to` does
+/// not hold too ([`retype`]), named in `dropped`. Everything else keeps its
+/// bytes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn retained(
     bytes: &[u8],
@@ -172,8 +177,10 @@ pub(super) fn retained(
     (from, to, moved): (ChartKind, ChartKind, bool),
     slots: &Slots<'_>,
     points: &Points,
+    dropped: &mut Vec<String>,
 ) -> Result<Vec<u8>, LiveError> {
     let node = &tree.nodes[ser];
+    let changed = from != to;
     let flag = |name: &str, value: &str| format!(r#"<{} val="{value}"/>"#, writer.el(name));
     let mut entries: Vec<(&str, Vec<u8>)> = vec![
         ("tx", slots.tx.as_bytes().to_vec()),
@@ -197,7 +204,14 @@ pub(super) fn retained(
     let holds = |name: &str| order(to).contains(&name);
     if xml::child(tree, ser, C, "dPt").is_some() {
         let points = if holds("dPt") {
-            carried(bytes, tree, &node.children, "dPt", points)
+            let mut retyped = |at: usize| -> Vec<Splice> {
+                if changed {
+                    retype::point(tree, at, to, dropped)
+                } else {
+                    Vec::new()
+                }
+            };
+            carried(bytes, tree, &node.children, "dPt", points, &mut retyped)?
         } else {
             Vec::new()
         };
@@ -207,7 +221,7 @@ pub(super) fn retained(
     if labels.is_some() && !holds("dLbls") {
         entries.push(("dLbls", Vec::new()));
     }
-    if from != to {
+    if changed {
         for name in FAMILY_ONLY {
             if !order(to).contains(name) && xml::child(tree, ser, C, name).is_some() {
                 entries.push((*name, Vec::new()));
@@ -235,11 +249,29 @@ pub(super) fn retained(
         }
     }
     if let Some(labels) = labels.filter(|&at| holds("dLbls") && !tree.nodes[at].empty) {
+        // Each point label's position, and the series', stays where `to`
+        // places labels so (FIX 9276).
+        let mut retyped = |at: usize| -> Vec<Splice> {
+            if changed {
+                retype::position(tree, at, to, dropped)
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        };
         let mut inner = vec![(
             "dLbl",
-            carried(bytes, tree, &tree.nodes[labels].children, "dLbl", points),
+            carried(
+                bytes,
+                tree,
+                &tree.nodes[labels].children,
+                "dLbl",
+                points,
+                &mut retyped,
+            )?,
         )];
-        if from != to && xml::child(tree, labels, C, "dLblPos").is_some() {
+        if changed && retype::position(tree, labels, to, dropped).is_some() {
             inner.push(("dLblPos", Vec::new()));
         }
         // A label element the labels do not hold is not added.

@@ -1,3 +1,7 @@
+//! ChannelIdentity lifecycle doors: provision, bind, read and release a channel identity.
+//! `ChannelIdentityProvisionRequest` and `Memory::channel_identity_get` are its call surface.
+//! Its request and view records are local definitions; `memory::channel_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 use super::*;

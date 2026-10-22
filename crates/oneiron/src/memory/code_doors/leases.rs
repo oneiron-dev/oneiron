@@ -1,3 +1,7 @@
+//! Code symbol lease doors: declare, renew and release a task's symbol leases.
+//! `Memory::code_symbols_declare_as` is its call surface.
+//! `memory::code_doors::types` defines the records these take and return.
+
 use super::*;
 use crate::code_symbol::code_symbol_entity_id;
 use crate::registry::ENTITY_TYPE_TASK;

@@ -566,6 +566,8 @@ class Oneiron:
         @property
         def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs": ...
         @property
+        def files(self) -> "Oneiron._VaultFilesVerbs": ...
+        @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
         @property
         def off_record(self) -> "Oneiron._VaultOffRecordVerbs": ...
@@ -1742,6 +1744,20 @@ class Oneiron:
             """The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."""
         def revoke(self, spec: Facade.SupportGrantRevokeRequest) -> Facade.SupportGrantRevokeAnswer:
             """The owner revokes one support grant; what support already read is not recalled."""
+    class _VaultFilesVerbs:
+        @property
+        def sources(self) -> "Oneiron._VaultFilesSourcesVerbs": ...
+    class _VaultFilesSourcesVerbs:
+        def attach(self, spec: Facade.FilesSourceAttachRequest) -> Facade.FilesSourceAttachAnswer:
+            """The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current."""
+        def rescan(self, spec: Facade.FilesSourceRescanRequest) -> Facade.FilesRescanAnswer:
+            """The owner rescans one Files source now, or every one: new files land, changed files supersede, files with no text are held by name, missing files retract."""
+        def detach(self, spec: Facade.FilesSourceDetachRequest) -> Facade.FilesSourceDetachAnswer:
+            """The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay."""
+        def list(self, spec: Facade.FilesSourceListRequest) -> Facade.FilesSourceList:
+            """The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."""
+        def files(self, spec: Facade.FilesSourceFilesRequest) -> Facade.FilesSourceFiles:
+            """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
     class _VaultResidenceVerbs:
         def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeAnswer:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""
@@ -3492,6 +3508,8 @@ class Oneiron:
             """Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt."""
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs": ...
+        @property
+        def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs": ...
         def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.BrowserHandoverOutput:
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
         def switch_engine(self, spec: Facade.LiveRunRequest[Facade.SwitchEngineInput]) -> Facade.BrowserSwitchEngineOutput:
@@ -3509,6 +3527,11 @@ class Oneiron:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
         def run(self, spec: Facade.LiveRunRequest[Facade.LibraryRunInput]) -> Facade.BrowserLibraryRunOutput:
             """Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift."""
+    class _SelfBrowserDemonstrationVerbs:
+        def start(self, spec: Facade.LiveRunRequest[Facade.DemonstrationStartInput]) -> Facade.BrowserDemonstrationStartOutput:
+            """Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running."""
+        def stop(self, spec: Facade.LiveRunRequest[Facade.DemonstrationStopInput]) -> Facade.BrowserDemonstrationStopOutput:
+            """Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."""
     class _SelfAgentsVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
             """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""

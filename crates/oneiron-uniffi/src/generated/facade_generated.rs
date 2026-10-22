@@ -1836,6 +1836,31 @@ export_facade! {
     let output = client.vault_support_grants_revoke(&input)?;
     crate::codec::lift_record("vault.support_grants.revoke", &output)
 };
+"vault.files.sources.attach" => fn vault_files_sources_attach(&self, input: FilesSourceAttachRequest) -> FilesSourceAttachAnswer = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceAttachRequest = crate::codec::lower_record("vault.files.sources.attach", input)?;
+    let output = client.vault_files_sources_attach(&input)?;
+    crate::codec::lift_record("vault.files.sources.attach", &output)
+};
+"vault.files.sources.rescan" => fn vault_files_sources_rescan(&self, input: FilesSourceRescanRequest) -> FilesRescanAnswer = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceRescanRequest = crate::codec::lower_record("vault.files.sources.rescan", input)?;
+    let output = client.vault_files_sources_rescan(&input)?;
+    crate::codec::lift_record("vault.files.sources.rescan", &output)
+};
+"vault.files.sources.detach" => fn vault_files_sources_detach(&self, input: FilesSourceDetachRequest) -> FilesSourceDetachAnswer = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceDetachRequest = crate::codec::lower_record("vault.files.sources.detach", input)?;
+    let output = client.vault_files_sources_detach(&input)?;
+    crate::codec::lift_record("vault.files.sources.detach", &output)
+};
+"vault.files.sources.list" => fn vault_files_sources_list(&self) -> FilesSourceList = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceListRequest = crate::codec::lower_empty("vault.files.sources.list")?;
+    let output = client.vault_files_sources_list(&input)?;
+    crate::codec::lift_record("vault.files.sources.list", &output)
+};
+"vault.files.sources.files" => fn vault_files_sources_files(&self, input: FilesSourceFilesRequest) -> FilesSourceFiles = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceFilesRequest = crate::codec::lower_record("vault.files.sources.files", input)?;
+    let output = client.vault_files_sources_files(&input)?;
+    crate::codec::lift_record("vault.files.sources.files", &output)
+};
 "vault.residence.mode" => fn vault_residence_mode(&self, input: ResidenceModeRequest) -> ResidenceModeAnswer = |client| {
     let input: oneiron::task_verb::sdk::ResidenceModeRequest = crate::codec::lower_record("vault.residence.mode", input)?;
     let output = client.vault_residence_mode(&input)?;
@@ -5640,6 +5665,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryDraftInput> = crate::codec::lower_record("self.browser.library.draft", input)?;
     let output = client.self_browser_library_draft(&input)?;
     crate::codec::lift_record("self.browser.library.draft", &output)
+};
+"self.browser.demonstration.start" => fn self_browser_demonstration_start(&self, input: LiveRunRequestDemonstrationStartInput) -> BrowserAnswerDemonstrationStarted = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserDemonstrationStartInput> = crate::codec::lower_record("self.browser.demonstration.start", input)?;
+    let output = client.self_browser_demonstration_start(&input)?;
+    crate::codec::lift_record("self.browser.demonstration.start", &output)
+};
+"self.browser.demonstration.stop" => fn self_browser_demonstration_stop(&self, input: LiveRunRequestDemonstrationStopInput) -> BrowserAnswerDemonstrationOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserDemonstrationStopInput> = crate::codec::lower_record("self.browser.demonstration.stop", input)?;
+    let output = client.self_browser_demonstration_stop(&input)?;
+    crate::codec::lift_record("self.browser.demonstration.stop", &output)
 };
 "self.browser.library.propose" => fn self_browser_library_propose(&self, input: LiveRunRequestProposeInput) -> BrowserAnswerProposeOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryProposeInput> = crate::codec::lower_record("self.browser.library.propose", input)?;

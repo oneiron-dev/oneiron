@@ -1,3 +1,7 @@
+//! Delivery-window policy doors: put, list, retract and evaluate a channel's delivery windows.
+//! `DeliveryWindowRule` and `Memory::delivery_window_policies` are its call surface.
+//! Its request and view records are local definitions; `memory::channel_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 use super::*;

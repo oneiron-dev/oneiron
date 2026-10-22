@@ -371,6 +371,11 @@ pub enum AgentVerb {
     VaultSupportGrantsMint,
     VaultSupportGrantsList,
     VaultSupportGrantsRevoke,
+    VaultFilesSourcesAttach,
+    VaultFilesSourcesRescan,
+    VaultFilesSourcesDetach,
+    VaultFilesSourcesList,
+    VaultFilesSourcesFiles,
     VaultResidenceMode,
     VaultResidenceOpen,
     VaultResidenceIndex,
@@ -1154,6 +1159,8 @@ pub enum AgentVerb {
     SelfBrowserBatch,
     SelfBrowserLibraryFind,
     SelfBrowserLibraryDraft,
+    SelfBrowserDemonstrationStart,
+    SelfBrowserDemonstrationStop,
     SelfBrowserLibraryPropose,
     SelfBrowserLibraryRetire,
     SelfBrowserLibraryRetired,
@@ -1543,6 +1550,11 @@ impl AgentVerb {
         Self::VaultSupportGrantsMint,
         Self::VaultSupportGrantsList,
         Self::VaultSupportGrantsRevoke,
+        Self::VaultFilesSourcesAttach,
+        Self::VaultFilesSourcesRescan,
+        Self::VaultFilesSourcesDetach,
+        Self::VaultFilesSourcesList,
+        Self::VaultFilesSourcesFiles,
         Self::VaultResidenceMode,
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
@@ -2326,6 +2338,8 @@ impl AgentVerb {
         Self::SelfBrowserBatch,
         Self::SelfBrowserLibraryFind,
         Self::SelfBrowserLibraryDraft,
+        Self::SelfBrowserDemonstrationStart,
+        Self::SelfBrowserDemonstrationStop,
         Self::SelfBrowserLibraryPropose,
         Self::SelfBrowserLibraryRetire,
         Self::SelfBrowserLibraryRetired,
@@ -2722,6 +2736,11 @@ impl AgentVerb {
             Self::VaultSupportGrantsMint => "vault.support_grants.mint",
             Self::VaultSupportGrantsList => "vault.support_grants.list",
             Self::VaultSupportGrantsRevoke => "vault.support_grants.revoke",
+            Self::VaultFilesSourcesAttach => "vault.files.sources.attach",
+            Self::VaultFilesSourcesRescan => "vault.files.sources.rescan",
+            Self::VaultFilesSourcesDetach => "vault.files.sources.detach",
+            Self::VaultFilesSourcesList => "vault.files.sources.list",
+            Self::VaultFilesSourcesFiles => "vault.files.sources.files",
             Self::VaultResidenceMode => "vault.residence.mode",
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
@@ -3529,6 +3548,8 @@ impl AgentVerb {
             Self::SelfBrowserBatch => "self.browser.batch",
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
             Self::SelfBrowserLibraryDraft => "self.browser.library.draft",
+            Self::SelfBrowserDemonstrationStart => "self.browser.demonstration.start",
+            Self::SelfBrowserDemonstrationStop => "self.browser.demonstration.stop",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
             Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
             Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
@@ -3920,6 +3941,11 @@ impl AgentVerb {
                 | Self::VaultSupportGrantsMint
                 | Self::VaultSupportGrantsList
                 | Self::VaultSupportGrantsRevoke
+                | Self::VaultFilesSourcesAttach
+                | Self::VaultFilesSourcesRescan
+                | Self::VaultFilesSourcesDetach
+                | Self::VaultFilesSourcesList
+                | Self::VaultFilesSourcesFiles
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -4681,6 +4707,8 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryDraft
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -4738,6 +4766,8 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryDraft
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -5119,6 +5149,11 @@ impl AgentVerb {
                 | Self::VaultSupportGrantsMint
                 | Self::VaultSupportGrantsList
                 | Self::VaultSupportGrantsRevoke
+                | Self::VaultFilesSourcesAttach
+                | Self::VaultFilesSourcesRescan
+                | Self::VaultFilesSourcesDetach
+                | Self::VaultFilesSourcesList
+                | Self::VaultFilesSourcesFiles
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -5880,6 +5915,8 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryDraft
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -6445,6 +6482,11 @@ impl AgentVerb {
                 | Self::VaultSupportGrantsMint
                 | Self::VaultSupportGrantsList
                 | Self::VaultSupportGrantsRevoke
+                | Self::VaultFilesSourcesAttach
+                | Self::VaultFilesSourcesRescan
+                | Self::VaultFilesSourcesDetach
+                | Self::VaultFilesSourcesList
+                | Self::VaultFilesSourcesFiles
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -7162,6 +7204,8 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryDraft
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -7406,6 +7450,9 @@ impl AgentVerb {
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
                 | Self::VaultSupportGrantsRevoke
+                | Self::VaultFilesSourcesAttach
+                | Self::VaultFilesSourcesRescan
+                | Self::VaultFilesSourcesDetach
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidencePrune
@@ -7853,6 +7900,8 @@ impl AgentVerb {
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
@@ -8291,6 +8340,11 @@ impl AgentVerb {
             Self::VaultSupportGrantsMint => &["spec"],
             Self::VaultSupportGrantsList => &["spec"],
             Self::VaultSupportGrantsRevoke => &["spec"],
+            Self::VaultFilesSourcesAttach => &["spec"],
+            Self::VaultFilesSourcesRescan => &["spec"],
+            Self::VaultFilesSourcesDetach => &["spec"],
+            Self::VaultFilesSourcesList => &["spec"],
+            Self::VaultFilesSourcesFiles => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -9074,6 +9128,8 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryDraft => &["spec"],
+            Self::SelfBrowserDemonstrationStart => &["spec"],
+            Self::SelfBrowserDemonstrationStop => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
@@ -9464,6 +9520,11 @@ impl AgentVerb {
             Self::VaultSupportGrantsMint => &["spec"],
             Self::VaultSupportGrantsList => &["spec"],
             Self::VaultSupportGrantsRevoke => &["spec"],
+            Self::VaultFilesSourcesAttach => &["spec"],
+            Self::VaultFilesSourcesRescan => &["spec"],
+            Self::VaultFilesSourcesDetach => &["spec"],
+            Self::VaultFilesSourcesList => &["spec"],
+            Self::VaultFilesSourcesFiles => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -10247,6 +10308,8 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryDraft => &["spec"],
+            Self::SelfBrowserDemonstrationStart => &["spec"],
+            Self::SelfBrowserDemonstrationStop => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
@@ -11353,6 +11416,21 @@ impl AgentVerb {
             }
             Self::VaultSupportGrantsRevoke => {
                 "The owner revokes one support grant; what support already read is not recalled."
+            }
+            Self::VaultFilesSourcesAttach => {
+                "The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current."
+            }
+            Self::VaultFilesSourcesRescan => {
+                "The owner rescans one Files source now, or every one: new files land, changed files supersede, files with no text are held by name, missing files retract."
+            }
+            Self::VaultFilesSourcesDetach => {
+                "The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay."
+            }
+            Self::VaultFilesSourcesList => {
+                "The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."
+            }
+            Self::VaultFilesSourcesFiles => {
+                "The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."
             }
             Self::VaultResidenceMode => {
                 "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."
@@ -13622,6 +13700,12 @@ impl AgentVerb {
             }
             Self::SelfBrowserLibraryDraft => {
                 "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."
+            }
+            Self::SelfBrowserDemonstrationStart => {
+                "Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running."
+            }
+            Self::SelfBrowserDemonstrationStop => {
+                "Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."
             }
             Self::SelfBrowserLibraryPropose => {
                 "Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."

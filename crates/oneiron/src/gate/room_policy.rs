@@ -7,7 +7,6 @@ use crate::conversation::RoomRole;
 use rmpv::Value;
 
 pub(crate) const KEY: &str = "room_policy_rows";
-const MAX_ROWS: usize = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RoomAction {
@@ -80,13 +79,11 @@ impl RoomPolicyRow {
 
 /// Strict map grammar: duplicates, unknown keys, malformed ids/roles and
 /// missing axes reject the entire manifest rather than silently widening.
+/// Every row parses, however many (rule 5): the policy fold counts them.
 pub(in crate::gate) fn parse_rows(value: &Value) -> Option<Vec<RoomPolicyRow>> {
     let Value::Array(rows) = value else {
         return None;
     };
-    if rows.len() > MAX_ROWS {
-        return None;
-    }
     rows.iter()
         .map(|row| {
             let Value::Map(fields) = row else {

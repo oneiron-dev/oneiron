@@ -86,6 +86,7 @@ mod fanout_doors;
 mod federation_burst_doors;
 mod federation_connect_doors;
 mod feedback_doors;
+mod files_doors;
 mod fold_doors;
 mod foreign_code_doors;
 pub(super) mod free_time_doors;
@@ -1429,7 +1430,7 @@ fn facade_rewrite_admit(
         facade_admit_rewritten(&vault, &auth, &original, rewritten)?;
         // A courtesy answer's rewritten reply_to meets its door's own check
         // here, so a bad one gives way to the caller's (FIX 5140).
-        crate::owner::cooperative_deletion::check_rewritten_reply_to(verb, rewritten)
+        crate::owner::courtesy_delete::check_rewritten_reply_to(verb, rewritten)
     })
 }
 

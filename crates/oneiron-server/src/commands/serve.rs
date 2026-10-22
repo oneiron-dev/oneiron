@@ -606,9 +606,7 @@ pub(crate) async fn start_desktop_workers(
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // Attached folders rescan after the import queue starts (OF-554).
     #[cfg(unix)]
-    workers.push(super::history_import::notes::folder::spawn_rescans(
-        Arc::clone(&sync_server),
-    ));
+    workers.push(crate::files_intake::spawn_rescans(Arc::clone(&sync_server)));
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
