@@ -45,12 +45,16 @@ impl ScopedRead<'_> {
 /// returns only what that reader may see (nothing on a failed bind or a
 /// lane that reads no row). An agent's own-Grant alternative (OF-499 A3)
 /// lands inside that read under the same signature, so it reaches agents
-/// with no change here. Whether a reader has an Admissions section at all
+/// with no change here. A weave Admin (OF-499 A3) passes too: the read binds
+/// it to its proof's lane. Whether a reader has an Admissions section at all
 /// stays its weave policy's call. The match is exhaustive so that a new
 /// reader role decides here.
 fn loop_decision_reader(reader: WeaveReader<'_>) -> WeaveReader<'_> {
     match reader {
-        WeaveReader::Owner(_) | WeaveReader::Person(_) | WeaveReader::Agent(_) => reader,
+        WeaveReader::Owner(_)
+        | WeaveReader::Person(_)
+        | WeaveReader::Agent(_)
+        | WeaveReader::Admin(_) => reader,
     }
 }
 

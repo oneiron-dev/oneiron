@@ -39,14 +39,19 @@ mod pointer_rows;
 pub mod preview;
 mod publication_sync;
 mod serving;
+// The serving descriptor of a published blob version (FIX 1195).
+mod serving_blob;
 mod vocabulary;
 use self::pointer_rows::{
     decode_artifact_pointer_row, hex_nibble, put_artifact_pointer_in_txn, snapshot_file_entry,
     validate_artifact_path,
 };
 pub(crate) use self::pointer_rows::{remove_blob_pointers_in_txn, validate_artifact_id};
+pub use self::publication_sync::ArtifactPublicationOutcome;
 use self::publication_sync::mark_publication_in_txn;
-pub use self::publication_sync::{ArtifactPublicationFrame, ArtifactPublicationOutcome};
+pub(crate) use self::publication_sync::{
+    ArtifactPublicationCursor, ArtifactPublicationPart, ArtifactPublicationStep,
+};
 pub use self::vocabulary::{
     ARTIFACT_POINTER_CHANNELS, ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel,
     ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus,
@@ -328,61 +333,6 @@ impl Vault {
             stale_taint_override,
             serve_tier,
         })
-    }
-
-    pub(crate) fn resolve_export_owner(
-        &self,
-        artifact: &str,
-        export: ArtifactExportRef,
-    ) -> Result<Option<EntityId>> {
-        validate_artifact_id(artifact)?;
-        match export {
-            ArtifactExportRef::ForkHash(fork_hash) => Ok(self
-                .resolve_artifact_snapshot_by_fork(artifact, &fork_hash)?
-                .map(|r| r.code_artifact_id)),
-            ArtifactExportRef::BlobVersion {
-                artifact_id,
-                version,
-            } => {
-                if artifact != artifact_id.to_hex()
-                    || version == 0
-                    || self.get_blob_artifact(&artifact_id)?.is_none()
-                {
-                    return Ok(None);
-                }
-                Ok(self
-                    .blob_artifact_version_metadata(&artifact_id, version)?
-                    .map(|_| artifact_id))
-            }
-        }
-    }
-
-    /// Publish admission runs behind the writer. No concurrent delete may
-    /// remove a blob between validating its version and inserting its pointer.
-    fn resolve_export_owner_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        artifact: &str,
-        export: ArtifactExportRef,
-    ) -> Result<Option<EntityId>> {
-        validate_artifact_id(artifact)?;
-        match export {
-            ArtifactExportRef::ForkHash(_) => self.resolve_export_owner(artifact, export),
-            ArtifactExportRef::BlobVersion {
-                artifact_id,
-                version,
-            } => {
-                if artifact != artifact_id.to_hex()
-                    || version == 0
-                    || self.get_blob_artifact_in_txn(rtxn, &artifact_id)?.is_none()
-                {
-                    return Ok(None);
-                }
-                Ok(self
-                    .blob_artifact_version_metadata_in_txn(rtxn, &artifact_id, version)?
-                    .map(|_| artifact_id))
-            }
-        }
     }
 
     pub fn unpublish_artifact_pointer(

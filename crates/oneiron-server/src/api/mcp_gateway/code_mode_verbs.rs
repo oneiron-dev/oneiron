@@ -53,6 +53,7 @@ mod reader;
 mod receipt_evidence;
 mod secret_custody;
 mod session_write;
+mod solved_runs;
 mod task_workflow;
 mod verdict;
 
@@ -65,6 +66,7 @@ use self::field_writer::RunFieldWriter;
 use self::guests::*;
 use self::receipt_evidence::ReceiptWriter;
 use self::secret_custody::RunSecretCustody;
+use self::solved_runs::BrowserCapture;
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::{
     mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
@@ -285,6 +287,9 @@ pub(crate) enum VerdictAsker {
 struct VaultLibrary {
     server: Arc<SyncServer>,
     by: oneiron::EntityId,
+    /// The caller's solved-run scope, which a program it files covers its
+    /// group in (CUA E8a); none for a library that files nothing.
+    scope: Option<oneiron::browser_library::SolvedRunScope>,
 }
 
 /// The fresh browser a proposal's replay runs on (CUA E1): a new guest for

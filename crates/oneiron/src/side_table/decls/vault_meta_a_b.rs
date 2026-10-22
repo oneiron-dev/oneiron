@@ -87,9 +87,13 @@ side_tables! {
     ARTIFACT_POINTER: VaultMeta b"artifact:pointer:v1:" Raw;
     /// Immutable publish admission receipt keyed by publish entity id16.
     ARTIFACT_PUBLISH_ADMISSION: VaultMeta b"artifact:publish:admission:v1:" LegacyJson;
-    /// Empty marker: this channel pointer changed and its publication has not reached the sync
-    /// server yet. Key: channel byte + u16be length + string (artifact id).
-    ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Raw;
+    /// A replica's serving descriptor of one published blob version: content hash, export name
+    /// and media type, nothing else (FIX 1195). Key: id16 (artifact) + u64be (version).
+    ARTIFACT_SERVING_BLOB: VaultMeta b"artifact:serving:blob:v1:" Named;
+    /// The change id (16 bytes) of this channel pointer's change whose publication has not
+    /// reached the sync server yet (FIX 9575). Key: channel byte + u16be length + string
+    /// (artifact id).
+    ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Named;
     /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
     ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
@@ -268,6 +272,27 @@ side_tables! {
     EMERGENCY_REQUEST_PLAN_INDEX: VaultMeta b"booking:emergency_request_plan:v1:" Raw;
     /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw;
+    /// CUA E8a: the source authority a solved browser run was captured under, by its evidence
+    /// claim: scope, group digest, credential reference and witness digest; no credential bytes.
+    /// Key: id16.
+    BROWSER_PROGRAM_AUTHORITY: VaultMeta b"browser.program.authority.v1\0" Named Engine
+        => crate::browser_library::erase_authority_actor_in_txn;
+    /// CUA E8a: a replay library program whose library runs failed, live or retired, with its
+    /// site hash, group digest and generation. Key: id16.
+    BROWSER_PROGRAM_FAILURE: VaultMeta b"browser.program.failure.v1\0" Named Engine;
+    /// CUA E8: a candidate program's induction already proposed, by its input fingerprint. Key:
+    /// hash32.
+    BROWSER_PROGRAM_SEEN: VaultMeta b"browser.program.seen.v1\0" Named Engine;
+    /// CUA E8a: a live replay library program covering a solved group. Key: hash32 (group) +
+    /// id16.
+    BROWSER_SOLVED_COVERAGE: VaultMeta b"browser.solved.coverage.v1\0" Named Engine;
+    /// CUA E8a: a solved group's full scoped key with its changed and processed generations.
+    /// Key: hash32 (group).
+    BROWSER_SOLVED_DIRTY: VaultMeta b"browser.solved.dirty.v1\0" Named Authored
+        => crate::browser_library::erase_dirty_actor_in_txn;
+    /// CUA E8a: one solved run's evidence claim in its group: its run and capture time, never its
+    /// body. Key: hash32 (group) + id16.
+    BROWSER_SOLVED_GROUP: VaultMeta b"browser.solved.group.v1\0" Named Engine;
     /// A replay library program a retire took out, with whose word, when and why. Key: id16.
     BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored
         => crate::browser_library::erase_retired_actor_in_txn;

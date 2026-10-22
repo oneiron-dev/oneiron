@@ -26,6 +26,42 @@ pub(super) const WORKER_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../../deploy/house-model/exl3_server.py"),
     ),
     (
+        "exl3_session/__init__.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/__init__.py"),
+    ),
+    (
+        "exl3_session/anchor.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/anchor.py"),
+    ),
+    (
+        "exl3_session/generator.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/generator.py"),
+    ),
+    (
+        "exl3_session/jobs.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/jobs.py"),
+    ),
+    (
+        "exl3_session/layer.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/layer.py"),
+    ),
+    (
+        "exl3_session/ops.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/ops.py"),
+    ),
+    (
+        "exl3_session/pages.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/pages.py"),
+    ),
+    (
+        "exl3_session/registry.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/registry.py"),
+    ),
+    (
+        "exl3_session/state.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/state.py"),
+    ),
+    (
         "exl3_stats.py",
         include_bytes!("../../../../../deploy/house-model/exl3_stats.py"),
     ),
