@@ -6457,6 +6457,7 @@
       "crate-vis": 4,
       "enum": 4,
       "fn": 8,
+      "re-export": 1,
       "struct": 8
      }
     },
@@ -6468,6 +6469,17 @@
      "purpose": "The needs-you notice of the lift proposals (OF-067)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/projection.rs",
+     "purpose": "The lift sweep's state as a caller toward one destination may read it (FIX 8165): its proposals and their…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -47670,8 +47682,24 @@
      "path": "src/outbound_consent/connector_call_input.rs",
      "purpose": "A connector call whose connector asked for input, kept on the call's own row (ONE-2510, FIX 3837; canon…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorResumeProtocol",
+      "OpenedConnectorResume"
+     ],
+     "path": "src/outbound_consent/connector_call_input_resume.rs",
+     "purpose": "A live connector exchange's resume state, kept on its call's row beside the round it waits on (FIX 9157…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -47774,7 +47802,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 1,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -54145,6 +54173,7 @@
       "InvocationClaim",
       "InvocationEntry",
       "InvocationOutcome",
+      "InvocationRelease",
       "InvocationWait"
      ],
      "path": "src/runtime_hooks/verb/state.rs",
@@ -54153,7 +54182,7 @@
       "crate-vis": 22,
       "enum": 1,
       "fn": 7,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -55630,7 +55659,7 @@
      "path": "src/self_heal/audit/doors.rs",
      "purpose": "Typed owner doors for the seal's existing receipts and check lifecycle",
      "surface": {
-      "fn": 6,
+      "fn": 8,
       "struct": 6
      }
     },
@@ -61304,6 +61333,17 @@
      "surface": {
       "crate-vis": 13,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/pending_gate_consent/run_groups.rs",
+     "purpose": "Each waiting run with every proposal it holds, read in one snapshot (FIX 9524)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -74767,7 +74807,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 143,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75600,7 +75640,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75992,7 +76032,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 145,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76225,7 +76265,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4968,
+   "source_files": 4971,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92682,7 +92722,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -93939,6 +93979,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/release.rs",
+     "purpose": "A facade answer's destination release, once its call has nothing left to wait on (FIX 8170), and again for…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/reply_doors.rs",
      "purpose": "The generated context-bearing reply door, under the existing owner's inference authority",
      "surface": {
@@ -94793,6 +94843,16 @@
      "notable": [],
      "path": "src/api/mcp_gateway/call_meta.rs",
      "purpose": "What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/claimed_release.rs",
+     "purpose": "What a claimed MCP `tools/call` keeps of its answer for the calls waiting on it, and how each waiter's reply…",
      "surface": {
       "crate-vis": 4
      }
@@ -98759,7 +98819,7 @@
      "path": "src/connector_call_host.rs",
      "purpose": "The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1,
       "struct": 1
      }
@@ -98771,7 +98831,7 @@
      "path": "src/connector_call_host/live_exchange.rs",
      "purpose": "The live half of the call host: the worker that owns an exchange once its send returned",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 22
      }
     },
     {
@@ -98781,7 +98841,7 @@
      "path": "src/connector_call_host/presenting.rs",
      "purpose": "What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 15
      }
     },
     {
@@ -98791,7 +98851,27 @@
      "path": "src/connector_call_host/reply_read.rs",
      "purpose": "The reply readers both halves of the call host share: one reply body, JSON read whole or an event stream…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_host/resume.rs",
+     "purpose": "A live exchange taken up again after a restart (FIX 9157, ruled by the Engine 07:49)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_host/sent.rs",
+     "purpose": "What one send of the call host came to, before the ledger scrubs its raw fields",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -98821,7 +98901,7 @@
      "path": "src/connector_elicitation.rs",
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -100096,7 +100176,7 @@
      "path": "src/livequery/history.rs",
      "purpose": "Retained scoped app payloads live in a separate journal, not the cursor document",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -100362,6 +100442,16 @@
      "path": "src/livequery/source/projection.rs",
      "purpose": "The owner feed's live projection: what a bound source derives, exports and replays",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/source/readmit.rs",
+     "purpose": "A bound source's re-admission of retained pushes at resume (FIX 9493): every row a retained result was…",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "s",
@@ -102212,7 +102302,7 @@
      "path": "src/models/native_exl3/mod.rs",
      "purpose": "The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -105269,7 +105359,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 550,
+     "files": 552,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -105360,7 +105450,7 @@
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 5,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -105549,7 +105639,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -105733,7 +105823,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1217,
+   "source_files": 1222,
    "test_files": 182
   },
   "oneiron-spawn": {
