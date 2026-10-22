@@ -111,7 +111,8 @@ fn terminal_write(
             seed.generation.to_hex()
         ),
     };
-    let memory = vault.memory(seed.actor, seed.class()?);
+    // The opener's own proof, restored, reads every link below (FIX 1667).
+    let memory = super::super::reader::terminal_memory(vault, seed)?;
     // OF-063 prose links (Engine ruling 10-17): a continuation's appended
     // text is read for the links its AI writer cannot resolve, receipt-only,
     // before the writer opens, and receipted only once the finalize has
