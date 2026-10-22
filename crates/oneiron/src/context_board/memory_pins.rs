@@ -30,12 +30,26 @@ impl MemoriesSection {
         let mut receipts = Vec::with_capacity(references.len());
         let mut pins = std::collections::BTreeSet::<String>::new();
         for reference in references {
-            let (short_id, hash) =
-                reference
-                    .rsplit_once(':')
-                    .ok_or(crate::Error::InvalidConfig(
+            let Some((short_id, hash)) = reference.rsplit_once(':') else {
+                // The bare short handle a MEMORIES head renders (FIX 9453):
+                // resolved through the vault's short-id mapping, then read by
+                // id under the same ceiling and clamp as a `short:hash` pin.
+                if crate::entity_id::parse_presentation_id(reference).is_err() {
+                    return Err(crate::Error::InvalidConfig(
                         "invalid memory pin reference".into(),
-                    ))?;
+                    ));
+                }
+                let (receipt, row) = match bare_handle_entity(reader, reference)? {
+                    Some(id) => pinned_row(reader, PointRead::id(id), None, disclosure)?,
+                    None => (reader.read_receipt(None, 0)?, None),
+                };
+                receipts.push(receipt);
+                if let Some(row) = row.filter(|row| pins.insert(row.id.clone())) {
+                    self.rows.retain(|old| old.id != row.id);
+                    self.rows.push(row);
+                }
+                continue;
+            };
             if hash.len() != 2 {
                 return Err(crate::Error::InvalidConfig(
                     "invalid memory pin hash".into(),
@@ -93,6 +107,31 @@ impl MemoriesSection {
             self.disclosure.clone(),
         );
     }
+}
+
+/// The entity a bare short handle names now: the forward row its short id
+/// holds under whichever content hash the record carries, confirmed by the
+/// reverse mapping, as a secret handle resolves. `None` when no current
+/// mapping names it. Resolution maps a name to an id; admission is the read.
+fn bare_handle_entity(reader: &ScopedRead<'_>, short_id: &str) -> Result<Option<crate::EntityId>> {
+    let store = &reader.vault().store;
+    let txn = store.env.read_txn()?;
+    for row in store.short_ids.prefix_iter(&txn, short_id.as_bytes())? {
+        let (key, value) = row?;
+        if key.len() != short_id.len() + 1 {
+            continue;
+        }
+        let bytes = <[u8; 16]>::try_from(&*value)
+            .map_err(|_| crate::Error::CorruptedIndex("short id entity id"))?;
+        let id = crate::EntityId::from_bytes(bytes)?;
+        if store
+            .port_short_id_reference(&txn, &id)?
+            .is_some_and(|(current, _)| current == short_id)
+        {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
 }
 
 /// One pin's PINNED row, read under `reader`'s ceiling and `disclosure`'s
