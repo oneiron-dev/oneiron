@@ -83,6 +83,7 @@ fn fixture() -> (tempfile::TempDir, Vault, LlmRequest) {
         tools: vec![],
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     (dir, vault, request)
 }

@@ -8,7 +8,8 @@
 use super::ParsedCandidate;
 use super::quote_binding::{QuoteBinding, bind_quote};
 use crate::dreamer_consolidation::call_labels::{
-    CallLabel, CallLabelMap, CallSources, LabelKind, SourceShown, SubjectLabel, new_person,
+    CallLabel, CallLabelMap, CallSources, CandidateRel, LabelKind, SourceShown, SubjectLabel,
+    new_person,
 };
 use crate::dreamer_consolidation::evidence::EvidenceLocator;
 use crate::dreamer_consolidation::extracted_people::PersonBindings;
@@ -213,7 +214,8 @@ fn prospective_queries(candidate: &serde_json::Value) -> Result<Vec<String>> {
     crate::claim::normalize_lexical_query_hints(&hints)
 }
 
-/// A 32-hex id. Only a candidate's unadvertised `rel` still reads one.
+/// A 32-hex id. Only a candidate's `rel` that names no listed relationship
+/// label still reads one (FIX 7575).
 pub(super) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
     let hex = hex.trim();
     if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -452,7 +454,10 @@ pub(in crate::dreamer_consolidation) fn read_candidate<'s>(
         predicate,
         value,
         confidence,
-        rel: item.get("rel").filter(|value| !value.is_null()).cloned(),
+        rel: item
+            .get("rel")
+            .filter(|value| !value.is_null())
+            .map(|value| CandidateRel::read(value, ctx.call.labels)),
         topic: item
             .get("topic_key")
             .filter(|value| !value.is_null())

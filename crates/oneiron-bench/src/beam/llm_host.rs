@@ -318,6 +318,7 @@ impl ModelSession {
                 ),
             ]),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         self.pins
             .admit(&request)
