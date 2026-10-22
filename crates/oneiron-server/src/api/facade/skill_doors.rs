@@ -13,7 +13,7 @@ use oneiron::{
 };
 use serde::Deserialize;
 
-use super::host_doors::{Listed, credential_listing, owner_proof, refused};
+use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use super::hub_doors::owner_call;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

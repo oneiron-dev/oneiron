@@ -7,7 +7,7 @@ use oneiron::policy_manifest_doors::{
 };
 use oneiron::task_verb::sdk::EmptyRequest;
 
-use super::host_doors::{Listed, off_runtime_listing, owner_proof, refused};
+use super::host_doors::support::{Listed, off_runtime_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

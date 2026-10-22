@@ -32,7 +32,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::LiveRunRequest;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use super::live_run_doors::hold_live_run;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

@@ -39,8 +39,12 @@ use crate::{EntityId, TimeRange, Vault};
 
 mod files;
 pub(crate) mod projected;
+mod projected_clearance;
+mod projected_decide;
 pub(crate) mod projected_files;
+mod projected_join;
 pub(crate) mod projected_source;
+mod projected_tree;
 mod reads;
 use files::prepare_push_candidate_documents;
 
@@ -139,6 +143,11 @@ fn candidate_digest(candidate: &CodePushCandidate) -> Result<[u8; 32]> {
     hasher.update(b"oneiron:push-candidate-digest:v1");
     hasher.update(&candidate.source_digest);
     hasher.update(&resolved);
+    // A masked copy's candidate binds its immutable projection pins, never
+    // its changing clearance (FIX 7608 2b-ii-B2).
+    if let Some(pins) = &candidate.projected {
+        hasher.update(&pins.digest());
+    }
     Ok(*hasher.finalize().as_bytes())
 }
 
@@ -169,6 +178,10 @@ impl Vault {
                 });
             }
         }
+        drop(txn);
+        // Pushes received into a masked copy's private ingress for this
+        // store join its intake (FIX 7608 2b-ii-B2).
+        pending.extend(self.pending_projected_candidates(store)?);
         Ok(pending)
     }
 
@@ -213,13 +226,26 @@ impl Vault {
         let Some(row) = row else {
             return Ok(false);
         };
-        if row.source.object_store != repo.identity().as_hex()
-            || row
-                .candidate
-                .as_ref()
-                .is_some_and(|candidate| candidate.resolved.is_some())
+        // A row received into a masked copy's private ingress for this
+        // store is matched through its projection join (FIX 7608 2b-ii-B2).
+        let projected = if row.source.object_store == repo.identity().as_hex() {
+            None
+        } else {
+            match self.projected_row_source(&row, source.provenance, repo)? {
+                Some(projected) => Some(projected),
+                None => return Ok(false),
+            }
+        };
+        if row
+            .candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.resolved.is_some())
         {
-            return Ok(false);
+            // A resolution is frozen; only a projected hold is refreshed.
+            return match projected {
+                Some(_) => self.refresh_projected_candidate_hold_of(&key, source.provenance),
+                None => Ok(false),
+            };
         }
         let id = push_candidate_id(
             &row.source.object_store,
@@ -227,6 +253,19 @@ impl Vault {
             &row.source.ref_name,
         )?;
         let digest = source_digest(&row, source.provenance);
+        if let Some(projected) = &projected {
+            return self.match_projected_candidate(
+                wire,
+                repo,
+                queue,
+                &key,
+                source.provenance,
+                &row,
+                id,
+                digest,
+                projected,
+            );
+        }
         let decided =
             self.decide_push_candidate(wire, repo, queue, source.provenance, &row, id, digest)?;
         let Some(decided) = decided else {
@@ -624,6 +663,9 @@ impl Vault {
             }
         }
         crate::code_revision::attach_code_revision_fork_in_txn(&self.store, wtxn, fork)?;
+        // A masked copy's translation is recorded and its source proved in
+        // this same writer (FIX 7608 2b-ii-B2).
+        self.record_projected_attachment_in_txn(wtxn, key.provenance, &prepared.candidate)?;
         // The attachment first: the bundle's own writer proves its source
         // from it, in this same transaction.
         current.candidate = Some(prepared.candidate.clone());

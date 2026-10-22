@@ -18,6 +18,9 @@
 //! A world delete retires nothing. A restore plans each pad its image names
 //! through the restore's one plan ([`plan_world_pad`], FIX 5686 part 2).
 
+#[cfg(feature = "sync")]
+mod current;
+
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
