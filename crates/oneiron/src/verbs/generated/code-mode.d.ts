@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4186 declarations.
+// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4187 declarations.
 // Replies: 1085 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
@@ -219,7 +219,8 @@ declare namespace Sdk {
   type ShapeItemClass = "receipted" | "widening" | "authority";
   type ShapePlanItem = { seq: number; target: ShapeTarget; change: ShapeChange; class: ShapeItemClass; before?: ShapeRow | null; after?: ShapeRow | null; door?: string | null };
   type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
-  type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState };
+  type ShapeApprovalDependencies = { digest: string };
+  type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState; approval?: ShapeApprovalDependencies | null };
   type ShapeApplyRun = { run_id: string; root: string; items: string[] };
   type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean; run: ShapeApplyRun };
   type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
@@ -4639,7 +4640,7 @@ declare namespace self {
     members(input: Sdk.SavedQueryMembersRequest): Promise<Sdk.SavedQueryMembershipPageView | StoredResult>;
     /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
     read(input: Sdk.SavedQueryReadRequest): Promise<Sdk.SavedQueryReadResult | StoredResult>;
-    /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+    /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it. */
     update(input: Sdk.SavedQueryUpdateRequest): Promise<Sdk.SavedQueryRecordView | StoredResult>;
   };
   const secrets: {
@@ -6318,7 +6319,7 @@ declare const vault: Sdk.VaultHost & {
       };
     };
     relay: {
-      /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
+      /** Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer. */
       decide(input: Sdk.PolicyOutboundRequest): Promise<Sdk.HostedRelayDecision | StoredResult>;
     };
   };
@@ -6777,11 +6778,11 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   shape: {
-    /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+    /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan. */
     apply(input: Sdk.ShapeApplyRequest): Promise<Sdk.ShapeApplyReceipt | StoredResult>;
-    /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+    /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing. */
     plan(input: Sdk.ShapePlanRequest): Promise<Sdk.ShapePlan | StoredResult>;
-    /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+    /** The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read. */
     read(input: Sdk.EmptyRequest): Promise<Sdk.ShapeRead | StoredResult>;
   };
   shared: {

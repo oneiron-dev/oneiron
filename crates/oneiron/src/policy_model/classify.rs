@@ -21,6 +21,7 @@ use crate::llm::{BudgetGuard, BudgetLease, LlmBackend, LlmRequest};
 use crate::store::GateSystemNoticeRecord;
 
 use super::binding::{PolicyContentBinding, content_binding};
+use super::clock::PolicyCallClock;
 use super::contract::PolicyOutputContract;
 use super::decide::{SafeguardModel, safeguard_verdict};
 use super::notice::{policy_model_rationale_notice, policy_notice};
@@ -147,6 +148,7 @@ impl Vault {
                 binding,
                 config,
                 pass_audit(&evaluation),
+                &PolicyCallClock::start(),
             );
         }
         Ok(owner_pattern_only_verdict(
@@ -173,8 +175,9 @@ impl Vault {
         backend: &dyn LlmBackend,
         lease: &BudgetLease,
     ) -> Result<PolicyClassifyVerdict> {
+        let clock = PolicyCallClock::start();
         let pass = self
-            .owner_plane_pass_pinned(&request, config, Some((backend, lease)))
+            .owner_plane_pass_pinned(&request, config, Some((backend, lease)), &clock)
             .await?;
         self.record_bare_classify_receipt(&request, &pass.verdict, config)
     }
@@ -285,28 +288,44 @@ impl Vault {
     /// a manifest that moved in that window answers a policy no longer in
     /// force, so it is derived again, ONCE; a manifest still moving after
     /// that yields [`PolicySkipReason::PolicyMoving`] bound to the frontier in
-    /// force now, never the old policy's answer.
+    /// force now, never the old policy's answer. Every derivation spends the
+    /// caller's one `clock` (FIX 10034).
     pub(super) async fn owner_plane_pass_pinned(
         &self,
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
         safeguard: Option<(&dyn LlmBackend, &BudgetLease)>,
+        clock: &PolicyCallClock,
     ) -> Result<OwnerPlanePass> {
         for _ in 0..2 {
-            let pass = self.owner_plane_pass(request, config, safeguard).await?;
+            let pass = self
+                .owner_plane_pass(request, config, safeguard, clock)
+                .await?;
             if !self.policy_model_verdict_is_stale_with_config(&pass.verdict, request, config)? {
                 return Ok(pass);
             }
         }
-        let binding = self.policy_model_context(request, config)?.binding;
         Ok(OwnerPlanePass {
-            verdict: PolicyClassifyVerdict::skipped(
-                PolicySkipReason::PolicyMoving,
-                binding,
-                config,
-                PolicyPlane::OwnerPolicy,
-            ),
+            verdict: self.policy_moving_verdict(request, config)?,
         })
+    }
+
+    /// The owner plane's typed fail-open for a policy still moving after its
+    /// retry: [`PolicySkipReason::PolicyMoving`], bound to the frontier in
+    /// force now. A pure read: it writes no row, so the traceless chat turn
+    /// uses it too (FIX 10033).
+    fn policy_moving_verdict(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyClassifyVerdict> {
+        let binding = self.policy_model_context(request, config)?.binding;
+        Ok(PolicyClassifyVerdict::skipped(
+            PolicySkipReason::PolicyMoving,
+            binding,
+            config,
+            PolicyPlane::OwnerPolicy,
+        ))
     }
 
     /// The owner plane's full pass, model included. Shared by the classify
@@ -317,11 +336,13 @@ impl Vault {
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
         safeguard: Option<(&dyn LlmBackend, &BudgetLease)>,
+        clock: &PolicyCallClock,
     ) -> Result<OwnerPlanePass> {
         self.owner_plane_pass_with_safeguard(
             request,
             config,
             safeguard.map(|(backend, lease)| SafeguardModel::Leased { backend, lease }),
+            clock,
         )
         .await
     }
@@ -334,11 +355,13 @@ impl Vault {
         config: &PolicyModelConfig,
         backend: &dyn LlmBackend,
         budget: &BudgetGuard,
+        clock: &PolicyCallClock,
     ) -> Result<OwnerPlanePass> {
         self.owner_plane_pass_with_safeguard(
             request,
             config,
             Some(SafeguardModel::Budgeted { backend, budget }),
+            clock,
         )
         .await
     }
@@ -348,6 +371,7 @@ impl Vault {
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
         safeguard: Option<SafeguardModel<'_>>,
+        clock: &PolicyCallClock,
     ) -> Result<OwnerPlanePass> {
         let context = self.policy_model_context(request, config)?;
         let binding = context.binding;
@@ -401,6 +425,7 @@ impl Vault {
                     binding,
                     config,
                     audit,
+                    clock,
                 )?,
             });
         }
@@ -419,6 +444,7 @@ impl Vault {
             binding,
             config,
             audit,
+            clock,
         )
         .await?;
         // The guard refused the pass: `host.budget.hit` on its line.
@@ -494,7 +520,11 @@ impl Vault {
 /// Evaluate the owner policy for a traceless chat turn. Only the policy manifest
 /// is read. In particular, the ordinary classify/enforce doors are NOT used:
 /// they append durable gate receipts even when a turn is withheld.
-/// A moving policy is retried once, then refused without releasing content.
+/// Both derivations spend one clock (FIX 10034). A policy still moving after
+/// the retry is the sovereign plane's typed fail-open,
+/// [`PolicySkipReason::PolicyMoving`] bound to the policy in force now, which
+/// the chat's skipped-check channel carries; nothing durable is written, and
+/// an ordinary Hold or Block is never turned into an Allow (FIX 10033).
 pub(crate) async fn stateless_owner_classification(
     vault: &Vault,
     content: &str,
@@ -503,9 +533,10 @@ pub(crate) async fn stateless_owner_classification(
     budget: &BudgetGuard,
 ) -> Result<(PolicyClassifyDecision, Vec<GateSystemNoticeRecord>)> {
     let request = PolicyClassifyRequest::outbound_content(content);
+    let clock = PolicyCallClock::start();
     for _ in 0..2 {
         let pass = vault
-            .owner_plane_pass_with_budget(&request, config, backend, budget)
+            .owner_plane_pass_with_budget(&request, config, backend, budget, &clock)
             .await?;
         #[cfg(test)]
         super::in_force::before_settling(super::in_force::SettlingDoor::AnonymousChat);
@@ -524,9 +555,11 @@ pub(crate) async fn stateless_owner_classification(
             return Ok((verdict.decision, notices));
         }
     }
-    Err(Error::ConcurrentWrite(
-        "anonymous chat policy changed during classification",
-    ))
+    let moving = vault.policy_moving_verdict(&request, config)?;
+    let notices = policy_notice(moving.decision, &moving.category, None, config)
+        .into_iter()
+        .collect();
+    Ok((moving.decision, notices))
 }
 
 /// What the owner plane concluded. A pass whose model did not get to speak

@@ -59,12 +59,14 @@ mod evidence;
 mod filter;
 mod lifecycle;
 mod membership;
+mod memo_lifetime;
 mod memory_watch;
 mod pack_drift;
 mod receipts;
 mod storage;
 mod support;
 mod sweep;
+mod value_fingerprint;
 
 /// Private-encoding unit tests: memo-key canonicalization, malformed-row
 /// rejection, and the pure predicates the evaluator composes. Public
@@ -105,6 +107,7 @@ pub use self::pack_drift::{
     PackDrift, PackDriftRepair, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,
     pack_drift_repairs, put_pack_migration_map, repair_pack_drift,
 };
+pub(crate) use self::memo_lifetime::{erase_memos_for_source_in_txn, memo_carriage, memo_owners};
 pub(crate) use self::pack_drift::{PackMove, repair_saved_queries_after_pack_move_in_txn};
 pub use self::receipts::{
     SavedQueryEvaluation, SavedQueryGenerationReceipt, SavedQueryJudgeReceipt,

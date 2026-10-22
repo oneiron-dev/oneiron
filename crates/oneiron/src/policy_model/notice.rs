@@ -7,11 +7,14 @@
 //!
 //! [`policy_model_rationale_notice`] is not a notice to a reader. It is an
 //! AUDIT row addressed to the substrate owner reading their own receipts,
-//! carrying the safeguard model's stated reason so the policy that produced it
-//! can be improved. It rides the same ledger vector because that vector is what
-//! a gate receipt persists, and it names its own audience so a host rendering
-//! notices to a person can filter it out. It is appended LAST, so it can never
-//! become the single body a caller surfaces.
+//! recording that the safeguard model stated a reason, by typed reference and
+//! a digest of that reason, never its text (FIX 10035): a model's reason can
+//! quote the candidate, and a durable receipt keeps no candidate plaintext.
+//! The reason itself stays on the verdict the caller holds. It rides the same
+//! ledger vector because that vector is what a gate receipt persists, and it
+//! names its own audience so a host rendering notices to a person can filter
+//! it out. It is appended LAST, so it can never become the single body a
+//! caller surfaces.
 
 use crate::store::{
     GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN, GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN,
@@ -231,12 +234,14 @@ fn hosted_notice(
     }
 }
 
-/// The audit row carrying the safeguard model's own stated reason, or `None`
+/// The audit row recording the safeguard model's stated reason, or `None`
 /// when the pass obtained no rationale (the model was not called, or the
 /// declared output contract does not carry one).
 ///
-/// The body is the model's words, bounded and otherwise untouched — the engine
-/// neither summarizes nor rewrites what it recorded.
+/// The body is content-free (FIX 10035): the decision as its ledger token and
+/// [`policy_rationale_digest`] of the reason, with the verdict's row in
+/// `row_ref`. The words themselves stay on the verdict the caller was handed,
+/// never in a durable receipt, ordinary or relay alike.
 ///
 /// `pass_plane` is the plane the CALL ran under, and every call site knows it
 /// statically. It is passed rather than derived because a verdict's category
@@ -258,13 +263,21 @@ pub(super) fn policy_model_rationale_notice(
     // The verdict's own attribution wins where it has one; the calling plane
     // is what answers for a verdict that names none.
     let plane = verdict.plane().unwrap_or(pass_plane);
+    let body = serde_json::json!({
+        "decision": verdict.decision.ledger_str(),
+        "policy_rationale_digest": policy_rationale_digest(rationale),
+    });
     Some(GateSystemNoticeRecord {
         notice_type: SYSTEM_NOTICE_TYPE_MODEL_RATIONALE.to_owned(),
         channel: SYSTEM_NOTICE_CHANNEL_AUDIT.to_owned(),
         voice: SYSTEM_NOTICE_VOICE_SYSTEM.to_owned(),
         audience: SYSTEM_NOTICE_AUDIENCE_AUDIT.to_owned(),
-        body: bounded_notice_body(rationale),
-        row_ref: None,
+        body: bounded_notice_body(&body.to_string()),
+        row_ref: match &verdict.category {
+            PolicyVerdictCategory::None => None,
+            PolicyVerdictCategory::OwnerPolicy { row_ref }
+            | PolicyVerdictCategory::HostedLegal { row_ref, .. } => safe_notice_row_ref(row_ref),
+        },
         setting_change_offer: None,
         policy_plane: Some(plane.as_str().to_owned()),
         policy_version: match plane {
@@ -277,7 +290,22 @@ pub(super) fn policy_model_rationale_notice(
     })
 }
 
-/// Complete typed receipts on the audit channel. A long JSON receipt spans
+/// The content hash a durable receipt keeps of a model's stated reason, in
+/// place of its words (FIX 10035): BLAKE3 under its own derivation domain, as
+/// hex. It tells two reasons apart and pins the one the caller was handed; it
+/// carries none of the text.
+pub(super) fn policy_rationale_digest(rationale: &str) -> String {
+    blake3::Hasher::new_derive_key("oneiron/policy-rationale-digest/v1")
+        .update(rationale.as_bytes())
+        .finalize()
+        .to_hex()
+        .to_string()
+}
+
+/// Complete typed receipts on the audit channel: typed pins, answers,
+/// probabilities, stop causes and evidence references, never candidate or
+/// policy text, so they are content-free as they stand (FIX 10035). A long
+/// JSON receipt spans
 /// consecutive notices, keyed by `question_hex/part` in `row_ref`; joining the
 /// bodies in part order recovers the original JSON without truncation.
 pub(super) fn policy_decision_receipt_notices(

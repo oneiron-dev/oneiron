@@ -3,7 +3,7 @@
 //! policy frontier come from one snapshot; the pack catalog verifies its own.
 use super::reach::{ReachActor, ReachRows, ReachSender};
 use super::seed::hex;
-use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, invalid};
+use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::decode_agent_definition;
 use crate::channel_identity::{
     ChannelIdentityState, channel_identity_fact_head_ids_in_txn,
@@ -90,6 +90,10 @@ pub(super) struct LiveShape {
     /// The rows the reach line joins, read on the same snapshot and before
     /// any visibility filter: the join runs over the whole set.
     pub(super) reach: ReachRows,
+    /// The names `visible` hid every entity of (FIX 10199): a seed row or
+    /// journal item about one is withheld from this caller, never planned
+    /// as missing structure to create.
+    pub(super) withheld: BTreeSet<ShapeTarget>,
 }
 
 /// A WORLD body's name: its `label` leaf, else its `name` leaf.
@@ -398,21 +402,29 @@ impl Vault {
             ));
         }
         let mut kept = Vec::with_capacity(rows.len());
+        let mut withheld = BTreeSet::new();
         for (row, entity) in rows {
             if entity.map_or(Ok(true), |id| visible(&id))? {
                 if let Some(id) = entity {
                     sources.list(id);
                 }
                 kept.push((row, entity));
+            } else {
+                withheld.insert(row.target());
             }
         }
         // One row per name, in a stable order: the first entity by id wins.
         kept.sort_by(|(a, x), (b, y)| a.target().cmp(&b.target()).then(x.cmp(y)));
         kept.dedup_by(|(a, _), (b, _)| a.target() == b.target());
+        // A name a visible row carries is the caller's to read.
+        for (row, _) in &kept {
+            withheld.remove(&row.target());
+        }
         Ok(LiveShape {
             rows: kept,
             policy_frontier,
             reach,
+            withheld,
         })
     }
 }

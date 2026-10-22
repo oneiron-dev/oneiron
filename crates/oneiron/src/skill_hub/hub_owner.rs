@@ -31,6 +31,53 @@ impl MarketplaceFitEvaluator for OwnerAskedSkillFit {
     }
 }
 
+/// Refuses a fetched skill that is not the one a caller named: its declared
+/// id, and its version when one was asked for (FIX 10202). It runs on the
+/// fetched package, before any skill write.
+pub(super) fn check_expected_skill(
+    record: &crate::skill::SkillRecord,
+    skill_id: &str,
+    version: Option<&str>,
+) -> Result<()> {
+    if record.skill_id != skill_id || version.is_some_and(|version| version != record.version) {
+        return Err(crate::error::Error::InvalidConfig(format!(
+            "the source carries {} version {}, not the requested skill; nothing was written",
+            record.skill_id, record.version
+        )));
+    }
+    Ok(())
+}
+
+/// One package already fetched, handed to an import door as its adapter's
+/// fetch: the door commits the bytes the identity check read, and never
+/// fetches again (FIX 10202).
+struct PrefetchedPackage<'a, A> {
+    adapter: &'a A,
+    source: &'a HubRef,
+    package: HubPackage,
+}
+
+impl<A: SkillHubAdapter> SkillHubAdapter for PrefetchedPackage<'_, A> {
+    fn hub_id(&self) -> EntityId {
+        self.adapter.hub_id()
+    }
+
+    fn kind(&self) -> super::SkillHubKind {
+        self.adapter.kind()
+    }
+
+    fn endpoint(&self) -> Option<&str> {
+        self.adapter.endpoint()
+    }
+
+    fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage> {
+        if hub_ref != self.source {
+            return Err(invalid("a checked import fetches only the ref it checked"));
+        }
+        Ok(self.package.clone())
+    }
+}
+
 impl Vault {
     /// Owner door: import the skill at `folder` of a configured hub, at a
     /// pin. The named publisher is admitted for this hub first. The skill
@@ -61,6 +108,69 @@ impl Vault {
             ),
             RefFetch::Http(adapter, _) => self.import_marketplace_skill_with_query(
                 &adapter,
+                &source,
+                &publisher,
+                &OwnerAskedSkillFit,
+                osv,
+                occurred,
+                at,
+            ),
+        }
+    }
+
+    /// [`Self::import_skill_from_hub_ref`] for a caller that names the skill
+    /// it asked for (FIX 10202): the package is fetched once, its declared id
+    /// and the requested version are checked before the publisher is
+    /// admitted or a candidate is born, and the import commits that same
+    /// package. A mismatch writes nothing.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the owner door's inputs plus the skill identity the caller asked for"
+    )]
+    pub(crate) fn import_skill_from_hub_ref_expecting(
+        &self,
+        owner: &AuthenticatedOwner,
+        hub: EntityId,
+        folder: &str,
+        pin: HubPin,
+        publisher: &str,
+        skill_id: &str,
+        version: Option<&str>,
+    ) -> Result<EntityId> {
+        let source = HubRef::new(hub, folder, pin)?;
+        let fetch = self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)?;
+        let package = match &fetch {
+            RefFetch::Git(adapter, _) => adapter.fetch_package(&source)?,
+            RefFetch::Http(adapter, _) => adapter.fetch_package(&source)?,
+        };
+        // The door reads the record from the package's files, so the check
+        // does too.
+        let parsed = super::folder::package_from_files(package.files.clone())?;
+        check_expected_skill(&parsed.record, skill_id, version)?;
+        let publisher = self.admit_skill_publisher(owner, publisher, hub)?;
+        let at = self.now_recorded_at();
+        let occurred = TimeRange { start: at, end: at };
+        let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
+        match &fetch {
+            RefFetch::Git(adapter, _) => self.import_marketplace_skill_with_query(
+                &PrefetchedPackage {
+                    adapter,
+                    source: &source,
+                    package,
+                },
+                &source,
+                &publisher,
+                &OwnerAskedSkillFit,
+                osv,
+                occurred,
+                at,
+            ),
+            RefFetch::Http(adapter, _) => self.import_marketplace_skill_with_query(
+                &PrefetchedPackage {
+                    adapter,
+                    source: &source,
+                    package,
+                },
                 &source,
                 &publisher,
                 &OwnerAskedSkillFit,
@@ -121,6 +231,61 @@ impl Vault {
                 (package, revision)
             }
         };
+        self.mark_hub_ref(&tracked, &revision, false)?;
+        let at = self.now_recorded_at();
+        let disposition = self.sync_skill_from_hub(
+            entity,
+            &tracked.hub_ref,
+            &package,
+            tracked.sync_policy,
+            TimeRange { start: at, end: at },
+            at,
+        )?;
+        if disposition == HubSyncDisposition::Applied {
+            self.mark_hub_ref(&tracked, &revision, true)?;
+        }
+        Ok(disposition)
+    }
+
+    /// [`Self::sync_skill_from_hub_ref`] for a caller that names the version
+    /// it asked for (FIX 10202): the refetched package's id and version are
+    /// checked before the ref is marked seen or the skill moves, and the
+    /// sync applies that same package. A mismatch writes nothing.
+    pub(crate) fn sync_skill_from_hub_ref_expecting(
+        &self,
+        owner: &AuthenticatedOwner,
+        entity: &EntityId,
+        version: &str,
+    ) -> Result<HubSyncDisposition> {
+        self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
+        let source = self
+            .skill_hub_sources(entity)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| invalid("the skill has no hub source"))?;
+        let tracked = match self.hub_ref_sync(&source.hub_id, &source.ref_string)? {
+            Some(tracked) => tracked,
+            None => pinned_tracking(source.clone())?,
+        };
+        let fallback = match &source.pin {
+            HubPin::Commit(commit) => Some(commit.as_str()),
+            _ => None,
+        };
+        let (package, revision) = match self.hub_ref_fetch(&tracked, fallback)? {
+            RefFetch::Git(adapter, _) => (
+                adapter.fetch_package(&tracked.hub_ref)?,
+                adapter.resolved_commit().to_owned(),
+            ),
+            RefFetch::Http(adapter, _) => {
+                let package = adapter.fetch_package(&tracked.hub_ref)?;
+                let revision = package.content_hash()?.to_hex();
+                (package, revision)
+            }
+        };
+        let current = self
+            .get_skill_record(entity)?
+            .ok_or_else(|| invalid("the skill has no record"))?;
+        check_expected_skill(&package.record, &current.skill_id, Some(version))?;
         self.mark_hub_ref(&tracked, &revision, false)?;
         let at = self.now_recorded_at();
         let disposition = self.sync_skill_from_hub(

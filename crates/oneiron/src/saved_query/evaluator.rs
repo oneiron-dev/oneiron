@@ -34,6 +34,11 @@ use super::support::{
     EVALUATOR_VERSION, canonical_json_bytes, cosine_similarity_micros, edge_kind_from_name,
     hex_lower, invalid, rmpv_to_json, vector_pair_fingerprint,
 };
+use super::value_fingerprint::{ClaimValueFingerprint, canonical_msgpack_value_bytes};
+
+/// The relevant claim values, their lossless fingerprints, whether one is
+/// held, and the claim rows they were read from.
+type ClaimEvidence = (Vec<(String, Value)>, Vec<ClaimValueFingerprint>, bool, Vec<EntityId>);
 
 /// The LLM dependency of a rubric-driven judge.
 ///
@@ -224,10 +229,11 @@ impl SavedQueryEvaluator<'_> {
             definition_version: definition.definition_version,
             verdict: decision.verdict,
             why: decision.why.clone(),
+            source_refs: collected.sources.clone(),
             envelope: derivation_envelope(&evidence_hash, &definition.matcher)?,
             evaluated_at: request.detected_at,
         };
-        put_evaluated_memo(self, request, &memo)?;
+        let kept = put_evaluated_memo(self, request, &memo)?;
         Ok(StagedOutcome {
             outcome: EvaluationOutcome {
                 decision,
@@ -235,7 +241,7 @@ impl SavedQueryEvaluator<'_> {
                 memo_hit: false,
             },
             judge,
-            memo: Some(memo),
+            memo: kept.then_some(memo),
         })
     }
 
@@ -265,6 +271,7 @@ impl SavedQueryEvaluator<'_> {
             let evidence = RelevantEvidence {
                 entity_ref: request.entity_ref,
                 claim_values: Vec::new(),
+                claim_value_fingerprints: Vec::new(),
                 edge_targets: Vec::new(),
                 semantic_inputs: Vec::new(),
                 scope_membership,
@@ -319,6 +326,7 @@ impl SavedQueryEvaluator<'_> {
         let evidence = RelevantEvidence {
             entity_ref: request.entity_ref,
             claim_values: Vec::new(),
+            claim_value_fingerprints: Vec::new(),
             edge_targets: Vec::new(),
             semantic_inputs: Vec::new(),
             scope_membership: QueryScope::default(),
@@ -459,7 +467,7 @@ impl SavedQueryEvaluator<'_> {
     ) -> Result<CollectedEvidence> {
         let deps = filter_dependencies(&definition.filter, &definition.matcher);
         let mut hidden = HiddenDependencies::default();
-        let (claim_values, held, claim_rows) = self.relevant_claim_values(
+        let (claim_values, claim_value_fingerprints, held, claim_rows) = self.relevant_claim_values(
             lane,
             entity_ref,
             &deps.claim_predicates,
@@ -511,6 +519,7 @@ impl SavedQueryEvaluator<'_> {
             evidence: RelevantEvidence {
                 entity_ref,
                 claim_values,
+                claim_value_fingerprints,
                 edge_targets,
                 semantic_inputs,
                 scope_membership,
@@ -560,8 +569,9 @@ impl SavedQueryEvaluator<'_> {
         Ok(QueryScope { worlds, facets })
     }
 
-    /// The relevant values, whether a relevant claim is held, and the claim
-    /// rows the values are read from.
+    /// The relevant values, their lossless fingerprints taken from each
+    /// ORIGINAL accepted value before its projection (FIX 10090), whether a
+    /// relevant claim is held, and the claim rows the values are read from.
     ///
     /// The claims about the entity are listed and read through the owner's
     /// lane; a claim it withholds marks the claims hidden. Each body is
@@ -576,9 +586,9 @@ impl SavedQueryEvaluator<'_> {
         definition: &SavedQueryDefinition,
         valid_at: u64,
         hidden: &mut HiddenDependencies,
-    ) -> Result<(Vec<(String, Value)>, bool, Vec<EntityId>)> {
+    ) -> Result<ClaimEvidence> {
         if predicates.is_empty() {
-            return Ok((Vec::new(), false, Vec::new()));
+            return Ok((Vec::new(), Vec::new(), false, Vec::new()));
         }
         let listed = lane.neighborhood_projected(
             &entity_ref,
@@ -596,7 +606,7 @@ impl SavedQueryEvaluator<'_> {
         )?;
         let Some(claim_refs) = listed.value else {
             hidden.claims = true;
-            return Ok((Vec::new(), false, Vec::new()));
+            return Ok((Vec::new(), Vec::new(), false, Vec::new()));
         };
         if listed.receipt.suppressed_count > 0 {
             hidden.claims = true;
@@ -610,8 +620,9 @@ impl SavedQueryEvaluator<'_> {
                 withheld.set(true);
                 Ok::<_, Error>(false)
             },
-            |txn, rows| -> Result<(Vec<(String, Value)>, bool, Vec<EntityId>)> {
+            |txn, rows| -> Result<ClaimEvidence> {
                 let mut values = Vec::new();
+                let mut fingerprints = Vec::new();
                 let mut held = false;
                 let mut sources = Vec::new();
                 for row in rows.into_iter().flatten() {
@@ -638,22 +649,25 @@ impl SavedQueryEvaluator<'_> {
                         held = true;
                         continue;
                     }
+                    let lossless = canonical_msgpack_value_bytes(&body.value);
+                    fingerprints.push((body.predicate.clone(), lossless));
                     values.push((body.predicate, rmpv_to_json(&body.value)));
                     sources.push(row.id);
                 }
-                Ok((values, held, sources))
+                Ok((values, fingerprints, held, sources))
             },
         )?;
         if withheld.get() {
             hidden.claims = true;
         }
-        let (mut values, held, sources) = read.value;
+        let (mut values, mut fingerprints, held, sources) = read.value;
         // Claim discovery order is edge-index order; the hash must not depend
         // on it.
         values.sort_by(|left, right| {
             (&left.0, left.1.to_string()).cmp(&(&right.0, right.1.to_string()))
         });
-        Ok((values, held, sources))
+        fingerprints.sort_unstable();
+        Ok((values, fingerprints, held, sources))
     }
 
     /// The targets of the entity's relevant edges, each edge admitted with

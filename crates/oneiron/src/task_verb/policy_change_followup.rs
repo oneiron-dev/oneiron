@@ -70,6 +70,37 @@ pub(crate) fn enqueue_policy_change_digest_followup_in_txn(
     enqueue_followup_in_txn(vault, txn, sender, recipient, &id, spec, now)
 }
 
+/// The receipt-bound delivery path for a committed policy change (FIX 10031).
+/// `provenance` is the write-time author the caller read off the landed,
+/// immutable ledger receipts `receipts` name (`policy_model`'s
+/// notification receipt check), so a change still reaches a current
+/// recipient after its author lost policy power. It is the TASK's recorded
+/// author, never re-proved as a live policy holder; the follow-up's own task
+/// authorization (actor binding, Auto ceiling, rate window, validation and
+/// route) runs unchanged. `digest` binds every receipt in one
+/// recipient-owned TASK; a push names exactly one.
+pub(crate) fn enqueue_committed_policy_notice_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    provenance: EntityId,
+    recipient: EntityId,
+    receipts: &[String],
+    digest: bool,
+    now: u64,
+) -> Result<EntityId> {
+    match (digest, receipts) {
+        (true, _) => enqueue_policy_change_digest_followup_in_txn(
+            vault, txn, provenance, recipient, receipts, now,
+        ),
+        (false, [receipt]) => enqueue_policy_change_followup_in_txn(
+            vault, txn, provenance, recipient, receipt, now,
+        ),
+        (false, _) => Err(Error::InvalidConfig(
+            "a pushed policy notice names one receipt".into(),
+        )),
+    }
+}
+
 /// Mints a standard, human-assigned TASK and its local follow-up cursor inside
 /// the caller's policy-write transaction. No decision ASK, realization job or
 /// outbound send is created here. A repeated `(receipt_id, recipient)` returns

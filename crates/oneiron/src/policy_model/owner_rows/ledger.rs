@@ -158,7 +158,12 @@ pub(super) fn put_event_in_txn(
     EVENTS.put(&vault.store, txn, &event.receipt_id, &encode(event)?)
 }
 
-fn read_receipts_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<PolicyRowReceipt>> {
+/// Every landed ruling in ledger order: the immutable receipts a queued
+/// notice is delivered against (FIX 10031).
+pub(super) fn read_receipts_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<PolicyRowReceipt>> {
     let mut rows = Vec::new();
     for entry in vault.store.vault_meta.prefix_iter(txn, RECEIPT)? {
         let (_, value) = entry?;

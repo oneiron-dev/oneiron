@@ -648,7 +648,7 @@
     },
     {
       "name": "vault.shape.read",
-      "description": "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read.",
+      "description": "The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read.",
       "input": "EmptyRequest",
       "output": "crate::vault_shape::ShapeRead",
       "call": "memory.shape_read()?",
@@ -660,7 +660,7 @@
     },
     {
       "name": "vault.shape.plan",
-      "description": "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing.",
+      "description": "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing.",
       "input": "crate::vault_shape::ShapePlanRequest",
       "output": "crate::vault_shape::ShapePlan",
       "call": "memory.shape_plan(&input)?",
@@ -672,7 +672,7 @@
     },
     {
       "name": "vault.shape.apply",
-      "description": "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item.",
+      "description": "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan.",
       "input": "crate::vault_shape::ShapeApplyRequest",
       "output": "crate::vault_shape::ShapeApplyReceipt",
       "call": "memory.shape_apply(&input)?",
@@ -2883,7 +2883,7 @@
     },
     {
       "name": "self.saved_query.update",
-      "description": "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check.",
+      "description": "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it.",
       "input": "crate::campaign::surface::SavedQueryUpdateRequest",
       "output": "crate::campaign::surface::SavedQueryRecordView",
       "call": "memory.update_saved_query(&input)?",
@@ -7475,7 +7475,7 @@
     },
     {
       "name": "vault.policy.relay.decide",
-      "description": "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer.",
+      "description": "Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer.",
       "input": "crate::policy_model::doors::PolicyOutboundRequest",
       "output": "crate::policy_model::doors::HostedRelayDecision",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.policy.relay.decide\", &input)?",

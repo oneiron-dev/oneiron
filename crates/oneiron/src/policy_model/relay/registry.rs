@@ -12,7 +12,6 @@ use super::super::notice::HOSTED_NOTICE_TEMPLATE_MAX_FIXED_LEN;
 use super::super::pattern::{CompiledPatternRules, compile_pattern_rules};
 use super::super::planes::{
     HostedLegalPolicy, POLICY_DOCUMENT_MAX_LEN, POLICY_HOSTED_CATEGORY_MAX_LEN,
-    POLICY_HOSTED_ROWS_MAX,
 };
 use super::trust::{ConnectionClass, EDGE_SERVICE_IDENTITY_PREFIX};
 use crate::error::RelayError;
@@ -109,7 +108,9 @@ fn validate_hosted_legal_policy(
 /// `compile_pattern_rules` already holds this policy's rule ids to.
 ///
 /// Every one of these is refused at REGISTRATION, so a policy that cannot be
-/// enforced never reaches the relay to fail there.
+/// enforced never reaches the relay to fail there. How MANY rows a policy
+/// carries is never one of them (FIX 10036): every valid row is kept whole,
+/// and the checks below cost a lookup per row, not a pass over the others.
 fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()> {
     let invalid = |field: &'static str, reason: &'static str| {
         Err(Error::Relay(RelayError::RelayHostedLegalPolicyInvalid {
@@ -118,12 +119,6 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
             reason,
         }))
     };
-    if policy.rows.len() > POLICY_HOSTED_ROWS_MAX {
-        return invalid(
-            "rows",
-            "carries more rows than one hosted legal policy may hold",
-        );
-    }
     // A set, not a linear scan: the check ran once per row against every row
     // kept so far, so a wide policy cost the square of its own width at
     // registration.
@@ -192,7 +187,17 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
     // refs; it does not stop a host from writing the prefixed spelling as its
     // own hosted `row_ref`, which is the case being closed here. Registration
     // is where it is visible and fixable.
-    for row in &policy.rows {
+    //
+    // Each category spelling, bare and plane-qualified, names the rows that
+    // carry it, so the check is one lookup per row.
+    let mut spelled: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+    for (index, row) in policy.rows.iter().enumerate() {
+        let label = super::planes::hosted_category_label(&row.category);
+        for spelling in [row.category.clone(), label] {
+            spelled.entry(spelling).or_default().insert(index);
+        }
+    }
+    for (index, row) in policy.rows.iter().enumerate() {
         let ref_spelling = row.row_ref.trim();
         // ANOTHER row's category, never its own. A row whose ref and category
         // are the same word is not ambiguous at all — both spellings name that
@@ -200,14 +205,9 @@ fn validate_hosted_rows(service: &str, policy: &HostedLegalPolicy) -> Result<()>
         // was a regression in the first version of this check: it rejected the
         // most natural way to write a single-concern row, where the host has
         // no reason to invent a second name for it.
-        let collides = policy
-            .rows
-            .iter()
-            .filter(|other| !std::ptr::eq(*other, row))
-            .any(|other| {
-                other.category == ref_spelling
-                    || super::planes::hosted_category_label(&other.category) == ref_spelling
-            });
+        let collides = spelled
+            .get(ref_spelling)
+            .is_some_and(|rows| rows.iter().any(|other| *other != index));
         if collides {
             return invalid(
                 "row_ref",

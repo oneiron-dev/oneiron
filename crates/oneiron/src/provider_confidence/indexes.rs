@@ -10,6 +10,7 @@ use sha2::Sha256;
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, unit_interval_f32};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
@@ -101,7 +102,7 @@ pub(super) fn active_provider_prior_in_txn(
         .transpose()?
         .flatten()
         && let Some((claim_id, value)) =
-            newest_active_prior_for_actor_in_txn(vault, &*wtxn, &actor, &subject)?
+            newest_active_prior_for_actor_in_txn(vault, &*wtxn, &actor, &subject, provider)?
     {
         if cached_head != Some(claim_id) {
             PROVIDER_PRIOR_HEAD_INDEX.put(&vault.store, wtxn, &digest, &claim_id)?;
@@ -113,6 +114,7 @@ pub(super) fn active_provider_prior_in_txn(
     let ProviderActors {
         actors,
         shell_priors,
+        unresolved,
     } = provider_actors_for_key_in_txn(vault, &*wtxn, provider)?;
     if let Some(smallest) = actors.first() {
         PROVIDER_ACTOR_INDEX.put(&vault.store, wtxn, &digest, smallest)?;
@@ -138,6 +140,9 @@ pub(super) fn active_provider_prior_in_txn(
             PROVIDER_PRIOR_HEAD_INDEX.put(&vault.store, wtxn, &digest, &claim_id)?;
             Ok(Some(value))
         }
+        // Only unresolved split priors: never neutral, never guessed onto a
+        // head. This raises, as every split prior did before (FIX 10053).
+        None if !unresolved.is_empty() => Err(unresolved_by_split()),
         None => {
             if cached_head_present {
                 PROVIDER_PRIOR_HEAD_INDEX.delete(&vault.store, wtxn, &digest)?;
@@ -200,10 +205,80 @@ fn validated_prior_head_owner_in_txn(
     {
         return Ok(None);
     }
-    let ClaimSubject::Entity(actor) = body.subject else {
+    let ClaimSubject::Entity(subject) = body.subject else {
         return Ok(None);
     };
-    Ok(projected_prior_owner_in_txn(vault, rtxn, &actor, provider)?.map(|owner| (owner, actor)))
+    let owner = projected_prior_claim_owner_in_txn(vault, rtxn, head, &subject, provider)?;
+    Ok(match owner {
+        Some(PriorOwner::Head(owner)) => Some((owner, subject)),
+        // An unresolved split prior re-earns nothing; the scan carries it.
+        Some(PriorOwner::Unresolved) | None => None,
+    })
+}
+
+/// Where one prior CLAIM on a matching subject projects (FIX 10053).
+enum PriorOwner {
+    /// The active canonical head carrying the provider key.
+    Head(EntityId),
+    /// A split's explicit ambiguous residue, or a claim it assigned to a
+    /// head that is not an active actor carrying the key: unresolved. It is
+    /// never guessed onto a head and never read as neutral.
+    Unresolved,
+}
+
+/// The owner of the prior `claim` on `subject`, read without moving the
+/// claim or its edges (FIX 10053). An active subject owns its priors, and a
+/// merged shell's project to its one matching head, as
+/// [`projected_prior_owner_in_txn`] reads them. A split shell's prior
+/// projects to the head the split assigned THAT claim to (the read-only
+/// reassignment projection), followed to its canonical head; its original
+/// subject is kept.
+fn projected_prior_claim_owner_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+    subject: &EntityId,
+    provider: &str,
+) -> Result<Option<PriorOwner>> {
+    if !actor_provider_key_matches_in_txn(vault, rtxn, subject, provider)? {
+        return Ok(None);
+    }
+    if vault.entity_lifecycle_state_in_txn(rtxn, subject)? != EntityLifecycleState::Split {
+        let owner = projected_prior_owner_in_txn(vault, rtxn, subject, provider)?;
+        return Ok(owner.map(PriorOwner::Head));
+    }
+    if vault
+        .ambiguous_residue_claims_in_txn(rtxn, subject)?
+        .contains(claim)
+    {
+        return Ok(Some(PriorOwner::Unresolved));
+    }
+    let heads = crate::identity_topology::identity_topology_shell_peers_for_store_in_txn(
+        &vault.store,
+        rtxn,
+        subject,
+        EdgeKind::SplitInto,
+    )?;
+    for head in heads {
+        if !vault
+            .claims_assigned_to_in_txn(rtxn, &head)?
+            .contains(claim)
+        {
+            continue;
+        }
+        if let [canonical] = vault.resolve_entity_in_txn(rtxn, &head)?.as_slice()
+            && active_actor_provider_key_matches_in_txn(vault, rtxn, canonical, provider)?
+        {
+            return Ok(Some(PriorOwner::Head(*canonical)));
+        }
+        break;
+    }
+    Ok(Some(PriorOwner::Unresolved))
+}
+
+/// A split left a prior unresolved and nothing else resolves.
+fn unresolved_by_split() -> Error {
+    Error::InvalidClaimBody("provider confidence prior left unresolved by a split")
 }
 
 /// Projects a matching prior subject without moving its claim or its edges.
@@ -267,12 +342,17 @@ fn actor_provider_key_matches_in_txn(
 struct ProviderActors {
     actors: Vec<EntityId>,
     shell_priors: Vec<(u64, EntityId, f32)>,
+    /// Active priors a split left unresolved (FIX 10053), by CLAIM id: they
+    /// stay on their shell, count toward no head and are never neutral.
+    unresolved: Vec<EntityId>,
 }
 
 /// Every ACTIVE PERSON entity whose body carries exactly `provider_key ==
 /// provider`, sorted and deduplicated.
 ///
-/// Matching shells contribute priors only through an active matching head.
+/// Matching shells contribute priors only through an active matching head;
+/// a split shell's, prior by prior, through the head each was assigned to,
+/// and the ones it left unresolved are carried apart (FIX 10053).
 /// The full-scan truth source, run on a stale shortcut, a miss, or before a write.
 /// Malformed and unrelated bodies are IGNORED rather than fatal: the PERSON
 /// type index is shared with every other person in the vault, and one
@@ -301,22 +381,26 @@ fn provider_actors_for_key_in_txn(
     actors.sort_unstable();
     actors.dedup();
     let mut shell_priors = Vec::new();
+    let mut unresolved = Vec::new();
     for shell in shells {
-        let priors = active_priors_for_actor_in_txn(vault, rtxn, &shell)?;
-        if priors.is_empty() {
-            continue;
+        for prior in active_priors_for_actor_in_txn(vault, rtxn, &shell)? {
+            match projected_prior_claim_owner_in_txn(vault, rtxn, &prior.1, &shell, provider)? {
+                Some(PriorOwner::Head(head)) if actors.binary_search(&head).is_ok() => {
+                    shell_priors.push(prior);
+                }
+                Some(PriorOwner::Unresolved) => unresolved.push(prior.1),
+                _ => {
+                    return Err(Error::InvalidClaimBody(
+                        "provider confidence prior stranded by merge",
+                    ));
+                }
+            }
         }
-        let owner = projected_prior_owner_in_txn(vault, rtxn, &shell, provider)?;
-        if owner.is_none_or(|head| actors.binary_search(&head).is_err()) {
-            return Err(Error::InvalidClaimBody(
-                "provider confidence prior stranded by merge",
-            ));
-        }
-        shell_priors.extend(priors);
     }
     Ok(ProviderActors {
         actors,
         shell_priors,
+        unresolved,
     })
 }
 
@@ -361,16 +445,26 @@ fn active_priors_for_actor_in_txn(
 }
 
 /// The newest active prior on `actor` and the cached head's original subject
-/// by `(valid_from, claim_id)`. Other shells wait for the next stale/miss scan.
+/// by `(valid_from, claim_id)`, the subject's only where they project to
+/// `actor` (a split shell's are each their own assignment's, FIX 10053).
+/// Other shells wait for the next stale/miss scan.
 fn newest_active_prior_for_actor_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     actor: &EntityId,
     subject: &EntityId,
+    provider: &str,
 ) -> Result<Option<(EntityId, f32)>> {
     let mut priors = active_priors_for_actor_in_txn(vault, rtxn, actor)?;
     if subject != actor {
-        priors.extend(active_priors_for_actor_in_txn(vault, rtxn, subject)?);
+        for prior in active_priors_for_actor_in_txn(vault, rtxn, subject)? {
+            if let Some(PriorOwner::Head(owner)) =
+                projected_prior_claim_owner_in_txn(vault, rtxn, &prior.1, subject, provider)?
+                && owner == *actor
+            {
+                priors.push(prior);
+            }
+        }
     }
     Ok(priors
         .into_iter()
@@ -413,7 +507,13 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
     // Writes cannot use the read-side staleness bound. Even a valid cached
     // actor must not hide a stranded prior on another matching shell. Check
     // provider-wide truth before resolving, repairing indexes, or minting.
-    provider_actors_for_key_in_txn(vault, &*wtxn, provider)?;
+    // A split's unresolved prior stays on its shell; it stops a write only
+    // where no active actor carries the key, so a mint would fork its
+    // history, as it did before (FIX 10053).
+    let truth = provider_actors_for_key_in_txn(vault, &*wtxn, provider)?;
+    if truth.actors.is_empty() && !truth.unresolved.is_empty() {
+        return Err(unresolved_by_split());
+    }
     if let Some(actor) = resolve_provider_actor_in_txn(vault, wtxn, provider)? {
         return Ok(actor);
     }

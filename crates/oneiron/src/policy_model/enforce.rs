@@ -18,6 +18,7 @@ use super::notice::{
     host_notice_body, policy_model_rationale_notice, policy_notice, safe_setting_change_offer,
     trusted_contact_notices,
 };
+use super::clock::PolicyCallClock;
 use super::planes::PolicyPlane;
 use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
@@ -219,6 +220,7 @@ impl Vault {
     /// than a pass can be taken and the owner plane does what it always does
     /// when it cannot answer: it fails OPEN, because it is sovereign and
     /// nothing sits beneath it. That outcome is receipted rather than silent.
+    /// Both derivations spend one call clock (FIX 10034).
     pub async fn enforce_policy_model_with_backend(
         &self,
         request: PolicyClassifyRequest,
@@ -227,9 +229,14 @@ impl Vault {
         lease: &BudgetLease,
     ) -> Result<PolicyModelEnforcement> {
         let safeguard = Some((backend, lease));
-        let mut pass = self.owner_plane_pass(&request, config, safeguard).await?;
+        let clock = PolicyCallClock::start();
+        let mut pass = self
+            .owner_plane_pass(&request, config, safeguard, &clock)
+            .await?;
         if self.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
-            pass = self.owner_plane_pass(&request, config, safeguard).await?;
+            pass = self
+                .owner_plane_pass(&request, config, safeguard, &clock)
+                .await?;
             if self.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
                 return self.stale_owner_plane_fail_open(request, config);
             }
@@ -249,12 +256,13 @@ impl Vault {
         backend: &dyn LlmBackend,
         budget: &crate::llm::BudgetGuard,
     ) -> Result<PolicyModelEnforcement> {
+        let clock = PolicyCallClock::start();
         let mut pass = self
-            .owner_plane_pass_with_budget(&request, config, backend, budget)
+            .owner_plane_pass_with_budget(&request, config, backend, budget, &clock)
             .await?;
         if self.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
             pass = self
-                .owner_plane_pass_with_budget(&request, config, backend, budget)
+                .owner_plane_pass_with_budget(&request, config, backend, budget, &clock)
                 .await?;
             if self.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
                 return self.stale_owner_plane_fail_open(request, config);

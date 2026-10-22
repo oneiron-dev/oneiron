@@ -8,6 +8,7 @@ use std::ops::Bound;
 use super::{
     authority,
     ledger::{PolicyChangedEvent, PolicyRowReceipt},
+    notification_receipt,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
@@ -577,6 +578,22 @@ impl Vault {
                     retired.push((queue_key.to_vec(), index_key.to_vec(), candidate));
                 }
             }
+            // Each item is delivered as the committed change it records:
+            // checked against its landed receipt, whose write-time author is
+            // its provenance, not a live holder (FIX 10031). One that does
+            // not match its receipt is retired with the revoked ones.
+            let committed = notification_receipt::committed_policy_notices_in_txn(
+                self,
+                &txn,
+                &group.iter().map(|(_, _, item)| item).collect::<Vec<_>>(),
+            )?;
+            let mut delivered = Vec::with_capacity(group.len());
+            for (entry, notice) in group.into_iter().zip(committed) {
+                match notice {
+                    Some(notice) => delivered.push((entry, notice)),
+                    None => retired.push(entry),
+                }
+            }
             for (queue_key, index_key, mut item) in retired {
                 item.mode = PolicyNotificationMode::LogOnly;
                 self.store
@@ -584,23 +601,23 @@ impl Vault {
                     .put(&mut txn, &queue_key, &encode(&item)?)?;
                 self.store.vault_meta.delete(&mut txn, &index_key)?;
             }
-            if group.is_empty() {
+            if delivered.is_empty() {
                 txn.commit()?;
                 return Ok(0);
             }
-            let sender = group
+            let sender = delivered
                 .iter()
-                .filter_map(|(_, _, item)| EntityId::from_hex(&item.author).ok())
-                .find(|author| live_holders.contains(author) && *author != recipient)
+                .map(|(_, notice)| notice.author)
+                .find(|author| *author != recipient)
                 .ok_or_else(invalid)?;
-            let receipts = group
+            let receipts = delivered
                 .iter()
-                .map(|(_, _, item)| item.receipt_id.clone())
+                .map(|(_, notice)| notice.receipt_id.clone())
                 .collect::<Vec<_>>();
-            let task = crate::task_verb::enqueue_policy_change_digest_followup_in_txn(
-                self, &mut txn, sender, recipient, &receipts, now,
+            let task = crate::task_verb::enqueue_committed_policy_notice_in_txn(
+                self, &mut txn, sender, recipient, &receipts, true, now,
             )?;
-            for (key, index_key, mut item) in group {
+            for ((key, index_key, mut item), _) in delivered {
                 item.followup_task = Some(task.to_hex());
                 self.store.vault_meta.put(&mut txn, &key, &encode(&item)?)?;
                 self.store.vault_meta.delete(&mut txn, &failure_key(&key))?;
@@ -611,16 +628,21 @@ impl Vault {
                 .delete(&mut txn, &key(DIGEST_WINDOW, recipient.as_bytes()))?;
             receipts.len()
         } else {
-            let sender = EntityId::from_hex(&row.author)?;
-            if !live_holders.contains(&sender) {
-                return Err(invalid());
-            }
-            let task = crate::task_verb::enqueue_policy_change_followup_in_txn(
+            // A committed change is pushed by its recorded write-time
+            // authority, checked against its landed receipt; its author
+            // need not hold policy power still (FIX 10031).
+            let notice =
+                notification_receipt::committed_policy_notices_in_txn(self, &txn, &[row])?
+                    .pop()
+                    .flatten()
+                    .ok_or_else(invalid)?;
+            let task = crate::task_verb::enqueue_committed_policy_notice_in_txn(
                 self,
                 &mut txn,
-                sender,
+                notice.author,
                 recipient,
-                &row.receipt_id,
+                &[notice.receipt_id],
+                false,
                 now,
             )?;
             let mut linked = row.clone();
