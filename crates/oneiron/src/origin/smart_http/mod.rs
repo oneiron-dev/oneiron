@@ -97,6 +97,7 @@ mod maintain;
 mod owner_pins;
 mod paths;
 mod push_admission;
+mod projected_serve;
 mod push_paths;
 pub(crate) mod push_projection;
 mod read_projection;

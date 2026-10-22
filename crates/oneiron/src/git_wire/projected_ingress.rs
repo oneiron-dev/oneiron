@@ -26,15 +26,16 @@ const PROJECTION_INGRESS_REPO: &str = "repo.git";
 
 impl GitWire<'_> {
     /// The private ingress at `root/repo.git`, made when absent: a bare
-    /// store whose alternates name `copy_store`'s objects, holding each of
-    /// `refs` (a root ref and its copy tip) where it holds nothing yet.
+    /// store whose alternates name the objects of the copy store at
+    /// `copy_store_root`, holding each of `refs` (a root ref and its copy
+    /// tip) where it holds nothing yet.
     ///
     /// # Errors
     /// A store that cannot be made, or a seed ref its publication refused.
     pub(crate) fn projection_ingress(
         &self,
         root: &Path,
-        copy_store: &GitWireRepo,
+        copy_store_root: &Path,
         refs: &[(GitRefName, GitOid)],
         now: u64,
     ) -> GitWireResult<GitWireRepo> {
@@ -49,7 +50,7 @@ impl GitWire<'_> {
             }
         }
         let repo_root = repo_root.canonicalize()?;
-        let objects = copy_store.common_dir().join("objects");
+        let objects = copy_store_root.canonicalize()?.join("objects");
         let objects = objects
             .to_str()
             .ok_or_else(|| invalid("a masked copy's object directory must be UTF-8"))?;
