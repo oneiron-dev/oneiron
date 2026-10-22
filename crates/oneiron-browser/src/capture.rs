@@ -18,7 +18,8 @@
 //! compares: each receipt's is a capture of its own, kept as its evidence
 //! even when its pixels repeat an earlier one's.
 
-use crate::{ScreenshotInput, ScreenshotTrigger};
+use crate::{BrowserError, ScreenshotInput, ScreenshotTrigger};
+use std::io::Cursor;
 
 /// What every screenshot an agent's verb takes masks: each secret field the
 /// page or window shows is blacked out before the image is held. The
@@ -97,4 +98,41 @@ pub(crate) fn unchanged_from(
 ) -> Option<String> {
     let (held, base) = base?;
     (held == image && base.scope.is_some() && base.scope == now.scope).then_some(base.id)
+}
+
+/// A PNG's width and height from its IHDR, when the bytes are a PNG.
+pub(crate) fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    let dimension = |at: usize| png.get(at..at + 4)?.try_into().ok().map(u32::from_be_bytes);
+    Some((dimension(16)?, dimension(20)?))
+}
+
+/// The (`x`, `y`, `width`, `height`) region of a held PNG.
+pub(crate) fn crop_region(
+    png: &[u8],
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<image::DynamicImage, BrowserError> {
+    let image = image::load_from_memory(png).map_err(|e| BrowserError::Protocol(e.to_string()))?;
+    if width == 0
+        || height == 0
+        || x.checked_add(width).is_none_or(|end| end > image.width())
+        || y.checked_add(height).is_none_or(|end| end > image.height())
+    {
+        return Err(BrowserError::Input(format!(
+            "region {x},{y} {width}x{height} does not fit the {}x{} image",
+            image.width(),
+            image.height()
+        )));
+    }
+    Ok(image.crop_imm(x, y, width, height))
+}
+
+pub(crate) fn encode_png(image: &image::DynamicImage) -> Result<Vec<u8>, BrowserError> {
+    let mut out = Cursor::new(Vec::new());
+    image
+        .write_to(&mut out, image::ImageFormat::Png)
+        .map_err(|e| BrowserError::Protocol(e.to_string()))?;
+    Ok(out.into_inner())
 }

@@ -20983,7 +20983,7 @@ class DialogAnswerFailure(TypedDict):
     kind: str
     accept: bool
     error: str
-class Observation2(TypedDict):
+class VerbsObservation(TypedDict):
     seq: int
     scope: str
     base_seq: NotRequired[int | None]
@@ -21001,7 +21001,7 @@ class Observation2(TypedDict):
     rebound: NotRequired[Rebound | None]
     fact: NotRequired[ActionFact | None]
     dialogs: NotRequired[list[DialogAnswerFailure]]
-class ObservationPage(Observation2):
+class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
 BrowserObservationPage = BrowserAnswer[ObservationPage]
 class ObservationBase(TypedDict):
@@ -21112,7 +21112,7 @@ class FailedStepReceipt(TypedDict):
     step: NotRequired[int | None]
     stop_cause: BatchStopCause
     missed: NotRequired[list[CheckReceipt]]
-    observation: NotRequired[Observation2 | None]
+    observation: NotRequired[VerbsObservation | None]
     error: NotRequired[str | None]
     refusal: NotRequired[DestinationRefusal | None]
     next: NotRequired[str | None]
@@ -21127,7 +21127,7 @@ class BatchOutput(TypedDict):
     stop_cause: NotRequired[BatchStopCause | None]
     failed_receipt: NotRequired[FailedStepReceipt | None]
     elapsed_ms: int
-    observation: NotRequired[Observation2 | None]
+    observation: NotRequired[VerbsObservation | None]
     receipts: NotRequired[list[EffectReceipt]]
     decisions: NotRequired[list[Any]]
     until_ms: NotRequired[int | None]
