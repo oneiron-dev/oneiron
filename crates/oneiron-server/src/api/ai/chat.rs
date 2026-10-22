@@ -69,12 +69,14 @@ use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
 use crate::voice_host::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 
+mod assertions;
 mod compaction;
 mod hook_ask;
 mod recall;
 mod sitting;
 mod sources;
 
+pub(crate) use assertions::ReplyAssertionCollector;
 pub(crate) use compaction::{
     AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
 };
@@ -775,6 +777,7 @@ fn start_turn(
                 .map(|chat| chat.breakpoint(WriteActor::new(actor, class), locality, recalled)),
             today: None,
             craft,
+            assertions: ReplyAssertionCollector::default(),
         },
         sources.rows(),
     )
@@ -1046,6 +1049,7 @@ fn streamed(started: Started, claim: Option<InvocationClaim>) -> Response {
                 message,
                 usage,
                 finish_reason,
+                ..
             } => Some(line(&ChatLine::Done {
                 text: message_text(&message),
                 usage,
@@ -1199,6 +1203,10 @@ pub(crate) struct Answer {
     /// for a call shown none, a turn that keeps no record, and a turn
     /// action, whose attempt's manifest names its craft.
     pub(crate) craft: Option<Vec<ManifestEntry>>,
+    /// The records this reply cited or created, as trusted host code notes
+    /// them (FIX 3416): a fresh collector per reply, Continue's and Retry's
+    /// too, never an earlier reply's.
+    pub(crate) assertions: ReplyAssertionCollector,
 }
 
 /// Where a reply is written.
@@ -1276,6 +1284,7 @@ fn begin_sourced_answer(
         breakpoint,
         today,
         craft,
+        assertions,
     } = answer;
     // The exact request the reply's craft rides in, read before it is sent.
     let craft = craft.and_then(|entries| {
@@ -1398,6 +1407,7 @@ fn begin_sourced_answer(
         mark,
         container,
         wakes,
+        assertions,
     };
     tokio::spawn(async move {
         let result = produce(producer).await;
@@ -1588,10 +1598,13 @@ impl TerminalSink for AssistantMessage {
         // finalizes it, a length cut or any other stop leaves it partial, and
         // a cancelled terminal keeps its text but is recorded as cancelled.
         // An answer commits only while the credential is live in its own
-        // write transaction.
+        // write transaction. The records the producer stamped on its
+        // terminal are judged and kept with it (FIX 3416).
         let credential = &self.credential;
+        let asserted = assertions::witness_assertions(&terminal.reply_assertions);
+        let finish_reason = terminal.finish_reason.clone();
         let receipt = memory
-            .finalize_model_stream_if(self.handle, terminal.finish_reason.clone(), |txn| {
+            .finalize_model_stream_if(self.handle, finish_reason, &asserted, |txn| {
                 credential.live_in(txn)
             })
             .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
@@ -1622,6 +1635,8 @@ struct Producer {
     container: Option<EntityId>,
     /// Committed TASKs, while the reply listens for an entry.
     wakes: EntryWakes,
+    /// The reply's host-side records, stamped on its terminal.
+    assertions: ReplyAssertionCollector,
 }
 
 /// Drives the model stream into the presence plane and the bus. The run
@@ -1645,6 +1660,7 @@ async fn produce(producer: Producer) -> Result<(), String> {
         mark,
         container,
         mut wakes,
+        assertions,
     } = producer;
     let memory = answer_memory(&vault, agent, session_key);
     let cancel = |reason: StreamCancelReason| {
@@ -1711,8 +1727,9 @@ async fn produce(producer: Producer) -> Result<(), String> {
         }
         if matches!(event, LlmStreamEvent::Done { .. }) {
             // The run settled the answer before it arrived: the provider
-            // spent it whether or not the answer is saved.
-            if let Err(error) = bus.publish(event) {
+            // spent it whether or not the answer is saved. It asserts the
+            // records this host gathered, never the ones it came with.
+            if let Err(error) = bus.publish(assertions.stamp(event)) {
                 if credential.live() {
                     cancel(StreamCancelReason::AgentAborted);
                 } else {

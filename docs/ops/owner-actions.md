@@ -1254,7 +1254,10 @@ is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
 
 `POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
 already going is joined. The sweep reads every note past its cursor, keeps each note revision as
-evidence and triages it as its own job. A note's findings land as Proposed
+evidence and triages it as its own job. A note too long for the Coach model's context window is
+triaged in parts: the whole note is split into parts that each fit, every part is its own job,
+synthesis jobs combine the part answers in order, and the note's own job files the findings once
+the last answer is in (status shows that job waiting until then). A note's findings land as Proposed
 `coach.feedback_triage.finding` claims citing that note; an empty answer counts as done. A job
 that fails (no skill bound, no Coach seat, a bad answer) leaves the note open, and the next sweep
 tries it again. `GET /v1/owner/feedback/triage/status?attempt=<id>` shows the sweep, its cursor,

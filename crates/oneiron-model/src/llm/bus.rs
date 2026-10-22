@@ -1,7 +1,7 @@
 //! Ephemeral one-producer fanout. The durable sink accepts terminals, never deltas.
 use super::{
     ContentPart, FinishReason, LlmMessage, LlmMessageRole, LlmResponse, LlmResult, LlmStream,
-    LlmStreamEvent, LlmUsage,
+    LlmStreamEvent, LlmUsage, ReplyAssertions,
 };
 use futures_core::Stream;
 use std::{
@@ -81,10 +81,12 @@ impl LlmEventBus {
                 message,
                 usage,
                 finish_reason,
+                reply_assertions,
             } => Some(LlmResponse {
                 message: message.clone(),
                 usage: usage.clone(),
                 finish_reason: finish_reason.clone(),
+                reply_assertions: reply_assertions.clone(),
             }),
             _ => None,
         };
@@ -112,7 +114,8 @@ impl LlmEventBus {
         Ok(())
     }
     /// A host supplies actual usage on cancellation. The reply keeps every
-    /// part in the order it started; incomplete tools are omitted.
+    /// part in the order it started; incomplete tools are omitted. A
+    /// cancellation asserts no record (FIX 3416).
     pub fn abort(&mut self, usage: LlmUsage) -> LlmResult<()> {
         if self.closed {
             return Ok(());
@@ -128,6 +131,7 @@ impl LlmEventBus {
             },
             usage,
             finish_reason: FinishReason::Cancelled,
+            reply_assertions: ReplyAssertions::default(),
         })
     }
     pub async fn drive(&mut self, mut stream: LlmStream<'_>) -> LlmResult<()> {

@@ -42,7 +42,7 @@ use oneiron::task_verb::sdk::{
     SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
 
-use super::host_doors::{MaybeListed, internal};
+use super::host_doors::support::{MaybeListed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

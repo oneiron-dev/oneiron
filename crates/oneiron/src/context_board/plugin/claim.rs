@@ -28,10 +28,6 @@ pub const PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION: u16 = 1;
 /// admission; no second approval object and no new gate consent kind exist.
 pub const PREDICATE_PLUGIN_SECTION_INSTALL: &str = "plugin.section_install";
 
-/// Bound on the pending-consent scan used to bind a fresh proposal to its
-/// consent record.
-const PLUGIN_PENDING_CONSENT_SCAN_LIMIT: usize = 512;
-
 // ---------------------------------------------------------------------------
 // §3 — the claim payload
 // ---------------------------------------------------------------------------
@@ -418,12 +414,14 @@ pub fn propose_plugin_section_install_with_evidence(
         )
     })?;
 
-    let decision_id = vault
-        .pending_gate_consents(PLUGIN_PENDING_CONSENT_SCAN_LIMIT)?
-        .into_iter()
-        .find(|record| record.claim_id == *claim_id.as_bytes())
-        .map(|record| record.decision_id)
-        .ok_or(PluginSectionError::MissingPendingConsent)?;
+    // The fresh proposal's consent row, fetched by its own claim id: older
+    // tray entries never hide it (FIX 8700).
+    let decision_id = {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        vault.store.pending_gate_consent_in_txn(&rtxn, &claim_id)?
+    }
+    .map(|record| record.decision_id)
+    .ok_or(PluginSectionError::MissingPendingConsent)?;
 
     Ok(PluginSectionInstallProposal {
         claim_id,

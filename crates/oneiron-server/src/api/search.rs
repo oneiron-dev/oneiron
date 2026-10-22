@@ -1,3 +1,6 @@
+//! The search routes: vector, text and semantic search over the caller's scoped reads.
+//! `search_vector`, `search_text` and `search_semantic` are its call surface.
+//! `crate::api::search` defines these DTOs; the engine's retrieval owns the ranking.
 use super::context_pack::embed_semantic_text;
 use super::core_engine_error;
 use super::default_limit;

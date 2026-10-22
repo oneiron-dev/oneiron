@@ -6,7 +6,7 @@ use oneiron::authority::InvocationSlipBinding;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{CredentialAttenuated, CredentialAttenuationRequest};
 
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
