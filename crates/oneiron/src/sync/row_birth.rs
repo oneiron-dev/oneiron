@@ -24,6 +24,7 @@ use crate::provenance::birth::{RowBirth, WithheldKey, stamp_replicated_row_birth
 use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 pub(crate) mod actor_erase;
+pub(super) mod checkpoint;
 
 /// The window map that carries row births.
 pub(crate) const ROW_BIRTHS_MAP: &str = "row_births";

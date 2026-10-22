@@ -12,7 +12,7 @@ use crate::{EntityId, Error, Result};
 pub use approval::{
     ApprovedRepresentation, RepresentationReview, schedule_approved_representation,
 };
-pub use context::{RepresentationContext, RepresentationSource};
+pub use context::{DestinationContext, RepresentationContext, RepresentationSource};
 pub use proposal::{PrematerializedDraft, RepresentationDraft, RepresentationPlanner};
 use serde::{Deserialize, Serialize};
 

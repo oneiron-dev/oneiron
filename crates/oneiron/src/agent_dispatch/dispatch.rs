@@ -4,13 +4,14 @@ use crate::Vault;
 use crate::agent_def::AgentDefinition;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
-use crate::context_projection::{CONTEXT_PROJECTION_MAX_ANCESTORS, normalize_context_spec};
+use crate::context_projection::normalize_context_spec;
 use crate::dreamer_runner::{
     DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
     decode_dreamer_attempt_payload,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 
 use super::codec::{agent_dispatch_status, encode_agent_dispatch_input, record_dispatch_input};
 use super::types::{
@@ -602,23 +603,73 @@ impl<'a> AgentDispatcher<'a> {
     /// Read the live project in the same snapshot as the stored parent slice.
     /// Root defaults to the vault project; an omitted child project inherits.
     /// A project transition may only enter a direct child responsibility space.
+    /// Every ancestor is read, however many (rule 5): past its threshold row
+    /// the walk asks whether everything is okay, counted on every way out.
     pub(super) fn project_depth_limit_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         parent_attempt: Option<AttemptId>,
         requested_project: Option<EntityId>,
-    ) -> Result<(EntityId, u8)> {
+    ) -> Result<(EntityId, u64)> {
         let root = self.vault.project_for_spawn_in_txn(txn, None)?.0;
+        let (parent_project, has_parent_input, mut parent_limit) = match parent_attempt {
+            Some(parent) => {
+                let mut walk = ScanCount::start(
+                    &self.vault.store,
+                    txn,
+                    EngineScan::DispatchAncestorRows,
+                    parent.as_bytes(),
+                )?;
+                let mut seen = std::collections::HashSet::new();
+                let slice = self.parent_slice_in_txn(txn, parent, root, &mut seen);
+                walk.rows(seen.len());
+                walk.defer(&self.vault.store);
+                slice?
+            }
+            // A root spawn takes its project's live policy depth whole.
+            None => (root, false, u64::MAX),
+        };
+        let (id, project) = self.vault.project_for_spawn_in_txn(
+            txn,
+            requested_project.or_else(|| parent_attempt.map(|_| parent_project)),
+        )?;
+        if id != root && (parent_attempt.is_none() || !has_parent_input) {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "a project spawn requires a real parent in its ancestor project",
+            )));
+        }
+        if parent_attempt.is_some() {
+            if id != parent_project && !project.parents.contains(&parent_project.to_hex()) {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "project is not a child of the parent project",
+                )));
+            }
+            parent_limit = parent_limit.checked_sub(1).ok_or(Error::Artifact(
+                ArtifactError::InvalidAgentDispatchInput("project depth is exhausted"),
+            ))?;
+        }
+        Ok((id, project.depth.min(parent_limit)))
+    }
+
+    /// The walk [`Self::project_depth_limit_in_txn`] counts, each attempt it
+    /// reads in `seen`: the parent's project, whether it stored a dispatch
+    /// input, and its slice folded with every ancestor project's live depth.
+    fn parent_slice_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent_attempt: AttemptId,
+        root: EntityId,
+        seen: &mut std::collections::HashSet<AttemptId>,
+    ) -> Result<(EntityId, bool, u64)> {
         let mut parent_project = root;
         let mut has_parent_input = false;
-        let mut parent_limit = CONTEXT_PROJECTION_MAX_ANCESTORS as u8;
-        let mut cursor = parent_attempt;
-        let mut seen = std::collections::HashSet::new();
-        let mut distance = 0u8;
+        let mut parent_limit = u64::MAX;
+        let mut cursor = Some(parent_attempt);
+        let mut distance = 0_u64;
         while let Some(attempt) = cursor {
-            if usize::from(distance) >= CONTEXT_PROJECTION_MAX_ANCESTORS || !seen.insert(attempt) {
+            if !seen.insert(attempt) {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                    "project depth ancestor bound or cycle",
+                    "project depth ancestor cycle",
                 )));
             }
             let row = AttemptQueue::new(self.vault).get_in_txn(txn, attempt)?;
@@ -640,7 +691,7 @@ impl<'a> AgentDispatcher<'a> {
                 parent_limit = input
                     .as_ref()
                     .and_then(|input| input.depth_remaining)
-                    .unwrap_or(super::types::AGENT_DISPATCH_COMPAT_DEPTH_CAP);
+                    .unwrap_or(u64::from(super::types::AGENT_DISPATCH_COMPAT_DEPTH_CAP));
                 parent_project = input
                     .as_ref()
                     .and_then(|input| input.project_ref)
@@ -672,31 +723,12 @@ impl<'a> AgentDispatcher<'a> {
             };
             distance += 1;
         }
-        let (id, project) = self.vault.project_for_spawn_in_txn(
-            txn,
-            requested_project.or_else(|| parent_attempt.map(|_| parent_project)),
-        )?;
-        if id != root && (parent_attempt.is_none() || !has_parent_input) {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                "a project spawn requires a real parent in its ancestor project",
-            )));
-        }
-        if parent_attempt.is_some() {
-            if id != parent_project && !project.parents.contains(&parent_project.to_hex()) {
-                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                    "project is not a child of the parent project",
-                )));
-            }
-            parent_limit = parent_limit.checked_sub(1).ok_or(Error::Artifact(
-                ArtifactError::InvalidAgentDispatchInput("project depth is exhausted"),
-            ))?;
-        }
-        Ok((id, project.depth.min(parent_limit)))
+        Ok((parent_project, has_parent_input, parent_limit))
     }
 
     /// The live depth a child of `parent_attempt` may persist, after folding
     /// the stored slice with every ancestor project's current depth.
-    pub fn child_depth_remaining(&self, parent_attempt: AttemptId) -> Result<u8> {
+    pub fn child_depth_remaining(&self, parent_attempt: AttemptId) -> Result<u64> {
         let txn = self.vault.store.env.read_txn()?;
         self.project_depth_limit_in_txn(&txn, Some(parent_attempt), None)
             .map(|(_, depth)| depth)

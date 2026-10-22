@@ -1912,6 +1912,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.files.sources.attach",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FilesSourceAttachRequest,
+                >(),
+            ),
+            (
+                "vault.files.sources.rescan",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FilesSourceRescanRequest,
+                >(),
+            ),
+            (
+                "vault.files.sources.detach",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FilesSourceDetachRequest,
+                >(),
+            ),
+            (
+                "vault.files.sources.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FilesSourceListRequest,
+                >(),
+            ),
+            (
+                "vault.files.sources.files",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FilesSourceFilesRequest,
+                >(),
+            ),
+            (
                 "vault.residence.mode",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResidenceModeRequest,
@@ -6888,6 +6918,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.support_grants.mint",
     "vault.support_grants.list",
     "vault.support_grants.revoke",
+    "vault.files.sources.attach",
+    "vault.files.sources.rescan",
+    "vault.files.sources.detach",
+    "vault.files.sources.list",
+    "vault.files.sources.files",
     "vault.residence.directives",
     "vault.off_record.start",
     "vault.off_record.status",
@@ -8220,6 +8255,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.support_grants.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SupportGrantRevokeAnswer,
         >(),
+        "vault.files.sources.attach" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::FilesSourceAttachAnswer,
+        >(),
+        "vault.files.sources.rescan" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::FilesRescanAnswer,
+        >(),
+        "vault.files.sources.detach" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::FilesSourceDetachAnswer,
+        >(),
+        "vault.files.sources.list" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::FilesSourceList>()
+        }
+        "vault.files.sources.files" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::FilesSourceFiles>()
+        }
         "vault.residence.directives" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::ResidenceDirectiveView>,
         >(),
@@ -12440,6 +12490,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.support_grants.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.files.sources.attach" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.files.sources.rescan" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.files.sources.detach" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.files.sources.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.files.sources.files" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19099,6 +19184,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.support_grants.revoke" => {
             let _input: crate::task_verb::sdk::SupportGrantRevokeRequest = decode(value.clone())?;
         }
+        "vault.files.sources.attach" => {
+            let _input: crate::task_verb::sdk::FilesSourceAttachRequest = decode(value.clone())?;
+        }
+        "vault.files.sources.rescan" => {
+            let _input: crate::task_verb::sdk::FilesSourceRescanRequest = decode(value.clone())?;
+        }
+        "vault.files.sources.detach" => {
+            let _input: crate::task_verb::sdk::FilesSourceDetachRequest = decode(value.clone())?;
+        }
+        "vault.files.sources.list" => {
+            let _input: crate::task_verb::sdk::FilesSourceListRequest = decode(value.clone())?;
+        }
+        "vault.files.sources.files" => {
+            let _input: crate::task_verb::sdk::FilesSourceFilesRequest = decode(value.clone())?;
+        }
         "vault.residence.mode" => {
             let _input: crate::task_verb::sdk::ResidenceModeRequest = decode(value.clone())?;
         }
@@ -22653,6 +22753,11 @@ pub fn invoke(
         "vault.support_grants.revoke" => {
             encode(vault_support_grants_revoke(memory, decode(value)?)?)
         }
+        "vault.files.sources.attach" => encode(vault_files_sources_attach(memory, decode(value)?)?),
+        "vault.files.sources.rescan" => encode(vault_files_sources_rescan(memory, decode(value)?)?),
+        "vault.files.sources.detach" => encode(vault_files_sources_detach(memory, decode(value)?)?),
+        "vault.files.sources.list" => encode(vault_files_sources_list(memory, decode(value)?)?),
+        "vault.files.sources.files" => encode(vault_files_sources_files(memory, decode(value)?)?),
         "vault.residence.mode" => encode(vault_residence_mode(memory, decode(value)?)?),
         "vault.residence.open" => encode(vault_residence_open(memory, decode(value)?)?),
         "vault.residence.index" => encode(vault_residence_index(memory, decode(value)?)?),
@@ -27462,6 +27567,36 @@ pub fn vault_support_grants_revoke(
 ) -> MemoryResult<crate::task_verb::sdk::SupportGrantRevokeAnswer> {
     crate::task_verb::sdk::revoke_support_grant_embedded(memory, input)
 }
+pub fn vault_files_sources_attach(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FilesSourceAttachRequest,
+) -> MemoryResult<crate::task_verb::sdk::FilesSourceAttachAnswer> {
+    crate::task_verb::sdk::attach_files_source_embedded(memory, input)
+}
+pub fn vault_files_sources_rescan(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FilesSourceRescanRequest,
+) -> MemoryResult<crate::task_verb::sdk::FilesRescanAnswer> {
+    crate::task_verb::sdk::rescan_files_sources_embedded(memory, input)
+}
+pub fn vault_files_sources_detach(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FilesSourceDetachRequest,
+) -> MemoryResult<crate::task_verb::sdk::FilesSourceDetachAnswer> {
+    crate::task_verb::sdk::detach_files_source_embedded(memory, input)
+}
+pub fn vault_files_sources_list(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FilesSourceListRequest,
+) -> MemoryResult<crate::task_verb::sdk::FilesSourceList> {
+    crate::task_verb::sdk::list_files_sources_embedded(memory, input)
+}
+pub fn vault_files_sources_files(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FilesSourceFilesRequest,
+) -> MemoryResult<crate::task_verb::sdk::FilesSourceFiles> {
+    crate::task_verb::sdk::files_source_files_embedded(memory, input)
+}
 pub fn vault_residence_mode(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidenceModeRequest,
@@ -31476,7 +31611,7 @@ pub fn vault_voices_lineage(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::VoiceRenderLineageRequest,
 ) -> MemoryResult<Vec<crate::task_verb::sdk::VoiceRenderEventView>> {
-    crate::task_verb::sdk::host_only(memory, "vault.voices.lineage", &input)
+    crate::task_verb::sdk::read_voice_render_lineage(memory, input)
 }
 pub fn ai_transcribe(
     memory: &Memory<'_>,
