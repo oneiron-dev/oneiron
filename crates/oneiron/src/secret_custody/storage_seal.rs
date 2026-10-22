@@ -49,7 +49,7 @@ mod image;
 
 pub(crate) use self::image::{
     CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
-    image_credential_row, plan_archived_credentials,
+    image_credential_row, plan_archived_credentials, withheld_credential_row,
 };
 
 pub(crate) use self::connector_resume::{

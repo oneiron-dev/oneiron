@@ -41,15 +41,17 @@ const ERR_RECORD_PAST_VALUE_CAPACITY: &str =
     "attempt record exceeds LMDB's 4294967295-byte value capacity";
 /// The members of a row a caller authored, which the side-row wall reads beside
 /// the payload (OF-067): the failure text, the intervention, signal, ask and
-/// cancel notes, and the requeued failures (FIX 5240). The queue's own ids,
+/// cancel notes, the requeued failures (FIX 5240) and the outputs and
+/// checkpoint a settled try left behind (FIX 9578). The queue's own ids,
 /// keys, states and times index the row and are never rewritten.
-const AUTHORED_MEMBERS: [&str; 6] = [
+const AUTHORED_MEMBERS: [&str; 7] = [
     "last_error",
     "events",
     "signals",
     "asks",
     "cancel_state",
     "history",
+    "terminal_exhaust",
 ];
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
 

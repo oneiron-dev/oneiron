@@ -3,7 +3,6 @@
 use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
-use crate::edge::EdgeKind;
 use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::{EntityId, Result, Vault};
@@ -11,8 +10,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod chunk_identity;
 mod chunks;
+mod preparation;
 mod retry;
 mod sources;
+use preparation::{Frozen, QueuedPreparation, WakeQuery, collect_queued, finish_preparations};
 
 /// One immutable branch contract selected from a single wake revision.
 /// Source bytes are shared by the owning `PreparedWake`; only exact version
@@ -188,7 +189,6 @@ impl PreparedWake {
         caller_scope: Option<&Scope>,
         only_attempt: Option<AttemptId>,
     ) -> Result<(Self, Vec<chunks::WakePreparationChunks>)> {
-        use crate::ports::EdgeDirection;
         // Witnessed TURN text is read under live relationship grants.
         let txn = super::turn_text::snapshot(vault)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
@@ -199,144 +199,25 @@ impl PreparedWake {
         } else {
             left_for_later(&records, scope)
         };
-        let mut ids = BTreeSet::new();
-        let mut attempts = BTreeSet::new();
-        let mut retries = Vec::new();
-        let mut preparations = BTreeMap::new();
-        // Each prepared attempt's queue lineage, for the work it owes.
-        let mut lineage = BTreeMap::new();
-        // Each attempt's projection round, by its kind and dedupe key.
-        let mut rounds = BTreeMap::new();
-        for attempt in records {
-            if attempt.kind != scope.attempt_kind()
-                || attempt.state.is_terminal()
-                || only_attempt.is_some_and(|id| id != attempt.id)
-                || left.contains(attempt.id.as_bytes())
-                || (only_attempt.is_none() && idle(vault, &txn, &attempt)?)
-            {
-                continue;
-            }
-            attempts.insert(*attempt.id.as_bytes());
-            if let Some(dedupe_key) = &attempt.dedupe_key {
-                rounds.insert(
-                    *attempt.id.as_bytes(),
-                    (attempt.kind.clone(), dedupe_key.clone()),
-                );
-            }
-            // A malformed queued row is not a source grant. Its own executor
-            // still refuses it, without failing unrelated wake work here.
-            let Ok(payload) =
-                crate::dreamer_runner::decode_dreamer_attempt_payload(&attempt.payload)
-            else {
-                continue;
-            };
-            let Ok(branch) = super::partition::decode_partition_payload(&payload.input) else {
-                continue;
-            };
-            let turns = branch.turn_ids();
-            ids.extend(branch.conversations());
-            ids.extend(turns.iter().copied());
-            let queued_scope = match super::branch_scope::decode_branch_scope(&payload.input) {
-                Ok(scope) => scope,
-                Err(_) => {
-                    preparations.insert(
-                        *attempt.id.as_bytes(),
-                        AttemptPreparation::Refused {
-                            reason: "invalid queued branch scope",
-                            scope_error: true,
-                        },
-                    );
-                    continue;
-                }
-            };
-            let effective_scope = match super::branch_scope::execution_scope_in(
-                vault,
-                &txn,
-                attempt.id,
-                payload.parent_attempt,
-                queued_scope,
+        let QueuedPreparation {
+            mut ids,
+            attempts,
+            retries,
+            mut preparations,
+            lineage,
+            rounds,
+        } = collect_queued(
+            vault,
+            &txn,
+            WakeQuery {
+                scope,
                 caller_scope,
-            ) {
-                Ok(scope) => scope,
-                Err(_) => {
-                    preparations.insert(
-                        *attempt.id.as_bytes(),
-                        AttemptPreparation::Refused {
-                            reason: "invalid retry execution scope",
-                            scope_error: true,
-                        },
-                    );
-                    continue;
-                }
-            };
-            let stamp = match vault.dreamer_attempt_authority_in_txn(&txn, attempt.id) {
-                Ok(Some(stamp)) => stamp,
-                _ => {
-                    preparations.insert(
-                        *attempt.id.as_bytes(),
-                        AttemptPreparation::Refused {
-                            reason: "invalid Dreamer attempt actor",
-                            scope_error: false,
-                        },
-                    );
-                    continue;
-                }
-            };
-            let budget = policy.retry_budget_for(stamp.actor, effective_scope.as_ref())?;
-            lineage.insert(
-                *attempt.id.as_bytes(),
-                retry::Lineage {
-                    parent: payload.parent_attempt,
-                    run_id: attempt.run_id.clone(),
-                    // A sibling's work keeps the attempt that first owed it.
-                    origin: super::partition::decode_branch_origin(&payload.input)
-                        .unwrap_or(attempt.id),
-                },
-            );
-            let prepared = PreparedConsolidationAttempt {
-                attempt_id: attempt.id,
-                branch: branch.clone(),
-                turn_ids: turns,
-                scope: effective_scope.clone(),
-                input: payload.input.clone(),
-                queued_input: payload.input.clone(),
-                source_versions: BTreeMap::new(),
-                retry_budget: budget,
-                neighbourhood: Default::default(),
-                thing: branch.thing.and_then(|thing| thing.entity),
-                sources_truncated: false,
-            };
-            preparations.insert(*attempt.id.as_bytes(), AttemptPreparation::Ready(prepared));
-            if attempt.retry_of.is_some() && effective_scope.is_none() {
-                // Each part widens over its own conversation's TURNs.
-                let mut peers = Vec::with_capacity(branch.parts.len());
-                for conversation in branch.conversations() {
-                    let found = vault.filtered_edge_peers(
-                        &txn,
-                        EdgeDirection::In,
-                        &conversation,
-                        EdgeKind::ChildOf,
-                        Some(ENTITY_TYPE_TURN),
-                    )?;
-                    ids.extend(found.iter().copied());
-                    peers.push(found);
-                }
-                retries.push(retry::Retry {
-                    attempt: *attempt.id.as_bytes(),
-                    branch,
-                    peers,
-                });
-            }
-            if let Some(bound) = effective_scope {
-                for resource in bound.readable.iter().chain(&bound.writable) {
-                    if let ScopeResource::DocumentVersion { document, .. } = resource
-                        && vault.get_entity_type_in_txn(&txn, document)? == Some(ENTITY_TYPE_CLAIM)
-                    {
-                        ids.insert(*document);
-                    }
-                }
-            }
-        }
+                only_attempt,
+            },
+            records,
+            &left,
+            &policy,
+        )?;
         // A host-supplied attenuation may carry additional exact prior CLAIM
         // grants not serialized into queued input. Pin them at this SAME txn;
         // BranchResources still admits only the effective exact scope.
@@ -421,118 +302,21 @@ impl PreparedWake {
             }
         }
         let read_receipt = read.read_receipt_in(&txn, None, withheld)?;
-        let mut known_rows = BTreeMap::new();
-        for outcome in preparations.values_mut() {
-            let AttemptPreparation::Ready(plan) = outcome else {
-                continue;
-            };
-            // A part that cannot be read whole splits off, as does one the
-            // effective scope does not name (FIX 7728); the rest run.
-            let held = lineage.get(plan.attempt_id.as_bytes());
-            let pin = chunk_identity::ChunkPin {
-                sources: &sources,
+        finish_preparations(
+            vault,
+            &txn,
+            &read,
+            Frozen {
+                texts: &texts,
+                refused_texts: &refused_texts,
+                lineage: &lineage,
+                rounds: &rounds,
                 completed: &completed,
-            };
-            owed.extend(sources::split_unreadable(
-                plan,
-                &sources,
-                &refused_texts,
-                held,
-                pin,
-            ));
-            owed.extend(sources::split_unnamed(plan, held, pin));
-            let mut ids: BTreeSet<_> = plan
-                .branch
-                .conversations()
-                .chain(plan.turn_ids.iter().copied())
-                .collect();
-            if let Some(scope) = plan.scope.as_ref() {
-                for resource in scope.readable.iter().chain(&scope.writable) {
-                    if let ScopeResource::DocumentVersion { document, .. } = resource
-                        && sources
-                            .get(document)
-                            .is_some_and(|row| row.0 == ENTITY_TYPE_CLAIM)
-                    {
-                        ids.insert(*document);
-                    }
-                }
-            }
-            let missing: Vec<EntityId> = plan
-                .branch
-                .conversations()
-                .chain(plan.turn_ids.iter().copied())
-                .filter(|id| !sources.contains_key(id))
-                .collect();
-            // FIX 3592: a held round stays whole, so a member TURN of it
-            // that this replica does not hold waits for its promotion. The
-            // whole-TURN refusal of any other round stays.
-            let away = !missing.is_empty()
-                && held_round_away_in(
-                    vault,
-                    &txn,
-                    rounds.get(plan.attempt_id.as_bytes()),
-                    &missing,
-                )?;
-            if !missing.is_empty() && !away {
-                *outcome = AttemptPreparation::Refused {
-                    reason: "prepared source not readable",
-                    scope_error: false,
-                };
-                continue;
-            }
-            // A refusal outranks a wait: only a turn whose tagged MESSAGE is
-            // away (OF-534) defers the attempt.
-            if let Some(&reason) = plan
-                .turn_ids
-                .iter()
-                .filter_map(|id| refused_texts.get(id))
-                .find(|reason| !super::turn_text::residency_deferred(reason))
-            {
-                *outcome = AttemptPreparation::Refused {
-                    reason,
-                    scope_error: false,
-                };
-                continue;
-            }
-            if away
-                || plan
-                    .turn_ids
-                    .iter()
-                    .any(|id| refused_texts.contains_key(id))
-            {
-                *outcome = AttemptPreparation::ResidencyDeferred;
-                continue;
-            }
-            let (neighbourhood, rows) =
-                neighbourhood_in(vault, &txn, &read, plan, &sources, &texts)?;
-            known_rows.extend(rows);
-            plan.neighbourhood = neighbourhood;
-            plan.source_versions = ids
-                .into_iter()
-                .filter_map(|id| {
-                    sources
-                        .get(&id)
-                        .map(|row| (id, super::resources::document_version(id, &row.2)))
-                })
-                .chain(
-                    plan.neighbourhood
-                        .claim_versions()
-                        .map(|(id, version)| (id, version.clone())),
-                )
-                .chain(
-                    plan.turn_ids
-                        .iter()
-                        .filter_map(|id| texts.get(id))
-                        .flat_map(super::turn_text::TurnText::versions)
-                        .map(|(id, version)| (id, version.clone())),
-                )
-                .collect();
-        }
-        // The heads a neighbourhood lists are read at this snapshot too; the
-        // branch admits them as priors from these bytes.
-        for (id, row) in known_rows {
-            sources.entry(id).or_insert(row);
-        }
+            },
+            &mut preparations,
+            &mut sources,
+            &mut owed,
+        )?;
         Ok((
             Self {
                 sources,

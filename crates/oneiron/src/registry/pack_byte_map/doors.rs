@@ -18,7 +18,11 @@ impl Vault {
     /// Explicit local installation, not a foreign-data import door.
     /// The caller must first approve and persist the exact package source.
     /// Hashes bind identity; this API mints NO execution grant or trust verdict.
-    /// The complete list is atomic under the LMDB writer lock.
+    /// A kind already installed by the same pack with its schema unchanged
+    /// takes the new exact source as an admitted revision and retains the
+    /// identity it replaces (FIX 10062): the caller's admission of the update
+    /// is its permission check. Another pack's kind, or a changed schema,
+    /// still collides. The complete list is atomic under the LMDB writer lock.
     pub(crate) fn install_pack_kinds_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
@@ -168,6 +172,8 @@ impl Vault {
                 Error::Registry(RegistryError::PackKindNotInstalled(name.to_owned()))
             })?;
             let (handle, envelope) = map.envelope(name, payload)?;
+            // A rewrite keeps the exact pin its instance was written under.
+            let envelope = map.keep_instance_pin(&self.store, txn, id, envelope)?;
             self.batch_in()
                 .put(id, handle, occurred, learned_at, &envelope.to_bytes()?)
                 .apply(txn)

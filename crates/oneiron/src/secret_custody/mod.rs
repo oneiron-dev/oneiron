@@ -100,7 +100,8 @@ pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 #[cfg(feature = "sync")]
 pub(crate) use self::control::input::{
-    RelayedInput, held_input_in_txn, held_inputs, keep_input_in_txn,
+    RelayedInput, WitnessPart, held_input_in_txn, held_inputs, held_witness_in_txn, held_witnesses,
+    keep_input_in_txn, keep_witness_in_txn,
 };
 pub(crate) use self::control::{
     ActiveChange, Material, custody_work_executor, drop_revoked_copies_in_txn,
@@ -155,7 +156,7 @@ pub(crate) use self::storage_seal::{
     StoredValue, archive_custody_body, archive_custody_guard, archive_same_custody_in_txn,
     credentials_eligible_for_heads, image_credential_row, plan_archived_credentials,
     put_stored_custody_in_txn, read_secret_custody_meta_in_txn, read_stored_custody_in_txn,
-    stored_value_held_in_txn, stored_value_opens_in_txn,
+    stored_value_held_in_txn, stored_value_opens_in_txn, withheld_credential_row,
 };
 pub(crate) use self::storage_seal::{
     open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
