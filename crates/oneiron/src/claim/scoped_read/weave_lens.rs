@@ -39,6 +39,9 @@ use crate::{EntityId, Vault};
 
 // A loop decision row's lens cells (OF-499 A2).
 mod loop_decisions;
+// The rows a read showed against a later read of them (FIX 7694).
+mod snapshot;
+pub(super) use snapshot::snapshot_still_served;
 
 /// The shipped skill whose SKILL.md is the render instruction.
 pub const WEAVE_REPORT_SKILL_NAME: &str = "weave-report";
@@ -410,7 +413,7 @@ fn cells(item: &WeaveItem, line: &str) -> Result<Vec<LedgerCell>> {
             cells.push(cell("dreamed_at", dreamed_at.to_string())?);
             cells.push(cell("entries", entries.to_string())?);
         }
-        WeaveItem::AgentHealth { card } => {
+        WeaveItem::AgentHealth { card, .. } => {
             cells.push(cell("card_ref", card.card_ref())?);
             cells.push(cell("subject_ref", card.subject.to_hex())?);
             cells.push(cell("signal", card.signal.as_str().to_owned())?);
@@ -421,7 +424,7 @@ fn cells(item: &WeaveItem, line: &str) -> Result<Vec<LedgerCell>> {
                 cells.push(cell("task_ref", task.to_hex())?);
             }
         }
-        WeaveItem::SieveAudit { attempt, audit } => {
+        WeaveItem::SieveAudit { attempt, audit, .. } => {
             for (label, value) in
                 super::weave_report::sieve_score::sieve_audit_cells(*attempt, audit)
             {
@@ -611,7 +614,7 @@ pub(super) fn compose_weave_lens_framed(
             }
             // A card's wrong settles it dismissed through the concern door,
             // never as a link correction. The door takes one JSON input.
-            if let WeaveItem::AgentHealth { card } = item {
+            if let WeaveItem::AgentHealth { card, .. } = item {
                 let input = serde_json::to_string(
                     &crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest {
                         card: card.card_ref(),
@@ -731,7 +734,7 @@ fn report_cards(report: &WeaveReport) -> impl Iterator<Item = String> + '_ {
         .iter()
         .flat_map(|section| &section.items)
         .filter_map(|item| match item {
-            WeaveItem::AgentHealth { card } => Some(card.card_ref()),
+            WeaveItem::AgentHealth { card, .. } => Some(card.card_ref()),
             _ => None,
         })
 }

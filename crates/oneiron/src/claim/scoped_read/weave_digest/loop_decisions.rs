@@ -5,16 +5,18 @@
 //! exactly as saved, or as the current skeleton once the read returns one;
 //! else that row alone is withheld and every other row of the period still
 //! serves. A decision the ledger gained since the period saved never joins
-//! it. A loop row's refs index its period for erasure, and never gate it.
+//! it. A loop row's refs index its period for erasure, and never gate it: a
+//! hard delete of one takes that ref out of the rows that name it, and the
+//! period and its other rows stay (FIX 7693).
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use super::super::loop_decision_read::ReadableLoopDecision;
 use super::super::weave_report::admissions::loop_decision_item;
+use super::invalid;
 use super::{ScopedRead, WeaveDigestReader, WeaveItem, WeaveReader, WeaveReport};
-use super::{invalid, report_sources};
 use crate::EntityId;
 use crate::error::Result;
 use crate::store::GateDecisionId;
@@ -84,29 +86,50 @@ impl WireLoopDecision {
     }
 }
 
-/// Every ref a saved period carries, for its erase index: the sources its
-/// checks read, and each loop row's claim, actor and evidence refs, so a
-/// hard delete of any of them erases the period with its copy.
-pub(super) fn indexed_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
-    let mut sources = report_sources(report)?;
-    for item in report.sections.iter().flat_map(|section| &section.items) {
-        if let WeaveItem::LoopDecision {
-            claim_ref,
-            actor_ref,
-            evidence_refs,
-            ..
-        } = item
-        {
-            sources.extend(
-                claim_ref
-                    .iter()
-                    .chain(actor_ref)
-                    .chain(evidence_refs)
-                    .copied(),
-            );
+/// A loop row's claim, actor and evidence refs, for its period's erase
+/// index; none for any other row.
+pub(super) fn row_refs(item: &WeaveItem) -> Vec<EntityId> {
+    let WeaveItem::LoopDecision {
+        claim_ref,
+        actor_ref,
+        evidence_refs,
+        ..
+    } = item
+    else {
+        return Vec::new();
+    };
+    claim_ref
+        .iter()
+        .chain(actor_ref)
+        .chain(evidence_refs)
+        .copied()
+        .collect()
+}
+
+/// A hard delete of `source` in a saved loop row (FIX 7693): the row keeps
+/// its decision, outcome, kind and reasons and loses that ref wherever it
+/// named it, as the current authorised read no longer shows a gone row.
+/// `true` when the row named it.
+pub(super) fn strip_ref(item: &mut WeaveItem, source: &EntityId) -> bool {
+    let WeaveItem::LoopDecision {
+        claim_ref,
+        actor_ref,
+        evidence_refs,
+        ..
+    } = item
+    else {
+        return false;
+    };
+    let mut named = false;
+    for slot in [claim_ref, actor_ref] {
+        if *slot == Some(*source) {
+            *slot = None;
+            named = true;
         }
     }
-    Ok(sources)
+    let shown = evidence_refs.len();
+    evidence_refs.retain(|id| id != source);
+    named || evidence_refs.len() != shown
 }
 
 /// Whether `report` holds any loop decision row.
@@ -191,7 +214,8 @@ impl ScopedRead<'_> {
         if !has_loop_rows(report) {
             return Ok(Cow::Borrowed(report));
         }
-        let txn = self.vault.store.env.read_txn()?;
+        // The recorded owner's grants judge at the refreshed clock (FIX 8671).
+        let txn = self.grant_read_txn()?;
         let mut rows = report.clone();
         recheck_loop_rows(
             &mut rows,

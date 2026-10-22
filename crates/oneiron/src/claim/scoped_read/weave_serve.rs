@@ -4,10 +4,9 @@
 //! reads the person lens, an agent the agent lens, and only a live owner
 //! proof reads the owner lens.
 use super::{
-    ClaimReadStatus, ScopedRead, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence,
-    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveItemCorrection, WeaveItemTarget,
-    WeaveLensRefusal, WeaveLensRender, WeaveLinkCorrection, WeaveLiveLens, WeaveReader,
-    WeaveReport, WeaveScheduleHold, WeaveSectionKind, WeaveSectionSpec,
+    ClaimReadStatus, ScopedReadReceipt, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule,
+    WeaveItemCorrection, WeaveItemTarget, WeaveLensRefusal, WeaveLensRender, WeaveLinkCorrection,
+    WeaveLiveLens, WeaveReader, WeaveReport, WeaveScheduleHold, WeaveSectionKind, WeaveSectionSpec,
 };
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
@@ -19,6 +18,8 @@ use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
 use crate::provenance::EdgeRef;
 use serde::{Deserialize, Serialize};
 
+// Each served item's lowering, and a saved period's view (FIX 7904).
+mod items;
 pub(super) mod sieve_audit;
 
 /// One section a weave report asks for, in the reader's own recipe.
@@ -242,6 +243,10 @@ pub enum WeaveItemView {
     AgentHealth {
         card_ref: String,
         card: crate::dreamer_runner::maintenance::agent_health::AgentHealthCard,
+        /// A saved copy's Coach draft lost its diagnosis and proposal: a row
+        /// they were drafted from was erased (FIX 8672). The rest stays.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        draft_erased: bool,
     },
     /// One sampled sieve audit (OF-499): the attempt that wrote it, the
     /// span's turn and source, the rule's kind and entity beside the
@@ -516,9 +521,11 @@ impl Memory<'_> {
     /// under the bound actor's current read and composes `answer`, the
     /// step's plan, over it, as a card beside the frame that minted its
     /// backing refs; its host keeps the frame for the card's events. The
-    /// plan was written over what the first read admitted, so a report that
-    /// changed meanwhile answers `None` and the host asks again from a fresh
-    /// read. A plan that does not cite each item exactly once is refused.
+    /// plan was written over the rows the first read admitted: it composes
+    /// over those rows while the re-read still serves each of them, a loop
+    /// decision appended since left for the next read (FIX 7694); else it
+    /// answers `None` and the host asks again from a fresh read. A plan that
+    /// does not cite each item exactly once is refused.
     pub fn weave_lens_finish_framed(
         &self,
         owner: Option<&AuthenticatedOwner>,
@@ -529,12 +536,13 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<HostedLensRender>> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let report = read
+        let fresh = read
             .weave_report(reader, &Self::weave_recipe(request)?)?
             .value;
-        if report != live.report {
+        if !super::weave_lens::snapshot_still_served(&live.report, &fresh) {
             return Ok(None);
         }
+        let report = live.report;
         self.produced_from(report.source_rows());
         let plan =
             super::weave_lens::weave_lens_answer_plan(answer, &report).map_err(|reason| {
@@ -692,107 +700,5 @@ impl Memory<'_> {
         request: &WeaveWrongItemRequest,
     ) -> MemoryResult<WeaveItemCorrectionView> {
         self.weave_wrong_item(Some(owner), owner, request)
-    }
-
-    /// A saved period's view. Its render composes under `read`, the
-    /// opener's own read; a render that no longer composes is left out and
-    /// the period's data still serves.
-    fn weave_digest_view(
-        &self,
-        read: &ScopedRead<'_>,
-        reader: WeaveReader<'_>,
-        stored: StoredWeaveDigest,
-    ) -> MemoryResult<WeaveDigestFramed> {
-        // A saved period serves the rows its report was read from.
-        self.produced_from(stored.report.value.source_rows());
-        // Its lens composes over the rows its render was written over.
-        let lens = stored.lens.as_ref().and_then(|render| {
-            read.saved_weave_lens_rows(stored.reader, &stored.report.value)
-                .and_then(|rows| {
-                    super::weave_lens::compose_weave_lens_framed(read, reader, &rows, render)
-                })
-                .inspect_err(|error| tracing::warn!(?error, "weave lens did not compose"))
-                .ok()
-        });
-        Ok(WeaveDigestFramed {
-            view: WeaveDigestView {
-                scheduled_for: stored.scheduled_for,
-                rendered_at: stored.rendered_at,
-                sections: self.weave_sections(&stored.report.value)?,
-                narrowing: stored.report.receipt,
-                lens: None,
-                lens_refused: stored.lens_refused,
-            },
-            lens,
-        })
-    }
-
-    pub(super) fn weave_sections(
-        &self,
-        report: &WeaveReport,
-    ) -> MemoryResult<Vec<WeaveSectionView>> {
-        report
-            .sections
-            .iter()
-            .map(|section| {
-                Ok(WeaveSectionView {
-                    kind: section.kind,
-                    sieve_score: super::weave_report::sieve_score::sieve_score_view(section),
-                    items: section
-                        .items
-                        .iter()
-                        .map(|item| {
-                            Ok(match item {
-                                WeaveItem::Claim { id, body } => WeaveItemView::Claim {
-                                    claim: self.served_claim_view(id, body)?,
-                                },
-                                WeaveItem::Project { id, goal } => WeaveItemView::Project {
-                                    project_ref: id.to_hex(),
-                                    goal_ref: goal.clone(),
-                                },
-                                WeaveItem::Budget {
-                                    project,
-                                    budget_ref,
-                                } => WeaveItemView::Budget {
-                                    project_ref: project.to_hex(),
-                                    budget_ref: budget_ref.to_hex(),
-                                },
-                                WeaveItem::Link {
-                                    source,
-                                    kind,
-                                    target,
-                                } => WeaveItemView::Link {
-                                    source_ref: source.to_hex(),
-                                    kind: kind.name().to_owned(),
-                                    target_ref: target.to_hex(),
-                                },
-                                WeaveItem::DreamProgress {
-                                    resident,
-                                    dreamed_at,
-                                    entries,
-                                } => WeaveItemView::DreamProgress {
-                                    resident_ref: resident.to_hex(),
-                                    dreamed_at: *dreamed_at,
-                                    entries: *entries,
-                                },
-                                WeaveItem::AgentHealth { card } => WeaveItemView::AgentHealth {
-                                    card_ref: card.card_ref(),
-                                    card: card.clone(),
-                                },
-                                WeaveItem::SieveAudit { attempt, audit } => {
-                                    super::weave_report::sieve_score::sieve_audit_view(
-                                        *attempt, audit,
-                                    )
-                                }
-                                WeaveItem::LoopDecision { .. } => {
-                                    super::weave_report::admissions::loop_decision_view(item)
-                                        .map_err(MemoryError::from)?
-                                }
-                            })
-                        })
-                        .collect::<MemoryResult<Vec<_>>>()?,
-                })
-            })
-            .collect()
     }
 }

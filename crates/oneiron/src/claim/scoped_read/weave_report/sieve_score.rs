@@ -4,13 +4,16 @@
 //! path, each audit a row of its own. No weighting, model or scorer: a
 //! section that shows no audit reads no samples, never a success. An
 //! unflagged window's audit (OF-498f) is a sample too: it agrees when the
-//! expensive path found nothing the rules missed there.
+//! expensive path found nothing the rules missed there. An audit's kept
+//! decisions name candidate refs of their own: a served copy keeps only
+//! those the reader's floor admits, and marks the decisions it redacted
+//! (FIX 8322); the stored audit and a saved period's copy keep them whole.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::{
     ScopedRead, WeaveItemView, WeaveSieveDiscoveryView, WeaveSieveFindingView, WeaveSieveScoreView,
 };
-use super::{WeaveItem, WeaveSection, WeaveSectionKind};
+use super::{WeaveItem, WeaveReport, WeaveSection, WeaveSectionKind};
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{
@@ -85,15 +88,88 @@ impl ScopedRead<'_> {
                 }
             }
             if admitted {
-                items.push(WeaveItem::SieveAudit { attempt, audit });
+                items.push(WeaveItem::SieveAudit {
+                    attempt,
+                    audit,
+                    redacted: Vec::new(),
+                });
             }
         }
         items
     }
 }
 
+/// One sampled audit's decision whose candidate refs the reader's own floor
+/// refused, in part (FIX 8322): the served copy leaves those refs out and
+/// keeps the decision, at its place in the audit's decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RedactedSieveDecision {
+    pub decision: usize,
+}
+
+impl ScopedRead<'_> {
+    /// Serves each sampled audit's kept decisions in `report` past this
+    /// reader's own floor (FIX 8322): every evidence id and pinned evidence
+    /// version a decision names passes
+    /// [`Self::is_entity_retrievable_with_policy_in`], as the audit's own
+    /// rows do, or is left out of the served copy, its decision marked in
+    /// the item's `redacted`. A floor that does not answer redacts. The
+    /// decision, the audit and its period always stay.
+    pub(crate) fn redact_sieve_decisions_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        report: &mut WeaveReport,
+    ) {
+        let mut floor: BTreeMap<EntityId, bool> = BTreeMap::new();
+        let mut admits = |id: EntityId| -> bool {
+            *floor.entry(id).or_insert_with(|| {
+                match self.is_entity_retrievable_with_policy_in(txn, policy, filter, &id) {
+                    Ok(readable) => readable,
+                    Err(error) => {
+                        tracing::warn!(
+                            error_kind = ?error.kind(),
+                            "the read floor did not answer for a sieve decision's ref; redacted"
+                        );
+                        false
+                    }
+                }
+            })
+        };
+        for item in report
+            .sections
+            .iter_mut()
+            .flat_map(|section| &mut section.items)
+        {
+            let WeaveItem::SieveAudit {
+                audit: SieveAuditRecord::Flagged(audit),
+                redacted,
+                ..
+            } = item
+            else {
+                continue;
+            };
+            for (index, kept) in audit.decisions.iter_mut().enumerate() {
+                let decision = &mut kept.decision;
+                let named = decision.evidence.len() + decision.receipt.evidence_versions.len();
+                decision.evidence.retain(|id| admits(*id));
+                decision
+                    .receipt
+                    .evidence_versions
+                    .retain(|version| admits(version.id));
+                if decision.evidence.len() + decision.receipt.evidence_versions.len() != named {
+                    redacted.push(RedactedSieveDecision { decision: index });
+                }
+            }
+        }
+    }
+}
+
 /// The rows a sampled audit stands on, each once: its turn, its source and
-/// each entity it names. A window's finding names no entity.
+/// each entity it names. A window's finding names no entity. Its decisions'
+/// candidate refs gate nothing: they serve redacted past the reader's floor
+/// ([`ScopedRead::redact_sieve_decisions_in`]).
 pub(crate) fn sieve_audit_rows(audit: &SieveAuditRecord) -> BTreeSet<EntityId> {
     match audit {
         SieveAuditRecord::Flagged(audit) => [

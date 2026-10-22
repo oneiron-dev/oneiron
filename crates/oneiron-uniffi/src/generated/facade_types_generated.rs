@@ -12300,6 +12300,12 @@ pub enum WeaveItemView {
         card_ref: String,
         #[serde(rename = "card")]
         card: AgentHealthCard,
+        #[serde(
+            rename = "draft_erased",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        draft_erased: Option<bool>,
     },
     #[serde(rename = "sieve_audit")]
     SieveAudit {

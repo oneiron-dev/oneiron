@@ -62,6 +62,7 @@ pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};
+pub use weave_report::sieve_score::RedactedSieveDecision;
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
