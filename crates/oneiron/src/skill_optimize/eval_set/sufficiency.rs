@@ -65,7 +65,10 @@ pub enum UnknownReason {
     NoRetestNoise,
     NoInterval,
     IntervalSpansMargin,
-    TooFewFamilies { slice: String, families: u32 },
+    TooFewFamilies {
+        slice: String,
+        families: u32,
+    },
     SetChanged,
     RubricChanged,
     CanaryDiverged,
