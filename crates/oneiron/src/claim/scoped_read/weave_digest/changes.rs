@@ -402,7 +402,8 @@ impl Vault {
 
     /// Whether the owner acknowledged the due notice `notice` of his period
     /// `scheduled_for`: a live weave digest notice for him, of that period,
-    /// that carries his key among its acknowledgements.
+    /// that carries his key among its acknowledgements, or else an agent's
+    /// acknowledgement for him under one covering Grant (FIX 5778).
     fn notice_dismissed_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -432,10 +433,14 @@ impl Vault {
         {
             return Ok(false);
         }
-        Ok(self
+        if self
             .owner_ack_keys_in_txn(txn, owner)?
             .iter()
-            .any(|key| body.acked_by.get(key) == Some(&true)))
+            .any(|key| body.acked_by.get(key) == Some(&true))
+        {
+            return Ok(true);
+        }
+        Ok(self.notice_acked_by_covering_agent_in_txn(txn, id, &body, owner))
     }
 
     /// The actor keys the owner acknowledges his own notices under (FIX

@@ -89,6 +89,11 @@ pub(crate) use self::pad_custody::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::pad_custody::{
+    missing_world_pads_in_txn, row_pad_in_txn, world_pad_recipients_in_txn,
+    world_pad_row_items_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use self::pad_custody::{
     pad_echo_equal, pad_reference_waits_in_txn, pad_row_held_in_txn,
 };
 pub(crate) use self::pad_erase::erase_batch_pad_row_in_txn;

@@ -491,7 +491,8 @@ side_tables! {
     /// (the displaced revision).
     SKILL_OPTIMIZE_DISPLACED_REVISION: VaultMeta b"skill_optimize:displaced_revision:v1:" Raw;
     /// One eval case in a seat's derivation ledger (MessagePack named map). Key: id16 (case).
-    SKILL_OPTIMIZE_EVAL_CASE: VaultMeta b"skill_optimize:eval_case:v1:" Raw;
+    SKILL_OPTIMIZE_EVAL_CASE: VaultMeta b"skill_optimize:eval_case:v1:" Raw
+        => crate::skill_optimize::erase_eval_source_in_txn;
     /// One date-cut sealed eval cohort (MessagePack named map). Key: id16 (cohort).
     SKILL_OPTIMIZE_EVAL_COHORT: VaultMeta b"skill_optimize:eval_cohort:v1:" Raw;
     /// The near-copy audit one eval cohort was cut with: refs, scores and coverage, never text.
@@ -531,7 +532,8 @@ side_tables! {
     /// (check).
     SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
     /// A counted own-seat pilot and its immutable measured sufficiency card. Key: id16.
-    SKILL_OPTIMIZE_OFFER_PILOT: VaultMeta b"skill_optimize:offer_pilot:v1:" Named;
+    SKILL_OPTIMIZE_OFFER_PILOT: VaultMeta b"skill_optimize:offer_pilot:v1:" Named
+        => crate::skill_optimize::erase_pilot_source_in_txn;
     /// The stock switch an offer's approval bound: the replaced and new role bindings, and any
     /// undo. Key: id16 (offer).
     SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named

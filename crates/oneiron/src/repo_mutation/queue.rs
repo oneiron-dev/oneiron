@@ -726,6 +726,7 @@ pub(super) fn execute_repo_mutation(
             Ok(Some(claim_id))
         }
         RepoMutationOperation::ReceivedFiles { .. } => {
+            super::received_file::require_received_files_execution(vault, request)?;
             super::received_file::tree::apply_prepared_received_files(
                 repo_root,
                 execution.commit_file()?,

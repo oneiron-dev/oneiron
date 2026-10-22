@@ -12,7 +12,7 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::reaction::{MessageReactionReceipt, MessageReactionRequest};
 
 use super::FacadeApiError;
-use super::host_doors::{Listed, hex_rows, internal, naming};
+use super::host_doors::support::{Listed, hex_rows, internal, naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

@@ -22,7 +22,7 @@ use oneiron::task_verb::sdk::{
     SupportGrantMintRequest, SupportGrantRevokeAnswer, SupportGrantRevokeRequest,
 };
 
-use super::host_doors::{Listed, internal, owner_proof};
+use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

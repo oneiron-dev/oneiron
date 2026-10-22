@@ -62,9 +62,28 @@ pub(super) fn isolated(binary: &Path) -> Command {
     for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with("ONEIRON_")) {
         command.env_remove(key);
     }
+    if let Some(fence) = fence_launcher(binary) {
+        command.env(FENCE_LAUNCHER_ENV, fence);
+    }
     command.env("NO_COLOR", "1");
     command
 }
+
+const FENCE_LAUNCHER_ENV: &str = "ONEIRON_FENCE_LAUNCHER";
+
+/// The host's fence launcher survives the `ONEIRON_*` strip: the browser guest
+/// cannot start without it, and it names a host binary, not engine config. The
+/// caller's absolute path wins; else the `oneiron-fence` built beside `binary`.
+fn fence_launcher(binary: &Path) -> Option<PathBuf> {
+    let given = std::env::var_os(FENCE_LAUNCHER_ENV).map(PathBuf::from);
+    if let Some(path) = given.filter(|path| path.is_absolute()) {
+        return Some(path);
+    }
+    fs::canonicalize(binary.with_file_name("oneiron-fence"))
+        .ok()
+        .filter(|path| path.is_file())
+}
+
 pub(super) async fn once(mut command: Command, deadline: Instant, log: &Path) -> Result<()> {
     command
         .stdout(fs::File::create(log).map_err(|e| e.to_string())?)

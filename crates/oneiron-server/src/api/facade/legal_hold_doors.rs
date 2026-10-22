@@ -17,7 +17,7 @@ use oneiron::task_verb::sdk::{
     LegalHoldPlaceRequest, LegalHoldWidenRequest,
 };
 
-use super::host_doors::{Listed, internal, off_runtime_listing, refused};
+use super::host_doors::support::{Listed, internal, off_runtime_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

@@ -8,7 +8,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{self, *};
 
-use super::host_doors::{Listed, MaybeListed, internal, no_hook_sandbox, owner_proof, refused};
+use super::host_doors::no_hook_sandbox;
+use super::host_doors::support::{Listed, MaybeListed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
