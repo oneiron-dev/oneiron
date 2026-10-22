@@ -638,6 +638,12 @@ pub(super) fn console_output_path(seq: u64) -> String {
 }
 
 /// A shadow check's report for the step's program.
+/// Where a step whose check landed by its end keeps the check's report in
+/// its record.
+pub(super) fn code_check_output_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.code-check.json")
+}
+
 /// Where a step's type diagnostics past one reply are kept whole, in a
 /// body the run owns and never in its replay record (FIX 8277).
 pub(super) fn type_diagnostics_output_path(seq: u64, invocation: u64) -> String {

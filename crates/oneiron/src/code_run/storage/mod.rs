@@ -68,7 +68,7 @@ pub(crate) use self::speech_identity::{
     executor_speech_turn_id_for_run,
 };
 pub(crate) use self::type_diagnostics::{
-    StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn,
+    StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn, runs_program_steps,
 };
 pub use self::wait_delivery::{
     WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap, park_and_bind_wait_trap,

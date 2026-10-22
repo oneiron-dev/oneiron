@@ -437,6 +437,12 @@ pub struct TaskWaitSetResult {
     /// while it is not.
     pub reason: Option<String>,
     pub until: u64,
+    /// The settled children's program steps' type feedback as it stood when
+    /// this answer was given (FIX 8277), beside their findings and never in
+    /// them. Never kept in the wait's first reduction: a later answer reads
+    /// newer feedback, as `vault.code.type_diagnostics` does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub program_steps: Vec<super::ProgramStepFeedback>,
 }
 
 /// How many children a wait set waits for.
@@ -747,6 +753,7 @@ pub(crate) fn reduce_task_wait_set(
         done: false,
         reason: None,
         until: set.until_ms,
+        program_steps: Vec::new(),
     };
     let finding =
         |task: EntityId, finding: &ReaderFindingRef, reason: Option<&str>| TaskWaitFinding {

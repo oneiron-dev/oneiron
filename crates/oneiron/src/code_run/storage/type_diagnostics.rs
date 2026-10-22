@@ -18,8 +18,10 @@ use super::super::type_diagnostics::{
     check_incarnation,
 };
 use super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
+use super::routing::ExecutorStorage;
 use crate::provenance::body::release_body_in_txn;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 
 /// One step's feedback row. Key: (run, step, invocation).
@@ -202,6 +204,18 @@ impl Vault {
         ROWS.scan_from(&self.store, &rtxn, run.as_bytes())
     }
 
+    /// The bodies `run`'s stored diagnostics collections are kept in, for
+    /// the readers of its results: read under the run's own checks, as any
+    /// result of it is. A row that cannot be read keeps none back; no read
+    /// that answers today is refused for it.
+    pub(crate) fn type_diagnostics_bodies(&self, run: EntityId) -> Vec<CodeRunRawOutput> {
+        self.type_diagnostics_rows(run)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(_, row)| row.body)
+            .collect()
+    }
+
     /// Writes a step's feedback as the step ended: a pending row never
     /// takes the place of a check that has already landed.
     ///
@@ -224,6 +238,38 @@ impl Vault {
         ROWS.put(self, &mut wtxn, &key, row)?;
         Ok(wtxn.commit()?)
     }
+}
+
+/// The program steps' type feedback of each of `runs`, as it stands, read
+/// in `txn` on the vault's own rows: a wait's settled children's (FIX 8277).
+/// A row that cannot be read gives none; nothing waits on a check.
+pub(crate) fn runs_program_steps_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    runs: &[EntityId],
+) -> Vec<ProgramStepFeedback> {
+    runs.iter()
+        .flat_map(|run| {
+            ROWS.scan_from(store, txn, run.as_bytes())
+                .unwrap_or_default()
+        })
+        .map(|(key, row)| row.feedback(key))
+        .collect()
+}
+
+/// [`runs_program_steps_in_txn`] on a run's storage: none on a session's
+/// route, whose steps keep their feedback with their run.
+pub(crate) fn runs_program_steps(
+    storage: &ExecutorStorage<'_>,
+    runs: &[EntityId],
+) -> Vec<ProgramStepFeedback> {
+    let ExecutorStorage::Canonical(vault) = storage else {
+        return Vec::new();
+    };
+    vault.store.env.read_txn().map_or_else(
+        |_| Vec::new(),
+        |rtxn| runs_program_steps_in_txn(&vault.store, &rtxn, runs),
+    )
 }
 
 /// An erased actor's step feedback goes (FIX 8277): each row of a run that
