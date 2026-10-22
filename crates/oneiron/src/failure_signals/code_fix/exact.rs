@@ -8,7 +8,10 @@
 //! that was never kept, leaves the replay to rebuild the call, and the
 //! replay says so. A capsule the wall withheld its request from keeps no
 //! copy, and says why (FIX 6348). An erased capsule's call is replayed by
-//! no copy and no rebuild (FIX 6251).
+//! no copy and no rebuild (FIX 6251). No copy of a call's request is read
+//! unless the Coach's own Grant admits its capture (FIX 8704): one it does
+//! not admit keeps its capsule as a reference only, and is rebuilt as a
+//! call with no copy kept is; no other copy stands in for it.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +20,7 @@ use crate::attempt_queue::AttemptId;
 use crate::code_run::{
     CapsuleRequest, CapsuleRungBinding, StepReplayCapsule, capsule_request, step_replay_capsules,
 };
+use crate::dreamer_runner::maintenance::code_fix::CoachReplayAdmission;
 use crate::self_heal::blocked_reports::{SentRequest, blocked_source_in, step_sources_in};
 use crate::{EntityId, LlmRequest, Result, Vault};
 
@@ -116,24 +120,31 @@ pub(crate) struct CodeFixReplaySelection {
     pub(crate) capsule: Option<StepReplayCapsule>,
 }
 
-/// What the vault kept of the request the failure `source` names. A request
+/// What the vault kept of the request the failure `source` names, read
+/// only under `admitted`, the Coach's admission to its capture. A request
 /// the report's own row keeps is read there, under that row's own erase.
-pub(crate) fn exact_replay(vault: &Vault, source: &CodeFixSource) -> Result<ExactReplay> {
-    Ok(code_fix_replay_selection(vault, source)?.exact)
+pub(crate) fn exact_replay(
+    vault: &Vault,
+    source: &CodeFixSource,
+    admitted: Option<&CoachReplayAdmission>,
+) -> Result<ExactReplay> {
+    Ok(code_fix_replay_selection(vault, source, admitted)?.exact)
 }
 
 /// The failing call of the failure `source` names, chosen once
 /// ([`CodeFixReplaySelection`]): its kept request, read where
 /// [`exact_replay`] reads it, and the capsule of the call among its run's
-/// kept calls.
+/// kept calls. With no `admitted`, no copy of the request is read: the
+/// replay rebuilds the call, unless its capsule reads erased.
 pub(crate) fn code_fix_replay_selection(
     vault: &Vault,
     source: &CodeFixSource,
+    admitted: Option<&CoachReplayAdmission>,
 ) -> Result<CodeFixReplaySelection> {
     let txn = vault.store.env.read_txn()?;
     // The attempt whose kept calls hold it, the hash of the one a report
-    // names, when it names one, and the copy the report's own row keeps.
-    let (attempt, digest, kept) = match source {
+    // names, when it names one, and what the report's own row keeps of it.
+    let (attempt, digest, sent) = match source {
         CodeFixSource::Case { case_ref } => match failed_case_in(vault, &txn, case_ref)? {
             Some((case, _)) => (
                 Some(EntityId::from_bytes(*case.failing_attempt_id.as_bytes())?),
@@ -147,11 +158,7 @@ pub(crate) fn code_fix_replay_selection(
                 .and_then(|source| source.request)
                 .and_then(|request| request.sent);
             let digest = sent.as_ref().map(|sent| sent.digest);
-            // The report's own row keeps it.
-            let kept = sent.and_then(|SentRequest { digest, kept }| {
-                kept.map(|kept| ExactReplay::of(as_kept(kept.request, None, digest, kept.stored)))
-            });
-            (*run, digest, kept)
+            (*run, digest, sent)
         }
     };
     drop(txn);
@@ -159,10 +166,31 @@ pub(crate) fn code_fix_replay_selection(
         Some(attempt) => failing_call(vault, attempt, digest)?,
         None => None,
     };
-    let exact = match (kept, attempt) {
-        (Some(kept), _) => kept,
-        (None, Some(attempt)) => attempt_request(vault, attempt, digest, capsule.clone())?,
-        (None, None) => ExactReplay::NotKept,
+    let row_keeps = sent.as_ref().is_some_and(|sent| sent.kept.is_some());
+    let exact = match (admitted, sent, attempt) {
+        // FIX 8704: a capture the Coach is not admitted to is read by no
+        // copy; an erased capsule's call still runs no replay at all.
+        (None, ..) => {
+            let erased = capsule
+                .as_ref()
+                .is_some_and(|capsule| capsule.content.actor().is_none());
+            if !row_keeps && erased {
+                ExactReplay::Erased
+            } else {
+                ExactReplay::NotKept
+            }
+        }
+        // The report's own row keeps it.
+        (
+            Some(_),
+            Some(SentRequest {
+                digest: sent,
+                kept: Some(kept),
+            }),
+            _,
+        ) => ExactReplay::of(as_kept(kept.request, None, sent, kept.stored)),
+        (Some(_), _, Some(attempt)) => attempt_request(vault, attempt, digest, capsule.clone())?,
+        (Some(_), _, None) => ExactReplay::NotKept,
     };
     if let ExactReplay::Withheld { reasons, fallback } = &exact {
         // Local only (FIX 6348): why the capsule keeps no copy.

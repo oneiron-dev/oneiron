@@ -235,8 +235,9 @@ impl Vault {
                 source_rows: row.source_rows,
             };
             ACKNOWLEDGED_CALLS.put(&self.store, txn, call_ref, &kept)?;
-            PENDING_CALLS.delete(&self.store, txn, call_ref)
+            super::connector_call_erase::delete_pending_call_in_txn(&self.store, txn, call_ref)
         })?)
+        .inspect(|_| self.finish_connector_resume_retirements_after_commit())
     }
 
     /// Marks every unanswered call's questions uncertain, and returns how
