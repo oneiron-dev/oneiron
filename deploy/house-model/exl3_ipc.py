@@ -382,7 +382,12 @@ class Connection:
         self.calls = {}
 
     def send(self, op, request_id, body, seq=None):
-        """Writes one frame, whole; False once the connection is gone."""
+        """Writes one frame, whole; False once the connection is gone. Every
+        refusal, error terminal and failed write reaches the log with its
+        cause."""
+        if op == "refused" or (op == "final" and body.get("outcome") == "error"):
+            detail = body if op == "refused" else body.get("error")
+            print(f"NATIVE_REPLY_ERROR op={op} request_id={request_id} detail={detail!r}", flush=True)
         envelope = {"v": SCHEMA_VERSION, "op": op, "request_id": request_id,
                     "epoch": self.state.identity.epoch, "body": body}
         if seq is not None:
@@ -394,7 +399,9 @@ class Connection:
             try:
                 self.sock.sendall(frame)
                 return True
-            except OSError:
+            except OSError as error:
+                print(f"NATIVE_SEND_ERROR op={op} request_id={request_id} {type(error).__name__}: {error}",
+                      flush=True)
                 self.closed = True
                 return False
 

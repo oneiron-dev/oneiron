@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1154 facade rows, 4072 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1106.
+// UniFFI census: 1155 facade rows, 4083 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1107.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -10347,6 +10347,24 @@ pub struct WithheldRef {
     pub role: WithheldRole,
 }
 
+/// `oneiron::provenance::birth::RoomEvidenceRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RoomEvidenceRef {
+    #[serde(rename = "supplied")]
+    pub supplied: String,
+    #[serde(rename = "turn", default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
+}
+
+/// `oneiron::provenance::birth::RoomEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RoomEvidence {
+    #[serde(rename = "refs")]
+    pub refs: Vec<RoomEvidenceRef>,
+}
+
 /// `oneiron::provenance::birth::RowBirth`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -10357,6 +10375,12 @@ pub struct RowBirth {
     pub content_hash: String,
     #[serde(rename = "withheld", default, skip_serializing_if = "Option::is_none")]
     pub withheld: Option<Vec<WithheldRef>>,
+    #[serde(
+        rename = "room_evidence",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub room_evidence: Option<RoomEvidence>,
 }
 
 /// `oneiron::memory::scoped_export::ScopedExportRecord`.
@@ -12289,14 +12313,20 @@ pub struct WeaveReportRequest {
 /// `oneiron::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveDiscoveryView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WeaveSieveDiscoveryView {
-    #[serde(rename = "start")]
-    pub start: u64,
-    #[serde(rename = "end")]
-    pub end: u64,
+    #[serde(rename = "start", default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<u64>,
+    #[serde(rename = "end", default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<u64>,
     #[serde(rename = "kind")]
     pub kind: String,
     #[serde(rename = "confidence")]
     pub confidence: u8,
+    #[serde(rename = "discovery_ref")]
+    pub discovery_ref: String,
+    #[serde(rename = "unlocated", default, skip_serializing_if = "Option::is_none")]
+    pub unlocated: Option<String>,
+    #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveFindingView`.
@@ -12450,6 +12480,8 @@ pub struct WeaveSieveScoreView {
     pub sampled: u64,
     #[serde(rename = "agreeing")]
     pub agreeing: u64,
+    #[serde(rename = "discoveries")]
+    pub discoveries: u64,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveSectionView`.
@@ -21936,6 +21968,12 @@ pub struct OffRecordNoteRequest {
     pub session_ref: String,
     #[serde(rename = "note")]
     pub note: CreateNoteRequest,
+    #[serde(
+        rename = "evidence_turn_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub evidence_turn_refs: Option<Vec<String>>,
 }
 
 /// `oneiron::verbs::off_record::OffRecordClaimRequest`.
@@ -33649,6 +33687,168 @@ pub struct CodeRunModelHealCountView {
     pub model_id: String,
     #[serde(rename = "healed_turns")]
     pub healed_turns: u64,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunTypeDiagnosticsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunTypeDiagnosticsRequest {
+    #[serde(rename = "check_ref")]
+    pub check_ref: String,
+}
+
+/// `oneiron::code_run::type_diagnostics::ProgramStepIdentity`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramStepIdentity {
+    #[serde(rename = "run")]
+    pub run: String,
+    #[serde(rename = "program_seq")]
+    pub program_seq: u64,
+    #[serde(rename = "invocation")]
+    pub invocation: u64,
+}
+
+/// `oneiron::code_run::type_diagnostics::ProgramPreparationNote`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramPreparationNote {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "detail", default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// `oneiron::code_run::type_diagnostics::TypeCheckFacts`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TypeCheckFacts {
+    #[serde(rename = "language")]
+    pub language: String,
+    #[serde(rename = "file")]
+    pub file: String,
+    #[serde(rename = "backend")]
+    pub backend: String,
+    #[serde(rename = "pin")]
+    pub pin: String,
+    #[serde(
+        rename = "action_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub action_digest: Option<String>,
+    #[serde(
+        rename = "elapsed_us",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub elapsed_us: Option<u64>,
+    #[serde(
+        rename = "peak_memory_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub peak_memory_bytes: Option<u64>,
+}
+
+/// `oneiron::code_run::type_diagnostics::DiagnosticMeasures`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DiagnosticMeasures {
+    #[serde(rename = "count")]
+    pub count: u64,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+}
+
+/// `oneiron::code_run::type_diagnostics::TypeDiagnostic`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TypeDiagnostic {
+    #[serde(rename = "file", default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(rename = "line")]
+    pub line: u32,
+    #[serde(rename = "column")]
+    pub column: u32,
+    #[serde(rename = "category")]
+    pub category: String,
+    #[serde(rename = "code")]
+    pub code: u32,
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "message_bytes")]
+    pub message_bytes: u64,
+}
+
+/// `oneiron::code_run::type_diagnostics::DiagnosticCollection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "form")]
+pub enum DiagnosticCollection {
+    #[serde(rename = "inline")]
+    Inline {
+        #[serde(rename = "diagnostics")]
+        diagnostics: Vec<TypeDiagnostic>,
+    },
+    #[serde(rename = "stored")]
+    Stored {
+        #[serde(rename = "handle")]
+        handle: String,
+        #[serde(rename = "occurrence")]
+        occurrence: String,
+        #[serde(rename = "byte_len")]
+        byte_len: u64,
+    },
+}
+
+/// `oneiron::code_run::type_diagnostics::TypeDiagnostics`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum TypeDiagnostics {
+    #[serde(rename = "complete")]
+    Complete {
+        #[serde(rename = "check")]
+        check: TypeCheckFacts,
+        #[serde(rename = "measures")]
+        measures: DiagnosticMeasures,
+        #[serde(rename = "diagnostics")]
+        diagnostics: DiagnosticCollection,
+    },
+    #[serde(rename = "pending")]
+    Pending {
+        #[serde(rename = "check")]
+        check: TypeCheckFacts,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "check")]
+        check: TypeCheckFacts,
+        #[serde(rename = "failure")]
+        failure: String,
+        #[serde(rename = "measures")]
+        measures: DiagnosticMeasures,
+        #[serde(rename = "diagnostics")]
+        diagnostics: DiagnosticCollection,
+    },
+    #[serde(rename = "unavailable")]
+    Unavailable {
+        #[serde(rename = "reason")]
+        reason: String,
+        #[serde(rename = "detail", default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+}
+
+/// `oneiron::code_run::type_diagnostics::ProgramStepFeedback`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramStepFeedback {
+    #[serde(rename = "step")]
+    pub step: ProgramStepIdentity,
+    #[serde(rename = "check_ref")]
+    pub check_ref: String,
+    #[serde(
+        rename = "preparation_note",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub preparation_note: Option<ProgramPreparationNote>,
+    #[serde(rename = "type_diagnostics")]
+    pub type_diagnostics: TypeDiagnostics,
 }
 
 /// `oneiron::memory::code_wait_doors::types::CodeWaitTarget`.
@@ -61462,6 +61662,18 @@ pub struct FoldHistoryStep {
     pub code: String,
     #[serde(rename = "console")]
     pub console: String,
+    #[serde(
+        rename = "type_diagnostics",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub type_diagnostics: Option<TypeDiagnostics>,
+    #[serde(
+        rename = "preparation_note",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub preparation_note: Option<ProgramPreparationNote>,
 }
 
 /// `oneiron::engine_executor::history::FoldHistory`.

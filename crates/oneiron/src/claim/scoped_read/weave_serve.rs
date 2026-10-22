@@ -307,6 +307,10 @@ pub struct WeaveSectionView {
 pub struct WeaveSieveScoreView {
     pub sampled: u64,
     pub agreeing: u64,
+    /// How many distinct discoveries the section's window audits found
+    /// (FIX 7903): one found again by another audit counts once here, and
+    /// each audit still lists its own occurrence.
+    pub discoveries: u64,
 }
 
 /// A live weave report, with its narrowing receipt.

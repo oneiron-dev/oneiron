@@ -45,7 +45,19 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
     let invocation = memory.invocation();
     let turn = memory.task_work_turn();
     let credential = mcp_verb_ask_credential(actor, memory);
-    let session = oneiron::task_verb::verb_hook_boundary::hook_session(Some(memory), tool);
+    // FIX 4280: a call serving a room NOTE keeps its hooks' records for its
+    // session; a close names the room hold this host keeps for the caller.
+    let held = crate::api::call_receipt::room_notes::held_room_note(
+        server,
+        crate::api::call_receipt::mcp_session_principal(actor.auth.as_ref(), actor.actor_ref),
+        Some(&input),
+    );
+    let session = oneiron::task_verb::verb_hook_boundary::hook_session_for_call(
+        Some(memory),
+        tool,
+        &input,
+        held.as_ref(),
+    );
     async move {
         let (reader, check) = admitted?;
         let resume = RowHookResume {
