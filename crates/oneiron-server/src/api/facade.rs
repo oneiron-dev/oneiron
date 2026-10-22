@@ -139,6 +139,7 @@ mod project_card_doors;
 mod proxy_doors;
 mod reaction_doors;
 mod receipts;
+mod release;
 mod reply_doors;
 mod repo_doors;
 mod research_doors;
@@ -203,6 +204,7 @@ use invoke::*;
 pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;
+pub(crate) use release::*;
 pub(crate) use secret_use_doors::self_use_as;
 
 use std::sync::Arc;
@@ -300,18 +302,19 @@ async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
 /// and headers are the call's context, its JSON body the verb's input, and
 /// the row runs in the facade's dispatch ([`call_verb`]), which the held
 /// socket runs too. A body that is not JSON is refused where the row reads
-/// it, as its handler refused it before.
+/// it, as its handler refused it before. Its answer meets one destination
+/// release before it is sent ([`released_reply`], FIX 8170).
 async fn facade_route(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, FacadeApiError> {
+) -> Result<(axum::Extension<FacadeReleased>, Json<serde_json::Value>), FacadeApiError> {
     let call = FacadeCall::http(&server, &auth, &headers);
     let verb = uri.path().trim_start_matches('/');
     let output = call_verb(&server, &call, verb, facade_json(payload)).await?;
-    Ok(Json(output.value))
+    Ok(released_reply(&server, &auth, verb, output))
 }
 
 /// `verb`, which names no facade verb, refused before the actor, the input

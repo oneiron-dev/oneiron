@@ -10,7 +10,10 @@
 //! the call's room grown for each piece before it is kept (Rule 5, FIX
 //! 5284): its size, its hops, its purpose and its Content-Type are
 //! `[limits]` rows the host measures, never refusals. The whole fetch,
-//! every hop's send and its whole body, runs inside the call's time left.
+//! every hop's send and its whole body, runs inside the call's time left,
+//! on the call's clock: a wait for room to hold the body moves the fetch's
+//! deadline on with the call's, and every read, connect and hop still runs
+//! against it (FIX 6196).
 //! These are the rules the seal crate's own guarded fetcher keeps
 //! (ARCH-0064a, SGN-00). A POST redirected by 301, 302 or 303 goes on as a
 //! GET without its body; by 307 or 308 it keeps both (RFC 9110 §15.4).
@@ -20,7 +23,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Instant;
 
 use oneiron_organ_protocol::{
     AskCode, AskRefusal, ByteBuf, FetchAnswer, FetchAsk, FetchMethod, Hash32,
@@ -28,6 +30,7 @@ use oneiron_organ_protocol::{
 use reqwest::Url;
 
 use crate::budget::{CallRoom, Stop};
+use crate::clock::Clock;
 use crate::handlers::{Answered, AskHandler, AskRequest};
 use crate::receipt::FetchTarget;
 use crate::spec::FetchGrant;
@@ -125,11 +128,7 @@ pub(crate) fn first_hop(
 
 /// Resolves `url`'s host once, inside the time left, and keeps only the
 /// addresses the grant lets a fetch reach.
-fn resolve(
-    url: &Url,
-    grant: &FetchGrant,
-    deadline: Instant,
-) -> Result<Vec<SocketAddr>, AskRefusal> {
+fn resolve(url: &Url, grant: &FetchGrant, clock: Clock<'_>) -> Result<Vec<SocketAddr>, AskRefusal> {
     let host = url
         .host_str()
         .ok_or_else(|| refused(AskCode::BadRequest, "no host"))?
@@ -150,9 +149,8 @@ fn resolve(
             let _ = found.send(addrs);
         })
         .map_err(|err| failed(format!("resolve: {err}")))?;
-    let left = deadline.saturating_duration_since(Instant::now());
     let addrs = looked_up
-        .recv_timeout(left)
+        .recv_timeout(clock.left())
         .map_err(|_| failed("resolve: out of time"))?
         .map_err(|err| failed(format!("resolve: {err}")))?;
     let reachable: Vec<SocketAddr> = addrs
@@ -175,22 +173,27 @@ impl AskHandler for GuardedFetch {
             room: ask.room,
             revoked: ask.revoked,
         };
-        let deadline = ask.deadline;
+        let clock = ask.clock;
         // One deadline over the whole fetch, every hop's send and all of its
         // body: at the deadline the fetch is dropped, and its connection
         // with it. (reqwest's blocking timeout starts afresh at every read,
-        // so a server that drips its body would outlast it.)
+        // so a server that drips its body would outlast it.) The deadline is
+        // the call's clock's: a wait for room meanwhile moves it on, so the
+        // fetch is checked again when it would have passed.
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|err| failed(format!("fetch: {err}")))?;
         runtime.block_on(async {
-            tokio::time::timeout_at(
-                tokio::time::Instant::from_std(deadline),
-                fetch(&request, first, ask.fetch, room, deadline),
-            )
-            .await
-            .unwrap_or_else(|_| Err(failed("out of time")))
+            let mut fetching = std::pin::pin!(fetch(&request, first, ask.fetch, room, clock));
+            loop {
+                let until = tokio::time::Instant::from_std(clock.deadline());
+                match tokio::time::timeout_at(until, fetching.as_mut()).await {
+                    Ok(fetched) => break fetched,
+                    Err(_) if !clock.passed() => {}
+                    Err(_) => break Err(failed("out of time")),
+                }
+            }
         })
     }
 }
@@ -215,14 +218,14 @@ impl Held<'_> {
     }
 }
 
-/// The fetch itself, hop by hop. DNS is bounded by `deadline` here; the
+/// The fetch itself, hop by hop. DNS is bounded by `clock` here; the
 /// caller bounds the rest.
 async fn fetch(
     request: &FetchAsk,
     first: Url,
     grant: &FetchGrant,
     room: Held<'_>,
-    deadline: Instant,
+    clock: Clock<'_>,
 ) -> Result<Answered, AskRefusal> {
     let mut target = FetchTarget {
         origin: origin(&first),
@@ -234,9 +237,8 @@ async fn fetch(
     let mut method = request.method;
     loop {
         allowed(&url, grant)?;
-        let addrs = resolve(&url, grant, deadline)?;
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
+        let addrs = resolve(&url, grant, clock)?;
+        if clock.passed() {
             return Err(failed("out of time"));
         }
         let host = url.host_str().unwrap_or_default().to_owned();

@@ -12746,6 +12746,7 @@ class SpawnIntentRequest(TypedDict):
     width: NotRequired[SpawnAskKnob[int] | None]
     pattern: NotRequired[SpawnAskKnob[str] | None]
     budget_cap_units: NotRequired[SpawnAskKnob[int] | None]
+    balance_free_prompt: NotRequired[bool]
 class SpawnIntentReply(TypedDict):
     intent_key: str
     phase: SpawnPhase
@@ -21240,6 +21241,7 @@ class AgentSpawnInput(TypedDict):
     project: NotRequired[str | None]
     objectives: NotRequired[list[str] | None]
     comm: NotRequired[CommReach | None]
+    balance_free_prompt: NotRequired[bool]
 AgentSpawnKind = Literal["agent_spawn"]
 class LaunchStatement(TypedDict):
     agent_count: int
