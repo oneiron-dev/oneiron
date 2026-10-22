@@ -121,6 +121,33 @@ pub(crate) fn erase_stream_seeds_in_txn(
     Ok(())
 }
 
+/// Takes the reply assertions off `message`'s stream receipts, its latest
+/// and each generation's, when an erase of it reaches them (FIX 10258): the
+/// receipts stay, naming no record. Registered with the reply assertions'
+/// eraser.
+pub(crate) fn redact_receipt_assertions_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+) -> Result<()> {
+    if let Some(mut latest) = RECEIPT.get(store, txn, message)?
+        && !latest.reply_assertions.is_empty()
+    {
+        latest.reply_assertions = crate::llm::ReplyAssertions::default();
+        RECEIPT.put(store, txn, message, &latest)?;
+    }
+    let generations: Vec<(String, MessageStreamReceipt)> = RECEIPT_BY_REF
+        .scan(store, txn)?
+        .into_iter()
+        .filter(|(_, done)| done.message_id == *message && !done.reply_assertions.is_empty())
+        .collect();
+    for (reference, mut done) in generations {
+        done.reply_assertions = crate::llm::ReplyAssertions::default();
+        RECEIPT_BY_REF.put(store, txn, &reference, &done)?;
+    }
+    Ok(())
+}
+
 pub(super) fn receipt(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

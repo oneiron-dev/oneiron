@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4193 declarations.
+// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4197 declarations.
 // Replies: 1085 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
@@ -355,7 +355,7 @@ declare namespace Sdk {
   type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null };
   type Criterion = { text: string; evidence_ref?: EntityId | null };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean };
-  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[] };
+  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[]; strict_verified_reuse?: boolean };
   type EscalationTrigger = "blocked" | "criteria_unmet" | "scope_widen" | "spend_over" | "deadline" | "brief_revised" | "retry_requested";
   type Reversibility = "reversible_read" | "outbound_effect";
   type EscalationRule = { to: TaskAskTarget; triggers?: EscalationTrigger[]; default?: TaskAskDefault; until?: number | null; reversibility: Reversibility; question_ref?: ConsultPayloadRef | null };
@@ -481,7 +481,9 @@ declare namespace Sdk {
   type StreamFinalityReason = "explicit_finalize" | "idle_timeout30s" | { idle_timeout: { timeout_ms: number } } | "process_crash_recovery" | "user_interrupted" | "agent_aborted" | "external_signal" | { custom: string };
   type IncompleteReason = "terminal_disagreement";
   type FinishReason = "stop" | "length" | "tool_calls" | "content_filtered" | "cancelled" | { other: { name: string } } | { incomplete: { reason: IncompleteReason } };
-  type MessageStreamReceipt = { message_id: EntityId; actor: EntityId; generation: EntityId; finality: StreamFinality; finality_reason: StreamFinalityReason; finish_reason?: FinishReason | null; bytes: number; recovered: boolean; ephemeral_text_lost: boolean; receipt_ref: string };
+  type ReplyAssertionRecord = { entity_type: number; id: EntityId };
+  type ReplyAssertions = { cited?: ReplyAssertionRecord[]; created?: ReplyAssertionRecord[] };
+  type MessageStreamReceipt = { message_id: EntityId; actor: EntityId; generation: EntityId; finality: StreamFinality; finality_reason: StreamFinalityReason; finish_reason?: FinishReason | null; bytes: number; recovered: boolean; ephemeral_text_lost: boolean; receipt_ref: string; reply_assertions?: ReplyAssertions };
   type MessageCancelKind = "user_interrupted" | "agent_aborted" | "external_signal";
   type MessageCustomCancelKind = "custom";
   type MessageCustomCancel = { kind: MessageCustomCancelKind; description: string };
@@ -492,7 +494,8 @@ declare namespace Sdk {
   type MessageDurabilityRequest = { message_id: string; after_generation?: string | null; limit?: number | null };
   type MessageCompletion = { incomplete: boolean; generating: boolean; finish_reason?: FinishReason | null };
   type MessageDocumentState = { frontier: number[]; content: string };
-  type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[] };
+  type MessageReplyAssertions = { message: EntityId; conversation: EntityId; turn: EntityId; writer: EntityId; writer_class: number; assertions: ReplyAssertions };
+  type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[]; birth_assertions?: MessageReplyAssertions | null };
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
   type ScopedClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; scope: ClaimScope; sensitivity?: number | null; evidence_turn_refs?: string[]; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
@@ -558,20 +561,22 @@ declare namespace Sdk {
   type TaggingMarkerState = "unconfigured" | "absent" | "pending" | "retrying" | "settled" | "failed";
   type TaggingMarkerView = { attempt_ref: string; state: string; checkpoint?: string | null; stack?: string | null; attempt_count: number; retry_of?: string | null; scheduled_at?: number | null; last_error?: string | null; created_at: number; updated_at: number };
   type TaggingFailureView = { class: string; code?: string | null; refusal?: string | null };
+  type TaggingFreshness = { stale: boolean; pending_retag: boolean };
   type ExecutionRuntime = "candle" | "endpoint" | "mlx" | "coreml";
   type ExecutionCompute = "cpu" | "metal" | "cuda" | "cpu_and_ne" | "opaque";
   type ExecutionPick = "calibrated" | "free" | "shorter_queue" | "fallback" | "pinned";
   type EncoderExecution = { runtime: ExecutionRuntime; compute: ExecutionCompute; engine: string; pick: ExecutionPick; queue_ms: number; infer_ms: number };
   type TaggingOutcomeView = { outcome: "saved"; spans: number; links: number; mood: boolean; linked: number; minted: number; context_links: number; speaker_links: number; unresolved_context_links: number; unresolved_speaker_links: number; surprise?: number | null } | { outcome: "shadowed"; spans: number; links: number; mood: boolean; mapped_spans: number; context_links: number; speaker_links: number } | { outcome: "imported"; spans: number; links: number; mood: boolean } | { outcome: "skipped"; reason: string } | { outcome: "superseded"; retry_at: number } | { outcome: "deferred"; retry_at: number } | { outcome: "failed"; failure: TaggingFailureView; retry_at: number } | { outcome: "rekeyed" } | { outcome: "handed_back"; reason: string; retry_at: number } | { outcome: "unreadable" };
   type TaggingTraceView = { recorded_at: number; attempt: string; turn_ref?: string | null; checkpoint: string; stack?: string | null; model?: string | null; input_hash?: string | null; try_number: number; call_micros?: number | null; execution?: EncoderExecution | null; outcome: TaggingOutcomeView };
-  type TaggingStatusView = { turn_ref: string; state: TaggingMarkerState; configured: boolean; checkpoint?: string | null; stack?: string | null; mode?: string | null; model?: string | null; marker?: TaggingMarkerView | null; failure?: TaggingFailureView | null; retry_at?: number | null; try_number?: number | null; has_tags: boolean; saved_at?: number | null; last_trace?: TaggingTraceView | null };
+  type TaggingStatusView = { turn_ref: string; state: TaggingMarkerState; configured: boolean; checkpoint?: string | null; stack?: string | null; mode?: string | null; model?: string | null; marker?: TaggingMarkerView | null; failure?: TaggingFailureView | null; retry_at?: number | null; try_number?: number | null; has_tags: boolean; freshness?: TaggingFreshness | null; saved_at?: number | null; last_trace?: TaggingTraceView | null };
   type MergeEvidenceView = { span: number; antecedent: number; confidence: number };
   type TaggingVadView = { valence: number; arousal: number; dominance: number };
-  type TurnTagsView = { turn_ref: string; envelope: DerivationEnvelopeView; message_refs: string[]; mentions: TaggedMentionView[]; merge_evidence: MergeEvidenceView[]; mood?: TaggingVadView | null; saved_at: number; surprise?: number | null };
+  type TaggingMoodPartView = { message_ref: string; start: number; end_message_ref: string; end: number; valence: number; arousal: number; dominance: number };
+  type TurnTagsView = { turn_ref: string; envelope: DerivationEnvelopeView; message_refs: string[]; mentions: TaggedMentionView[]; merge_evidence: MergeEvidenceView[]; mood?: TaggingVadView | null; mood_freshness?: TaggingFreshness | null; mood_parts: TaggingMoodPartView[]; saved_at: number; surprise?: number | null; freshness: TaggingFreshness };
   type TaggingTagsView = { turn_ref: string; tags?: TurnTagsView | null };
   type TaggingHistoryView = { turn_ref: string; traces: TaggingTraceView[] };
   type TaggingMentionsRequest = { entity_ref: string; limit: number };
-  type TaggingMentionHitView = { turn_ref: string; index: number; mention: TaggedMentionView };
+  type TaggingMentionHitView = { turn_ref: string; index: number; mention: TaggedMentionView; freshness: TaggingFreshness };
   type TaggingMentionsView = { entity_ref: string; mentions: TaggingMentionHitView[] };
   type AffectClaimConsolidateRequest = { claim_ref: string };
   type AffectTurnEvidence = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number };
@@ -2979,8 +2984,6 @@ declare namespace Sdk {
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelRoleInput = { kind: "generate"; request: LlmRequest } | { kind: "embed"; text: string } | { kind: "tag"; text: string };
   type ModelRoleInvoke = { role: ModelRole; input: ModelRoleInput };
-  type ReplyAssertionRecord = { entity_type: number; id: EntityId };
-  type ReplyAssertions = { cited?: ReplyAssertionRecord[]; created?: ReplyAssertionRecord[] };
   type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
   type NerSpan = { message: number; start: number; end: number; label: string; confidence: number };
   type CorefLink = { span: number; antecedent: number; confidence?: number | null };
@@ -2988,7 +2991,8 @@ declare namespace Sdk {
   type ContextLink = { span: number; turn: string; message: string; start: number; end: number; confidence: number };
   type SpeakerTarget = "speaker" | "addressee";
   type SpeakerLink = { span: number; target: SpeakerTarget; confidence: number };
-  type EncoderOutput = { spans: NerSpan[]; links?: CorefLink[]; vad?: Vad | null; context_links?: ContextLink[]; speaker_links?: SpeakerLink[]; stack_sha16?: string | null };
+  type MoodPart = { message: number; start: number; end_message: number; end: number; vad: Vad };
+  type EncoderOutput = { spans: NerSpan[]; links?: CorefLink[]; vad?: Vad | null; context_links?: ContextLink[]; speaker_links?: SpeakerLink[]; mood_parts?: MoodPart[]; stack_sha16?: string | null };
   type ModelRoleOutput = { kind: "generated"; response: LlmResponse } | { kind: "embedded"; vector: number[] } | { kind: "tagged"; output: EncoderOutput; execution?: EncoderExecution | null };
   type ModelRoleInvocation = { receipt: ModelRoleReceipt; output: ModelRoleOutput };
   type ProposalReplacement = { before: string; after: string };
@@ -3206,8 +3210,8 @@ declare namespace Sdk {
   type ScheduledBackfill = { question: string; version: number; due_at: number };
   type QuestionReadRequest = { id: EntityId; version?: number | null };
   type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
-  type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" };
-  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null };
+  type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" } | { state: "details_omitted" };
+  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
   type QuestionAnswersReply = QuestionAnswer[] | QuestionAnswersPage;
@@ -3286,8 +3290,8 @@ declare namespace Sdk {
   type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; secret_params?: SecretParam[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type DialogAnswerFailure = { tab?: string | null; kind: string; accept: boolean; error: string };
-  type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[] };
-  type ObservationPage = Observation2 & { next?: string | null };
+  type VerbsObservation = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[] };
+  type ObservationPage = VerbsObservation & { next?: string | null };
   type ObservationBase = { scope: string; seq: number };
   type ObserveInput = { base?: ObservationBase | null; full?: boolean; cursor?: string | null };
   type FindInput = { role?: string | null; name?: string | null; cursor?: string | null };
@@ -3315,9 +3319,9 @@ declare namespace Sdk {
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
   type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput };
-  type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: Observation2 | null; error?: string | null; refusal?: DestinationRefusal | null; next?: string | null };
+  type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: VerbsObservation | null; error?: string | null; refusal?: DestinationRefusal | null; next?: string | null };
   type StepRebound = { step: number; rebound: Rebound };
-  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; stop_cause?: BatchStopCause | null; failed_receipt?: FailedStepReceipt | null; elapsed_ms: number; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
+  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; stop_cause?: BatchStopCause | null; failed_receipt?: FailedStepReceipt | null; elapsed_ms: number; observation?: VerbsObservation | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
   type WindowsInput = { app?: string | null };
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };
@@ -7056,14 +7060,14 @@ declare const vault: Sdk.VaultHost & {
     revoke(input: Sdk.SupportGrantRevokeRequest): Promise<Sdk.SupportGrantRevokeAnswer | StoredResult>;
   };
   tagging: {
-    /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome. */
-    history(input: Sdk.TaggingTurnRequest): Promise<Sdk.TaggingHistoryView | StoredResult>;
-    /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
-    mentions(input: Sdk.TaggingMentionsRequest): Promise<Sdk.TaggingMentionsView | StoredResult>;
-    /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
-    status(input: Sdk.TaggingTurnRequest): Promise<Sdk.TaggingStatusView | StoredResult>;
-    /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them. */
-    tags(input: Sdk.TaggingTurnRequest): Promise<Sdk.TaggingTagsView | StoredResult>;
+    /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt. */
+    history(input: Sdk.TaggingTurnRequest): Promise<Sdk.ScopedReadResult<Sdk.TaggingHistoryView> | StoredResult>;
+    /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt. */
+    mentions(input: Sdk.TaggingMentionsRequest): Promise<Sdk.ScopedReadResult<Sdk.TaggingMentionsView> | StoredResult>;
+    /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt. */
+    status(input: Sdk.TaggingTurnRequest): Promise<Sdk.ScopedReadResult<Sdk.TaggingStatusView> | StoredResult>;
+    /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt. */
+    tags(input: Sdk.TaggingTurnRequest): Promise<Sdk.ScopedReadResult<Sdk.TaggingTagsView> | StoredResult>;
   };
   task_types: {
     /** The owner reads the task-type tree in force, or one kept tree version, for the vault or a project. */

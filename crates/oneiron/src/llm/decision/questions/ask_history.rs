@@ -103,6 +103,11 @@ pub(super) struct ArtifactAskEvent {
     /// (FIX 9174); none for the question's own ask.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) parent_proposal_ref: Option<String>,
+    /// Whether the entry's ref details were left out (FIX 9419): its refs did not pass
+    /// the secret scan, so it keeps only its typed ids, versions, time and error kind,
+    /// and names no proposal.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) details_omitted: bool,
 }
 
 impl ArtifactAskEvent {
@@ -250,8 +255,9 @@ pub(crate) struct StandingReask<'a> {
 /// marks (FIX 9174), under an ask id of its own: `proposal_ref` is the proposal its
 /// answers wait under, none when it answered no unit; `failed` the kind of error that
 /// stopped it, logged on its own. A re-ask whose question version is no standing question
-/// of its principal (a one-off ask's wake) is logged nowhere and still lands, and an entry
-/// the secret scan refuses is left out rather than refuse the wake.
+/// of its principal (a one-off ask's wake) is logged nowhere and still lands. An entry
+/// the secret scan refuses is logged all the same, in its place in the sequence, with its
+/// ref details left out and marked so (FIX 9419); the wake is never refused for it.
 pub(crate) fn record_standing_reask_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -281,16 +287,28 @@ pub(crate) fn record_standing_reask_in_txn(
         proposal_ref: proposal_ref.map(str::to_owned),
         failed,
         parent_proposal_ref: Some(reask.parent_proposal_ref.to_owned()),
+        details_omitted: false,
     };
-    let entry = QuestionAskHistoryEntry {
+    let entry = |event: ArtifactAskEvent| QuestionAskHistoryEntry {
         principal: reask.principal,
         event: AskHistoryEvent::Artifact(Box::new(event)),
     };
-    if secret_scan_before_put(&entry).is_err() {
-        tracing::warn!("a standing re-ask was not logged: its refs did not pass the secret scan");
-        return Ok(());
+    let mut logged = entry(event.clone());
+    if secret_scan_before_put(&logged).is_err() {
+        // The refs are left out; the re-ask's ids, versions, time and error kind stay.
+        logged = entry(ArtifactAskEvent {
+            proposal_ref: None,
+            parent_proposal_ref: None,
+            details_omitted: true,
+            ..event
+        });
+        if secret_scan_before_put(&logged).is_err() {
+            tracing::warn!("a standing re-ask was not logged: even its ids did not pass the scan");
+            return Ok(());
+        }
+        tracing::warn!("a standing re-ask was logged without its refs: they did not pass the scan");
     }
-    append_in_txn(vault, txn, reask.question, reask.principal, entry.event)
+    append_in_txn(vault, txn, reask.question, reask.principal, logged.event)
 }
 
 /// [`record_standing_reask_in_txn`] for a re-ask that failed, in a transaction of its
