@@ -38,7 +38,12 @@ use super::value_fingerprint::{ClaimValueFingerprint, canonical_msgpack_value_by
 
 /// The relevant claim values, their lossless fingerprints, whether one is
 /// held, and the claim rows they were read from.
-type ClaimEvidence = (Vec<(String, Value)>, Vec<ClaimValueFingerprint>, bool, Vec<EntityId>);
+type ClaimEvidence = (
+    Vec<(String, Value)>,
+    Vec<ClaimValueFingerprint>,
+    bool,
+    Vec<EntityId>,
+);
 
 /// The LLM dependency of a rubric-driven judge.
 ///
@@ -467,14 +472,15 @@ impl SavedQueryEvaluator<'_> {
     ) -> Result<CollectedEvidence> {
         let deps = filter_dependencies(&definition.filter, &definition.matcher);
         let mut hidden = HiddenDependencies::default();
-        let (claim_values, claim_value_fingerprints, held, claim_rows) = self.relevant_claim_values(
-            lane,
-            entity_ref,
-            &deps.claim_predicates,
-            definition,
-            valid_at,
-            &mut hidden,
-        )?;
+        let (claim_values, claim_value_fingerprints, held, claim_rows) = self
+            .relevant_claim_values(
+                lane,
+                entity_ref,
+                &deps.claim_predicates,
+                definition,
+                valid_at,
+                &mut hidden,
+            )?;
         let edge_targets =
             self.relevant_edge_targets(lane, entity_ref, &deps.edge_kinds, &mut hidden)?;
         // Stage 0 admitted the candidate, so its own vector is the owner's to

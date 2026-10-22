@@ -102,12 +102,12 @@ pub use self::membership::{
     MembershipWritePlan, commit_membership_plan, derived_member_value, membership_events,
     next_membership_epoch,
 };
+pub(crate) use self::memo_lifetime::{erase_memos_for_source_in_txn, memo_carriage, memo_owners};
 pub use self::memory_watch::{MemoryWatch, memory_watch, memory_watches, set_memory_watch};
 pub use self::pack_drift::{
     PackDrift, PackDriftRepair, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,
     pack_drift_repairs, put_pack_migration_map, repair_pack_drift,
 };
-pub(crate) use self::memo_lifetime::{erase_memos_for_source_in_txn, memo_carriage, memo_owners};
 pub(crate) use self::pack_drift::{PackMove, repair_saved_queries_after_pack_move_in_txn};
 pub use self::receipts::{
     SavedQueryEvaluation, SavedQueryGenerationReceipt, SavedQueryJudgeReceipt,
