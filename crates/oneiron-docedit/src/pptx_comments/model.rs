@@ -58,6 +58,10 @@ pub enum PptxError {
     /// deadline ran out (FIX 8596): never invalid XML.
     #[error(transparent)]
     Resource(#[from] ResourceRefusal),
+    /// The package passed a ceiling its caller set, or classic ZIP's widths
+    /// (FIX 5354): never an invalid package.
+    #[error("package ceiling: {0}")]
+    Capacity(crate::resource::CapacityHit),
 }
 
 impl PptxError {
