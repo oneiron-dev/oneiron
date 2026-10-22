@@ -566,6 +566,8 @@ class Oneiron:
         @property
         def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs": ...
         @property
+        def files(self) -> "Oneiron._VaultFilesVerbs": ...
+        @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
         @property
         def off_record(self) -> "Oneiron._VaultOffRecordVerbs": ...
@@ -1742,6 +1744,20 @@ class Oneiron:
             """The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."""
         def revoke(self, spec: Facade.SupportGrantRevokeRequest) -> Facade.SupportGrantRevokeAnswer:
             """The owner revokes one support grant; what support already read is not recalled."""
+    class _VaultFilesVerbs:
+        @property
+        def sources(self) -> "Oneiron._VaultFilesSourcesVerbs": ...
+    class _VaultFilesSourcesVerbs:
+        def attach(self, spec: Facade.FilesSourceAttachRequest) -> Facade.FilesSourceAttachAnswer:
+            """The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current."""
+        def rescan(self, spec: Facade.FilesSourceRescanRequest) -> Facade.FilesRescanAnswer:
+            """The owner rescans one Files source now, or every one: new files land, changed files supersede, files with no text are held by name, missing files retract."""
+        def detach(self, spec: Facade.FilesSourceDetachRequest) -> Facade.FilesSourceDetachAnswer:
+            """The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay."""
+        def list(self, spec: Facade.FilesSourceListRequest) -> Facade.FilesSourceList:
+            """The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."""
+        def files(self, spec: Facade.FilesSourceFilesRequest) -> Facade.FilesSourceFiles:
+            """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
     class _VaultResidenceVerbs:
         def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeAnswer:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""

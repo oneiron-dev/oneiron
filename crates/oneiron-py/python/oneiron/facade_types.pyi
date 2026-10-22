@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1149 facade rows, 4064 declarations.
-Inputs: 1084 of 1149 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1035 of 1149 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1154 facade rows, 4084 declarations.
+Inputs: 1089 of 1154 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1154 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
@@ -7007,6 +7007,95 @@ class SupportGrantRevokeAnswer(TypedDict):
     revoked_at: NotRequired[int | None]
     decision_ref: NotRequired[str | None]
     delivered_recallable: bool
+class FilesSourceAttachRequest(TypedDict):
+    path: str
+    include: NotRequired[list[str]]
+    exclude: NotRequired[list[str] | None]
+    kind: NotRequired[str | None]
+class FilesWorldView(TypedDict):
+    world: EntityId
+    machine: EntityId
+class FilesSourceView(TypedDict):
+    source: EntityId
+    folder: str
+    world: EntityId
+    machine: EntityId
+    include: NotRequired[list[str]]
+    exclude: list[str]
+    kind: str
+    attached_at: int
+    last_rescan_at: NotRequired[int | None]
+    files: int
+    name_only: int
+    retracted: int
+    proposed: int
+class FilesRescanCounts(TypedDict):
+    landed: int
+    links: int
+    unchanged: int
+    superseded: int
+    proposed: int
+    retracted: int
+    restored: int
+    removed: int
+    name_only: int
+    failed: int
+    first_error: NotRequired[str | None]
+class FilesLimitCrossed(TypedDict):
+    row: str
+    limit: int
+    observed: int
+class FilesRescanView(TypedDict):
+    source: EntityId
+    folder: str
+    counts: NotRequired[FilesRescanCounts | None]
+    error: NotRequired[str | None]
+    limits_crossed: NotRequired[list[FilesLimitCrossed]]
+class FilesSourceAttachAnswer(TypedDict):
+    world: FilesWorldView
+    source: FilesSourceView
+    rescan: FilesRescanView
+class FilesSourceRescanRequest(TypedDict):
+    source: NotRequired[EntityId | None]
+class FilesRescanAnswer(TypedDict):
+    rescans: list[FilesRescanView]
+class FilesSourceDetachRequest(TypedDict):
+    source: EntityId
+class FilesSourceDetachAnswer(TypedDict):
+    source: EntityId
+    folder: NotRequired[str | None]
+    detached: bool
+class FilesSourceListRequest(TypedDict):
+    ...
+class FilesSourceList(TypedDict):
+    world: NotRequired[FilesWorldView | None]
+    sources: list[FilesSourceView]
+class FilesSourceFilesRequest(TypedDict):
+    source: EntityId
+class FileHandle(TypedDict):
+    source: EntityId
+    path: str
+FilesFileState = Literal["landed", "proposed", "retracted", "name_only"]
+NameOnlyReason = Literal["unsupported", "not_text", "unreadable", "empty", "linked"]
+class FileReadinessNameOnlyBody(TypedDict):
+    why: NameOnlyReason
+class FileReadinessNameOnly(TypedDict):
+    name_only: FileReadinessNameOnlyBody
+FileReadiness = Literal["text"] | FileReadinessNameOnly
+class FilesFileView(TypedDict):
+    handle: FileHandle
+    state: FilesFileState
+    readiness: FileReadiness
+    note: NotRequired[EntityId | None]
+    fork: NotRequired[EntityId | None]
+    revision: NotRequired[str | None]
+    bytes: NotRequired[int | None]
+    modified_at: NotRequired[int | None]
+    first_seen_at: NotRequired[int | None]
+    indexed_at: NotRequired[int | None]
+class FilesSourceFiles(TypedDict):
+    source: EntityId
+    files: list[FilesFileView]
 ResidenceModeName = Literal["opened", "all"]
 class ResidenceModeRequest(TypedDict):
     machine: EntityId
