@@ -5188,6 +5188,12 @@ pub struct DoneMeans {
         skip_serializing_if = "Option::is_none"
     )]
     pub browser_checks: Option<Vec<ExpectInput>>,
+    #[serde(
+        rename = "strict_verified_reuse",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub strict_verified_reuse: Option<bool>,
 }
 
 /// `oneiron::task_verb::ask_types::AskAuthorityScopeWire`.

@@ -353,7 +353,7 @@ declare namespace Sdk {
   type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null };
   type Criterion = { text: string; evidence_ref?: EntityId | null };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean };
-  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[] };
+  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[]; strict_verified_reuse?: boolean };
   type EscalationTrigger = "blocked" | "criteria_unmet" | "scope_widen" | "spend_over" | "deadline" | "brief_revised" | "retry_requested";
   type Reversibility = "reversible_read" | "outbound_effect";
   type EscalationRule = { to: TaskAskTarget; triggers?: EscalationTrigger[]; default?: TaskAskDefault; until?: number | null; reversibility: Reversibility; question_ref?: ConsultPayloadRef | null };

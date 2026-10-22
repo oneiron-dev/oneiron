@@ -14,11 +14,14 @@ use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::ClaimReadStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::decision::{ProviderPin, Reversibility};
+use crate::llm::decision::Reversibility;
 
 use super::brief::StoredBrief;
 use super::browser_workflow::task_workflow_binding_in_txn;
-use super::decision_port::{PortAnswer, TaskDecisions, TaskQuestion, ask_traced};
+use super::decision_port::{PortAnswer, PortDecision, TaskDecisions, TaskQuestion, ask};
+use super::highway_block::{
+    BlockContinuation, BlockPurpose, DoneAskBinding, done_ask_binding_in, strict_done_reuse,
+};
 use super::highway_report::done_question_inputs;
 use super::highway_runner::workflow_try::WorkflowRunEnd;
 use super::highway_runner::{runner_refusal, runner_task_in};
@@ -39,15 +42,13 @@ pub struct RunnerDoneQuestion {
 }
 
 /// The answer to a [`RunnerDoneQuestion`], for the completion that reports
-/// its Done.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// its Done, with the receipt its ladder returned (FIX 10179).
+#[derive(Debug, Clone, PartialEq)]
 pub struct RunnerDoneAnswer {
     judged: Judged,
-    answer: PortAnswer,
+    answer: PortDecision,
     /// The try the question was asked for, at its lease generation.
     attempt: Option<(AttemptId, u32)>,
-    /// The model whose answer stands; `None` when no model answered.
-    answered_by: Option<ProviderPin>,
 }
 
 /// The report an answer was given for.
@@ -65,32 +66,30 @@ impl RunnerDoneQuestion {
     /// call answers "ask up".
     #[must_use]
     pub fn decide(&self, decisions: &TaskDecisions<'_>) -> RunnerDoneAnswer {
-        let traced = ask_traced(
-            Some(decisions),
-            TaskQuestion::DoneMet,
-            self.judged.principal,
-            &self.evidence,
-            &self.state,
-            self.reversibility,
-        );
         RunnerDoneAnswer {
             judged: self.judged,
-            answer: traced.answer,
+            answer: ask(
+                Some(decisions),
+                TaskQuestion::DoneMet,
+                self.judged.principal,
+                &self.evidence,
+                &self.state,
+                self.reversibility,
+            ),
             attempt: self.attempt,
-            answered_by: traced.answered_by,
         }
     }
 }
 
 impl RunnerDoneAnswer {
-    /// The answer, when it was given for exactly this report.
+    /// The answer and its receipt, when it was given for exactly this report.
     pub(super) fn for_report(
         &self,
         task_ref: EntityId,
         result_ref: EntityId,
         brief: &StoredBrief,
         principal: EntityId,
-    ) -> Option<PortAnswer> {
+    ) -> Option<PortDecision> {
         let judged = Judged {
             task_ref,
             result_ref,
@@ -98,7 +97,7 @@ impl RunnerDoneAnswer {
             brief_digest: brief.digest,
             principal,
         };
-        (judged == self.judged).then_some(self.answer)
+        (judged == self.judged).then(|| self.answer.clone())
     }
 
     /// Records the model whose answer stands as the judge of the try this
@@ -107,11 +106,12 @@ impl RunnerDoneAnswer {
     /// join that fails is logged and leaves the judge unknown: it never fails
     /// the report or changes its answer.
     pub(super) fn record_judge_in_txn(&self, vault: &Vault, txn: &mut heed::RwTxn<'_>) {
-        let (Some((attempt, generation)), Some(judge)) = (self.attempt, &self.answered_by) else {
+        let (Some((attempt, generation)), Some(judge)) = (self.attempt, self.answer.answered_by())
+        else {
             return;
         };
         if let Err(error) = crate::skill_attribution::finalize_run_judge_in_txn(
-            vault, txn, attempt, generation, judge,
+            vault, txn, attempt, generation, &judge,
         ) {
             tracing::warn!(kind = ?error.kind(), "a run's Done judge was not recorded; it stays unknown");
         }
@@ -147,7 +147,7 @@ pub fn runner_done_question(
         return Ok(None);
     }
     let attempt = Some((record.id, record.attempt_count));
-    done_question_in(vault, &txn, task_ref, result_ref, &[], attempt)
+    done_question_in(vault, &txn, task_ref, result_ref, attempt, &[], attempt)
 }
 
 /// A bound try's typed Done (CUA E4; Engine C1), given with no question
@@ -206,10 +206,14 @@ pub fn runner_workflow_done_answer(
             brief_digest: brief.digest,
             principal: authority.owner_ref,
         },
-        answer: PortAnswer::Yes,
-        // A structural proof, which no model answered.
+        // The workflow's own receipt answered it: no ladder ran, and no
+        // ladder receipt is made up. A structural proof, which no model
+        // answered.
+        answer: PortDecision {
+            answer: PortAnswer::Yes,
+            receipt: None,
+        },
         attempt: None,
-        answered_by: None,
     }))
 }
 
@@ -274,8 +278,9 @@ pub(super) fn workflow_done_question(
             }
         }
     }
+    let attempt = Some((end.wrapper.id, end.wrapper.attempt_count));
     // The run's wrapper closed before its TASK settles: no live lease asks.
-    let mut question = done_question_in(vault, &txn, end.task, note, &readable, None)?;
+    let mut question = done_question_in(vault, &txn, end.task, note, attempt, &readable, None)?;
     let leaf_results: Vec<serde_json::Value> = end
         .results
         .iter()
@@ -337,22 +342,43 @@ fn leaf_text(
 
 /// The question a Done on `task_ref` with the durable `result_ref` asks, in
 /// `txn`, over `leaves` too: a leased runner's, or an ended workflow run's
-/// over its report NOTE (FIX 4391), asked for `attempt` when a live lease
-/// asks it. `None` when it asks none: no brief, or an ask already holds the
-/// TASK.
+/// over its report NOTE (FIX 4391), by the try `attempt` and its count,
+/// asked for `leased` when a live lease asks it (FIX 1877). `None` when it
+/// asks none: no brief, or an ask already holds the TASK. Under strict
+/// verified reuse (FIX 10183) only an ask opened for this very Done holds
+/// it; the question is asked over any other.
 fn done_question_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,
     result_ref: EntityId,
-    leaves: &[EntityId],
     attempt: Option<(AttemptId, u32)>,
+    leaves: &[EntityId],
+    leased: Option<(AttemptId, u32)>,
 ) -> Result<Option<RunnerDoneQuestion>> {
     let Some(body) = task_verb_body_in(vault, txn, task_ref)? else {
         return Ok(None);
     };
-    if matches!(&body.state, Some(TaskExecutionState::Blocked { on, .. }) if !on.is_empty()) {
-        return Ok(None);
+    if let Some(TaskExecutionState::Blocked { on, .. }) = &body.state
+        && !on.is_empty()
+    {
+        if !strict_done_reuse(body.brief.as_ref()) {
+            return Ok(None);
+        }
+        let expected = BlockContinuation {
+            task: task_ref,
+            purpose: BlockPurpose::Done {
+                result_ref,
+                brief_rev: body.brief.as_ref().map_or(0, |brief| brief.rev),
+            },
+            attempt: attempt.map(|(id, _)| id),
+            attempt_count: attempt.map_or(0, |(_, count)| count),
+        };
+        for wait in on {
+            if done_ask_binding_in(vault, txn, *wait, &expected)? == DoneAskBinding::Bound {
+                return Ok(None);
+            }
+        }
     }
     let Some(brief) = body.brief else {
         return Ok(None);
@@ -379,6 +405,6 @@ fn done_question_in(
         evidence,
         state,
         reversibility: brief.brief.escalation.reversibility,
-        attempt,
+        attempt: leased,
     }))
 }
