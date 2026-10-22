@@ -6,15 +6,16 @@ use crate::federation::Scope;
 use crate::secret_lease::VaultInstant;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::Signer;
 use std::collections::BTreeSet;
-use zeroize::Zeroizing;
 
 mod connect;
 mod connect_lifecycle;
 pub use connect_lifecycle::ConnectRescopeOffer;
 mod courtesy;
 pub use connect::ConnectOffer;
+mod issuer_seed;
+pub use issuer_seed::{HostSlipIssuer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT};
 
 const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
 /// The attestation a host's own root roster row carries.
@@ -24,26 +25,7 @@ pub(super) const HOST_ROOT_ATTESTATION: &str = "HostRoot";
 const HOST_ROOT_SLIP_CACHE: SideTable<String, String, Raw> =
     SideTable::new(&side_table::AUTHORITY_HOST_ROOT_SLIP_CACHE);
 
-/// A dedicated host signing key. Never loaded from device-key residue.
-/// The configured retained root secret is the recovery material for bootstrap.
-pub struct HostSlipIssuer {
-    secret: Zeroizing<Vec<u8>>,
-    signing: SigningKey,
-}
 impl HostSlipIssuer {
-    pub fn from_secret(secret: &[u8]) -> Result<Self> {
-        if secret.is_empty() {
-            return Err(invalid_authority());
-        }
-        let seed = Zeroizing::new(blake3::derive_key(
-            "oneiron/host-authority-signing/v2",
-            secret,
-        ));
-        Ok(Self {
-            secret: Zeroizing::new(secret.to_vec()),
-            signing: SigningKey::from_bytes(&seed),
-        })
-    }
     #[must_use]
     pub fn public_key(&self) -> AuthorityKey {
         AuthorityKey::Ed25519(self.binding_key())
