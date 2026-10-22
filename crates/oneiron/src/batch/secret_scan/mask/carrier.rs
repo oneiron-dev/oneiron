@@ -12,6 +12,7 @@
 //! back writes the value it stands for again, and one that deletes the
 //! handle removes the secret.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use heed::{RoTxn, RwTxn};
@@ -237,6 +238,167 @@ impl LiftedKeys {
     pub(crate) fn resolve_json(&self, value: &mut serde_json::Value) -> bool {
         each_string(value, &|text| self.resolved(text))
     }
+
+    /// `text` as [`Self::masked`] reads it, with where each run of it came
+    /// from (FIX 2936): the same values in the same order, each replaced
+    /// where [`str::replace`] replaces it, a handle over a handle standing
+    /// for both stretches. A pure reading: nothing is scanned or minted.
+    pub(crate) fn masked_text(&self, text: &str) -> MaskedText {
+        let mut runs = vec![Run {
+            text: text.to_owned(),
+            source: 0..text.chars().count(),
+            handle: false,
+        }];
+        for (value, handle) in self.0.iter().filter(|(value, _)| !value.is_empty()) {
+            let current: String = runs.iter().map(|run| run.text.as_str()).collect();
+            // Right to left, so each earlier match keeps its position.
+            for at in char_matches(&current, value).into_iter().rev() {
+                split_run(&mut runs, at.start);
+                split_run(&mut runs, at.end);
+                let covered = covering(&runs, &at);
+                let stretch = &runs[covered.clone()];
+                let start = stretch.iter().map(|run| run.source.start).min();
+                let end = stretch.iter().map(|run| run.source.end).max();
+                let run = Run {
+                    text: handle.clone(),
+                    source: start.unwrap_or_default()..end.unwrap_or_default(),
+                    handle: true,
+                };
+                runs.splice(covered, [run]);
+            }
+        }
+        MaskedText(runs)
+    }
+}
+
+/// A text as [`LiftedKeys::masked`] reads it, run by run: each run is a
+/// stretch of the stored text read as it is, or a handle that stands for
+/// the stretch it replaced. Positions are Unicode scalar counts.
+#[derive(Debug)]
+pub(crate) struct MaskedText(Vec<Run>);
+
+#[derive(Debug)]
+struct Run {
+    /// What the reader reads.
+    text: String,
+    /// The stretch of the stored text it reads or stands for.
+    source: Range<usize>,
+    /// Whether `text` stands for `source` rather than reading it as it is.
+    handle: bool,
+}
+
+/// A selection of a masked text that splits no handle (C-ANCHOR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MaskedSelection {
+    /// The selection in the text the reader reads.
+    pub(crate) shown: Range<usize>,
+    /// The stretch of the stored text it stands for.
+    pub(crate) stored: Range<usize>,
+}
+
+impl MaskedText {
+    /// The text the reader reads: [`LiftedKeys::masked`]'s reading.
+    pub(crate) fn text(&self) -> String {
+        self.0.iter().map(|run| run.text.as_str()).collect()
+    }
+
+    /// The selection `start..end` of the text the reader reads, widened so
+    /// it splits no handle: an end inside a handle moves out to that
+    /// handle's edge, and an empty selection inside one takes the whole
+    /// handle (C-ANCHOR). `None` for a selection past the text's end or one
+    /// that ends before it starts.
+    pub(crate) fn selection(&self, start: usize, end: usize) -> Option<MaskedSelection> {
+        let mut shown = start..end;
+        let (mut from, mut to) = (None, None);
+        let mut at = 0;
+        for run in &self.0 {
+            let next = at + run.text.chars().count();
+            if from.is_none() && start < next {
+                if run.handle {
+                    shown.start = at;
+                    from = Some(run.source.start);
+                } else {
+                    from = Some(run.source.start + (start - at));
+                }
+            }
+            if at < end && end <= next {
+                if run.handle {
+                    shown.end = next;
+                    to = Some(run.source.end);
+                } else {
+                    to = Some(run.source.start + (end - at));
+                }
+            }
+            at = next;
+        }
+        if start > end || end > at {
+            return None;
+        }
+        // A selection at the text's end, or an empty one at its start.
+        let from = from.unwrap_or_else(|| self.0.last().map_or(0, |run| run.source.end));
+        let to = to.unwrap_or_default().max(from);
+        Some(MaskedSelection {
+            shown,
+            stored: from..to,
+        })
+    }
+}
+
+/// Where [`str::replace`] replaces `value` in `text`, in characters.
+fn char_matches(text: &str, value: &str) -> Vec<Range<usize>> {
+    let len = value.chars().count();
+    let (mut found, mut chars, mut last) = (Vec::new(), 0, 0);
+    for (at, _) in text.match_indices(value) {
+        chars += text[last..at].chars().count();
+        found.push(chars..chars + len);
+        chars += len;
+        last = at + value.len();
+    }
+    found
+}
+
+/// Splits the run `at` falls inside, so that a run starts at `at`. A
+/// handle's two parts both stand for its whole stretch.
+fn split_run(runs: &mut Vec<Run>, at: usize) {
+    let mut start = 0;
+    for index in 0..runs.len() {
+        let len = runs[index].text.chars().count();
+        if start < at && at < start + len {
+            let run = &mut runs[index];
+            let cut = run
+                .text
+                .char_indices()
+                .nth(at - start)
+                .map_or(run.text.len(), |(byte, _)| byte);
+            let mut tail = Run {
+                text: run.text.split_off(cut),
+                source: run.source.clone(),
+                handle: run.handle,
+            };
+            if !run.handle {
+                run.source.end = run.source.start + (at - start);
+                tail.source.start = run.source.end;
+            }
+            runs.insert(index + 1, tail);
+            return;
+        }
+        start += len;
+    }
+}
+
+/// The runs that make up `at`, whose edges fall on run edges.
+fn covering(runs: &[Run], at: &Range<usize>) -> Range<usize> {
+    let (mut start, mut first) = (0, 0);
+    for (index, run) in runs.iter().enumerate() {
+        if start == at.start {
+            first = index;
+        }
+        start += run.text.chars().count();
+        if start >= at.end {
+            return first..index + 1;
+        }
+    }
+    first..runs.len()
 }
 
 fn strings_of<'v>(value: &'v serde_json::Value, texts: &mut Vec<&'v str>) {

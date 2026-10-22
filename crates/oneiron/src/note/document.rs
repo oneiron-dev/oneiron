@@ -276,6 +276,19 @@ impl NoteDocument {
         Ok(())
     }
 
+    /// Sets the live title to `title`, a mask on write's reading of it: a
+    /// handle in place of each secret it held (OF-067; FIX 1098).
+    pub(super) fn mask_title(&self, title: &str) -> Result<()> {
+        validate_title(title)?;
+        self.doc
+            .get_map(META)
+            .insert("title", title)
+            .map_err(|_| invalid("NOTE title mask"))?;
+        self.doc
+            .commit_with(CommitOptions::new().commit_msg("oneiron.note/v1 mask_on_write"));
+        Ok(())
+    }
+
     pub(super) fn set_title(&self, title: &str, actor: &WriteActor) -> Result<()> {
         validate_title(title)?;
         self.doc
