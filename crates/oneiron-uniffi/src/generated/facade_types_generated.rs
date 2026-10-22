@@ -1571,6 +1571,24 @@ pub struct AgentHealthCoachAnswer {
     pub pads: AgentHealthPadRead,
     #[serde(rename = "draft", default, skip_serializing_if = "Option::is_none")]
     pub draft: Option<AgentHealthCoachDraft>,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
+    #[serde(
+        rename = "source_rows_complete",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows_complete: Option<bool>,
+    #[serde(
+        rename = "draft_erased",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub draft_erased: Option<bool>,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::apply::AgentHealthApplicationState`.

@@ -411,7 +411,8 @@ side_tables! {
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
     /// One agent-health card (OF-568): the Coach's merged evidence, routing and outcome for one
     /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
-    COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named;
+    COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named
+        => crate::dreamer_runner::maintenance::agent_health::erase_actor_sources_in_txn;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
@@ -439,6 +440,9 @@ side_tables! {
     /// recorded links prove, its recurrence key and its retries. Kept after the Coach files it;
     /// it waits while no `COACH_ISSUE_SETTLED` row names it. Key: id16 of the issue.
     COACH_DIAGNOSTIC_ISSUE: VaultMeta b"coach:diagnostic_issue:v1:" Named;
+    /// Each COACH_DIAGNOSTIC_ISSUE under its recurrence key, written with it (FIX 7343). Key:
+    /// the key's 32 bytes, then id16 of the issue.
+    COACH_DIAGNOSTIC_ISSUE_BY_KEY: VaultMeta b"coach:diagnostic_issue_by_key:v1:" Raw;
     /// What was observed of a model finding's issue (OF-418 L3), append-only: an owner's closed
     /// answer to its proposal, as the claim's gate row records it. Key: id16 of the issue, then
     /// hash32 of the fact.
@@ -449,7 +453,7 @@ side_tables! {
     COACH_ISSUE_SETTLED: VaultMeta b"coach:issue_settled:v1:" Named;
     /// A blocked report filed while a `coach.issues` attempt held its lease (FIX 1554): the
     /// attempt's lease generation, consumed in the commit that settles it, which queues one
-    /// successor while reports wait. Key: id16 of the attempt.
+    /// successor, reconcile-only wakes too (FIX 7343). Key: id16 of the attempt.
     COACH_ISSUES_REDRIVE: VaultMeta b"coach:issues_redrive:v1:" Named;
     /// A case where a person changed the decision ladder's answer, kept until the Coach's
     /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
