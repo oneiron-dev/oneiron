@@ -7,6 +7,7 @@
 //! mode is read; the bar stays the host's own judgment.
 use super::*;
 use crate::claim::ScopedRead;
+use crate::context_board::room::RoomMode;
 
 impl Memory<'_> {
     /// `room`'s composed posture mode as `txn` reads it, under `lane`, the

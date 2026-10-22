@@ -151,6 +151,7 @@ fn memory_row(entity: &ContextEntity, source: MemorySource) -> MemoryRow {
                         .map(|edge| edge.target.to_hex())
                 })
             }),
+        world_unproven: false,
         tier: MemoryTier::Snippet,
         snippet: None,
         hook: None,

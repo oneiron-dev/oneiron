@@ -1,7 +1,8 @@
 //! POST /v1/core/context-board/scratchpad: the caller's one session pad
 //! (OF-548). A line appends to the session's live `scratchpad` NOTE, opening
-//! it (and sealing the actor's prior pad) on the session's first line; a seal
-//! ends the run. The board serves the live pad as its SCRATCHPAD rows.
+//! it on the session's first line; each session's or fork's pad is its own,
+//! and opening one never seals another's (FIX 9748). A seal ends the run.
+//! The board serves the live pad as its SCRATCHPAD rows.
 //! POST /v1/core/context-board/scratchpad/recall searches the whole pad and
 //! answers its matching lines in full, the ones the board folds included.
 //! A write answers the SDK's [`ScratchpadWriteReply`] through the same SDK
@@ -88,7 +89,9 @@ pub(crate) struct ContextBoardScratchpadResponse {
     pad: Option<String>,
     /// Whether the pad is now sealed.
     sealed: bool,
-    /// Hex id of the actor's prior pad, sealed because this line opened a new one.
+    /// Hex id of this session's earlier pad, sealed because a racing first
+    /// line of the same session opened this one; another session's pad is
+    /// never sealed here.
     #[serde(skip_serializing_if = "Option::is_none")]
     sealed_prior: Option<String>,
 }
