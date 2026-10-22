@@ -3290,8 +3290,8 @@ declare namespace Sdk {
   type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; secret_params?: SecretParam[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type DialogAnswerFailure = { tab?: string | null; kind: string; accept: boolean; error: string };
-  type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[] };
-  type ObservationPage = Observation2 & { next?: string | null };
+  type VerbsObservation = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[] };
+  type ObservationPage = VerbsObservation & { next?: string | null };
   type ObservationBase = { scope: string; seq: number };
   type ObserveInput = { base?: ObservationBase | null; full?: boolean; cursor?: string | null };
   type FindInput = { role?: string | null; name?: string | null; cursor?: string | null };
@@ -3319,9 +3319,9 @@ declare namespace Sdk {
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
   type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput };
-  type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: Observation2 | null; error?: string | null; refusal?: DestinationRefusal | null; next?: string | null };
+  type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: VerbsObservation | null; error?: string | null; refusal?: DestinationRefusal | null; next?: string | null };
   type StepRebound = { step: number; rebound: Rebound };
-  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; stop_cause?: BatchStopCause | null; failed_receipt?: FailedStepReceipt | null; elapsed_ms: number; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
+  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; stop_cause?: BatchStopCause | null; failed_receipt?: FailedStepReceipt | null; elapsed_ms: number; observation?: VerbsObservation | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
   type WindowsInput = { app?: string | null };
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };

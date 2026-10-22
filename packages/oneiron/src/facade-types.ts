@@ -674,7 +674,7 @@ export type WorkflowBinding = { handle: string; args?: Record<string, string> }
 export type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null }
 /** `oneiron::task_verb::brief::Criterion` */
 export type Criterion = { text: string; evidence_ref?: EntityId | null }
-/** `oneiron_browser::ExpectInput` */
+/** `oneiron_browser::verbs::ExpectInput` */
 export type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean }
 /** `oneiron::task_verb::brief::DoneMeans` */
 export type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[]; strict_verified_reuse?: boolean }
@@ -7944,15 +7944,15 @@ export type ConnectorAnswerAction = "accept" | "decline" | "cancel"
 export type ConnectorQuestionAnswer = { key: string; action: ConnectorAnswerAction; content?: unknown | null }
 /** `oneiron::verbs::connector_call::ConnectorAnswerRequest` */
 export type ConnectorAnswerRequest = { handle: string; answers: ConnectorQuestionAnswer[] }
-/** `oneiron_browser::OpenInput` */
+/** `oneiron_browser::verbs::OpenInput` */
 export type OpenInput = { url: string }
 /** `oneiron_browser::request::DestinationRefusal` */
 export type DestinationRefusal = { reason: string; message: string }
 /** `oneiron_browser::answer::TakeoverRecord` */
 export type TakeoverRecord = { by: string; asked?: string | null; taken_at_ms: number; returned_at_ms: number; inputs: number; refusal?: DestinationRefusal | null }
-/** `oneiron_browser::TabSwitchCause` */
+/** `oneiron_browser::verbs::TabSwitchCause` */
 export type TabSwitchCause = "opened" | "closed"
-/** `oneiron_browser::TabSwitch` */
+/** `oneiron_browser::verbs::TabSwitch` */
 export type TabSwitch = { tab: string; url: string; title: string; from: string; why: TabSwitchCause }
 /** `oneiron_browser::engine::BrowserEngine` */
 export type BrowserEngine = "lightpanda" | "chromium"
@@ -7982,13 +7982,13 @@ export type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why:
 export type RecordingGap = { seq?: number | null; tab?: string | null; gap: RecordingGapKind }
 /** `oneiron_browser::demonstration::DemonstrationStopCause` */
 export type DemonstrationStopCause = "stopped" | "handed_over" | "handed_back" | "abandoned" | "guest_lost" | "engine_switched" | "session_closed"
-/** `oneiron_browser::ScreenshotTrigger` */
+/** `oneiron_browser::verbs::ScreenshotTrigger` */
 export type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt"
-/** `oneiron_browser::ScrollDirection` */
+/** `oneiron_browser::verbs::ScrollDirection` */
 export type ScrollDirection = "up" | "down" | "left" | "right"
-/** `oneiron_browser::DecideStep` */
+/** `oneiron_browser::programs::DecideStep` */
 export type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; secret?: string | null; clear?: boolean; option?: string | null }
-/** `oneiron_browser::BatchStep` */
+/** `oneiron_browser::programs::BatchStep` */
 export type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text?: string | null; secret?: string | null; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" }) | { step: "fill"; ref: string; field: FieldSpec }
 /** `oneiron_browser::library::admission::WorkflowSeed` */
 export type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string }
@@ -8058,7 +8058,7 @@ export type SwitchStage = "start" | "attach" | "cookies" | "navigate"
 export type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string }
 /** `oneiron_browser::switch::EngineSwitchRecord` */
 export type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome }
-/** `oneiron_browser::EffectReceipt` */
+/** `oneiron_browser::verbs::EffectReceipt` */
 export type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; duration_ms: number }
 /** `oneiron_browser::library::secret_slots::SecretParam` */
 export type SecretParam = { name: string; kind: SecretKind }
@@ -8066,72 +8066,72 @@ export type SecretParam = { name: string; kind: SecretKind }
 export type RecentCounts = { pass: number; miss: number; repair: number; of: number }
 /** `oneiron_browser::library::cards::LibraryCard` */
 export type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; secret_params?: SecretParam[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number }
-/** `oneiron_browser::PartialTree` */
+/** `oneiron_browser::verbs::PartialTree` */
 export type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number }
 /** `oneiron_browser::fact::DialogAnswerFailure` */
 export type DialogAnswerFailure = { tab?: string | null; kind: string; accept: boolean; error: string }
-/** `oneiron_browser::Observation` */
-export type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[] }
-/** `oneiron_browser::ObservationPage` */
-export type ObservationPage = Observation2 & { next?: string | null }
+/** `oneiron_browser::verbs::Observation` */
+export type VerbsObservation = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[] }
+/** `oneiron_browser::verbs::ObservationPage` */
+export type ObservationPage = VerbsObservation & { next?: string | null }
 /** `oneiron::verbs::browser::BrowserObservationPage` */
 export type BrowserObservationPage = BrowserAnswer<ObservationPage>
 /** `oneiron_browser::observation::ObservationBase` */
 export type ObservationBase = { scope: string; seq: number }
-/** `oneiron_browser::ObserveInput` */
+/** `oneiron_browser::verbs::ObserveInput` */
 export type ObserveInput = { base?: ObservationBase | null; full?: boolean; cursor?: string | null }
-/** `oneiron_browser::FindInput` */
+/** `oneiron_browser::verbs::FindInput` */
 export type FindInput = { role?: string | null; name?: string | null; cursor?: string | null }
-/** `oneiron_browser::FindOutput` */
+/** `oneiron_browser::verbs::FindOutput` */
 export type FindOutput = { rows: Row[]; next?: string | null; partial?: PartialTree | null; walk_next?: string | null }
 /** `oneiron::verbs::browser::BrowserFindOutput` */
 export type BrowserFindOutput = BrowserAnswer<FindOutput>
-/** `oneiron_browser::ClickInput` */
+/** `oneiron_browser::verbs::ClickInput` */
 export type ClickInput = { ref: string; base?: ObservationBase | null }
-/** `oneiron_browser::PointInput` */
+/** `oneiron_browser::verbs::PointInput` */
 export type PointInput = { image: string; x: number; y: number; base?: ObservationBase | null }
-/** `oneiron_browser::TypeInput` */
+/** `oneiron_browser::verbs::TypeInput` */
 export type TypeInput = { ref: string; text?: string | null; secret?: string | null; clear?: boolean; base?: ObservationBase | null }
-/** `oneiron_browser::SelectInput` */
+/** `oneiron_browser::verbs::SelectInput` */
 export type SelectInput = { ref: string; option: string; base?: ObservationBase | null }
-/** `oneiron_browser::WaitForInput` */
+/** `oneiron_browser::verbs::WaitForInput` */
 export type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null; cursor?: string | null }
-/** `oneiron_browser::WaitForOutput` */
+/** `oneiron_browser::verbs::WaitForOutput` */
 export type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null; partial?: PartialTree | null; walk_next?: string | null; rebindings?: Rebound[] }
 /** `oneiron::verbs::browser::BrowserWaitForOutput` */
 export type BrowserWaitForOutput = BrowserAnswer<WaitForOutput>
-/** `oneiron_browser::ExpectOutput` */
+/** `oneiron_browser::verbs::ExpectOutput` */
 export type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTree | null; rebindings?: Rebound[] }
 /** `oneiron::verbs::browser::BrowserExpectOutput` */
 export type BrowserExpectOutput = BrowserAnswer<ExpectOutput>
-/** `oneiron_browser::ScreenshotInput` */
+/** `oneiron_browser::verbs::ScreenshotInput` */
 export type ScreenshotInput = { trigger: ScreenshotTrigger; since_capture?: string | null }
-/** `oneiron_browser::ScreenshotOutput` */
+/** `oneiron_browser::verbs::ScreenshotOutput` */
 export type ScreenshotOutput = { image: string; media_type: string; width: number; height: number; bytes: number; trigger: ScreenshotTrigger; url: string; title: string; capture_id: string; unchanged_from?: string | null }
 /** `oneiron::verbs::browser::BrowserScreenshotOutput` */
 export type BrowserScreenshotOutput = BrowserAnswer<ScreenshotOutput>
-/** `oneiron_browser::ViewInput` */
+/** `oneiron_browser::verbs::ViewInput` */
 export type ViewInput = { image: string }
-/** `oneiron_browser::ImageOutput` */
+/** `oneiron_browser::verbs::ImageOutput` */
 export type ImageOutput = { image: string; media_type: string; width: number; height: number; bytes: number; source: string }
 /** `oneiron::verbs::browser::BrowserImageOutput` */
 export type BrowserImageOutput = BrowserAnswer<ImageOutput>
-/** `oneiron_browser::CropInput` */
+/** `oneiron_browser::verbs::CropInput` */
 export type CropInput = { image: string; x: number; y: number; width: number; height: number }
-/** `oneiron_browser::ZoomInput` */
+/** `oneiron_browser::verbs::ZoomInput` */
 export type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null }
-/** `oneiron_browser::BatchInput` */
+/** `oneiron_browser::programs::BatchInput` */
 export type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean }
-/** `oneiron_browser::SubgoalStatus` */
+/** `oneiron_browser::programs::SubgoalStatus` */
 export type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU"
 /** `oneiron_browser::stop::CheckReceipt` */
 export type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput }
 /** `oneiron_browser::stop::FailedStepReceipt` */
-export type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: Observation2 | null; error?: string | null; refusal?: DestinationRefusal | null; next?: string | null }
+export type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: VerbsObservation | null; error?: string | null; refusal?: DestinationRefusal | null; next?: string | null }
 /** `oneiron_browser::observation::StepRebound` */
 export type StepRebound = { step: number; rebound: Rebound }
-/** `oneiron_browser::BatchOutput` */
-export type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; stop_cause?: BatchStopCause | null; failed_receipt?: FailedStepReceipt | null; elapsed_ms: number; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] }
+/** `oneiron_browser::programs::BatchOutput` */
+export type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; stop_cause?: BatchStopCause | null; failed_receipt?: FailedStepReceipt | null; elapsed_ms: number; observation?: VerbsObservation | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] }
 /** `oneiron::verbs::browser::BrowserBatchOutput` */
 export type BrowserBatchOutput = BrowserAnswer<BatchOutput>
 /** `oneiron_browser::library::cards::LibraryFindInput` */
@@ -8192,9 +8192,9 @@ export type LibraryRunInput = { workflow: string; args?: Record<string, string>;
 export type LibraryRunOutput = { workflow: string; status: SubgoalStatus; mode: LibraryRunMode; model_free: boolean; model_free_unproven?: number | null; unmet?: number[]; batch: BatchOutput }
 /** `oneiron::verbs::browser::BrowserLibraryRunOutput` */
 export type BrowserLibraryRunOutput = BrowserAnswer<LibraryRunOutput>
-/** `oneiron_browser::HandoverInput` */
+/** `oneiron_browser::programs::HandoverInput` */
 export type HandoverInput = { reason: string }
-/** `oneiron_browser::HandoverOutput` */
+/** `oneiron_browser::programs::HandoverOutput` */
 export type HandoverOutput = { reason: string; asked_at_ms: number }
 /** `oneiron::verbs::browser::BrowserHandoverOutput` */
 export type BrowserHandoverOutput = BrowserAnswer<HandoverOutput>
