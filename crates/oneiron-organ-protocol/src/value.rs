@@ -258,10 +258,10 @@ impl Value {
     /// # Errors
     /// The value itself, when it is not a map.
     pub fn into_map(mut self) -> Result<Vec<(Value, Value)>, Value> {
-        match &mut self {
-            Self::Map(entries) => Ok(std::mem::take(entries)),
-            _ => Err(self),
+        if let Self::Map(entries) = &mut self {
+            return Ok(std::mem::take(entries));
         }
+        Err(self)
     }
 
     /// An array's items, taken out of it, as [`Self::into_map`] takes a
@@ -270,9 +270,9 @@ impl Value {
     /// # Errors
     /// The value itself, when it is not an array.
     pub fn into_array(mut self) -> Result<Vec<Value>, Value> {
-        match &mut self {
-            Self::Array(items) => Ok(std::mem::take(items)),
-            _ => Err(self),
+        if let Self::Array(items) = &mut self {
+            return Ok(std::mem::take(items));
         }
+        Err(self)
     }
 }

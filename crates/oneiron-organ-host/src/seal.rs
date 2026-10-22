@@ -191,8 +191,8 @@ impl SealSettings {
 /// `seal_sign_asks`, `seal_fetch_asks`, `seal_asks`, `seal_answer_bytes`,
 /// and `seal_memory_asks` for its own buffers) measure them, so the grant's generic thresholds are the wire's own. Its
 /// memory is a floor: each call is sized by what it lends, and grows. Its
-/// frames are bounded by the wire's own `u32` length alone, and its outputs
-/// by the PDF format bound.
+/// messages take as many frames as they need, and its outputs are bounded
+/// by the PDF format bound alone.
 #[must_use]
 pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
     let mut spec = OrganSpec::first_party(SEAL_ORGAN, program);

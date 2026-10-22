@@ -78,8 +78,6 @@ pub enum HostError {
     BudgetTimeout,
     #[error("the call asks more than the whole organ budget")]
     OverBudget,
-    #[error("a call carries at most 16 inputs")]
-    TooManyInputs,
     #[error("organ reply broke a protocol rule: {0}")]
     ReplyInvalid(String),
     #[error("input {artifact} v{version} not found")]

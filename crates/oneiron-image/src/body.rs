@@ -5,7 +5,7 @@
 //! made at export. Every coordinate is in canvas pixels after the steps
 //! before it, top-left origin, after EXIF orientation.
 
-use oneiron_organ_protocol::{ErrorCode, Hash32, OrganError, TypedBody};
+use oneiron_organ_protocol::{ErrorCode, Hash32, OrganError, TypedBody, Value};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -159,26 +159,20 @@ pub(crate) fn bad(detail: impl Into<String>) -> OrganError {
     OrganError::new(ErrorCode::BadRequest, detail)
 }
 
-/// A value as MessagePack with named fields, so any reader can follow it.
+/// A value as MessagePack with named fields, so any reader can follow it,
+/// in the protocol's codec, which does not recurse over a value's depth.
 ///
 /// # Errors
 /// `internal` if the value does not encode.
-pub(crate) fn to_value<T: Serialize>(value: &T) -> Result<rmpv::Value, OrganError> {
-    let bytes = rmp_serde::to_vec_named(value)
-        .map_err(|err| OrganError::new(ErrorCode::Internal, format!("encode: {err}")))?;
-    rmpv::decode::read_value(&mut bytes.as_slice())
+pub(crate) fn to_value<T: Serialize>(value: &T) -> Result<Value, OrganError> {
+    oneiron_organ_protocol::to_value(value)
         .map_err(|err| OrganError::new(ErrorCode::Internal, format!("encode: {err}")))
 }
 
 /// # Errors
 /// `bad_request` naming `what` if the value does not have the shape.
-pub(crate) fn from_value<T: DeserializeOwned>(
-    value: &rmpv::Value,
-    what: &str,
-) -> Result<T, OrganError> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).map_err(|err| bad(format!("{what}: {err}")))?;
-    rmp_serde::from_slice(&bytes).map_err(|err| bad(format!("{what}: {err}")))
+pub(crate) fn from_value<T: DeserializeOwned>(value: &Value, what: &str) -> Result<T, OrganError> {
+    oneiron_organ_protocol::from_value(value).map_err(|err| bad(format!("{what}: {err}")))
 }
 
 impl ImageBody {

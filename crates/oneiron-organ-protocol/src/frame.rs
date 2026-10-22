@@ -315,7 +315,7 @@ fn send_frame_with<T: Serialize + ?Sized, G>(
         .max(fds.len().div_ceil(MAX_FDS_PER_FRAME))
         .max(1);
     for at in 0..frames {
-        let bytes = piece(&body, at, chunk);
+        let bytes = piece(body.as_slice(), at, chunk);
         let carried = piece(fds, at, MAX_FDS_PER_FRAME);
         let mut header = [0u8; HEADER];
         header[..4].copy_from_slice(&(bytes.len() as u32).to_le_bytes());

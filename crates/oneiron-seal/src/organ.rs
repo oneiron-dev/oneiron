@@ -48,7 +48,7 @@ use async_trait::async_trait;
 use oneiron_organ_protocol::{
     ASK_MEMORY_GROW, ASK_NET_FETCH, Answer, AnswerMemory, AskCode, AskRefusal, AskReply, Asker,
     ByteBuf, CallContext, ErrorCode, FetchAnswer, FetchAsk, MemoryAnswer, MemoryAsk, Organ,
-    OrganError, OrganIdentity, OutputBytes, VerbSpec, frame_body_len,
+    OrganError, OrganIdentity, OutputBytes, Value, VerbSpec, read_cost,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -85,8 +85,8 @@ pub const REVISIONS: &str = "application/octet-stream";
 pub const SEALED_OUTPUT: &str = "sealed.pdf";
 /// The report JSON a verdict carries past which the engine's `[limits]`
 /// row asks (`seal_report_json_bytes`). Every report is carried whole,
-/// however many signatures it names (Rule 5), inside the reply frame's own
-/// `u32` length.
+/// however many signatures it names (Rule 5), across as many reply frames
+/// as it takes.
 pub const MAX_REPORT_JSON_BYTES: usize = 8 * 1024 * 1024;
 const PDF: &str = "application/pdf";
 
@@ -374,11 +374,11 @@ impl ReplyMemory {
         }
     }
 
-    /// `value` read as `T`, its encoded copy and what it decodes into, about
-    /// as much again, reserved first.
-    fn args<T: DeserializeOwned>(&self, value: &rmpv::Value, what: &str) -> Result<T, OrganError> {
-        let encoded = frame_body_len(value).map_err(|err| bad(format!("{what}: {err}")))?;
-        self.reserve(encoded.saturating_mul(2))?;
+    /// `value` read as `T`, its encoded copy and the most it decodes into
+    /// (the codec's own count, [`read_cost`]) reserved first.
+    fn args<T: DeserializeOwned>(&self, value: &Value, what: &str) -> Result<T, OrganError> {
+        let cost = read_cost(value).map_err(|err| bad(format!("{what}: {err}")))?;
+        self.reserve(cost)?;
         from_value(value, what)
     }
 }
@@ -428,7 +428,7 @@ struct CallAsks {
 }
 
 impl CallAsks {
-    fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+    fn ask(&self, verb: &str, value: Value) -> Result<AskReply, AskRefusal> {
         self.asker.ask(verb, value)
     }
 }
@@ -551,7 +551,7 @@ impl SealBackend for AskedBackend {
         }
         let reply = self
             .asks
-            .ask(ASK_IDENTITY, rmpv::Value::Map(Vec::new()))
+            .ask(ASK_IDENTITY, Value::Map(Vec::new()))
             .map_err(|refusal| backend_error(&refusal, BackendRejectCode::IdentityUnavailable))?;
         let answer: IdentityAnswer =
             from_value(&reply.value, "identity").map_err(|_| BackendError::Rejected {
@@ -717,22 +717,20 @@ fn bad(detail: impl Into<String>) -> OrganError {
 }
 
 /// The outcome as the report's one tagged entry, and the call's counts
-/// beside it as `observed`. Its encoded copy and the value it becomes,
-/// about as much again, are reserved before either is made (FIX 6195).
+/// beside it as `observed`. Its encoded copy and the most the value it
+/// becomes takes ([`read_cost`]) are reserved before either is made
+/// (FIX 6195).
 fn report<T: Serialize>(
     report: &T,
     observed: &SealObservations,
     memory: &ReplyMemory,
 ) -> Result<Answer, OrganError> {
-    let encoded = frame_body_len(report)
+    let cost = read_cost(report)
         .map_err(|err| OrganError::new(ErrorCode::Internal, format!("encode: {err}")))?;
-    memory.reserve(encoded.saturating_mul(2))?;
+    memory.reserve(cost)?;
     let mut value = to_value(report)?;
-    if let rmpv::Value::Map(entries) = &mut value {
-        entries.push((
-            rmpv::Value::from("observed"),
-            to_value(&observed.observed())?,
-        ));
+    if let Value::Map(entries) = &mut value {
+        entries.push((Value::from("observed"), to_value(&observed.observed())?));
     }
     Ok(Answer {
         report: value,
@@ -740,17 +738,13 @@ fn report<T: Serialize>(
     })
 }
 
-/// MessagePack with named fields, so any reader can follow it.
-fn to_value<T: Serialize>(value: &T) -> Result<rmpv::Value, OrganError> {
-    let internal = |err: &dyn std::fmt::Display| {
-        OrganError::new(ErrorCode::Internal, format!("encode: {err}"))
-    };
-    let bytes = rmp_serde::to_vec_named(value).map_err(|err| internal(&err))?;
-    rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|err| internal(&err))
+/// MessagePack with named fields, so any reader can follow it, in the
+/// protocol's codec, which does not recurse over a value's depth.
+fn to_value<T: Serialize>(value: &T) -> Result<Value, OrganError> {
+    oneiron_organ_protocol::to_value(value)
+        .map_err(|err| OrganError::new(ErrorCode::Internal, format!("encode: {err}")))
 }
 
-fn from_value<T: DeserializeOwned>(value: &rmpv::Value, what: &str) -> Result<T, OrganError> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).map_err(|err| bad(format!("{what}: {err}")))?;
-    rmp_serde::from_slice(&bytes).map_err(|err| bad(format!("{what}: {err}")))
+fn from_value<T: DeserializeOwned>(value: &Value, what: &str) -> Result<T, OrganError> {
+    oneiron_organ_protocol::from_value(value).map_err(|err| bad(format!("{what}: {err}")))
 }

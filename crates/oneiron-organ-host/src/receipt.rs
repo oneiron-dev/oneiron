@@ -4,7 +4,9 @@
 
 use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
-use oneiron_organ_protocol::{AskCode, Hash32, Locator, Notes, OrganIdentity, ProtocolVersion, to_vec};
+use oneiron_organ_protocol::{
+    AskCode, Hash32, Locator, Notes, OrganIdentity, ProtocolVersion, to_vec,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::spec::CallClass;

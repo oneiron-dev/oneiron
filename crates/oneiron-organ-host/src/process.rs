@@ -862,8 +862,7 @@ impl OrganProcess {
                             let held: Vec<BorrowedFd<'_>> =
                                 region.iter().map(|region| region.fd()).collect();
                             let answer = ToOrgan::Answer(answer);
-                            let sent =
-                                self.send_answer(id, &answer, &held, clock, room, grant);
+                            let sent = self.send_answer(id, &answer, &held, clock, room, grant);
                             if !matches!(sent, Ok(Some(_))) {
                                 asks.unsent();
                             }

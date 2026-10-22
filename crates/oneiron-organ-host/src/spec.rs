@@ -48,13 +48,13 @@ pub struct OrganSpec {
     pub memory_bytes: u64,
     /// What one call books from the shared budget.
     pub call_memory_bytes: u64,
-    /// The largest frame the host sends one call before the
-    /// `organ_call_frame_bytes` row asks. Frames cross under the wire's own
-    /// `u32` length alone (Rule 5).
+    /// The largest message the host sends one call before the
+    /// `organ_call_frame_bytes` row asks. A message takes as many frames as
+    /// it needs (Rule 5).
     pub max_call_frame: u32,
-    /// The largest frame the organ sends back for one call before the
-    /// `organ_reply_frame_bytes` row asks; read whole under the wire's own
-    /// `u32` length, with budget room made for it before it is read.
+    /// The largest message the organ sends back for one call before the
+    /// `organ_reply_frame_bytes` row asks; read whole, across as many frames
+    /// as it takes, with budget room made for each frame before it is read.
     pub max_reply_frame: u32,
     /// The bytes one reply's outputs hold together, inline and region,
     /// before the `organ_output_bytes` row asks; never a refusal (Rule 5).
