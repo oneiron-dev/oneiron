@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod chunks;
+mod narrative_labels;
 mod write;
 use chunks::retry_chunks_in_txn;
 pub(super) use write::{Draft, NightlyWrite, landed_units_in_txn, recheck_in_txn, scoped_draft};
@@ -406,6 +407,13 @@ impl ConsolidationExecutor<'_> {
                     );
                 }
             };
+            // A call's labels mean nothing past it: the stored text names
+            // what each stood for (FIX 7576).
+            let names = match narrative_labels::durable_names(ctx.vault, &read, &labels, members) {
+                Ok(names) => names,
+                Err(error) => return Ok(charges.park_on_error(&error)),
+            };
+            let narrative = narrative_labels::durable_text(&narrative, &names);
             let candidate = ClaimCandidate::new(
                 "dreamer.arc.summary",
                 ClaimSubject::Entity(first.scope_project),

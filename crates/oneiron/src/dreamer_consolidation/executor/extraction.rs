@@ -3,7 +3,7 @@
 //! its `corrections` child.
 
 use super::*;
-use crate::dreamer_consolidation::call_labels::CallLabelMap;
+use crate::dreamer_consolidation::call_labels::{CallLabelMap, CandidateRel};
 use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
 
@@ -192,7 +192,9 @@ pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
     predicate: Option<String>,
     value: serde_json::Value,
     confidence: f32,
-    rel: Option<serde_json::Value>,
+    /// Its `rel`, a listed relationship label read back to its id (FIX
+    /// 7575), or any other value as the reply wrote it.
+    rel: Option<CandidateRel>,
     topic: Option<serde_json::Value>,
     locators: Vec<super::super::evidence::EvidenceLocator>,
     evidence_turn_refs: Vec<EntityId>,
@@ -285,9 +287,10 @@ fn resolve_proposal(
     let rel = match (corrects, parsed.rel) {
         (Some(prior), _) => prior.body.rel,
         (None, None) => scope.relationship,
-        // Not advertised, and no call shows a relationship id; still read
-        // as before (FIX 7506 left this one route unlabelled).
-        (None, Some(value)) => Some(
+        // A relationship the call listed, by its label (FIX 7575).
+        (None, Some(CandidateRel::Listed(rel))) => Some(rel),
+        // A value that is no listed label is read as before.
+        (None, Some(CandidateRel::Unlisted(value))) => Some(
             value
                 .as_str()
                 .and_then(entity_id_from_hex)
@@ -347,6 +350,9 @@ fn resolve_proposal(
         facts.project,
         facts.topic.as_deref(),
     )?;
+    // The wake's clock is milliseconds; a claim's times are Unix seconds
+    // (FIX 8695).
+    let at = now_ms / 1_000;
     Ok((
         PromotionCandidate {
             claim_id,
@@ -358,11 +364,8 @@ fn resolve_proposal(
             provenance_chain: Vec::new(),
             supersedes: None,
             evidence_meet: ClaimSource::Generated,
-            occurred: TimeRange {
-                start: now_ms,
-                end: now_ms,
-            },
-            learned_at: now_ms,
+            occurred: TimeRange { start: at, end: at },
+            learned_at: at,
             decisions: decisions.to_vec(),
         },
         parsed.locators,
