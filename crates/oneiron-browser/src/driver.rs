@@ -37,6 +37,7 @@
 
 mod change;
 mod document;
+mod frames;
 mod handles;
 mod lightpanda;
 pub(crate) mod pages;
@@ -55,9 +56,9 @@ use crate::secret::{Entry, Secrets, bare_handle, entry};
 use crate::{
     BrowserDriver, BrowserEngine, BrowserError, BrowserPersonInput, BrowserTab, ClickInput,
     CropInput, ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation,
-    ObservationPage, ObserveInput, OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput,
-    SecretKind, SelectInput, StoragePhase, TabSwitch, TabSwitchCause, TypeInput, ViewInput,
-    WaitForInput, WaitForOutput, ZoomInput,
+    ObservationPage, ObserveInput, OpenInput, PartialTree, PointInput, Row, ScreenshotInput,
+    ScreenshotOutput, SecretKind, SelectInput, StoragePhase, TabSwitch, TabSwitchCause, TypeInput,
+    ViewInput, WaitForInput, WaitForOutput, ZoomInput,
 };
 use base64::Engine as _;
 use change::Watch;
@@ -85,6 +86,13 @@ const MEDIA: usize = 16;
 /// pixels of one.
 const SCROLL_NOTCHES: u32 = 3;
 const NOTCH_PX: f64 = 100.0;
+/// The cause a page read that ran out of its call's time names on the
+/// partial page it answers (FIX 8367): the stable timeout code.
+const READ_TIMEOUT_CAUSE: &str = "browser_timeout";
+/// A loaded page's visible text, read when its tree gives no row (FIX
+/// 7717): its body's rendered text, or its text where the engine renders
+/// none; null for a page not loaded or with no body.
+const BODY_TEXT: &str = "(() => { const d = document; const b = d.body; if (d.readyState !== 'complete' || !b) return null; return typeof b.innerText === 'string' ? b.innerText : b.textContent; })()";
 /// CDP's modifier bits.
 const ALT: u32 = 1;
 const CTRL: u32 = 2;
@@ -126,7 +134,7 @@ pub(crate) struct CdpDriver {
     typed: HashMap<u64, SecretKind>,
     /// The DOM nodes the last read showed a secret in, for a screenshot
     /// to mask.
-    secret_nodes: Vec<u64>,
+    secret_nodes: Vec<(Option<String>, u64)>,
 }
 
 /// One page target the driver follows, with its session on it, and the
@@ -279,6 +287,10 @@ impl CdpDriver {
             }
             kept
         });
+        // A closed tab's bindings go too; its handles' records stay (FIX 6158).
+        for tab in &closed {
+            self.handles.forget_tab(tab);
+        }
         let mut opened = None;
         for info in &pages {
             let id = target_id(info);
@@ -441,8 +453,33 @@ impl CdpDriver {
             .call(Some(&self.session), method, params, Instant::now() + CALL)
     }
 
-    /// The front tab's accessibility nodes as they are now.
+    /// The front tab's accessibility nodes as they are now. A loaded page
+    /// whose tree gives no row but whose body shows text (Lightpanda's tree
+    /// of a bare-text document, FIX 7717) reads as that text, each line a
+    /// read-only row (`outline::text_nodes`); a page not loaded, or with no
+    /// text, reads as its tree did.
     fn ax_nodes(&self) -> Result<Vec<Value>, BrowserError> {
+        let mut nodes = self.page_nodes()?;
+        // Its in-page frames' rows read where the page shows them (FIX 205).
+        self.graft_frames(&mut nodes);
+        if outline::has_rows(&nodes) {
+            return Ok(nodes);
+        }
+        let text = self
+            .page(
+                "Runtime.evaluate",
+                json!({"expression": BODY_TEXT, "returnByValue": true}),
+            )
+            .ok()
+            .filter(|reply| reply.get("exceptionDetails").is_none())
+            .and_then(|reply| reply.pointer("/result/value")?.as_str().map(str::to_owned))
+            .filter(|text| !text.trim().is_empty());
+        Ok(text.map_or(nodes, |text| outline::text_nodes(&text)))
+    }
+
+    /// The front tab's own document's accessibility nodes, its frames' not
+    /// read: what a settle poll hashes.
+    fn page_nodes(&self) -> Result<Vec<Value>, BrowserError> {
         let mut tree = self.page("Accessibility.getFullAXTree", json!({}))?;
         Ok(match tree.get_mut("nodes").map(Value::take) {
             Some(Value::Array(nodes)) => nodes,
@@ -453,7 +490,7 @@ impl CdpDriver {
     /// The outline as it is now, unminted: a settle poll's read, which
     /// mints no handle and holds no secret, as only its hash is read.
     fn lines(&self) -> Result<Vec<Line>, BrowserError> {
-        Ok(outline::lines(&self.ax_nodes()?, &Masks::default()))
+        Ok(outline::lines(&self.page_nodes()?, &Masks::default()))
     }
 
     /// The outline's rows, hashed for a settle poll: their href, level,
@@ -519,9 +556,17 @@ impl CdpDriver {
         Ok((field("url"), field("title")))
     }
 
-    /// The page as it is now, whole or as an edit of `base`.
+    /// The page as it is now, whole or as an edit of `base`. A read of its
+    /// rows that runs out of its call's time answers the page as far as it
+    /// reads (FIX 8367): its URL and title, as the browser holds them, and
+    /// no rows, cut by `browser_timeout`; the guest and the session stay,
+    /// and the cut's `walk_next` reads the page again.
     fn observation(&mut self, base: &Base) -> Result<Observation, BrowserError> {
-        let capture = self.capture()?;
+        let capture = match self.capture() {
+            Ok(capture) => capture,
+            Err(BrowserError::Timeout(_)) => return self.timed_out(),
+            Err(error) => return Err(error),
+        };
         let (url, title) = self.page_info()?;
         self.seq += 1;
         let read = Read {
@@ -534,6 +579,30 @@ impl CdpDriver {
             partial: None,
         };
         let mut observation = self.pages.observe(read, base);
+        observation.dialogs = self.pipe.take_dialog_failures();
+        Ok(observation)
+    }
+
+    /// The page whose rows did not read in their call's time, as a whole
+    /// partial observation: never an edit, and never a base for one.
+    fn timed_out(&mut self) -> Result<Observation, BrowserError> {
+        let (url, title) = self.page_info()?;
+        self.seq += 1;
+        let read = Read {
+            seq: self.seq,
+            scope: format!("page:{}", self.target),
+            url,
+            title,
+            rows: Vec::new(),
+            no_tree: false,
+            partial: Some(PartialTree {
+                reason: READ_TIMEOUT_CAUSE.to_owned(),
+                visited: 0,
+                pending: 0,
+                walk_ms: u64::try_from(CALL.as_millis()).unwrap_or(u64::MAX),
+            }),
+        };
+        let mut observation = self.pages.observe(read, &Base::Whole);
         observation.dialogs = self.pipe.take_dialog_failures();
         Ok(observation)
     }
@@ -723,7 +792,7 @@ impl CdpDriver {
         row: Option<&Row>,
         base: &Base,
     ) -> Result<Observation, BrowserError> {
-        let watch = Watch::Click(change::point_target(x, y, row));
+        let watch = Watch::Click(change::point_target(x, y, row), None);
         self.act(base, &watch, |_| Ok(()), |driver| driver.mouse_click(x, y))
     }
 
@@ -764,7 +833,7 @@ impl CdpDriver {
         if hit != Value::Bool(true) {
             return Err(covered());
         }
-        let watch = Watch::Click(change::row_target(&target.row));
+        let watch = Watch::Click(change::row_target(&target.row), Some(node));
         let mut observation =
             self.act(base, &watch, |_| Ok(()), |driver| driver.mouse_click(x, y))?;
         observation.rebound.clone_from(&target.rebound);
@@ -926,8 +995,12 @@ impl CdpDriver {
         let mut observation = self
             .observation(base)
             .map_err(|error| refused.unwrap_or(error))?;
-        // A tab the act opened or closed is an effect: no fact stands.
-        observation.fact = fact.filter(|_| moved.is_none());
+        // A tab the act opened or closed is an effect, and so is an outline
+        // that moved (FIX 8006): no fact stands.
+        let fact = fact
+            .filter(|_| moved.is_none())
+            .filter(|_| self.fingerprint().is_ok_and(|after| after == before));
+        observation.fact = fact;
         Ok(observation)
     }
 
@@ -1307,6 +1380,8 @@ impl BrowserDriver for CdpDriver {
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
         let base = Base::of_observe(&input)?;
         match input.cursor.as_deref() {
+            // A partial page's `walk_next` reads the page again, whole.
+            Some(cursor) if pages::is_walk(cursor) => self.observation(&Base::Whole),
             // Unpaged, a cursor reads the whole rest of its observation.
             Some(cursor) => self.pages.rest(cursor),
             None => self.observation(&base),
@@ -1320,6 +1395,11 @@ impl BrowserDriver for CdpDriver {
     fn observe_page(&mut self, input: ObserveInput) -> Result<ObservationPage, BrowserError> {
         let base = Base::of_observe(&input)?;
         match input.cursor.as_deref() {
+            // A partial page's `walk_next` reads the page again, whole.
+            Some(cursor) if pages::is_walk(cursor) => {
+                let observation = self.observation(&Base::Whole)?;
+                Ok(self.pages.first(observation))
+            }
             Some(cursor) => self.pages.next(cursor),
             None => {
                 let observation = self.observation(&base)?;

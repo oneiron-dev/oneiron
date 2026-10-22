@@ -14,18 +14,21 @@
 //! locator, candidate or receipt of the session ever holds the value.
 //!
 //! A screenshot masks the same rows (each one a secret shows in, by its DOM
-//! node, in whatever frame or shadow tree the tree reached it) and, for
+//! node, in whatever frame or shadow tree the tree reached it, an
+//! out-of-process frame's on that frame's own session, FIX 8336) and, for
 //! fields no read has classified yet, every input a password, card or
-//! one-time-code autocomplete token names in the front document, before
-//! the image is taken; every mask comes off after it.
+//! one-time-code autocomplete token names in the front document and in
+//! each of its out-of-process frames, before the image is taken; every mask
+//! comes off after it.
 
-use super::CdpDriver;
 use super::row_metadata::DomRead;
+use super::{CALL, CdpDriver};
 use crate::outline::{self, Line, Masked, Masks};
 use crate::secret_fields::{FieldFacts, SECRET_MARK, classify, masked, secret_display_policy};
 use crate::{BrowserError, RowSecret, SecretKind, SecretNote};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::time::Instant;
 use url::Url;
 
 /// Masks every input the front document marks secret by its type or an
@@ -144,24 +147,28 @@ impl CdpDriver {
     /// a screenshot is taken only once they all did.
     pub(super) fn mask_secrets(&self) -> (Vec<Value>, Result<(), BrowserError>) {
         let mut masked = Vec::new();
-        let fields = self.page(
-            "Runtime.evaluate",
-            json!({"expression": MASK_FIELDS, "returnByValue": true}),
-        );
-        if let Err(error) = fields {
-            return (masked, Err(error));
+        for session in std::iter::once(self.session.clone()).chain(self.oopif_sessions()) {
+            if let Err(error) = self.evaluate_in(&session, MASK_FIELDS) {
+                return (masked, Err(error));
+            }
         }
-        for backend in &self.secret_nodes {
+        for (frame, backend) in &self.secret_nodes {
+            let session = self.frame_session(frame.as_deref());
             // A node the page no longer has shows nothing.
-            let Ok(resolved) = self.page("DOM.resolveNode", json!({"backendNodeId": backend}))
-            else {
+            let resolved = self.pipe.call(
+                Some(&session),
+                "DOM.resolveNode",
+                json!({"backendNodeId": backend}),
+                Instant::now() + CALL,
+            );
+            let Ok(resolved) = resolved else {
                 continue;
             };
             let Some(object) = resolved.pointer("/object/objectId").cloned() else {
                 continue;
             };
-            let element = json!({"objectId": object});
-            if let Err(error) = self.call_on(&element, MASK_NODE, json!([])) {
+            let element = json!({"objectId": object, "sessionId": session});
+            if let Err(error) = self.call_in(&element, MASK_NODE) {
                 return (masked, Err(error));
             }
             masked.push(element);
@@ -169,18 +176,50 @@ impl CdpDriver {
         (masked, Ok(()))
     }
 
+    /// Evaluates `expression` on page or frame `session`, by value.
+    fn evaluate_in(&self, session: &str, expression: &str) -> Result<Value, BrowserError> {
+        self.pipe.call(
+            Some(session),
+            "Runtime.evaluate",
+            json!({"expression": expression, "returnByValue": true}),
+            Instant::now() + CALL,
+        )
+    }
+
+    /// Calls `function` on `element`, on the session it was resolved on.
+    fn call_in(&self, element: &Value, function: &str) -> Result<(), BrowserError> {
+        let session = element["sessionId"].as_str().unwrap_or(&self.session);
+        let answer = self.pipe.call(
+            Some(session),
+            "Runtime.callFunctionOn",
+            json!({"objectId": element["objectId"], "functionDeclaration": function, "arguments": [], "returnByValue": true}),
+            Instant::now() + CALL,
+        )?;
+        match answer.get("exceptionDetails") {
+            Some(error) => Err(BrowserError::Protocol(
+                error
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("script error")
+                    .to_owned(),
+            )),
+            None => Ok(()),
+        }
+    }
+
     /// Takes off every mask [`Self::mask_secrets`] put on: the front
     /// document's, then each element's it names. Every one is tried; the
     /// first failure is the answer.
     pub(super) fn unmask_secrets(&self, masked: &[Value]) -> Result<(), BrowserError> {
-        let mut restored = self
-            .page(
-                "Runtime.evaluate",
-                json!({"expression": UNMASK_FIELDS, "returnByValue": true}),
-            )
-            .map(drop);
+        let mut restored = Ok(());
+        for session in std::iter::once(self.session.clone()).chain(self.oopif_sessions()) {
+            let undone = self.evaluate_in(&session, UNMASK_FIELDS).map(drop);
+            if restored.is_ok() {
+                restored = undone;
+            }
+        }
         for element in masked {
-            let undone = self.call_on(element, UNMASK_NODE, json!([])).map(drop);
+            let undone = self.call_in(element, UNMASK_NODE);
             if restored.is_ok() {
                 restored = undone;
             }
