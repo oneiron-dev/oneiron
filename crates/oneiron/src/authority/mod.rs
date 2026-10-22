@@ -63,6 +63,7 @@ mod critical_confirm_door;
 mod current_scope;
 mod engine_machine;
 mod entry_transition;
+mod entry_transition_predicates;
 mod first_seen_clock;
 mod fold_engine;
 mod fold_project;
