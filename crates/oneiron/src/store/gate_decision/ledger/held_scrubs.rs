@@ -256,6 +256,24 @@ impl Store {
         }
     }
 
+    /// Whether a decision bound to or citing `claim` is still left for its
+    /// erase to scrub: an unredacted one, but for one owed its skeleton while
+    /// a hold keeps its partition, which the due pass settles (FIX 7994).
+    /// [`Self::verify_claim_erasure_by_scan_in_txn`] still names every
+    /// unredacted one.
+    pub(crate) fn claim_decisions_left_to_scrub_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim: &EntityId,
+    ) -> Result<bool> {
+        for decision in self.verify_claim_erasure_by_scan_in_txn(txn, claim.as_bytes())? {
+            if !self.claim_scrub_held_in_txn(txn, claim, decision)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Drops every scrub `decision` is owed, in the transaction that redacts
     /// or removes it.
     pub(in crate::store) fn forget_gate_scrubs_of_decision_in_txn(
