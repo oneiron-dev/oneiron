@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use image::RgbaImage;
 use oneiron_organ_protocol::{
     Answer, CallContext, ErrorCode, Hash32, InputBytes, Loss, Notes, Organ, OrganError,
-    OrganIdentity, OutputBytes, VerbSpec,
+    OrganIdentity, OutputBytes, Value, VerbSpec,
 };
 use serde::Deserialize;
 
@@ -255,18 +255,18 @@ fn note_source(notes: &mut Notes, input: &InputBytes, header: &Header) {
     }
 }
 
-fn header_report(header: &Header, too_large: Option<OrganError>) -> rmpv::Value {
+fn header_report(header: &Header, too_large: Option<OrganError>) -> Value {
     let (width, height) = header.size();
     let (icc, icc_name) = match &header.profile {
-        Profile::Untagged => ("none", rmpv::Value::Nil),
-        Profile::Srgb => ("srgb", rmpv::Value::Nil),
+        Profile::Untagged => ("none", Value::Nil),
+        Profile::Srgb => ("srgb", Value::Nil),
         Profile::Other(name) => ("other", name.as_str().into()),
     };
     let refusal = header
         .refusal()
         .or_else(|| too_large.map(|err| err.detail))
-        .map_or(rmpv::Value::Nil, rmpv::Value::from);
-    let pairs: Vec<(&str, rmpv::Value)> = vec![
+        .map_or(Value::Nil, Value::from);
+    let pairs: Vec<(&str, Value)> = vec![
         ("format", header.format.media_type().into()),
         ("width", width.into()),
         ("height", height.into()),
@@ -282,7 +282,7 @@ fn header_report(header: &Header, too_large: Option<OrganError>) -> rmpv::Value 
         ("supported", refusal.is_nil().into()),
         ("refusal", refusal),
     ];
-    rmpv::Value::Map(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    Value::Map(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
 
 /// Refuses what the first slice cannot keep, then checks the size.
@@ -420,7 +420,7 @@ impl ImageOrgan {
         drop(source);
         call.check_cancel()?;
         let png = encode_png(&pixels, header.alpha)?;
-        let report = rmpv::Value::Map(vec![
+        let report = Value::Map(vec![
             ("format".into(), "png".into()),
             ("width".into(), pixels.width().into()),
             ("height".into(), pixels.height().into()),

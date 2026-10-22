@@ -9,8 +9,7 @@ use std::time::{Duration, Instant};
 use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
 use oneiron_organ_protocol::{
-    ByteBuf, Call, CancelReason, Hash32, INLINE_MAX_BYTES, Input, MAX_FDS_PER_FRAME, Outcome,
-    Payload, SharedRegion,
+    ByteBuf, Call, CancelReason, Hash32, INLINE_MAX_BYTES, Input, Outcome, Payload, SharedRegion,
 };
 
 use crate::asks::{AskContext, CallAsks};
@@ -424,9 +423,6 @@ impl OrganHost {
         {
             return Err(HostError::KindNotGranted(body.kind.clone()));
         }
-        if call.inputs.len() + lent.len() > MAX_FDS_PER_FRAME {
-            return Err(HostError::TooManyInputs);
-        }
         let booking = how.booking(&slot.spec);
         // The call's room: its booking, grown as its answers and outputs
         // need (FIX 5284), and as the organ's own buffers lease the machine's
@@ -697,7 +693,8 @@ fn wire_inputs(inputs: &[Resolved]) -> (Vec<Input>, Vec<BorrowedFd<'_>>) {
             let data = match &resolved.held {
                 Held::Inline(bytes) => Payload::Inline(ByteBuf::from(bytes.clone())),
                 Held::Region(region) => {
-                    let slot = u16::try_from(fds.len()).unwrap_or(u16::MAX);
+                    // Any number: the call's frames carry every region.
+                    let slot = fds.len() as u64;
                     fds.push(region.fd());
                     Payload::Slot(slot)
                 }
@@ -713,9 +710,9 @@ fn wire_inputs(inputs: &[Resolved]) -> (Vec<Input>, Vec<BorrowedFd<'_>>) {
     (wire, fds)
 }
 
-/// Measures the largest frames a call's process carried for it against
-/// the install grant's own frame sizes: thresholds, never refusals, under
-/// the wire's own `u32` length (Rule 5).
+/// Measures the largest messages a call's process carried for it against
+/// the install grant's own frame sizes: thresholds, never refusals; a
+/// message takes as many frames as it needs (Rule 5).
 fn measure_frames(vault: &Vault, spec: &OrganSpec, (sent, received): (u64, u64)) {
     let rows = [
         (EngineLimit::OrganCallFrameBytes, spec.max_call_frame, sent),

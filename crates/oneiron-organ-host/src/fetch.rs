@@ -304,8 +304,8 @@ async fn fetch(
             content_type,
             final_url: url.to_string(),
         };
-        let value = to_value(&answer)
-            .map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
+        let value =
+            to_value(&answer).map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
         return Ok(Answered {
             value,
             data: Some(body),

@@ -3,9 +3,12 @@
 //! Built: the socket moves to fd 3 and every other inherited descriptor
 //! closes at exec (`oneiron_spawn::command_with_fds`, which the caller starts
 //! the organ through), a clean environment, cwd `/`, its own process group (so
-//! a kill reaches what it forks), rlimits (core 0, open files, file size;
-//! data on Linux), `no_new_privs` and a new user and network namespace where
-//! Linux allows it, nice +10. Not built: filesystem confinement (Landlock,
+//! a kill reaches what it forks), rlimits (core 0, file size; data on
+//! Linux), `no_new_privs` and a new user and network namespace where Linux
+//! allows it, nice +10. Open files are the engine's own limits, the
+//! machine's descriptor floor: a call or reply carries any number of
+//! regions across its frames (protocol 2.0, FIX 6190), and the runtime
+//! closes each input's descriptor once it has mapped it. Not built: filesystem confinement (Landlock,
 //! Seatbelt) and a syscall filter, so third-party organs are refused
 //! (`Unavailable::ThirdPartyUnconfined`). No parent-death signal: Linux ties
 //! it to the spawning thread, which may be a short-lived worker; the organ
@@ -85,7 +88,6 @@ struct Plan {
     file_size: libc::rlim_t,
     /// The hard data and file-size limits.
     hard: libc::rlim_t,
-    open_files: libc::rlim_t,
     /// Where the child writes its outcomes, before exec.
     #[cfg(target_os = "linux")]
     status: Option<i32>,
@@ -126,9 +128,6 @@ pub(crate) fn confine(command: &mut Command, spec: &OrganSpec) -> io::Result<Con
         } else {
             grant
         },
-        // Per seat: a call's inputs, plus the outputs of the reply before it,
-        // which the organ may not have closed yet when the next call lands.
-        open_files: rlim(Some(64 + 2 * 16 * u64::from(spec.threads))),
         #[cfg(target_os = "linux")]
         status: status
             .as_ref()
@@ -175,7 +174,6 @@ impl Plan {
             return Err(io::Error::last_os_error());
         }
         limit(libc::RLIMIT_CORE, 0, 0)?;
-        limit(libc::RLIMIT_NOFILE, self.open_files, self.open_files)?;
         limit(libc::RLIMIT_FSIZE, self.file_size, self.hard)?;
         #[cfg(target_os = "linux")]
         self.linux(joined)?;

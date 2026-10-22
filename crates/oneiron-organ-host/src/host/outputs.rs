@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
-use oneiron_organ_protocol::{Hash32, MAX_FDS_PER_FRAME, MappedRegion, Output, Payload, Proposal};
+use oneiron_organ_protocol::{Hash32, MappedRegion, Output, Payload, Proposal};
 
 use super::Resolved;
 use crate::budget::{CallRoom, Grown, Lease};
@@ -160,9 +160,6 @@ fn take_outputs(
     fds: Vec<OwnedFd>,
     deadline: Instant,
 ) -> Result<Vec<OrganOutput>, HostError> {
-    if outputs.len() > MAX_FDS_PER_FRAME {
-        return Err(HostError::ReplyInvalid("more than 16 outputs".into()));
-    }
     let Called {
         vault, spec, room, ..
     } = *called;
@@ -225,8 +222,9 @@ fn output_bytes(
             Ok((OutputBytes::Inline(bytes.into_vec()), len))
         }
         Payload::Slot(slot) => {
-            let fd = slots
-                .get_mut(usize::from(slot))
+            let fd = usize::try_from(slot)
+                .ok()
+                .and_then(|slot| slots.get_mut(slot))
                 .and_then(Option::take)
                 .ok_or_else(|| HostError::ReplyInvalid("output slot".into()))?;
             let invalid =

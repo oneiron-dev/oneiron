@@ -14,7 +14,7 @@ mod probe {
 
     use oneiron_organ_protocol::{
         Answer, AskCode, CallContext, ErrorCode, Organ, OrganError, OrganIdentity, OutputBytes,
-        VerbSpec, touch_fold,
+        Value, VerbSpec, touch_fold,
     };
 
     pub(super) struct Probe;
@@ -78,14 +78,14 @@ mod probe {
                     let verb = field("verb")
                         .and_then(|v| v.as_str().map(str::to_owned))
                         .unwrap_or_default();
-                    let value = field("value").unwrap_or(rmpv::Value::Nil);
+                    let value = field("value").unwrap_or(Value::Nil);
                     let times = field("times").and_then(|v| v.as_u64()).unwrap_or(1);
                     let mut report = Vec::new();
                     for _ in 0..times {
                         let line = match call.ask(&verb, value.clone()) {
                             Ok(reply) => {
                                 let data = reply.data.as_deref().unwrap_or_default();
-                                rmpv::Value::Map(vec![
+                                Value::Map(vec![
                                     ("answered".into(), reply.value),
                                     ("len".into(), (data.len() as u64).into()),
                                     ("fold".into(), touch_fold(data).into()),
@@ -96,13 +96,9 @@ mod probe {
                             }
                             Err(refusal) => {
                                 // The code by its wire name, as an organ reads it.
-                                let code = rmp_serde::to_vec_named(&refusal.code)
-                                    .ok()
-                                    .and_then(|bytes| {
-                                        rmpv::decode::read_value(&mut bytes.as_slice()).ok()
-                                    })
-                                    .unwrap_or(rmpv::Value::Nil);
-                                rmpv::Value::Map(vec![("refused".into(), code)])
+                                let code = oneiron_organ_protocol::to_value(&refusal.code)
+                                    .unwrap_or_default();
+                                Value::Map(vec![("refused".into(), code)])
                             }
                         };
                         report.push(line);
@@ -111,7 +107,7 @@ mod probe {
                         return Err(OrganError::new(ErrorCode::Internal, "failed after asking"));
                     }
                     Ok(Answer {
-                        report: rmpv::Value::Array(report),
+                        report: Value::Array(report),
                         ..Answer::default()
                     })
                 }
@@ -168,7 +164,7 @@ mod rogue {
 
     use oneiron_organ_protocol::{
         Ask, DEFAULT_FRAME_LIMIT, FromOrgan, HelloAck, Notes, OrganIdentity, Outcome, PROTOCOL,
-        Proposal, ProtocolVersion, Reply, ToOrgan, VerbSpec, recv_frame, send_frame,
+        Proposal, ProtocolVersion, Reply, ToOrgan, Value, VerbSpec, recv_frame, send_frame,
     };
 
     fn socket() -> UnixStream {
@@ -222,7 +218,7 @@ mod rogue {
             call,
             id,
             verb: "probe.answer".into(),
-            value: rmpv::Value::Nil,
+            value: Value::Nil,
         })
     }
 
@@ -268,7 +264,7 @@ mod rogue {
             outcome: Outcome::Proposal(Proposal {
                 body: None,
                 outputs: Vec::new(),
-                report: rmpv::Value::Nil,
+                report: Value::Nil,
                 notes: Notes::default(),
             }),
         })
@@ -439,8 +435,9 @@ mod rogue {
         }
     }
 
-    /// An organ built against protocol 1.0: it acks 1.0, echoes each call's
-    /// args, and exits on any message 1.0 does not have.
+    /// An organ that acks protocol 1.0, which a 2.0 host refuses at the
+    /// handshake; served anyway, it echoes each call's args, and exits on any
+    /// message 1.0 does not have.
     pub(super) fn v1_0() {
         let stream = socket();
         let Some(organ) = hello_organ(&stream) else {
@@ -478,13 +475,14 @@ mod rogue {
         let Some(organ) = hello_organ(&stream) else {
             return;
         };
-        let Ok(body) = rmp_serde::to_vec_named(&ack_for(organ)) else {
+        let Ok(body) = oneiron_organ_protocol::to_vec(&ack_for(organ)) else {
             return;
         };
         let Ok(len) = u32::try_from(body.len()) else {
             return;
         };
-        for byte in len.to_le_bytes().iter().chain(&body) {
+        // One frame, the message's last: `len: u32 LE | more: 0 | body`.
+        for byte in len.to_le_bytes().iter().chain(&[0]).chain(&body) {
             if stream.write_all(&[*byte]).is_err() {
                 return;
             }
