@@ -4747,7 +4747,7 @@
      "purpose": "OF-499 A3: a real, current Admin proof for the weave, behind an MFA step-up witness",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 2
      }
@@ -12417,6 +12417,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/actor_key/weave_admin.rs",
+     "purpose": "The weave Admin's read key (OF-499 A3, L02 seam): the Admin's verified request instrument as every slip key…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -12800,6 +12810,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_correction/admin.rs",
+     "purpose": "A weave Admin's wrong labels (OF-499 A3): the one-tap wrong on a link, claim, project, budget or sieve audit…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -12816,7 +12836,7 @@
       "crate-vis": 11,
       "enum": 2,
       "fn": 10,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -12828,6 +12848,20 @@
      "purpose": "FIX 5778: an agent acting for the owner inside its Grant acknowledges his weave digest's due notice, and…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveAdminKey"
+     ],
+     "path": "src/claim/scoped_read/weave_digest/admin.rs",
+     "purpose": "The weave Admin's digest namespace (OF-499 A3): its key, its saved and newest period read, its kept live…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -12987,10 +13021,20 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 3,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/admin.rs",
+     "purpose": "The weave Admin's lane and live report (OF-499 A3)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -13072,6 +13116,16 @@
       "enum": 2,
       "fn": 13,
       "struct": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_serve/admin.rs",
+     "purpose": "The served weave Admin lens (OF-499 A3): an Admin's live report, its live lens's two reads, its saved digest…",
+     "surface": {
+      "fn": 7
      }
     },
     {
@@ -21465,8 +21519,19 @@
       "const": 4,
       "crate-vis": 2,
       "enum": 4,
-      "fn": 13,
+      "fn": 12,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/answer.rs",
+     "purpose": "The owner's answer to a filed courtesy ask (OF-273, BIZ-LEGAL-0004 B2)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -21477,6 +21542,23 @@
      "purpose": "A courtesy try across this vault's own host re-root (FIX 5088; Engine 10-19 15:0x)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CooperativeDeleteOperation",
+      "CooperativeDeleteRecord",
+      "CooperativeDeleteRecordState"
+     ],
+     "path": "src/deletion/coop_delivery/types.rs",
+     "purpose": "What a courtesy delete answer keeps beside its choice: the customer holds it placed (FIX 2924), the records…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -21534,7 +21616,7 @@
      "path": "src/deletion/delete/confirmed.rs",
      "purpose": "The pending-confirmed-delete gate of a due owner-confirmed erase (FIX 6337)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -21544,7 +21626,7 @@
      "path": "src/deletion/delete/facade.rs",
      "purpose": "Public and gated delete entry points plus the headerful orchestration state machine",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -21606,6 +21688,16 @@
      "surface": {
       "crate-vis": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/preflight.rs",
+     "purpose": "What the delete rail admits before any legal hold is read, as one check a caller that decides before the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21737,6 +21829,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LiftAndEraseShownState",
+      "ShownCustomerHold"
+     ],
+     "path": "src/deletion/legal_hold/confirmation.rs",
+     "purpose": "The owner's one \"Lift the hold and erase?\" confirm, bound to what it showed (OF-470, FIX 1462), and the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -21754,8 +21861,19 @@
      "purpose": "Legal hold doors (OF-470, design B; owner ruling 2026-10-17: \"B, and that stuff is for cloud only + we…",
      "surface": {
       "crate-vis": 5,
-      "fn": 14,
-      "re-export": 1
+      "fn": 13,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/pending_delete.rs",
+     "purpose": "The owner's plain delete of a record only secret orders keep (OF-470 C2, C4, FIX 1465): \"erase confirmed…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -30486,6 +30604,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/federation/courtesy_scope.rs",
+     "purpose": "Which records a courtesy deletion ask covers here, read in the caller's own transaction (FIX 2927): this…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "DerivationBindError",
       "DerivationKey",
@@ -30720,7 +30848,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "mod": 2,
       "re-export": 19
      }
@@ -39930,6 +40058,7 @@
       "CommitOutcome",
       "CommitReceipt",
       "DeleteReceipt",
+      "DeleteRequestState",
       "MemoryReceipt",
       "PendingWrite",
       "RecordRefusal",
@@ -39941,8 +40070,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "enum": 3,
-      "fn": 4,
+      "enum": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 6
      }
@@ -40572,13 +40701,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/entity_delete.rs",
      "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -40595,7 +40724,7 @@
      "path": "src/memory/entity_erase.rs",
      "purpose": "Owner erase that can also take every record in this vault holding the same bytes",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 2,
       "struct": 2
@@ -60642,7 +60771,7 @@
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 35
      }
     },
     {
@@ -60653,6 +60782,16 @@
      "purpose": "What a hold's refusals tell the owner (WILL-PLAN L01 rows 01 and 03)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/legal_hold/pending.rs",
+     "purpose": "An owner erase that waits (OF-470 C2, C4): the owner's confirmed erase a host order keeps, and the owner's…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -62340,6 +62479,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/window_pads.rs",
+     "purpose": "The device's side of the window pad envelope (KS-5, FIX 7107)",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -62440,7 +62589,7 @@
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -64148,11 +64297,11 @@
      "path": "src/sync/transport.rs",
      "purpose": "Wire protocol encoding/decoding for WebSocket transport",
      "surface": {
-      "const": 40,
+      "const": 42,
       "enum": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 2
      }
     },
@@ -64215,6 +64364,43 @@
      "path": "src/sync/transport/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WindowPadBinding",
+      "WindowPadEnvelope",
+      "WindowPadForm",
+      "WindowPadKind",
+      "WindowPadReadiness",
+      "WindowPadReceipt",
+      "WindowPadSidecar"
+     ],
+     "path": "src/sync/transport/window_pads.rs",
+     "purpose": "The window pad envelope (KS-5, FIX 7107): the one wire form of every frame that carries a window's bytes, an…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 11,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowPadArrival",
+      "WindowPadAssembly"
+     ],
+     "path": "src/sync/transport/window_pads/parts.rs",
+     "purpose": "A window pad envelope put back together on its socket (KS-5, FIX 7107): the first frame, then its…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -64354,8 +64540,34 @@
       "crate-vis": 24,
       "fn": 6,
       "mod": 1,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparedWindowPads",
+      "WindowPadPartRepair"
+     ],
+     "path": "src/sync/window/pad_custody.rs",
+     "purpose": "A window pad envelope's two engine doors (KS-5, FIX 7107), one for each side of the wire and both crates'…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/pad_custody/inflate.rs",
+     "purpose": "A window blob's pad references as today's carriers again (KS-5, FIX 7107, KEEP TODAY): what a send that may…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -68733,13 +68945,15 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
+      "CourtesyDeleteHold",
       "CourtesyDeleteIncoming",
+      "CourtesyDeleteRecordProgress",
       "CourtesyDeleteSendRequest",
       "CourtesyDeleteSent"
      ],
@@ -68747,7 +68961,7 @@
      "purpose": "The inputs and answers of the owner's courtesy delete rows (OF-273, ARCH-0043 #relationship-lifecycle)…",
      "surface": {
       "fn": 7,
-      "struct": 6
+      "struct": 8
      }
     },
     {
@@ -74348,7 +74562,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 98,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74593,7 +74807,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 41,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74768,7 +74982,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75454,7 +75668,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 144,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75482,7 +75696,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 251,
+     "files": 256,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75687,7 +75901,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4928,
+   "source_files": 4945,
    "test_files": 902
   },
   "oneiron-android": {
@@ -94496,6 +94710,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/memory/owner_delete.rs",
+     "purpose": "The owner's own named delete through `/v1/core/memory/verbs` (FIX 1465)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/memory/watch.rs",
      "purpose": "—",
      "surface": {
@@ -99176,6 +99400,16 @@
      "purpose": "Guarded socket chokepoint with revocation consults on queue and flush",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/window_pads.rs",
+     "purpose": "The home's side of the window pad envelope (KS-5, FIX 7107)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -104604,7 +104838,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 547,
+     "files": 548,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104821,7 +105055,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -105068,7 +105302,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1207,
+   "source_files": 1209,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -105161,6 +105395,7 @@
       "CommitReceipt",
       "ConsolidationJobInput",
       "DeleteReceipt",
+      "DeleteRequestState",
       "DreamerJobRef",
       "DreamerJobView",
       "Effort",
@@ -105217,7 +105452,7 @@
      "path": "src/dto.rs",
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
-      "enum": 10,
+      "enum": 11,
       "struct": 54
      }
     },
@@ -106258,7 +106493,9 @@
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
+      "CourtesyDeleteHold",
       "CourtesyDeleteIncoming",
+      "CourtesyDeleteRecordProgress",
       "CourtesyDeleteSendRequest",
       "CourtesyDeleteSent",
       "CoverageGap",
@@ -107195,6 +107432,7 @@
       "LibraryRunInput",
       "LibraryRunMode",
       "LibraryRunOutput",
+      "LiftAndEraseShownState",
       "LiftCause",
       "LiftCauseCount",
       "LiftCloseReason",
@@ -108695,6 +108933,7 @@
       "SharedVaultRequest",
       "ShedBlocker",
       "ShedCause",
+      "ShownCustomerHold",
       "SieveEvidenceCursor",
       "SieveEvidenceRequest",
       "SieveEvidenceView",
@@ -109285,6 +109524,7 @@
       "WireCommitOutcome",
       "WireCommitReceipt",
       "WireDeleteReceipt",
+      "WireDeleteRequestState",
       "WireEntityRefReceipt",
       "WireEntityView",
       "WireMentionProvenance",
@@ -109360,8 +109600,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1002,
-      "struct": 3089
+      "enum": 1003,
+      "struct": 3093
      }
     },
     {

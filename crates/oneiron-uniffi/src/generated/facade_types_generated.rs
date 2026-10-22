@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1157 facade rows, 4106 generated types.
+// UniFFI census: 1157 facade rows, 4111 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1109.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -13495,6 +13495,8 @@ pub enum WeaveReaderKind {
     Owner,
     #[serde(rename = "agent")]
     Agent,
+    #[serde(rename = "admin")]
+    Admin,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveReaderRef`.
@@ -22376,6 +22378,15 @@ pub struct RecordEraseConfirmRequest {
     pub also_same_bytes: Option<bool>,
 }
 
+/// `oneiron::memory::claims::DeleteRequestState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WireDeleteRequestState {
+    #[serde(rename = "applied")]
+    Applied,
+    #[serde(rename = "completion_pending")]
+    CompletionPending,
+}
+
 /// `oneiron::memory::claims::DeleteReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WireDeleteReceipt {
@@ -22389,6 +22400,8 @@ pub struct WireDeleteReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub receipt_ref: Option<String>,
+    #[serde(rename = "state")]
+    pub state: WireDeleteRequestState,
 }
 
 /// `oneiron::verbs::record_erase::EraseSameBytesRow`.
@@ -23190,8 +23203,12 @@ pub struct SufficiencyInput {
     pub set_changed: bool,
     #[serde(rename = "rubric_changed")]
     pub rubric_changed: bool,
-    #[serde(rename = "canary_diverged")]
-    pub canary_diverged: bool,
+    #[serde(
+        rename = "canary_diverged",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub canary_diverged: Option<bool>,
 }
 
 /// `oneiron::skill_optimize::eval_set::sufficiency::UnknownReason`.
@@ -23216,6 +23233,8 @@ pub enum UnknownReason {
     RubricChanged,
     #[serde(rename = "canary_diverged")]
     CanaryDiverged,
+    #[serde(rename = "no_canary")]
+    NoCanary,
 }
 
 /// `oneiron::skill_optimize::eval_set::sufficiency::SufficiencyVerdict`.
@@ -26784,6 +26803,8 @@ pub enum LegalHoldEventKind {
     DeleteRefused,
     #[serde(rename = "lift_and_erase_confirmed")]
     LiftAndEraseConfirmed,
+    #[serde(rename = "erase_confirmed")]
+    EraseConfirmed,
     #[serde(rename = "erase_completed")]
     EraseCompleted,
     #[serde(rename = "lifted")]
@@ -26859,12 +26880,60 @@ pub struct LegalHoldEvent {
     pub request_id: Option<String>,
 }
 
+/// `oneiron::deletion::legal_hold::confirmation::ShownCustomerHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShownCustomerHold {
+    #[serde(rename = "hold_id")]
+    pub hold_id: String,
+    #[serde(rename = "targets")]
+    pub targets: Vec<LegalHoldTarget>,
+    #[serde(rename = "placed_by", default, skip_serializing_if = "Option::is_none")]
+    pub placed_by: Option<String>,
+    #[serde(rename = "placed_at")]
+    pub placed_at: u64,
+    #[serde(
+        rename = "matter_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub matter_ref: Option<String>,
+}
+
+/// `oneiron::deletion::legal_hold::confirmation::LiftAndEraseShownState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiftAndEraseShownState {
+    #[serde(rename = "title")]
+    pub title: String,
+    #[serde(rename = "prompt")]
+    pub prompt: String,
+    #[serde(rename = "records")]
+    pub records: Vec<String>,
+    #[serde(
+        rename = "claim_free_partition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claim_free_partition: Option<bool>,
+    #[serde(rename = "holds")]
+    pub holds: Vec<ShownCustomerHold>,
+}
+
 /// `oneiron::verbs::legal_hold::LegalHoldLiftAndEraseRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldLiftAndEraseRequest {
     #[serde(rename = "records")]
     pub records: Vec<String>,
+    #[serde(
+        rename = "claim_free_partition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claim_free_partition: Option<bool>,
+    #[serde(rename = "shown_state")]
+    pub shown_state: LiftAndEraseShownState,
 }
 
 /// `oneiron::deletion::legal_hold::types::ErasePendingReason`.
@@ -26874,6 +26943,8 @@ pub enum ErasePendingReason {
     HistoricalSweep,
     #[serde(rename = "custody_retirement")]
     CustodyRetirement,
+    #[serde(rename = "veto_window")]
+    VetoWindow,
 }
 
 /// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
@@ -26971,6 +27042,8 @@ pub struct LegalHoldLiftAndErased {
     pub holds: Vec<String>,
     #[serde(rename = "records")]
     pub records: Vec<LegalHoldErasedRecord>,
+    #[serde(rename = "changed", default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<LiftAndEraseShownState>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteSendRequest`.
@@ -27042,6 +27115,28 @@ pub enum CooperativeDeletionDispositionKind {
     Decline,
 }
 
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CourtesyDeleteHold {
+    #[serde(rename = "hold")]
+    pub hold: String,
+    #[serde(rename = "status")]
+    pub status: String,
+    #[serde(rename = "records")]
+    pub records: Vec<String>,
+    #[serde(rename = "lifted", default, skip_serializing_if = "Option::is_none")]
+    pub lifted: Option<String>,
+}
+
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteRecordProgress`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CourtesyDeleteRecordProgress {
+    #[serde(rename = "record")]
+    pub record: String,
+    #[serde(rename = "state")]
+    pub state: String,
+}
+
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteChoice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CourtesyDeleteChoice {
@@ -27059,6 +27154,12 @@ pub struct CourtesyDeleteChoice {
     pub deleted: Vec<String>,
     #[serde(rename = "recorded")]
     pub recorded: String,
+    #[serde(rename = "holds")]
+    pub holds: Vec<CourtesyDeleteHold>,
+    #[serde(rename = "excluded")]
+    pub excluded: Vec<String>,
+    #[serde(rename = "progress")]
+    pub progress: Vec<CourtesyDeleteRecordProgress>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteIncoming`.
@@ -27094,6 +27195,8 @@ pub struct CourtesyDeleteIncoming {
         skip_serializing_if = "Option::is_none"
     )]
     pub reply_status: Option<String>,
+    #[serde(rename = "holds")]
+    pub holds: Vec<CourtesyDeleteHold>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteAnswerRequest`.

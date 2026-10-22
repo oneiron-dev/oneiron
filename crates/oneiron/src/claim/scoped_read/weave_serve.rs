@@ -18,6 +18,8 @@ use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
 use crate::provenance::EdgeRef;
 use serde::{Deserialize, Serialize};
 
+// The weave Admin's reads and labels under its proof (OF-499 A3).
+mod admin;
 // Each served item's lowering, and a saved period's view (FIX 7904).
 mod items;
 pub(super) mod sieve_audit;
@@ -376,6 +378,10 @@ pub enum WeaveReaderKind {
     Person,
     Owner,
     Agent,
+    /// A weave Admin's namespace (OF-499 A3): `reader_ref` is its exact
+    /// Admin membership grant. Answer only: an Admin reader comes from its
+    /// proof, never from a reader ref.
+    Admin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -394,6 +400,11 @@ impl WeaveReaderRef {
             WeaveReaderKind::Person => WeaveDigestReader::Person(id),
             WeaveReaderKind::Owner => WeaveDigestReader::Owner(id),
             WeaveReaderKind::Agent => WeaveDigestReader::Agent(id),
+            WeaveReaderKind::Admin => {
+                return Err(MemoryError::bad_request(
+                    "an admin reader comes from its admin proof, never a reader_ref",
+                ));
+            }
         })
     }
 
@@ -402,6 +413,7 @@ impl WeaveReaderRef {
             WeaveDigestReader::Person(id) => (WeaveReaderKind::Person, id),
             WeaveDigestReader::Owner(id) => (WeaveReaderKind::Owner, id),
             WeaveDigestReader::Agent(id) => (WeaveReaderKind::Agent, id),
+            WeaveDigestReader::Admin(key) => (WeaveReaderKind::Admin, key.membership_grant()),
         };
         Self {
             kind,
@@ -510,6 +522,7 @@ impl Memory<'_> {
             WeaveReader::Person(_) => "person",
             WeaveReader::Owner(_) => "owner",
             WeaveReader::Agent(_) => "agent",
+            WeaveReader::Admin(_) => crate::gate::weave_policy::ADMIN_ROLE,
         };
         let report = self.live_weave_report(reader, request)?;
         let sections = self.weave_sections(&report)?;
