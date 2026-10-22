@@ -25220,10 +25220,21 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 31,
-      "crate-vis": 9,
+      "const": 32,
+      "crate-vis": 10,
       "fn": 11,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/coach/eval_measurement.rs",
+     "purpose": "The Coach's eval measurement job (FIX 574, OF-578): one per request digest, queued when the measurement is…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -58671,7 +58682,7 @@
       "enum": 4,
       "fn": 8,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 6,
       "struct": 4
      }
     },
@@ -58751,7 +58762,7 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 8,
       "struct": 5
@@ -58823,6 +58834,83 @@
      "purpose": "An erased row out of the eval cases' source sets (FIX 6933): each case's own set and every label's on it",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EvalArmPin",
+      "EvalAxisPin",
+      "EvalCaseMeasurement",
+      "EvalLegRecord",
+      "EvalMeasurement",
+      "EvalMeasurementRequest",
+      "FloorSlicePolicy",
+      "MeasurementState",
+      "MeasurementUnavailable",
+      "ScoreDirection"
+     ],
+     "path": "src/skill_optimize/eval_set/measurement.rs",
+     "purpose": "Paired, family-grouped eval measurements (FIX 574, OF-578; ARCH-0053)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 3,
+      "re-export": 3,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/measurement/doors.rs",
+     "purpose": "The measurement doors: ask, read, claim, record a case and fail",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/measurement/finish.rs",
+     "purpose": "Finishing a measurement: the complete matched set, the estimator once, and the card read from its numbers",
+     "surface": {
+      "const": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EstimateGap",
+      "EvalFamilySummary",
+      "MeasurementMethodPin"
+     ],
+     "path": "src/skill_optimize/eval_set/measurement/statistics.rs",
+     "purpose": "The paired, family-grouped estimator behind an eval measurement (FIX 574, OF-578)",
+     "surface": {
+      "crate-vis": 14,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EvalTaskInput"
+     ],
+     "path": "src/skill_optimize/eval_set/replay_input.rs",
+     "purpose": "The task a released eval case was given, for the trusted measuring host only (FIX 574, OF-578)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -59287,7 +59375,7 @@
      "surface": {
       "crate-vis": 18,
       "mod": 2,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -74870,7 +74958,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 143,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75633,7 +75721,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 62,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75901,7 +75989,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4945,
+   "source_files": 4951,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90534,6 +90622,46 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/eval_measurement.rs",
+     "purpose": "The Coach's paired eval measurement (FIX 574, OF-578)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_measurement/legs.rs",
+     "purpose": "The legs' exact-model calls: each arm on its own one-model ladder, as a call of the seat's role, under one…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_measurement/offer.rs",
+     "purpose": "A training offer's measured card: the paired measurement of exactly the offer's incumbent and stock…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_measurement/score.rs",
+     "purpose": "A leg's blind score: the replay judge's `response_score` question on the task, the answer, the case's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/failure_signals.rs",
      "purpose": "The host's failure-signal sender (OF-380)",
      "surface": {
@@ -104831,7 +104959,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 86,
+     "files": 90,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105302,7 +105430,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1209,
+   "source_files": 1213,
    "test_files": 182
   },
   "oneiron-spawn": {
