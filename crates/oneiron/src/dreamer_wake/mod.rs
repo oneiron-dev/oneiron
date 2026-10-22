@@ -33,7 +33,9 @@ mod types;
 pub(crate) use self::arc_backstop::arc_policy_in_txn;
 pub use self::deadline::*;
 pub use self::driver::*;
-pub(crate) use self::driver::{llm_waits_on_owner_act, waits_on_owner_act};
+pub(crate) use self::driver::{
+    check_host_wake_rewrite, llm_waits_on_owner_act, waits_on_owner_act,
+};
 pub use self::grain::*;
 pub use self::legibility::*;
 pub use self::night_step::NightStepRequestId;

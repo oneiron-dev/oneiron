@@ -168,6 +168,10 @@ pub struct HostWriteOrigin {
     /// from the run's own history, never from the guest. It names the pause
     /// only, beside the call's invocation.
     hook_ask: Option<EntityId>,
+    /// The live, verified slip whose turn woke the calling program (FIX
+    /// 8717), from the program's own binding, never from the guest: the
+    /// surface the origin reaches reads and writes under it.
+    read_proof: Option<crate::authority::VerifiedSlip>,
 }
 
 impl HostWriteOrigin {
@@ -178,7 +182,15 @@ impl HostWriteOrigin {
             model_provider: None,
             code_consent: None,
             hook_ask: None,
+            read_proof: None,
         }
+    }
+
+    /// This origin with the waking slip a turn program's call runs under,
+    /// if its program has one (FIX 8717).
+    pub(crate) fn with_read_proof(mut self, proof: Option<crate::authority::VerifiedSlip>) -> Self {
+        self.read_proof = proof;
+        self
     }
 
     /// This origin naming the hook pause its call resumes, if it resumes one.

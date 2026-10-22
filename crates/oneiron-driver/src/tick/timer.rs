@@ -289,6 +289,25 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                 "checkpoint resume deadline unavailable; keeping independent deadlines"
             ),
         }
+        // An owner Stop's owed abandon is retried at its paced instant on the
+        // next pass of any scope, program runtime bound or none (FIX 7352).
+        // Read-only and best-effort, as the checkpoint projection is.
+        match DreamerRunnerStore::new(self.vault).next_owed_stop_retry() {
+            Ok(Some(due_secs)) => {
+                let due_at_ms = due_secs.saturating_mul(1_000);
+                if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
+                    next = Some(CommitmentDeadline {
+                        due_at_ms,
+                        scope: DreamerConsolidationScope::Micro,
+                    });
+                }
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "owed stop retry deadline unavailable; keeping independent deadlines"
+            ),
+        }
         // A digest is per vault, so only the elected home node arms its
         // cadence. Macro admission's local-home check is also the digest's
         // home check, even when no Macro attempt is queued.

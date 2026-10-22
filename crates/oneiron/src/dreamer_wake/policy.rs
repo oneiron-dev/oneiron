@@ -68,8 +68,9 @@ pub enum AgentWakeRole {
     Worker,
 }
 
-/// The owner-selected cadence precedence. The shipped default prevents a
-/// nested definition from making cadence more frequent than its vault.
+/// The owner-selected cadence precedence. The shipped default lets an
+/// agent's explicit interval override the vault grain (FIX 8727); an owner
+/// who wants no agent woken more often than the vault picks the vault floor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CadencePrecedence {

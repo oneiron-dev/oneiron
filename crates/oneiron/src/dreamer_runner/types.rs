@@ -13,6 +13,9 @@ use super::claim_authoring::{
     DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringBudgetTrap,
 };
 use super::codec::invalid_dreamer_runner;
+// A Retry park's pause, resolved per vault (FIX 8716).
+mod retry_policy;
+
 use super::constants::{
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
@@ -650,11 +653,6 @@ pub struct DreamerRunTreeRecord {
     pub created_at: u64,
 }
 
-/// How long a [`DreamerParkCause::Retry`] park waits before a later pass
-/// resumes it, in store-clock seconds (Engine 10-21 ruling). Pacing, not a
-/// cap: the work always resumes, as the same try, once the delay passed.
-pub const DREAMER_RETRY_PARK_SECS: u64 = 900;
-
 /// Why a Dreamer attempt parked. The reason text is for people; this is
 /// what code reads. Only a [`Self::ProviderUnavailable`] park resumes when a
 /// model offer recovers (OF-305).
@@ -695,18 +693,6 @@ impl DreamerParkCause {
             Self::Cancelled => "cancelled",
             Self::Signal => "signal",
             Self::Other => "other",
-        }
-    }
-
-    /// Whether a later wake pass resumes a park of this cause as the same
-    /// try (DOOR-144), and how long after it parked: a Checkpoint or a
-    /// Paused park at once, a Retry after [`DREAMER_RETRY_PARK_SECS`].
-    #[must_use]
-    pub const fn later_pass_resume_delay(self) -> Option<u64> {
-        match self {
-            Self::Checkpoint | Self::Paused => Some(0),
-            Self::Retry => Some(DREAMER_RETRY_PARK_SECS),
-            _ => None,
         }
     }
 

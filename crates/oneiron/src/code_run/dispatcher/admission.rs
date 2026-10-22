@@ -18,6 +18,13 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: RunCall,
     ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        // A slip-woken program's call holds only while its slip admits it
+        // (FIX 8717), door or none.
+        if let RunCall::Bridge(effect) = call
+            && let Some(code) = self.program_authority_refusal(effect.as_str())?
+        {
+            return Ok(Err(AgentVerbRefusal { code }));
+        }
         let Some(door) = &self.agent_verbs else {
             return Ok(Ok(None));
         };

@@ -465,6 +465,7 @@ pub(crate) fn bind_program_write_in_txn(
     )? {
         return Err(invalid("a program write lost its lease"));
     }
+    super::authority::require_program_authority_in_txn(vault, wtxn, write.attempt)?;
     let key = (write.code_run, write.receipt);
     let issued = write.issued();
     if let Some(held) = STEP.get(vault, &*wtxn, &key)?

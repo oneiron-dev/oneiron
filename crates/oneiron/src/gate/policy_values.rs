@@ -7,6 +7,7 @@ use rmpv::Value;
 pub(super) enum PolicyValueKey {
     ArtifactAnswerQuietSeconds,
     CommOptOutPosture,
+    DreamerRetryParkSeconds,
     ProposalCheckThreshold,
     ProviderCooldownDefaultSeconds,
     ProviderCooldownMaxSeconds,
@@ -18,6 +19,7 @@ impl PolicyValueKey {
         match value {
             "artifact_answer_quiet_seconds" => Some(Self::ArtifactAnswerQuietSeconds),
             "comm_opt_out_posture" => Some(Self::CommOptOutPosture),
+            "dreamer_retry_park_seconds" => Some(Self::DreamerRetryParkSeconds),
             "proposal_check_threshold" => Some(Self::ProposalCheckThreshold),
             "provider_cooldown_default_seconds" => Some(Self::ProviderCooldownDefaultSeconds),
             "provider_cooldown_max_seconds" => Some(Self::ProviderCooldownMaxSeconds),
@@ -30,6 +32,7 @@ impl PolicyValueKey {
         match self {
             Self::ArtifactAnswerQuietSeconds => "artifact_answer_quiet_seconds",
             Self::CommOptOutPosture => "comm_opt_out_posture",
+            Self::DreamerRetryParkSeconds => "dreamer_retry_park_seconds",
             Self::ProposalCheckThreshold => "proposal_check_threshold",
             Self::ProviderCooldownDefaultSeconds => "provider_cooldown_default_seconds",
             Self::ProviderCooldownMaxSeconds => "provider_cooldown_max_seconds",
@@ -51,9 +54,11 @@ impl PolicyValueKey {
             // External effects carry no trusted origin yet, the meta-rule is
             // read at vault scope only, and an offer's cooldown is the
             // deployment's, never one world's.
-            // A held answer's proposer is woken on the vault's clock.
+            // A held answer's proposer is woken on the vault's clock, and a
+            // Dreamer Retry park resumes on it (FIX 8716).
             Self::ArtifactAnswerQuietSeconds
             | Self::CommOptOutPosture
+            | Self::DreamerRetryParkSeconds
             | Self::ProviderCooldownDefaultSeconds
             | Self::ProviderCooldownMaxSeconds
             | Self::ProviderCooldownMaxWaitSeconds
@@ -87,6 +92,7 @@ impl PolicyPrecedence {
 pub(super) enum PolicyValue {
     ArtifactAnswerQuietSeconds(u64),
     CommOptOutPosture(crate::gate::resolution::CommOptOutPosture),
+    DreamerRetryParkSeconds(u64),
     ProposalCheckThreshold(u64),
     ProviderCooldownDefaultSeconds(u64),
     ProviderCooldownMaxSeconds(u64),
@@ -103,6 +109,11 @@ impl PolicyValue {
             }
             (Self::CommOptOutPosture(a), Self::CommOptOutPosture(b)) => {
                 Self::CommOptOutPosture(a.restrict(b))
+            }
+            // A longer pause never resumes a Retry park sooner than any
+            // trusted row asks.
+            (Self::DreamerRetryParkSeconds(a), Self::DreamerRetryParkSeconds(b)) => {
+                Self::DreamerRetryParkSeconds(a.max(b))
             }
             (Self::ProposalCheckThreshold(a), Self::ProposalCheckThreshold(b)) => {
                 Self::ProposalCheckThreshold(a.min(b))
@@ -128,6 +139,7 @@ impl PolicyValue {
         match self {
             Self::CommOptOutPosture(value) => value.as_str().to_owned(),
             Self::ArtifactAnswerQuietSeconds(value)
+            | Self::DreamerRetryParkSeconds(value)
             | Self::ProposalCheckThreshold(value)
             | Self::ProviderCooldownDefaultSeconds(value)
             | Self::ProviderCooldownMaxSeconds(value)
@@ -323,6 +335,9 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                                 _ => return None,
                             })
                         }
+                        PolicyValueKey::DreamerRetryParkSeconds => {
+                            PolicyValue::DreamerRetryParkSeconds(retry_park_seconds(raw)?)
+                        }
                         PolicyValueKey::ProposalCheckThreshold => {
                             PolicyValue::ProposalCheckThreshold(raw.as_u64().filter(|v| *v > 0)?)
                         }
@@ -477,6 +492,49 @@ pub(super) fn shipped_default_artifact_answer_quiet_seconds() -> u64 {
         .and_then(|row| row["value"].as_u64())
         .filter(|value| *value <= ARTIFACT_ANSWER_QUIET_CEILING_SECONDS)
         .expect("shipped artifact answer quiet interval")
+}
+
+/// A Dreamer Retry park's pause, in seconds: pacing, never a cap, so any
+/// positive pause is the owner's to set (FIX 8716).
+fn retry_park_seconds(raw: &Value) -> Option<u64> {
+    raw.as_u64().filter(|seconds| *seconds > 0)
+}
+
+/// The shipped pause before a later wake pass resumes a Dreamer Retry park
+/// as the same try (Engine 10-21, FIX 8716).
+fn shipped_default_dreamer_retry_park_seconds() -> u64 {
+    let defaults: serde_json::Value =
+        serde_json::from_str(include_str!("policy_value_defaults.json"))
+            .expect("valid shipped policy defaults");
+    defaults
+        .as_array()
+        .expect("shipped policy rows")
+        .iter()
+        .find(|row| row["key"] == "dreamer_retry_park_seconds" && row["scope"]["level"] == "vault")
+        .and_then(|row| row["value"].as_u64())
+        .filter(|value| *value > 0)
+        .expect("shipped Dreamer retry park pause")
+}
+
+impl super::resolution::PolicyManifestResolution {
+    /// How long a Dreamer Retry park waits before a later wake pass resumes
+    /// it as the same try, in store-clock seconds (FIX 8716): the vault's
+    /// row, else the shipped one. A fail-closed manifest reads the shipped
+    /// row, since a pause grants nothing.
+    pub(crate) fn dreamer_retry_park_seconds(&self) -> u64 {
+        let fallback = shipped_default_dreamer_retry_park_seconds();
+        match self
+            .resolved_policy_value(
+                PolicyValueKey::DreamerRetryParkSeconds,
+                &PolicyEvaluationScope::default(),
+                PolicyValue::DreamerRetryParkSeconds(fallback),
+            )
+            .value
+        {
+            PolicyValue::DreamerRetryParkSeconds(seconds) => seconds,
+            _ => unreachable!("typed policy key"),
+        }
+    }
 }
 
 /// The longest rest a cooldown row may name: a provider's monthly window.

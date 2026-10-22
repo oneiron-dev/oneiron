@@ -8,11 +8,13 @@ mod executor_error;
 mod hooks;
 mod observe;
 mod park_cause;
+mod rewrite;
 mod settle;
 mod stop;
 
 pub use self::claim_authoring::{BoundClaimAuthoringSelector, ClaimAuthoringSelection};
 pub(crate) use self::park_cause::{llm_waits_on_owner_act, waits_on_owner_act};
+pub(crate) use self::rewrite::check_host_wake_rewrite;
 use self::settle::Settlement;
 use self::stop::{attempt_stop, boundary_stop};
 
@@ -107,6 +109,8 @@ pub struct DreamerWakeDriver<'a> {
     contribution_host:
         Option<&'a (dyn crate::dreamer_runner::maintenance::ContributionReplayHost + Send + Sync)>,
     claim_authoring: ClaimAuthoringSelection,
+    /// The material this pass's `host.wake` pre-hooks added (FIX 8722).
+    hook_material: Vec<String>,
     #[cfg(feature = "sync")]
     pub(super) progress: Option<WakeProgressLane<'a>>,
 }
@@ -129,9 +133,17 @@ impl<'a> DreamerWakeDriver<'a> {
             skill_optimizer: None,
             contribution_host: None,
             claim_authoring: ClaimAuthoringSelection::None,
+            hook_material: Vec::new(),
             #[cfg(feature = "sync")]
             progress: None,
         }
+    }
+
+    /// The material this pass's `host.wake` pre-hooks added, in order, each
+    /// text re-validated and re-gated (FIX 8722); empty when none did.
+    #[must_use]
+    pub fn hook_material(&self) -> &[String] {
+        &self.hook_material
     }
 
     /// Attach the Coach's author and independent typed-decision replay judge.
@@ -248,6 +260,9 @@ impl<'a> DreamerWakeDriver<'a> {
         // An ended pass's Checkpoint parks, and its Retry parks whose delay
         // passed, resume as the same tries (DOOR-144).
         self.resume_checkpoints(input);
+        // An owner Stop's owed abandon is retried once due, on every wake
+        // host, with a program runtime bound or none (FIX 7352).
+        self.store.recover_owed_stop_abandons(now);
         crate::human_task::run_human_followups_on_wake(self.vault, now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
         // PEOPLE `about`: a person whose facts moved queues its lines anew.

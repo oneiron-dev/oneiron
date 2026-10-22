@@ -80,7 +80,11 @@ impl Memory<'_> {
             ));
         }
         if let Some(proof) = &self.read_proof {
-            return TurnProgramAuthority::slip(self.actor, self.actor_class, proof);
+            // The slip seals the instrument its request kept, verified again
+            // at each judgment (FIX 8717); a request that kept none seals
+            // nothing.
+            let instrument = self.invocation_slip()?;
+            return TurnProgramAuthority::slip(self.actor, self.actor_class, proof, instrument);
         }
         if self.native_invocation() {
             return Some(TurnProgramAuthority::native(self.actor, self.actor_class));
