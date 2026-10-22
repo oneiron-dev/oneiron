@@ -8,13 +8,23 @@
 //! ```text
 //! frame*      u32be len ‖ ONEV envelope   chunks: stream 0 (the image),
 //!                                         then 1.. (bodies), in order
-//! frame       u32be len ‖ ONEV envelope   the sealed manifest (stream MAX)
+//! frame*      u32be len ‖ ONEV envelope   the manifest's pieces (stream
+//!                                         MAX-1), in order
+//! frame       u32be len ‖ ONEV envelope   the sealed manifest root (stream MAX)
 //! u32be n ‖ commitment (n)
 //! u32be n ‖ signature record (n)
-//! u64be offset of the manifest frame
+//! u64be offset of the manifest root's frame
 //! ```
+//!
+//! A checkpoint's metadata is streamed into bounded pieces on their own
+//! reserved stream, and the frame the commitment names is the fixed-small
+//! root after them (FIX 8823): the frame order every reader checks takes
+//! them as any other stream's, and the root, the last sealed frame, is the
+//! manifest the evidence names. [`inspect_backup_tail`] reads only the clear
+//! head and the tail from the root on, for a cheap check of a recorded
+//! backup that is no proof of its other bytes.
 
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 
 use super::commitment::{
     CHECKPOINT_SIGNATURE_EPOCH, COMMITMENT_VERSION, COMMITMENT_VERSION_V1, CheckpointSigner,
@@ -35,8 +45,11 @@ pub const ARTIFACT_SEAL_SUITE: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 pub const ARTIFACT_SEAL_EPOCH: u64 = 1;
 /// The stream of the image's chunks; bodies follow at 1, 2, ...
 pub const IMAGE_STREAM: u32 = 0;
-/// The stream the sealed manifest is framed under: the last frame.
+/// The stream the sealed manifest root is framed under: the last frame.
 pub const MANIFEST_STREAM: u32 = u32::MAX;
+/// The stream the manifest's pieces are framed under, just before its root
+/// (FIX 8823): no body or payload stream takes it.
+pub const MANIFEST_PIECE_STREAM: u32 = u32::MAX - 1;
 /// Longest frame a reader takes: no envelope's header and tag come near 64 KiB
 /// above its plaintext.
 pub const MAX_FRAME_LEN: u64 = MAX_PLAINTEXT_LEN as u64 + (1 << 16);
@@ -73,11 +86,11 @@ pub struct BackupEvidence {
     pub commitment_digest: [u8; 32],
     /// The signature record's exact bytes.
     pub signature: Vec<u8>,
-    /// BLAKE3 of the sealed manifest's envelope.
+    /// BLAKE3 of the sealed manifest root's envelope.
     pub manifest_blake3: [u8; 32],
-    /// Where the manifest's frame starts.
+    /// Where the manifest root's frame starts.
     pub manifest_offset: u64,
-    /// The sealed frames: every chunk, and the manifest.
+    /// The sealed frames: every chunk, the manifest's pieces and its root.
     pub frames: u64,
     /// BLAKE3 of every byte of the artifact, as held.
     pub outer_blake3: [u8; 32],
@@ -206,7 +219,38 @@ pub fn verify_with_pins(evidence: &BackupEvidence, pins: &[CheckpointSigner]) ->
         &evidence.signature,
         &commitment.signer,
     )?;
-    let version = if evidence.format_version == ARTIFACT_VERSION_V2 {
+    signs_clear_parts(
+        &commitment,
+        &ClearParts {
+            format_version: evidence.format_version,
+            kind: evidence.kind,
+            engine_vault_id: &evidence.engine_vault_id,
+            registry_binding: evidence.registry_binding,
+            snapshot: &evidence.snapshot,
+            key_commitment: &evidence.key_commitment,
+            key_header_blake3: &evidence.key_header_blake3,
+            manifest_blake3: &evidence.manifest_blake3,
+        },
+    )
+}
+
+/// What an artifact's clear parts say, as a commitment must sign them.
+struct ClearParts<'a> {
+    format_version: u16,
+    kind: ArtifactKind,
+    engine_vault_id: &'a [u8; 32],
+    registry_binding: Option<[u8; 32]>,
+    snapshot: &'a [u8; 32],
+    key_commitment: &'a [u8; 32],
+    key_header_blake3: &'a [u8; 32],
+    manifest_blake3: &'a [u8; 32],
+}
+
+/// Whether `commitment` signs what `parts` say: version, epoch, engine vault
+/// id, kind, snapshot and sealed manifest, and for version 2 the registry
+/// binding, the key header's commitment and its BLAKE3.
+fn signs_clear_parts(commitment: &Commitment, parts: &ClearParts<'_>) -> Result<()> {
+    let version = if parts.format_version == ARTIFACT_VERSION_V2 {
         COMMITMENT_VERSION
     } else {
         COMMITMENT_VERSION_V1
@@ -214,22 +258,22 @@ pub fn verify_with_pins(evidence: &BackupEvidence, pins: &[CheckpointSigner]) ->
     let checks: [(bool, &'static str); 9] = [
         (commitment.version == version, "version"),
         (commitment.epoch == CHECKPOINT_SIGNATURE_EPOCH, "epoch"),
-        (commitment.vault_id == evidence.engine_vault_id, "vault id"),
-        (commitment.kind == evidence.kind.code(), "kind"),
-        (commitment.snapshot == evidence.snapshot, "snapshot"),
-        (commitment.manifest == evidence.manifest_blake3, "manifest"),
+        (commitment.vault_id == *parts.engine_vault_id, "vault id"),
+        (commitment.kind == parts.kind.code(), "kind"),
+        (commitment.snapshot == *parts.snapshot, "snapshot"),
+        (commitment.manifest == *parts.manifest_blake3, "manifest"),
         (
-            commitment.registry_binding == evidence.registry_binding,
+            commitment.registry_binding == parts.registry_binding,
             "registry binding",
         ),
         (
             version == COMMITMENT_VERSION_V1
-                || commitment.key_commitment == Some(evidence.key_commitment),
+                || commitment.key_commitment == Some(*parts.key_commitment),
             "key commitment",
         ),
         (
             version == COMMITMENT_VERSION_V1
-                || commitment.key_header_blake3 == Some(evidence.key_header_blake3),
+                || commitment.key_header_blake3 == Some(*parts.key_header_blake3),
             "key header",
         ),
     ];
@@ -237,6 +281,120 @@ pub fn verify_with_pins(evidence: &BackupEvidence, pins: &[CheckpointSigner]) ->
         Some((_, field)) => Err(Error::BackupCommitmentMismatch(field)),
         None => Ok(()),
     }
+}
+
+/// What the clear head and the tail of one artifact say (FIX 6777), read by
+/// [`inspect_backup_tail`]: never a proof of the bytes between them, which
+/// only [`inspect_backup`] hashes, nor of anything sealed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackupTailEvidence {
+    /// The prelude version.
+    pub format_version: u16,
+    pub kind: ArtifactKind,
+    /// The engine's vault id.
+    pub engine_vault_id: [u8; 32],
+    pub registry_binding: Option<[u8; 32]>,
+    pub snapshot: [u8; 32],
+    /// The commitment naming the vault data key, as the key header carries it.
+    pub key_commitment: [u8; 32],
+    /// The clear commitment, decoded; its signature verifies against the
+    /// signer it names, which no pin has vouched for.
+    pub commitment: Commitment,
+    /// BLAKE3 of the commitment's exact bytes.
+    pub commitment_digest: [u8; 32],
+    /// BLAKE3 of the sealed manifest root's envelope.
+    pub manifest_blake3: [u8; 32],
+    /// Where the manifest root's frame starts.
+    pub manifest_offset: u64,
+    /// The artifact's length in bytes.
+    pub size: u64,
+}
+
+/// Reads one sealed artifact's clear head and its tail (FIX 6777): the
+/// prelude and key header from its start, then from the footer's offset the
+/// manifest root's frame, the commitment and the signature record, which end
+/// where the footer starts. The commitment must sign those clear parts and
+/// the root, and its signature must verify against the signer it names.
+/// Each part is bounded as [`inspect_backup`] bounds it; the frames between
+/// the head and the root are never read, so this proves neither their bytes
+/// nor the artifact's outer BLAKE3, and opens nothing.
+pub fn inspect_backup_tail<R: Read + Seek>(mut reader: R) -> Result<BackupTailEvidence> {
+    let seek = |error: std::io::Error| Error::BackupRead(error.kind());
+    reader.seek(SeekFrom::Start(0)).map_err(seek)?;
+    let prelude = ArtifactPrelude::read(&mut reader)?;
+    let key_header_len = usize::try_from(prelude.key_header_len)
+        .ok()
+        .filter(|len| *len <= MAX_KEY_HEADER_LEN)
+        .ok_or(Error::BackupMalformed("key header length"))?;
+    let mut key_header_bytes = vec![0u8; key_header_len];
+    read_exact(&mut reader, &mut key_header_bytes, "key header")?;
+    let key_header = KeyHeader::decode(&key_header_bytes)?;
+    let head_end = reader.stream_position().map_err(seek)?;
+    let size = reader.seek(SeekFrom::End(0)).map_err(seek)?;
+    let footer_at = size
+        .checked_sub(8)
+        .filter(|at| *at >= head_end)
+        .ok_or(Error::BackupMalformed("footer"))?;
+    reader.seek(SeekFrom::Start(footer_at)).map_err(seek)?;
+    let mut footer = [0u8; 8];
+    read_exact(&mut reader, &mut footer, "footer")?;
+    let manifest_offset = u64::from_be_bytes(footer);
+    if manifest_offset < head_end || manifest_offset >= footer_at {
+        return Err(Error::BackupMalformed("footer"));
+    }
+    reader
+        .seek(SeekFrom::Start(manifest_offset))
+        .map_err(seek)?;
+    let expect = FrameExpect {
+        kind: prelude.kind,
+        vault_id: &prelude.engine_vault_id,
+        key_id: &key_header.commitment,
+        snapshot: &prelude.snapshot,
+    };
+    let mut input = Hashed {
+        inner: &mut reader,
+        hasher: blake3::Hasher::new(),
+        size: 0,
+    };
+    let mut scratch = vec![0u8; SCRATCH_LEN];
+    let root = read_frame(&mut input, &expect, &mut scratch)?;
+    let (Some(manifest_blake3), 0) = (root.manifest, root.index) else {
+        return Err(Error::BackupMalformed("frame order"));
+    };
+    let commitment_bytes = read_signed(&mut input, "commitment")?;
+    let signature = read_signed(&mut input, "signature")?;
+    if manifest_offset.checked_add(input.size) != Some(footer_at) {
+        return Err(Error::BackupMalformed("footer"));
+    }
+    let commitment = Commitment::decode(&commitment_bytes)?;
+    verify_commitment_signature(&commitment_bytes, &signature, &commitment.signer)?;
+    let key_header_blake3 = *blake3::hash(&key_header_bytes).as_bytes();
+    signs_clear_parts(
+        &commitment,
+        &ClearParts {
+            format_version: prelude.version,
+            kind: prelude.kind,
+            engine_vault_id: &prelude.engine_vault_id,
+            registry_binding: prelude.registry_binding,
+            snapshot: &prelude.snapshot,
+            key_commitment: &key_header.commitment,
+            key_header_blake3: &key_header_blake3,
+            manifest_blake3: &manifest_blake3,
+        },
+    )?;
+    Ok(BackupTailEvidence {
+        format_version: prelude.version,
+        kind: prelude.kind,
+        engine_vault_id: prelude.engine_vault_id,
+        registry_binding: prelude.registry_binding,
+        snapshot: prelude.snapshot,
+        key_commitment: key_header.commitment,
+        commitment_digest: commitment_digest(&commitment_bytes),
+        commitment,
+        manifest_blake3,
+        manifest_offset,
+        size,
+    })
 }
 
 /// What every sealed frame of one artifact must name.

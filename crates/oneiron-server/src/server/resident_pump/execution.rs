@@ -310,6 +310,12 @@ pub(super) fn run_bound(
                 full += 1;
                 std::thread::sleep(WINDOW_FULL_WAIT);
             }
+            EngineExecutorStatus::Complete => {
+                // CUA E8b: a TASK run that ended keeps what its browser
+                // solved toward its done-means, before its door drops.
+                browser_workflow::capture_task_run(vault, &door, actor, &status.attempt, type_ref);
+                return Ok(BoundRun::Agent(outcome));
+            }
             _ => return Ok(BoundRun::Agent(outcome)),
         }
     }

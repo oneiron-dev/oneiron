@@ -38,6 +38,7 @@ mod run_verbs;
 mod scoped_child;
 mod scoped_child_io;
 pub mod shadow_runner;
+mod spawn_replay;
 mod storage;
 mod support;
 mod team_submit;
@@ -136,7 +137,7 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
-    ProgramResumeWait, load_program_checkpoint_tail, program_resume_call,
+    ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail, program_resume_call,
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
@@ -159,8 +160,8 @@ pub(crate) use self::storage::{
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
 pub(crate) use self::storage::{
-    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_stub,
-    wait_settled_owners,
+    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_erased,
+    wait_reply_scan, wait_settled_owners,
 };
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};

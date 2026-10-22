@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1157 facade rows, 4132 declarations.
+Census: 1157 facade rows, 4136 declarations.
 Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -13148,7 +13148,7 @@ class PptxCommentPatch(TypedDict):
 class SlideAbstention(TypedDict):
     target: PptxCommentTarget
     decision: NotRequired[TypedDecision | None]
-SlideUnitRefusalReason = Literal["MissingShape", "AmbiguousShape", "TargetChanged", "UnresolvedGeometry", "EvidenceBudget", "UnreadableImage"]
+SlideUnitRefusalReason = Literal["MissingShape", "AmbiguousShape", "TargetChanged", "UnresolvedGeometry", "EvidenceBudget", "UnreadableImage", "RunDeadline"]
 class SlideUnitRefused(TypedDict):
     target: PptxCommentTarget
     reason: SlideUnitRefusalReason
@@ -13357,6 +13357,12 @@ class DeckOutline(TypedDict):
     assets: NotRequired[list[OutlineAsset]]
 class DeckOutlineProposeRequest(TypedDict):
     outline: DeckOutline
+CitedClaimLifecycle = Literal["active", "superseded", "retracted"]
+class EvidenceObservation(TypedDict):
+    pin: int
+    source_frontier: NotRequired[list[int] | None]
+    lifecycle: NotRequired[CitedClaimLifecycle | None]
+    mapped: bool
 class KeptOutline(TypedDict):
     note: EntityId
     frontier: list[int]
@@ -13365,12 +13371,17 @@ class KeptOutline(TypedDict):
     content_hash: list[int]
     kept_by: EntityId
     kept_at: int
+    evidence: NotRequired[list[EvidenceObservation]]
 class OutlineFreshnessEvidenceMovedBody(TypedDict):
     pins: list[int]
 class OutlineFreshnessEvidenceMoved(TypedDict):
     evidence_moved: OutlineFreshnessEvidenceMovedBody
 OutlineFreshness = Literal["fresh", "not_kept", "edited"] | OutlineFreshnessEvidenceMoved
-KeptOutlineOmissionReason = Literal["sources_unreadable", "invalid_frozen_outline"]
+KeptOutlineOmissionReason = Literal["sources_unreadable", "invalid_frozen_outline", "keys_unknown"]
+class EvidenceChange(TypedDict):
+    kept: EvidenceObservation
+    now: EvidenceObservation
+DeckPresentation = Literal["whole", "masked"]
 class DeckOutlineView(TypedDict):
     outline_ref: str
     frontier: list[int]
@@ -13378,8 +13389,11 @@ class DeckOutlineView(TypedDict):
     kept: NotRequired[KeptOutline | None]
     freshness: OutlineFreshness
     kept_omission: NotRequired[KeptOutlineOmissionReason | None]
+    evidence_changed: NotRequired[list[EvidenceChange]]
+    presentation: NotRequired[DeckPresentation]
 class DeckOutlineRefRequest(TypedDict):
     outline_ref: str
+    why: NotRequired[str | None]
 class DeckOutlineSettleRequest(TypedDict):
     outline_ref: str
     expected_frontier: list[int]
@@ -13398,6 +13412,7 @@ class DeckDesignRequest(TypedDict):
     templates: list[ArtifactVersionRef]
     assets: NotRequired[dict[str, ArtifactVersionRef]]
     fonts: NotRequired[list[ArtifactVersionRef]]
+    why: NotRequired[str | None]
 class DirectionSlide(TypedDict):
     page: str
     layout: str
@@ -13528,6 +13543,7 @@ class DeckDesignView(TypedDict):
     spec: DesignSpec
     plans: list[DeckPlanView | None]
     decisions: list[list[DeckDesignDecision]]
+    presentation: NotRequired[DeckPresentation]
 class DeckEmissionNames(TypedDict):
     text: str
     table: str
@@ -18214,6 +18230,7 @@ class OfficeBodyFork(TypedDict):
     opened_at: int
     state: ForkState
     run_root: NotRequired[EntityId | None]
+    origin: NotRequired[AttemptId | None]
 class OfficeBodyForkEditRequest(TypedDict):
     artifact_ref: str
     fork_ref: str
@@ -18271,6 +18288,7 @@ class ProposalMember(TypedDict):
     fork: EntityId
     opener: BodyActor
     run_root: NotRequired[EntityId | None]
+    origin: NotRequired[AttemptId | None]
     verdict: MemberVerdict
     answer: NotRequired[MemberAnswer | None]
 BundleVerdict = Literal["landed", "rejected", "mixed", "let_go"]
@@ -18809,6 +18827,7 @@ class ProgramRunView(TypedDict):
     held_by_try: list[ProgramHeldView]
     run: NotRequired[ProgramRunStateView | None]
     steps: list[ProgramStepView]
+    erased_steps: list[str]
     undecodable_steps: int
     next_cursor: NotRequired[str | None]
     withheld: list[str]

@@ -48,7 +48,6 @@ pub(crate) fn archive_deck_marks_table() -> crate::batch::export::LentSideTable 
     &DECK_ID_MARKS
 }
 
-const MAX_RENDERS: usize = 4_096;
 const MAX_RENDERER_BYTES: usize = 256;
 
 /// Which side of the diff a review image shows.
@@ -269,14 +268,14 @@ pub fn run_deck_transaction(
     })))
 }
 
+/// Every render a review carries is kept, whatever their number (FIX 9816);
+/// each must name its renderer and slide.
 fn validate_context(context: &DeckEditContext) -> Result<()> {
-    if context.renders.len() > MAX_RENDERS
-        || context.renders.iter().any(|render| {
-            render.renderer.trim().is_empty()
-                || render.renderer.len() > MAX_RENDERER_BYTES
-                || render.slide.is_empty()
-        })
-    {
+    if context.renders.iter().any(|render| {
+        render.renderer.trim().is_empty()
+            || render.renderer.len() > MAX_RENDERER_BYTES
+            || render.slide.is_empty()
+    }) {
         return Err(invalid("deck review renders are invalid"));
     }
     Ok(())

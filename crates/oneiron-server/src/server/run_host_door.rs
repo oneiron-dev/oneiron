@@ -29,6 +29,7 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use oneiron::authority::VerifiedSlip;
 use oneiron::board_verb::BoardVerbCall;
 use oneiron::claim::{CallerLocality, ScopedRead, ScopedReadActorKey};
 use oneiron::code_run::{
@@ -101,6 +102,11 @@ pub(crate) struct RunHostDoor {
     /// The line the run's entry in flight spends on, which its `ai.speech`
     /// is admitted on (FIX 3194); empty between entries.
     line: Mutex<Option<RunAdmission>>,
+    /// The live, verified slip whose turn woke a Dreamer turn program this
+    /// door serves (FIX 8717): the reads this door admits for the run take
+    /// its key. Its rows' surfaces take it from the call's origin. `None`
+    /// for a pumped run and a program no slip woke.
+    proof: Option<VerifiedSlip>,
 }
 
 impl RunHostDoor {
@@ -118,6 +124,29 @@ impl RunHostDoor {
             server: Arc::clone(server),
             actor,
             runtime,
+            proof: None,
+        }
+    }
+
+    /// This door, bound to the waking slip's live view of the turn program
+    /// it serves, when a slip's turn woke it (FIX 8717).
+    #[must_use]
+    pub(crate) fn with_waking_proof(mut self, proof: Option<VerifiedSlip>) -> Self {
+        self.proof = proof;
+        self
+    }
+
+    /// The run's own surface for a read this door admits: the agent's, on
+    /// this device, under the waking slip when one binds the door.
+    fn admitting_memory(&self) -> Memory<'_> {
+        let memory = self
+            .server
+            .vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .at(CallerLocality::OnDevice);
+        match &self.proof {
+            Some(proof) => memory.with_read_proof(proof),
+            None => memory,
         }
     }
 
@@ -132,6 +161,22 @@ impl RunHostDoor {
                 .funded_run(self.run.clone(), guard, payer)
         });
         *self.line.lock().unwrap_or_else(PoisonError::into_inner) = line;
+    }
+
+    /// CUA E8b: what this run's browser reached for TASK `task`, kept as
+    /// the agent's solved-run evidence when its done-means' browser checks
+    /// hold on the page (`goal`, under the run's recorded `type_ref`), under
+    /// the run's write `origin`. Logs what it came to; never fails the run.
+    pub(crate) fn capture_task_run(
+        &self,
+        origin: &HostWriteOrigin,
+        task: EntityId,
+        type_ref: oneiron::learning::TypeRef,
+        goal: &oneiron::task_verb::DoneMeans,
+    ) {
+        let memory = agent_memory(&self.server, self.actor, origin, InvocationId::mint());
+        self.guests
+            .capture_task_run(&self.server, &memory, origin, task, type_ref, goal);
     }
 }
 
@@ -248,10 +293,7 @@ impl AgentVerbDoor for RunHostDoor {
         {
             return Ok(None);
         }
-        self.server
-            .vault
-            .memory(self.actor.entity_ref(), self.actor.actor_class())
-            .at(CallerLocality::OnDevice)
+        self.admitting_memory()
             .read_key()
             .map(Some)
             .map_err(|error| AgentVerbRefusal { code: error.code })
@@ -281,12 +323,17 @@ impl AgentVerbDoor for RunHostDoor {
         let server = Arc::clone(&self.server);
         let actor = self.actor;
         let request = request.clone();
+        let proof = self.proof.clone();
         self.runtime.spawn_blocking(move || {
             let memory = server
                 .vault
                 .memory(actor.entity_ref(), actor.actor_class())
                 .at(CallerLocality::OnDevice)
                 .with_invocation(invocation);
+            let memory = match &proof {
+                Some(proof) => memory.with_read_proof(proof),
+                None => memory,
+            };
             let _ = sender
                 .send(crate::api::connector_answer_as(&server, &memory, request).and_then(encode));
         });
