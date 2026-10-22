@@ -11,12 +11,16 @@
 //! holder's erase owes its retirement to the final holder's release, when
 //! the settled row takes its erased form ([`super::erase_settled_in_txn`]).
 //! A waiter not yet delivered, a cursor and the rows a reply was derived
-//! from own nothing. An already-erased row holds no reply to carry.
+//! from own nothing. An already-erased row holds no reply to carry. A row
+//! that does not decode is carried whole, opaque, and its retired form is
+//! the erased marker, which every reader answers as an erased reply (FIX
+//! 9390).
 
 use super::super::response_owners::response_owner_in_txn;
 use super::super::wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG, WaitDelivery};
 use super::{HOLDERS, WaitHolder};
 use crate::side_table::{ErasedForm, SideKey, SideTableDbs};
+use crate::store::{ResponseCarriage, ResponseScan, is_opaque_erased};
 use crate::{EntityId, Result};
 
 /// The wait a settled row's full `vault_meta` key names: the wait index's
@@ -34,15 +38,30 @@ pub(crate) fn settled_wait_key(key: &[u8]) -> bool {
     settled_wait(key).is_some()
 }
 
-/// The erased form an image holds in a delivery's or a settled reply's
-/// place: `None` for a row already erased, or one that does not decode,
-/// which holds no reply.
-pub(crate) fn wait_reply_stub(value: &[u8]) -> Option<Vec<u8>> {
-    let reply: WaitDelivery = DELIVERIES.decode_value(value).ok()?;
+/// What a checkpoint carries of a delivery's or a settled reply's row: the
+/// whole row, its erased form the stub an image holds in its place. No
+/// response for a row already erased; a row that does not decode, or whose
+/// erased form does not encode, is carried whole as an opaque response.
+pub(crate) fn wait_reply_scan(value: &[u8]) -> ResponseScan {
+    let Ok(reply) = DELIVERIES.decode_value(value) else {
+        return ResponseScan::opaque_row();
+    };
     if reply.erased {
-        return None;
+        return ResponseScan::NotResponse;
     }
-    DELIVERIES.encode_value(&reply.into_erased().ok()?).ok()
+    match reply.into_erased().and_then(|erased| DELIVERIES.encode_value(&erased)) {
+        Ok(stub) => ResponseScan::Decoded(ResponseCarriage::whole(stub)),
+        Err(_) => ResponseScan::opaque_row(),
+    }
+}
+
+/// Whether a delivery's or a settled reply's row `value` is an erased one:
+/// its decoded erased form, or the erased marker of one that never decoded.
+pub(crate) fn wait_reply_erased(value: &[u8]) -> bool {
+    is_opaque_erased(value)
+        || DELIVERIES
+            .decode_value(value)
+            .is_ok_and(|reply: WaitDelivery| reply.erased)
 }
 
 /// Who owns the delivery row `key` (a full `vault_meta` key): its run, the
@@ -110,7 +129,9 @@ pub(crate) fn wait_settled_owners(
 }
 
 /// Whether the settled row `key` (a full `vault_meta` key) still holds its
-/// reply live: present and not in its erased form.
+/// reply live: present and not in its erased form. A row that does not
+/// decode still holds it (an opaque reply its holders keep), and the erased
+/// marker holds none (FIX 9390).
 ///
 /// # Errors
 ///
@@ -125,6 +146,10 @@ pub(crate) fn settled_reply_held_in_txn(
     };
     Ok(SETTLED
         .get_bytes(dbs, txn, &(SETTLED_TAG, wait))?
-        .and_then(|bytes| SETTLED.decode_value(&bytes).ok())
-        .is_some_and(|reply| !reply.erased))
+        .is_some_and(|bytes| {
+            !is_opaque_erased(&bytes)
+                && !SETTLED
+                    .decode_value(&bytes)
+                    .is_ok_and(|reply| reply.erased)
+        }))
 }

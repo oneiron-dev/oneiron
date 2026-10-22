@@ -202,10 +202,11 @@ pub(crate) use body_envelope::{
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
-    RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily, ResponseRead,
-    ResponseScan, bind_response_in_txn, carrier_row, erase_response_owner_in_txn,
-    release_response_in_txn, response_binding_in_txn, response_carrier,
-    response_owed_to_all_in_txn, settle_shared_response_in_txn,
+    RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
+    ResponseOwners, ResponseRead, ResponseScan, bind_response_in_txn, carrier_row,
+    erase_response_owner_in_txn, is_opaque_erased, release_response_in_txn,
+    response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
+    settle_shared_response_in_txn,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{
@@ -277,10 +278,13 @@ pub(crate) use structural_kind_registry::{
 #[cfg(feature = "sync")]
 pub(crate) use sync_responses::media_job_put_fenced_in_txn;
 #[doc(hidden)]
-pub use sync_responses::{IdempotencyEntry, ResponseStamps, media_job_erased_state};
+pub use sync_responses::{
+    IdempotencyEntry, ResponseStamps, http_response_read, media_job_erased_state,
+    media_response_read,
+};
 pub(crate) use sync_responses::{
-    MediaKey, erase_sync_response_owner_in_txn, http_carriage, http_erase_drop_caller, http_owners,
-    media_job_carriage, media_job_owners, media_key, media_part_carriage,
+    MediaKey, erase_sync_response_owner_in_txn, http_erase_drop_caller, http_owners, http_scan,
+    media_job_owners, media_job_scan, media_key, media_part_carriage,
 };
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;

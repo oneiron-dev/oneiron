@@ -153,7 +153,11 @@ impl Vault {
                 };
                 // Every queue row goes unleased: an agent dispatch's stub
                 // too, whose instance seals the row as it stood (FIX 7115).
-                let value = if entry.name == "job_records" {
+                // An opaque one's stub, the erased marker, and an opaque row
+                // itself go as they are (FIX 9390).
+                let value = if entry.name == "job_records"
+                    && !crate::attempt_queue::attempt_row_opaque(key, &value)
+                {
                     rebuild::unlease_attempt(key, &value)?
                 } else {
                     value

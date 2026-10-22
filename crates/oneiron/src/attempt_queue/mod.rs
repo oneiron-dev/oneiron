@@ -68,7 +68,7 @@ pub use types::{
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use payload_erase::{
-    attempt_payload_family, attempt_payload_owners, attempt_payload_stub,
+    attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
     erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
     retire_attempt_payload_in_txn,
 };
