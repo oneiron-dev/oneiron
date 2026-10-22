@@ -346,26 +346,8 @@ pub(super) fn dispatch_result_receipt(
     }
     let window_decision = admission.map(|stage| &stage.window_decision);
     let window_resolution = admission.map(|stage| &stage.window_resolution);
-    let mut engine_receipt_fields = BTreeMap::new();
-    let mut engine_policy_trace = Vec::new();
-    if let Some(posting) = space_posting {
-        engine_receipt_fields.insert(
-            "space_posting".to_owned(),
-            posting.preset_token().to_owned(),
-        );
-        engine_receipt_fields.insert(
-            "space_posting_setting_ref".to_owned(),
-            posting.setting_ref().to_owned(),
-        );
-        engine_receipt_fields.insert(
-            "space_posting_policy_risk".to_owned(),
-            posting.policy_risk().to_string(),
-        );
-    }
-    if let Some(seat) = admission.and_then(|stage| stage.seat.as_ref()) {
-        engine_receipt_fields.extend(seat.receipt_fields.clone());
-        engine_policy_trace.extend(seat.policy_trace.iter().cloned());
-    }
+    let (engine_receipt_fields, engine_policy_trace) =
+        engine_receipt_evidence(space_posting, admission);
     let mut receipt = outbound_intent_receipt(
         request.receipt_id.clone(),
         request.intent_ref.clone(),
@@ -428,109 +410,12 @@ pub(super) fn dispatch_result_receipt(
     // send stamps `budget_debit: "0"` next to the deny reason — the
     // honest record. `budget` = min remaining over the rows MATCHED by
     // this dispatch (the binding constraint — M4 resolution 2026-07-10).
-    if let Some(charge) = effector_charge.as_ref() {
-        receipt.fields.insert(
-            "connector_key_ref".to_owned(),
-            format!("ckey:{}", charge.key_ref.to_hex()),
-        );
-        receipt
-            .fields
-            .insert("budget_debit".to_owned(), charge.sends_debit.to_string());
-        let binding_remaining = charge
-            .read
-            .rows
-            .iter()
-            .filter(|row| charge.matched_rows.contains(&row.row_index))
-            .map(|row| row.remaining)
-            .min();
-        if let Some(binding_remaining) = binding_remaining {
-            receipt
-                .fields
-                .insert("budget".to_owned(), binding_remaining.to_string());
-        }
-        // ONE-1794: a per-grant key's catalog pool, beside the key's own
-        // echo and under the catalog key's ref. Stamped only when the pool's
-        // stage ran; `budget_debit` stays the key's own, so the receipt
-        // projections never count one send twice.
-        if let Some(pool) = charge.pool.as_ref() {
-            receipt.fields.insert(
-                "budget_pool_key_ref".to_owned(),
-                format!("ckey:{}", pool.key_ref.to_hex()),
-            );
-            receipt
-                .fields
-                .insert("budget_pool_debit".to_owned(), pool.sends_debit.to_string());
-            let pool_remaining = charge.read.pool.as_ref().and_then(|read| {
-                read.rows
-                    .iter()
-                    .filter(|row| pool.matched_rows.contains(&row.row_index))
-                    .map(|row| row.remaining)
-                    .min()
-            });
-            if let Some(pool_remaining) = pool_remaining {
-                receipt
-                    .fields
-                    .insert("budget_pool".to_owned(), pool_remaining.to_string());
-            }
-        }
-    }
-    receipt.fields.insert(
-        "channel_call".to_owned(),
-        verb_contract.channel_call.clone(),
-    );
-    receipt.fields.insert(
-        "interruption_class".to_owned(),
-        serde_json::to_value(&verb_contract.interruption_class)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "unknown".to_owned()),
-    );
-    receipt.fields.insert(
-        "retry_class".to_owned(),
-        serde_json::to_value(&verb_contract.retry_class)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "unknown".to_owned()),
-    );
-    receipt.fields.insert(
-        "policy_risk".to_owned(),
-        match policy_risk {
-            ExternalEffectPolicyRisk::Normal => "normal",
-            ExternalEffectPolicyRisk::HoldToProposal => "hold_to_proposal",
-        }
-        .to_owned(),
-    );
+    append_effector_budget_receipt(&mut receipt, effector_charge.as_ref());
+    append_contract_receipt(&mut receipt, verb_contract, policy_risk);
     for (key, value) in engine_receipt_fields {
         receipt.fields.insert(key, value);
     }
-    append_optional_receipt_field(
-        &mut receipt,
-        "content_ref",
-        request.intent.content_ref.as_deref(),
-    );
-    append_optional_receipt_field(
-        &mut receipt,
-        "idempotency_key",
-        request.intent.idempotency_key.as_deref(),
-    );
-    append_optional_receipt_field(
-        &mut receipt,
-        "dedupe_key",
-        request.intent.dedupe_key.as_deref(),
-    );
-    append_optional_receipt_field(
-        &mut receipt,
-        "channel_identity_ref",
-        request
-            .channel_identity_ref
-            .map(|identity_ref| identity_ref.to_hex())
-            .as_deref(),
-    );
-    append_optional_receipt_field(
-        &mut receipt,
-        "counterparty_ref",
-        request.counterparty_ref.as_deref(),
-    );
+    append_request_receipt(&mut receipt, request);
     if let Some(execution) = execution {
         receipt.fields.insert(
             "delivery_may_have_occurred".to_owned(),
@@ -580,4 +465,150 @@ pub(super) fn dispatch_result_receipt(
         budget_ladder_events,
         budget_pool,
     }
+}
+
+/// The engine's own receipt evidence for a dispatch: the frozen space
+/// posting's fields and the seat decision's fields and policy trace.
+fn engine_receipt_evidence(
+    space_posting: Option<&FrozenSpacePosting>,
+    admission: Option<&AdmissionStage>,
+) -> (BTreeMap<String, String>, Vec<String>) {
+    let mut engine_receipt_fields = BTreeMap::new();
+    let mut engine_policy_trace = Vec::new();
+    if let Some(posting) = space_posting {
+        engine_receipt_fields.insert(
+            "space_posting".to_owned(),
+            posting.preset_token().to_owned(),
+        );
+        engine_receipt_fields.insert(
+            "space_posting_setting_ref".to_owned(),
+            posting.setting_ref().to_owned(),
+        );
+        engine_receipt_fields.insert(
+            "space_posting_policy_risk".to_owned(),
+            posting.policy_risk().to_string(),
+        );
+    }
+    if let Some(seat) = admission.and_then(|stage| stage.seat.as_ref()) {
+        engine_receipt_fields.extend(seat.receipt_fields.clone());
+        engine_policy_trace.extend(seat.policy_trace.iter().cloned());
+    }
+    (engine_receipt_fields, engine_policy_trace)
+}
+
+/// Stamps the governing connector key's budget charge on the receipt.
+fn append_effector_budget_receipt(
+    receipt: &mut ReceiptRecord,
+    effector_charge: Option<&crate::connector_key::EffectorBudgetCharge>,
+) {
+    if let Some(charge) = effector_charge {
+        receipt.fields.insert(
+            "connector_key_ref".to_owned(),
+            format!("ckey:{}", charge.key_ref.to_hex()),
+        );
+        receipt
+            .fields
+            .insert("budget_debit".to_owned(), charge.sends_debit.to_string());
+        let binding_remaining = charge
+            .read
+            .rows
+            .iter()
+            .filter(|row| charge.matched_rows.contains(&row.row_index))
+            .map(|row| row.remaining)
+            .min();
+        if let Some(binding_remaining) = binding_remaining {
+            receipt
+                .fields
+                .insert("budget".to_owned(), binding_remaining.to_string());
+        }
+        // ONE-1794: a per-grant key's catalog pool, beside the key's own
+        // echo and under the catalog key's ref. Stamped only when the pool's
+        // stage ran; `budget_debit` stays the key's own, so the receipt
+        // projections never count one send twice.
+        if let Some(pool) = charge.pool.as_ref() {
+            receipt.fields.insert(
+                "budget_pool_key_ref".to_owned(),
+                format!("ckey:{}", pool.key_ref.to_hex()),
+            );
+            receipt
+                .fields
+                .insert("budget_pool_debit".to_owned(), pool.sends_debit.to_string());
+            let pool_remaining = charge.read.pool.as_ref().and_then(|read| {
+                read.rows
+                    .iter()
+                    .filter(|row| pool.matched_rows.contains(&row.row_index))
+                    .map(|row| row.remaining)
+                    .min()
+            });
+            if let Some(pool_remaining) = pool_remaining {
+                receipt
+                    .fields
+                    .insert("budget_pool".to_owned(), pool_remaining.to_string());
+            }
+        }
+    }
+}
+
+/// Stamps the verb contract's channel call, interruption and retry classes
+/// and the policy risk on the receipt.
+fn append_contract_receipt(
+    receipt: &mut ReceiptRecord,
+    verb_contract: &OutboundVerbContract,
+    policy_risk: ExternalEffectPolicyRisk,
+) {
+    receipt.fields.insert(
+        "channel_call".to_owned(),
+        verb_contract.channel_call.clone(),
+    );
+    receipt.fields.insert(
+        "interruption_class".to_owned(),
+        serde_json::to_value(&verb_contract.interruption_class)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "unknown".to_owned()),
+    );
+    receipt.fields.insert(
+        "retry_class".to_owned(),
+        serde_json::to_value(&verb_contract.retry_class)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "unknown".to_owned()),
+    );
+    receipt.fields.insert(
+        "policy_risk".to_owned(),
+        match policy_risk {
+            ExternalEffectPolicyRisk::Normal => "normal",
+            ExternalEffectPolicyRisk::HoldToProposal => "hold_to_proposal",
+        }
+        .to_owned(),
+    );
+}
+
+/// Stamps the request's optional content, idempotency, dedupe, identity and
+/// counterparty references on the receipt.
+fn append_request_receipt(receipt: &mut ReceiptRecord, request: &OutboundDispatchRequest) {
+    append_optional_receipt_field(
+        receipt,
+        "content_ref",
+        request.intent.content_ref.as_deref(),
+    );
+    append_optional_receipt_field(
+        receipt,
+        "idempotency_key",
+        request.intent.idempotency_key.as_deref(),
+    );
+    append_optional_receipt_field(receipt, "dedupe_key", request.intent.dedupe_key.as_deref());
+    append_optional_receipt_field(
+        receipt,
+        "channel_identity_ref",
+        request
+            .channel_identity_ref
+            .map(|identity_ref| identity_ref.to_hex())
+            .as_deref(),
+    );
+    append_optional_receipt_field(
+        receipt,
+        "counterparty_ref",
+        request.counterparty_ref.as_deref(),
+    );
 }
