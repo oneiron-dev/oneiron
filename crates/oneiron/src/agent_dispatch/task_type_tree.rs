@@ -28,8 +28,11 @@ use crate::task_type::{
 };
 use crate::temporal::TimeRange;
 
+use self::validation::validate_tree;
 use super::team_shape::team_shape_skill;
 use super::widen_record::invalid;
+
+mod validation;
 
 /// The tree file inside the team-shape skill's package.
 pub const TASK_TYPE_TREE_FILE: &str = "task-type-tree.json";
@@ -713,24 +716,4 @@ fn note_carrier_in_txn(
         Ok(Some(carrier)) if served => reads.note(carrier),
         Ok(Some(_)) | Err(_) => reads.unknown(),
     }
-}
-
-/// A tree is structurally whole: a root, and every parent a stored node.
-fn validate_tree(tree: &TaskTypeTree) -> Result<()> {
-    if tree.version == 0 {
-        return Err(invalid("a type tree version starts at 1"));
-    }
-    if !tree.nodes.contains_key(crate::task_type::ROOT_NODE_ID) {
-        return Err(invalid("a type tree has a root"));
-    }
-    if tree.nodes.iter().any(|(id, node)| {
-        node.node_id != *id
-            || node
-                .parent
-                .as_ref()
-                .is_some_and(|parent| !tree.nodes.contains_key(parent))
-    }) {
-        return Err(invalid("every type node names a stored parent"));
-    }
-    Ok(())
 }

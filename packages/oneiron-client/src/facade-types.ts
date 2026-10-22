@@ -5123,7 +5123,7 @@ export type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; 
 /** `oneiron::team::doors::spawn::SpawnAskKnob` */
 export type SpawnAskKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T }
 /** `oneiron::team::doors::spawn::SpawnIntentRequest` */
-export type SpawnIntentRequest = { intent_key: string; prompt: string; requested_type?: TypeStamp | null; need: string; care?: string | null; notes?: string | null; model?: SpawnAskKnob<string> | null; width?: SpawnAskKnob<number> | null; pattern?: SpawnAskKnob<string> | null; budget_cap_units?: SpawnAskKnob<number> | null }
+export type SpawnIntentRequest = { intent_key: string; prompt: string; requested_type?: TypeStamp | null; need: string; care?: string | null; notes?: string | null; model?: SpawnAskKnob<string> | null; width?: SpawnAskKnob<number> | null; pattern?: SpawnAskKnob<string> | null; budget_cap_units?: SpawnAskKnob<number> | null; balance_free_prompt?: boolean }
 /** `oneiron::team::doors::spawn::SpawnIntentReply` */
 export type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?: TypeStamp | null; refusal?: string | null; root_attempt?: EntityId | null; member_attempts: EntityId[]; team_ref?: string | null; agent_def_ref?: EntityId | null; plan?: PlanObservation | null; erasure?: SpawnErasure | null }
 /** `oneiron::task_verb::run_doors::CancelForceRequest` */
@@ -8157,7 +8157,7 @@ export type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { m
 /** `oneiron::code_run::run_verbs::SpawnPattern` */
 export type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation"
 /** `oneiron::code_run::run_verbs::AgentSpawnInput` */
-export type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: ContextSpec | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null }
+export type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: ContextSpec | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null; balance_free_prompt?: boolean }
 /** `oneiron::code_run::run_verbs::AgentSpawnKind` */
 export type AgentSpawnKind = "agent_spawn"
 /** `oneiron::agent_dispatch::launch::LaunchStatement` */
