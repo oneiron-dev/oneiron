@@ -535,7 +535,17 @@
      "path": "src/agent_def/id_pin.rs",
      "purpose": "The pin an agent id keeps (H215): the widest ceiling a row at the id may hold, and the fork lineage it was…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/id_pin/scan.rs",
+     "purpose": "The composition lists one definition's put reads (FIX 9555)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -603,7 +613,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_def/portable_binding.rs",
@@ -686,7 +696,7 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 14,
-      "crate-vis": 60,
+      "crate-vis": 59,
       "enum": 5,
       "fn": 27,
       "struct": 4
@@ -738,7 +748,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/attenuation.rs",
@@ -892,8 +902,19 @@
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
       "crate-vis": 8,
-      "fn": 6,
+      "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/dispatch/depth.rs",
+     "purpose": "Dispatch depth (FIX 9560)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -1049,11 +1070,21 @@
      "purpose": "The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a launch-ready plan — which…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 13,
       "re-export": 1,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner/budget_resolution.rs",
+     "purpose": "The budget a plan is fitted to and launched under (FIX 9561)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -1125,7 +1156,7 @@
      "path": "src/agent_dispatch/planner_live/learning.rs",
      "purpose": "The measured reads the live planner weighs, and what a thin project leaf borrows into them (FIX 5496…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -1156,6 +1187,16 @@
      "purpose": "The leased child's planned launch (DOOR-111 S4c-2, S4c-3): a leased agent's planned intent, launched under…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/width_outcomes.rs",
+     "purpose": "The width evidence the live planner weighs (FIX 9568): each admitted pattern skill's anchored team outcomes…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -1282,8 +1323,18 @@
      "path": "src/agent_dispatch/spend_lease.rs",
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 9,
       "fn": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/spend_lease/ancestry.rs",
+     "purpose": "Spend-tree ancestry (FIX 9563, 9564)",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -1303,7 +1354,7 @@
      "path": "src/agent_dispatch/spend_record.rs",
      "purpose": "Durable spend scopes and their typed reads (OF-532)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 4,
       "fn": 4,
       "struct": 5
@@ -1322,6 +1373,16 @@
       "crate-vis": 4,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/task_type_tree/validation.rs",
+     "purpose": "A stored task-type tree's structure (FIX 9566), checked on store and on load: the root has no parent, every…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -1405,10 +1466,20 @@
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/widen.rs",
-     "purpose": "Fail-closed propose-widen and owner-authenticated, TASK-bound board approval or decline",
+     "purpose": "Fail-closed propose-widen, and board approval or decline by a revalidated root Owner or by the board…",
      "surface": {
       "crate-vis": 5,
-      "fn": 3
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/widen/board_authority.rs",
+     "purpose": "Who answers a widen proposal as the board above (FIX 9565): a revalidated root Owner of this vault, or the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -1440,7 +1511,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "struct": 1
      }
     },
@@ -32919,6 +32990,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/project_depth/explicit.rs",
+     "purpose": "Whether a project's live depth is a setting the owner made or the seeded default alone (FIX 9560)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -32935,7 +33016,7 @@
      "path": "src/gate/project_depth/mod.rs",
      "purpose": "Immutable project-scoped policy-manifest contributions",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -45064,8 +45145,8 @@
      "path": "src/office_body/mod.rs",
      "purpose": "Live office body records and Vault doors",
      "surface": {
-      "crate-vis": 5,
-      "re-export": 10
+      "crate-vis": 6,
+      "re-export": 12
      }
     },
     {
@@ -45244,6 +45325,20 @@
       "enum": 2,
       "fn": 1,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocumentMemory"
+     ],
+     "path": "src/office_body/resources.rs",
+     "purpose": "The host's document memory (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3,
+      "trait": 1
      }
     },
     {
@@ -74757,14 +74852,14 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 60,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75387,7 +75482,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 153,
+     "files": 154,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75632,7 +75727,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76285,7 +76380,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4973,
+   "source_files": 4982,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82404,7 +82499,7 @@
      "surface": {
       "const": 6,
       "enum": 7,
-      "fn": 11,
+      "fn": 12,
       "struct": 39,
       "trait": 1
      }
@@ -83152,7 +83247,7 @@
      "surface": {
       "const": 1,
       "enum": 9,
-      "fn": 1,
+      "fn": 2,
       "struct": 16
      }
     },
@@ -83196,7 +83291,7 @@
      "surface": {
       "enum": 1,
       "fn": 11,
-      "mod": 15,
+      "mod": 16,
       "re-export": 5,
       "struct": 1
      }
@@ -84047,8 +84142,9 @@
      "purpose": "Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks",
      "surface": {
       "const": 4,
-      "fn": 9,
-      "struct": 3
+      "enum": 1,
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -84115,7 +84211,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PptxAnchorOutcome",
@@ -84135,9 +84231,9 @@
      "path": "src/pptx_comments/model.rs",
      "purpose": "PowerPoint comment requests, inspection facts, codec limits and typed refusals",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 5,
-      "fn": 4,
+      "fn": 5,
       "struct": 8
      }
     },
@@ -84162,6 +84258,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Hold",
+      "MeasuringPort",
+      "ResourcePort",
+      "ResourceRefusal",
+      "Resources"
+     ],
+     "path": "src/resource.rs",
+     "purpose": "The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 16,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -84170,7 +84286,9 @@
      "path": "src/retained_opc/mod.rs",
      "purpose": "Bounded, retained OPC archives",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
+      "fn": 1,
       "re-export": 2,
       "type": 1
      }
@@ -84188,7 +84306,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "re-export": 1,
       "struct": 2
      }
@@ -84213,7 +84331,7 @@
      "path": "src/retained_opc/package/parts.rs",
      "purpose": "The add-part and remove-part doors",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 12,
       "struct": 1
      }
@@ -84601,6 +84719,13 @@
      "layout": "dir",
      "purpose": "Narrow, byte-preserving modern PowerPoint comment edits and the slide and shape identities they anchor to"
     },
+    "resource": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX…"
+    },
     "retained_opc": {
      "files": 8,
      "impl_vault": false,
@@ -84646,7 +84771,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 155,
+   "source_files": 156,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -99316,6 +99441,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/document_memory.rs",
+     "purpose": "The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -104078,7 +104213,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/core/construction.rs",
@@ -104095,7 +104230,7 @@
      "purpose": "The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house…",
      "surface": {
       "crate-vis": 8,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -105676,6 +105811,13 @@
      "layout": "file+dir",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in…"
     },
+    "document_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)"
+    },
     "embedded": {
      "files": 6,
      "impl_vault": false,
@@ -105966,7 +106108,7 @@
    },
    "over_bar": 36,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1230,
+   "source_files": 1231,
    "test_files": 182
   },
   "oneiron-spawn": {
