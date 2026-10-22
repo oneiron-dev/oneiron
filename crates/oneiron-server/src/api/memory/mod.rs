@@ -215,6 +215,11 @@ pub(crate) struct CoreMemoryVerbDeleteOutcome {
     #[serde(skip_serializing_if = "Option::is_none", rename = "sweep_key")]
     #[schema(example = "686172646572617365")]
     sweep_key: Option<String>,
+    /// `applied` when the local delete rail applied it, or
+    /// `completion_pending` when the owner's delete was accepted and waits:
+    /// erase confirmed, completion pending (FIX 1465).
+    #[schema(example = "applied")]
+    state: String,
 }
 
 /// Typed operation family selected by a named memory verb.
@@ -299,6 +304,7 @@ pub(crate) struct CoreMemoryWatchResponse {
     query_ref: Option<String>,
 }
 
+mod owner_delete;
 mod watch;
 pub(crate) use self::watch::{
     __path_core_memory_watch_disable, __path_core_memory_watch_enable,
@@ -440,13 +446,26 @@ pub(crate) async fn core_memory_verb(
             }
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let (reason, response_reason) = core_memory_delete_reason(verb, req.reason)?;
-            let outcome = server
-                .vault
-                .delete_entity_with_reason(&id, reason)
-                .map_err(|error| {
-                    tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
-                    core_engine_error("core memory delete failed", error)
-                })?;
+            let failed = |error: oneiron::Error| {
+                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
+                core_engine_error("core memory delete failed", error)
+            };
+            // The proven owner's delete of a record only secret orders keep
+            // waits, accepted, instead of being refused (FIX 1465).
+            let pending = owner_delete::owner_pending_delete(&server, &auth, &id, reason)
+                .map_err(failed)?;
+            let (outcome, state) = if pending {
+                let state = oneiron::memory::DeleteRequestState::CompletionPending;
+                ((true, None, None), state)
+            } else {
+                let outcome = server
+                    .vault
+                    .delete_entity_with_reason(&id, reason)
+                    .map_err(failed)?;
+                let applied = (outcome.existed, outcome.receipt_id, outcome.sweep_key);
+                (applied, oneiron::memory::DeleteRequestState::Applied)
+            };
+            let (existed, receipt_id, sweep_key) = outcome;
 
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
@@ -457,7 +476,7 @@ pub(crate) async fn core_memory_verb(
                 old_id: None,
                 entity: None,
                 delete: Some(CoreMemoryVerbDeleteOutcome {
-                    existed: outcome.existed,
+                    existed,
                     reason: response_reason,
                     hard: matches!(
                         reason,
@@ -465,8 +484,9 @@ pub(crate) async fn core_memory_verb(
                             | oneiron::DeleteReason::GdprDelete
                             | oneiron::DeleteReason::PolicyDelete
                     ),
-                    receipt_id: outcome.receipt_id.map(|id| id.to_hex()),
-                    sweep_key: outcome.sweep_key.as_deref().map(hex_bytes),
+                    receipt_id: receipt_id.map(|id| id.to_hex()),
+                    sweep_key: sweep_key.as_deref().map(hex_bytes),
+                    state: state.as_str().to_owned(),
                 }),
             }))
         }
