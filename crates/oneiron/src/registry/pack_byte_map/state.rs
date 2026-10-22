@@ -33,6 +33,7 @@ impl PackByteMapSnapshot {
         let mut allocations = BTreeSet::new();
         for (name, row) in &self.registrations {
             row.identity.validate()?;
+            row.validate_retained()?;
             if name != &row.identity.name
                 || row.generation == 0
                 || (row.active && row.handle.is_none())
@@ -67,9 +68,15 @@ impl PackByteMapSnapshot {
         identity.validate()?;
         if let Some(prior) = self.registrations.get_mut(&identity.name) {
             if prior.identity != *identity {
-                return Err(Error::Registry(RegistryError::PackKindNameCollision(
-                    identity.name.clone(),
-                )));
+                // The admitted update of the same pack, its kind schema
+                // unchanged, is a revision (FIX 10062); any other identity
+                // under the name collides.
+                if !prior.identity.same_pack_revision(identity) {
+                    return Err(Error::Registry(RegistryError::PackKindNameCollision(
+                        identity.name.clone(),
+                    )));
+                }
+                prior.revise(identity);
             }
             if prior.handle.is_some() {
                 prior.active = true;
@@ -94,8 +101,10 @@ impl PackByteMapSnapshot {
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("pack slot generation"))?;
         self.slot_generations.insert(handle, generation);
+        // A collected handle has no instance left, so no pin to retain.
         let row = PackKindRegistration {
             identity: identity.clone(),
+            retained: Vec::new(),
             handle: Some(handle),
             generation,
             active: true,
@@ -144,7 +153,7 @@ impl PackByteMapSnapshot {
     ) -> Result<()> {
         envelope.validate()?;
         let row = self.installed(&envelope.kind.name)?;
-        if row.identity != envelope.kind
+        if !row.admits(&envelope.kind)
             || row.handle != Some(handle)
             || row.generation != envelope.generation
         {
@@ -161,7 +170,7 @@ impl PackByteMapSnapshot {
     ) -> Result<(u8, PackInstanceEnvelope)> {
         envelope.validate()?;
         let row = self.installed(&envelope.kind.name)?;
-        if row.identity != envelope.kind {
+        if !row.admits(&envelope.kind) {
             return Err(Error::Registry(RegistryError::PackKindNameCollision(
                 envelope.kind.name.clone(),
             )));
