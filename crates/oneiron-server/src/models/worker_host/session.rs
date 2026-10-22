@@ -42,6 +42,8 @@ use oneiron::EntityId;
 use oneiron::llm::{SegmentManifest, SessionInvalidation};
 
 #[cfg(unix)]
+pub(super) use registry::Registry;
+#[cfg(unix)]
 pub(in crate::models) use turn::open_turn;
 
 /// What a turn's canonical path was admitted under, held by the turn and

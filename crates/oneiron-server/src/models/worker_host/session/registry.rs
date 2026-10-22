@@ -4,7 +4,7 @@
 //! epoch empties it, and nothing here is persisted or restored.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use oneiron::llm::{
     CanonicalCheckpointRef, ManifestDigest, SessionBinding, SessionDrop, SessionHandle,
@@ -16,7 +16,10 @@ use serde_json::Value as JsonValue;
 use super::policy;
 use crate::models::native_exl3::{OpFault, session_send};
 
-static REGISTRY: OnceLock<Mutex<BTreeMap<String, Worker>>> = OnceLock::new();
+/// Every managed worker's sessions, by worker id: held by the process's one
+/// worker host, beside the supervisors.
+#[derive(Default)]
+pub(in crate::models::worker_host) struct Registry(Mutex<BTreeMap<String, Worker>>);
 
 /// Where a worker's sessions are reached: its current incarnation's socket
 /// and epoch, and its supervisor, whose activity the answers feed.
@@ -83,8 +86,9 @@ pub(super) struct PendingTurn {
 }
 
 pub(super) fn lock() -> MutexGuard<'static, BTreeMap<String, Worker>> {
-    REGISTRY
-        .get_or_init(Mutex::default)
+    super::super::host()
+        .sessions
+        .0
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
 }

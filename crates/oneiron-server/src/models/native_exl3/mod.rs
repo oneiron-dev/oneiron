@@ -29,6 +29,7 @@ mod transport;
 mod wire;
 
 pub(super) use session_ops::{OpFault, capability as session_capability, send as session_send};
+pub(super) use transport::next_request_id;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;

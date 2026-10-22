@@ -35,7 +35,7 @@ const SEND_FLAGS: SendFlags = SendFlags::empty();
 /// Request ids, unique in this process.
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
-pub(super) fn next_request_id() -> u64 {
+pub(in crate::models) fn next_request_id() -> u64 {
     NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
 }
 

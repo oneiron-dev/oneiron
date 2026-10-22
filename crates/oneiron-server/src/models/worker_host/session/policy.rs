@@ -2,7 +2,6 @@
 //! sessions, which calls may use one, what keys it, where the canonical cut
 //! falls, when a suffix commit runs, and why a session is dropped.
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use oneiron::llm::{
     CanonicalCheckpointRef, ConditioningDigest, MessageStamp, SegmentClass, SegmentKind,
@@ -212,9 +211,8 @@ pub(super) fn suffix_plan(
     }
 }
 
-/// Op ids, unique in this process: a retried op names the same one.
-static NEXT_OP_ID: AtomicU64 = AtomicU64::new(1);
-
+/// An op id, unique in this process (the native channel's own request
+/// ids): a retried op names the same one.
 pub(super) fn next_op_id() -> u64 {
-    NEXT_OP_ID.fetch_add(1, Ordering::Relaxed)
+    crate::models::native_exl3::next_request_id()
 }
