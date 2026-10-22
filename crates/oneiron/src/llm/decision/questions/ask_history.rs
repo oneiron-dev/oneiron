@@ -18,7 +18,7 @@ use super::store::{
     AnswerKey, QUESTION_ANSWER, decode_family, family_prefix, secret_scan_before_put,
 };
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Error, ErrorKind, Result, Vault};
 
 /// Key of one log entry: id16(question) + u64be(sequence).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,8 +95,9 @@ pub(super) struct ArtifactAskEvent {
     pub(super) asked_at: u64,
     /// The proposal its answers wait under; none when no unit was answered.
     pub(super) proposal_ref: Option<String>,
-    /// The failed ask's error kind; none when it completed.
-    pub(super) failed: Option<String>,
+    /// The failed ask's error kind, as its stable wire name (FIX 9177); none when it
+    /// completed.
+    pub(super) failed: Option<ErrorKind>,
 }
 
 impl ArtifactAskEvent {
