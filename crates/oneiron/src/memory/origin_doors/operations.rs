@@ -1,3 +1,7 @@
+//! Origin doors: authority get and set, checkout door binding, code export and publications.
+//! `Memory::origin_authority_get_as` is its call surface.
+//! `memory::origin_doors::types` defines the records these take and return.
+
 use super::*;
 use crate::checkout::lease::CheckoutRepoOps;
 use crate::git_wire::{GitOid, GitRefName, GitWireRepo};

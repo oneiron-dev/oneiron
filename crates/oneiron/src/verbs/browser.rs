@@ -1,10 +1,11 @@
 //! Browser wire shapes, shared by code mode and the credential-bound host doors.
 pub use oneiron_browser::{
     BatchInput as BrowserBatchInput, ClickInput as BrowserClickInput,
-    CropInput as BrowserCropInput, DraftInput as BrowserLibraryDraftInput,
-    ExpectInput as BrowserExpectInput, FindInput as BrowserFindInput,
-    HandoverInput as BrowserHandoverInput, LibraryFindInput as BrowserLibraryFindInput,
-    LibraryRetireInput as BrowserLibraryRetireInput,
+    CropInput as BrowserCropInput, DemonstrationStartInput as BrowserDemonstrationStartInput,
+    DemonstrationStopInput as BrowserDemonstrationStopInput,
+    DraftInput as BrowserLibraryDraftInput, ExpectInput as BrowserExpectInput,
+    FindInput as BrowserFindInput, HandoverInput as BrowserHandoverInput,
+    LibraryFindInput as BrowserLibraryFindInput, LibraryRetireInput as BrowserLibraryRetireInput,
     LibraryRetiredInput as BrowserLibraryRetiredInput, LibraryRunInput as BrowserLibraryRunInput,
     ObservationBase as BrowserObservationBase, ObserveInput as BrowserObserveInput,
     OpenInput as BrowserOpenInput, PointInput as BrowserPointInput,
@@ -20,6 +21,10 @@ pub use oneiron_browser::{
 // with the takeover a person ended and the agent's move to another tab since
 // its last answer, once each.
 pub type BrowserBatchOutput = oneiron_browser::BrowserAnswer<oneiron_browser::BatchOutput>;
+pub type BrowserDemonstrationStartOutput =
+    oneiron_browser::BrowserAnswer<oneiron_browser::DemonstrationStarted>;
+pub type BrowserDemonstrationStopOutput =
+    oneiron_browser::BrowserAnswer<oneiron_browser::DemonstrationOutput>;
 pub type BrowserExpectOutput = oneiron_browser::BrowserAnswer<oneiron_browser::ExpectOutput>;
 pub type BrowserFindOutput = oneiron_browser::BrowserAnswer<oneiron_browser::FindOutput>;
 pub type BrowserHandoverOutput = oneiron_browser::BrowserAnswer<oneiron_browser::HandoverOutput>;
