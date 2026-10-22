@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1155 facade rows, 4094 generated types.
+// UniFFI census: 1155 facade rows, 4096 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1107.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -1323,6 +1323,16 @@ pub struct NotificationSource {
     pub detail: Option<String>,
 }
 
+/// `oneiron::inbox::actions::NotificationAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationAction {
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "args")]
+    pub args: crate::WireJson,
+}
+
 /// `oneiron::inbox::list::NotificationRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -1349,6 +1359,8 @@ pub struct NotificationRow {
     pub seen: bool,
     #[serde(rename = "acked")]
     pub acked: bool,
+    #[serde(rename = "actions", default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<NotificationAction>>,
 }
 
 /// `oneiron::inbox::list::NotificationPage`.
@@ -1571,6 +1583,24 @@ pub struct AgentHealthCoachAnswer {
     pub pads: AgentHealthPadRead,
     #[serde(rename = "draft", default, skip_serializing_if = "Option::is_none")]
     pub draft: Option<AgentHealthCoachDraft>,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
+    #[serde(
+        rename = "source_rows_complete",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows_complete: Option<bool>,
+    #[serde(
+        rename = "draft_erased",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub draft_erased: Option<bool>,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::apply::AgentHealthApplicationState`.
@@ -4229,6 +4259,30 @@ pub struct CancelRejectionPathology {
     pub last_status: Option<String>,
 }
 
+/// `oneiron_authority::authority::comm_reach::CommReach`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CommReach {
+    #[serde(rename = "parent")]
+    Parent,
+    #[serde(rename = "subtree")]
+    Subtree,
+    #[serde(rename = "project")]
+    Project,
+    #[serde(rename = "vault")]
+    Vault,
+}
+
+/// `oneiron::context_board::tasks::projection::ConsultWidening`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsultWidening {
+    #[serde(rename = "child")]
+    pub child: String,
+    #[serde(rename = "from", default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<CommReach>,
+    #[serde(rename = "to")]
+    pub to: CommReach,
+}
+
 /// `oneiron::context_board::tasks::projection::TaskRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TaskRow {
@@ -4282,6 +4336,10 @@ pub struct TaskRow {
         skip_serializing_if = "Option::is_none"
     )]
     pub cancel_pathology: Option<CancelRejectionPathology>,
+    #[serde(rename = "widening", default, skip_serializing_if = "Option::is_none")]
+    pub widening: Option<ConsultWidening>,
+    #[serde(rename = "fits", default, skip_serializing_if = "Option::is_none")]
+    pub fits: Option<Vec<String>>,
 }
 
 /// `oneiron::context_board::tasks::projection::TasksOverflow`.
@@ -10119,19 +10177,6 @@ pub struct CredentialPactCeiling {
     pub ceiling: FederationDirectionScope,
 }
 
-/// `oneiron_authority::authority::comm_reach::CommReach`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum CommReach {
-    #[serde(rename = "parent")]
-    Parent,
-    #[serde(rename = "subtree")]
-    Subtree,
-    #[serde(rename = "project")]
-    Project,
-    #[serde(rename = "vault")]
-    Vault,
-}
-
 /// `oneiron::verbs::credential::CredentialCaveat`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -13665,6 +13710,8 @@ pub enum InboxLensKind {
     CoordinationUpdate,
     #[serde(rename = "concern")]
     Concern,
+    #[serde(rename = "digest")]
+    Digest,
 }
 
 /// `oneiron::agent_inbox_lens::serve::InboxLensPile`.
@@ -13681,8 +13728,8 @@ pub enum InboxLensPile {
 /// `oneiron::agent_inbox_lens::serve::InboxLensParticipant`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct InboxLensParticipant {
-    #[serde(rename = "identity")]
-    pub identity: String,
+    #[serde(rename = "identity", default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
     #[serde(rename = "actor")]
     pub actor: String,
 }
@@ -13726,8 +13773,8 @@ pub struct InboxLensRow {
         skip_serializing_if = "Option::is_none"
     )]
     pub thread_ref: Option<String>,
-    #[serde(rename = "identity")]
-    pub identity: String,
+    #[serde(rename = "identity", default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
     #[serde(rename = "actor")]
     pub actor: String,
     #[serde(rename = "facet", default, skip_serializing_if = "Option::is_none")]
@@ -13758,6 +13805,10 @@ pub struct InboxLensRow {
         skip_serializing_if = "Option::is_none"
     )]
     pub diary_review: Option<InboxLensDiaryReview>,
+    #[serde(rename = "sender", default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<String>,
+    #[serde(rename = "widening", default, skip_serializing_if = "Option::is_none")]
+    pub widening: Option<ConsultWidening>,
 }
 
 /// `oneiron::agent_inbox_lens::serve::InboxConcernGroup`.
@@ -56355,6 +56406,8 @@ pub struct DeckDiff {
 pub struct DeckReviewView {
     #[serde(rename = "head")]
     pub head: Vec<u8>,
+    #[serde(rename = "fork_head")]
+    pub fork_head: Vec<u8>,
     #[serde(rename = "head_version")]
     pub head_version: u64,
     #[serde(rename = "ok")]
@@ -56392,6 +56445,8 @@ pub struct DeckForkMergeRequest {
     pub fork_ref: String,
     #[serde(rename = "reviewed_head")]
     pub reviewed_head: Vec<u8>,
+    #[serde(rename = "reviewed_fork")]
+    pub reviewed_fork: Vec<u8>,
     #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<ApproveScope>,
     #[serde(rename = "landing", default, skip_serializing_if = "Option::is_none")]

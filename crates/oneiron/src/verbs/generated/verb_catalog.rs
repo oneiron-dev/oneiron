@@ -13301,10 +13301,10 @@ impl AgentVerb {
                 "The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands."
             }
             Self::VaultArtifactsBodyDeckReview => {
-                "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names."
+                "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head and fork frontier a merge names."
             }
             Self::VaultArtifactsBodyDeckMerge => {
-                "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses."
+                "A person lands a reviewed deck fork up to the fork frontier its review read, merged or switched in; later fork work waits for its own review. A moved head, a conflict or the opener as merger refuses."
             }
             Self::VaultArtifactsBodyDeckExport => {
                 "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep."
