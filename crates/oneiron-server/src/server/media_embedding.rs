@@ -368,7 +368,9 @@ impl SyncServer {
     /// ([`Self::check_space_moves`]). First, each swapped-in incumbent past
     /// its undo window retires, and each open move past its fill deadline
     /// with no check closes kept
-    /// ([`oneiron::Vault::expire_unfilled_space_moves`]). Returns each
+    /// ([`oneiron::Vault::expire_unfilled_space_moves`]), and each waiting
+    /// owner-approved embedder binding begins its move
+    /// ([`oneiron::Vault::begin_waiting_embedder_moves`]). Returns each
     /// space's own pass and the vectors the rooms stored. Blocking.
     fn backfill_media_pass(
         &self,
@@ -393,6 +395,14 @@ impl SyncServer {
                 }
             }
             Err(error) => tracing::warn!(%error, "unfilled embedding space moves not closed"),
+        }
+        match self.vault.begin_waiting_embedder_moves() {
+            Ok(begun) => {
+                for candidate in begun {
+                    tracing::info!(%candidate, "embedding space move begun for a staged embedder binding");
+                }
+            }
+            Err(error) => tracing::warn!(%error, "staged embedder bindings not begun"),
         }
         let (bindings, moves) = match (self.vault.kind_slot_bindings(), self.vault.space_moves()) {
             (Ok(bindings), Ok(moves)) => (bindings, moves),

@@ -303,6 +303,15 @@ pub(crate) fn moving_kind_in_txn(
         .map(|(_, row)| row.candidate))
 }
 
+/// The move to `candidate`, open or concluded, if any.
+pub(super) fn space_move_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    candidate: &str,
+) -> Result<Option<SpaceMove>> {
+    EMBEDDING_MOVE.get(store, txn, &candidate.to_owned())
+}
+
 fn open_move_in_txn(
     store: &impl SideTableDbs,
     txn: &RoTxn<'_>,
@@ -601,6 +610,23 @@ impl Vault {
         incumbent: SpaceRef,
         margin: Option<f32>,
     ) -> Result<SpaceMove> {
+        let mut wtxn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &wtxn)?;
+        let row = self.begin_space_move_in_txn(&mut wtxn, candidate, incumbent, margin)?;
+        wtxn.commit()?;
+        Ok(row)
+    }
+
+    /// [`Self::begin_space_move`] in the caller's write, which admitted whoever acts first: a
+    /// staged embedder binding begins its move in the write that stages it (O3b PR B). A refusal
+    /// writes nothing.
+    pub(crate) fn begin_space_move_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        candidate: &str,
+        incumbent: SpaceRef,
+        margin: Option<f32>,
+    ) -> Result<SpaceMove> {
         if margin.is_some_and(|margin| !margin.is_finite()) {
             return Err(Error::InvalidConfig(
                 "an embedding space move's margin must be finite".into(),
@@ -611,21 +637,19 @@ impl Vault {
                 "embedding space {candidate} cannot move to itself"
             )));
         }
-        let mut wtxn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &wtxn)?;
-        let Some(space) = embedding_space_in_txn(&self.store, &wtxn, candidate)? else {
+        let Some(space) = embedding_space_in_txn(&self.store, wtxn, candidate)? else {
             return Err(Error::InvalidConfig(format!(
                 "embedding space {candidate} is not declared"
             )));
         };
         if let Some(id) = incumbent.declared()
-            && embedding_space_in_txn(&self.store, &wtxn, id)?.is_none()
+            && embedding_space_in_txn(&self.store, wtxn, id)?.is_none()
         {
             return Err(Error::InvalidConfig(format!(
                 "embedding space {id} is not declared"
             )));
         }
-        let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
+        let bindings = kind_slot_bindings_in_txn(&self.store, wtxn)?;
         let kinds: BTreeSet<InputKind> = InputKind::ALL
             .into_iter()
             .filter(|kind| incumbent.serves(&bindings, *kind))
@@ -638,7 +662,7 @@ impl Vault {
         for kind in &kinds {
             space.admit_binding(*kind)?;
         }
-        for (_, other) in EMBEDDING_MOVE.scan(&self.store, &wtxn)? {
+        for (_, other) in EMBEDDING_MOVE.scan(&self.store, wtxn)? {
             if other.state != SpaceMoveState::Open {
                 continue;
             }
@@ -663,8 +687,7 @@ impl Vault {
             state: SpaceMoveState::Open,
             last_check: None,
         };
-        EMBEDDING_MOVE.put(&self.store, &mut wtxn, &row.candidate, &row)?;
-        wtxn.commit()?;
+        EMBEDDING_MOVE.put(&self.store, wtxn, &row.candidate, &row)?;
         Ok(row)
     }
 
@@ -685,15 +708,27 @@ impl Vault {
     pub fn abandon_space_move(&self, owner: &AuthenticatedOwner, candidate: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &wtxn)?;
-        let moving = open_move_in_txn(&self.store, &wtxn, candidate)?;
-        EMBEDDING_MOVE.delete(&self.store, &mut wtxn, &moving.candidate)?;
-        drop_space_rows_in_txn(&self.store, &mut wtxn, candidate, &moving.kinds)?;
-        let owned = BTreeSet::from([space_setup_id(candidate)?]);
-        let setup = self.publish_embedding_setup_as_in_txn(&mut wtxn, &owned)?;
+        let setup = self.abandon_space_move_in_txn(&mut wtxn, candidate)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
         self.embedding_move_ended();
         Ok(())
+    }
+
+    /// [`Self::abandon_space_move`] in the caller's write, which admitted the owner first; an
+    /// embedder binding filling on it waits again (O3b PR B). Returns the setup rows it
+    /// published, for the caller to hand on once it commits.
+    pub(crate) fn abandon_space_move_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        candidate: &str,
+    ) -> Result<BTreeSet<EntityId>> {
+        let moving = open_move_in_txn(&self.store, wtxn, candidate)?;
+        EMBEDDING_MOVE.delete(&self.store, wtxn, &moving.candidate)?;
+        drop_space_rows_in_txn(&self.store, wtxn, candidate, &moving.kinds)?;
+        super::binding_move::move_ended_in_txn(self, wtxn, &moving)?;
+        let owned = BTreeSet::from([space_setup_id(candidate)?]);
+        self.publish_embedding_setup_as_in_txn(wtxn, &owned)
     }
 
     /// Runs the vault's probes paired on an open move's incumbent and candidate, and concludes
@@ -1034,16 +1069,33 @@ impl Vault {
     /// longer holds as the undo is written (FIX 8200).
     pub fn undo_space_move(&self, owner: &AuthenticatedOwner, candidate: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &wtxn)?;
+        let actor = owner.revalidate_in_txn(self, &wtxn)?;
+        let (moving, setup) = self.undo_space_move_in_txn(&mut wtxn, candidate)?;
+        // The binding the move applied goes back with its slots (O3b PR B).
+        super::binding_move::move_undone_in_txn(self, &mut wtxn, &moving, actor)?;
+        wtxn.commit()?;
+        self.embedding_setup_committed(setup);
+        self.embedding_move_ended();
+        Ok(())
+    }
+
+    /// [`Self::undo_space_move`]'s slots and move in the caller's write, which admitted the owner
+    /// first. Returns the undone move and the setup rows it published, for the caller to hand on
+    /// once it commits. A refusal writes nothing.
+    pub(crate) fn undo_space_move_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        candidate: &str,
+    ) -> Result<(SpaceMove, BTreeSet<EntityId>)> {
         let Some(mut moving) = EMBEDDING_MOVE
-            .get(&self.store, &wtxn, &candidate.to_owned())?
+            .get(&self.store, wtxn, &candidate.to_owned())?
             .filter(|row| matches!(row.state, SpaceMoveState::SwappedIn { .. }))
         else {
             return Err(Error::InvalidConfig(format!(
                 "no swapped-in embedding space move to {candidate}"
             )));
         };
-        let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
+        let bindings = kind_slot_bindings_in_txn(&self.store, wtxn)?;
         if let Some(kind) = moving
             .kinds
             .iter()
@@ -1055,24 +1107,21 @@ impl Vault {
         }
         let incumbent = moving.incumbent.declared();
         if let Some(id) = incumbent
-            && embedding_space_in_txn(&self.store, &wtxn, id)?.is_none()
+            && embedding_space_in_txn(&self.store, wtxn, id)?.is_none()
         {
             return Err(Error::InvalidConfig(format!(
                 "embedding space {id} is retired; the move cannot be undone"
             )));
         }
         for kind in &moving.kinds {
-            set_kind_slot_in_txn(&self.store, &mut wtxn, *kind, incumbent)?;
+            set_kind_slot_in_txn(&self.store, wtxn, *kind, incumbent)?;
         }
         let at = self.store.clock.now_recorded_at();
         moving.state = SpaceMoveState::Undone { at };
-        self.note_space_move_in_txn(&mut wtxn, &moving)?;
-        EMBEDDING_MOVE.put(&self.store, &mut wtxn, &moving.candidate, &moving)?;
-        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
-        wtxn.commit()?;
-        self.embedding_setup_committed(setup);
-        self.embedding_move_ended();
-        Ok(())
+        self.note_space_move_in_txn(wtxn, &moving)?;
+        EMBEDDING_MOVE.put(&self.store, wtxn, &moving.candidate, &moving)?;
+        let setup = self.publish_embedding_setup_in_txn(wtxn)?;
+        Ok((moving, setup))
     }
 
     /// Whether a move that swapped in at `swapped_at` (vault seconds) is past its undo window at
@@ -1152,6 +1201,9 @@ impl Vault {
                 timed_out: true,
             };
             EMBEDDING_MOVE.put(&self.store, &mut wtxn, &moving.candidate, &moving)?;
+            // An embedder binding filling on it waits again with its candidate, which the next
+            // pass declares again (O3b PR B); so it joins before the candidate's rows go.
+            super::binding_move::move_ended_in_txn(self, &mut wtxn, &moving)?;
             drop_space_rows_in_txn(&self.store, &mut wtxn, &moving.candidate, &moving.kinds)?;
             self.note_space_move_in_txn(&mut wtxn, &moving)?;
             expired.push(moving.candidate);
@@ -1194,14 +1246,17 @@ impl Vault {
         let verdict = check
             .as_ref()
             .map_or(NotWorse::Unknown, |check| check.verdict);
+        // An owner-approved embedder binding filling on it makes its swap the owner's yes, the
+        // check's reading kept beside it (O3b PR B).
+        let approved = by_owner || super::binding_move::approves_move_in_txn(self, &wtxn, &moving)?;
         let at = self.store.clock.now_recorded_at();
-        let concluded = if by_owner || verdict == NotWorse::NotWorse {
+        let concluded = if approved || verdict == NotWorse::NotWorse {
             for kind in &moving.kinds {
                 set_kind_slot_in_txn(&self.store, &mut wtxn, *kind, Some(candidate))?;
             }
             moving.state = SpaceMoveState::SwappedIn {
                 at,
-                by_owner: by_owner && verdict != NotWorse::NotWorse,
+                by_owner: approved && verdict != NotWorse::NotWorse,
             };
             true
         } else if verdict == NotWorse::Worse {
@@ -1215,6 +1270,9 @@ impl Vault {
         };
         if check.is_some() {
             moving.last_check.clone_from(&check);
+        }
+        if concluded {
+            super::binding_move::move_ended_in_txn(self, &mut wtxn, &moving)?;
         }
         EMBEDDING_MOVE.put(&self.store, &mut wtxn, &moving.candidate, &moving)?;
         if matches!(moving.state, SpaceMoveState::Kept { .. }) {
