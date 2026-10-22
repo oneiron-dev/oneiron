@@ -42,8 +42,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 5 | 2 | 0 |
 | [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 46 | 6 | 0 |
 | [oneiron-napi](codemap/oneiron-napi.md) | The raw N-API addon root: module registrations and the crate-level native exports | 22 | 1 | 2 |
-| [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 32 | 4 | 1 |
-| [oneiron-organ-protocol](codemap/oneiron-organ-protocol.md) | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 9 | 2 | 0 |
+| [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 36 | 4 | 1 |
+| [oneiron-organ-protocol](codemap/oneiron-organ-protocol.md) | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 11 | 2 | 0 |
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 5 | 0 | 1 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 18 | 8 | 1 |
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 19 | 5 | 0 |
@@ -605,6 +605,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `asks` | file | 1 | m | Protocol 1.1 asks, the engine side: who answers, and what the receipt records |
 | `budget` | file | 1 | m | One admission budget for every organ: threads, memory, in-flight calls |
+| `clock` | file | 1 | s | A call's time, which stops while the call waits for budget room (Engine ruling, 10-20; FIX 6196, 8020) |
 | `error` | file | 1 | s | What can go wrong on the engine side of an organ call |
 | `fetch` | file | 1 | m | The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the… |
 | `handlers` | file | 1 | s | The handlers a caller supplies for an organ's asks (protocol 1.1) |
@@ -614,12 +615,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `mesh` | dir | 3 | m | Organ calls between the owner's nodes (OF-575, owner ruling MESH) |
 | `outcome` | file | 1 | s | What an organ call proposed, checked by the host that ran it: on this machine, or on another of the owner's… |
 | `pin` | file | 1 | s | Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are… |
-| `process` | file | 1 | L | One live organ process: spawn, handshake, a reader thread, calls |
+| `process` | file+dir | 3 | L | One live organ process: spawn, handshake, a reader thread, calls |
 | `receipt` | file | 1 | s | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… |
 | `regions` | file | 1 | s | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
 | `resource_memory` | file | 1 | s | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
 | `route` | file | 1 | m | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
-| `sandbox` | file | 1 | s | What the host does to an organ process between fork and exec |
+| `sandbox` | file+dir | 2 | m | What the host does to an organ process between fork and exec |
 | `seal` | file+dir | 6 | m | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
 | `slot` | file | 1 | m | One installed organ: its process, its crash history, its condition |
 | `spec` | file | 1 | s | What the engine installs and what a caller asks |
@@ -629,10 +630,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `frame` | file | 1 | m | Framing: `len: u32 LE \| MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries… |
+| `frame` | file+dir | 2 | m | Framing: `len: u32 LE \| MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries… |
 | `memory` | file | 1 | s | The `memory.grow` ask (FIX 7654): an organ reserves the memory its own buffers are about to take, before it… |
 | `region` | file | 1 | s | Read-only shared regions: how blob bytes cross without being copied |
-| `runtime` | file | 1 | m | The organ side: handshake, frames, a small worker pool and cancel flags |
+| `runtime` | file+dir | 2 | m | The organ side: handshake, frames, a small worker pool and cancel flags |
 | `seal` | file | 1 | s | The seal organ's revision classification, as its verdicts carry it (OF-415, C032) |
 | `shape` | file | 1 | s | A structural check of a MessagePack frame before it is decoded |
 | `spin` | file | 1 | s | Spinning a moment before sleeping |
