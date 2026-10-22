@@ -10,7 +10,7 @@ use oneiron::task_verb::sdk::EmptyRequest;
 
 use super::FacadeApiError;
 use super::host_doors::support::owner_listing::as_owner;
-use super::host_doors::{Listed, credential_listing, owner_proof, refused};
+use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

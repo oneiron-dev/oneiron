@@ -9,7 +9,7 @@ use oneiron::task_verb::sdk::{self, AgentVerb, LiveRunRequest};
 use oneiron::{EdgeActorClass, EntityId};
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use super::live_run_doors::hold_live_run;
 use crate::api::VerdictAsker;
 use crate::auth::CoreAuth;

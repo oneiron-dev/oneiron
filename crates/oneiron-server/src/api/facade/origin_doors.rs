@@ -12,7 +12,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::owner_action::as_owner;
-use super::host_doors::{Listed, credential_listing};
+use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

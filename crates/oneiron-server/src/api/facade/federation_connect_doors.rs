@@ -1,5 +1,5 @@
+use super::host_doors::support::{Listed, hex_rows, internal};
 //! The typed owner federation doors share the existing owner HTTP operations.
-use super::host_doors::{Listed, hex_rows, internal};
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, federation_connect};

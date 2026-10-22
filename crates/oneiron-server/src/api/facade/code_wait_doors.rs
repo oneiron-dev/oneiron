@@ -11,7 +11,7 @@ use oneiron::memory::code_wait_doors::{
     CodeWaitReceiptRequest, CodeWaitReceiptView, CodeWaitResolveRequest,
 };
 
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 use super::host_doors::support::owner_listing::as_owner;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

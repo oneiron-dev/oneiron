@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use oneiron::memory::merge_queue_doors::*;
 
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 pub(super) use super::host_doors::support::owner_action::as_owner;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

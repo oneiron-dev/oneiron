@@ -1,4 +1,4 @@
-//! The owner-listing `as_owner` the artifact hosting, commitment, code wait and hook regen doors run.
+//! The owner-listing `as_owner` shared by the artifact, commitment, code wait and hook regen doors.
 //! `as_owner` is its call surface: the owner's proof, then the caller; a refusal is `refused`.
 //! The support root defines `owner_proof`, `refused` and the listing this wrapper runs.
 

@@ -41,7 +41,7 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, MaybeListed, credential_listing, owner_proof, refused};
+use super::host_doors::support::{Listed, MaybeListed, credential_listing, owner_proof, refused};
 use super::shared_act_doors::{as_person_naming, person};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

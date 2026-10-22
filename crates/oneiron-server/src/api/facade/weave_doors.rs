@@ -25,7 +25,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{EmptyRequest, WeaveEnqueueRequest, WeaveScheduleCleared};
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing, off_runtime_listing, refused};
+use super::host_doors::support::{Listed, credential_listing, off_runtime_listing, refused};
 use crate::auth::CoreAuth;
 use crate::lens_frames::CardOwner;
 use crate::server::SyncServer;
@@ -262,7 +262,7 @@ pub(crate) async fn vault_weave_enqueue(
     input: WeaveEnqueueRequest,
 ) -> Listed<DreamerAttemptRef> {
     const VERB: &str = "vault.weave.enqueue";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -280,7 +280,7 @@ pub(crate) async fn vault_weave_schedules_list(
     _input: EmptyRequest,
 ) -> Listed<Vec<WeaveScheduleView>> {
     const VERB: &str = "vault.weave.schedules.list";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -298,7 +298,7 @@ pub(crate) async fn vault_weave_schedules_put(
     input: WeaveScheduleView,
 ) -> Listed<WeaveScheduleView> {
     const VERB: &str = "vault.weave.schedules.put";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -316,7 +316,7 @@ pub(crate) async fn vault_weave_schedules_clear(
     input: WeaveReaderRef,
 ) -> Listed<WeaveScheduleCleared> {
     const VERB: &str = "vault.weave.schedules.clear";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -336,7 +336,7 @@ pub(crate) async fn vault_weave_setting_changes_list(
     _input: EmptyRequest,
 ) -> Listed<Vec<WeaveDigestSettingChange>> {
     const VERB: &str = "vault.weave.setting_changes.list";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -356,7 +356,7 @@ pub(crate) async fn vault_weave_setting_changes_answer(
     input: WeaveDigestSettingAnswer,
 ) -> Listed<WeaveDigestSettingChange> {
     const VERB: &str = "vault.weave.setting_changes.answer";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -376,7 +376,7 @@ pub(crate) async fn vault_weave_setting_changes_undo(
     input: WeaveDigestSettingUndo,
 ) -> Listed<WeaveDigestSettingChange> {
     const VERB: &str = "vault.weave.setting_changes.undo";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -396,7 +396,7 @@ pub(crate) async fn vault_weave_digest_feedback_put(
     input: WeaveDigestFeedback,
 ) -> Listed<WeaveDigestFeedback> {
     const VERB: &str = "vault.weave.digest_feedback.put";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -414,7 +414,7 @@ pub(crate) async fn vault_weave_owner_digest_render(
     _input: EmptyRequest,
 ) -> Listed<Option<WeaveDigestRendered>> {
     const VERB: &str = "vault.weave.owner.digest.render";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -432,7 +432,7 @@ pub(crate) async fn vault_inbox_concerns_review(
     _input: EmptyRequest,
 ) -> Listed<DreamerAttemptRef> {
     const VERB: &str = "vault.inbox.concerns.review";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -450,7 +450,7 @@ pub(crate) async fn vault_inbox_lens(
     input: InboxLensRequest,
 ) -> Listed<InboxLensPage> {
     const VERB: &str = "vault.inbox.lens";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
@@ -468,7 +468,7 @@ pub(crate) async fn vault_inbox_groups(
     input: InboxRunGroupsRequest,
 ) -> Listed<Vec<InboxGroup>> {
     const VERB: &str = "vault.inbox.groups";
-    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };

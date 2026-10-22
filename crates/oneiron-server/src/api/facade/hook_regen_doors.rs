@@ -13,7 +13,7 @@ use oneiron::memory::hook_regen_doors::{
 };
 use oneiron::task_verb::sdk::{EmptyRequest, PackPutReceipt};
 
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 use super::host_doors::support::owner_listing::as_owner;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
