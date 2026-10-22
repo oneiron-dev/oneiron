@@ -22975,9 +22975,19 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 17,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/decisions/identity_choice.rs",
+     "purpose": "The one final identity choice (FIX 8693)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -23011,11 +23021,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/extraction/corrections.rs",
-     "purpose": "The typed pack that decides which listed claim each extracted candidate corrects: one question per candidate…",
+     "purpose": "The typed pack that decides which listed claim each extracted candidate corrects: per candidate, one…",
      "surface": {
       "crate-vis": 3
      }
@@ -23051,7 +23061,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/merge_resolution.rs",
@@ -23875,7 +23885,7 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 4,
       "struct": 8
@@ -23885,10 +23895,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/settle/decision_pages.rs",
+     "purpose": "A parked conflict's settlement in pages (Rule 5, FIX 7636, FIX 7637)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/settle/decision_projection.rs",
      "purpose": "A parked conflict's settlement ask as the ladder reads it (FIX 7506 P2): each stored member and retained…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
@@ -75206,7 +75226,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 133,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76265,7 +76285,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4971,
+   "source_files": 4973,
    "test_files": 902
   },
   "oneiron-android": {
