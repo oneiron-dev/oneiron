@@ -103,12 +103,6 @@ impl<'a> CallAsks<'a> {
         self.context.room
     }
 
-    /// Answer bytes this call has lent the organ: they draw on the same
-    /// booking as its outputs.
-    pub(crate) fn lent_bytes(&self) -> u64 {
-        self.lent
-    }
-
     /// The largest frame bodies this call's process carried for it: the
     /// host's (its call, its answers), then the organ's (its asks; the
     /// reply is the caller's to add).

@@ -113,7 +113,7 @@ impl Here<'_> {
                     FloorRefusal::Deadline => HostError::DeadlineExceeded,
                 })
             })?;
-        Ok(Some(Leased(Mutex::new(held))))
+        Ok(Some(Leased::new(held)))
     }
 }
 

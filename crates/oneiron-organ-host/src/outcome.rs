@@ -38,7 +38,18 @@ pub struct OrganOutput {
 }
 
 /// A lease of the machine's memory an output's bytes hold until they drop.
-pub(crate) struct Leased(pub(crate) Mutex<Box<dyn Send>>);
+pub(crate) struct Leased {
+    /// Never read: it goes back as the bytes drop.
+    _held: Mutex<Box<dyn Send>>,
+}
+
+impl Leased {
+    pub(crate) fn new(held: Box<dyn Send>) -> Self {
+        Self {
+            _held: Mutex::new(held),
+        }
+    }
+}
 
 impl fmt::Debug for Leased {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
