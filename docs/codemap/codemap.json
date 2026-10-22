@@ -21731,7 +21731,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 1,
-      "re-export": 14
+      "re-export": 16
      }
     },
     {
@@ -21767,6 +21767,24 @@
       "fn": 22,
       "struct": 14,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunnerSeatCreditTopUpRequest",
+      "RunnerSeatQuotasRequest",
+      "RunnerSeatQuotasView",
+      "RunnerSeatTopUpEffect",
+      "RunnerSeatTopUpReceipt"
+     ],
+     "path": "src/dispatch_byoa/owner_doors.rs",
+     "purpose": "The owner's runner seat quota doors (FIX 7451): `vault.runners.seats.quotas` reads the named seats' quotas…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -21841,13 +21859,23 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/seat_candidate.rs",
+     "purpose": "A seat as an ordered route's candidate (FIX 7505): a CLI seat whose argv cannot carry the work's task is…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RunnerSeatQuota"
      ],
      "path": "src/dispatch_byoa/seat_quota.rs",
      "purpose": "What each runner seat's quota last read as (OF-137), kept by the route so a pass picks seats without reading…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 1
      }
@@ -21927,20 +21955,46 @@
      "path": "src/dispatch_byoa/work_binding.rs",
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 5,
       "fn": 6,
       "struct": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dispatch_byoa/work_hand_off.rs",
      "purpose": "A spent seat's work handed to the next seat (OF-137): \"the router mints the next attempt on the next seat…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResumeRunnerWork",
+      "RunnerWorkResume"
+     ],
+     "path": "src/dispatch_byoa/work_resume.rs",
+     "purpose": "An explicit resume of a bound runner work a spend parked (FIX 7450): the owner's Stop, InternalModels, or a…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/work_usage.rs",
+     "purpose": "The provider usage a bound work's ended attempt reports (FIX 7452), read from that attempt's own capture and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -66452,7 +66506,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1167
+      "fn": 1169
      }
     },
     {
@@ -71873,8 +71927,8 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 19,
-     "impl_vault": false,
+     "files": 23,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
@@ -72939,7 +72993,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4688,
+   "source_files": 4692,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83913,7 +83967,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1136
+      "fn": 1138
      }
     },
     {
@@ -85201,7 +85255,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1137
+      "fn": 1139
      }
     },
     {
@@ -89400,7 +89454,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 186
+      "crate-vis": 187
      }
     },
     {
@@ -89821,6 +89875,16 @@
      "purpose": "The owner's cross-kind review and run compensation, on the caller's own credential handle",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/runner_seat_doors.rs",
+     "purpose": "The owner's runner seat quota doors (FIX 7451): `vault.runners.seats.quotas` and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -100181,7 +100245,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 504,
+     "files": 505,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -100638,7 +100702,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1098,
+   "source_files": 1099,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -103904,6 +103968,13 @@
       "RunnerBudgetReservation",
       "RunnerBudgetReservationsRequest",
       "RunnerBudgetReservationsView",
+      "RunnerSeat",
+      "RunnerSeatCreditTopUpRequest",
+      "RunnerSeatQuota",
+      "RunnerSeatQuotasRequest",
+      "RunnerSeatQuotasView",
+      "RunnerSeatTopUpEffect",
+      "RunnerSeatTopUpReceipt",
       "SavedIntentState",
       "SavedQueryArchiveRequest",
       "SavedQueryCreateRequest",
@@ -104010,9 +104081,11 @@
       "SealedAttemptReceipt",
       "SearchAxis",
       "SearchEvidence",
+      "SeatAuth",
       "SeatInventory",
       "SeatPolicy",
       "SeatPrecedence",
+      "SeatSpent",
       "SeatWorkload",
       "SecretGrantCleanup",
       "SecretGrantMintRequest",
@@ -104797,8 +104870,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 964,
-      "struct": 2994
+      "enum": 966,
+      "struct": 3001
      }
     },
     {
