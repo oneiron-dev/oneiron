@@ -153,3 +153,37 @@ pub(super) fn own_server(
         server: Some(server),
     })
 }
+
+/// The same catalog and OpenAI request codec, sent once over the native wire.
+pub(super) fn native(
+    models: &Models,
+    socket: &Path,
+    rt: &tokio::runtime::Runtime,
+) -> Result<Arm, String> {
+    let runtime = models_runtime(models, rt)?;
+    let entry = runtime
+        .router()
+        .and_then(|router| {
+            router
+                .chat_catalog()
+                .find(|entry| entry.model == models.engine_id)
+                .cloned()
+        })
+        .ok_or("no configured native catalog row")?;
+    let reasoning = entry.supports(&LlmCapability::Reasoning);
+    let locality = entry.locality;
+    let provider = &models.config.providers[&models.model.provider];
+    let transport = rt.block_on(super::native::Transport::connect(socket, provider))?;
+    let config =
+        oneiron_llm_openai::OpenAiCompatConfig::from_catalog([entry]).with_solo_admission(true);
+    Ok(Arm {
+        backend: Box::new(oneiron_llm_openai::OpenAiCompatBackend::new(
+            config, transport,
+        )),
+        model: models.engine_id.clone(),
+        locality,
+        reasoning,
+        _runtime: runtime,
+        server: None,
+    })
+}

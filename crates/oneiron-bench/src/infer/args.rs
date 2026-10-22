@@ -4,8 +4,9 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
-pub(super) const USAGE: &str = "usage: oneiron-bench infer run --arm-id ID --transport direct|own-server\n\
+pub(super) const USAGE: &str = "usage: oneiron-bench infer run --arm-id ID --transport direct|own-server|native-ipc\n\
   --models-toml FILE --model PROVIDER:MODEL --cases /ABS/cases.jsonl --out /ABS/rows.jsonl\n\
+  [--native-socket /ABS/worker.sock] [--seed N]\n\
   [--reps 1] [--only CASE_ID]... [--warmup 1] [--sampling shipped|greedy|card]\n\
   [--schema on|off] [--cache-bust on|off] [--keep-outputs /ABS/DIR]\n\
   [--concurrency 1] [--stagger-ms 0] [--draft-depth N] [--solo on|off]\n\
@@ -22,6 +23,7 @@ pub(super) enum Transport {
     /// `OwnServerBackend` and `RemoteLlmClient` to a loopback `oneiron-server`
     /// that routes to the same provider.
     OwnServer,
+    NativeIpc,
 }
 
 impl Transport {
@@ -29,6 +31,7 @@ impl Transport {
         match self {
             Self::Direct => "direct",
             Self::OwnServer => "own-server",
+            Self::NativeIpc => "native-ipc",
         }
     }
 }
@@ -81,6 +84,8 @@ pub(super) struct RunArgs {
     pub(super) gpu_index: u32,
     pub(super) vram_poll_ms: u64,
     pub(super) server: Option<PathBuf>,
+    pub(super) native_socket: Option<PathBuf>,
+    pub(super) seed: Option<u64>,
     /// Calls in flight at once from this client: worker tasks sharing one
     /// arm, backend and meter.
     pub(super) concurrency: u32,
@@ -147,6 +152,8 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
     let mut gpu_index = 0;
     let mut vram_poll_ms = 100;
     let mut server = None;
+    let mut native_socket = None;
+    let mut seed = None;
     let mut concurrency = 1;
     let mut stagger_ms = 0;
     let mut draft_depth = None;
@@ -162,9 +169,10 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
                 transport = Some(match value.as_str() {
                     "direct" => Transport::Direct,
                     "own-server" => Transport::OwnServer,
+                    "native-ipc" => Transport::NativeIpc,
                     other => {
                         return Err(format!(
-                            "--transport is direct or own-server, not `{other}`"
+                            "--transport is direct, own-server or native-ipc, not `{other}`"
                         ));
                     }
                 });
@@ -204,6 +212,8 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
             "--gpu-index" => gpu_index = number(flag, value)?,
             "--vram-poll-ms" => vram_poll_ms = positive(flag, value)?,
             "--server" => server = Some(PathBuf::from(value)),
+            "--native-socket" => native_socket = Some(absolute(flag, PathBuf::from(value))?),
+            "--seed" => seed = Some(number(flag, value)?),
             "--concurrency" => concurrency = positive(flag, value)?,
             "--stagger-ms" => stagger_ms = number(flag, value)?,
             "--draft-depth" => draft_depth = Some(number(flag, value)?),
@@ -232,8 +242,15 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
         (Transport::OwnServer, None) => {
             return Err("--transport own-server needs --server <oneiron-server binary>".to_owned());
         }
-        (Transport::Direct, Some(_)) => {
+        (Transport::Direct | Transport::NativeIpc, Some(_)) => {
             return Err("--server applies to --transport own-server only".to_owned());
+        }
+        _ => {}
+    }
+    match (transport, &native_socket) {
+        (Transport::NativeIpc, None) => return Err("native-ipc needs --native-socket".to_owned()),
+        (Transport::Direct | Transport::OwnServer, Some(_)) => {
+            return Err("--native-socket applies to native-ipc only".to_owned());
         }
         _ => {}
     }
@@ -257,6 +274,8 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
         gpu_index,
         vram_poll_ms,
         server,
+        native_socket,
+        seed,
         concurrency,
         stagger_ms,
         draft_depth,

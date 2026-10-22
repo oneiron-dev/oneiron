@@ -255,10 +255,20 @@ fn write_rows(
             Ok(measured) => {
                 keep_output(sink.keep_outputs, case, rep, &measured.text);
                 let quality = scoring::score(case, &measured.text);
-                ("ok", None, measured.timing, Some(quality))
+                let rejected = sink.identity.transport == "native-ipc"
+                    && measured.timing.receipt_rejection.is_some();
+                let status = if rejected { "rejected" } else { "ok" };
+                let error = rejected
+                    .then(|| measured.timing.receipt_rejection.clone())
+                    .flatten();
+                (status, error, measured.timing, Some(quality))
             }
             Err(failed) => (
-                "error",
+                if sink.identity.transport == "native-ipc" {
+                    "rejected"
+                } else {
+                    "error"
+                },
                 Some(failed.error),
                 Timing {
                     wall_ms: Some(failed.wall_ms),

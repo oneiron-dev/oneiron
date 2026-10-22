@@ -25,6 +25,7 @@ mod cases;
 mod config;
 mod engine;
 mod measure;
+mod native;
 mod request;
 mod rows;
 mod scoring;
@@ -126,6 +127,12 @@ fn config_digest(args: &RunArgs, models: &Models) -> Result<String, String> {
         "role_added": models.role_added,
         "server": args.server.as_ref().map(|server| server.display().to_string()),
     });
+    if let Some(socket) = &args.native_socket {
+        config["native_socket"] = json!(socket);
+    }
+    if let Some(seed) = args.seed {
+        config["seed"] = json!(seed);
+    }
     // The schedule and the declared depth join the digest only off their
     // defaults, so a sequential run keeps the digest it always had and its
     // rows still resume.
@@ -398,6 +405,13 @@ impl Run<'_> {
             .map_err(|e| format!("tokio runtime: {e}"))?;
         let arm = match (args.transport, &args.server) {
             (Transport::Direct, _) => arms::direct(self.models, &rt)?,
+            (Transport::NativeIpc, _) => arms::native(
+                self.models,
+                args.native_socket
+                    .as_deref()
+                    .ok_or("native-ipc needs --native-socket")?,
+                &rt,
+            )?,
             (Transport::OwnServer, Some(server)) => {
                 let work = sibling(&args.out, &format!(".server-{}", unix_ms()));
                 arms::own_server(self.models, server, &work, &rt, &reaper)?
@@ -413,6 +427,7 @@ impl Run<'_> {
             cache_bust: args.cache_bust,
             reasoning: arm.reasoning,
             solo: args.solo,
+            seed: args.seed,
         };
         let budget = BudgetGuard::new(
             "infer-bench-caller",
