@@ -95,7 +95,11 @@ impl LiftAndEraseShownState {
     /// whole. Host orders are left out, so a client builds the same echo
     /// from the list it displayed.
     #[must_use]
-    pub fn from_holds(records: &[EntityId], claim_free_partition: bool, holds: &[LegalHold]) -> Self {
+    pub fn from_holds(
+        records: &[EntityId],
+        claim_free_partition: bool,
+        holds: &[LegalHold],
+    ) -> Self {
         let records: BTreeSet<EntityId> = records.iter().copied().collect();
         let mut shown: Vec<ShownCustomerHold> = holds
             .iter()
@@ -392,7 +396,17 @@ impl Vault {
                 LegalHoldReason::OwnerConfirmed
             };
             hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
-            hold_store::log_in_txn(&self.store, txn, &hold, event, reason, leaving, &who, now, None)?;
+            hold_store::log_in_txn(
+                &self.store,
+                txn,
+                &hold,
+                event,
+                reason,
+                leaving,
+                &who,
+                now,
+                None,
+            )?;
         }
         // An erase a host order keeps waits for it; in a shared vault with two
         // or more Owners every erase waits out the veto window (FIX 9781).
@@ -463,11 +477,15 @@ impl Vault {
                 .map(drop),
         };
         if let Err(error) = started {
+            let generation = pending.generation;
             let dropped = self.with_write_txn_grouped(|txn| {
-                hold_store::drop_pending_erase_in_txn(&self.store, txn, &record, &pending.generation)
+                hold_store::drop_pending_erase_in_txn(&self.store, txn, &record, &generation)
             });
             if let Err(drop_error) = dropped {
-                tracing::warn!(error = %drop_error, "a waiting erase whose act did not start stays");
+                tracing::warn!(
+                    error = %drop_error,
+                    "a waiting erase whose act did not start stays"
+                );
             }
             return LiftAndEraseStatus::Failed {
                 message: error.to_string(),
@@ -488,7 +506,11 @@ impl Vault {
     /// own `erase` act completed, and claims that act in this writer, so the
     /// act authorizes one erase. Any other erase, and one whose act another
     /// door already executed, runs as it did.
-    pub(super) fn erase_act_cleared(&self, record: &EntityId, pending: &PendingErase) -> Result<bool> {
+    pub(super) fn erase_act_cleared(
+        &self,
+        record: &EntityId,
+        pending: &PendingErase,
+    ) -> Result<bool> {
         if pending.kind != PendingEraseKind::LiftAndErase {
             return Ok(true);
         }

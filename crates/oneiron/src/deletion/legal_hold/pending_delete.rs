@@ -8,8 +8,9 @@
 //!
 //! Only a proven owner's own delete is accepted so. A customer hold, an
 //! order the owner may see, a member, an agent, a timer or a raw delete
-//! meets the hold's refusal as before, and a record the rail would refuse
-//! for any other reason is refused here the same way.
+//! meets the hold's refusal as before. A record the due run's delete rail
+//! would refuse for any other reason is not accepted either: the ordinary
+//! delete runs, and refuses it as it does today.
 
 use super::{LegalHoldEventKind, LegalHoldReason, LegalHoldTarget};
 use crate::Vault;
@@ -32,8 +33,8 @@ impl Vault {
     /// request again keeps the one waiting; another one replaces it.
     ///
     /// # Errors
-    /// The owner proof no longer holds, or the delete rail refuses the
-    /// record for a reason no hold makes.
+    /// The owner proof no longer holds, or the caller's deletion authority
+    /// does not.
     pub fn owner_pending_delete(
         &self,
         owner: &AuthenticatedOwner,
@@ -75,7 +76,11 @@ impl Vault {
             if crate::world_keys::reject_held_pad_world_in_txn(&self.store, txn, &[*id]).is_err() {
                 return Ok(false);
             }
-            self.delete_admission_in_txn(txn, id, reason, true)?;
+            // What the due run will refuse is never accepted: the ordinary
+            // delete runs instead, and refuses as it does today.
+            if self.delete_admission_in_txn(txn, id, reason, false).is_err() {
+                return Ok(false);
+            }
             let generation = self.store.clock.entity_id()?;
             let request = PendingErase {
                 confirmed_by: Some(actor.to_hex()),
