@@ -74,11 +74,8 @@ impl InferenceWindows {
     /// one. Any other window that cannot be built fails as the call's infer
     /// would.
     pub(crate) fn plan(counter: &WindowCounter, input: EncoderInput) -> oneiron::Result<Self> {
-        match counter.window(&input) {
-            Ok(window) => {
-                let tokens = window.tokens();
-                return Ok(Self::whole(input, tokens));
-            }
+        match counter.window(&input).map(|window| window.tokens()) {
+            Ok(tokens) => return Ok(Self::whole(input, tokens)),
             Err(error) if !turn_overflows(counter, &input) => return Err(error),
             Err(_) => {}
         }
@@ -226,10 +223,10 @@ fn split(
             messages,
             ..input.clone()
         };
-        let Ok(window) = counter.window(&part) else {
+        let Ok(fits) = counter.window(&part).map(|window| window.tokens()) else {
             return Ok(None);
         };
-        tokens = tokens.max(window.tokens());
+        tokens = tokens.max(fits);
         parts.push(WindowPart {
             input: part,
             origins,
