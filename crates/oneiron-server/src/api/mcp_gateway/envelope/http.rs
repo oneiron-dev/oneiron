@@ -234,7 +234,47 @@ pub(super) async fn mcp_endpoint(
                             error,
                         );
                     }
-                    let mut reply = outcome.body;
+                    // The waiter is resolved again, on its own connection's
+                    // machine: a credential no longer live gets the refusal
+                    // it gets anywhere, and the kept answer is released for
+                    // this waiter (FIX 7914).
+                    let waiter = match super::booking_call::resolve_tool_caller(
+                        mode,
+                        &mcp_request_id(&id),
+                        &headers,
+                        &connection,
+                        locality,
+                        &server,
+                        params,
+                    )
+                    .await
+                    {
+                        Ok(waiter) if waiter.auth.as_ref().is_some_and(|auth| {
+                            !auth.credential_is_live(server.vault())
+                        }) =>
+                        {
+                            Err(super::super::actor_dispatch::mcp_proof_error())
+                        }
+                        Ok(waiter) => {
+                            Ok(waiter.toward(crate::auth::proved_peer(&headers, &connection)))
+                        }
+                        Err(error) => Err(error),
+                    };
+                    let waiter = match waiter {
+                        Ok(waiter) => waiter,
+                        Err(error) => {
+                            return mcp_connection_refusal(
+                                &server,
+                                &headers,
+                                &request.method,
+                                &body,
+                                id,
+                                error,
+                            );
+                        }
+                    };
+                    let mut reply =
+                        super::super::claimed_release::replayed(&server, &waiter, outcome);
                     if let Some(reply) = reply.as_object_mut() {
                         reply.insert("id".to_owned(), id);
                     }
@@ -273,7 +313,7 @@ pub(super) async fn mcp_endpoint(
         }
     };
     let method = request.method.clone();
-    let mut result = handle_mcp_request(
+    let call = handle_mcp_request(
         mode,
         &headers,
         locality,
@@ -281,8 +321,14 @@ pub(super) async fn mcp_endpoint(
         &server,
         request,
         raw_arguments.as_deref(),
-    )
-    .await;
+    );
+    // A claimed call keeps the answer its release judged, for the calls
+    // waiting on it (FIX 7914).
+    let (mut result, judged) = if claim.is_some() {
+        super::super::claimed_release::capturing(call).await
+    } else {
+        (call.await, None)
+    };
     // A `tools/call` that reached its door carries its own receipt; every
     // other reply is the connection's (FIX 811).
     let covered = match &result {
@@ -297,9 +343,12 @@ pub(super) async fn mcp_endpoint(
         if let Some(saved) = saved.as_object_mut() {
             saved.remove("id");
         }
+        let peer = crate::auth::proved_peer(&headers, &connection);
+        let release = super::super::claimed_release::kept(peer, &saved, judged);
         claim.finish(InvocationOutcome {
             status: 200,
             body: saved,
+            release,
         });
     }
     mcp_http_reply(reply, stamp.as_ref())
