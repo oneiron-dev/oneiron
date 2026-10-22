@@ -22,9 +22,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/guard.rs` | src | s | 1 struct · 17 fn · 1 crate-vis | BudgetGuard | Guard handle: admission, abort, reads, and settlement entry points |
 | `src/llm/budget/ladders.rs` | src | s | 5 crate-vis | — | Threshold ladder emission for the budget meter |
 | `src/llm/budget/ledger.rs` | src | s | 10 crate-vis | — | Lease and tally bookkeeping: reservations, charging, and metering math |
-| `src/llm/budget/mod.rs` | src | s | 5 re-export | — | — |
+| `src/llm/budget/mod.rs` | src | s | 5 re-export | — | Budget admission and settlement surface |
 | `src/llm/budget/policy.rs` | src | s | 2 struct · 1 enum · 9 fn · 1 crate-vis | BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable | Resolved manifest policy table for one budget meter |
-| `src/llm/budget/settlement.rs` | src | s | 2 fn · 1 crate-vis | — | — |
+| `src/llm/budget/settlement.rs` | src | s | 2 fn · 1 crate-vis | — | Budget lease settlement |
 | `src/llm/budget/state.rs` | src | m | 23 crate-vis | — | Budget meter core: reserve planning and admission |
 | `src/llm/budget/templates.rs` | src | s | 1 struct · 9 const | BudgetPromptTemplate | Budget ladder prompt templates and their registry |
 | `src/llm/budget/tests.rs` | test | s | — | — | — |
