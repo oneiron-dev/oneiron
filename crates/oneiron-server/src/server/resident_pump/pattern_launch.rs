@@ -273,7 +273,10 @@ pub(super) fn leader_exposure(
     let Some(launch) = dispatcher.planned_launch_for_leader(leased.id)? else {
         return Ok(None);
     };
-    let pack = &launch.pack;
+    // An erase took the intent's pack (Engine 10-22): the run reads none.
+    let Some(pack) = &launch.pack else {
+        return Ok(None);
+    };
     let body = skill_text(pack)?;
     let revision = format!("{}@{}", pack.skill_id(), pack.version());
     let exposure = if continues {

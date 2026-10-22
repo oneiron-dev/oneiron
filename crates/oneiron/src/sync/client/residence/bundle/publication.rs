@@ -12,8 +12,9 @@
 //! newest generation, naming the request, which the home admits it under:
 //! - When that generation names the request and this install sealed it, a
 //!   commit whose ack was lost stands, and the request is enacted.
-//! - When another upload already took the slot, the request waits for the
-//!   next one.
+//! - When the home's newest is of a later slot than this clock's, the request
+//!   waits for it; a slot another upload took already takes this one too
+//!   (FIX 8885).
 //! - Otherwise, once it holds the publisher turn, it assembles with the
 //!   request in the bundle's signed provenance, stages both objects and
 //!   commits on the parent it read, naming the request, after persisting
@@ -208,7 +209,9 @@ async fn publish_one(
     if named {
         return enact(manager, request).await;
     }
-    if latest.is_some_and(|newest| newest.slot >= slot) || !turn::ask_turn(rpc, false).await? {
+    // An asked publication goes on in a slot that has a generation already
+    // (FIX 8885); only a newest of a later slot than this clock's waits.
+    if latest.is_some_and(|newest| newest.slot > slot) || !turn::ask_turn(rpc, false).await? {
         return Ok(());
     }
     let assembling = Arc::clone(manager);

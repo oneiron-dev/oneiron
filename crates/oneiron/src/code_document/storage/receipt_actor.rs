@@ -3,7 +3,7 @@
 //! erase rewrites the receipts alone: every operation, frontier, hash and
 //! sequence stays, and blame, ops and range changes read it as no one's.
 
-use heed::{RoTxn, RwTxn};
+use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use super::{CODE_DOCUMENT_HEAD, CODE_DOCUMENT_INGRESS};
@@ -68,19 +68,7 @@ impl<'de> Deserialize<'de> for ReceiptActor {
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the receipts.
-fn names_no_actor(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the ingress receipts (FIX 3520): each operation it
 /// made keeps its receipt, edit, frontiers and sequence and names no one, and
