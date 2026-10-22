@@ -35,8 +35,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/docx_body.rs` | src | m | 5 struct · 5 enum · 7 fn · 1 const | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxMark, DocxParagraph +2 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
 | `src/edit/check.rs` | src | m | 16 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/geometry.rs` | src | s | 6 crate-vis | — | `set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue |
-| `src/edit/media.rs` | src | s | 6 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
-| `src/edit/mod.rs` | src | m | 6 struct · 3 enum · 1 fn · 2 mod · 2 re-export · 4 crate-vis | EditRefusal, EditReport, Effect, FitUnverified, Picture, RunProps, Target, ValueEdit +1 | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
+| `src/edit/media.rs` | src | m | 8 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
+| `src/edit/mod.rs` | src | m | 7 struct · 3 enum · 1 fn · 2 mod · 2 re-export · 4 crate-vis | AnchorCandidate, EditRefusal, EditReport, Effect, FitUnverified, Picture, RunProps, Target +2 | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
 | `src/edit/structure/arrange.rs` | src | s | 4 crate-vis | — | Projector arrangement verbs and their verification seam |
 | `src/edit/structure/arrange/verify.rs` | src | m | 5 crate-vis | — | Independent read-back checks for projector arrangement verbs |
 | `src/edit/structure/born.rs` | src | s | 2 crate-vis | — | The live-deck projector's creation verbs for what a preset shape cannot carry: a picture over a new media… |
@@ -50,13 +50,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit/structure/tests.rs` | test | m | 1 crate-vis | — | ONE-2529 acceptance, first half (add, delete, reparent): high-water id allocation, the supported delete… |
 | `src/edit/structure/timing.rs` | src | s | 6 crate-vis | — | The delete cascade over a small, tested timing subset (ARCH-0077, "Animation dependencies") |
 | `src/edit/tests.rs` | test | L | 7 crate-vis | — | ONE-2528 acceptance: per verb, the edit changes only the declared fields and parts (exact part sets), keeps… |
-| `src/edit/text.rs` | src | m | 10 crate-vis | — | `set_text`, `replace_run_text` and `set_run_props` |
+| `src/edit/text.rs` | src | m | 13 crate-vis | — | `set_text`, `replace_run_text` and `set_run_props` |
 | `src/edit/text/build.rs` | src | s | 4 crate-vis | — | The new XML the text mapping writes: a run with new text, a run of the paragraph's end properties, and new… |
-| `src/edit/transaction.rs` | src | m | 10 struct · 8 enum · 1 trait · 14 fn · 2 const · 1 re-export | AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets +11 | Deck transaction grammar, reports and runner seam |
+| `src/edit/transaction.rs` | src | m | 10 struct · 8 enum · 1 trait · 14 fn · 1 const · 1 re-export | AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets +11 | Deck transaction grammar, reports and runner seam |
 | `src/edit/transaction/run.rs` | src | m | 1 fn · 6 crate-vis | — | Ordered deck transaction execution |
-| `src/edit/wire.rs` | src | m | 3 struct · 5 enum · 2 fn | DeckIdentityAmbiguity, DeckInspection, DeckNativeRefusal, DeckShapeInspection, DeckShapeKind, DeckSlideInspection, DeckStepRefusal, DeckTransactionRefusal | Owned wire forms for the deck edit door (ARCH-0077, "Identities" and "The 23 named refusals"): the native… |
+| `src/edit/wire.rs` | src | m | 4 struct · 5 enum · 2 fn | DeckAnchorCandidate, DeckIdentityAmbiguity, DeckInspection, DeckNativeRefusal, DeckShapeInspection, DeckShapeKind, DeckSlideInspection, DeckStepRefusal +1 | Owned wire forms for the deck edit door (ARCH-0077, "Identities" and "The 23 named refusals"): the native… |
 | `src/edit/xfrm.rs` | src | s | 6 crate-vis | — | `set_xfrm` and `move_in_slide_space`: a shape's own transform, attribute by attribute |
-| `src/edit/xml.rs` | src | s | 21 crate-vis | — | Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it… |
+| `src/edit/xml.rs` | src | m | 24 crate-vis | — | Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it… |
 | `src/emit/check.rs` | src | m | 1 crate-vis | — | The candidate checks, run on the exported bytes and independent of the writer's bookkeeping: the write set… |
 | `src/emit/mod.rs` | src | m | 11 struct · 3 enum · 2 fn · 1 crate-vis | Candidate, CheckFault, ClaimTrace, EmitError, EmitInputs, EmittedSlide, FitTrace, FitUnverified +6 | Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 "Creation result and checks") |
 | `src/emit/slide.rs` | src | s | 7 crate-vis | — | Slide XML for emission: an empty slide whose root binds `p:`, `a:` and `r:`, the shapes placed into its… |
@@ -131,7 +131,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native_patch/chart/categories.rs` | src | s | 7 crate-vis | — | Multi-level categories (`c:multiLvlStrRef`, FIX 3493): a hierarchy's cache read level by level, leaf first… |
 | `src/native_patch/chart/placeholder.rs` | src | s | 1 crate-vis | — | A stock plot's placeholder series (OF-510, FIX 9374): a `c:ser` of a `c:stockChart` holding neither… |
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 4 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
-| `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes; a cell a merge… |
+| `src/native_patch/table.rs` | src | m | 12 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes; a cell a merge… |
 | `src/native_patch/tests.rs` | test | m | — | — | — |
 | `src/native_patch/workbook.rs` | src | m | 18 crate-vis | — | The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the… |
 | `src/native_patch/workbook/cells.rs` | src | s | 1 crate-vis | — | A worksheet's cells written in place (FIX 7987): a written cell keeps its own attributes and children (its… |
@@ -146,7 +146,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pptx_comments/xml.rs` | src | s | 17 crate-vis | — | PPTX comment XML spans, queries and surgery |
 | `src/pptx_comments/xml/parse.rs` | src | m | 5 crate-vis | — | Namespace-aware parsing for PPTX comment XML |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 1 type · 2 re-export | Error | Bounded, retained OPC archives |
-| `src/retained_opc/package.rs` | src | m | 2 struct · 1 enum · 7 fn · 1 re-export | Editability, Limits, Package | Retained OPC package state and copy-through writing |
+| `src/retained_opc/package.rs` | src | m | 2 struct · 1 enum · 7 fn · 1 re-export · 1 crate-vis | Editability, Limits, Package | Retained OPC package state and copy-through writing |
 | `src/retained_opc/package/open.rs` | src | m | 1 fn · 4 crate-vis | — | Retained ZIP admission, metadata inspection and expansion |
 | `src/retained_opc/package/parts.rs` | src | m | 1 struct · 12 fn · 6 crate-vis | Relationship | The add-part and remove-part doors |
 | `src/retained_opc/xml/ffi.rs` | src | s | 17 crate-vis | — | Minimal Expat C ABI |
