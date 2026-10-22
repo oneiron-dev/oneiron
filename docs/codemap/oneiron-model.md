@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | Extraction-quality schemas and validation |
 | `src/lib.rs` | src | s | 2 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
 | `src/llm/assembly.rs` | src | s | 1 struct · 7 fn | StreamAssembly | Shared typed stream assembly |
-| `src/llm/backend.rs` | src | s | 2 struct · 1 enum · 3 trait · 3 fn · 3 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
+| `src/llm/backend.rs` | src | s | 2 struct · 1 enum · 3 trait · 6 fn · 3 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
 | `src/llm/backend_identity.rs` | src | s | 1 struct · 2 fn | LlamaAlias | The answering house llama.cpp process's launch alias (FIX 7895, 6567 PR1b): which incarnation answered a… |
 | `src/llm/budget/dispatch.rs` | src | s | 1 struct · 1 enum · 10 fn · 1 const | DispatchBinding, DispatchRefused | Bound admissions and the one-use dispatch check: a lease that records what it was granted for, and is… |
 | `src/llm/budget/guard.rs` | src | s | 1 struct · 17 fn · 1 crate-vis | BudgetGuard | Guard handle: admission, abort, reads, and settlement entry points |
@@ -42,6 +42,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/fallback.rs` | src | s | 1 struct · 1 enum · 1 trait · 4 fn | DeterministicRunner, FallbackError, FallbackRegistry | Named deterministic non-LLM fallback runners |
 | `src/llm/image.rs` | src | s | 5 struct · 1 trait · 2 fn · 1 type | ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageIntent, ImageResponse | Provider-neutral image generation and reference-edit intent |
 | `src/llm/inference.rs` | src | m | 4 struct · 6 enum · 6 fn · 1 const | InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence, WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode +2 | What a model worker is and what one physical call to it reported (FIX 8314, INFERENCE R1): the worker's… |
+| `src/llm/inference_observation.rs` | src | s | 1 struct · 1 enum · 3 fn · 4 crate-vis | InferenceCallObservation, InferenceObservationId | What each physical inference request measured, published by the adapter that sends it while the request is… |
 | `src/llm/label_read.rs` | src | s | 3 struct · 1 enum · 1 trait · 4 fn | LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet | Label-read seam: a host model scores a closed label set instead of generating text |
 | `src/llm/limit.rs` | src | m | 6 fn | — | How an adapter reads a provider's refusal as a spent quota or a rate limit, and the reset the refusal names… |
 | `src/llm/media/backend.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 fn | AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility | Media backends and the host's media door |
@@ -50,7 +51,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 10 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
 | `src/llm/media/response.rs` | src | s | 2 struct · 1 enum · 4 fn | MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
-| `src/llm/mod.rs` | src | s | 4 mod · 25 re-export | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 4 mod · 26 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
 | `src/llm/protocol.rs` | src | m | 7 struct · 6 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage +5 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |

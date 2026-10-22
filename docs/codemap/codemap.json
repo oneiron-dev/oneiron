@@ -22178,7 +22178,7 @@
      "surface": {
       "const": 5,
       "enum": 5,
-      "fn": 22,
+      "fn": 23,
       "struct": 14,
       "trait": 1
      }
@@ -28362,7 +28362,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 8,
       "re-export": 1,
@@ -36988,9 +36988,9 @@
      "purpose": "Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 5,
       "trait": 1
      }
@@ -37465,13 +37465,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/ask_history.rs",
      "purpose": "One commit-ordered log of a question's asks (FIX 2337, FIX 1585): each graph answer receipt a question…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -37549,7 +37549,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 14
      }
     },
@@ -37639,6 +37639,7 @@
      "surface": {
       "crate-vis": 7,
       "fn": 9,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -37650,6 +37651,16 @@
      "purpose": "FIX 1588: a standing question's work is written under the class its asker authenticated as when it wrote the…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/refresh/manual.rs",
+     "purpose": "FIX 9176: a standing question refreshed by hand writes its answers as the asker its version keeps, as the…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -38004,7 +38015,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 11,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -38235,7 +38246,7 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 1,
-      "fn": 25,
+      "fn": 26,
       "re-export": 1,
       "struct": 3
      }
@@ -69097,7 +69108,7 @@
      "purpose": "The voice-bank rows (DOOR-143, e2e VOICE-02, FIX 4393, 4396): `vault.voices.packs.put` banks a reference…",
      "surface": {
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "re-export": 1,
       "struct": 12
      }
@@ -70066,7 +70077,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 17,
+      "fn": 18,
       "struct": 4,
       "trait": 2
      }
@@ -73839,7 +73850,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 127,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74548,7 +74559,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4829,
+   "source_files": 4830,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85093,7 +85104,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 6,
       "struct": 2,
       "trait": 3,
       "type": 3
@@ -85491,6 +85502,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "InferenceCallObservation",
+      "InferenceObservationId"
+     ],
+     "path": "src/llm/inference_observation.rs",
+     "purpose": "What each physical inference request measured, published by the adapter that sends it while the request is…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "LabelReadModel",
       "LabelReadRequest",
       "LabelReadResponse",
@@ -85621,7 +85648,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -85747,7 +85774,7 @@
      "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85756,7 +85783,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 42,
+   "source_files": 43,
    "test_files": 6
   },
   "oneiron-napi": {
