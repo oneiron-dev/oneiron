@@ -71,13 +71,28 @@ def canonical_json(value) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
+def host_env(**extra: str) -> dict:
+    """The environment of every host-side tool the builder runs (git, tar, unshare, mount).
+
+    PATH and the locale only: no HOME, so no ~/.gitconfig, ~/.cargo, ~/.config
+    or user site-packages reaches a tool, and no git system config or
+    attributes, TAR_OPTIONS, CARGO_*, RUST* or PYTHON* variable either."""
+    env = {k: os.environ[k] for k in ("PATH", "LANG") if k in os.environ}
+    env.setdefault("PATH", "/usr/bin:/bin")
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_ATTR_NOSYSTEM="1",
+               PYTHONNOUSERSITE="1")
+    env.update(extra)
+    return env
+
+
 def run(argv, *, cwd=None, env=None, check=True, capture=False, stdin=None) -> subprocess.CompletedProcess:
+    """Runs argv; with no env given it gets host_env(), never this process's environment."""
     shown = " ".join(str(a) for a in argv)
     log(f"$ {shown}")
     result = subprocess.run(
         [str(a) for a in argv],
         cwd=cwd,
-        env=env,
+        env=host_env() if env is None else env,
         stdin=stdin,
         stdout=subprocess.PIPE if capture else None,
         text=capture,

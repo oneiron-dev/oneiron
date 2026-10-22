@@ -37,9 +37,11 @@ OUTPUT_STATES = ("unbuilt", "built-candidate", "boot-proved", "released")
 BUILT_FIELDS = (
     "builder_commit", "engine_commit", "host", "tools_tree_sha256", "packages_lock_sha256",
     "oci_index_digest", "oci_manifest_digest", "oci_config_digest", "oci_layer_digest",
-    "oci_layer_diff_id", "oci_archive_sha256", "ext4_sha256", "ext4_uuid",
-    "compressed_bytes", "unpacked_bytes", "sparse_capacity_bytes", "receipt_sha256",
+    "oci_layer_diff_id", "oci_archive_sha256", "compressed_bytes", "unpacked_bytes",
+    "sbom_sha256", "provenance_sha256", "receipt_sha256",
 )
+# The Firecracker rootfs: present, or refused at the engine's cap (ext4_refused names why).
+EXT4_FIELDS = ("ext4_sha256", "ext4_uuid", "sparse_capacity_bytes")
 DEB_NAME = re.compile(r"[a-z0-9][a-z0-9+.-]+")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 SNAPSHOT = re.compile(r"\d{8}T\d{6}Z")
@@ -234,9 +236,12 @@ def _check_outputs(name: str, outputs: dict, problems: list[str]) -> None:
         if extra:
             problems.append(f"release.toml: variants.{name} is unbuilt but carries {extra}; unbuilt fields stay absent")
     else:
-        missing = [k for k in BUILT_FIELDS if k not in out]
+        refused = "ext4_refused" in out
+        missing = [k for k in BUILT_FIELDS + (() if refused else EXT4_FIELDS) if k not in out]
         if missing:
             problems.append(f"release.toml: variants.{name} is {state} but lacks {missing}")
+        if refused and any(k in out for k in EXT4_FIELDS):
+            problems.append(f"release.toml: variants.{name} names ext4_refused and an ext4 output at once")
     for key, value in out.items():
         if isinstance(value, int) and value <= 0:
             problems.append(f"release.toml: variants.{name}.{key} is {value}; a zero is never a measurement")

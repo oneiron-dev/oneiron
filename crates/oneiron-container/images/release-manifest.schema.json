@@ -61,7 +61,7 @@
       "$ref": "#/$defs/binaries"
     },
     "sbom": {
-      "description": "No SBOM is produced yet: null, never a placeholder.",
+      "description": "The build's SPDX 2.3 JSON SBOM (sbom.spdx.json), or null for a build without one; never a placeholder.",
       "oneOf": [
         {
           "type": "null"
