@@ -122,6 +122,13 @@ impl FirecrackerBackend {
         cancel: &StepCancellation,
     ) -> Result<MicroVmExit> {
         cancel.check()?;
+        // The OCI identity the host selected, kept before the boot artifacts
+        // it resolves to shadow the image (FIX 9136).
+        #[cfg(target_os = "linux")]
+        let selected_oci = image
+            .oci
+            .as_ref()
+            .and_then(|oci| oneiron_container::ImageRef::pinned(&oci.image).ok());
         #[cfg(target_os = "linux")]
         let resolved;
         #[cfg(target_os = "linux")]
@@ -139,15 +146,25 @@ impl FirecrackerBackend {
         config.validate()?;
         config.pins.verify(image)?;
         #[cfg(target_os = "linux")]
-        let image_release = oneiron_container::image_release::observe_release(
-            None,
-            &oneiron_container::image_release::ObservedArtifacts::from_firecracker_pins(
+        let image_release = {
+            use oneiron_container::image_release as release;
+            let pins = release::ObservedArtifacts::from_firecracker_pins(
                 config.pins.kernel,
                 config.pins.rootfs,
-            ),
-            &oneiron_container::image_release::HostCapabilities::default(),
-            &oneiron_container::image_release::NoVerifierConfigured,
-        );
+            );
+            // An OCI boot is bound by its reference, a raw boot by its pins.
+            let (selected, observed) = match &selected_oci {
+                Some(oci) => (release::SelectedImage::Oci(oci), pins.with_image_ref(oci)),
+                None => (
+                    release::SelectedImage::Boot {
+                        kernel: config.pins.kernel,
+                        rootfs: config.pins.rootfs,
+                    },
+                    pins,
+                ),
+            };
+            release::observe_bound_release(selected, &observed, &release::NoVerifierConfigured)
+        };
         {
             let mut states = self
                 .state
@@ -189,45 +206,45 @@ impl FirecrackerBackend {
                     let bytes = serde_json::to_vec(&launch::machine_config(config, budget))
                         .map_err(|_| refused("VM evidence encoding"))?;
                     let hash = blake3::hash(&bytes).to_hex().to_string();
-                    state.manifest =
-                        Some(oneiron_container::SessionManifest {
-                            backend: "firecracker".into(),
-                            runtime: config.firecracker.display().to_string(),
-                            image: image.oci.as_ref().map(|i| i.image.clone()).unwrap_or_else(
-                                || {
-                                    config
-                                        .pins
-                                        .rootfs
-                                        .iter()
-                                        .map(|b| format!("{b:02x}"))
-                                        .collect()
-                                },
-                            ),
-                            argv_digest: hash.clone(),
-                            network: "no-nic; host-vsock".into(),
-                            seccomp: oneiron_container::GuestSeccomp::RuntimeDefault,
-                            generation: vm.id().to_owned(),
-                            fence_unproven: false,
-                            fence_proof: Some(oneiron_container::FenceProof {
-                                ruleset_hash: hash.clone(),
-                                seccomp_hash: blake3::hash(&config::read_regular_bounded(
-                                    &config.firecracker,
-                                    256 * 1024 * 1024,
-                                )?)
-                                .to_hex()
-                                .to_string(),
-                                network_routes: vec!["no NIC; host-owned vsock only".into()],
-                                network_evidence_digest: hash,
-                                sandbox_generation: vm.id().to_owned(),
-                                launcher_digest: config
+                    state.manifest = Some(oneiron_container::SessionManifest {
+                        backend: "firecracker".into(),
+                        runtime: config.firecracker.display().to_string(),
+                        image: selected_oci.as_ref().map_or_else(
+                            || {
+                                config
                                     .pins
                                     .rootfs
                                     .iter()
                                     .map(|b| format!("{b:02x}"))
-                                    .collect(),
-                            }),
-                            image_release,
-                        });
+                                    .collect()
+                            },
+                            |oci| oci.as_str().to_owned(),
+                        ),
+                        argv_digest: hash.clone(),
+                        network: "no-nic; host-vsock".into(),
+                        seccomp: oneiron_container::GuestSeccomp::RuntimeDefault,
+                        generation: vm.id().to_owned(),
+                        fence_unproven: false,
+                        fence_proof: Some(oneiron_container::FenceProof {
+                            ruleset_hash: hash.clone(),
+                            seccomp_hash: blake3::hash(&config::read_regular_bounded(
+                                &config.firecracker,
+                                256 * 1024 * 1024,
+                            )?)
+                            .to_hex()
+                            .to_string(),
+                            network_routes: vec!["no NIC; host-owned vsock only".into()],
+                            network_evidence_digest: hash,
+                            sandbox_generation: vm.id().to_owned(),
+                            launcher_digest: config
+                                .pins
+                                .rootfs
+                                .iter()
+                                .map(|b| format!("{b:02x}"))
+                                .collect(),
+                        }),
+                        image_release,
+                    });
                 }
                 state.phase = Phase::Complete(proposals);
                 Ok(exit)
