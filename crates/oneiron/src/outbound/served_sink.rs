@@ -26,7 +26,6 @@ use super::dispatch_types::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
 use super::intent::OutboundIntentSource;
-use super::reply_content::CONNECTOR_REPLY_BODY_PREFIX;
 use crate::channel_identity_provider::{
     DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, LineChat, LineChatKind, SLACK_CHANNEL,
     line_audience_key,
@@ -35,6 +34,8 @@ use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::surface_event::SurfaceConnectorPayload;
 use crate::{EntityId, Vault};
+
+mod content;
 
 const SLACK_POST_MESSAGE: &str = "https://slack.com/api/chat.postMessage";
 /// The built-in Slack pack connection whose checked credential posts.
@@ -76,25 +77,6 @@ const LINE_INVALID_REPLY_TOKEN: &str = "Invalid reply token";
 const LINE_MONTHLY_LIMIT: &str = "monthly limit";
 /// How long the month-usage read before a push may take.
 const LINE_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// The check-in line a trusted contact's notice (OF-527) reads, the same
-/// every time: the fact of concern, never a word of the conversation.
-const TRUSTED_CONTACT_CHECK_IN_TEXT: &str = "Having a hard night, please check in.";
-
-impl Vault {
-    /// The plain text an outbound content ref sends, when this engine has a
-    /// typed loader for it: an agent's connector reply body, a commitment
-    /// reminder, or a trusted contact's fixed check-in line.
-    pub fn outbound_content_text(&self, content_ref: &str) -> Result<Option<String>> {
-        if content_ref == crate::counterparty_contact::TRUSTED_CONTACT_NOTICE_CONTENT_REF {
-            return Ok(Some(TRUSTED_CONTACT_CHECK_IN_TEXT.to_owned()));
-        }
-        if content_ref.starts_with(CONNECTOR_REPLY_BODY_PREFIX) {
-            return self.connector_reply_body_text(content_ref);
-        }
-        self.commitment_reminder_text(content_ref)
-    }
-}
 
 /// The served sink: one bounded HTTPS client and the vault its credentials
 /// and content are read from.
