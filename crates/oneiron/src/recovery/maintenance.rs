@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::canonical::{capture_canonical_window_within, invalid};
-use super::{CanonicalSnapshot, RecoveryBudget, RecoveryTier, recover_vault_window};
+use super::{CanonicalSnapshot, RecoveryBudget, RecoveryTier};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::store::legal_hold::HoldActor;
@@ -135,7 +135,7 @@ impl Vault {
                 "window recovery needs the window's writers stopped",
             ));
         }
-        let actor = {
+        let (actor, principal) = {
             let txn = self.store.env.read_txn()?;
             let actor = owner.revalidate_in_txn(self, &txn)?;
             // An authenticated human is not by that alone this vault's owner.
@@ -144,7 +144,7 @@ impl Vault {
                     "window recovery is an owner act, and the actor is no owner of this vault",
                 )));
             }
-            HoldActor::owner(actor)
+            (HoldActor::owner(actor), actor)
         };
         let doc = durable_window_doc(self, &key)?;
         if rebootstrap {
@@ -159,13 +159,11 @@ impl Vault {
         drop(bytes);
         create_private_dir(dir)?;
         let manifest_path = dir.join(format!("{window}.manifest"));
-        let prepared = recover_vault_window(
-            self,
-            &crate::sync::bridge::Materializer::new(),
-            &manifest_path,
-            &snapshot,
-            budget,
-        )?;
+        // The recovery's pages take the owner's turns on the vault's
+        // task-work line (FIX 8821).
+        let prepared =
+            super::work::RecoveryWork::new(&manifest_path, &snapshot, budget, Some(principal))
+                .drain(self, &crate::sync::bridge::Materializer::new())?;
         let installed = if rebootstrap {
             // The recovery left the rebuilt document equivalent to the
             // artifact; the window's own cut of it must be too.

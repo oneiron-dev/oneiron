@@ -5,7 +5,8 @@
 //! plot's settings) and `view` (its 3D view), one value each;
 //! `category_set`, its categories by point identity ([`categories`]);
 //! `order`, a movable list of series identities; and `series`, a map from
-//! series identity to that series' `name`, `family`, `x`, `size` (a bubble
+//! series identity to that series' `name`, `family`, `plot` (which plot of
+//! its family draws it), `x`, `x_labels` (text x values), `size` (a bubble
 //! series' sizes) and `bubble_3d`, one value each, whether it draws a set
 //! of its own (`local`, its own set under `category_set`, kept while it
 //! draws the chart's), and its values: by category point identity
@@ -41,6 +42,8 @@ const VALUES: &str = "values";
 const CELLS: &str = "cells";
 const LOCAL: &str = "local";
 const X: &str = "x";
+const X_LABELS: &str = "x_labels";
+const PLOT: &str = "plot";
 const SIZE: &str = "size";
 const BUBBLE_3D: &str = "bubble_3d";
 const PLOTS: &str = "plots";
@@ -95,6 +98,8 @@ pub(super) fn read(charts: &LoroMap, id: NodeId) -> Result<NodePayload> {
                 values,
                 family: line_family,
                 x: json(&map, X)?,
+                x_labels: json_or(&map, X_LABELS, None)?,
+                plot: json_or(&map, PLOT, None)?,
                 categories: own,
                 bubble_size: json_or(&map, SIZE, None)?,
                 bubble_3d: json_or(&map, BUBBLE_3D, None)?,
@@ -183,6 +188,8 @@ fn sync_chart(entry: &LoroMap, chart: &NodePayload) -> Result<()> {
         put_json(&map, NAME, &line.name)?;
         put_json(&map, FAMILY, &line.family)?;
         put_json(&map, X, &line.x)?;
+        put_json(&map, X_LABELS, &line.x_labels)?;
+        put_json(&map, PLOT, &line.plot)?;
         put_json(&map, SIZE, &line.bubble_size)?;
         put_json(&map, BUBBLE_3D, &line.bubble_3d)?;
         put_json(&map, LOCAL, &line.categories.is_some())?;

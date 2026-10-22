@@ -34,7 +34,6 @@ pub struct DoorAdmissionStamp {
     /// 7608 2b-ii): its record's id, never an authority of its own; the
     /// canonical authority lives in the proof. None on every ordinary
     /// admission.
-    #[allow(dead_code, reason = "FIX 7608 2b-ii-A: 2b-ii-B binds and reads it")]
     pub(super) ingress_proof: Option<EntityId>,
 }
 

@@ -5,7 +5,7 @@ use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{self, *};
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 use super::hub_doors::owner_call;
 use crate::auth::CoreAuth;
 use crate::replay_judge::{self, ServeAxisBandit};
@@ -268,7 +268,7 @@ async fn picked<T: Send + 'static>(
         Err(error) => (Err(error), Vec::new()),
     })
     .await
-    .unwrap_or_else(|_| (Err(super::host_doors::internal(verb)), Vec::new()))
+    .unwrap_or_else(|_| (Err(super::host_doors::support::internal(verb)), Vec::new()))
 }
 
 pub(crate) async fn vault_skills_optimize_tradeoff_asks(

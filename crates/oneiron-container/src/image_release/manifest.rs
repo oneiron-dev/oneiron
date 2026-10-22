@@ -196,7 +196,8 @@ pub struct ImageReleaseManifest {
     pub contracts: ContractRevisions,
     pub artifacts: ReleaseArtifacts,
     pub binaries: GuestBinaries,
-    /// No SBOM is produced yet: `null`, never a placeholder.
+    /// The emitted SPDX 2.3 SBOM (`sbom.spdx.json`), named by media type,
+    /// relative path and SHA-256; `null` for a build without an SBOM.
     pub sbom: Option<DocumentRef>,
     /// The build receipt (`receipt.json`), the build's provenance record.
     pub provenance: Option<DocumentRef>,

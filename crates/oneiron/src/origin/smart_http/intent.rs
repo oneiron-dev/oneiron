@@ -29,6 +29,7 @@ use crate::store::Store;
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
+mod projection;
 mod push_admission;
 mod record;
 
@@ -556,6 +557,9 @@ impl Vault {
         }
         let root = Path::new(&intent.repo_root);
         let stamp = push_admission::recovered_stamp(intent)?;
+        // A projection-bound intent resumes only on its validated proof and
+        // the canonical host it names (FIX 7608 2b-ii-B2).
+        self.require_resumed_ingress(root, &stamp)?;
         // Recovery uses the accepted host, never the current pusher or a new
         // lease. The producer receipt seals the journal's epoch binding too.
         let admission = {

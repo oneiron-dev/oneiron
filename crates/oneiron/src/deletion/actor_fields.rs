@@ -116,6 +116,13 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
         wtxn,
         &erased,
     )?;
+    // A Gate decision the image brings back bound to an erased claim, or a
+    // bundle citing one, takes its skeleton again, or is owed it while a hold
+    // keeps its partition (FIX 7994).
+    let now = vault.store.clock.now_recorded_at();
+    vault
+        .store
+        .rerun_gate_claim_scrubs_in_txn(wtxn, &erased, now)?;
     for actor in &erased {
         scrub_actor_fields_in_txn(vault, wtxn, actor)?;
         // The image's cleanup rows name it again; they go once more (FIX 7517).
@@ -129,15 +136,21 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
 
 /// A legal hold's release, in its own transaction (FIX 6280): the births a
 /// hold kept from an erased actor's scrub, and their window carriers, go
-/// once nothing holds their rows; no other scrub runs again. The `dt:`
-/// markers and the holds as they now stand say what is owed. A vault that
-/// keeps no hold row, standing or released, owes nothing: only a hold keeps
-/// a birth past its actor's scrub, and a released one keeps its row for 24
-/// months, well past the release pass that settles it.
+/// once nothing holds their rows, a carrier whose birth never landed here
+/// too (FIX 6386); no other scrub runs again. The `dt:` markers and the
+/// holds as they now stand say what is owed. A vault that keeps no hold row,
+/// standing or released, owes nothing: only a hold keeps a birth past its
+/// actor's scrub, and a released one keeps its row for 24 months, well past
+/// the release pass that settles it.
 pub(super) fn rerun_birth_actor_scrubs_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
+    // Kept gate (lead, 10-22): a hold row outlives its owed birth work. Only
+    // `store::legal_hold::expire_in_txn` removes hold rows, called only by
+    // `Vault::sweep_legal_hold_log`, whose one caller (deletion/legal_hold/
+    // mod.rs:613, `maintain_legal_holds`) runs it after that pass's due run
+    // (:611) succeeded.
     if crate::store::legal_hold::holds_in_txn(&vault.store, wtxn)?.is_empty() {
         return Ok(());
     }

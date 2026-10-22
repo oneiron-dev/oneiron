@@ -16,7 +16,7 @@ use oneiron::task_verb::sdk::{
 use oneiron::workspace_roster::{MemberOnboardingOutcome, WorkspaceRosterEntry};
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{MaybeListed, owner_proof};
+use super::host_doors::support::{MaybeListed, owner_proof};
 use super::shared_act_doors::{as_person_naming, person};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
