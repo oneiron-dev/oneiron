@@ -19927,6 +19927,7 @@ class AuthorTakeRequest(TypedDict):
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str
+    reason: NotRequired[str | None]
 class NoteReadRequest(TypedDict):
     note_ref: str
     reason: NotRequired[str | None]

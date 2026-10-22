@@ -7699,7 +7699,7 @@ export type AuthorTakeTarget = { subject: string } | { claim: string }
 /** `oneiron::verbs::memory::AuthorTakeRequest` */
 export type AuthorTakeRequest = { target: AuthorTakeTarget; markdown: string }
 /** `oneiron::verbs::memory::CreateNoteFromEntityRequest` */
-export type CreateNoteFromEntityRequest = { source_ref: string; kind: string }
+export type CreateNoteFromEntityRequest = { source_ref: string; kind: string; reason?: string | null }
 /** `oneiron::note::reads::NoteReadRequest` */
 export type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] }
 /** `oneiron::note::reads::NoteAccessRequest` */

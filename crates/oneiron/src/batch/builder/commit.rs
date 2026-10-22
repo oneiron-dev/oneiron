@@ -274,7 +274,10 @@ impl BatchBuilder<'_> {
                 // nor any preflight receipt.
                 Ok(Judged::Denied(denial)) => {
                     let settled = reference_read::settle_denial_in(
-                        &vault.store, wtxn, &staged_gate_decisions, *denial,
+                        &vault.store,
+                        wtxn,
+                        &staged_gate_decisions,
+                        *denial,
                     );
                     return match settled {
                         Ok((err, Some(decision))) => Rows::Refuse(Refused {

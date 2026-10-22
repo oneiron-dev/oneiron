@@ -61198,6 +61198,8 @@ pub struct CreateNoteFromEntityRequest {
     pub source_ref: String,
     #[serde(rename = "kind")]
     pub kind: String,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// `oneiron::note::reads::NoteReadRequest`.
