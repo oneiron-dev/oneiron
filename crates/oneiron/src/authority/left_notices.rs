@@ -353,7 +353,7 @@ fn transferred_admission(
     bounds: Result<super::slip::TransferredBounds>,
     now: u64,
 ) -> impl Fn(EntityId, Option<&crate::federation::Scope>) -> bool {
-    move |id, position| {
+    move |id: EntityId, position: Option<&crate::federation::Scope>| {
         bounds
             .as_ref()
             .is_ok_and(|bounds| bounds.admits(id, position, now))

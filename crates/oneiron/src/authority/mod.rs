@@ -321,10 +321,7 @@ pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
     AdminStepUp, AuthenticatedWeaveAdmin, WEAVE_ADMIN_MFA_REQUIRED, WEAVE_ADMIN_NOT_CURRENT,
 };
-pub(crate) use withdrawn_grant::{
-    ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, mark_if_withdrawn_grant_in_txn,
-    mark_withdrawn_grant_in_txn,
-};
+pub(crate) use withdrawn_grant::{mark_if_withdrawn_grant_in_txn, mark_withdrawn_grant_in_txn};
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
