@@ -6,7 +6,9 @@
 //! erase still waits, and a hold's refusal there names the owner the row
 //! records as confirming it. None waiting cancels the erase: nothing is
 //! published or torn. Once its tombstone has published, the erase is decided
-//! and finishes, whatever a later writer reads.
+//! and finishes, whatever a later writer reads. The proof is of the one
+//! request the run read: a newer request for the record, under another
+//! reason, cancels this run and waits for its own (FIX 1465).
 
 use std::cell::{Cell, RefCell};
 
@@ -14,7 +16,7 @@ use crate::Vault;
 use crate::deletion::LegalHoldActorKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::legal_hold::{HoldActor, pending_erase_by_in_txn};
+use crate::store::legal_hold::{HoldActor, pending_erase_in_txn};
 
 use super::DeleteEntityOutcome;
 
@@ -28,30 +30,44 @@ pub(crate) enum ConfirmedEraseOutcome {
     Cancelled,
 }
 
-/// Who the confirmed erase of `record` that waits names as confirming it,
-/// as a hold's refusal names them: the owner its row records, else no one.
-/// `None` when no erase of it waits.
+/// Who the confirmed erase of `record` that waits as request `generation`
+/// names as confirming it, as a hold's refusal names them: the owner its row
+/// records, else no one. `None` when no erase of it waits, or another
+/// request's does.
 pub(crate) fn due_erase_requester_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &EntityId,
+    generation: &EntityId,
 ) -> Result<Option<HoldActor>> {
-    Ok(match pending_erase_by_in_txn(&vault.store, txn, record)? {
-        None => None,
-        Some(None) => Some(HoldActor::UNATTRIBUTED),
-        Some(Some(by)) => Some(HoldActor::new(LegalHoldActorKind::Owner, Some(by))),
-    })
+    Ok(pending_erase_in_txn(&vault.store, txn, record)?
+        .filter(|pending| pending.generation == *generation)
+        .map(|pending| match pending.confirmed_by {
+            None => HoldActor::UNATTRIBUTED,
+            Some(by) => HoldActor::new(LegalHoldActorKind::Owner, Some(by)),
+        }))
 }
 
-/// A due confirmed erase on the hard-delete rail: the requester its writers
-/// proved, and whether one of them found no erase waiting.
-#[derive(Debug, Default)]
+/// A due confirmed erase on the delete rail: the request it runs, the
+/// requester its writers proved, and whether one of them found that request
+/// no longer waiting.
+#[derive(Debug)]
 pub(crate) struct PendingConfirmedErase {
+    generation: EntityId,
     requester: RefCell<Option<HoldActor>>,
     cancelled: Cell<bool>,
 }
 
 impl PendingConfirmedErase {
+    /// The proof of the waiting request `generation`.
+    pub(crate) const fn new(generation: EntityId) -> Self {
+        Self {
+            generation,
+            requester: RefCell::new(None),
+            cancelled: Cell::new(false),
+        }
+    }
+
     /// Re-proves in `txn` that the confirmed erase of `id` still waits, and
     /// returns who its row names. None waiting cancels the erase: the error
     /// ends the rail where it stands, and [`Self::outcome`] reads it as
@@ -62,7 +78,7 @@ impl PendingConfirmedErase {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<HoldActor> {
-        let Some(requester) = due_erase_requester_in_txn(vault, txn, id)? else {
+        let Some(requester) = due_erase_requester_in_txn(vault, txn, id, &self.generation)? else {
             self.cancelled.set(true);
             return Err(Error::InvalidConfig(
                 "no confirmed erase of this record waits".into(),

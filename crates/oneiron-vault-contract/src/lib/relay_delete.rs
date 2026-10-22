@@ -7,10 +7,14 @@
 //! that the object still holds the ciphertext the delete names, then claims,
 //! unlinks and syncs it inside its backup-hold writer exclusion, so a legal
 //! hold placed meanwhile commits before the hold read or after the sync. It
-//! answers [`RelayDeleteState`]: `deleted`, `absent`, `held`, `unknown` with a
-//! closed reason, or `storage_io` with a closed stage and kind. Only
-//! `deleted` and `absent` settle a delete; every other answer leaves it
-//! deferred, its intent kept.
+//! answers [`RelayDeleteState`]: `deleted`, `absent`, `held` with its coarse
+//! visibility, `unknown` with a closed reason, or `storage_io` with a closed
+//! stage and kind. Only `deleted` and `absent` settle a delete; every other
+//! answer leaves it deferred, its intent kept.
+//!
+//! A delete names one generation of its object ([`RelayDeleteGeneration`],
+//! FIX 1283): the current object, or a generation a guarded upload kept when
+//! it replaced the object, which the room retires once no hold keeps it.
 //!
 //! The supervisor alone names the room's locker objects directory to the
 //! engine (`relay_locker_bind`, [`RelayLockerBindRequest`]), which opens it
@@ -32,7 +36,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 /// The revision of this surface, which an engine built with it reports on
 /// `Ping` (`relay_delete_revision`).
-pub const RELAY_DELETE_REVISION: u32 = 1;
+pub const RELAY_DELETE_REVISION: u32 = 2;
 
 /// How long a delete has to be admitted, in milliseconds, from the moment a
 /// valid `relay_delete_execute` reaches the engine's dispatch: its queue, its
@@ -56,6 +60,9 @@ pub struct RelayDeleteRequest {
     pub request_id: String,
     /// The locker object: 64 lowercase hex, or `manifest`.
     pub object: String,
+    /// Which generation of the object the delete names: the current one, or
+    /// one an upload kept when it replaced the object.
+    pub generation: RelayDeleteGeneration,
     /// The BLAKE3 digest of the ciphertext the delete names, 64 lowercase
     /// hex.
     pub ciphertext_blake3: String,
@@ -79,12 +86,53 @@ impl RelayDeleteRequest {
             valid_locker_object(&self.object),
             "relay delete object must be 64 lowercase hex or manifest"
         );
+        self.generation.validate()?;
         anyhow::ensure!(
             is_hex(&self.ciphertext_blake3, 64),
             "relay delete ciphertext_blake3 must be 64 lowercase hex"
         );
         Ok(())
     }
+}
+
+/// One generation of a locker object (FIX 1283): the object as it stands, or
+/// one a guarded upload kept when it replaced the object. A kept generation
+/// is never listed or read; the room names it by its object and its id alone,
+/// and no request carries a path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RelayDeleteGeneration {
+    /// The object a listing shows and a read returns.
+    Current,
+    /// The generation an upload kept: its id is 16 random bytes as 32
+    /// lowercase hex, the room's own, fresh for each upload that replaced the
+    /// object.
+    Preimage { generation_id: String },
+}
+
+impl RelayDeleteGeneration {
+    /// Reject-not-truncate: a kept generation's id is 32 lowercase hex.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if let Self::Preimage { generation_id } = self {
+            anyhow::ensure!(
+                is_hex(generation_id, 32),
+                "relay delete generation_id must be 32 lowercase hex"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// How the holds that keep a vault's backups show to its owner, coarse on
+/// purpose (FIX 9500): no order, issuer, count, date or ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayHoldVisibility {
+    /// A hold the owner may see stands.
+    Visible,
+    /// Only host orders whose silence still runs stand: the relay answers a
+    /// neutral completion pending, naming no hold.
+    SilentOnly,
 }
 
 /// What became of one `relay_delete_execute`.
@@ -98,8 +146,9 @@ pub enum RelayDeleteState {
     /// engine's writer: nothing is left to delete.
     Absent,
     /// A standing legal hold keeps the vault's backups: the object stays
-    /// until the hold lifts.
-    Held,
+    /// until the hold lifts. `visibility` says only whether the owner may see
+    /// a hold that stands.
+    Held { visibility: RelayHoldVisibility },
     /// Nothing is known to be deleted: the delete stays deferred.
     Unknown { reason: RelayDeleteUnknown },
     /// A filesystem step failed and nothing is claimed deleted. It names no
@@ -234,7 +283,7 @@ impl RelayDeleteIoKind {
     }
 }
 
-/// The answer to `relay_delete_execute`: the request's six fields as sent,
+/// The answer to `relay_delete_execute`: the request's seven fields as sent,
 /// and what became of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayDeleteExecuteWire {
@@ -440,7 +489,7 @@ impl RelayLockerRefusal {
 
 /// A strict read of the answer line to the `relay_delete_execute` request
 /// `request`: its one wrapper and nothing beside it, a payload that
-/// validates, and all six fields as sent.
+/// validates, and all seven fields as sent.
 ///
 /// # Errors
 ///

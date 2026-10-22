@@ -9,8 +9,8 @@ use super::{LibraryRunInput, LibraryRunOutput, SecretArg, WorkflowLibrary, misse
 use super::{WorkflowProgram, WorkflowProof};
 #[cfg(feature = "driver")]
 use crate::{
-    BatchInput, BrowserDriver, BrowserError, CheckReceipt, FailedStepReceipt, FieldWriter,
-    ObserveInput, RoutineDecider, StepStop, SubgoalStatus, stop::elapsed_ms,
+    BatchInput, BrowserDriver, BrowserError, CheckReceipt, ExpectInput, FailedStepReceipt,
+    FieldWriter, ObserveInput, RoutineDecider, StepStop, SubgoalStatus, stop::elapsed_ms,
 };
 use crate::{BatchStopCause, FIELD_WRITER, STRICT_DENIED, StrictDenied};
 use schemars::JsonSchema;
@@ -320,4 +320,21 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
         unmet,
         batch,
     })
+}
+
+#[cfg(feature = "driver")]
+/// The checks a library run of `program` with `input`'s arguments reads on
+/// the page its steps left (CUA E8a): the program's postcondition, filled
+/// as [`run`] fills it, a secret slot's handle kept a secret.
+///
+/// # Errors
+///
+/// [`BrowserError::Input`] when `input`'s arguments do not fill `program`.
+pub fn filled_checks(
+    program: &WorkflowProgram,
+    input: &LibraryRunInput,
+) -> Result<Vec<ExpectInput>, BrowserError> {
+    let (args, text) = typed_args(input)?;
+    let (_, checks) = super::secret_slots::as_text(program, &text).fill(&args)?;
+    Ok(checks)
 }
