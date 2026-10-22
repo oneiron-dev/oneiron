@@ -25,20 +25,29 @@ python3 build.py manifest --work /srv/oneiron-images/work --variant base
 
 `<checkout>` is a git checkout that holds `inputs.engine.commit`. One fetch
 can take several `--variant` flags; a first `--learn` fetch must name every
-variant the lock should cover. Each build writes these under
-`<work>/artifacts/<variant>/`:
-- `rootfs.tar` and `rootfs.members.tsv` (every member's sha256);
+variant the lock should cover. A variant the builder cannot install yet
+(desktop-cua's source build, generic-agent's archive payloads) is refused
+before any namespace, fetch or download. Every tool's output goes to
+stderr; `build` prints its record JSON on stdout, whole and last. Each
+build writes these under `<work>/artifacts/<variant>/`:
+- `rootfs.tar` (with each file's xattrs, a file capability as v2) and
+  `rootfs.members.tsv` (every member's sha256 and xattrs);
 - `<variant>.oci.tar` (an OCI layout `docker load` accepts);
 - `rootfs.ext4` (root-only, for Firecracker's `/dev/vda`), unless its
   capacity would pass the engine's 4 GiB cap, when the record says
   `ext4_refused` instead;
-- `sbom.spdx.json` (SPDX 2.3) and `provenance.json` (in-toto, SLSA v1),
-  both unsigned;
+- `sbom.spdx.json` (SPDX 2.3, Debian licences read from each package's
+  DEP-5 copyright file in the image) and `provenance.json` (in-toto, SLSA
+  v1), both unsigned;
 - `build-record.json`, and `receipt.json` from `receipt`.
 
 `manifest` adds `image-release.json` there.
 
-The existing recipes in `../guest/` and their pins and receipts stay as they
-are: this builder reads them by hash and replaces none of them. A built
-output here is a candidate, not a deployed image: no signing key exists, so
-its release manifest is unsigned, and no boot or smoke has qualified one.
+`../guest/browser/build.sh` and `../guest/checker/build.sh` take this
+builder as their default route (rebuild from a mirror, or `--archive` to
+import a recorded output) and print the image's config digest;
+`--dockerfile` keeps each one's Dockerfile recipe. The builder reads those
+recipes by hash at the engine commit. A built output is a candidate, not a
+deployed image: no signing key exists, so its release manifest is
+unsigned. A `boot-proved` output names its smoke in its `note`, and that
+proof covers exactly what the note says.

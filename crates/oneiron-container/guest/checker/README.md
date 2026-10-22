@@ -39,43 +39,83 @@ fetches nothing; a program the image lacks holds the check, naming it.
 
 ## Build
 
-On a Linux host with Docker (or another Docker-compatible CLI with
-BuildKit), git and rustup, from a checkout of the commit to build:
+On a Linux host with Docker (or another Docker-compatible CLI), git and
+python3 3.11 or newer, `build.sh` takes one of three routes. The flag picks
+the route, and a failing route never falls back to another:
 
 ```sh
-crates/oneiron-container/guest/checker/build.sh
+# the image-family route (the default)
+ONEIRON_CHECKER_IMAGES_MIRROR=/srv/oneiron-images/mirror \
+ONEIRON_CHECKER_IMAGES_WORK=/srv/oneiron-images/work \
+  crates/oneiron-container/guest/checker/build.sh
+# import a built archive, no rebuild
+crates/oneiron-container/guest/checker/build.sh --archive /srv/oneiron-images/checker.oci.tar
+# the Dockerfile route
+crates/oneiron-container/guest/checker/build.sh --dockerfile
 ```
 
-It:
+- **Image family (default).** It rebuilds the `checker` variant with
+  `crates/oneiron-container/images/build.py` (docs/ops/guest-image-family.md)
+  and loads the OCI archive it writes. The steps are `fetch` (never
+  `--learn`: the committed lock decides), then `build`, `receipt` and
+  `manifest`, against the mirror and work dir the two variables name. The
+  host is the builder's: Linux x86_64, unprivileged user and mount
+  namespaces, network for the fetch. The helper, fence, guest, toolchain and
+  store come from release.toml's `inputs.engine.commit`, which the checkout
+  must hold, not from the checkout as it stands. The builder's own receipt,
+  SBOM, provenance and `image-release.json` stay under
+  `<work>/artifacts/checker/`.
+- **`--archive FILE`.** It loads a `checker.oci.tar` that is already built.
+  Its sha256 must be release.toml's checker `oci_archive_sha256`; anything
+  else is refused, never loaded.
+- **`--dockerfile`.** This is the route as it was before the image family:
+  1. it refuses a checkout with local changes to tracked files, since the
+     receipt names the commit;
+  2. it builds `oneiron-fence` and `oneiron-guest` from this checkout with
+     host Cargo;
+  3. it builds this directory's Dockerfile from a context of `checker.py`,
+     those binaries and a `git archive` of HEAD. The image gets its packages
+     from the pinned Debian base, and Rust `1.96` from rustup-init 1.29.1,
+     kept only when its SHA-256 is the one the Dockerfile names for the
+     architecture. A stage of its own fetches the dependency store from the
+     archived manifests and lockfile; the image keeps the store, not the
+     tree;
+  4. it checks that both binaries load inside the image. A host glibc newer
+     than the image's fails here, not when a check starts its guest.
 
-1. refuses a checkout with local changes to tracked files, since the
-   receipt names the commit;
-2. builds `oneiron-fence` and `oneiron-guest` from this checkout;
-3. builds this directory's Dockerfile from a context of `checker.py`, those
-   binaries and a `git archive` of HEAD. The image gets its packages from
-   the pinned Debian base, and Rust `1.96` from rustup-init 1.29.1, kept
-   only when its SHA-256 is the one the Dockerfile names for the
-   architecture. A stage of its own fetches the dependency store from the
-   archived manifests and lockfile; the image keeps the store, not the tree;
-4. checks that both binaries load inside the image (a host glibc newer than
-   the image's fails here, not when a check starts its guest);
-5. writes the receipt and prints the local image id, `sha256:<64 hex>`, as
-   the only line on stdout.
+Every route writes the receipt and prints one line on stdout, the image's
+**config digest** (`sha256:<64 hex>`); everything else goes to stderr. For
+an archive the digest comes from its own `manifest.json` Config, hashed
+against the config bytes (the rule `deploy/firecracker/build.py` uses). The
+Dockerfile route saves the built image and reads the digest the same way;
+it does not take it from `--iidfile`. `--store-id` works with any route. It
+prints instead the id this host's docker store answers the image as
+(`docker image inspect` `.Id`), which every route also writes to stderr. A
+docker on the containerd image store answers by the manifest digest, and
+there the config digest does not resolve. A classic store answers by the
+config digest.
 
 Its outputs go to `ONEIRON_CHECKER_OUT`, by default `checker-image` under
 `CARGO_TARGET_DIR` (the checkout's `target/` when unset):
 
-- `image-id`: the image id (the build's `--iidfile`);
-- `image.json`: the receipt, written inside the image: `image` (the id),
-  `source_commit`, `cargo_lock_sha256`, `rustc` (`rustc -vV` of the
-  toolchain `RUSTUP_TOOLCHAIN=1.96` selects), `cargo` (`cargo -V`), and the
-  SHA-256 of the helper, fence and guest the image holds (`helper_sha256`,
-  `fence_sha256`, `guest_sha256`).
+- `image-id`: the config digest, on every route and with `--store-id`;
+- `image.json`: the receipt, written inside the image: `image` (the config
+  digest), `source_commit` (HEAD for the Dockerfile route, else the engine
+  commit the image was built from), `cargo_lock_sha256`, `rustc`
+  (`rustc -vV` of the toolchain `RUSTUP_TOOLCHAIN=1.96` selects), `cargo`
+  (`cargo -V`), and the SHA-256 of the helper, fence and guest the image
+  holds (`helper_sha256`, `fence_sha256`, `guest_sha256`).
 
 Nothing is pushed to a registry. `ONEIRON_CHECKER_DOCKER` names the
 container CLI (default `docker`), and `ONEIRON_CHECKER_TAG` the tag the
 image also gets (default `oneiron-queue-checker:local`), so a prune of
-untagged images keeps it.
+untagged images keeps it. An imported archive also keeps its own
+`oneiron-image-checker:candidate` tag.
+
+The image-family image has no rustup. `/opt/cargo/bin` links straight to
+the pinned toolchain in place of rustup's proxies, so `RUSTUP_TOOLCHAIN`
+selects nothing. Nothing that runs in the image may use `cargo +toolchain`:
+without a proxy, `+1.96` is not a toolchain selector (FIX 8977).
 
 The store holds what the lockfile named at the built commit. When
 Cargo.lock gains a crate or a version, rebuild the image: a check that
@@ -84,12 +124,14 @@ needs a crate the store lacks cannot fetch it and is held
 
 ## Pin
 
-Put the printed id and the receipt's identities in the engine's config:
+Put the id this host's store answers and the receipt's identities in the
+engine's config. On a classic store that is the printed id; on a
+containerd store it is the `--store-id` output (or the stderr line):
 
 ```toml
 [merge_queue]
 runtime = "/usr/bin/docker"
-image = "sha256:<the printed id>"
+image = "sha256:<the id>"
 toolchain = { rust = "<release and commit-hash from the receipt's rustc>", cargo_lock = "sha256:<the receipt's cargo_lock_sha256>" }
 # The guest limits default to these (QUEUE_CHECK_DEFAULT_LIMITS in
 # crates/oneiron-server/src/config/merge_queue.rs). They are defaults, not
@@ -103,9 +145,12 @@ toolchain = { rust = "<release and commit-hash from the receipt's rustc>", cargo
 All of `/tmp/queue-check` (the source, the store's copy and the target dir)
 is guest tmpfs, so `memory_mib` covers it as well as the compiler.
 
-A local id names the image only on the host that holds it. Build on the host
-that serves the engine, or move the image with `docker save` and
-`docker load`, which keep its id.
+A local id names the image only on the host that holds it. Build or import
+on the host that serves the engine, or move the image with `docker save` and
+`docker load`, which keep its config. The OCI backend mounts the host's
+fence (`ONEIRON_FENCE_LAUNCHER`) over the image's entrypoint. The
+image-family and `--archive` routes build no host fence: stage one that
+loads in the image's glibc, and record its hash beside the image id.
 
 Without the section a check answers that it needs configuration and names
 the keys; it never runs on the host instead. On a host with no isolated

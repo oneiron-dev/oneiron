@@ -1,6 +1,6 @@
 # The browser guest: Lightpanda (the engine agents start on) or headless
 # Chromium, each speaking CDP over the guest's stdio only (entrypoint.sh).
-# Built on a Linux host by build.sh here, which puts this checkout's builds
+# Built on a Linux host by `build.sh --dockerfile`, which puts this checkout's builds
 # of oneiron-fence, oneiron-browser-relay and oneiron-guest in the context
 # beside this directory's files; deployments pin the built image's id
 # (README.md). The runtime adds --network none, --read-only, a non-root

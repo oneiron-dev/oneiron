@@ -60,7 +60,7 @@ def fetch(model: Model, *, repo: Path, mirror: Mirror, work: Path, variants: lis
     tools = model.plan("tools")
     cfg, out = mkosi_run.write_config(model, tools, work=work, mirror=mirror, tools_tree=bootstrap, phase="fetch")
     mkosi_run.build(mkosi_src, cfg, work)
-    fetched_tools = mkosi_run.finish_tools_tree(out)
+    fetched_tools = mkosi_run.finish_tools_tree(out, work)
     for plan in plans:
         plan_dir = mkosi_run.write_plan(model, plan, engine=engine, mirror=mirror, work=work)
         cfg, _ = mkosi_run.write_config(model, plan, work=work, mirror=mirror, tools_tree=fetched_tools,
@@ -86,6 +86,9 @@ def _tools_tree(model: Model, mirror: Mirror, work: Path, mkosi_src: Path, boots
     if mark.exists():
         recorded = mark.read_text().strip()
         mark.unlink()
+        # Finished again before the check (it is idempotent): a tree an older
+        # builder finished no longer matches its mark, so it is rebuilt.
+        mkosi_run.finish_tools_tree(out, work)
         if export.tree_digest(out / "tools") == recorded:
             mark.write_text(recorded + "\n")
             log(f"tools tree reused: {recorded}")
@@ -94,7 +97,7 @@ def _tools_tree(model: Model, mirror: Mirror, work: Path, mkosi_src: Path, boots
     model.check_lock_covers(tools)
     cfg, out = mkosi_run.write_config(model, tools, work=work, mirror=mirror, tools_tree=bootstrap, phase="build")
     mkosi_run.build(mkosi_src, cfg, work)
-    tree = mkosi_run.finish_tools_tree(out)
+    tree = mkosi_run.finish_tools_tree(out, work)
     digest = export.tree_digest(tree)
     (tree / TOOLS_MARK).write_text(digest + "\n")
     log(f"tools tree (builder identity) sha256 {digest}")
@@ -180,10 +183,12 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
     tar = export.rootfs_tar(tree, artifacts / "rootfs.tar", epoch, rules)
     commit = model.engine_commit()
     builder = run(["git", "-C", repo, "rev-parse", "HEAD"], capture=True).stdout.strip()
+    # The builder commit stays out of the OCI config and manifest, so an
+    # image's ids are fixed by its payload; the record, receipt, SBOM and
+    # provenance name the builder (FIX 9354).
     annotations = {"org.opencontainers.image.revision": commit,
                    "org.opencontainers.image.source": model.inputs("engine", "repository"),
-                   "dev.oneiron.image.variant": variant,
-                   "dev.oneiron.image.builder-commit": builder}
+                   "dev.oneiron.image.variant": variant}
     oci = export.oci(tar, variant=variant, image=plan.image, epoch=epoch, out=artifacts, annotations=annotations)
 
     def in_tools(argv, env):
@@ -211,7 +216,7 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
     # Written before the SBOM step too, so a refusal there still leaves the build's record.
     write_json(artifacts / "build-record.json", record)
     record.update(attest.write(model, record, plan, build_dir=work / "cargo-build" / variant, engine=engine,
-                               cargo_home=mirror.cargo_home))
+                               cargo_home=mirror.cargo_home, rootfs=tree))
     write_json(artifacts / "build-record.json", record)
     return record
 

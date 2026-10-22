@@ -1,10 +1,12 @@
 #!/bin/bash
 # The last step on the image tree ($BUILDROOT): drop what is per-machine,
-# secret or build-time state. Licence files (usr/share/doc/*/copyright) and
+# secret or build-time state, and normalize the offline Cargo store a plan
+# places (the checker's). Licence files (usr/share/doc/*/copyright) and
 # dpkg's database stay. mkosi then clamps every mtime to SOURCE_DATE_EPOCH.
 set -euo pipefail
 
 root=${BUILDROOT:?}
+plan=${SRCDIR:-/work/src}/plan
 
 # An empty machine-id: whatever starts the guest supplies one; none is baked in.
 : > "$root/etc/machine-id"
@@ -37,3 +39,53 @@ for dir in tmp var/tmp; do
     find "$root/$dir" -mindepth 1 -delete
   fi
 done
+
+# The offline Cargo store (a plan's cargo-store tree; the checker's), as
+# copied into the image, never the mirror's: what differs between two
+# fetches of the same lock goes (FIX 9353).
+# - .global-cache is cargo's SQLite record of last-use times; a check's
+#   scratch copy of the store (checks.json) recreates it.
+# - Every git object store (each git/db repo and each checkout's .git) is
+#   repacked from its refs by the image's own pinned git, with fixed
+#   single-thread options, so the server's pack and delta choices do not
+#   reach the image. `mkosi-chroot` runs it inside the image with /dev and
+#   /proc mounted; the tools tree carries no git.
+# - Then each checkout's index (stat data) and reflogs (times) go, and a
+#   checkout pack identical to its db's is linked to it again, as the fetch
+#   left them.
+# The checkouts keep their sources, .cargo-ok, HEAD, refs and objects.
+image_git() {
+  mkosi-chroot env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null /usr/bin/git \
+    -c safe.directory='*' -c gc.auto=0 -c pack.threads=1 -c pack.window=10 -c pack.depth=50 \
+    -c pack.writeReverseIndex=false -c repack.writeBitmaps=false "$@"
+}
+
+normalize_cargo_store() {
+  local store=$root$1 repo git db pack twin
+  rm -f "$store/.global-cache" "$store/.global-cache-wal" "$store/.global-cache-shm"
+  for repo in "$store"/git/db/* "$store"/git/checkouts/*/*/.git; do
+    [ -d "$repo/objects" ] || continue
+    image_git --git-dir="${repo#"$root"}" repack -a -d -f -F -n -q --no-write-bitmap-index
+    rm -rf "$repo/objects/info/commit-graph" "$repo/objects/info/commit-graphs" \
+           "$repo/objects/pack/multi-pack-index" "$repo"/objects/pack/*.bitmap "$repo"/objects/pack/*.rev
+  done
+  for git in "$store"/git/checkouts/*/*/.git; do
+    [ -d "$git" ] || continue
+    rm -rf "$git/index" "$git/logs"
+    db=$store/git/db/$(basename "$(dirname "$(dirname "$git")")")
+    for pack in "$git"/objects/pack/pack-*; do
+      twin=$db/objects/pack/${pack##*/}
+      if [ -f "$pack" ] && [ -f "$twin" ] && cmp -s "$pack" "$twin"; then
+        ln -f "$twin" "$pack"
+      fi
+    done
+  done
+}
+
+if [ "${ONEIRON_IMAGES_PHASE:-}" != fetch ] && [ -s "$plan/trees.tsv" ]; then
+  while IFS=$'\t' read -r rel dest; do
+    if [ "$rel" = cargo-home ]; then
+      normalize_cargo_store "$dest"
+    fi
+  done < "$plan/trees.tsv"
+fi

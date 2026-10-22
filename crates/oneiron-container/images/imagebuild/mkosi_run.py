@@ -25,6 +25,12 @@ HOOKS = {
     "postinst": IMAGES / "mkosi.postinst",
     "finalize": IMAGES / "mkosi.finalize",
 }
+# The snapshot sources sandbox_tree() writes, relative to its root; the
+# finished tools tree carries the same file and no other source list.
+SNAPSHOT_SOURCES = Path("etc/apt/sources.list.d/mkosi.sources")
+# What write_plan() can install today; anything else is refused before a fetch.
+SUPPORTED_PAYLOADS = ("file", "rust-toolchain")
+SUPPORTED_TREES = ("cargo-store",)
 
 
 def sandbox_tree(model: Model, work: Path) -> Path:
@@ -33,7 +39,7 @@ def sandbox_tree(model: Model, work: Path) -> Path:
     root = work / "sandbox"
     if root.exists():
         shutil.rmtree(root)
-    sources = root / "etc" / "apt" / "sources.list.d" / "mkosi.sources"
+    sources = root / SNAPSHOT_SOURCES
     sources.parent.mkdir(parents=True)
     stanzas = []
     for source in debian["sources"]:
@@ -57,16 +63,29 @@ def _tsv(path: Path, rows) -> None:
     path.write_text("".join("\t".join(str(c) for c in row) + "\n" for row in rows))
 
 
+def check_supported(model: Model, plan: Plan) -> None:
+    """Refuses a plan write_plan() cannot install. Side-effect free: build.py
+    calls it for every requested plan before its namespace or any download."""
+    if plan.source_builds:
+        names = ", ".join(sb["pin"] for sb in plan.source_builds)
+        raise NotYetSupported(f"{plan.name} needs an external source build ({names}); the CUA build lands with its phase")
+    for entry in plan.payloads:
+        kind = model.payload(entry["pin"])["kind"]
+        if kind not in SUPPORTED_PAYLOADS:
+            raise NotYetSupported(f"payload {entry['pin']} has kind {kind!r}; its install lands with phase {plan.phase}")
+    for entry in plan.trees:
+        if entry["kind"] not in SUPPORTED_TREES:
+            raise NotYetSupported(f"tree kind {entry['kind']!r} is not supported")
+
+
 def write_plan(model: Model, plan: Plan, *, engine: Path, mirror: Mirror, work: Path) -> Path:
     """The plan directory the hooks read (mounted at /work/src/plan)."""
+    check_supported(model, plan)
     root = work / "plan" / plan.name
     if root.exists():
         shutil.rmtree(root)
     (root / "files").mkdir(parents=True)
     (root / "trees").mkdir()
-    if plan.source_builds:
-        names = ", ".join(sb["pin"] for sb in plan.source_builds)
-        raise NotYetSupported(f"{plan.name} needs an external source build ({names}); the CUA build lands with its phase")
     _tsv(root / "native.tsv", [(n["package"], n["bin"], n["dest"], n.get("mode", "0555")) for n in plan.native])
     files = []
     for entry in plan.files:
@@ -80,14 +99,10 @@ def write_plan(model: Model, plan: Plan, *, engine: Path, mirror: Mirror, work: 
         if kind == "file":
             shutil.copyfile(mirror.blob(payload["sha256"]), root / "files" / entry["pin"])
             files.append((f"files/{entry['pin']}", entry["dest"], entry.get("mode", "0555")))
-        elif kind == "rust-toolchain":
+        else:
             install_rust(model, mirror, payload["components"], root / "trees" / entry["pin"])
             trees.append((f"plan/trees/{entry['pin']}", entry["dest"]))
-        else:
-            raise NotYetSupported(f"payload {entry['pin']} has kind {kind!r}; its install lands with phase {plan.phase}")
     for entry in plan.trees:
-        if entry["kind"] != "cargo-store":
-            raise NotYetSupported(f"tree kind {entry['kind']!r} is not supported")
         trees.append(("cargo-home", entry["dest"]))
     _tsv(root / "files.tsv", files)
     _tsv(root / "trees.tsv", trees)
@@ -222,10 +237,24 @@ def box(mkosi_src: Path, cfg: Path, work: Path, argv, *, env_extra: dict | None 
     return result
 
 
-def finish_tools_tree(out: Path) -> Path:
+def finish_tools_tree(out: Path, work: Path) -> Path:
+    """Normalizes the tools tree mkosi left in out; idempotent."""
     tree = out / "tools"
     if not tree.is_dir():
         raise StepFailed(f"mkosi left no tools tree at {tree}")
+    # apt in the tree reads the frozen snapshot only. mkosi writes the tree's
+    # own trixie.sources for deb.debian.org (its for_image repositories drop
+    # the snapshot); that and any other enabled list go, and sandbox_tree()'s
+    # snapshot file takes their place (FIX 9355).
+    apt = tree / "etc" / "apt"
+    (apt / "sources.list").unlink(missing_ok=True)
+    parts = apt / "sources.list.d"
+    parts.mkdir(parents=True, exist_ok=True)
+    for path in sorted(parts.iterdir()):
+        if path.suffix in (".list", ".sources"):
+            path.unlink()
+    shutil.copyfile(work / "sandbox" / SNAPSHOT_SOURCES, tree / SNAPSHOT_SOURCES)
+    os.chmod(tree / SNAPSHOT_SOURCES, 0o644)
     resolv = tree / "etc" / "resolv.conf"
     if not resolv.exists() and not resolv.is_symlink():
         # mkosi refuses a tools tree without one; its own default tools tree ships an empty file.
