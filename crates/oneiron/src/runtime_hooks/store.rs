@@ -11,6 +11,7 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result, Vault};
 
+use super::body::HookBudgetOverrun;
 use super::lineage::LineageLink;
 use super::source::{
     ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
@@ -248,6 +249,9 @@ pub(super) struct HookRunRecord {
     pub(super) state: HookRunState,
     pub(super) receipt_id: String,
     pub(super) duration_ms: u64,
+    /// Set when the run ended past its `budget_ms`: measured beside its
+    /// outcome, which it does not change (FIX 8842).
+    pub(super) budget_overrun: Option<HookBudgetOverrun>,
     /// Unix milliseconds, as the body saw it.
     pub(super) now: u64,
     /// Unix milliseconds of the write: its place in the run index.

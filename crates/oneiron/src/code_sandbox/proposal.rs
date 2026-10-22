@@ -119,7 +119,7 @@ impl SandboxFileWriteProposal {
         let old = std::str::from_utf8(base)
             .map_err(|_| Error::InvalidClaimBody("code edit base is not UTF-8"))?;
         let shared = usize::try_from(body.len()).map_or(base.len(), |len| len.min(base.len()));
-        let mut frame = vec![0; LOWER_FRAME];
+        let mut frame = zeroed(LOWER_FRAME)?;
         let mut reader = body.reader();
         let mut prefix = 0;
         while prefix < shared {
@@ -166,14 +166,20 @@ impl SandboxFileWriteProposal {
             .map_err(|_| Error::InvalidClaimBody("code edit output is not UTF-8"))?;
         let expected = &old[prefix..old.len() - suffix];
         let start = old[..prefix].chars().count();
+        let end = start + expected.chars().count();
+        let mut expected_text = String::new();
+        expected_text
+            .try_reserve_exact(expected.len())
+            .map_err(out_of_memory)?;
+        expected_text.push_str(expected);
         Ok(Some(SandboxFileEditProposal {
             path: self.path.clone(),
             base_content_hash: *blake3::hash(base).as_bytes(),
             edit: crate::code_document::CodeFileEdit {
                 path: self.path.relative_path().to_owned(),
                 start,
-                end: start + expected.chars().count(),
-                expected: expected.to_owned(),
+                end,
+                expected: expected_text,
                 replacement,
                 new_path: None,
             },
@@ -183,6 +189,21 @@ impl SandboxFileWriteProposal {
 
 /// One comparison buffer while a write is lowered; never a size bound.
 const LOWER_FRAME: usize = 1024 * 1024;
+
+/// `len` zero bytes in memory reserved first: host memory that cannot hold
+/// them refuses as [`out_of_memory`], before anything is read (FIX 8674).
+fn zeroed(len: usize) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(len).map_err(out_of_memory)?;
+    bytes.resize(len, 0);
+    Ok(bytes)
+}
+
+/// A reservation the host allocator could not make: the existing I/O error
+/// of kind `OutOfMemory`, never a size limit of our own (FIX 8674).
+fn out_of_memory(_: std::collections::TryReserveError) -> Error {
+    Error::Io(std::io::Error::from(std::io::ErrorKind::OutOfMemory))
+}
 
 /// One proposed memory claim from a propose-only guest.
 #[derive(Debug, Clone, PartialEq)]

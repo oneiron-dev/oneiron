@@ -4,30 +4,34 @@
 //! receipt, intents and cursor in one write. Delivery is at least once, in
 //! commit order, per hook and per source.
 
-use std::collections::{BTreeMap, HashMap};
+mod body;
+
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use crate::claim::{ClaimReadStatus, ScopedRead};
-use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
-use crate::skill_hub::pack_catalog::{HookActorClass, HookPhase, HookRenderClass, PackHookBinding};
+use crate::receipt::hex_lower;
+use crate::skill_hub::pack_catalog::{HookActorClass, HookPhase, PackHookBinding};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::apply;
 use super::block::{self, HookBlock};
-use super::body::{HookBodyRun, HookBodyRuntime, HookVerdict};
+use super::body::{HookBodyRuntime, HookRunContext, HookVerdict};
 use super::filter;
 use super::grant::{self, HookGrant};
-use super::lineage::{self, HookCheck, HookCheckReason, LineageLink};
-use super::outcome::{HookOutcome, kind_token};
+use super::lineage::{self, HookCheck, LineageLink};
+use super::outcome::HookOutcome;
 use super::read::{self, SeenFact};
 use super::source::{self, FactEntry, FactKind, FactPosition, FactSource};
 use super::store::{
-    self, CursorRow, HookIntent, HookIntentState, HookReadPin, HookRunRecord, HookRunRef,
-    HookRunState, HookVerdictPin, RunKey,
+    self, CursorRow, HookIntent, HookIntentState, HookRunRecord, HookRunRef, HookRunState, RunKey,
 };
+
+pub(super) use body::{Verdict, ask_verdict, judge};
+use body::{VerdictPins, receipt, record};
 
 /// Entries one pass reads from each source: the in-memory cap. A source with
 /// more is read again from its cursors on the next pass.
@@ -42,8 +46,6 @@ pub type HookPassAdmission = std::sync::Arc<dyn Fn() -> Option<Box<dyn Send>> + 
 /// The largest input a memo row pins.
 pub(super) const MAX_PINNED_INPUT: usize = 256 * 1024;
 pub(super) const MAX_OUTCOME_BYTES: usize = 64 * 1024;
-/// The most bytes of `ai.verdict` requests and replies one memo row pins.
-const MAX_PINNED_VERDICT_BYTES: usize = 256 * 1024;
 /// The longest reason or error a receipt field carries.
 const MAX_FIELD: usize = 512;
 
@@ -451,8 +453,8 @@ impl Pass<'_> {
             now,
         )?;
         let started = Instant::now();
-        let budget_ms = run.binding.selector.budget_ms;
-        let deadline = started + Duration::from_millis(u64::from(budget_ms));
+        let mut context = HookRunContext::new(run.binding.selector.budget_ms);
+        let deadline = context.deadline();
         let mut pins = Vec::new();
         let mut verdicts = VerdictPins::new();
         let result = match body {
@@ -468,12 +470,15 @@ impl Pass<'_> {
                     reply
                 };
                 self.runtime
-                    .run_fact_hook(&body, &input, budget_ms, &mut answer, &mut verdict)
+                    .run_fact_hook(&body, &input, &mut context, &mut answer, &mut verdict)
             }
             Err(reason) => Err(Error::InvalidConfig(reason)),
         };
+        // The body's worker has joined, a failed run's too: its accounting
+        // ends here, and an overrun goes beside its outcome (FIX 8842).
+        let overrun = context.finish();
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let verdict = judge(run.binding, result);
+        let verdict = judge(run.binding, result, overrun);
         let memo = record(run, &input, pins, verdicts, &verdict, duration_ms, now);
         let queued = self.commit(run, memo, &verdict)?;
         self.report.count(&verdict);
@@ -606,153 +611,6 @@ impl Pass<'_> {
     }
 }
 
-/// One `ai.verdict` of a fact hook, answered as the live runner answers it:
-/// only a generative hook asks, of `host`, for its grant's reader, the
-/// identity whose reach the hook reads with. Beside it, the rows its
-/// evidence resolved to ([`HookVerdict::verdict`]); a refusal here reads none.
-pub(super) fn ask_verdict(
-    binding: &PackHookBinding,
-    grant: &HookGrant,
-    host: Option<&dyn HookVerdict>,
-    request: &str,
-    deadline: Instant,
-) -> (std::result::Result<String, String>, Option<Vec<EntityId>>) {
-    let refused = match (binding.selector.render_class, host) {
-        (HookRenderClass::Generative, Some(host)) => {
-            let class = filter::edge_class(grant.reader_class);
-            return host.verdict(grant.reader, class, request, deadline);
-        }
-        (HookRenderClass::Generative, None) => "no verdict host serves this run",
-        (HookRenderClass::DeterministicEager, _) => {
-            "a deterministic hook calls no model: declare render_class: generative"
-        }
-    };
-    (Err(refused.to_owned()), Some(Vec::new()))
-}
-
-/// The verdicts one run heard, pinned in order while their requests and
-/// replies fit [`MAX_PINNED_VERDICT_BYTES`]; the first that does not ends
-/// the pins.
-struct VerdictPins {
-    pins: Vec<HookVerdictPin>,
-    bytes: usize,
-    complete: bool,
-}
-
-impl VerdictPins {
-    const fn new() -> Self {
-        Self {
-            pins: Vec::new(),
-            bytes: 0,
-            complete: true,
-        }
-    }
-
-    fn push(
-        &mut self,
-        request: &str,
-        reply: &std::result::Result<String, String>,
-        evidence: Option<Vec<EntityId>>,
-    ) {
-        let (Ok(text) | Err(text)) = reply;
-        // Each evidence row pins as its 32-hex id.
-        let rows = evidence.as_ref().map_or(0, Vec::len).saturating_mul(32);
-        let bytes = self
-            .bytes
-            .saturating_add(request.len())
-            .saturating_add(text.len())
-            .saturating_add(rows);
-        if !self.complete || bytes > MAX_PINNED_VERDICT_BYTES {
-            self.complete = false;
-            return;
-        }
-        self.bytes = bytes;
-        self.pins.push(HookVerdictPin {
-            request_json: request.to_owned(),
-            reply: reply.clone(),
-            evidence,
-        });
-    }
-}
-
-/// How a body run ended, judged against its binding.
-pub(super) struct Verdict {
-    pub(super) state: HookRunState,
-    pub(super) outcome: Option<HookOutcome>,
-    pub(super) outcome_json: Option<String>,
-    /// The outcome kind, or `refused` / `failed`.
-    pub(super) token: String,
-    pub(super) reason: Option<String>,
-    pub(super) fuel_used: u64,
-    pub(super) host_calls: u32,
-}
-
-/// A body that failed, trapped or ran past its budget is `failed`. An
-/// outcome that does not parse, is not a kind of the binding's phase, is not
-/// one the binding allows, or has the wrong shape is `refused`.
-pub(super) fn judge(binding: &PackHookBinding, result: Result<HookBodyRun>) -> Verdict {
-    let run = match result {
-        Ok(run) => run,
-        Err(error) => {
-            return Verdict {
-                state: HookRunState::Failed,
-                outcome: None,
-                outcome_json: None,
-                token: "failed".to_owned(),
-                reason: Some(bounded(&error.to_string())),
-                fuel_used: 0,
-                host_calls: 0,
-            };
-        }
-    };
-    match accept(binding, &run.outcome_json) {
-        Ok(outcome) => Verdict {
-            state: HookRunState::Completed,
-            token: kind_token(outcome.kind()).to_owned(),
-            outcome: Some(outcome),
-            outcome_json: Some(run.outcome_json),
-            reason: None,
-            fuel_used: run.fuel_used,
-            host_calls: run.host_calls,
-        },
-        Err(reason) => Verdict {
-            state: HookRunState::Refused,
-            token: "refused".to_owned(),
-            outcome: None,
-            outcome_json: (run.outcome_json.len() <= MAX_OUTCOME_BYTES).then_some(run.outcome_json),
-            reason: Some(reason),
-            fuel_used: run.fuel_used,
-            host_calls: run.host_calls,
-        },
-    }
-}
-
-fn accept(binding: &PackHookBinding, json: &str) -> std::result::Result<HookOutcome, String> {
-    if json.len() > MAX_OUTCOME_BYTES {
-        return Err("the outcome is too large".to_owned());
-    }
-    let outcome: HookOutcome =
-        serde_json::from_str(json).map_err(|_| "the outcome does not parse".to_owned())?;
-    let kind = outcome.kind();
-    let phase = binding.selector.phase;
-    if !kind.applies_in(phase) {
-        return Err(format!(
-            "{} is not a {} outcome",
-            kind_token(kind),
-            match phase {
-                HookPhase::Pre => "pre-hook",
-                HookPhase::Post => "post-hook",
-                HookPhase::Fact => "fact-hook",
-            }
-        ));
-    }
-    if !binding.selector.outcomes.contains(&kind) {
-        return Err(format!("the binding does not allow {}", kind_token(kind)));
-    }
-    outcome.validate()?;
-    Ok(outcome)
-}
-
 /// The input a body sees as `input`. `now` is Unix milliseconds from the
 /// vault clock; `recorded_at` is the fact's own, in seconds.
 pub(super) fn input_json(
@@ -792,90 +650,6 @@ pub(super) fn input_json(
 
 pub(super) fn block_id(key: &RunKey) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(b"oneiron.hook-block.v1", &[key.as_slice()])
-}
-
-/// The run's memo row; the commit stamps its write time.
-fn record(
-    run: &Run<'_>,
-    input: &str,
-    reads: Vec<HookReadPin>,
-    verdicts: VerdictPins,
-    verdict: &Verdict,
-    duration_ms: u64,
-    now: u64,
-) -> HookRunRecord {
-    HookRunRecord {
-        binding: run.binding_id,
-        code: run.binding.code,
-        body_hash: run.binding.body_hash.clone(),
-        source: run.entry.position.source(),
-        position: run.entry.position.hex(),
-        fact: run.entry.kind,
-        entity: run.entry.entity,
-        input_json: (input.len() <= MAX_PINNED_INPUT).then(|| input.to_owned()),
-        input_hash: blake3::hash(input.as_bytes()).to_hex().to_string(),
-        reads,
-        verdicts: verdicts.pins,
-        verdicts_complete: verdicts.complete,
-        outcome_json: verdict.outcome_json.clone(),
-        outcome: verdict.token.clone(),
-        reason: verdict.reason.clone(),
-        state: verdict.state,
-        receipt_id: store::receipt_id(&run.key),
-        duration_ms,
-        now,
-        committed_at: 0,
-    }
-}
-
-/// The run's Hook receipt: the hook, its CODE id and body hash, the duration,
-/// the outcome, `now`, the rows read and the run key.
-fn receipt(
-    run: &Run<'_>,
-    verdict: &Verdict,
-    check: Option<HookCheckReason>,
-    rows_read: usize,
-    duration_ms: u64,
-    now: u64,
-) -> ReceiptRecord {
-    let binding = run.binding;
-    let mut fields: BTreeMap<String, String> = [
-        ("binding", run.binding_id.to_hex()),
-        ("code", binding.code.to_hex()),
-        ("body_hash", binding.body_hash.clone()),
-        ("hook", format!("{}/{}", binding.pack, binding.hook)),
-        ("hook_version", binding.hook_version.clone()),
-        ("fact", run.entry.kind.as_str().to_owned()),
-        ("source", run.entry.position.source().as_str().to_owned()),
-        ("position", run.entry.position.hex()),
-        ("duration_ms", duration_ms.to_string()),
-        ("now", now.to_string()),
-        ("rows_read", rows_read.to_string()),
-        ("run_key", hex_lower(&run.key)),
-        ("fuel_used", verdict.fuel_used.to_string()),
-        ("host_calls", verdict.host_calls.to_string()),
-    ]
-    .into_iter()
-    .map(|(name, value)| (name.to_owned(), value))
-    .collect();
-    if let Some(check) = check {
-        fields.insert("check".to_owned(), check.as_str().to_owned());
-    }
-    if let Some(reason) = &verdict.reason {
-        fields.insert("reason".to_owned(), bounded(reason));
-    }
-    ReceiptRecord {
-        receipt_id: store::receipt_id(&run.key),
-        receipt_kind: ReceiptKind::Hook,
-        occurred_at: now / 1_000,
-        actor: Some(binding.author_id().to_hex()),
-        on_behalf_of: None,
-        outcome: verdict.token.clone(),
-        job_ref: None,
-        trigger_ref: Some(run.entry.entity.to_hex()),
-        policy_trace: Vec::new(),
-        fields,
-    }
 }
 
 /// `text`, cut to [`MAX_FIELD`] bytes on a character boundary.

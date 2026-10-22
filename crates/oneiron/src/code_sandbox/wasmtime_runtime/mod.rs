@@ -32,7 +32,8 @@ use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 /// Component ABI shipped for hosts building the plain-JS interpreter artifact.
 pub const GUEST_WIT: &str = include_str!("../../../wit/code-run.wit");
 
-/// Per-step ceilings. Zero ceilings are never interpreted as unlimited.
+/// Per-step ceilings, and one advisory threshold (`host_calls`). Zero
+/// ceilings are never interpreted as unlimited.
 #[derive(Debug, Clone, Copy)]
 pub struct ComponentBudget {
     pub fuel: u64,
@@ -45,6 +46,10 @@ pub struct ComponentBudget {
     /// done, not failed, its finished host calls kept (FIX 7665). This is not a
     /// hard end-to-end RPC timeout.
     pub wall_time: Duration,
+    /// An advisory observation threshold, never a ceiling (FIX 8676): each
+    /// step counts its host calls, and a count past it only marks the
+    /// step's tracing observation. No count refuses a call or ends a step.
+    /// Zero turns the marker off.
     pub host_calls: u32,
     pub message_bytes: usize,
     pub foreign_budget: super::microvm::ExecutionBudget,
@@ -92,7 +97,6 @@ impl WasmtimeComponentRuntime {
         if budget.fuel == 0
             || budget.memory_bytes == 0
             || budget.wall_time.is_zero()
-            || budget.host_calls == 0
             || budget.message_bytes == 0
             || !budget.foreign_budget.is_bounded()
             || budget.foreign_budget.pids > 4096
@@ -317,7 +321,7 @@ fn execute_component(
         State {
             events,
             limits,
-            remaining_calls: budget.host_calls,
+            calls: typed::ComponentCallObservation::new(budget.host_calls),
             message_bytes: budget.message_bytes,
         },
     );
@@ -620,7 +624,8 @@ impl HeldOutput {
 struct State {
     events: mpsc::SyncSender<HostEvent>,
     limits: StoreLimits,
-    remaining_calls: u32,
+    /// The step's host calls, observed when its store drops (FIX 8676).
+    calls: typed::ComponentCallObservation,
     message_bytes: usize,
 }
 

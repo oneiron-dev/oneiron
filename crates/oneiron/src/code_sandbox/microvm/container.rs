@@ -294,7 +294,12 @@ impl MicroVmBackend for ContainerBackend {
                 crate::error::CodeError::SandboxProposalDiskFloor { .. }
             ))
         );
-        if abandoned && !at_floor {
+        // So does one whose lowering host memory could not hold (FIX 8674).
+        let out_of_memory = matches!(
+            &result,
+            Err(crate::Error::Io(error)) if error.kind() == std::io::ErrorKind::OutOfMemory
+        );
+        if abandoned && !at_floor && !out_of_memory {
             return Err(crate::Error::Code(
                 crate::error::CodeError::SandboxAbandoned {
                     backend: CONTAINER_BACKEND_NAME,

@@ -1,14 +1,15 @@
 //! `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that
 //! declares the generative class asks through the same decision ladder the
-//! `ai.verdict` row climbs, for the reader its grant names, by the end of
-//! its own budget.
+//! `ai.verdict` row climbs, for the reader its grant names. The hook's
+//! budget is an accounting deadline that never shortens or refuses its
+//! verdict (FIX 8842): a deadline the request names stands as named.
 
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use oneiron::memory::ProducerRows;
 use oneiron::runtime_hooks::HookVerdict;
-use oneiron::task_verb::sdk::AiVerdictRequest;
+use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdictRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
 use crate::server::SyncServer;
@@ -39,17 +40,7 @@ impl ServerHookVerdict {
             .ok_or_else(|| "the server is stopping".to_owned())?;
         let mut request: AiVerdictRequest = serde_json::from_str(request_json)
             .map_err(|error| format!("invalid ai.verdict request: {error}"))?;
-        // The verdict answers inside the hook's own budget.
-        let left = u64::try_from(
-            deadline
-                .saturating_duration_since(Instant::now())
-                .as_millis(),
-        )
-        .unwrap_or(u64::MAX);
-        if left == 0 {
-            return Err("hook deadline exceeded".to_owned());
-        }
-        request.deadline_ms = Some(request.deadline_ms.map_or(left, |own| own.min(left)));
+        request.deadline_ms = verdict_deadline_ms(request.deadline_ms, deadline);
         let memory = server
             .vault
             .memory(reader, class)
@@ -87,4 +78,22 @@ impl HookVerdict for ServerHookVerdict {
         evidence.extend(producers.take());
         (reply, Some(evidence))
     }
+}
+
+/// A hook verdict's deadline (FIX 8842): the one its request names, as
+/// named; else the `ai.verdict` default, or the hook run's time left when
+/// that is longer, as a long hook budget gave its verdicts before. The
+/// hook's deadline only ever lengthens a verdict's time: it never shortens
+/// one and never refuses one once it has passed.
+fn verdict_deadline_ms(own: Option<u64>, hook_deadline: Instant) -> Option<u64> {
+    if own.is_some() {
+        return own;
+    }
+    let left = u64::try_from(
+        hook_deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX);
+    (left > AI_VERDICT_DEADLINE_MS).then_some(left)
 }
