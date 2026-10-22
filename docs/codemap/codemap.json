@@ -17588,6 +17588,26 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorBindingDependent",
+      "ConnectorCredentialBinding",
+      "ConnectorIssuerObservation",
+      "ConnectorIssuerTransition",
+      "ConnectorIssuerTransitionState"
+     ],
+     "path": "src/connector_key/credential_binding.rs",
+     "purpose": "FIX 988 (ARCH-0054 identity drift; ARCH-0072 \"every row that depended on the old issuer\"): one durable…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ConnectorEvent",
       "ConnectorEventFilter",
       "ConnectorSubscription",
@@ -17734,7 +17754,7 @@
      "purpose": "The owner's consent to a catalog connector's tools (ONE-1794, OF-189)",
      "surface": {
       "const": 2,
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 2,
       "struct": 5
@@ -17784,9 +17804,9 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "mod": 2,
-      "re-export": 13
+      "re-export": 16
      }
     },
     {
@@ -17974,9 +17994,9 @@
      "purpose": "ARCH-0072 typed per-capability grant slates",
      "surface": {
       "const": 2,
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 3,
-      "fn": 36,
+      "fn": 37,
       "struct": 10
      }
     },
@@ -18011,6 +18031,44 @@
       "crate-vis": 2,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectorRevisionDeferral",
+      "ConnectorSlateRevisionAccepted",
+      "ConnectorSlateRevisionOffer",
+      "SlateRevisionCause"
+     ],
+     "path": "src/connector_key/slate_revision.rs",
+     "purpose": "FIX 988: proposed delta slates and the owner's acceptance of them (ARCH-0072 \"a proposed delta slate that…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectorScopeExceed",
+      "ConnectorScopeOutcome",
+      "ConnectorScopeOutcomeRecorded",
+      "ConnectorScopeRuling",
+      "ConnectorSlateScopeSignal"
+     ],
+     "path": "src/connector_key/slate_scope_signal.rs",
+     "purpose": "FIX 988 (ARCH-0072 door 3, OF-399): typed scope-exceed evidence",
+     "surface": {
+      "const": 1,
+      "crate-vis": 8,
+      "enum": 2,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -18483,7 +18541,7 @@
      "path": "src/consent_graduation/fold.rs",
      "purpose": "Txn-level counters projection, incremental maintenance, and CID-7 rebuild fold",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -66788,6 +66846,34 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectorBindingDependentView",
+      "ConnectorCredentialBindingView",
+      "ConnectorIssuerReaskRequest",
+      "ConnectorRevisionGrantView",
+      "ConnectorRevisionSnoozeView",
+      "ConnectorScopeOutcomeRequest",
+      "ConnectorScopeOutcomeView",
+      "ConnectorScopeSignalView",
+      "ConnectorSlateRevisionAcceptRequest",
+      "ConnectorSlateRevisionAcceptedView",
+      "ConnectorSlateRevisionCauseView",
+      "ConnectorSlateRevisionDeferRequest",
+      "ConnectorSlateRevisionOfferView",
+      "ConnectorSlateRevisionOffersRequest",
+      "ConnectorSlateRevisionOffersView"
+     ],
+     "path": "src/verbs/connector_slate_revision.rs",
+     "purpose": "FIX 988: the owner's doors onto proposed connector slate revisions (ARCH-0072 door 3, and the issuer-change…",
+     "surface": {
+      "enum": 2,
+      "fn": 7,
+      "struct": 13
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -67062,7 +67148,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1173
+      "fn": 1178
      }
     },
     {
@@ -67459,7 +67545,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 10,
-      "re-export": 77,
+      "re-export": 78,
       "struct": 39
      }
     },
@@ -72422,7 +72508,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 35,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73542,7 +73628,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 82,
+     "files": 83,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73614,7 +73700,7 @@
    },
    "over_bar": 155,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4747,
+   "source_files": 4751,
    "test_files": 902
   },
   "oneiron-android": {
@@ -84801,7 +84887,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1142
+      "fn": 1147
      }
     },
     {
@@ -86089,7 +86175,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1143
+      "fn": 1148
      }
     },
     {
@@ -89915,6 +90001,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/connector_revision_doors.rs",
+     "purpose": "FIX 988: the owner's doors onto proposed connector slate revisions, shared by HTTP, SDK and MCP: his ruling…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/connector_slate_doors.rs",
      "purpose": "FIX 987: the owner's slate re-draft and a key holder's own narrow, shared by HTTP, SDK and MCP",
      "surface": {
@@ -90308,7 +90404,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 188
+      "crate-vis": 189
      }
     },
     {
@@ -101244,7 +101340,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 509,
+     "files": 510,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -101701,7 +101797,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1115,
+   "source_files": 1116,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -102720,6 +102816,7 @@
       "ConnectWindow",
       "ConnectorAnswerAction",
       "ConnectorAnswerRequest",
+      "ConnectorBindingDependentView",
       "ConnectorCallApproveOnceRequest",
       "ConnectorCallReply",
       "ConnectorCallRequest",
@@ -102727,8 +102824,10 @@
       "ConnectorCallStatusRequest",
       "ConnectorConsentRowView",
       "ConnectorConsentView",
+      "ConnectorCredentialBindingView",
       "ConnectorEnd",
       "ConnectorEntry",
+      "ConnectorIssuerReaskRequest",
       "ConnectorKeyView",
       "ConnectorListRequest",
       "ConnectorNameRequest",
@@ -102751,13 +102850,28 @@
       "ConnectorQualificationReceipt",
       "ConnectorQuestion",
       "ConnectorQuestionAnswer",
+      "ConnectorRevisionDeferral",
+      "ConnectorRevisionGrantView",
+      "ConnectorRevisionSnoozeView",
       "ConnectorSchemaReply",
       "ConnectorSchemaRequest",
+      "ConnectorScopeExceed",
+      "ConnectorScopeOutcome",
+      "ConnectorScopeOutcomeRequest",
+      "ConnectorScopeOutcomeView",
+      "ConnectorScopeSignalView",
       "ConnectorSendTaskOutcome",
       "ConnectorSlateNarrowRequest",
       "ConnectorSlateNarrowView",
       "ConnectorSlateRedraftReply",
       "ConnectorSlateRedraftRequest",
+      "ConnectorSlateRevisionAcceptRequest",
+      "ConnectorSlateRevisionAcceptedView",
+      "ConnectorSlateRevisionCauseView",
+      "ConnectorSlateRevisionDeferRequest",
+      "ConnectorSlateRevisionOfferView",
+      "ConnectorSlateRevisionOffersRequest",
+      "ConnectorSlateRevisionOffersView",
       "ConnectorSlateView",
       "ConnectorToolResult",
       "ConnectorView",
@@ -105912,8 +106026,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 981,
-      "struct": 3029
+      "enum": 986,
+      "struct": 3042
      }
     },
     {
