@@ -37,6 +37,7 @@
 //! nothing else is written.
 
 mod body;
+mod freshness;
 mod held;
 mod history;
 mod input;
@@ -50,6 +51,7 @@ mod tags;
 mod trace;
 mod verbs;
 
+pub use freshness::{TaggingFreshness, TaggingMoodPartView};
 pub use held::{HeldTagsOutcome, UnreadText};
 pub use history::TaggingTraceRecord;
 pub use marker::{

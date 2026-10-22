@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1157 facade rows, 4115 generated types.
+// UniFFI census: 1157 facade rows, 4122 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1109.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -8064,6 +8064,15 @@ pub struct TaggingFailureView {
     pub refusal: Option<String>,
 }
 
+/// `oneiron::tagging::freshness::TaggingFreshness`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaggingFreshness {
+    #[serde(rename = "stale")]
+    pub stale: bool,
+    #[serde(rename = "pending_retag")]
+    pub pending_retag: bool,
+}
+
 /// `oneiron::memory::extraction::types::ExecutionRuntime`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ExecutionRuntime {
@@ -8281,6 +8290,8 @@ pub struct TaggingStatusView {
     pub try_number: Option<u32>,
     #[serde(rename = "has_tags")]
     pub has_tags: bool,
+    #[serde(rename = "freshness", default, skip_serializing_if = "Option::is_none")]
+    pub freshness: Option<TaggingFreshness>,
     #[serde(rename = "saved_at", default, skip_serializing_if = "Option::is_none")]
     pub saved_at: Option<u64>,
     #[serde(
@@ -8289,6 +8300,15 @@ pub struct TaggingStatusView {
         skip_serializing_if = "Option::is_none"
     )]
     pub last_trace: Option<TaggingTraceView>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `TaggingStatusView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultTaggingStatusView {
+    #[serde(rename = "value")]
+    pub value: TaggingStatusView,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::tagging::verbs::MergeEvidenceView`.
@@ -8313,6 +8333,25 @@ pub struct TaggingVadView {
     pub dominance: f64,
 }
 
+/// `oneiron::tagging::freshness::TaggingMoodPartView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaggingMoodPartView {
+    #[serde(rename = "message_ref")]
+    pub message_ref: String,
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end_message_ref")]
+    pub end_message_ref: String,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "valence")]
+    pub valence: f64,
+    #[serde(rename = "arousal")]
+    pub arousal: f64,
+    #[serde(rename = "dominance")]
+    pub dominance: f64,
+}
+
 /// `oneiron::tagging::verbs::TurnTagsView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TurnTagsView {
@@ -8328,10 +8367,20 @@ pub struct TurnTagsView {
     pub merge_evidence: Vec<MergeEvidenceView>,
     #[serde(rename = "mood", default, skip_serializing_if = "Option::is_none")]
     pub mood: Option<TaggingVadView>,
+    #[serde(
+        rename = "mood_freshness",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub mood_freshness: Option<TaggingFreshness>,
+    #[serde(rename = "mood_parts")]
+    pub mood_parts: Vec<TaggingMoodPartView>,
     #[serde(rename = "saved_at")]
     pub saved_at: u64,
     #[serde(rename = "surprise", default, skip_serializing_if = "Option::is_none")]
     pub surprise: Option<f64>,
+    #[serde(rename = "freshness")]
+    pub freshness: TaggingFreshness,
 }
 
 /// `oneiron::tagging::verbs::TaggingTagsView`.
@@ -8343,6 +8392,15 @@ pub struct TaggingTagsView {
     pub tags: Option<TurnTagsView>,
 }
 
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `TaggingTagsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultTaggingTagsView {
+    #[serde(rename = "value")]
+    pub value: TaggingTagsView,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
 /// `oneiron::tagging::verbs::TaggingHistoryView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TaggingHistoryView {
@@ -8350,6 +8408,15 @@ pub struct TaggingHistoryView {
     pub turn_ref: String,
     #[serde(rename = "traces")]
     pub traces: Vec<TaggingTraceView>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `TaggingHistoryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultTaggingHistoryView {
+    #[serde(rename = "value")]
+    pub value: TaggingHistoryView,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::tagging::verbs::TaggingMentionsRequest`.
@@ -8371,6 +8438,8 @@ pub struct TaggingMentionHitView {
     pub index: u64,
     #[serde(rename = "mention")]
     pub mention: TaggedMentionView,
+    #[serde(rename = "freshness")]
+    pub freshness: TaggingFreshness,
 }
 
 /// `oneiron::tagging::verbs::TaggingMentionsView`.
@@ -8380,6 +8449,15 @@ pub struct TaggingMentionsView {
     pub entity_ref: String,
     #[serde(rename = "mentions")]
     pub mentions: Vec<TaggingMentionHitView>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `TaggingMentionsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultTaggingMentionsView {
+    #[serde(rename = "value")]
+    pub value: TaggingMentionsView,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::memory::affect::AffectClaimConsolidateRequest`.
@@ -46421,6 +46499,22 @@ pub struct SpeakerLink {
     pub confidence: f64,
 }
 
+/// `oneiron::memory::extraction::types::MoodPart`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MoodPart {
+    #[serde(rename = "message")]
+    pub message: u64,
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end_message")]
+    pub end_message: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "vad")]
+    pub vad: Vad,
+}
+
 /// `oneiron::memory::extraction::types::EncoderOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -46443,6 +46537,12 @@ pub struct EncoderOutput {
         skip_serializing_if = "Option::is_none"
     )]
     pub speaker_links: Option<Vec<SpeakerLink>>,
+    #[serde(
+        rename = "mood_parts",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub mood_parts: Option<Vec<MoodPart>>,
     #[serde(
         rename = "stack_sha16",
         default,

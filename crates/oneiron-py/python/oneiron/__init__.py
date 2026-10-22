@@ -1363,16 +1363,16 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def status(self, spec):
-            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
+            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt."""
             return json.loads(_translate(lambda: self._client.vault_tagging_status(json.dumps(spec))))
         def tags(self, spec):
-            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."""
+            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt."""
             return json.loads(_translate(lambda: self._client.vault_tagging_tags(json.dumps(spec))))
         def history(self, spec):
-            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
+            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt."""
             return json.loads(_translate(lambda: self._client.vault_tagging_history(json.dumps(spec))))
         def mentions(self, spec):
-            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
+            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt."""
             return json.loads(_translate(lambda: self._client.vault_tagging_mentions(json.dumps(spec))))
     class _VaultClusterVerbs:
         def __init__(self, client: _NativeClient) -> None:

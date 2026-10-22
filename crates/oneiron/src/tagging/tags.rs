@@ -510,15 +510,27 @@ pub(super) fn origin_reads_in_txn(
     Ok(names_in_txn(store, txn, entity, origin)? && readable_in_txn(store, txn, origin)?.is_some())
 }
 
-/// The mood saved on a turn and when it was saved: what the turn-VAD read
-/// door reads when no annotation was written on the turn.
+/// The mood saved on a turn, when it was saved and how current it is: what
+/// the turn-VAD read door reads when no annotation was written on the turn.
+/// A mood read from text the turn no longer shows stays readable, said to be
+/// stale (FIX 10169).
 pub(crate) fn saved_turn_mood_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
-) -> Result<Option<(Vad, u64)>> {
-    Ok(readable_in_txn(store, txn, turn)?
-        .and_then(|tags| tags.mood.map(|mood| (mood, tags.saved_at))))
+) -> Result<Option<(Vad, u64, super::TaggingFreshness)>> {
+    let Some(tags) = readable_in_txn(&vault.store, txn, turn)? else {
+        return Ok(None);
+    };
+    let Some(mood) = tags.mood else {
+        return Ok(None);
+    };
+    let freshness = super::freshness::tagging_freshness_in_txn(vault, txn, turn, &tags)?;
+    Ok(Some((
+        mood,
+        tags.saved_at,
+        super::freshness::mood_freshness(freshness, &tags),
+    )))
 }
 
 /// Whether the tag set of `turn` names `entity`: one index read.
