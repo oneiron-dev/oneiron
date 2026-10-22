@@ -363,6 +363,15 @@ side_tables! {
         => crate::skill_attribution::erase_contribution_checks_in_txn;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
+    /// A leased run's derivation witnesses (FIX 3103): each exact DerivedFrom edge a write of the
+    /// run left stored, with its producer, whether the run's lease held as it landed and when
+    /// (each end nil once erased); beside them, each scope summary a run asked for, with its lease
+    /// owner. Key: "d" + id16 (run attempt) + u32be (lease generation) + hash32 (the edge pair),
+    /// or "r" + id16 (summary attempt) + id16 (asking run's attempt) + u32be (its generation).
+    /// An erase moves a scrubbed edge's row to a fresh ULID in place of the pair (or to "e" +
+    /// ULID once its run is erased) and drops a request that names the erased entity.
+    SKILL_ATTRIBUTION_DERIVATION_WITNESS: VaultMeta b"skill_attribution:derivation_witness:v1:" Named Engine
+        => crate::skill_attribution::erase_derivation_witness_in_txn;
     /// Replacement judge revision (UTF-8) marking one routed judgment as displaced. Key: u64be
     /// (evidence sequence).
     SKILL_ATTRIBUTION_DISPLACED_JUDGE: VaultMeta b"skill_attribution:displaced_judge:v1:" Raw;
