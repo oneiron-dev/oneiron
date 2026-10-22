@@ -8,8 +8,9 @@
 //! the ones its new family holds; a new plot takes its family's (CALLS, D9c
 //! stock, surface and of-pie defaults). A stock series is drawn with no
 //! line between its points, its close as a dot.
+//! A stock price no series draws holds a placeholder series (FIX 9374).
 //! Entry: `kept`, `fresh`, `same`, `defaults`, `overlay`, `stock_style`,
-//! `stock_series`.
+//! `stock_series`, `placeholder`.
 
 use super::families::{applied, order, written};
 use super::*;
@@ -484,6 +485,35 @@ pub(super) fn stock_series(
     out.extend(
         format!(
             r#"{cat}{val}<{s} val="0"/></{ser}>"#,
+            s = writer.el("smooth"),
+            ser = writer.el("ser")
+        )
+        .into_bytes(),
+    );
+    out
+}
+
+/// A stock plot's placeholder for a price no series draws (FIX 9374): its
+/// `idx` and `order`, an empty name, [`stock_style`] and no categories or
+/// values, so the plot keeps its three or four series, each price its
+/// place, and nothing is drawn for it. Every reader skips it
+/// ([`crate::native_patch::stock_placeholder`]).
+pub(super) fn placeholder(tree: &XmlTree, writer: &Writer, (idx, order): (u32, u32)) -> Vec<u8> {
+    let (line, marker) = stock_style(tree, writer, false);
+    let mut out = format!(
+        r#"<{ser}><{i} val="{idx}"/><{o} val="{order}"/><{t}><{v}></{v}></{t}>"#,
+        ser = writer.el("ser"),
+        i = writer.el("idx"),
+        o = writer.el("order"),
+        t = writer.el("tx"),
+        v = writer.el("v"),
+    )
+    .into_bytes();
+    out.extend(line);
+    out.extend(marker);
+    out.extend(
+        format!(
+            r#"<{s} val="0"/></{ser}>"#,
             s = writer.el("smooth"),
             ser = writer.el("ser")
         )

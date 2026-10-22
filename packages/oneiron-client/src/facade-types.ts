@@ -6859,7 +6859,7 @@ export type ChartCategory = { id?: NodeId | null; levels?: (string | null)[] }
 /** `oneiron_docedit::live::pptx::chart::categories::ChartCategories` */
 export type ChartCategories = { level_count?: number; points?: ChartCategory[] }
 /** `oneiron_docedit::live::pptx::chart::ChartSeries` */
-export type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null }
+export type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; x_labels?: (string | null)[] | null; plot?: number | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null }
 /** `oneiron_docedit::live::pptx::chart::ChartSource` */
 export type ChartSource = "workbook" | "literal" | "cached"
 /** `oneiron_docedit::live::pptx::chart::families::BarDirection` */
