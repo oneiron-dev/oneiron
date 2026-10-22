@@ -230,4 +230,14 @@ def finish_tools_tree(out: Path) -> Path:
     if not resolv.exists() and not resolv.is_symlink():
         # mkosi refuses a tools tree without one; its own default tools tree ships an empty file.
         resolv.touch()
+    # Host-dependent state no tool reads back: ldconfig's aux cache records each
+    # library's inode and ctime, and the logs carry wall-clock times. Two hosts'
+    # tools trees differed in exactly these two files (runs b4 and b5), so they
+    # go before the tree is hashed as the builder identity.
+    (tree / "var" / "cache" / "ldconfig" / "aux-cache").unlink(missing_ok=True)
+    logs = tree / "var" / "log"
+    if logs.is_dir() and not logs.is_symlink():
+        for path in sorted(logs.rglob("*"), reverse=True):
+            if path.is_symlink() or path.is_file():
+                path.unlink()
     return tree

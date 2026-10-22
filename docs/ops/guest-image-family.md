@@ -216,13 +216,41 @@ byte fails the fetch; nothing re-resolves.
 | `rootfs_tar_bytes` | The uncompressed layer (`rootfs.tar`) with tar headers. |
 | `sparse_capacity_bytes` | The ext4 file's length, which the engine's 4 GiB verifier measures, sparse space included. |
 | `ext4_allocated_bytes` | Blocks the ext4 file occupies on the build host's disk. |
-| `writable_bytes`, `peak_ram_bytes` | Run-time measurements from a boot. They stay absent until one is made. |
+| `builder_peak_rss_bytes` | The builder's largest single process (`ru_maxrss` over the build and its waited-for children), not a sum. |
+| `ext4_refused`, `ext4_needed_bytes` | Present instead of the ext4 fields when the capacity would pass the 4 GiB cap. |
+| writable / snapshot bytes | Not an image property: both forms mount the rootfs read-only, and run-time writes land in the session's tmpfs (browser 512 MiB, checker 16 GiB by config). Only a boot measures them. |
+| guest peak RAM, cold boot | Unmeasured: they need the acceptance smoke (a boot). |
 
 Budgets in `release.toml` are proposed engineering targets, not checks. The
 browser's 2 GiB and the desktop's 3 GiB runtime memory defaults are config
 values, not image sizes. The checker's provisional 2-8 GiB payload can exceed
 the 4 GiB Firecracker cap. Its first build decides between pruning, a split,
 or a reviewed bound change.
+
+## Measured: the first built candidates (10-22)
+
+Built by run b4 on a fleet Linux host (kel) at builder commit
+`7f18af0c9e`, from the learned lock (554 packages) and tools tree
+`8cd6538c5ca4…`. The budgets are RESULT.md's proposed payload budgets.
+
+| Variant | Compressed transfer (OCI archive) | Unpacked filesystem (file bytes) | Payload budget | Sparse ext4 capacity | ext4 allocated | Builder peak RSS |
+|---|---|---|---|---|---|---|
+| base | 37.1 MiB (38,901,760) | 105.9 MiB (110,999,048) | <= 256 MiB: within | 224.0 MiB (234,881,024) | 131.3 MiB | 2.13 GiB |
+| browser | 362.6 MiB (380,180,480) | 1,014.8 MiB (1,064,102,555) | <= 2 GiB: within | 1.17 GiB (1,258,291,200) | 1.05 GiB | 2.16 GiB |
+| checker | 953.6 MiB (999,915,520) | 2.66 GiB (2,853,387,168) | 2-8 GiB provisional: within | 3.14 GiB (3,372,220,416) | 2.95 GiB | 2.03 GiB |
+
+- **All three fit the 4 GiB Firecracker rootfs cap**, the checker by about
+  0.86 GiB. The checker's payload is about 0.60 GiB of Rust toolchain
+  (rustc, cargo, rust-std, rustfmt, clippy: 643,217,165 bytes) plus
+  0.75 GiB of offline Cargo store (803,384,846 bytes, the crates the lock
+  names for x86_64 Linux) on top of the Debian closure. The store grows
+  with `Cargo.lock`, so the cap's margin shrinks as dependencies are added.
+  The cap does not move here.
+- Writable and snapshot bytes and the guest's peak RAM are unmeasured; they
+  need the acceptance smoke.
+- The whole build job's cgroup peak was 13.0 GiB (13,979,426,816 bytes,
+  anonymous memory plus page cache) under a 16 GiB booking. The fetch's
+  largest process was 473 MiB. Book `--mem 16G`.
 
 ## Verify a release
 
