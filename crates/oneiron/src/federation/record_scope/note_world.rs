@@ -9,8 +9,9 @@
 //! ([`NoteWorlds::axis`]) never admits more than that, and a NOTE also in
 //! base reality stays where a base read finds it today.
 
-use super::{Scope, ScopeAxis, ScopeId};
+use super::{MachineHistoryScope, Scope, ScopeAxis, ScopeId};
 use crate::EntityId;
+use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
@@ -94,9 +95,9 @@ pub(crate) fn note_worlds_in(
 }
 
 impl NoteWorlds {
-    /// The one world `ceiling` holds it at (`NOTE_MULTI_WORLD_POSITION`):
-    /// base reality when it is in base and the ceiling holds base, else the
-    /// first world it is in that the ceiling holds; `None` where `ceiling`
+    /// Its world witness under `ceiling` (`NOTE_MULTI_WORLD_POSITION`): base
+    /// reality when it is in base and the ceiling holds base, else the
+    /// smallest world it is in that the ceiling holds; `None` where `ceiling`
     /// leaves worlds whole, holds none of them, or it is in no single world.
     fn held(&self, ceiling: &ScopeAxis<ScopeId>) -> Option<ScopeId> {
         let (Self::In(worlds), ScopeAxis::Some(_)) = (self, ceiling) else {
@@ -115,11 +116,11 @@ impl NoteWorlds {
         }
     }
 
-    /// The world axis of its one position, which every door that does not
-    /// hold it at a ceiling reads: its one world; base reality when base is
-    /// among several, so a base read keeps it; its worlds when base is not,
-    /// held only by a ceiling that holds them all; every world when it is in
-    /// no single one, held only by a ceiling that leaves worlds whole.
+    /// The world axis of its one position, which a door that does not hold
+    /// it at a ceiling reads: its one world; base reality when base is among
+    /// several, so a base read keeps it; its worlds when base is not, held
+    /// only by a ceiling that holds them all; every world when it is in no
+    /// single one, held only by a ceiling that leaves worlds whole.
     pub(crate) fn axis(&self) -> ScopeAxis<ScopeId> {
         let base = ScopeId(crate::claim::base_world_id());
         match self {
@@ -129,9 +130,17 @@ impl NoteWorlds {
         }
     }
 
+    /// Every world it is in, for a door that holds it per ceiling with
+    /// [`any_world_at`]; every world when it is in no single one.
+    fn every(&self) -> ScopeAxis<ScopeId> {
+        match self {
+            Self::In(worlds) => ScopeAxis::Some(worlds.clone()),
+            Self::NoSingleWorld => ScopeAxis::All,
+        }
+    }
+
     /// The world axis a door reading under the world ceiling `ceiling`
-    /// holds it at: the one world the ceiling holds it at, else
-    /// [`Self::axis`].
+    /// holds it at: its witness there, else [`Self::axis`].
     pub(crate) fn axis_at(&self, ceiling: &ScopeAxis<ScopeId>) -> ScopeAxis<ScopeId> {
         self.held(ceiling).map_or_else(
             || self.axis(),
@@ -150,17 +159,50 @@ impl NoteWorlds {
         }
     }
 
-    /// Its world as a read under the world ceiling `ceiling` places it: the
-    /// one world the ceiling holds it at, else [`Self::world`].
-    pub(crate) fn world_at(&self, ceiling: &ScopeAxis<ScopeId>) -> Option<Option<EntityId>> {
-        self.held(ceiling)
-            .map_or_else(|| self.world(), |world| Some(reported(world)))
+    /// Whether a read under every world ceiling in `ceilings` reads it at
+    /// all: a NOTE in base reality alone always, as before it held any edge;
+    /// one in other worlds where the ceilings leave worlds whole or hold one
+    /// of them (`NOTE_MULTI_WORLD_POSITION`); one in no single world only
+    /// where they leave worlds whole (`NOTE_WORLD_LOOKUP_FAULT`).
+    pub(crate) fn readable_at(&self, ceilings: &[&ScopeAxis<ScopeId>]) -> bool {
+        let base = ScopeId(crate::claim::base_world_id());
+        let ceiling = met(ceilings);
+        match self {
+            Self::In(worlds) if worlds.len() == 1 && worlds.contains(&base) => true,
+            _ if matches!(ceiling, ScopeAxis::All) => true,
+            _ => self.held(&ceiling).is_some(),
+        }
     }
 }
 
 /// `world` as a world read reports it: base reality is `None`.
 fn reported(world: ScopeId) -> Option<EntityId> {
     Some(world.0).filter(|world| *world != crate::claim::base_world_id())
+}
+
+/// The world axes in `ceilings`, met: every world where there is none.
+fn met(ceilings: &[&ScopeAxis<ScopeId>]) -> ScopeAxis<ScopeId> {
+    ceilings
+        .iter()
+        .fold(ScopeAxis::All, |worlds, ceiling| worlds.meet(ceiling))
+}
+
+/// A world-only Scope over `worlds`, every other axis whole.
+fn world_scope(worlds: ScopeAxis<ScopeId>) -> Scope {
+    Scope {
+        worlds,
+        ..Scope::top()
+    }
+}
+
+/// The live worlds of the stored row `id` of `kind` when it is a NOTE.
+pub(crate) fn note_worlds_of(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Option<NoteWorlds> {
+    (kind == ENTITY_TYPE_NOTE).then(|| note_worlds_in(store, txn, id))
 }
 
 /// `scope`, the position the stored row `id` of `kind` is stamped or derived
@@ -179,45 +221,199 @@ pub(crate) fn note_position(
     scope
 }
 
-/// `record`, the position of the stored row `id` of `kind`, as a door that
-/// reads under every Scope in `ceilings` holds it: a NOTE at one world of its
-/// live edges they all hold, base reality first (`NOTE_MULTI_WORLD_POSITION`).
-/// Any other row, and a NOTE under ceilings that leave worlds whole, keep
-/// `record`.
+/// [`note_position`] carrying every world a NOTE is in, for a door that
+/// holds it under each of its ceilings with [`any_world_at`].
+pub(crate) fn every_world_position(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    mut scope: Scope,
+) -> Scope {
+    if kind == ENTITY_TYPE_NOTE {
+        scope.worlds = note_worlds_in(store, txn, id).every();
+    }
+    scope
+}
+
+/// `record`, an [`every_world_position`], as a door whose world ceiling is
+/// `ceiling` holds it: a NOTE in several worlds at its witness there. A
+/// position in one world, every world or none keeps `record`; so does one
+/// the ceiling holds no world of, which the door then refuses as before.
+pub(crate) fn any_world_at(record: &Scope, ceiling: &ScopeAxis<ScopeId>) -> Scope {
+    let mut held = record.clone();
+    if let ScopeAxis::Some(worlds) = &record.worlds
+        && worlds.len() > 1
+        && let Some(world) = NoteWorlds::In(worlds.clone()).held(ceiling)
+    {
+        held.worlds = ScopeAxis::Some(BTreeSet::from([world]));
+    }
+    held
+}
+
+/// `record` as a door reading under every world ceiling in `ceilings` holds
+/// a NOTE whose live worlds are `worlds`: at its witness under them all,
+/// base reality first (`NOTE_MULTI_WORLD_POSITION`). No `worlds` (any other
+/// row), and ceilings that leave worlds whole, keep `record`.
+pub(crate) fn position_at(
+    record: &Scope,
+    worlds: Option<&NoteWorlds>,
+    ceilings: &[&ScopeAxis<ScopeId>],
+) -> Scope {
+    let mut held = record.clone();
+    let ceiling = met(ceilings);
+    if let Some(worlds) = worlds
+        && !matches!(ceiling, ScopeAxis::All)
+    {
+        held.worlds = worlds.axis_at(&ceiling);
+    }
+    held
+}
+
+/// [`position_at`] for the stored row `id` of `kind`, a NOTE's live worlds
+/// read in `txn` on `store`.
 pub(crate) fn held_at(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
     record: &Scope,
-    ceilings: &[&Scope],
+    ceilings: &[&ScopeAxis<ScopeId>],
 ) -> Scope {
-    let mut held = record.clone();
-    let ceiling = ceilings
-        .iter()
-        .fold(ScopeAxis::All, |worlds, scope| worlds.meet(&scope.worlds));
-    if kind == ENTITY_TYPE_NOTE && !matches!(ceiling, ScopeAxis::All) {
-        held.worlds = note_worlds_in(store, txn, id).axis_at(&ceiling);
+    if matches!(met(ceilings), ScopeAxis::All) {
+        return record.clone();
     }
-    held
+    let worlds = note_worlds_of(store, txn, id, kind);
+    position_at(record, worlds.as_ref(), ceilings)
 }
 
-/// [`super::record_world_in`] for a read under the world ceiling of
-/// `ceiling`: a NOTE at one of its worlds the ceiling holds
-/// ([`NoteWorlds::world_at`]); any other row where `record_world_in` places
-/// it.
-pub(crate) fn record_world_held_at(
+/// [`super::scope_for_blob`] of the stored row `raw` of `id`, held as a door
+/// reading under every world ceiling in `ceilings` holds it ([`held_at`]).
+pub(crate) fn blob_scope_held_at(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    ceilings: &[&ScopeAxis<ScopeId>],
+) -> Result<Option<Scope>> {
+    let kind = EntityMetadataHeader::parse(raw)
+        .ok_or(crate::error::Error::CorruptedIndex("record header"))?
+        .entity_type;
+    Ok(super::scope_for_blob(store, txn, id, raw)?
+        .map(|scope| held_at(store, txn, id, kind, &scope, ceilings)))
+}
+
+/// [`super::scope_for_blob`] of the stored row `raw` of `id` as an
+/// [`every_world_position`].
+pub(crate) fn blob_scope_every_world(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<Scope>> {
+    let kind = EntityMetadataHeader::parse(raw)
+        .ok_or(crate::error::Error::CorruptedIndex("record header"))?
+        .entity_type;
+    Ok(super::scope_for_blob(store, txn, id, raw)?
+        .map(|scope| every_world_position(store, txn, id, kind, scope)))
+}
+
+/// The world-only position of the stored row `id` of `kind`, with body
+/// `data`, as a read under the world ceiling of `ceiling` holds it: a NOTE at
+/// its witness there, else its one position; any other row where
+/// [`super::record_world_in`] places it. `None` where the row proves no world.
+pub(crate) fn world_record_held_at(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
     data: &[u8],
     ceiling: &Scope,
+) -> Result<Option<Scope>> {
+    if kind == ENTITY_TYPE_NOTE {
+        let worlds = note_worlds_in(store, txn, id).axis_at(&ceiling.worlds);
+        return Ok(Some(world_scope(worlds)));
+    }
+    let base = crate::claim::base_world_id();
+    Ok(
+        super::record_world_in(store, txn, id, kind, data)?.map(|world| {
+            world_scope(ScopeAxis::Some(BTreeSet::from([ScopeId(
+                world.unwrap_or(base),
+            )])))
+        }),
+    )
+}
+
+/// [`super::record_world_in`] for a read that holds a world where `holds`
+/// says so: a NOTE at its first world `holds` admits, base reality first,
+/// else its one world ([`NoteWorlds::world`]). With no `holds`, a NOTE is
+/// classified as base reality, as before FIX-LIST 9433 (a stale-world
+/// exclusion or partition that no reader's world ceiling binds); its live
+/// worlds bind at the row doors.
+pub(crate) fn record_world_where(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+    holds: Option<&dyn Fn(Option<EntityId>) -> bool>,
 ) -> Result<Option<Option<EntityId>>> {
     if kind != ENTITY_TYPE_NOTE {
         return super::record_world_in(store, txn, id, kind, data);
     }
-    Ok(note_worlds_in(store, txn, id).world_at(&ceiling.worlds))
+    let Some(holds) = holds else {
+        return Ok(Some(None));
+    };
+    let worlds = note_worlds_in(store, txn, id);
+    let NoteWorlds::In(set) = &worlds else {
+        return Ok(None);
+    };
+    let base = ScopeId(crate::claim::base_world_id());
+    let mut ordered = set
+        .get(&base)
+        .into_iter()
+        .chain(set.iter().filter(|world| **world != base));
+    Ok(ordered
+        .find(|world| holds(reported(**world)))
+        .map(|world| reported(*world))
+        .or_else(|| worlds.world()))
+}
+
+/// A NOTE source's one position as an answer resting on it records it: its
+/// witness under every world ceiling in `ceilings`; base reality, as before
+/// FIX-LIST 9433, where they leave worlds whole or hold none of its worlds
+/// (its read gate keeps such a source out first). Any other row keeps
+/// `scope`.
+pub(crate) fn source_position(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    mut scope: Scope,
+    ceilings: &[&ScopeAxis<ScopeId>],
+) -> Scope {
+    if kind == ENTITY_TYPE_NOTE {
+        let base = ScopeId(crate::claim::base_world_id());
+        let world = note_worlds_in(store, txn, id)
+            .held(&met(ceilings))
+            .unwrap_or(base);
+        scope.worlds = ScopeAxis::Some(BTreeSet::from([world]));
+    }
+    scope
+}
+
+/// The worlds a sync selector's `world` reads, as a ceiling: every world,
+/// base reality alone, or base reality and its one world.
+#[cfg(feature = "sync")]
+pub(crate) fn selector_world_axis(world: crate::sync::SyncSelectorWorld) -> ScopeAxis<ScopeId> {
+    let base = ScopeId(crate::claim::base_world_id());
+    match world {
+        crate::sync::SyncSelectorWorld::All => ScopeAxis::All,
+        crate::sync::SyncSelectorWorld::Base => ScopeAxis::Some(BTreeSet::from([base])),
+        crate::sync::SyncSelectorWorld::World(world) => {
+            ScopeAxis::Some(BTreeSet::from([base, ScopeId(world.entity_id())]))
+        }
+    }
 }
 
 /// [`super::admits`] at a scoped door, `door` its selector, slip and
@@ -232,7 +428,8 @@ pub(super) fn admits_at(
     verb: &str,
 ) -> bool {
     let [selector, slip, channel] = door;
-    let held = held_at(store, txn, id, kind, scope, &door);
+    let ceilings = [&selector.worlds, &slip.worlds, &channel.worlds];
+    let held = held_at(store, txn, id, kind, scope, &ceilings);
     super::admits(&held, selector, slip, channel, verb)
 }
 

@@ -1138,6 +1138,7 @@ impl Vault {
             h.entity_type,
             &raw[ENTITY_METADATA_HEADER_LEN..],
             |source, row| {
+                let door = [selector, slip, channel];
                 Ok(disclosure_scope_for_stored_row(
                     &self.store,
                     txn,
@@ -1145,8 +1146,17 @@ impl Vault {
                     row.entity_type,
                     &row.body,
                 )?
-                .is_some_and(|scope| admits(&scope, selector, slip, channel, verb))
-                    && crate::authority::row_causal_admitted(self, txn, source, &row.encode())?)
+                .is_some_and(|scope| {
+                    note_world::admits_at(
+                        &self.store,
+                        txn,
+                        *source,
+                        row.entity_type,
+                        &scope,
+                        door,
+                        verb,
+                    )
+                }) && crate::authority::row_causal_admitted(self, txn, source, &row.encode())?)
             },
         )
     }

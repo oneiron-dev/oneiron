@@ -268,6 +268,20 @@ fn sources_in_txn(
         }
         let scope = crate::federation::record_scope::scope_for_blob(&vault.store, txn, *id, &raw)?
             .ok_or(Error::EntityNotFound)?;
+        // A NOTE source sits at one world it is in that both readers hold,
+        // else at base reality as before (FIX-LIST 9433).
+        let held = [
+            &reader.world_ceiling().worlds,
+            &holder.world_ceiling().worlds,
+        ];
+        let scope = crate::federation::record_scope::note_world::source_position(
+            &vault.store,
+            txn,
+            *id,
+            header.entity_type,
+            scope,
+            &held,
+        );
         // The shared scoped reader checks NOTE authorship, but its NOTE branch
         // returns before the non-claim record-position grant. Conjoin both.
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
