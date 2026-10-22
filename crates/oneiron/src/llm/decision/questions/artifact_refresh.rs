@@ -559,6 +559,10 @@ pub struct ArtifactAskRecord {
     /// wire name (FIX 9177); none when the ask completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<ErrorKind>,
+    /// For a wake's re-ask of withdrawn answers, the proposal they were withdrawn from
+    /// (FIX 9174); none for the question's own ask.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_proposal_ref: Option<String>,
 }
 
 /// Where one artifact ask's answers stand, by the same walk the next ask's baseline takes:

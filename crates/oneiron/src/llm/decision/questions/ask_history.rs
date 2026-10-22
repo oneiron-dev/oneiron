@@ -13,9 +13,10 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use super::records::AnswerRecord;
+use super::records::{AnswerRecord, QuestionActivation};
 use super::store::{
-    AnswerKey, QUESTION_ANSWER, decode_family, family_prefix, secret_scan_before_put,
+    AnswerKey, QUESTION_ANSWER, QUESTION_VERSION, VersionKey, decode_family, family_prefix,
+    secret_scan_before_put,
 };
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ErrorKind, Result, Vault};
@@ -98,6 +99,10 @@ pub(super) struct ArtifactAskEvent {
     /// The failed ask's error kind, as its stable wire name (FIX 9177); none when it
     /// completed.
     pub(super) failed: Option<ErrorKind>,
+    /// For a wake's re-ask of withdrawn answers, the proposal they were withdrawn from
+    /// (FIX 9174); none for the question's own ask.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) parent_proposal_ref: Option<String>,
 }
 
 impl ArtifactAskEvent {
@@ -224,6 +229,83 @@ pub(super) fn append_artifact_ask_in_txn(
         principal,
         AskHistoryEvent::Artifact(Box::new(event)),
     )
+}
+
+/// One wake's re-ask of a standing question's withdrawn answers (FIX 9174): the question
+/// version and principal it asked as, the artifact, the proposal its answers were withdrawn
+/// from, and the head versions it read.
+pub(crate) struct StandingReask<'a> {
+    pub(crate) question: EntityId,
+    pub(crate) question_version: u32,
+    pub(crate) principal: EntityId,
+    pub(crate) artifact: EntityId,
+    /// The withdrawn answers' proposal: the re-ask's parent.
+    pub(crate) parent_proposal_ref: &'a str,
+    /// Each read artifact's head version when it was asked again, the artifact first.
+    pub(crate) versions: &'a [(EntityId, u64)],
+    pub(crate) asked_at: u64,
+}
+
+/// Logs one real re-ask in the transaction that commits its proposal and its wake's
+/// marks (FIX 9174), under an ask id of its own: `proposal_ref` is the proposal its
+/// answers wait under, none when it answered no unit; `failed` the kind of error that
+/// stopped it, logged on its own. A re-ask whose question version is no standing question
+/// of its principal (a one-off ask's wake) is logged nowhere and still lands, and an entry
+/// the secret scan refuses is left out rather than refuse the wake.
+pub(crate) fn record_standing_reask_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    reask: &StandingReask<'_>,
+    proposal_ref: Option<&str>,
+    failed: Option<ErrorKind>,
+) -> Result<()> {
+    let key = VersionKey {
+        id: reask.question,
+        version: reask.question_version,
+    };
+    let standing = QUESTION_VERSION
+        .get(&vault.store, txn, &key)?
+        .is_some_and(|record| {
+            record.principal == reask.principal
+                && record.definition.activation == QuestionActivation::Standing
+        });
+    if !standing {
+        return Ok(());
+    }
+    let event = ArtifactAskEvent {
+        ask_id: EntityId::now(),
+        artifact: reask.artifact,
+        question_version: reask.question_version,
+        versions: reask.versions.to_vec(),
+        asked_at: reask.asked_at,
+        proposal_ref: proposal_ref.map(str::to_owned),
+        failed,
+        parent_proposal_ref: Some(reask.parent_proposal_ref.to_owned()),
+    };
+    let entry = QuestionAskHistoryEntry {
+        principal: reask.principal,
+        event: AskHistoryEvent::Artifact(Box::new(event)),
+    };
+    if secret_scan_before_put(&entry).is_err() {
+        tracing::warn!("a standing re-ask was not logged: its refs did not pass the secret scan");
+        return Ok(());
+    }
+    append_in_txn(vault, txn, reask.question, reask.principal, entry.event)
+}
+
+/// [`record_standing_reask_in_txn`] for a re-ask that failed, in a transaction of its
+/// own: the wake's hold and its error stand whether or not the entry lands.
+pub(crate) fn record_failed_standing_reask(
+    vault: &Vault,
+    reask: &StandingReask<'_>,
+    kind: ErrorKind,
+) {
+    let logged = vault.with_write_txn_grouped(|wtxn| {
+        record_standing_reask_in_txn(vault, wtxn, reask, None, Some(kind))
+    });
+    if let Err(error) = logged {
+        tracing::warn!(kind = ?error.kind(), "a failed standing re-ask was not logged");
+    }
 }
 
 /// Erasing `actor` from the ask logs (FIX 3520), in the erase's own transaction: every

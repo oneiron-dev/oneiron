@@ -15540,6 +15540,7 @@ class ArtifactAskRecord(TypedDict):
     standing: ArtifactAskStanding
     ask_id: NotRequired[EntityId | None]
     failed: NotRequired[ErrorKind | None]
+    parent_proposal_ref: NotRequired[str | None]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):

@@ -45,12 +45,13 @@ impl Asking<'_> {
             asked_at: self.now,
             proposal_ref,
             failed,
+            parent_proposal_ref: None,
         };
         let committed = ask(&reference).and_then(|run| {
             vault.with_write_txn_grouped(|wtxn| {
                 let proposed = match &run.proposal {
                     Some(proposal) => Some(vault.retain_edit_proposal_in_txn(
-                        wtxn, &artifact, proposal, None, self.actor, self.now,
+                        wtxn, &artifact, proposal, None, None, self.actor, self.now,
                     )?),
                     None => None,
                 };
@@ -99,7 +100,9 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
         proposal_ref: event.proposal_ref.clone(),
         ask_id: Some(event.ask_id),
     };
-    ask_record(vault, event.artifact, &stamp, event.failed)
+    let mut record = ask_record(vault, event.artifact, &stamp, event.failed)?;
+    record.parent_proposal_ref.clone_from(&event.parent_proposal_ref);
+    Ok(record)
 }
 
 /// `stamp`'s ask of `artifact`, with where its answers stand: failed, none held, still
@@ -130,6 +133,7 @@ fn ask_record(
         standing,
         ask_id: stamp.ask_id,
         failed,
+        parent_proposal_ref: None,
     })
 }
 
