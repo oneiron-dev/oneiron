@@ -62340,6 +62340,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/window_pads.rs",
+     "purpose": "The device's side of the window pad envelope (KS-5, FIX 7107)",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -62440,7 +62450,7 @@
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -64148,11 +64158,11 @@
      "path": "src/sync/transport.rs",
      "purpose": "Wire protocol encoding/decoding for WebSocket transport",
      "surface": {
-      "const": 40,
+      "const": 42,
       "enum": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 2
      }
     },
@@ -64215,6 +64225,43 @@
      "path": "src/sync/transport/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WindowPadBinding",
+      "WindowPadEnvelope",
+      "WindowPadForm",
+      "WindowPadKind",
+      "WindowPadReadiness",
+      "WindowPadReceipt",
+      "WindowPadSidecar"
+     ],
+     "path": "src/sync/transport/window_pads.rs",
+     "purpose": "The window pad envelope (KS-5, FIX 7107): the one wire form of every frame that carries a window's bytes, an…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 11,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowPadArrival",
+      "WindowPadAssembly"
+     ],
+     "path": "src/sync/transport/window_pads/parts.rs",
+     "purpose": "A window pad envelope put back together on its socket (KS-5, FIX 7107): the first frame, then its…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -64354,8 +64401,34 @@
       "crate-vis": 24,
       "fn": 6,
       "mod": 1,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparedWindowPads",
+      "WindowPadPartRepair"
+     ],
+     "path": "src/sync/window/pad_custody.rs",
+     "purpose": "A window pad envelope's two engine doors (KS-5, FIX 7107), one for each side of the wire and both crates'…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/pad_custody/inflate.rs",
+     "purpose": "A window blob's pad references as today's carriers again (KS-5, FIX 7107, KEEP TODAY): what a send that may…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -75482,7 +75555,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 251,
+     "files": 256,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75687,7 +75760,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4928,
+   "source_files": 4933,
    "test_files": 902
   },
   "oneiron-android": {
@@ -99179,6 +99252,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/window_pads.rs",
+     "purpose": "The home's side of the window pad envelope (KS-5, FIX 7107)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -104821,7 +104904,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -105068,7 +105151,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1207,
+   "source_files": 1208,
    "test_files": 182
   },
   "oneiron-spawn": {
