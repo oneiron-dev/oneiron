@@ -151,6 +151,11 @@ impl Vault {
         let now = self.store.clock.now_recorded_at();
         let mut offers = Vec::new();
         for stats in ramp_stats_in_txn(self, &rtxn)? {
+            // A connector scope revision is offered as its proposed delta
+            // slate, never as a go-auto grant (FIX 988).
+            if stats.scope.op_kind == crate::connector_key::CONNECTOR_SCOPE_RAMP_OP_KIND {
+                continue;
+            }
             if stats.state == RampState::Offered
                 && native_mail_offer_is_earned(self, &rtxn, &stats.scope)?
                 && !crate::edit_distance::graduation::asks_are_suppressed_in_txn(

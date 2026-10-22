@@ -370,9 +370,13 @@ lands. The log names the pack, organ, build and platform once per install, and
 e-sign seals wait, said once, until the seal build is listed or a seal organ
 program is named (`--seal-organ`, `ONEIRON_SEAL_ORGAN`), which stays first
 party. No config file, settings file or environment sets the list: a settings
-file that names it is refused as an unknown field. A vault VM has no
-config-drive file for it. An engine from before this flag refuses it, so a
-supervisor passes it only to engines at or after the merge that added it.
+file that names it is refused as an unknown field. A vault VM takes the list
+from its config drive's `/config/trusted-organ-builds`, one blake3 per line:
+its init passes each line on as its own `--trusted-organ-build`, so the drive
+carries the flag and is not another source (FIX 7889). Only an image whose
+manifest names `vm_trusted_organ_builds_revision: 1` reads that file. An engine
+from before this flag refuses it, so a supervisor passes it only to engines at
+or after the merge that added it.
 
 A `local` embedder names its files with `model_dir` or `models_dir`, because
 the XDG data root is never read. A keystore lives in the supervisor's

@@ -9,11 +9,15 @@
 //! ([`SeriesBinding`]).
 
 mod categories;
+#[macro_use]
 mod families;
+mod special;
 
 pub(crate) use categories::draws_categories;
 pub use categories::{CategoryField, ChartCategories, ChartCategory, effective_categories};
 pub use families::{BarDirection, BarShape, ChartPlot, ChartView, PlotGrouping, SizeRepresents};
+pub use special::{OfPieType, SplitType, StockOrder, StockRoles, SurfaceBand};
+pub(crate) use special::{lines_and_bars, surface};
 
 use super::{Conflict, DeckNode, NodeId, NodePayload};
 use crate::live::LiveError;
@@ -22,7 +26,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// The classic chart families the live deck reads and writes, live-born
-/// charts included: the 2D families, their 3D forms, and bubble charts.
+/// charts included: the 2D families, their 3D forms, bubble charts, and
+/// stock, surface and of-pie charts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChartKind {
@@ -43,6 +48,14 @@ pub enum ChartKind {
     Area3D,
     /// Scatter-like: x values, values and a bubble size per point.
     Bubble,
+    /// Prices by series ([`StockRoles`]): high, low and close, or open too.
+    Stock,
+    /// A 2D (contour) surface: heights over its categories and series.
+    Surface,
+    #[serde(rename = "surface_3d")]
+    Surface3D,
+    /// A pie of pie or bar of pie: some points drawn in a second plot.
+    OfPie,
 }
 
 impl ChartKind {
@@ -61,13 +74,17 @@ impl ChartKind {
             Self::Pie3D => "pie3DChart",
             Self::Area3D => "area3DChart",
             Self::Bubble => "bubbleChart",
+            Self::Stock => "stockChart",
+            Self::Surface => "surfaceChart",
+            Self::Surface3D => "surface3DChart",
+            Self::OfPie => "ofPieChart",
         }
     }
 
-    /// Whether the family plots against axes (a pie, 3D pie or doughnut
-    /// does not).
+    /// Whether the family plots against axes (a pie, 3D pie, doughnut or
+    /// of-pie does not).
     pub fn has_axes(self) -> bool {
-        !matches!(self, Self::Pie | Self::Pie3D | Self::Doughnut)
+        !matches!(self, Self::Pie | Self::Pie3D | Self::Doughnut | Self::OfPie)
     }
 }
 
@@ -320,11 +337,23 @@ impl NodePayload {
             family,
             categories,
             series,
+            plots,
             ..
         } = &mut out
         {
             categories::drawn(*family, categories, series);
             families::drawn(*family, series);
+            let points = categories
+                .ids()
+                .into_iter()
+                .chain(
+                    series
+                        .iter()
+                        .filter_map(|line| line.categories.as_ref())
+                        .flat_map(ChartCategories::ids),
+                )
+                .collect();
+            special::drawn(*family, plots, series, &points);
         }
         out
     }
@@ -333,17 +362,20 @@ impl NodePayload {
 /// A chart's series fit the categories each draws: a category series holds
 /// no more values than its set has points (a shorter one ends in missing
 /// points; an empty set is points by index), and only a scatter series
-/// carries x values, at least one per value.
+/// carries x values, at least one per value. Its plots' fills and sizes
+/// are ones a chart part holds.
 pub(super) fn check(payload: &NodePayload) -> Result<(), LiveError> {
     let NodePayload::Chart {
         family,
         categories,
         series,
+        plots,
         ..
     } = payload
     else {
         return Ok(());
     };
+    special::check(plots)?;
     for line in series {
         let set = effective_categories(categories, line);
         if !draws_categories(*family, line) {

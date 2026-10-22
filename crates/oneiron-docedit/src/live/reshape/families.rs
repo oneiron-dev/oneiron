@@ -3,12 +3,15 @@
 //! written over its bytes, a plot written fresh in its family (its settings
 //! the model's, else the family's defaults), and the chart's `c:view3D`
 //! written where the model's view differs from the one it holds. Each plot
-//! takes the settings of the nth plot of its family ([`ChartPlot`]).
+//! takes the settings of the nth plot of its family ([`ChartPlot`]); a
+//! stock, surface or of-pie plot's compound settings are written by
+//! [`special`].
 //! Entry: `kept_plot`, `fresh_plot`, `view`, `same_settings`.
 
+use super::special::{self, Context};
 use super::*;
 use crate::edit::xml::Splice;
-use crate::live::pptx::{BarDirection, BarShape, ChartPlot, ChartView, PlotGrouping};
+use crate::live::pptx::{BarDirection, BarShape, ChartPlot, ChartView, NodeId, PlotGrouping};
 
 /// A `c:view3D`'s children in schema order.
 const VIEW_ORDER: &[&str] = &[
@@ -22,7 +25,7 @@ const VIEW_ORDER: &[&str] = &[
 ];
 
 /// A plot element's children in schema order, its series as `ser`.
-fn order(kind: ChartKind) -> &'static [&'static str] {
+pub(super) fn order(kind: ChartKind) -> &'static [&'static str] {
     match kind {
         ChartKind::Bar => &[
             "barDir",
@@ -120,6 +123,31 @@ fn order(kind: ChartKind) -> &'static [&'static str] {
             "axId",
             "extLst",
         ],
+        ChartKind::Stock => &[
+            "ser",
+            "dLbls",
+            "dropLines",
+            "hiLowLines",
+            "upDownBars",
+            "axId",
+            "extLst",
+        ],
+        ChartKind::Surface | ChartKind::Surface3D => {
+            &["wireframe", "ser", "bandFmts", "axId", "extLst"]
+        }
+        ChartKind::OfPie => &[
+            "ofPieType",
+            "varyColors",
+            "ser",
+            "dLbls",
+            "gapWidth",
+            "splitType",
+            "splitPos",
+            "custSplit",
+            "secondPieSize",
+            "serLines",
+            "extLst",
+        ],
     }
 }
 
@@ -144,7 +172,7 @@ fn defaults(kind: ChartKind) -> ChartPlot {
             plot.bubble_scale = Some(100);
             plot.show_neg_bubbles = Some(false);
         }
-        _ => {}
+        _ => special::defaults(kind, &mut plot),
     }
     plot
 }
@@ -176,6 +204,21 @@ fn tokens(plot: &ChartPlot) -> Vec<(&'static str, String)> {
         (
             "sizeRepresents",
             plot.size_represents.map(|value| value.token().to_owned()),
+        ),
+        ("wireframe", plot.wireframe.map(|on| bit(on).to_owned())),
+        (
+            "ofPieType",
+            plot.of_pie_type.map(|value| value.token().to_owned()),
+        ),
+        ("gapWidth", plot.gap_width.map(|value| value.to_string())),
+        (
+            "splitType",
+            plot.split_type.map(|value| value.token().to_owned()),
+        ),
+        ("splitPos", plot.split_pos.as_ref().map(ToString::to_string)),
+        (
+            "secondPieSize",
+            plot.second_pie_size.map(|value| value.to_string()),
         ),
     ]
     .into_iter()
@@ -296,8 +339,10 @@ pub(super) fn grouping(
 
 /// A kept plot with its series replaced where they stood, each setting the
 /// model sets (`plots`, the `nth` plot of `kind`) written where it differs
-/// from the plot's own, and its axis ids replaced by `ids` when the plot's
-/// axes changed. Everything else keeps its bytes.
+/// from the plot's own (compound ones as [`special::kept`] writes them, a
+/// custom split's points at their places in `points`), and its axis ids
+/// replaced by `ids` when the plot's axes changed. Everything else keeps
+/// its bytes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn kept_plot(
     bytes: &[u8],
@@ -308,16 +353,25 @@ pub(super) fn kept_plot(
     plots: &[ChartPlot],
     ids: Option<&[u32]>,
     writer: &Writer,
+    points: &[Option<NodeId>],
 ) -> Result<Vec<u8>, LiveError> {
     let held = tokens(&held::plot_settings(tree, kind, nth, plot));
     let mut entries: Vec<(&str, Vec<u8>)> = vec![("ser", sers.to_vec())];
-    if let Some(plot) = wanted(plots, kind, nth) {
-        for (name, value) in tokens(&plot) {
+    let want = wanted(plots, kind, nth);
+    if let Some(plot) = &want {
+        for (name, value) in tokens(plot) {
             if !held.contains(&(name, value.clone())) {
                 entries.push((name, flag(writer, name, &value)));
             }
         }
     }
+    let context = Context {
+        bytes,
+        tree,
+        from: None,
+        points,
+    };
+    entries.extend(special::kept(&context, plot, kind, want.as_ref(), writer)?);
     if let Some(ids) = ids {
         entries.push(("axId", ids_xml(writer, ids)));
     }
@@ -327,14 +381,17 @@ pub(super) fn kept_plot(
 
 /// A plot written fresh in `kind`: that family's required elements, its
 /// settings the model's (`plots`, the `nth` plot of `kind`) and else the
-/// family's defaults, the series, and the axis ids it plots on.
+/// family's defaults, its compound settings as [`special::fresh`] writes
+/// them (carried from the held plot it converts, `context.from`), the
+/// series, and the axis ids it plots on.
 pub(super) fn fresh_plot(
     (kind, nth): (ChartKind, u32),
     writer: &Writer,
     sers: &[u8],
     ids: &[u32],
     plots: &[ChartPlot],
-) -> Vec<u8> {
+    context: &Context<'_>,
+) -> Result<Vec<u8>, LiveError> {
     let mut settings = defaults(kind);
     if let Some(plot) = wanted(plots, kind, nth) {
         settings = ChartPlot {
@@ -348,10 +405,11 @@ pub(super) fn fresh_plot(
             size_represents: plot.size_represents.or(settings.size_represents),
             ..settings
         };
+        special::overlay(&plot, &mut settings);
     }
     let pie = matches!(
         kind,
-        ChartKind::Pie | ChartKind::Pie3D | ChartKind::Doughnut
+        ChartKind::Pie | ChartKind::Pie3D | ChartKind::Doughnut | ChartKind::OfPie
     );
     let mut parts: Vec<(&str, Vec<u8>)> = tokens(&settings)
         .into_iter()
@@ -360,6 +418,7 @@ pub(super) fn fresh_plot(
     parts.push(("varyColors", flag(writer, "varyColors", bit(pie))));
     parts.push(("ser", sers.to_vec()));
     parts.push(("axId", ids_xml(writer, ids)));
+    parts.extend(special::fresh(context, kind, &settings, writer)?);
     match kind {
         ChartKind::Bar | ChartKind::Bar3D => {
             parts.push(("gapWidth", flag(writer, "gapWidth", "150")));
@@ -386,7 +445,7 @@ pub(super) fn fresh_plot(
         }
     }
     out.extend(format!("</{name}>").into_bytes());
-    out
+    Ok(out)
 }
 
 /// The splice that writes the model's 3D view (`wanted`) into the chart
@@ -483,9 +542,11 @@ pub(super) fn view(
 }
 
 /// Whether the chart part `read` reads holds every setting `wanted` sets:
-/// each plot's (the nth plot of its family), its 3D view's, and each
-/// series' 3D bubbles (the series in one order). A setting `wanted` leaves
-/// unset is any the part holds.
+/// each plot's (the nth plot of its family; compound ones as
+/// [`special::same`] compares them, stock prices and custom splits by
+/// identity elsewhere), its 3D view's, and each series' 3D bubbles (the
+/// series in one order). A setting `wanted` leaves unset is any the part
+/// holds.
 pub(in crate::live) fn same_settings(read: &NodePayload, wanted: &NodePayload) -> bool {
     let (
         NodePayload::Chart {
@@ -505,14 +566,10 @@ pub(in crate::live) fn same_settings(read: &NodePayload, wanted: &NodePayload) -
         return false;
     };
     let plots_held = plots.iter().all(|plot| {
-        let have = held
-            .iter()
-            .find(|have| have.is(plot.family, plot.nth))
-            .map(tokens)
-            .unwrap_or_default();
-        tokens(&plot.fit(plot.family, plot.nth).0)
-            .iter()
-            .all(|token| have.contains(token))
+        let want = plot.fit(plot.family, plot.nth).0;
+        let found = held.iter().find(|have| have.is(plot.family, plot.nth));
+        let have = found.map(tokens).unwrap_or_default();
+        tokens(&want).iter().all(|token| have.contains(token)) && special::same(found, &want)
     });
     let view_held = view.is_none_or(|view| {
         let have = held_view.unwrap_or_default();

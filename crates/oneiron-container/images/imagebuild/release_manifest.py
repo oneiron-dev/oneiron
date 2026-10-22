@@ -296,6 +296,16 @@ def _sign(command: str, payload: bytes, schema: dict) -> bytes:
     return (json.dumps(envelope, indent=2) + "\n").encode()
 
 
+def _sbom(receipt: dict, artifacts: Path) -> dict | None:
+    """The SBOM the receipt names, measured again from its file; None for a build without one."""
+    ref = receipt.get("sbom")
+    if not ref:
+        return None
+    path = artifacts / ref["path"]
+    _expect(sha256_file(path), ref["sha256"], ref["path"])
+    return {"media_type": ref["media_type"], "path": ref["path"], "sha256": "sha256:" + ref["sha256"]}
+
+
 def emit(model: Model, work: Path, variant: str, *, kernel: Path | None, signer_cmd: str | None) -> tuple[Path, str]:
     """Writes <work>/artifacts/<variant>/image-release.json; returns its path and sha256."""
     record = pipeline.load_record(work, variant)
@@ -324,6 +334,9 @@ def emit(model: Model, work: Path, variant: str, *, kernel: Path | None, signer_
     _expect(oci["layer_diff_id"], tar_sha, "OCI layer diff_id against rootfs.tar")
     archive = _file(oci_archive, blake3)
     _expect(archive["sha256"], outputs.get("oci_archive_sha256"), oci_archive.name)
+    if outputs.get("ext4_sha256") is None:
+        raise MissingPin(f"the {variant} build wrote no rootfs.ext4 ({outputs.get('ext4_refused')}); "
+                         "the manifest wire requires one, so this variant has no release manifest")
     ext4 = _file(artifacts / "rootfs.ext4", blake3)
     _expect(ext4["sha256"], outputs.get("ext4_sha256"), "rootfs.ext4")
     kernel_image = _file(kernel.resolve(), blake3) if kernel else None
@@ -355,7 +368,7 @@ def emit(model: Model, work: Path, variant: str, *, kernel: Path | None, signer_
             },
         },
         "binaries": binaries,
-        "sbom": None,
+        "sbom": _sbom(receipt, artifacts),
         "provenance": {"media_type": RECEIPT_MEDIA_TYPE, "path": RECEIPT, "sha256": "sha256:" + receipt_sha},
         "host": {
             # The vault boots only as a microVM; every other variant's OCI form runs without KVM.
