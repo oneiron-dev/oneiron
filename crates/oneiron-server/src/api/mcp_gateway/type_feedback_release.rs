@@ -84,11 +84,11 @@ impl Carrier {
                     };
                     let type_diagnostics: TypeDiagnostics =
                         serde_json::from_value(diagnostics.clone()).ok()?;
-                    let preparation_note: Option<ProgramPreparationNote> =
-                        match step.get("preparation_note") {
-                            Some(note) => Some(serde_json::from_value(note.clone()).ok()?),
-                            None => None,
-                        };
+                    let preparation_note: Option<ProgramPreparationNote> = step
+                        .get("preparation_note")
+                        .map(|note| serde_json::from_value(note.clone()))
+                        .transpose()
+                        .ok()?;
                     let identity = ProgramStepIdentity {
                         run: run.to_owned(),
                         program_seq: step.get("step")?.as_u64()?,
