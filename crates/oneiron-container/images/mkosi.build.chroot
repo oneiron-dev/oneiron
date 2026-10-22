@@ -40,6 +40,11 @@ if [ -s "$plan" ]; then
   # No build-machine path survives in the binaries: sources, the Cargo home,
   # the toolchain and the target dir (build-script output) map to fixed names.
   export RUSTFLAGS="--remap-path-prefix=$src/engine=/oneiron --remap-path-prefix=$CARGO_HOME=/cargo-home --remap-path-prefix=$src/rust=/rust --remap-path-prefix=$CARGO_TARGET_DIR=/target"
+  # The C and C++ that build scripts compile (cc, cmake) map the same paths:
+  # a crate's C source keeps its assertions' __FILE__ (tree-sitter defines no
+  # NDEBUG), and the Rust remap does not reach a C compiler.
+  cmap="-ffile-prefix-map=$src/engine=/oneiron -ffile-prefix-map=$CARGO_HOME=/cargo-home -ffile-prefix-map=$CARGO_TARGET_DIR=/target"
+  export CFLAGS="$cmap" CXXFLAGS="$cmap"
 
   printf 'rustc\t%s\n' "$(rustc -V)" >> "$record"
   printf 'cargo\t%s\n' "$(cargo -V)" >> "$record"

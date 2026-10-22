@@ -111,6 +111,10 @@ plumbing = false
 # busybox's reboot applet, which with -f makes the reboot call itself, no init
 # system asked (FIX 8978). One link, not `busybox --install`, and no setuid.
 packages = ["busybox", "mount"]
+# expat-sys, in oneiron-server's default closure, builds its bundled Expat with
+# cmake when pkg-config finds no system Expat (none is in the overlay), so the
+# binaries link it statically and the image needs no libexpat1.
+build_packages = ["cmake"]
 links = [{ path = "/usr/bin/reboot", target = "/usr/bin/busybox" }]
 files = [{ pin = "vault-init", dest = "/usr/sbin/oneiron-vault-init", mode = "0755" }]
 dirs = [
