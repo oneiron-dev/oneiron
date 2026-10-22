@@ -60,9 +60,11 @@ pub(super) enum Recipe {
     /// A live-born table from rows of unequal length, padded to its widest.
     RaggedTable,
     /// A live-born SmartArt outline.
+    #[serde(rename = "smartart_birth")]
     SmartArtBirth,
     /// A node of a SmartArt the deck holds moved to the front, in a deck
     /// that first took a live-born one.
+    #[serde(rename = "smartart_restructure")]
     SmartArtRestructure,
     /// A live-born picture showing an image part the deck holds.
     HeldPictureBirth,
