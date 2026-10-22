@@ -44,8 +44,8 @@ use crate::identity_topology::{
     note_zero_head_split_in_txn, shell_edge_sources_for_store_in_txn,
     zero_head_split_shells_for_store_in_txn,
 };
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::scan_check::{EngineScan, ScanCount};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -431,12 +431,7 @@ fn direct_inbound_shells_in_txn(
 ) -> Result<()> {
     let direction = crate::ports::EdgeDirection::In;
     for kind in SHELL_EDGE_KINDS {
-        let scope = [
-            &[direction as u8][..],
-            head.as_bytes(),
-            &[kind as u8][..],
-        ]
-        .concat();
+        let scope = [&[direction as u8][..], head.as_bytes(), &[kind as u8][..]].concat();
         let mut count = ScanCount::start(store, rtxn, EngineScan::EdgePeerRows, &scope)?;
         for entry in store.port_edges(rtxn, head, direction, Some(kind), None)? {
             count.row();
