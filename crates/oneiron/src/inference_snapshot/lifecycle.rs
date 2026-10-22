@@ -42,6 +42,10 @@ pub type SnapshotFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// vault's plaintext snapshot state, native and in host memory. The vault
 /// gives it no key, database or file.
 pub trait SnapshotRuntime: Send + Sync {
+    /// The bound `vault`'s release answers within: the owner's lock release
+    /// timeout. The lock waits that long and [`LOCK_RELEASE_MARGIN`] more.
+    fn release_bound(&self, vault: VaultRef) -> Duration;
+
     /// Releases every copy of `vault`'s snapshot state the host holds, for a
     /// lock: its sessions and their handles, host memory copies, transfer
     /// buffers and mappings. `closed` is the admission generation that just
@@ -112,7 +116,7 @@ impl SnapshotAdmission {
 #[derive(Default)]
 pub(crate) struct SnapshotLifecycle {
     gate: Mutex<Gate>,
-    runtime: RwLock<Option<Attached>>,
+    runtime: RwLock<Option<Arc<dyn SnapshotRuntime>>>,
     ledger: Ledger,
 }
 
@@ -133,19 +137,12 @@ impl Default for Gate {
     }
 }
 
-/// The attached runtime and the bound its release answers within.
-#[derive(Clone)]
-struct Attached {
-    runtime: Arc<dyn SnapshotRuntime>,
-    bound: Duration,
-}
-
 impl SnapshotLifecycle {
     fn gate(&self) -> MutexGuard<'_, Gate> {
         self.gate.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn attached(&self) -> Option<Attached> {
+    fn attached(&self) -> Option<Arc<dyn SnapshotRuntime>> {
         self.runtime
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -205,23 +202,16 @@ impl Vault {
     }
 
     /// Attaches the host's runtime to this vault's snapshot lifecycle: a
-    /// lock waits for its release, within `release_bound` and
+    /// lock waits for its release, within its bound and
     /// [`LOCK_RELEASE_MARGIN`], and an erase tells it what to drop. A later
     /// attach replaces it.
-    pub fn attach_snapshot_runtime(
-        &self,
-        runtime: Arc<dyn SnapshotRuntime>,
-        release_bound: Duration,
-    ) {
+    pub fn attach_snapshot_runtime(&self, runtime: Arc<dyn SnapshotRuntime>) {
         *self
             .store
             .inference_snapshots
             .runtime
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = Some(Attached {
-            runtime,
-            bound: release_bound,
-        });
+            .unwrap_or_else(PoisonError::into_inner) = Some(runtime);
     }
 
     /// An admission under the current generation, `None` while the vault
@@ -247,7 +237,7 @@ impl Vault {
         let lifecycle = &self.store.inference_snapshots;
         let closed_generation = lifecycle.close();
         lifecycle.ledger().clear();
-        let Some(attached) = lifecycle.attached() else {
+        let Some(runtime) = lifecycle.attached() else {
             return SnapshotLockReceipt {
                 closed_generation,
                 release: None,
@@ -260,10 +250,11 @@ impl Vault {
             ..SnapshotRelease::default()
         };
         let release = if tokio::runtime::Handle::try_current().is_ok() {
-            let answer = attached
-                .runtime
-                .release_vault(self.snapshot_vault_ref(), closed_generation);
-            let bound = attached.bound.saturating_add(LOCK_RELEASE_MARGIN);
+            let vault = self.snapshot_vault_ref();
+            let bound = runtime
+                .release_bound(vault)
+                .saturating_add(LOCK_RELEASE_MARGIN);
+            let answer = runtime.release_vault(vault, closed_generation);
             match tokio::time::timeout(bound, answer).await {
                 Ok(release) => release,
                 Err(_) => timed_out(),
@@ -303,8 +294,8 @@ impl Vault {
     pub(crate) fn inference_snapshots_erased(&self, ids: &[EntityId]) {
         let lifecycle = &self.store.inference_snapshots;
         lifecycle.erased();
-        if let Some(attached) = lifecycle.attached() {
-            attached.runtime.invalidate(self.snapshot_vault_ref(), ids);
+        if let Some(runtime) = lifecycle.attached() {
+            runtime.invalidate(self.snapshot_vault_ref(), ids);
         }
     }
 }
