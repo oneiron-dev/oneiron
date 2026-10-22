@@ -627,12 +627,20 @@ impl BrowserSession {
         Ok(&mut self.driver)
     }
 
-    /// Pages a batch's last observation, as an answer pages it.
+    /// Pages a batch's last observation, as an answer pages it, and its
+    /// failed step's, with a cursor of its own (FIX 8044).
     fn page_batch(&mut self, batch: &mut BatchOutput) {
         if let Some(observation) = batch.observation.take() {
             let page = self.driver.paged(observation);
             batch.observation = Some(page.observation);
             batch.next = page.next;
+        }
+        if let Some(failed) = batch.failed_receipt.as_mut()
+            && let Some(observation) = failed.observation.take()
+        {
+            let page = self.driver.paged(observation);
+            failed.observation = Some(page.observation);
+            failed.next = page.next;
         }
     }
 
@@ -973,6 +981,10 @@ impl BrowserDriver for BrowserSession {
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
         self.live()?.observe(input)
+    }
+
+    fn observe_hidden(&mut self) -> Result<Observation, BrowserError> {
+        self.live()?.observe_hidden()
     }
 
     fn paged(&mut self, observation: Observation) -> ObservationPage {

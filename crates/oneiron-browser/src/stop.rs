@@ -175,6 +175,10 @@ pub struct FailedStepReceipt {
     /// its code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<DestinationRefusal>,
+    /// The cursor of `observation`'s next page, when it is answered in
+    /// pages (FIX 8044), as the batch's own `next` pages its observation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
 }
 
 impl BatchStopCause {
@@ -336,6 +340,7 @@ pub(crate) fn stopped<D: BrowserDriver + ?Sized>(
         observation,
         error: Some(code),
         refusal,
+        next: None,
     });
     output.elapsed_ms = elapsed_ms(started);
     output

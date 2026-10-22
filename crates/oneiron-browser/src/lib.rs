@@ -1297,6 +1297,17 @@ pub fn paged<D: BrowserDriver + ?Sized>(
 pub trait BrowserDriver: Send {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError>;
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError>;
+
+    /// A whole read of the page that no answer gives the caller (a routine
+    /// step's look, a batch's progress read): kept apart from the
+    /// observations a caller's base names, so it never ages one out (FIX
+    /// 8510). A driver that keeps no such apart reads as `observe` does.
+    fn observe_hidden(&mut self) -> Result<Observation, BrowserError> {
+        self.observe(ObserveInput {
+            full: true,
+            ..ObserveInput::default()
+        })
+    }
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError>;
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError>;
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError>;
@@ -1803,11 +1814,9 @@ impl Routine<'_> {
         let mut waited = false;
         let mut looks = 0;
         while looks < ROUTINE_LOOKS {
-            // A look the caller never sees: whole, and never its base.
-            let page = driver.observe(ObserveInput {
-                full: true,
-                ..ObserveInput::default()
-            })?;
+            // A look the caller never sees: whole, never its base, and
+            // never aging out one (FIX 8510).
+            let page = driver.observe_hidden()?;
             // A desktop window with no tree is read by its pixels: a step
             // that only clicks locates its target in a screenshot there.
             let blind = page.no_tree

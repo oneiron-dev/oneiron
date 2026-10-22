@@ -227,6 +227,7 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
             observation: Some(observation.clone()),
             error: Some(code),
             refusal: None,
+            next: None,
         });
         batch.observation = Some(observation);
     }

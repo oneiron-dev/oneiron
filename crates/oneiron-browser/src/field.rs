@@ -22,8 +22,8 @@ use crate::observation::rows_named;
 use crate::stop::Stop;
 use crate::{
     AskUpReason, BatchStopCause, BrowserDriver, BrowserError, ClockScope, EffectReceipt,
-    ExpectInput, Observation, ObserveInput, Routine, RoutineAnswer, Row, StrictDenial,
-    StrictDenied, TypeInput, asked_up,
+    ExpectInput, Observation, Routine, RoutineAnswer, Row, StrictDenial, StrictDenied, TypeInput,
+    asked_up,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -360,10 +360,7 @@ pub(crate) fn fill<D: BrowserDriver + ?Sized>(
     let prepared = field.prepare()?;
     // A look the caller never sees, as a routine step's: the page, and the
     // field's row as it shows it now.
-    let page = driver.observe(ObserveInput {
-        full: true,
-        ..ObserveInput::default()
-    })?;
+    let page = driver.observe_hidden()?;
     let (rows, _) = rows_named(
         std::slice::from_ref(&target),
         &page.rows,

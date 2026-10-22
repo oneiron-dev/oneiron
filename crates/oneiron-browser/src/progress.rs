@@ -13,7 +13,7 @@ use crate::observation::splice_of;
 use crate::stop::elapsed_ms;
 use crate::{
     BatchOutput, BatchStep, BatchStopCause, BrowserDriver, FailedStepReceipt, Observation,
-    ObserveInput, StepStop, SubgoalStatus,
+    StepStop, SubgoalStatus,
 };
 
 /// The steps in a row that count and leave the page unchanged before the
@@ -116,10 +116,7 @@ impl Progress {
 /// unseen, so it proves no page unchanged, and neither does a refused read.
 fn complete_read<D: BrowserDriver + ?Sized>(driver: &mut D) -> Option<Observation> {
     driver
-        .observe(ObserveInput {
-            full: true,
-            ..ObserveInput::default()
-        })
+        .observe_hidden()
         .ok()
         .filter(|page| page.full && page.partial.is_none() && !page.no_tree)
 }
@@ -172,6 +169,7 @@ pub(crate) fn handed_up(
         observation: Some(page),
         error: Some(NO_PROGRESS.to_owned()),
         refusal: None,
+        next: None,
     });
     output.elapsed_ms = elapsed_ms(started);
     output

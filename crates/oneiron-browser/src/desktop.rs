@@ -1890,6 +1890,16 @@ impl BrowserDriver for DesktopSession {
         Ok(observation)
     }
 
+    fn observe_hidden(&mut self) -> Result<Observation, BrowserError> {
+        self.pages.hiding(true);
+        let read = self.observe(ObserveInput {
+            full: true,
+            ..ObserveInput::default()
+        });
+        self.pages.hiding(false);
+        read
+    }
+
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
         self.live()?;
         let base = Base::of_observe(&input)?;
@@ -2527,11 +2537,19 @@ impl BrowserDriver for DesktopSession {
         };
         self.decider = decider;
         let mut output = output?;
-        // The batch's last observation pages as an answer pages it.
+        // The batch's last observation pages as an answer pages it, and its
+        // failed step's with a cursor of its own (FIX 8044).
         if let Some(observation) = output.observation.take() {
             let page = self.pages.first(observation);
             output.observation = Some(page.observation);
             output.next = page.next;
+        }
+        if let Some(failed) = output.failed_receipt.as_mut()
+            && let Some(observation) = failed.observation.take()
+        {
+            let page = self.pages.first(observation);
+            failed.observation = Some(page.observation);
+            failed.next = page.next;
         }
         Ok(output)
     }

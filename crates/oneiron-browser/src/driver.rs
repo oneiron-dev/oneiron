@@ -583,6 +583,15 @@ impl CdpDriver {
         Ok(observation)
     }
 
+    /// `observation`, read on another guest (a proposal's fresh replay, FIX
+    /// 7881), held here for its later pages under a number of this
+    /// driver's, so its cursor reads on this session after that guest went.
+    pub(crate) fn adopt_page(&mut self, mut observation: Observation) -> ObservationPage {
+        self.seq += 1;
+        observation.seq = self.seq;
+        self.pages.first_adopted(observation)
+    }
+
     /// The page whose rows did not read in their call's time, as a whole
     /// partial observation: never an edit, and never a base for one.
     fn timed_out(&mut self) -> Result<Observation, BrowserError> {
@@ -1390,6 +1399,13 @@ impl BrowserDriver for CdpDriver {
 
     fn paged(&mut self, observation: Observation) -> ObservationPage {
         self.pages.first(observation)
+    }
+
+    fn observe_hidden(&mut self) -> Result<Observation, BrowserError> {
+        self.pages.hiding(true);
+        let read = self.observation(&Base::Whole);
+        self.pages.hiding(false);
+        read
     }
 
     fn observe_page(&mut self, input: ObserveInput) -> Result<ObservationPage, BrowserError> {

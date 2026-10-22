@@ -113,7 +113,29 @@ impl BrowserSession {
             None => replay_and_file(&mut fresh, &mut NoDecider, library, solved, guest),
         };
         self.policy = std::mem::take(&mut fresh.policy);
-        output
+        let mut output = output?;
+        if let Some(replay) = output.replay.as_mut() {
+            self.page_replay(replay);
+        }
+        Ok(output)
+    }
+
+    /// Pages a replay's observations, its failed step's too, through this
+    /// session, which outlives the fresh guest they were read on (FIX 7881):
+    /// their cursors read on here.
+    fn page_replay(&mut self, replay: &mut crate::BatchOutput) {
+        if let Some(observation) = replay.observation.take() {
+            let page = self.driver.adopt_page(observation);
+            replay.observation = Some(page.observation);
+            replay.next = page.next;
+        }
+        if let Some(failed) = replay.failed_receipt.as_mut()
+            && let Some(observation) = failed.observation.take()
+        {
+            let page = self.driver.adopt_page(observation);
+            failed.observation = Some(page.observation);
+            failed.next = page.next;
+        }
     }
 
     /// The fresh guest for this session's replay, on the engine this session
