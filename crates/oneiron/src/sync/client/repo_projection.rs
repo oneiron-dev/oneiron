@@ -34,4 +34,31 @@ impl SyncClient {
             RepoSyncAdmission::Held => None,
         })
     }
+
+    /// `payload`, a whole window state the home sent for `key` (bulk state
+    /// or a promotion snapshot), as this window takes it: its copy rows
+    /// translated onto the sources this device holds. A state nothing here
+    /// can take as a source edit (a ruled hold) is taken as it came: its
+    /// copy rows stay copy rows under their own ids, masked, and no source
+    /// row changes.
+    pub(super) fn admitted_whole_payload(
+        &self,
+        key: &WindowKey,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, TransportError> {
+        let admitted =
+            crate::sync::selector::admit_repo_sync_frame(&self.vault, key.as_str(), &payload, None)
+                .map_err(|error| TransportError::Storage(error.to_string()))?;
+        Ok(match admitted {
+            RepoSyncAdmission::Admit(std::borrow::Cow::Owned(translated)) => translated,
+            RepoSyncAdmission::Admit(std::borrow::Cow::Borrowed(_)) => payload,
+            RepoSyncAdmission::Held => {
+                tracing::warn!(
+                    window = key.as_str(),
+                    "sync: a whole window state holds a copy edit on its ruled cause; its copy rows stay copies"
+                );
+                payload
+            }
+        })
+    }
 }

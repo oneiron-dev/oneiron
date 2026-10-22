@@ -327,7 +327,8 @@ impl SyncClient {
                 "bulk window pads not installed".into(),
             ));
         }
-        Ok(envelope.payload)
+        // FIX 7608 slice 4: copy rows land on the sources this device holds.
+        self.admitted_whole_payload(key, envelope.payload)
     }
 
     /// A promotion reply's snapshot of `window`, its envelope in base64, the
@@ -351,7 +352,8 @@ impl SyncClient {
         {
             tracing::warn!(%window, "promoted window pads not installed; its pad rows land them");
         }
-        Ok(envelope.payload)
+        // FIX 7608 slice 4: copy rows land on the sources this device holds.
+        self.admitted_whole_payload(window, envelope.payload)
     }
 
     /// Whether a window frame of `key` about to leave carries what a
