@@ -408,7 +408,8 @@ pub(super) fn apply_world_filter(
     for scored in scores.iter().copied() {
         // Base is an explicit member, never implicit in a named world; a
         // world-scoped row passes only for its own world.
-        if record_world(store, rtxn, &scored.id)?.is_some_and(|world| world == target) {
+        let holds = |world: Option<EntityId>| world == target;
+        if record_world(store, rtxn, &scored.id, Some(&holds))?.is_some_and(holds) {
             kept.push(scored);
         }
     }
@@ -440,7 +441,7 @@ fn drop_stale_federated_claims(
 
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        let stale_world = record_world(store, rtxn, &scored.id)?
+        let stale_world = record_world(store, rtxn, &scored.id, None)?
             .flatten()
             .is_some_and(|world| stale.contains_key(&world));
         if !stale_world {
@@ -464,6 +465,7 @@ fn record_world(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
+    holds: Option<&dyn Fn(Option<EntityId>) -> bool>,
 ) -> Result<Option<Option<EntityId>>> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(Some(None));
@@ -473,7 +475,15 @@ fn record_world(
             crate::claim::decode_claim_body(&raw.body, true)?.world,
         ));
     }
-    crate::federation::record_scope::record_world_in(store, rtxn, *id, raw.entity_type, &raw.body)
+    // A NOTE at a world it is in that `holds` admits (FIX-LIST 9433).
+    crate::federation::record_scope::note_world::record_world_where(
+        store,
+        rtxn,
+        *id,
+        raw.entity_type,
+        &raw.body,
+        holds,
+    )
 }
 
 /// Whether one candidate survives a resolved per-turn ActiveSet (ONE-1420).
@@ -489,7 +499,8 @@ fn active_set_admits(
     id: &EntityId,
     active_set: &WorldAuthoritySet,
 ) -> Result<bool> {
-    Ok(record_world(store, rtxn, id)?.is_some_and(|world| active_set.admits(world)))
+    let holds = |world: Option<EntityId>| active_set.admits(world);
+    Ok(record_world(store, rtxn, id, Some(&holds))?.is_some_and(holds))
 }
 
 pub(super) fn apply_filters(
@@ -808,7 +819,7 @@ fn pipeline_candidate_matches_world_filter(
             let Some(stale) = stale_worlds else {
                 return Ok(true);
             };
-            return Ok(!record_world(store, rtxn, id)?
+            return Ok(!record_world(store, rtxn, id, None)?
                 .flatten()
                 .is_some_and(|world| stale.contains_key(&world)));
         }
@@ -833,5 +844,6 @@ fn pipeline_candidate_matches_world_filter(
         }
     };
 
-    Ok(record_world(store, rtxn, id)?.is_some_and(|world| world == target))
+    let holds = |world: Option<EntityId>| world == target;
+    Ok(record_world(store, rtxn, id, Some(&holds))?.is_some_and(holds))
 }
