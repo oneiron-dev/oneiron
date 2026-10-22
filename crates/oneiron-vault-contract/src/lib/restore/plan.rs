@@ -121,6 +121,14 @@ pub struct ManagedRestorePlan {
     pub source: RestoreSourceExpectation,
     pub custody: RestoreCustodyPlan,
     pub evidence: RestoreEvidence,
+    /// The least checkpoint sequence the artifact's signed commitment may
+    /// carry (FIX 969): an artifact-backed wake or migrate names the
+    /// sequence of the source copy the supervisor verified, and the restore
+    /// refuses a lower one before its manifest opens; equal passes. `null`
+    /// for a historical restore, which takes no floor. Required even when
+    /// `null`; never a custody sequence or a default.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub wake_sequence_floor: Option<u64>,
 }
 
 /// What the plan says the artifact is, from a record kept apart from it:

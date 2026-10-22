@@ -121,7 +121,7 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
     if let Some(depth_remaining) = input.depth_remaining {
         entries.push((
             Value::from(KEY_DEPTH_REMAINING),
-            Value::from(u64::from(depth_remaining)),
+            Value::from(depth_remaining),
         ));
     }
     if let Some(project_ref) = input.project_ref {
