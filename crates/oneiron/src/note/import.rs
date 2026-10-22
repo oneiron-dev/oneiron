@@ -282,7 +282,6 @@ impl Vault {
             .collect::<Result<Vec<_>>>()?;
         self.with_write_txn(|txn| {
             let owner_actor = owner.revalidate_in_txn(self, txn)?;
-            scan_titles(&self.store, txn, batch)?;
             let receipt = self.approve_once_in_txn(txn, owner, digest)?;
             self.take_decision_slot_in_txn(txn, &slot, receipt.decision_id())?;
             let links = self.land_imported_notes_in_txn(
@@ -396,7 +395,16 @@ impl Vault {
             content.update_note(*id, |txn| {
                 let doc = super::document_store::load(self, txn, *id)?;
                 if let Some(title) = &note.title {
-                    doc.set_title(title, &actor)?;
+                    // Admitted as an edit's title is (FIX 1098); the record
+                    // keeps the imported title's identity.
+                    let admitted = super::document_store::admit_title(
+                        self,
+                        txn,
+                        *id,
+                        title,
+                        &mut crate::batch::secret_scan::Lifted::default(),
+                    )?;
+                    doc.set_title(&admitted, &actor)?;
                     super::operations::record_authorship(
                         &doc,
                         &super::NoteAuthorship {
@@ -542,19 +550,15 @@ pub(crate) fn note_importer_in_txn(
     Ok(field("importer").and_then(|hex| EntityId::from_hex(hex).ok()))
 }
 
-/// Refuses `batch` when the secret scan is on and would refuse a title: the
-/// write door scans each note's body, and a title lands beside it. Approve
-/// asks this, never the digest, so a decline is recorded whatever the scan.
+/// What `batch`'s titles ask before its approval: nothing now. A title the
+/// secret scan would refuse is admitted where the note lands, a handle in
+/// place of each secret it holds, as its body is (OF-067; FIX 1098); a hit
+/// no span places refuses there, in the landing writer.
 pub(super) fn scan_titles(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    batch: &ImportedNoteBatch,
+    _store: &Store,
+    _txn: &heed::RoTxn<'_>,
+    _batch: &ImportedNoteBatch,
 ) -> Result<()> {
-    if secret_scan_mode_in_txn(store, txn)? == SecretScanMode::On {
-        for title in batch.notes.iter().filter_map(|note| note.title.as_deref()) {
-            scan_write_payload(title.as_bytes())?;
-        }
-    }
     Ok(())
 }
 

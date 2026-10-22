@@ -1,12 +1,18 @@
 use std::io::{Cursor, Read, Write};
+use std::sync::Arc;
 
 use zip::result::ZipError;
 use zip::write::FileOptions;
 use zip::{ZipArchive, ZipWriter};
 
+use crate::admission::{Hold, Operation, Refusal, bytes_of, wide};
+
 /// Archive workload limits, supplied by the host policy on native edit and
-/// settlement doors. The standalone fork uses `DEFAULT` as its safe fallback;
-/// a vault can narrow these limits without changing the DOCX reader.
+/// settlement doors. The standalone fork uses `DEFAULT` as its fallback; a
+/// vault's trusted row replaces it and a holder can narrow that row, without
+/// changing the DOCX reader. The byte ceilings are the caller's; the entry
+/// count is an observation, never a reason to refuse (Rule 5; FIX 8570): what
+/// each entry costs is reserved through the operation's port instead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArchiveLimits {
     pub max_entries: usize,
@@ -16,7 +22,7 @@ pub struct ArchiveLimits {
 
 impl ArchiveLimits {
     /// Standalone baseline. The Oneiron vault ships these same values in its
-    /// default policy manifest and composes narrower trusted/holder limits.
+    /// default policy manifest, which a trusted vault row replaces.
     pub const DEFAULT: Self = Self {
         max_entries: 1_000,
         max_part_bytes: 200 * 1024 * 1024,
@@ -33,17 +39,51 @@ impl ArchiveLimits {
         }
     }
 
-    /// Deny invalid zero or nonsensical bounds before ZIP inflation.
+    /// Deny zero or incoherent settings before ZIP inflation. No dimension
+    /// is bounded by [`Self::DEFAULT`]: a host or a vault owner may set any
+    /// coherent ceiling (FIX 5355, 8763).
     #[must_use]
     pub fn is_valid(self) -> bool {
         self.max_entries > 0
-            && self.max_entries <= Self::DEFAULT.max_entries
             && self.max_part_bytes > 0
-            && self.max_part_bytes <= Self::DEFAULT.max_part_bytes
-            && self.max_total_bytes <= Self::DEFAULT.max_total_bytes
             && self.max_part_bytes <= self.max_total_bytes
     }
 }
+
+/// The ceiling a package passed: one its caller set, or one classic ZIP has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ceiling {
+    /// [`ArchiveLimits::max_part_bytes`]: one entry's inflated bytes.
+    PartBytes,
+    /// [`ArchiveLimits::max_total_bytes`]: every entry's inflated bytes.
+    TotalBytes,
+    /// Classic ZIP's entry count: 65,535 is its ZIP64 sentinel.
+    ZipEntries,
+    /// Classic ZIP's 4 GiB sizes and offsets.
+    ZipBytes,
+}
+
+impl Ceiling {
+    /// The ceiling's name in a refusal.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PartBytes => "max_part_bytes",
+            Self::TotalBytes => "max_total_bytes",
+            Self::ZipEntries => "zip_entries",
+            Self::ZipBytes => "zip_bytes",
+        }
+    }
+}
+
+/// The most entries a classic ZIP records: its central directory counts in
+/// 16 bits, and 65,535 there is the ZIP64 sentinel, which a classic reader
+/// takes as "look for a ZIP64 record".
+pub const CLASSIC_ZIP_ENTRIES: u64 = u16::MAX as u64 - 1;
+
+/// The most bytes a classic ZIP records in a size or offset: 32 bits, with
+/// 0xFFFFFFFF its ZIP64 sentinel.
+pub const CLASSIC_ZIP_BYTES: u64 = u32::MAX as u64 - 1;
 
 #[derive(Debug)]
 pub enum DocxError {
@@ -64,12 +104,31 @@ pub enum DocxError {
     /// normalized for Word compatibility. This is an engine/package invariant,
     /// never an input tolerance.
     InvalidWrittenZip(String),
-    /// The package's XML would build more than one parse's budget allows
-    /// ([`crate::parse_budget`]); refused before any tree is built.
-    ParseLimitExceeded {
-        bound: crate::parse_budget::ParseBound,
+    /// The package passed a ceiling (FIX 5354): `observed` past `limit`. A
+    /// well-formed package, never a corrupt one.
+    Capacity {
+        ceiling: Ceiling,
+        observed: u64,
         limit: u64,
     },
+    /// The read's memory was refused at the machine's floor, or its wait or
+    /// deadline ran out ([`crate::admission`]): a well-formed package.
+    Resource(Refusal),
+}
+
+impl DocxError {
+    /// Whether the package was well formed and the work stopped at a ceiling
+    /// or at the machine's memory or a deadline, rather than at the package.
+    #[must_use]
+    pub fn is_admission(&self) -> bool {
+        matches!(self, Self::Capacity { .. } | Self::Resource(_))
+    }
+}
+
+impl From<Refusal> for DocxError {
+    fn from(refusal: Refusal) -> Self {
+        Self::Resource(refusal)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -81,36 +140,43 @@ pub struct DocxFile {
 #[derive(Clone, Debug)]
 pub struct DocxArchive {
     files: Vec<DocxFile>,
+    /// The memory the trees its parts build was reserved under: held while
+    /// the archive lives, so until a reader built them from it.
+    _trees: Arc<Hold>,
 }
 
 impl DocxArchive {
     /// Build an archive directly from a list of files (useful for tests).
     pub fn from_parts(files: Vec<DocxFile>) -> Self {
-        Self { files }
+        Self {
+            files,
+            _trees: Arc::default(),
+        }
     }
 
+    /// Read under the limits of the operation it runs in
+    /// ([`Operation::limits`]).
     pub fn read(docx_bytes: &[u8]) -> Result<Self, DocxError> {
-        Self::read_with_limits(docx_bytes, ArchiveLimits::DEFAULT)
+        Self::read_with_limits(docx_bytes, Operation::current().limits())
     }
 
-    /// Read under the caller's effective workload policy. Declared sizes are
-    /// checked before inflation, and actual bytes are bounded per entry and
-    /// cumulatively so a lying central directory cannot bypass the ceiling.
+    /// Read under the caller's effective workload policy, reserving what the
+    /// read allocates through the operation it runs in. The entry count is an
+    /// observation: each entry's record, name and bytes are reserved before
+    /// they are allocated, and the read asks the operation at each entry
+    /// whether its deadline passed. Declared sizes are checked against the
+    /// byte ceilings before inflation, and actual bytes per entry and
+    /// cumulatively, so a lying central directory cannot pass them.
     pub fn read_with_limits(docx_bytes: &[u8], limits: ArchiveLimits) -> Result<Self, DocxError> {
         if !limits.is_valid() {
             return Err(DocxError::ZipBomb("invalid archive limits".to_owned()));
         }
+        let operation = Operation::current();
+        let mut hold = operation.hold();
         let cursor = Cursor::new(docx_bytes);
         let mut zip = ZipArchive::new(cursor).map_err(DocxError::ZipRead)?;
 
-        if zip.len() > limits.max_entries {
-            return Err(DocxError::ZipBomb(format!(
-                "archive contains {} entries (max {})",
-                zip.len(),
-                limits.max_entries
-            )));
-        }
-
+        hold.take(bytes_of::<DocxFile>(zip.len()))?;
         let mut files = Vec::with_capacity(zip.len());
         let mut total_bytes: u64 = 0;
         // OPC §7.3: ZIP item names shall be unique within the package, and
@@ -121,7 +187,10 @@ impl DocxArchive {
             std::collections::HashMap::new();
 
         for i in 0..zip.len() {
+            operation.checkpoint()?;
             let mut file = zip.by_index(i).map_err(DocxError::ZipRead)?;
+            // The name, its lowercased key and the stored spelling.
+            hold.take(wide(file.name().len()).saturating_mul(3))?;
             let name = file.name().to_string();
 
             if !name.ends_with('/')
@@ -137,43 +206,90 @@ impl DocxArchive {
                 )));
             }
 
-            // Reject a declared oversize before inflation; also cap actual
+            // Refuse a declared oversize before inflation; also cap actual
             // bytes with take() because ZIP headers are caller-controlled.
             let remaining = limits.max_total_bytes.saturating_sub(total_bytes);
-            if file.size() > limits.max_part_bytes || file.size() > remaining {
-                return Err(DocxError::ZipBomb(format!(
-                    "file {name:?} exceeds archive workload limits"
-                )));
+            let declared = file.size();
+            if declared > limits.max_part_bytes {
+                return Err(DocxError::Capacity {
+                    ceiling: Ceiling::PartBytes,
+                    observed: declared,
+                    limit: limits.max_part_bytes,
+                });
             }
+            if declared > remaining {
+                return Err(DocxError::Capacity {
+                    ceiling: Ceiling::TotalBytes,
+                    observed: total_bytes.saturating_add(declared),
+                    limit: limits.max_total_bytes,
+                });
+            }
+            // The declared size is the header's word, an estimate: nothing of
+            // it is measured until it is inflated.
+            hold.take_estimate(declared, 0)?;
             let mut data = Vec::new();
             let cap = limits.max_part_bytes.min(remaining);
             (&mut file)
-                .take(cap + 1)
+                .take(cap.saturating_add(1))
                 .read_to_end(&mut data)
                 .map_err(DocxError::Io)?;
-            if data.len() as u64 > cap {
-                return Err(DocxError::ZipBomb(format!(
-                    "file {name:?} exceeds archive workload limits"
-                )));
+            let actual = wide(data.len());
+            if actual > cap {
+                return Err(if actual > limits.max_part_bytes {
+                    DocxError::Capacity {
+                        ceiling: Ceiling::PartBytes,
+                        observed: actual,
+                        limit: limits.max_part_bytes,
+                    }
+                } else {
+                    DocxError::Capacity {
+                        ceiling: Ceiling::TotalBytes,
+                        observed: total_bytes.saturating_add(actual),
+                        limit: limits.max_total_bytes,
+                    }
+                });
             }
-            total_bytes = total_bytes
-                .checked_add(data.len() as u64)
-                .ok_or_else(|| DocxError::ZipBomb("cumulative archive size overflow".to_owned()))?;
+            // What inflated past the header's word, measured now.
+            hold.take(actual.saturating_sub(declared))?;
+            total_bytes = total_bytes.saturating_add(actual);
 
             files.push(DocxFile { name, data });
         }
-        // One XML budget across every part, charged before any reader builds
-        // a tree from this archive.
-        crate::parse_budget::admit_parts(files.iter().map(|file| file.data.as_slice())).map_err(
-            |bound| DocxError::ParseLimitExceeded {
-                bound,
-                limit: bound.limit(),
-            },
+        // The trees every part builds, reserved before any reader builds one
+        // from this archive, and held while the archive lives.
+        let trees = crate::parse_budget::admit_parts(
+            files.iter().map(|file| file.data.as_slice()),
+            &operation,
         )?;
-        Ok(Self { files })
+        Ok(Self {
+            files,
+            _trees: Arc::new(trees),
+        })
     }
 
     pub fn write(&self) -> Result<Vec<u8>, DocxError> {
+        // This writer emits classic ZIP only: past its widths the package is
+        // refused as that format's limit, before the writer would switch to
+        // ZIP64 records Word's normalization below does not read.
+        let entries = wide(self.files.len());
+        if entries > CLASSIC_ZIP_ENTRIES {
+            return Err(DocxError::Capacity {
+                ceiling: Ceiling::ZipEntries,
+                observed: entries,
+                limit: CLASSIC_ZIP_ENTRIES,
+            });
+        }
+        if let Some(file) = self
+            .files
+            .iter()
+            .find(|file| wide(file.data.len()) > CLASSIC_ZIP_BYTES)
+        {
+            return Err(DocxError::Capacity {
+                ceiling: Ceiling::ZipBytes,
+                observed: wide(file.data.len()),
+                limit: CLASSIC_ZIP_BYTES,
+            });
+        }
         let cursor = Cursor::new(Vec::new());
         let mut writer = ZipWriter::new(cursor);
         // Pin the per-entry modification time to a fixed epoch. With the `time`
@@ -198,6 +314,13 @@ impl DocxArchive {
         }
         let cursor = writer.finish().map_err(DocxError::ZipWrite)?;
         let mut bytes = cursor.into_inner();
+        if wide(bytes.len()) > CLASSIC_ZIP_BYTES {
+            return Err(DocxError::Capacity {
+                ceiling: Ceiling::ZipBytes,
+                observed: wide(bytes.len()),
+                limit: CLASSIC_ZIP_BYTES,
+            });
+        }
         normalize_word_compatible_creator_version(&mut bytes)?;
         Ok(bytes)
     }
@@ -276,8 +399,9 @@ impl DocxArchive {
 /// remains untouched.
 ///
 /// This parser is deliberately bounded to the classic ZIP shape this writer
-/// emits. DOCX read limits keep entries and sizes below ZIP64 thresholds. Any
-/// mismatch is our own broken-output invariant and fails the write loudly.
+/// emits: [`DocxArchive::write`] refuses a package past classic ZIP's widths
+/// as that format's limit before it gets here. Any mismatch is our own
+/// broken-output invariant and fails the write loudly.
 fn normalize_word_compatible_creator_version(bytes: &mut [u8]) -> Result<(), DocxError> {
     const EOCD_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
     const CENTRAL_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];

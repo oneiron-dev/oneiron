@@ -153,6 +153,11 @@ pub(crate) struct ContextBoardResponse {
     /// its candidates.
     #[serde(skip_serializing_if = "Option::is_none")]
     room: Option<Vec<String>>,
+    /// Where the ROOM rows sit in the room's whole stream, and the cursor to
+    /// its next page; absent when the board renders no room.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(inline)]
+    room_page: Option<board::ContextBoardRoomPage>,
     /// The context pack retrieval produced; absent when retrieval was skipped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pack: Option<CoreContextPackResponse>,
@@ -591,6 +596,7 @@ pub(crate) async fn context_board_hydrate(
         you: parts.you,
         tasks: parts.tasks,
         room: parts.room,
+        room_page: parts.room_page,
         pack,
         changed,
         skills: parts.skills,

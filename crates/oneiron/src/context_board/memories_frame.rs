@@ -79,8 +79,9 @@ fn memory_row_head(row: &MemoryRow, foreign: bool) -> String {
 }
 
 /// The board section a MEMORIES row in `world` renders in, one per world;
-/// a row with no world renders in `unscoped`. A fenced world's section
-/// carries the FICTION marker (FIX 7756).
+/// a row with no world renders in `unscoped`, and one whose world cannot be
+/// proven in `unknown` (FIX 9744). A fenced world's section carries the
+/// FICTION marker (FIX 7756).
 pub(super) fn memories_section_name(world: Option<&str>, fiction: bool) -> String {
     format!(
         "MEMORIES world={}{}",
@@ -89,12 +90,21 @@ pub(super) fn memories_section_name(world: Option<&str>, fiction: bool) -> Strin
     )
 }
 
+/// The section name a row whose world cannot be proven renders under: no
+/// world id, so it is never a foreign host or a fenced world, and never
+/// base's `unscoped`.
+const UNPROVEN_WORLD_SECTION: &str = "unknown";
+
 pub fn assemble_memories_sections(
     section: &MemoriesSection,
 ) -> Result<Vec<BoardSection>, BoardFrameError> {
     let mut worlds: BTreeMap<Option<&str>, Vec<_>> = BTreeMap::new();
     for row in &section.rows {
-        worlds.entry(row.world.as_deref()).or_default().push(row);
+        let world = match row.world.as_deref() {
+            None if row.world_unproven => Some(UNPROVEN_WORLD_SECTION),
+            world => world,
+        };
+        worlds.entry(world).or_default().push(row);
     }
     let mut sections = Vec::new();
     for (world, rows) in worlds {

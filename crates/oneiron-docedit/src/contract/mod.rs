@@ -16,10 +16,11 @@ mod run;
 
 use crate::ArchiveLimits;
 use crate::docx_body::{DocxBlock, DocxChange, DocxRevision};
+use crate::graphic::GraphicLimits;
 use crate::pptx_comments::{
     PptxAnchorOutcome, PptxCommentEdit, PptxCommentLimits, PptxSlideIdentity,
 };
-use crate::resource::{ResourceRefusal, Resources};
+use crate::resource::{CapacityHit, ResourceRefusal, Resources};
 use crate::retained_opc::{Limits, XmlLimits};
 use crate::xlsx_body::{XlsxBook, XlsxChange};
 use schemars::JsonSchema;
@@ -124,7 +125,10 @@ impl Op {
     }
 }
 
-/// DOCX archive ceilings, checked across every entry before any XML parser runs.
+/// DOCX archive ceilings: the byte ceilings checked across every entry
+/// before any XML parser runs. `max_entries` is an observation, never a
+/// reason to refuse: each entry's memory is reserved through the host's port
+/// instead (FIX 8570).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DocxLimits {
@@ -294,6 +298,40 @@ pub struct DeckCreateArgs {
     pub assets: BTreeMap<String, DeckAsset>,
     pub names: DeckNames,
     pub limits: PackageLimits,
+    /// The host's graphic ceilings for the brief's assets (FIX 5355); absent,
+    /// the engine's defaults.
+    #[serde(default)]
+    pub graphics: Option<GraphicSettings>,
+}
+
+/// A host's graphic ceilings: an asset past a byte or pixel one is refused,
+/// not truncated. The SVG node, depth, segment and fill-edge counts are
+/// observations, never a reason to refuse (FIX 8574).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GraphicSettings {
+    pub svg_bytes: usize,
+    pub svg_nodes: usize,
+    pub svg_depth: usize,
+    pub segments: usize,
+    pub fill_edges: usize,
+    pub raster_bytes: usize,
+    pub raster_pixels: u64,
+}
+
+impl GraphicSettings {
+    #[must_use]
+    pub fn graphic(self) -> GraphicLimits {
+        GraphicLimits {
+            svg_bytes: self.svg_bytes,
+            svg_nodes: self.svg_nodes,
+            svg_depth: self.svg_depth,
+            segments: self.segments,
+            fill_edges: self.fill_edges,
+            raster_bytes: self.raster_bytes,
+            raster_pixels: self.raster_pixels,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -666,6 +704,11 @@ pub struct ContractError {
     /// [`ErrorCode::ResourceDeadline`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource: Option<ResourceRefusal>,
+    /// The ceiling a well-formed package passed, its dimension, what the
+    /// package has and the limit: the typed cause behind
+    /// [`ErrorCode::CapacityExceeded`] (FIX 5354).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<CapacityHit>,
 }
 
 impl ContractError {
@@ -683,6 +726,16 @@ impl ContractError {
         }
     }
 
+    /// The error a ceiling ends a call with: [`ErrorCode::CapacityExceeded`],
+    /// and the ceiling itself as the cause, never an invalid document.
+    #[must_use]
+    pub fn capacity(hit: CapacityHit) -> Self {
+        Self {
+            capacity: Some(hit),
+            ..Self::new(ErrorCode::CapacityExceeded, hit.to_string())
+        }
+    }
+
     pub fn new(code: ErrorCode, detail: impl Into<String>) -> Self {
         let mut detail = detail.into();
         if detail.len() > MAX_DETAIL_BYTES {
@@ -696,6 +749,7 @@ impl ContractError {
             code,
             detail,
             resource: None,
+            capacity: None,
         }
     }
 }
@@ -729,6 +783,11 @@ pub enum ErrorCode {
     /// The host's wait for memory, or a deadline the caller gave, ran out;
     /// the call may run again.
     ResourceDeadline,
+    /// A well-formed package passed a ceiling the caller set, or one its
+    /// format has (classic ZIP's widths): the error's `capacity` names the
+    /// dimension, what the package has and the limit. A count in the
+    /// document is never this reason.
+    CapacityExceeded,
 }
 
 impl ErrorCode {
@@ -746,6 +805,7 @@ impl ErrorCode {
             Self::Internal => "internal",
             Self::MemoryFloor => "memory_floor",
             Self::ResourceDeadline => "resource_deadline",
+            Self::CapacityExceeded => "capacity_exceeded",
         }
     }
 }

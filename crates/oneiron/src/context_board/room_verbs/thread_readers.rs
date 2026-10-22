@@ -2,8 +2,9 @@
 //! thread of a room, and the ceiling that thread puts on its reader, over the
 //! room's roster.
 
-use super::{room_clearance_in, room_reader_in, room_roster_in};
+use super::{live_audience, room_clearance_in, room_reader_in, room_roster_in};
 use crate::claim::RoomTurnCeiling;
+use crate::conversation::RoomLiveSpeakerEntries;
 use crate::federation::Scope;
 use crate::{EntityId, Vault};
 
@@ -59,8 +60,11 @@ pub(crate) fn thread_reader_in(
 /// Admin in it off the room (FIX 6267), is bound to that caller alone: its
 /// worlds and clearance, and it as the audience. One whose audience still
 /// holds members, read so, meets that caller's own clearance too
-/// ([`off_room_reader_clearance_in`], FIX 6497). `None` when `caller` does
-/// not read the thread here. Held, as the room's.
+/// ([`off_room_reader_clearance_in`], FIX 6497). A public thread is heard as
+/// its room is: the room's live speakers join its audience by their entry
+/// refs and meet an unknown's clearance (FIX 9754,
+/// [`public_thread_live_speakers_in`]). `None` when `caller` does not read
+/// the thread here. Held, as the room's.
 pub(crate) fn thread_ceiling_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -84,10 +88,45 @@ pub(crate) fn thread_ceiling_in(
         members.push(caller);
     }
     let own = off_room_reader_clearance_in(vault, txn, room, thread, &members, caller)?;
+    let live = public_thread_live_speakers_in(vault, txn, room, thread)?;
+    let speakers = match &live {
+        Some(live) => vault.live_speaker_clearance_in(txn, live)?,
+        None => None,
+    };
+    let extra = crate::claim::meet_clearance(own.as_ref(), speakers.as_ref());
     let mut ceiling =
-        super::ceiling::room_turn_ceiling_in(vault, txn, room, caller, &members, own.as_ref())?;
+        super::ceiling::room_turn_ceiling_in(vault, txn, room, caller, &members, extra.as_ref())?;
+    if let Some(live) = &live {
+        ceiling.roster = live_audience::with_entries(members, live);
+    }
     ceiling.branch = Some(thread);
     Ok(Some(ceiling))
+}
+
+/// The room's live speakers a reader of thread `thread` of `room` hears
+/// (FIX 9754). A public thread is heard as its room is, so its ceiling and
+/// each row's refresh take the room's live entry refs and an unknown's
+/// clearance, as [`room_ceiling_in`](super::room_ceiling_in) does. A private
+/// thread (FIX 2951) is heard by its audience alone and takes none: `None`.
+/// A live call's typed hold holds the thread's read as it holds the room's;
+/// any other error reading the speakers leaves a public thread's ceiling as
+/// its members alone make it (`None`).
+pub(crate) fn public_thread_live_speakers_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+) -> crate::Result<Option<RoomLiveSpeakerEntries>> {
+    if crate::workspace_roster::thread_audience_in(vault, txn, room, thread)?.is_some() {
+        return Ok(None);
+    }
+    match vault.room_live_speaker_entries_in(txn, room) {
+        Ok(live) => Ok(Some(live)),
+        Err(
+            error @ crate::Error::Record(crate::error::RecordError::RoomLiveSpeakersIncomplete(_)),
+        ) => Err(error),
+        Err(_) => Ok(None),
+    }
 }
 
 /// What the vault's Owner or an Admin reading a private thread off the room
