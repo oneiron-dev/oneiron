@@ -396,6 +396,19 @@ pub(crate) fn projection_ingress_root(vault: &Vault, store_id: EntityId) -> Resu
         .join(PROJECTION_INGRESS_DIR))
 }
 
+/// The directory every private ingress of the canonical store `store_id`
+/// would live under, made by nothing here: a store none was ever made for
+/// has none.
+pub(crate) fn existing_projection_ingress_root(vault: &Vault, store_id: EntityId) -> PathBuf {
+    vault
+        .store
+        .env
+        .path()
+        .join(REPO_SECRET_PROJECTION_DIR)
+        .join(store_id.to_hex())
+        .join(PROJECTION_INGRESS_DIR)
+}
+
 /// The directory a store's private ingresses live under, beside its copies.
 const PROJECTION_INGRESS_DIR: &str = "ingress";
 
