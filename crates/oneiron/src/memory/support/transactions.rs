@@ -64,6 +64,12 @@ impl Memory<'_> {
         if let Some(ask) = origin.hook_ask {
             self.hook_ask = Some(ask);
         }
+        // A turn program's waking slip binds the surface its call reaches
+        // (FIX 8717): its reads take the slip's key, its claim writes the
+        // slip's position check.
+        if let Some(proof) = &origin.read_proof {
+            self.read_proof = Some(proof.clone());
+        }
         self.host_origin = Some(origin);
         self
     }

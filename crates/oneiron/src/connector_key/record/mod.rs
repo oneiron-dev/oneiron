@@ -1,3 +1,7 @@
+//! Connector key record vocabulary facade.
+//! Entry: `ConnectorKeyRecord`.
+//! Definitions live in `key_record`, `budgets` and `scoped`.
+
 mod budgets;
 mod key_record;
 mod scoped;
