@@ -8,13 +8,13 @@ use super::super::frame::{BudgetPolicyRef, PLUGIN_SECTION_BUDGET_POLICY_REF};
 use super::errors::{PluginResult, PluginSectionError};
 use super::install::PluginInstallTarget;
 use super::manifest::{
-    AuthorityLaneRef, PluginInstallExecutor, PluginInstallSource, SectionBindingResolver,
-    StateFamilyRef,
+    ApprovedPluginIdentity, AuthorityLaneRef, PluginInstallExecutor, PluginInstallSource,
+    SectionBindingResolver, StateFamilyRef,
 };
 use crate::entity_id::EntityId;
 use crate::skill::SkillRecord;
 use crate::skill_hub::{
-    HubIndexEntry, HubPackage, HubRef, RefFetch, SkillHubAdapter, pinned_tracking,
+    HubIndexEntry, HubPackage, HubPin, HubRef, RefFetch, SkillHubAdapter, pinned_tracking,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -82,19 +82,30 @@ impl PluginInstallSource for VaultPluginInstallExecutor<'_> {
     }
 }
 
+/// Imports the approved package: fetched and parsed under the approved
+/// immutable content hash, its identity checked before the checked import,
+/// and the import entry built from the approved identity rather than from
+/// whatever the proposal's tag or semver ref resolves to now.
 fn ingest_checked<A: SkillHubAdapter>(
     vault: &Vault,
     adapter: &A,
     hub_ref: &HubRef,
+    approved: &ApprovedPluginIdentity,
     target_skill_ref: EntityId,
     now: u64,
 ) -> PluginResult<EntityId> {
-    let package = adapter.fetch_package(hub_ref)?;
+    let pinned = HubRef::new(
+        adapter.hub_id(),
+        hub_ref.ref_string.clone(),
+        HubPin::ContentHash(approved.content_hash.to_hex()),
+    )?;
+    let package = adapter.fetch_package(&pinned)?;
+    approved.check_package(&package)?;
     let entry = HubIndexEntry {
-        name: package.record.skill_id.clone(),
+        name: approved.skill_id.clone(),
         description: package.record.desc.clone(),
-        version: package.record.version.clone(),
-        content_hash: package.content_hash()?,
+        version: approved.version.clone(),
+        content_hash: approved.content_hash,
         ref_string: hub_ref.ref_string.clone(),
     };
     Ok(vault.ingest_skill_from_adapter_checked(
@@ -114,6 +125,7 @@ impl PluginInstallExecutor for VaultPluginInstallExecutor<'_> {
         &self,
         vault: &Vault,
         target: &PluginInstallTarget,
+        approved: &ApprovedPluginIdentity,
         _approved_claim_id: &EntityId,
         now: u64,
     ) -> PluginResult<EntityId> {
@@ -128,10 +140,10 @@ impl PluginInstallExecutor for VaultPluginInstallExecutor<'_> {
         };
         match vault.hub_ref_fetch(&pinned_tracking(hub_ref.clone())?, None)? {
             RefFetch::Git(adapter, _) => {
-                ingest_checked(vault, &adapter, hub_ref, *target_skill_ref, now)
+                ingest_checked(vault, &adapter, hub_ref, approved, *target_skill_ref, now)
             }
             RefFetch::Http(adapter, _) => {
-                ingest_checked(vault, &adapter, hub_ref, *target_skill_ref, now)
+                ingest_checked(vault, &adapter, hub_ref, approved, *target_skill_ref, now)
             }
         }
     }

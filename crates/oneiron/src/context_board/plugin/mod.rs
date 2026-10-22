@@ -51,10 +51,10 @@ pub use self::doors::{
 pub use self::errors::{PluginResult, PluginSectionError};
 pub use self::install::{PluginInstallOrigin, PluginInstallTarget, ValidatedSectionManifest};
 pub use self::manifest::{
-    AuthorityLaneRef, PluginInstallExecutor, PluginInstallSource, SECTION_MANIFEST_SCHEMA_VERSION,
-    SectionBindingResolver, SectionId, SectionManifest, SectionManifestEnvelope,
-    SectionManifestProvenance, SectionVerbAllowlist, SectionVerbRef, SkillLifecycleSource,
-    StateFamilyRef,
+    ApprovedPluginIdentity, AuthorityLaneRef, PluginInstallExecutor, PluginInstallSource,
+    SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver, SectionId, SectionManifest,
+    SectionManifestEnvelope, SectionManifestProvenance, SectionVerbAllowlist, SectionVerbRef,
+    SkillLifecycleSource, StateFamilyRef,
 };
 pub use self::render::{
     PLUGIN_PROPOSALS_SECTION_NAME, PluginProposalRow, PluginSectionRow, PluginSectionSnapshot,

@@ -110,9 +110,9 @@ pub use notifications::{
     caller_marker_contains, notification_body_json, notification_scoped_to_caller,
 };
 pub use plugin::{
-    AdmittedPluginSection, AuthorityLaneRef, BoardBlockKind, BoardBlockRecord, BoardBlockScope,
-    BoardBlockWriteEnvelope, CORE_SECTION_IDS, EngineSectionBindings,
-    PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION, PLUGIN_PROPOSALS_SECTION_NAME,
+    AdmittedPluginSection, ApprovedPluginIdentity, AuthorityLaneRef, BoardBlockKind,
+    BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope, CORE_SECTION_IDS,
+    EngineSectionBindings, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION, PLUGIN_PROPOSALS_SECTION_NAME,
     PREDICATE_PLUGIN_SECTION_INSTALL, PackSectionRegistration, PluginInstallClaimPayload,
     PluginInstallExecutor, PluginInstallOrigin, PluginInstallSource, PluginInstallTarget,
     PluginProposalRow, PluginResult, PluginSectionAdmission, PluginSectionError,
