@@ -57,6 +57,8 @@ impl MeshRoutes {
                 mesh,
                 Arc::new(VaultLlmNodes(Arc::clone(vault))),
                 tokio::runtime::Handle::current(),
+                // What its calls hold at once (FIX 8619).
+                oneiron_llm_own_server::StagingBudget::default(),
             ),
         };
         routes.publish(vault);

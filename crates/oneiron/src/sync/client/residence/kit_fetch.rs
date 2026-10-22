@@ -3,18 +3,21 @@
 //! rebuilt seed. Each slice request is signed with the seed's owner anchor
 //! ([`KitBundleFetch`]), and the home's kit door serves the generations a
 //! publisher named the kit's root for. The bytes are checked as a machine's
-//! read checks them (`bundle::fetch_generation`).
+//! read checks them (`bundle::fetch_generation`). The kit reads the home's
+//! current index of those generations the same way (FIX 7106).
 
 use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::bundle::{PartSource, fetch_generation};
 use crate::sync::residence::{
-    KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH, KitBundleFetch,
-    SEALED_BUNDLE_READ_PART_MAX, SealedBundleObject, kit_bundle_fetch_origin, sealed_digest_hex,
-    sealed_generation_hex,
+    KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH, KIT_PAD_INDEX_FETCH_PATH, KitBundleFetch,
+    KitPadIndexFetch, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry, SealedBundleIndex,
+    SealedBundleKitRoot, SealedBundleObject, kit_bundle_fetch_origin, sealed_digest_from_hex,
+    sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
@@ -33,6 +36,30 @@ const KIT_BUNDLE_PART_TIMEOUT_SECS: u64 = 300;
 /// generation, `bundle`, two 20-digit `u64`s, 64-hex digest, `false`, keys
 /// and punctuation).
 const KIT_BUNDLE_PART_REPLY_MAX: usize = 4 * SEALED_BUNDLE_READ_PART_MAX.div_ceil(3) + 241;
+/// The most bytes one index answer may hold (CALLS: KIT_PAD_INDEX_REPLY_MAX,
+/// 1 MiB): a memory floor far past the largest index a home keeps, the 104
+/// bytes around its list and `SEALED_BUNDLE_KEEP` entries of at most 333
+/// bytes each (48-hex generation, two 64-hex digests, three 20-digit `u64`s,
+/// keys and punctuation).
+const KIT_PAD_INDEX_REPLY_MAX: usize = 1024 * 1024;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KitPadIndexReply {
+    retained_revision: String,
+    generations: Vec<KitPadIndexEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KitPadIndexEntry {
+    generation: String,
+    commit_order: u64,
+    bundle_length: u64,
+    bundle_digest: String,
+    pads_length: u64,
+    pads_digest: String,
+}
 
 /// The home's kit door, and what each request to it is signed with.
 pub(super) struct KitHome {
@@ -47,10 +74,11 @@ pub(super) struct KitHome {
 
 impl KitHome {
     /// One slice of a kept object from `offset`, as the home sends it:
-    /// `generation` names one, `None` the newest named for the kit's root. A
-    /// refused or missing slice is `InvalidPayload`; a body that fails to
-    /// arrive is `Storage`; a body past [`KIT_BUNDLE_PART_REPLY_MAX`] is
-    /// `FrameTooLarge`.
+    /// `generation` names one, `None` the newest named for the kit's root,
+    /// and a kept pad object whose bytes the home lacks its typed answer
+    /// (FIX 7106). A refused or missing slice is `InvalidPayload`; a body that
+    /// fails to arrive is `Storage`; a body past [`KIT_BUNDLE_PART_REPLY_MAX`]
+    /// is `FrameTooLarge`.
     pub(super) async fn part(
         &self,
         generation: Option<SealedBundleGeneration>,
@@ -75,7 +103,7 @@ impl KitHome {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        let mut response = self
+        let response = self
             .client
             .post(self.url.clone())
             .json(&json!({
@@ -91,58 +119,99 @@ impl KitHome {
             .send()
             .await
             .map_err(|e| TransportError::Storage(format!("kit fetch request failed: {e}")))?;
+        // A kept pad object whose bytes the home lacks answers 409, typed.
+        if !response.status().is_success() && response.status() != reqwest::StatusCode::CONFLICT {
+            return Err(TransportError::InvalidPayload(
+                "the home refused the kit fetch",
+            ));
+        }
+        answer(response, KIT_BUNDLE_PART_REPLY_MAX).await
+    }
+
+    /// The home's current index of the generations named for the kit's root
+    /// (FIX 7106). A refused fetch is `InvalidPayload`; a body past
+    /// [`KIT_PAD_INDEX_REPLY_MAX`] is `FrameTooLarge`.
+    async fn index(&self) -> Result<Value, TransportError> {
+        let mut nonce = [0u8; KIT_BUNDLE_FETCH_NONCE_BYTES];
+        crate::world_keys::os_fill(&mut nonce)
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let fetch = KitPadIndexFetch {
+            vault_id: self.vault_id,
+            root: self.root,
+            origin: self.origin.clone(),
+            timestamp: crate::unix_seconds_now(),
+            nonce,
+        };
+        let signature: String = fetch
+            .sign(&self.anchor)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let mut url = self.url.clone();
+        url.set_path(KIT_PAD_INDEX_FETCH_PATH);
+        let response = self
+            .client
+            .post(url)
+            .json(&json!({
+                "vaultId": sealed_digest_hex(&fetch.vault_id),
+                "root": sealed_digest_hex(&fetch.root.0),
+                "timestamp": fetch.timestamp,
+                "nonce": sealed_digest_hex(&fetch.nonce),
+                "signature": signature,
+            }))
+            .send()
+            .await
+            .map_err(|e| TransportError::Storage(format!("kit fetch request failed: {e}")))?;
         if !response.status().is_success() {
             return Err(TransportError::InvalidPayload(
                 "the home refused the kit fetch",
             ));
         }
-        // A slice whose body fails to arrive, past the deadline or on a dropped
-        // connection, is a failed transport, not a missing slice (FIX 4297;
-        // CALLS: KIT_BUNDLE_BODY_READ_FAILURE, TransportError). A body that
-        // arrived and does not decode stays `InvalidPayload`.
-        // The body is counted as it arrives and refused once it passes the
-        // largest answer a slice has (FIX 5953); a stated length may refuse it
-        // sooner but never stands in for the count.
-        if let Some(size) = response.content_length()
-            && size > KIT_BUNDLE_PART_REPLY_MAX as u64
-        {
-            return Err(TransportError::FrameTooLarge {
-                size: usize::try_from(size).unwrap_or(usize::MAX),
-                max: KIT_BUNDLE_PART_REPLY_MAX,
-            });
-        }
-        let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|e| TransportError::Storage(format!("kit fetch request failed: {e}")))?
-        {
-            let size = body.len().checked_add(chunk.len()).unwrap_or(usize::MAX);
-            if size > KIT_BUNDLE_PART_REPLY_MAX {
-                return Err(TransportError::FrameTooLarge {
-                    size,
-                    max: KIT_BUNDLE_PART_REPLY_MAX,
-                });
-            }
-            body.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&body)
-            .map_err(|_| TransportError::InvalidPayload("the kit fetch answer does not decode"))
+        answer(response, KIT_PAD_INDEX_REPLY_MAX).await
     }
 }
 
-/// One generation's bundle and pad object as the home at `home` keeps them,
-/// read with the kit alone, for a restore on an install that is no machine of
-/// the vault's: `seed` is the kit's, rebuilt for the vault `vault_id`.
-/// `generation` names one, `None` the newest the home keeps for the kit's root.
-/// `None` when the home keeps no such generation for the root, or refused the
-/// kit. `home` is the home's address, as `https`, `http`, `wss` or `ws`.
-pub async fn fetch_sealed_bundle_with_kit(
+/// A kit door's answer, `max` bytes at most.
+async fn answer(mut response: reqwest::Response, max: usize) -> Result<Value, TransportError> {
+    // A slice whose body fails to arrive, past the deadline or on a dropped
+    // connection, is a failed transport, not a missing slice (FIX 4297;
+    // CALLS: KIT_BUNDLE_BODY_READ_FAILURE, TransportError). A body that
+    // arrived and does not decode stays `InvalidPayload`.
+    // The body is counted as it arrives and refused once it passes the
+    // largest answer a slice has (FIX 5953); a stated length may refuse it
+    // sooner but never stands in for the count.
+    if let Some(size) = response.content_length()
+        && size > max as u64
+    {
+        return Err(TransportError::FrameTooLarge {
+            size: usize::try_from(size).unwrap_or(usize::MAX),
+            max,
+        });
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| TransportError::Storage(format!("kit fetch request failed: {e}")))?
+    {
+        let size = body.len().checked_add(chunk.len()).unwrap_or(usize::MAX);
+        if size > max {
+            return Err(TransportError::FrameTooLarge { size, max });
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body)
+        .map_err(|_| TransportError::InvalidPayload("the kit fetch answer does not decode"))
+}
+
+/// The kit door of the home at `home`, its requests signed with `seed`, the
+/// kit's, rebuilt for the vault `vault_id`. `home` is the home's address, as
+/// `https`, `http`, `wss` or `ws`.
+fn kit_home(
     home: &str,
     vault_id: &[u8; 32],
     seed: &RecoveryRootSeed,
-    generation: Option<SealedBundleGeneration>,
-) -> Result<Option<(SealedVaultBundle, SealedKeyPads)>, TransportError> {
+) -> Result<KitHome, TransportError> {
     let http = if let Some(rest) = home.strip_prefix("wss://") {
         format!("https://{rest}")
     } else if let Some(rest) = home.strip_prefix("ws://") {
@@ -168,13 +237,78 @@ pub async fn fetch_sealed_bundle_with_kit(
         .timeout(Duration::from_secs(KIT_BUNDLE_PART_TIMEOUT_SECS))
         .build()
         .map_err(|e| TransportError::Storage(format!("kit fetch client failed: {e}")))?;
-    let home = KitHome {
+    Ok(KitHome {
         client,
         url,
         origin,
         vault_id: *vault_id,
         root,
         anchor: seed.anchor(),
-    };
+    })
+}
+
+/// One generation's bundle and pad object as the home at `home` keeps them,
+/// read with the kit alone, for a restore on an install that is no machine of
+/// the vault's: `seed` is the kit's, rebuilt for the vault `vault_id`.
+/// `generation` names one, `None` the newest the home keeps for the kit's root.
+/// `None` when the home keeps no such generation for the root, or refused the
+/// kit. `home` is the home's address, as `https`, `http`, `wss` or `ws`.
+pub async fn fetch_sealed_bundle_with_kit(
+    home: &str,
+    vault_id: &[u8; 32],
+    seed: &RecoveryRootSeed,
+    generation: Option<SealedBundleGeneration>,
+) -> Result<Option<(SealedVaultBundle, SealedKeyPads)>, TransportError> {
+    let home = kit_home(home, vault_id, seed)?;
     fetch_generation(&mut PartSource::Kit(&home), generation).await
+}
+
+/// The generations the home at `home` keeps named for the kit's root, newest
+/// committed first, with the revision of the home's one read that named them,
+/// read with the kit alone (FIX 7106): `seed` is the kit's, rebuilt for the
+/// vault `vault_id`. `None` when the home keeps none for the root, or refused
+/// the kit. Each entry names the kit's root and anchor, the ones its
+/// signature was checked against.
+pub async fn fetch_sealed_bundle_index_with_kit(
+    home: &str,
+    vault_id: &[u8; 32],
+    seed: &RecoveryRootSeed,
+) -> Result<Option<SealedBundleIndex>, TransportError> {
+    let home = kit_home(home, vault_id, seed)?;
+    let reply = match home.index().await {
+        Ok(reply) => reply,
+        Err(TransportError::InvalidPayload(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let refused = || TransportError::InvalidPayload("the kit index answer does not decode");
+    let reply: KitPadIndexReply = serde_json::from_value(reply).map_err(|_| refused())?;
+    let kit = SealedBundleKitRoot {
+        root: home.root,
+        anchor_key: home.anchor.verifying_key().to_bytes(),
+    };
+    let entries = reply
+        .generations
+        .iter()
+        .map(|entry| {
+            Ok(SealedBundleEntry {
+                generation: sealed_generation_from_hex(&entry.generation).ok_or_else(refused)?,
+                commit_order: entry.commit_order,
+                bundle_len: entry.bundle_length,
+                bundle_digest: sealed_digest_from_hex(&entry.bundle_digest).ok_or_else(refused)?,
+                pads_len: entry.pads_length,
+                pads_digest: sealed_digest_from_hex(&entry.pads_digest).ok_or_else(refused)?,
+                kit: Some(kit),
+            })
+        })
+        .collect::<Result<Vec<_>, TransportError>>()?;
+    if !entries
+        .windows(2)
+        .all(|pair| pair[0].commit_order > pair[1].commit_order)
+    {
+        return Err(refused());
+    }
+    Ok(Some(SealedBundleIndex {
+        retained_revision: sealed_digest_from_hex(&reply.retained_revision).ok_or_else(refused)?,
+        entries,
+    }))
 }

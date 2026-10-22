@@ -11,7 +11,8 @@
 //! (`limits.renderer_work`), round robin across the callers it is for, the
 //! host's own wakes behind them, and runs to one deadline ([`RENDER_TIME`])
 //! and a stop flag its caller sets on leaving. The memory it reads pages into
-//! is leased from the machine's ([`MachineMemory`]) before it is read. Its
+//! is leased from the machine's ([`MachineMemory`](crate::machine::MachineMemory))
+//! before it is read, and named allocated once it is (FIX 8240). Its
 //! scratch lives in the vault disk's private spool, and each write claims
 //! its room on that disk's floor first. A turn that does not come, memory
 //! that does not fit, or a disk at its reserve answers typed:
@@ -29,7 +30,7 @@ use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{EntityId, Error, Result};
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
-use crate::machine::{DiskClaim, DiskFloor, MachineMemory, MemoryLease, MemoryRefusal};
+use crate::machine::{DiskClaim, DiskFloor, MemoryLease, MemoryRefusal};
 use crate::server::SyncServer;
 
 /// The whole deck's export to PDF, and one page's raster.
@@ -72,12 +73,13 @@ pub(crate) const RENDER_MEMORY_FLOOR: &str = "render_memory_floor";
 /// free-space reserve. Retryable.
 pub(crate) const RENDER_DISK_FLOOR: &str = "render_disk_floor";
 
-/// `limits.renderer_work`'s default: a quarter of the machine's cores, at
-/// least one (CALLS "FIX 7653 renderer turns"). A render is a LibreOffice
-/// export and a raster per page, each a process that keeps a core busy; the
-/// row schedules them and never refuses one.
+/// `limits.renderer_work`'s default: 2,048 renders admitted at once, as the
+/// other work rows default (CALLS "FIX 8243 / FIX 7653 renderer turns"). It
+/// is the row's scheduling bound and the point its OF-520 question asks at,
+/// not a sizing of the machine's cores; an operator's own value stands. The
+/// row schedules renders and never refuses one.
 pub(crate) fn default_turns() -> usize {
-    (crate::machine::cores() / 4).max(1)
+    2_048
 }
 
 struct LibreOfficeSlides {
@@ -203,9 +205,9 @@ pub(crate) struct AdmittedRenderer {
     /// every memory admission the work asks for.
     deadline: Instant,
     stop: Arc<AtomicBool>,
-    memory: MachineMemory,
-    /// One lease, grown by each admission.
-    lease: Mutex<Option<MemoryLease>>,
+    /// One lease, empty at first, grown by each admission; what the work
+    /// allocated under it is named so (FIX 8240).
+    lease: Mutex<MemoryLease>,
     disk: DiskFloor,
     /// The vault disk's private spool, the scratch's parent.
     spool: PathBuf,
@@ -294,8 +296,7 @@ impl AdmittedRenderer {
             turn,
             deadline: Instant::now() + RENDER_TIME,
             stop,
-            memory: server.memory.clone(),
-            lease: Mutex::default(),
+            lease: Mutex::new(server.memory.empty_lease()),
             disk: server.transfers.disk.clone(),
             spool,
             refused: Mutex::default(),
@@ -331,19 +332,7 @@ impl AdmittedRenderer {
             return Ok(());
         }
         let stopped = || self.stop.load(Ordering::Relaxed);
-        let mut held = lock(&self.lease);
-        let leased = match held.take() {
-            Some(mut lease) => {
-                let grown = lease.grow(bytes, deadline, &stopped);
-                *held = Some(lease);
-                grown
-            }
-            None => self
-                .memory
-                .lease_until(bytes, deadline, &stopped)
-                .map(|lease| *held = Some(lease)),
-        };
-        drop(held);
+        let leased = lock(&self.lease).grow(bytes, deadline, &stopped);
         leased.map_err(|refused| {
             self.refuse(match refused {
                 MemoryRefusal::Floor { needed, available } => {
@@ -456,10 +445,11 @@ impl AdmittedRenderer {
                 if size == 0 {
                     return Err(failed("the slide renderer wrote no output"));
                 }
-                // Its bytes are leased before they are read, and its file goes
-                // once they are.
+                // Its bytes are leased before they are read, named allocated
+                // once they are, and its file goes then too.
                 self.lease(size, deadline)?;
                 let image = std::fs::read(&png)?;
+                self.materialized(size, u64::try_from(image.len()).unwrap_or(u64::MAX));
                 let _ = std::fs::remove_file(&png);
                 Ok(image)
             })
@@ -488,6 +478,12 @@ impl SlideRenderer for AdmittedRenderer {
     /// fit.
     fn admit(&self, bytes: u64) -> Result<()> {
         self.lease(bytes, self.deadline)
+    }
+
+    /// `reserved` of the lease's pending bytes named allocated, as `actual`
+    /// bytes it holds now (FIX 8240). Never waits or refuses.
+    fn materialized(&self, reserved: u64, actual: u64) {
+        lock(&self.lease).materialized(reserved, actual);
     }
 }
 

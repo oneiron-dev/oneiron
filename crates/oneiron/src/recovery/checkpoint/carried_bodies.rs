@@ -77,6 +77,12 @@ pub(super) struct CarriedInline {
     /// the row lands at `keep` plus `len` bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) landed_len: Option<u64>,
+    /// A row-held response whose row did not decode where it was taken (FIX
+    /// 6227), carried whole past what its family recognized it by: it lands
+    /// exactly as it rested, and a claim among them indexes nothing and is
+    /// not embedded again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) opaque: bool,
     /// A restore over a live vault keeps this response's row as the live
     /// vault holds it, with the live vault's binding (a media job, a Live
     /// family; KS-2B2): its stream is passed over, never required or
@@ -170,9 +176,14 @@ impl BodyCensus {
                 carriage,
                 instance,
                 digest,
+                opaque,
             } => {
-                let (carried, body, stub) =
-                    response_rows::carry(database, key, value, (carriage, instance, digest))?;
+                let (carried, body, stub) = response_rows::carry(
+                    database,
+                    key,
+                    value,
+                    (carriage, instance, digest, opaque),
+                )?;
                 self.inline.push((carried, body));
                 return Ok(Some(stub));
             }
@@ -250,6 +261,7 @@ impl BodyCensus {
                 stored_len: 0,
                 retired: None,
                 landed_len: None,
+                opaque: false,
                 superseded: false,
             },
             body.to_vec(),
@@ -503,6 +515,35 @@ pub(super) fn require(
         &pruned.digests,
     )?;
     Ok(retired)
+}
+
+/// The responses `image` lands that never decoded where they were taken
+/// (FIX 6227), its `retired` instances' aside: how many, and the claims
+/// among them, which a restore never decodes, indexes or embeds again.
+///
+/// # Errors
+///
+/// [`Error::CorruptedIndex`] for an opaque claim whose key names no entity.
+pub(super) fn opaque_landing(
+    image: &CheckpointImage,
+    retired: &BTreeSet<[u8; 16]>,
+) -> Result<(usize, BTreeSet<EntityId>)> {
+    let mut landed = 0;
+    let mut claims = BTreeSet::new();
+    for carried in image.inline_bodies.iter().filter(|carried| {
+        carried.opaque && !carried.superseded && !retired.contains(&carried.instance)
+    }) {
+        landed += 1;
+        if carried.database == "entities" {
+            let key = carried
+                .key
+                .as_slice()
+                .try_into()
+                .map_err(|_| codec_error())?;
+            claims.insert(EntityId::from_bytes(key)?);
+        }
+    }
+    Ok((landed, claims))
 }
 
 /// Reads past the `index`th stream without opening it: its outer frames

@@ -50,6 +50,7 @@
 mod admission;
 mod authority;
 mod holder_policy;
+mod key_erase;
 mod publication;
 
 use std::collections::BTreeSet;
@@ -78,6 +79,7 @@ use crate::store::Store;
 #[cfg(feature = "sync")]
 pub use self::admission::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
+pub(crate) use self::key_erase::{PadEraseSubject, stage_retained_pad_key_erase_in_txn};
 pub(crate) use self::publication::bundle_publish_executor;
 
 /// The bundle's size step: every bundle is a positive multiple of it.

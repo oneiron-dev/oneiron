@@ -28,6 +28,7 @@ use oneiron_llm_openai::{
 };
 
 use super::broker::{BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, join};
+use super::http::charge_read;
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 const JSON: &str = "application/json";
@@ -190,6 +191,9 @@ impl BrokerMedia {
             call_with_key(&self.client, &self.keys, &self.secret, &header, &body).await?;
         let (status, headers) = answered(reply.outcome)?;
         let body = std::mem::take(&mut *reply.body);
+        // The broker hands the reply over whole: its bytes are charged on the
+        // media-reply line and held with the call it was read for (FIX 8615).
+        let _held = charge_read(body.capacity());
         Ok((
             status,
             headers
