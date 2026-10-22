@@ -70,6 +70,13 @@ pub(super) fn facade_actor(
     Ok((actor, actor_class))
 }
 
+/// The actor [`facade_actor`] resolves for `auth`, when it resolves one: a
+/// door that only keys by its caller (a search's deadline job, FIX 6164)
+/// reads it, never refusing a caller that binds none.
+pub(in crate::api) fn facade_actor_id(server: &SyncServer, auth: &CoreAuth) -> Option<EntityId> {
+    facade_actor(server, auth).ok().map(|(actor, _)| actor)
+}
+
 /// Names the room whose turn a request runs in (ARCH-0067 §8). It names only
 /// the room: the engine reads the roster and its Scope from the vault.
 pub(crate) const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";

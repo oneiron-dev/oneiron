@@ -1,3 +1,7 @@
+//! Consolidation lineage: provenance hops, kept decisions and evidence envelopes.
+//! Entry: `PromotionCandidate`, what consolidation hands to promotion.
+//! Definitions are local to this module.
+
 use rmpv::Value;
 
 use super::support::invalid_consolidation;

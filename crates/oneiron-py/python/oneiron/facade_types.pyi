@@ -9717,7 +9717,7 @@ class LearningProjectionView(TypedDict):
     receipt: NotRequired[LateCreditReceipt | None]
 class ObjectiveConfession(TypedDict):
     objective: str
-    met: bool
+    met: NotRequired[bool | None]
     flaw: NotRequired[str | None]
     uncertainty: NotRequired[str | None]
 class AttemptConfession(TypedDict):

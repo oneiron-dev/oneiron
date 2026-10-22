@@ -2,9 +2,7 @@
 
 use super::document::{BODY, decode_frontier};
 use super::{DocAuthorization, EntityDoc, ForkRequest, ForkStatus, SettleVerb, invalid, storage};
-use crate::batch::secret_scan::{
-    LiftedKeys, SecretScanMode, scan_content_in_txn, secret_scan_mode_in_txn,
-};
+use crate::batch::secret_scan::{Lifted, LiftedKeys, Part, admit_parts_in_txn};
 use crate::error::Result;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -120,6 +118,7 @@ impl Vault {
             let mut h = storage::head(&self.store, txn, entity)?;
             let mut doc = storage::load(&self.store, txn, &h)?;
             let lifted = lifted_keys_for(&self.store, txn, &h, edits)?;
+            let mut plan = Lifted::default();
             let before = doc.doc.oplog_vv();
             for edit in edits {
                 let actor = edit
@@ -130,14 +129,8 @@ impl Vault {
                     .set_peer_id(loro::LoroDoc::new().peer_id())
                     .map_err(|_| invalid("document peer rotation"))?;
                 super::forks::bind_actor(self, txn, &doc, actor, at)?;
-                apply(
-                    &mut doc,
-                    *entity,
-                    edit,
-                    at,
-                    secret_scan_mode_in_txn(&self.store, txn)?,
-                    &lifted,
-                )?;
+                let text = admitted_prose_in_txn(self, txn, *entity, edit, &lifted, &mut plan)?;
+                apply(&mut doc, *entity, edit, &text, at, &lifted)?;
             }
             storage::persist(self, txn, entity, &mut h, &doc, Some(&before))?;
             Ok(doc.frontier())
@@ -164,15 +157,18 @@ impl Vault {
             let mut h = storage::head(&self.store, txn, &request.entity)?;
             let live = storage::load(&self.store, txn, &h)?;
             let mut fork = live.fork(&request.base)?;
-            scan_content_in_txn(&self.store, txn, request.text.as_bytes())?;
-            // A handle of a key the live text's lift marked writes its value
-            // again (OF-067).
-            let resolved = if LiftedKeys::names_a_handle(&request.text) {
-                super::lift::lifted_keys_in_txn(&self.store, txn, &h)?.resolved(&request.text)
-            } else {
-                None
-            };
-            let text = resolved.as_deref().unwrap_or(&request.text);
+            // The new text is admitted before any operation holds it, and a
+            // handle of a key the live text's lift marked writes its value
+            // again (OF-067; FIX 2371).
+            let lifted = LiftedKeys::of_in_txn(&self.store, txn, [live.text()])?;
+            let text = &admitted_text_in_txn(
+                self,
+                txn,
+                request.entity,
+                &request.text,
+                &lifted,
+                &mut Lifted::default(),
+            )?;
             super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
             let before = live.doc.oplog_vv();
             let timed_out = request.timeout_ms == 0
@@ -203,7 +199,7 @@ impl Vault {
                     base: request.base.clone(),
                     actor: request.actor,
                     edits: Vec::new(),
-                    rewrite: Some(request.text.clone()),
+                    rewrite: Some(text.clone()),
                 };
                 super::forks::retain_fork(
                     self,
@@ -269,6 +265,43 @@ impl Vault {
         })?;
         registry.remove(&request.entity);
         Ok(out)
+    }
+}
+
+impl Vault {
+    /// [`Self::entity_text_anchor`] for a reader in its sight (FIX 2936;
+    /// C-ANCHOR). `start..end` counts the text that reader reads: with
+    /// `masked`, each key the live text's lift marked reads as its handle.
+    /// The selection is widened so it splits no handle (an end inside one
+    /// moves out to its edge, an empty selection inside one takes it whole).
+    /// The anchor's cursors and frontier name the stored text it stands for;
+    /// its quote and hash are the text the reader reads. Returns the anchor
+    /// and the widened range. The document and its keys are read in one
+    /// snapshot; an unmasked reader's anchor is the stored text's.
+    pub(crate) fn entity_text_anchor_in_sight(
+        &self,
+        entity: &EntityId,
+        start: usize,
+        end: usize,
+        masked: bool,
+    ) -> Result<(TextAnchor, (usize, usize))> {
+        if !masked {
+            return Ok((self.entity_text_anchor(entity, start, end)?, (start, end)));
+        }
+        let txn = self.store.env.read_txn()?;
+        let h = storage::head(&self.store, &txn, entity)?;
+        let doc = storage::load(&self.store, &txn, &h)?;
+        let text = doc.text();
+        let shown = LiftedKeys::of_in_txn(&self.store, &txn, [text.as_str()])?.masked_text(&text);
+        let selection = shown
+            .selection(start, end)
+            .ok_or(invalid("text span is out of bounds"))?;
+        let (from, to) = (selection.shown.start, selection.shown.end);
+        let mut anchor = make_anchor(&doc, *entity, selection.stored.start, selection.stored.end)?;
+        let quote: String = shown.text().chars().skip(from).take(to - from).collect();
+        anchor.hash = *blake3::hash(quote.as_bytes()).as_bytes();
+        anchor.quote = quote;
+        Ok((anchor, (from, to)))
     }
 }
 
@@ -367,36 +400,74 @@ pub(super) fn resolve_cursors(
     Ok((start, end))
 }
 
-/// `secrets` is the owner's switch as the edit's transaction reads it: the
-/// replacement is text content, scanned only while the switch is on.
+/// The anchor `edit` is placed by, and the text it writes as its writer
+/// gave it.
+fn verb_parts(edit: &AnchoredEdit) -> (&TextAnchor, &str) {
+    match &edit.verb {
+        EditVerb::AppendToSection { section, text } => (section, text.as_str()),
+        EditVerb::ReplaceQuotedSpan { span, text } => (span, text.as_str()),
+        EditVerb::InsertAfterAnchor { anchor, text } => (anchor, text.as_str()),
+    }
+}
+
+/// [`admitted_text_in_txn`] over the text `edit` writes.
+pub(super) fn admitted_prose_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    entity: EntityId,
+    edit: &AnchoredEdit,
+    lifted: &LiftedKeys,
+    plan: &mut Lifted,
+) -> Result<String> {
+    admitted_text_in_txn(vault, txn, entity, verb_parts(edit).1, lifted, plan)
+}
+
+/// `text`, prose a writer authors for `entity`'s document, as the document
+/// takes it (OF-067; FIX 2371): admitted with `plan`, the write's one plan,
+/// so each secret the batch door's text rules place goes to custody and the
+/// text keeps its handle before any operation holds it; then each handle of
+/// a key the live text's lift marked (`lifted`) is the value it stands for
+/// again (Engine ruling G2 = b). A handle this write minted stays a handle.
+/// A hit no span places refuses as before.
+pub(super) fn admitted_text_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    entity: EntityId,
+    text: &str,
+    lifted: &LiftedKeys,
+    plan: &mut Lifted,
+) -> Result<String> {
+    let mut admitted = text.to_owned();
+    admit_parts_in_txn(
+        vault,
+        txn,
+        entity,
+        &mut [("text:body", Part::Text(&mut admitted))],
+        plan,
+    )?;
+    Ok(lifted.resolved(&admitted).unwrap_or(admitted))
+}
+
+/// `replacement` is the text `edit` writes as admitted
+/// ([`admitted_prose_in_txn`]); `lifted` are the keys the live text's lift
+/// marked, for a quote a masked reader was issued (FIX 2936).
 pub(super) fn apply(
     doc: &mut EntityDoc,
     entity: EntityId,
     edit: &AnchoredEdit,
+    replacement: &str,
     at: u64,
-    secrets: SecretScanMode,
     lifted: &LiftedKeys,
 ) -> Result<()> {
     let actor = edit
         .actor
         .ok_or(invalid("text operation requires an actor"))?;
-    let (anchor, replacement) = match &edit.verb {
-        EditVerb::AppendToSection { section, text } => (section, text),
-        EditVerb::ReplaceQuotedSpan { span, text } => (span, text),
-        EditVerb::InsertAfterAnchor { anchor, text } => (anchor, text),
-    };
-    if secrets == SecretScanMode::On {
-        crate::batch::secret_scan::scan_write_payload(replacement.as_bytes())?;
-    }
-    // A handle of a key the document's lifted text holds writes its value
-    // again (OF-067).
-    let resolved = lifted.resolved(replacement);
-    let replacement = resolved.as_deref().unwrap_or(replacement);
+    let anchor = verb_parts(edit).0;
     let (start, end) = resolve(doc, entity, anchor)?;
     let replacing = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
     if replacing {
         let current: String = doc.text().chars().skip(start).take(end - start).collect();
-        if blake3::hash(current.as_bytes()).as_bytes() != &anchor.hash || current != anchor.quote {
+        if !quotes(anchor, &current, lifted) {
             return Err(invalid("quoted span changed concurrently"));
         }
     }
@@ -410,18 +481,29 @@ pub(super) fn apply(
     })
 }
 
+/// Whether `current`, the span `anchor` resolves to, is still the quote it
+/// was issued with: as stored, or as a reader who reads each lifted key as
+/// its handle read it, in that reader's own text (FIX 2936).
+fn quotes(anchor: &TextAnchor, current: &str, lifted: &LiftedKeys) -> bool {
+    let same = |text: &str| {
+        blake3::hash(text.as_bytes()).as_bytes() == &anchor.hash && text == anchor.quote
+    };
+    same(current) || lifted.masked(current).is_some_and(|shown| same(&shown))
+}
+
 /// The keys the lifted text of the document `h` heads holds, when one of
-/// `edits` names a handle: an edit that carries one back writes its value.
+/// `edits` names a handle: an edit that carries one back writes its value,
+/// and a quote a masked reader was issued is read as that reader read it.
 fn lifted_keys_for(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     h: &storage::Head,
     edits: &[AnchoredEdit],
 ) -> Result<LiftedKeys> {
-    let names = edits.iter().any(|edit| match &edit.verb {
-        EditVerb::AppendToSection { text, .. }
-        | EditVerb::ReplaceQuotedSpan { text, .. }
-        | EditVerb::InsertAfterAnchor { text, .. } => LiftedKeys::names_a_handle(text),
+    let names = edits.iter().any(|edit| {
+        let (anchor, text) = verb_parts(edit);
+        let quoted = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
+        LiftedKeys::names_a_handle(text) || (quoted && LiftedKeys::names_a_handle(&anchor.quote))
     });
     if !names {
         return Ok(LiftedKeys::default());

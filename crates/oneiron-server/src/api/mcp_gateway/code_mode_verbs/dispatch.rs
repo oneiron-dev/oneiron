@@ -154,10 +154,16 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             origin: origin.clone(),
             run_id: self.run_id,
         };
+        // What the answer holds (a deck preview's renderer) comes back with
+        // it, kept until the answer is handed to the run (FIX 8238).
         self.runtime.spawn(HELD_IMAGE.scope(held, async move {
-            let _ = sender.send(execute_code_mode_verb(&server, &actor, verb, input, run).await);
+            let executed = crate::api::answer_hold::keeping(execute_code_mode_verb(
+                &server, &actor, verb, input, run,
+            ))
+            .await;
+            let _ = sender.send(executed);
         }));
-        let Ok(executed) = receiver.recv() else {
+        let Ok((executed, kept)) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
                 code: "engine_error".to_owned(),
             }));
@@ -170,10 +176,12 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .extend(listed.iter().flatten().copied());
-        Ok(Ok(AgentVerbAnswer {
+        let answer = AgentVerbAnswer {
             output,
             rows: listed,
-        }))
+        };
+        drop(kept);
+        Ok(Ok(answer))
     }
 
     /// The run's answer to the questions one of its connector calls waits on

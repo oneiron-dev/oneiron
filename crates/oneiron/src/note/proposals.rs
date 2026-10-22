@@ -374,6 +374,17 @@ impl Vault {
                     landed: Vec::new(),
                     explainer: explainer.to_owned(),
                 };
+                // Its explainer is free text: admitted before anything is
+                // routed, landed or stored (FIX 2375).
+                let text = crate::batch::secret_scan::Part::Text(&mut bundle.explainer);
+                super::free_text::admit_free_text_in_txn(
+                    self,
+                    txn,
+                    bundle.id,
+                    "note.proposal.explainer",
+                    &mut [("text:explainer", text)],
+                    &mut crate::batch::secret_scan::Lifted::default(),
+                )?;
                 for id in forks {
                     let mut fork: NoteFork = NOTE_FORK
                         .get(&self.store, txn, id)?
