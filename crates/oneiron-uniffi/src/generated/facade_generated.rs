@@ -3041,6 +3041,11 @@ export_facade! {
     let output = client.vault_code_model_heal_count(&input)?;
     crate::codec::lift_record("vault.code.model_heal_count", &output)
 };
+"vault.code.type_diagnostics" => fn vault_code_type_diagnostics(&self, input: CodeRunTypeDiagnosticsRequest) -> Option<ProgramStepFeedback> = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest = crate::codec::lower_record("vault.code.type_diagnostics", input)?;
+    let output = client.vault_code_type_diagnostics(&input)?;
+    crate::codec::lift_record("vault.code.type_diagnostics", &output)
+};
 "vault.code.waits.resolve" => fn vault_code_waits_resolve(&self, input: CodeWaitResolveRequest) -> CodeWaitReceiptView = |client| {
     let input: oneiron::memory::code_wait_doors::CodeWaitResolveRequest = crate::codec::lower_record("vault.code.waits.resolve", input)?;
     let output = client.vault_code_waits_resolve(&input)?;

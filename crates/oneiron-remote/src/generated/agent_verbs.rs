@@ -1903,6 +1903,9 @@ impl OneironClient {
                 "vault.code.model_heal_count" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunModelHealCountView,
                 >(client, verb, &input),
+                "vault.code.type_diagnostics" => remote_agent_verb_output::<
+                    Option<oneiron::code_run::ProgramStepFeedback>,
+                >(client, verb, &input),
                 "vault.code.waits.resolve" => remote_agent_verb_output::<
                     oneiron::memory::code_wait_doors::CodeWaitReceiptView,
                 >(client, verb, &input),
@@ -11050,6 +11053,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.model_heal_count", value)
+    }
+    pub fn vault_code_type_diagnostics(
+        &self,
+        input: &oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest,
+    ) -> Result<Option<oneiron::code_run::ProgramStepFeedback>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.type_diagnostics", value)
     }
     pub fn vault_code_waits_resolve(
         &self,

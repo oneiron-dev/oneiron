@@ -19368,6 +19368,40 @@ async fn vault_code_model_heal_count(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_code_type_diagnostics(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.type_diagnostics")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.type_diagnostics", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.type_diagnostics", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_type_diagnostics(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_waits_resolve(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37030,6 +37064,7 @@ pub(crate) async fn call_verb(
         "vault.code.oplog" => vault_code_oplog(server, call, input).await,
         "execute_code" => execute_code(server, call, input).await,
         "vault.code.model_heal_count" => vault_code_model_heal_count(server, call, input).await,
+        "vault.code.type_diagnostics" => vault_code_type_diagnostics(server, call, input).await,
         "vault.code.waits.resolve" => vault_code_waits_resolve(server, call, input).await,
         "vault.code.waits.receipt" => vault_code_waits_receipt(server, call, input).await,
         "vault.results.status" => vault_results_status(server, call, input).await,
