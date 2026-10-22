@@ -87205,7 +87205,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -98795,7 +98795,7 @@
      "path": "src/config/models/mod.rs",
      "purpose": "`[models]`: which model serves each role, at three levels of detail",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2,
       "re-export": 12,
@@ -102320,7 +102320,7 @@
      "purpose": "The house model's decision read over llama.cpp's native API: the `LabelReadModel` the escalation rung is…",
      "surface": {
       "crate-vis": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
