@@ -12389,7 +12389,7 @@
      "path": "src/claim/scoped_read/agent_grants.rs",
      "purpose": "FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -14890,7 +14890,7 @@
      "purpose": "The shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): one captured step of a canonical…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5,
       "trait": 1,
       "type": 1
@@ -14905,9 +14905,19 @@
      "path": "src/code_run/shadow_runner/source.rs",
      "purpose": "The source an arm runs from (PR-S1): one captured step of a canonical run, read from its capsule and frozen…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 14,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/shadow_runner/source/admitted.rs",
+     "purpose": "A captured step prepared for a reader admitted to its capture (FIX 8704): the reader's own admission is…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -24966,11 +24976,21 @@
      "purpose": "The Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "re-export": 1,
       "struct": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/code_fix/admission.rs",
+     "purpose": "The Coach's admission to a failure's captured source (FIX 6357, 7031, 7548, 8704)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -24980,7 +25000,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/engine.rs",
      "purpose": "A publisher's engine candidate replayed against the real failure (FIX 1661, 2144, 6357): one matched pair on…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -25472,9 +25492,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "DestinationContext",
       "RepresentationContext",
       "RepresentationSource"
      ],
@@ -25482,8 +25503,8 @@
      "purpose": "Actor-scoped evidence and owner-authored voice reads, with exact revision pins",
      "surface": {
       "crate-vis": 4,
-      "fn": 2,
-      "struct": 2
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -29852,7 +29873,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ExactReplayRequest",
@@ -29879,7 +29900,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/failure_signals/code_fix/subject.rs",
@@ -46600,9 +46621,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/connector_call_erase.rs",
-     "purpose": "An actor's erase reaches every connector call row that keeps what the actor asked (FIX 9159): the held or…",
+     "purpose": "What a connector call row keeps, and how it goes",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -53780,7 +53801,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "re-export": 11
      }
     },
@@ -53948,7 +53969,17 @@
      "path": "src/secret_custody/storage_seal.rs",
      "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/storage_seal/connector_resume.rs",
+     "purpose": "A connector call's durable resume state at rest (FIX 9157): sealed under the call's own erasable custody…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -59077,13 +59108,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/credential_custody.rs",
      "purpose": "The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 15
      }
     },
     {
@@ -73166,7 +73197,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 151,
+     "files": 152,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73432,7 +73463,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 134,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74069,7 +74100,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74456,7 +74487,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4821,
+   "source_files": 4824,
    "test_files": 902
   },
   "oneiron-android": {
@@ -89143,6 +89174,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/stewardship/sources.rs",
+     "purpose": "What each model a follow-up draft goes to may read of its sources (FIX 8714)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/sync_wake.rs",
      "purpose": "A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's…",
      "surface": {
@@ -98074,7 +98115,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ManagedShutdown",
@@ -98085,8 +98126,9 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
-      "fn": 17,
+      "crate-vis": 15,
+      "fn": 15,
+      "re-export": 2,
       "struct": 3,
       "type": 1
      }
@@ -98126,10 +98168,31 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/state_serve/coordinator.rs",
+     "purpose": "Supervised vault startup, serving, and shutdown",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/state_serve/idle_backup.rs",
      "purpose": "The backup before an idle reap (`prepare_idle_reap`, Engine 10-20 backup shipper row (a), co-signed with LC)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/ingress.rs",
+     "purpose": "Managed HTTP ingress and the reap freeze gate",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {
@@ -99178,7 +99241,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 12,
       "struct": 1
      }
@@ -99319,7 +99382,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 20,
       "re-export": 14,
       "struct": 2
@@ -99517,6 +99580,16 @@
      "purpose": "Soniox's real-time speech-to-text socket (OF-410): a live `[models.media.transcribe]` rung",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/source_admission.rs",
+     "purpose": "A caller's sources, admitted for each offer a call actually goes to (FIX 8714): an opt-in hook on the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -100574,6 +100647,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/runtime/clock.rs",
+     "purpose": "Shared wall-clock time in Unix milliseconds",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RuntimeConfig"
      ],
@@ -100645,9 +100728,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/runtime/mod.rs",
-     "purpose": "—",
+     "purpose": "Runtime configuration, host services, and shared time helpers",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 2,
       "re-export": 8
      }
@@ -100859,7 +100942,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SyncServer"
@@ -100868,9 +100951,19 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 20,
-      "fn": 16,
+      "fn": 15,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/core/construction.rs",
+     "purpose": "Construction of the core sync server from an opened vault",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -101179,13 +101272,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/reader_runner.rs",
      "purpose": "The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/reader_runner/child.rs",
+     "purpose": "Execution and settlement of claimed reader children and summary jobs",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -101229,7 +101332,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/resident_pump.rs",
@@ -101272,6 +101375,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/server/resident_pump/execution.rs",
+     "purpose": "Execution of a leased agent run, including its model and planner seats",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/resident_pump/pattern_launch.rs",
      "purpose": "A leased agent's own pattern runs, and its planned leader's frozen pack (DOOR-111 S4c-4, S4c-5)",
      "surface": {
@@ -101282,10 +101395,30 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/server/resident_pump/settlement.rs",
+     "purpose": "Completion, failure, and durable parking of leased agent runs",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/run_host_door/host_rows.rs",
+     "purpose": "Host-served verb rows for an agent run and its model options",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -102241,7 +102374,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 80,
+     "files": 81,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102542,9 +102675,9 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 81,
+     "files": 83,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
@@ -102563,7 +102696,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 67,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -102619,11 +102752,11 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
-     "purpose": "—"
+     "purpose": "Runtime configuration, host services, and shared time helpers"
     },
     "saved_query_sweep": {
      "files": 1,
@@ -102633,9 +102766,9 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 60,
+     "files": 65,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Sync server state and maintenance jobs, split by concern"
     },
@@ -102703,9 +102836,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 52,
+   "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1120,
+   "source_files": 1130,
    "test_files": 182
   },
   "oneiron-spawn": {
