@@ -310,6 +310,7 @@ fn authorized_agent_edits_inference_rows_and_next_call_uses_them() -> Result<()>
         tools: vec![],
         params: Default::default(),
         provider_options: Default::default(),
+        host_segments: None,
     };
     let host = crate::llm::HostInferenceContext {
         binding: crate::llm::HostInferenceBinding::Advertised {

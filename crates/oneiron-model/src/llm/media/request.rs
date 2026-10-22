@@ -145,6 +145,7 @@ impl MediaRequest {
             tools: Vec::new(),
             params: self.params.clone(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         }
     }
 

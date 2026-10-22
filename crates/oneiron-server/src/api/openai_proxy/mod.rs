@@ -326,6 +326,7 @@ fn model_request(
         tools: Vec::new(),
         params: chat.params(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     })
 }
 

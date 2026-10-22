@@ -142,6 +142,7 @@ pub fn build_openai_chat_request(
         path: config.endpoint_path.clone(),
         headers: BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]),
         body: JsonValue::Object(body),
+        host_segments: request.host_segments.clone(),
     })
 }
 

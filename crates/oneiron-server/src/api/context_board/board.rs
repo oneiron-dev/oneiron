@@ -594,3 +594,91 @@ pub(super) fn board_frame_error(error: BoardFrameError) -> ApiError {
         Some("board"),
     )
 }
+
+/// What one rendered board section was read from (DESIGN-V2 R2): its
+/// rendered name, the fence it renders behind, and the memory rows (at the
+/// revision each was served at, where the read pinned one) and skills (at
+/// the version the session loaded, where it did) it shows. It rides beside
+/// the board's text and never changes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BoardSectionSource {
+    pub(crate) name: String,
+    pub(crate) fence: oneiron::llm::TrustFence,
+    pub(crate) dependencies: Vec<oneiron::llm::SegmentLocator>,
+}
+
+/// The rendered board's sections, in the order the frame renders them:
+/// every first-party section in frame order inside the authoritative
+/// wrapper, then each foreign world's MEMORIES section after it, as guest
+/// evidence. A section's dependencies are its own rows; the SKILLS section
+/// names every skill the session loaded and every capability hit.
+pub(super) fn section_sources(
+    sections: &[BoardSection],
+    memories: Option<&oneiron::MemoriesSection>,
+    hits: &[CapabilityHit],
+    reads: &SessionReadSet,
+) -> Vec<BoardSectionSource> {
+    use oneiron::llm::{SegmentLocator, SourceRevision, TrustFence};
+    let mut first_party = Vec::new();
+    let mut guest = Vec::new();
+    for section in sections {
+        let name = section.name().to_owned();
+        let world = name.strip_prefix("MEMORIES world=");
+        let foreign = world
+            .and_then(|world| EntityId::from_hex(world).ok())
+            .is_some_and(oneiron::entity_id::is_foreign_world_id_range);
+        let mut dependencies = Vec::new();
+        if let (Some(world), Some(memories)) = (world, memories) {
+            dependencies.extend(
+                memories
+                    .rows
+                    .iter()
+                    .filter(|row| row.world.as_deref().unwrap_or("unscoped") == world)
+                    .filter_map(|row| {
+                        Some(SegmentLocator::Memory {
+                            id: EntityId::from_hex(&row.id).ok()?,
+                            revision: row
+                                .source_revision
+                                .map(|revision| SourceRevision(revision.0)),
+                        })
+                    }),
+            );
+        }
+        if name == "SKILLS" {
+            let loaded: Vec<(EntityId, String)> = reads
+                .loaded_skills()
+                .filter_map(|(id, version)| {
+                    Some((EntityId::from_hex(id).ok()?, version.to_owned()))
+                })
+                .collect();
+            dependencies.extend(loaded.iter().map(|(id, version)| SegmentLocator::Skill {
+                id: *id,
+                version: Some(version.clone()),
+            }));
+            dependencies.extend(
+                hits.iter()
+                    .filter(|hit| !loaded.iter().any(|(id, _)| *id == hit.id))
+                    .map(|hit| SegmentLocator::Skill {
+                        id: hit.id,
+                        version: None,
+                    }),
+            );
+        }
+        let source = BoardSectionSource {
+            name,
+            fence: if foreign {
+                TrustFence::Guest
+            } else {
+                TrustFence::Authoritative
+            },
+            dependencies,
+        };
+        if foreign {
+            guest.push(source);
+        } else {
+            first_party.push(source);
+        }
+    }
+    first_party.extend(guest);
+    first_party
+}

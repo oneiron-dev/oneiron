@@ -415,6 +415,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         let mut request = vault
             .authorize_model_role(super::DREAMER_NARRATIVE_ROLE, request, &self.inference)?

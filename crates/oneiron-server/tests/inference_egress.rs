@@ -110,6 +110,7 @@ fn call(vault: &Vault, model: &ModelId) -> Request<Body> {
         tools: vec![],
         params: Default::default(),
         provider_options: Default::default(),
+        host_segments: None,
     };
     owner(vault, Request::post("/v1/llm/generate"))
         .header("content-type", "application/json")

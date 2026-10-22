@@ -212,6 +212,7 @@ async fn generate(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     let request = vault
         .authorize_raw_inference(request, &route.inference)?

@@ -91,6 +91,12 @@ pub(super) fn self_chat(
 }
 
 impl SelfChat {
+    /// The log as its caller read it, which the turn's segment manifest
+    /// names its lines from (DESIGN-V2 R2).
+    pub(super) fn log(&self) -> &ChatLog {
+        &self.log
+    }
+
     /// The log as the model reads it: each landed summary as the agent's
     /// own record of the turns it covers, then each retained message by its
     /// author.

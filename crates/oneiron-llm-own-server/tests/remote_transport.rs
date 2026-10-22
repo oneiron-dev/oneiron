@@ -55,6 +55,7 @@ fn request() -> LlmRequest {
         tools: vec![],
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     }
 }
 type CapturedRequest = (String, BTreeMap<String, String>, Value);

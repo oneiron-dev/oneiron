@@ -264,6 +264,7 @@ fn widened_resident_route_is_refused_at_inference_admission() {
         tools: vec![],
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     let host = crate::llm::HostInferenceContext {
         binding: crate::llm::HostInferenceBinding::Advertised {
@@ -323,6 +324,7 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
         tools: vec![],
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     let before = request.clone();
     let routes = BTreeMap::from([(ModelSlot::Llm, ModelLocality::OnDevice)]);

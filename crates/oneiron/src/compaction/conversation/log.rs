@@ -62,6 +62,9 @@ pub struct ChatLog {
     pub branch: Option<EntityId>,
     /// The model-facing lines, oldest first.
     pub lines: Vec<ChatLogLine>,
+    /// Each line's MESSAGE, aligned with `lines`: `None` for a summary,
+    /// whose line names its own id (DESIGN-V2 R2 segment locators).
+    pub message_ids: Vec<Option<EntityId>>,
     /// Each retained turn the lines hold, in order, by revision.
     pub sources: Vec<ConversationTurnSpan>,
     /// The summaries standing in the lines.
@@ -182,6 +185,7 @@ pub fn read_chat_log(
         _ => true,
     });
     let mut lines = Vec::new();
+    let mut message_ids = Vec::new();
     let mut summaries = Vec::new();
     let mut held: Vec<usize> = Vec::new();
     for entry in &entries {
@@ -194,6 +198,7 @@ pub fn read_chat_log(
                     epoch: receipt.epoch,
                     text: text.clone(),
                 });
+                message_ids.push(None);
             }
             Entry::Raw(index, line) => {
                 let (_, author, text) = &turns[index].lines[line];
@@ -204,6 +209,7 @@ pub fn read_chat_log(
                     author: *author,
                     text: text.clone(),
                 });
+                message_ids.push(Some(turns[index].lines[line].0));
             }
         }
     }
@@ -239,6 +245,7 @@ pub fn read_chat_log(
         conversation,
         branch,
         lines,
+        message_ids,
         sources,
         summaries,
         pinned,

@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 
 use crate::code_run::{CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS};
 use crate::entity_id::bytes_to_hex_lower;
-use crate::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
+use crate::llm::{
+    ByteSpan, ContentPart, LlmMessage, LlmMessageRole, LlmRequest, Segment, SegmentClass,
+    SegmentClock, SegmentKind,
+};
 
 /// Where a turn's request puts the context read for that turn (FIX 6676).
 /// Every assembler that builds a turn's request reads
@@ -397,8 +400,39 @@ fn assemble_system_prompt(
     host_sections: &[String],
     activated_memory: &[String],
 ) -> String {
+    system_prompt_pieces(soul_prompt, host_sections, activated_memory).0
+}
+
+/// One piece of an assembled system prompt and where its bytes lie in it
+/// (DESIGN-V2 R2): the soul, each host section, each activated memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemPromptPiece {
+    pub kind: SegmentKind,
+    pub bytes: ByteSpan,
+}
+
+/// The system prompt [`assemble_session_prompt`] sends for these parts,
+/// byte for byte, with each piece's place in it. The `# Activated Memory`
+/// heading and the separators belong to no piece.
+pub fn system_prompt_pieces(
+    soul_prompt: &str,
+    host_sections: &[String],
+    activated_memory: &[String],
+) -> (String, Vec<SystemPromptPiece>) {
+    let mut pieces = Vec::new();
+    let mut piece = |kind: SegmentKind, prompt: &mut String, text: &str| {
+        let start = prompt.len();
+        prompt.push_str(text);
+        pieces.push(SystemPromptPiece {
+            kind,
+            bytes: ByteSpan {
+                start,
+                end: prompt.len(),
+            },
+        });
+    };
     let mut prompt = String::new();
-    prompt.push_str(soul_prompt.trim_end());
+    piece(SegmentKind::System, &mut prompt, soul_prompt.trim_end());
     prompt.push('\n');
 
     for section in host_sections
@@ -408,7 +442,7 @@ fn assemble_system_prompt(
         .filter(|s| !s.is_empty())
     {
         prompt.push('\n');
-        prompt.push_str(section);
+        piece(SegmentKind::HostSection, &mut prompt, section);
         prompt.push('\n');
     }
 
@@ -423,11 +457,35 @@ fn assemble_system_prompt(
             prompt.push_str("\n# Activated Memory\n\n");
             wrote_header = true;
         }
-        prompt.push_str(memory);
+        piece(SegmentKind::ActivatedMemory, &mut prompt, memory);
         prompt.push('\n');
     }
 
-    prompt
+    (prompt, pieces)
+}
+
+/// The segments of a system message at `message` assembled from `pieces`:
+/// the soul and the host sections on the epoch clock, canonical; each
+/// activated memory live, and so ephemeral wherever it sits.
+#[must_use]
+pub fn system_prompt_segments(pieces: &[SystemPromptPiece], message: usize) -> Vec<Segment> {
+    pieces
+        .iter()
+        .map(|piece| {
+            let memory = piece.kind == SegmentKind::ActivatedMemory;
+            let clock = if memory {
+                SegmentClock::Live
+            } else {
+                SegmentClock::Epoch
+            };
+            let mut segment =
+                Segment::whole(piece.kind.clone(), clock, message).within(piece.bytes);
+            if memory {
+                segment.class = SegmentClass::Ephemeral;
+            }
+            segment
+        })
+        .collect()
 }
 
 fn recompile_stamp(

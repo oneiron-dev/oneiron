@@ -167,6 +167,7 @@ impl CoachHealthHost for HostModel<'_> {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         let Ok(call) = self.runtime.admit_role(self.vault, role, request) else {
             return Ok(None);

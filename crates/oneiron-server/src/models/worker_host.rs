@@ -27,6 +27,7 @@ mod launcher;
 mod probe;
 #[cfg(unix)]
 mod process;
+mod session;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -44,6 +45,10 @@ use launch_manifest::LaunchSlot;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
 
+#[cfg(unix)]
+pub(super) use session::open_turn;
+pub(crate) use session::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
+
 /// The process's one worker host, made when the first worker is configured
 /// or the process is marked as the one that launches them.
 static HOST: OnceLock<WorkerHost> = OnceLock::new();
@@ -55,6 +60,9 @@ struct WorkerHost {
     workers: Mutex<BTreeMap<String, Hosted>>,
     stores: Arc<Stores>,
     ledgers: Mutex<BTreeMap<String, Arc<DeviceLedger>>>,
+    /// The sessions on its managed EXL3 workers (DESIGN-V2 R2).
+    #[cfg(unix)]
+    sessions: session::Registry,
 }
 
 /// One configured worker and its supervisor.
@@ -97,6 +105,12 @@ impl NativeRoute {
             record.manifest_sha256.clone(),
         ))
     }
+}
+
+/// The process's worker host, made on first use.
+#[cfg(unix)]
+fn host() -> &'static WorkerHost {
+    HOST.get_or_init(WorkerHost::default)
 }
 
 /// Marks this process as the one that launches managed workers, and starts

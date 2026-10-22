@@ -881,6 +881,7 @@ pub async fn run_resident_dream(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     let authorized = match model.role {
         Some(role) => ctx

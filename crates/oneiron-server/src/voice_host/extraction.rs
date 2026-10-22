@@ -108,6 +108,7 @@ impl TinyExtractor {
             tools: Vec::new(),
             params: BTreeMap::from([("max_output_tokens".to_owned(), json!(MAX_OUTPUT_TOKENS))]),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         }
     }
 

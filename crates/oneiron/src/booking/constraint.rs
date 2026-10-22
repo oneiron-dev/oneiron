@@ -731,6 +731,7 @@ fn constraint_parse_llm_request(
         tools: Vec::new(),
         params,
         provider_options: BTreeMap::new(),
+        host_segments: None,
     })
 }
 

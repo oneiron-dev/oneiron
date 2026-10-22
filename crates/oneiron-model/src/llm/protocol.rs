@@ -1,11 +1,12 @@
 //! Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical JSON.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use super::{CallEnvelope, ModelId, ReplyAssertions};
+use super::{CallEnvelope, ModelId, ReplyAssertions, SegmentManifest};
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -27,6 +28,12 @@ pub struct LlmRequest {
     /// `provider`, as for [`Self::params`].
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub provider_options: BTreeMap<String, JsonValue>,
+    /// The typed segment manifest of [`Self::messages`] (DESIGN-V2 R2): set
+    /// only by the host, after admission. Never read from a wire, never in
+    /// [`Self::canonical_bytes`], and ignored by every adapter but the native
+    /// EXL3 transport.
+    #[serde(skip)]
+    pub host_segments: Option<Arc<SegmentManifest>>,
 }
 
 impl LlmRequest {

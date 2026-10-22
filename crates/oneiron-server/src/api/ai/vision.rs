@@ -278,6 +278,7 @@ async fn asked(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     let admitted = server
         .ai

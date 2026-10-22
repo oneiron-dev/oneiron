@@ -111,6 +111,8 @@ pub use status::{
 };
 pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::permit_worker_launch;
+// DESIGN-V2 R2: a committed chat reply reaches the session coordinator.
+pub(crate) use worker_host::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};

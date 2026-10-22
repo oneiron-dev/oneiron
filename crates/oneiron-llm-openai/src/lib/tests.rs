@@ -95,6 +95,7 @@ fn request() -> LlmRequest {
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     }
 }
 

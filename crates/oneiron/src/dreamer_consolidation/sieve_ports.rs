@@ -360,6 +360,7 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     // The rung never goes up the role chain: its asks name the owners only.
     let to = AskTo::owner();

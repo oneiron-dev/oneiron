@@ -594,6 +594,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                 tools: Vec::new(),
                 params: BTreeMap::new(),
                 provider_options: BTreeMap::new(),
+                host_segments: None,
             };
             let mut request = ctx
                 .vault

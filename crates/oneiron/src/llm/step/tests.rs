@@ -125,6 +125,7 @@ fn request_fixture() -> LlmRequest {
         tools: Vec::new(),
         params,
         provider_options: std::collections::BTreeMap::new(),
+        host_segments: None,
     }
 }
 

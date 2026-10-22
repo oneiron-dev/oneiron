@@ -130,6 +130,7 @@ fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         }
     };
     let bare = config(vec![LlmCapability::Streaming]);

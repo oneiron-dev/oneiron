@@ -165,6 +165,7 @@ pub async fn run_task_realize(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     if !objectives.is_empty() {
         request.messages.push(LlmMessage {

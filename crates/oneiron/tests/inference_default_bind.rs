@@ -28,6 +28,7 @@ fn request(model: ModelId, locality: ModelLocality) -> LlmRequest {
         tools: vec![],
         params: Default::default(),
         provider_options: Default::default(),
+        host_segments: None,
     }
 }
 

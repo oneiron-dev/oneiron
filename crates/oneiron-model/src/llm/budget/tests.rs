@@ -32,6 +32,7 @@ fn on_device_request() -> LlmRequest {
         tools: Vec::new(),
         params: std::collections::BTreeMap::new(),
         provider_options: std::collections::BTreeMap::new(),
+        host_segments: None,
     }
 }
 
