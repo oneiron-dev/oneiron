@@ -111,7 +111,9 @@ impl DocumentRegistry {
                 return Ok(());
             };
             // The receipt hashes the command as admitted: the queued frame.
-            let frame = PendingNoteRequest::decode(&stored).ok_or_else(denied)?.frame;
+            let frame = PendingNoteRequest::decode(&stored)
+                .ok_or_else(denied)?
+                .frame;
             let body = frame.get(1..).ok_or_else(denied)?;
             let request = decode_document(body).map_err(|_| denied())?;
             let operation = NoteOperation::decode(request.payload)?;

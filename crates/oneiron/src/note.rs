@@ -532,7 +532,10 @@ pub(crate) fn lift_note_in_txn(
     }
     let mut outcome = CarrierText::Clean;
     for (place, text) in texts {
-        outcome = match (outcome, mark_carrier_text_in_txn(vault, txn, id, place, text)?) {
+        outcome = match (
+            outcome,
+            mark_carrier_text_in_txn(vault, txn, id, place, text)?,
+        ) {
             (CarrierText::Unplaceable(reason), _) | (_, CarrierText::Unplaceable(reason)) => {
                 CarrierText::Unplaceable(reason)
             }
