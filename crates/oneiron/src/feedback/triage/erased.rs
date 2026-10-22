@@ -23,7 +23,8 @@ pub(super) fn evidence_erased_in_txn(
 
 /// Settles `handoff`, stored under `key`, erased at `now` when the owner
 /// erased its evidence, in the sweep's write; `true` when it did, and the
-/// sweep then queues nothing for it.
+/// sweep then queues nothing for it. The part graph a long item left goes
+/// with it (FIX 7549): its answers were drawn from the erased item.
 pub(super) fn settle_erased_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -35,6 +36,7 @@ pub(super) fn settle_erased_in_txn(
         return Ok(false);
     }
     handoff.erased_at = Some(now);
+    handoff.work = None;
     HANDOFFS.put(&vault.store, txn, key, handoff)?;
     Ok(true)
 }

@@ -379,7 +379,10 @@ pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
         if row.birth_at != header.learned_at {
             return Err(invalid("document birth timestamp binding"));
         }
-        if row.head == row.entity_id {
+        // The head's own value carries its birth; any other value, a retained
+        // parent among them (FIX 8829), claims no authority.
+        let current = heads.get(&row.entity_id) == Some(&row.head);
+        if row.head == row.entity_id && current {
             let birth = row
                 .authorship
                 .iter()
@@ -393,14 +396,17 @@ pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
                 return Err(invalid("NOTE birth provenance binding"));
             }
         }
-        if row.head != row.entity_id
-            && heads.get(&row.entity_id) != Some(&row.head)
-            && !row.authorship.is_empty()
-        {
+        if !current && !row.authorship.is_empty() {
             return Err(invalid("proposal value claims authority"));
         }
     }
-    // A switch moves the head to its fork; a merge or reject keeps it.
+    // A switch moves the head to its fork; a merge or reject keeps it. A
+    // decided fork's value stays only as the head, or as the parent a
+    // pending fork needs (FIX 8829).
+    let retained: BTreeSet<_> = super::document::retained_parents(snapshot)?
+        .into_iter()
+        .map(|(note, head)| (*note.as_bytes(), *head.as_bytes()))
+        .collect();
     let mut switched = BTreeSet::new();
     for row in &snapshot.head_move_receipts {
         let receipt = row.decode()?;
@@ -415,7 +421,10 @@ pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
             switched.insert((row.entity_id, *receipt.head.as_bytes()));
         }
         let fork = *receipt.fork.as_bytes();
-        if docs.contains(&(row.entity_id, fork)) && heads.get(&row.entity_id) != Some(&fork) {
+        if docs.contains(&(row.entity_id, fork))
+            && heads.get(&row.entity_id) != Some(&fork)
+            && !retained.contains(&(row.entity_id, fork))
+        {
             return Err(invalid("decided proposal retains text"));
         }
     }
@@ -493,7 +502,7 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
     }
     if proposals
         .values()
-        .any(|(len, _, _, members)| members.len() != usize::from(*len))
+        .any(|(len, _, _, members)| usize::try_from(*len).ok() != Some(members.len()))
     {
         return Err(invalid(
             "entity document proposal spans entities outside the snapshot",
@@ -671,7 +680,6 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
         if fork.output_metadata.is_some() != pending
             || fork.output.is_some() != pending
             || fork.proposal_index >= fork.proposal_len
-            || fork.proposal_len > 256
         {
             return Err(invalid("entity document fork state"));
         }

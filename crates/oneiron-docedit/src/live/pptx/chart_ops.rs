@@ -111,6 +111,8 @@ impl ChartEdit {
                         values: values.clone(),
                         family: *kind,
                         x: x.clone(),
+                        x_labels: None,
+                        plot: None,
                         categories: own,
                         bubble_size: bubble_size.clone(),
                         bubble_3d: *bubble_3d,
@@ -141,13 +143,20 @@ impl ChartEdit {
                 series: id,
                 family: kind,
             } => {
-                if let Some(line) = find(series, *id) {
+                // A series of another family takes that family's plot as
+                // settlement places it.
+                if let Some(line) = find(series, *id)
+                    && line.family != *kind
+                {
                     line.family = *kind;
+                    line.plot = None;
                 }
             }
+            // X values written replace text ones (FIX 9277).
             Self::SetSeriesX { series: id, x } => {
                 if let Some(line) = find(series, *id) {
                     line.x.clone_from(x);
+                    line.x_labels = None;
                 }
             }
             Self::SetSeriesBubbleSize {

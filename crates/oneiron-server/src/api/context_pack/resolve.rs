@@ -155,7 +155,13 @@ pub(crate) async fn run_context_pack(
         })?;
     // Embedded once everything free is checked: it is a paid call. On the
     // one-space preset the text query is embedded into the text slot's space.
-    let media = embed_media_seeds(server, media, query).await?;
+    // A reader whose optional memory is `none` embeds nothing (FIX 8151);
+    // its pins, disclosure, signals and cursor still run below.
+    let media = if skip_optional_recall {
+        Vec::new()
+    } else {
+        embed_media_seeds(server, media, query).await?
+    };
 
     let mut builder = server
         .vault

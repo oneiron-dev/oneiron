@@ -4,10 +4,12 @@
 //! places by category identity, so a moved point keeps its own and a
 //! deleted one's go with it.
 
+use super::families::applied;
 use super::layout::CategorySet;
 use super::{Writer, int};
 use crate::design_plan::Cell;
-use crate::edit::xml;
+use crate::edit::xml::{self, Splice};
+use crate::live::LiveError;
 use crate::live::held::C;
 use crate::live::pptx::{NodeId, SeriesBinding, positions};
 use crate::native_patch::number;
@@ -94,40 +96,50 @@ pub(super) fn remap(
     Some(held.iter().map(|id| places.get(id).copied()).collect())
 }
 
-/// `element` (a `c:dPt` or `c:dLbl`) with its `c:idx` set to `to`; its own
-/// bytes when it is already there.
-fn reindexed(bytes: &[u8], tree: &XmlTree, element: usize, to: u32) -> Vec<u8> {
-    let span = tree.nodes[element].span.clone();
-    let Some(idx) = xml::child(tree, element, C, "idx") else {
-        return bytes[span].to_vec();
-    };
-    if int(tree, element, "idx") == Some(to) {
-        return bytes[span].to_vec();
+/// `element` (a `c:dPt` or `c:dLbl`) with its `c:idx` set to `to` and
+/// `splices` (on the whole part's bytes, inside it) applied; its own bytes
+/// when nothing changes.
+fn reindexed(
+    bytes: &[u8],
+    tree: &XmlTree,
+    element: usize,
+    to: u32,
+    mut splices: Vec<Splice>,
+) -> Result<Vec<u8>, LiveError> {
+    if let Some(idx) = xml::child(tree, element, C, "idx")
+        && int(tree, element, "idx") != Some(to)
+    {
+        splices.push(xml::set_attribute(
+            bytes,
+            &tree.nodes[idx],
+            "val",
+            &to.to_string(),
+        ));
     }
-    let (range, value) = xml::set_attribute(bytes, &tree.nodes[idx], "val", &to.to_string());
-    let mut out = bytes[span.start..range.start].to_vec();
-    out.extend(value);
-    out.extend_from_slice(&bytes[range.end..span.end]);
-    out
+    if splices.is_empty() {
+        return Ok(bytes[tree.nodes[element].span.clone()].to_vec());
+    }
+    applied(bytes, tree, element, splices)
 }
 
 /// The `name` elements (`dPt` or `dLbl`) among `children`, each carried to
-/// its point's new place, in point order; one whose point is gone goes.
+/// its point's new place with the splices `retype` gives it (FIX 9276), in
+/// point order; one whose point is gone goes.
 pub(super) fn carried(
     bytes: &[u8],
     tree: &XmlTree,
     children: &[usize],
     name: &str,
     points: &Points,
-) -> Vec<u8> {
-    let mut kept: Vec<(u32, Vec<u8>)> = children
-        .iter()
-        .filter(|&&at| tree.nodes[at].is(C, name))
-        .filter_map(|&at| {
-            let to = points.place(int(tree, at, "idx")?)?;
-            Some((to, reindexed(bytes, tree, at, to)))
-        })
-        .collect();
+    retype: &mut dyn FnMut(usize) -> Vec<Splice>,
+) -> Result<Vec<u8>, LiveError> {
+    let mut kept: Vec<(u32, Vec<u8>)> = Vec::new();
+    for &at in children.iter().filter(|&&at| tree.nodes[at].is(C, name)) {
+        let Some(to) = int(tree, at, "idx").and_then(|idx| points.place(idx)) else {
+            continue;
+        };
+        kept.push((to, reindexed(bytes, tree, at, to, retype(at))?));
+    }
     kept.sort_by_key(|(to, _)| *to);
-    kept.into_iter().flat_map(|(_, element)| element).collect()
+    Ok(kept.into_iter().flat_map(|(_, element)| element).collect())
 }
