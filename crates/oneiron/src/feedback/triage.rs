@@ -29,10 +29,26 @@
 //! completes doing nothing: it reads no source, retains and queues nothing,
 //! keeps every continuation and writes no error, and the status shows the
 //! `skill_unbound` hold.
+//!
+//! A revision whose whole request the Coach's window cannot take is triaged
+//! in parts (FIX 7549, the `work` child): its job cuts the item into spans
+//! that fit, each answered by a part child, then joins the answers in
+//! ordered batches that fit, level after level, on synthesis children, every
+//! answer kept on the handoff row. The job parks on its children and stays
+//! the revision's owner; it alone files the final answer and acknowledges
+//! the revision, and nothing is cut away. Its queue input and queueing are
+//! the `jobs` child's; the graph's writers are the `work_store` child's.
 mod erased;
 mod github;
+mod jobs;
 mod owner;
 mod source;
+mod work;
+mod work_store;
+
+use self::jobs::{
+    attempt_id, attempt_ref, enqueue_triage_in_txn, invalid_job, job_target, requeue_unacknowledged,
+};
 
 pub use self::github::{
     FEEDBACK_TRIAGE_GITHUB_PREFIX, GithubIssueKind, GithubIssuePage, GithubIssueRevision,
@@ -45,16 +61,17 @@ pub use self::owner::{
 pub use self::source::{
     FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
 };
+pub use self::work::{
+    FeedbackTriageNodeAnswer, FeedbackTriagePin, FeedbackTriageSpan, FeedbackTriageSplit,
+    FeedbackTriageStep, FeedbackTriageWork, FeedbackTriageWorkNode,
+};
+pub use self::work_store::{FeedbackTriageNodeInput, FeedbackTriageNodeJob};
 
-use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::FeedbackInboxNote;
-use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND;
-use crate::dreamer_runner::{
-    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
-};
+use crate::attempt_queue::AttemptId;
+use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 
@@ -66,6 +83,15 @@ pub const COACH_FEEDBACK_SWEEP_FACET: &str = "coach.feedback_sweep";
 /// The Coach's triage of one handed-off revision on the bound skill. Input:
 /// `{source, id, revision, evidence}`.
 pub const COACH_FEEDBACK_TRIAGE_FACET: &str = "coach.feedback_triage";
+/// One part of a long revision's item, answered on the bound skill (FIX
+/// 7549). Input: `{source, id, revision, evidence, generation, node}`.
+pub const COACH_FEEDBACK_TRIAGE_PART_FACET: &str = "coach.feedback_triage_part";
+/// One ordered batch of a long revision's answers, joined on the bound
+/// skill (FIX 7549). Input as a part's.
+pub const COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET: &str = "coach.feedback_triage_synthesis";
+/// The owner of the park a long revision's job holds while its part and
+/// synthesis children run (a `Signal` park, kept across a restart).
+pub const COACH_FEEDBACK_TRIAGE_PARK_OWNER: &str = "coach.feedback_triage";
 /// The open inbox, as a triage source names it.
 pub const FEEDBACK_TRIAGE_INBOX_SOURCE: &str = "inbox";
 /// Predicate of one Proposed triage finding; its subject is the evidence
@@ -200,6 +226,10 @@ pub struct FeedbackTriageHandoff {
     /// Vault seconds a sweep found its evidence ASSET erased by the owner:
     /// settled with no result, it is never queued again.
     pub erased_at: Option<u64>,
+    /// The part and synthesis graph of an item too long for the Coach's
+    /// window (FIX 7549), every answer kept; `None` for an item triaged
+    /// whole, and once the owner erased its evidence.
+    pub work: Option<FeedbackTriageWork>,
 }
 
 /// One revision's committed triage result. An empty `findings` is a result:
@@ -254,6 +284,22 @@ pub enum FeedbackTriageItem {
     Github(Box<GithubIssueRevision>),
 }
 
+impl FeedbackTriageItem {
+    /// The item as a long revision's parts cut it (FIX 7549): its JSON, the
+    /// encoding the whole-item request carries it in.
+    ///
+    /// # Errors
+    ///
+    /// An item that does not encode.
+    pub fn text(&self) -> Result<String> {
+        match self {
+            Self::Inbox(note) => serde_json::to_string(note),
+            Self::Github(issue) => serde_json::to_string(issue),
+        }
+        .map_err(|_| Error::InvalidConfig("a feedback triage item did not encode".into()))
+    }
+}
+
 /// What one triage job reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FeedbackTriageInput {
@@ -265,6 +311,9 @@ pub struct FeedbackTriageInput {
     pub item: FeedbackTriageItem,
     /// The SKILL entity bound now.
     pub skill: EntityId,
+    /// The part graph earlier runs of this job left (FIX 7549); `None`
+    /// until an item too long for the window is first cut.
+    pub work: Option<FeedbackTriageWork>,
 }
 
 /// A leased triage job's work.
@@ -289,30 +338,23 @@ pub struct FeedbackTriageSweep {
     pub requeued: usize,
 }
 
-/// A triage job's input as it rides the queue.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct JobInput {
-    source: String,
-    id: String,
-    revision: String,
-    evidence: EntityId,
-}
-
-fn invalid_job() -> Error {
-    Error::InvalidConfig("invalid feedback triage job".into())
-}
-
-fn skill_unbound() -> Error {
-    Error::InvalidConfig("no feedback triage skill is bound".into())
-}
-
-fn attempt_ref(id: AttemptId) -> Result<EntityId> {
-    EntityId::from_bytes(*id.as_bytes())
-}
-
-fn attempt_id(id: &EntityId) -> Result<AttemptId> {
-    AttemptId::from_bytes(id.as_bytes())
+/// Refuses `output` unless each finding cites only `own`, the item it was
+/// given, and names a problem: what the filing writer and each part or
+/// synthesis answer (FIX 7549) both hold to.
+pub(crate) fn check_feedback_triage_findings(
+    output: &FeedbackTriageOutput,
+    own: &FeedbackTriageSourceRef,
+) -> Result<()> {
+    if output.findings.iter().any(|finding| {
+        finding.problem.trim().is_empty()
+            || finding.source_refs.is_empty()
+            || finding.source_refs.iter().any(|cited| cited != own)
+    }) {
+        return Err(Error::InvalidConfig(
+            "a feedback triage finding cites only the note it was given and names a problem".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// A note's canonical encoding, the bytes its evidence keeps, and its
@@ -346,28 +388,6 @@ fn evidence_id(source_ref: &FeedbackTriageSourceRef) -> Result<EntityId> {
             source_ref.revision.as_bytes(),
         ],
     )
-}
-
-fn job_input(source_ref: &FeedbackTriageSourceRef, evidence: EntityId) -> Result<Value> {
-    rmpv::ext::to_value(JobInput {
-        source: source_ref.source.clone(),
-        id: source_ref.id.clone(),
-        revision: source_ref.revision.clone(),
-        evidence,
-    })
-    .map_err(|_| invalid_job())
-}
-
-fn job_target(input: &Value) -> Result<(FeedbackTriageSourceRef, EntityId)> {
-    let job: JobInput = rmpv::ext::from_value(input.clone()).map_err(|_| invalid_job())?;
-    Ok((
-        FeedbackTriageSourceRef {
-            source: job.source,
-            id: job.id,
-            revision: job.revision,
-        },
-        job.evidence,
-    ))
 }
 
 /// The binding as `txn` reads it; the default while never set.
@@ -488,6 +508,7 @@ fn hand_off_revision_in_txn(
         handed_off_at: now,
         result: None,
         erased_at: None,
+        work: None,
     };
     HANDOFFS.put(
         &vault.store,
@@ -551,95 +572,6 @@ fn retain_evidence_in_txn(
             bytes,
         )
         .apply(txn)
-}
-
-/// Queues one revision's triage job on the Coach's host queue under
-/// `sweep`, and answers its attempt. The key holds one live job per
-/// revision; a settled job holds none, so a sweep can queue it again.
-fn enqueue_triage_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    source_ref: &FeedbackTriageSourceRef,
-    evidence: EntityId,
-    sweep: AttemptId,
-    run_id: Option<&str>,
-    now: u64,
-) -> Result<EntityId> {
-    let outcome = DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
-        txn,
-        COACH_HOST_QUEUE_KIND,
-        DreamerAttemptPayload {
-            attempt_type: COACH_FEEDBACK_TRIAGE_FACET.into(),
-            input: job_input(source_ref, evidence)?,
-            parent_attempt: Some(sweep),
-        },
-        Some(format!(
-            "{COACH_FEEDBACK_TRIAGE_FACET}:{}:{}:{}",
-            source_ref.source, source_ref.id, source_ref.revision
-        )),
-        run_id.map(str::to_owned),
-        now,
-    )?;
-    let status = match outcome {
-        EnqueueDreamerAttemptOutcome::Enqueued(status)
-        | EnqueueDreamerAttemptOutcome::Existing(status) => status,
-    };
-    attempt_ref(status.attempt.id)
-}
-
-/// Queues again each unacknowledged revision whose job settled without a
-/// result or is gone, under `sweep`. A live job keeps its revision, and one
-/// whose evidence the owner erased is settled erased instead.
-fn requeue_unacknowledged(
-    vault: &Vault,
-    sweep: AttemptId,
-    run_id: Option<&str>,
-    now: u64,
-) -> Result<usize> {
-    let handoffs = {
-        let txn = vault.store.env.read_txn()?;
-        HANDOFFS.scan(&vault.store, &txn)?
-    };
-    let sweep_ref = attempt_ref(sweep)?;
-    let queue = AttemptQueue::new(vault);
-    let mut requeued = 0;
-    for (key, read) in handoffs {
-        if read.result.is_some() || read.erased_at.is_some() {
-            continue;
-        }
-        // Read again under the writer: the job may have acknowledged since.
-        let again = vault.with_write_txn_grouped(|txn| {
-            let Some(mut handoff) = HANDOFFS.get(&vault.store, txn, &key)? else {
-                return Ok(false);
-            };
-            if handoff.result.is_some() || handoff.erased_at.is_some() {
-                return Ok(false);
-            }
-            if queue
-                .get_in_txn(txn, attempt_id(&handoff.attempt)?)?
-                .is_some_and(|record| !record.state.is_terminal())
-            {
-                return Ok(false);
-            }
-            if erased::settle_erased_in_txn(vault, txn, &key, &mut handoff, now)? {
-                return Ok(false);
-            }
-            handoff.attempt = enqueue_triage_in_txn(
-                vault,
-                txn,
-                &handoff.source_ref,
-                handoff.evidence,
-                sweep,
-                run_id,
-                now,
-            )?;
-            handoff.queued_by = sweep_ref;
-            HANDOFFS.put(&vault.store, txn, &key, &handoff)?;
-            Ok(true)
-        })?;
-        requeued += usize::from(again);
-    }
-    Ok(requeued)
 }
 
 /// Walks the inbox from `after` to its end, a page at a time, each note's
@@ -747,50 +679,5 @@ impl Vault {
         marked?;
         report.requeued = requeued?;
         Ok(report)
-    }
-
-    /// What a leased `coach.feedback_triage` job triages: the item its
-    /// revision names, an inbox note read back from the inbox or a GitHub
-    /// item read back from its evidence, checked against that revision, with
-    /// its evidence and the skill bound now; the result committed for it
-    /// already; or, once the owner erased its evidence, nothing to triage.
-    ///
-    /// # Errors
-    ///
-    /// An attempt that is not this facet's Coach attempt or not the
-    /// revision's current job; a job naming no handoff, or an item that no
-    /// longer matches its revision; no bound skill; storage errors.
-    pub fn feedback_triage_job(
-        &self,
-        attempt: &DreamerAdmittedAttempt,
-    ) -> Result<FeedbackTriageJob> {
-        self.require_coach_attempt(attempt, COACH_FEEDBACK_TRIAGE_FACET)?;
-        let (handoff, skill, erased) = {
-            let txn = self.store.env.read_txn()?;
-            let handoff = job_handoff_in_txn(self, &txn, attempt)?;
-            let erased = erased::evidence_erased_in_txn(self, &txn, &handoff)?;
-            (handoff, binding_in_txn(self, &txn)?.skill, erased)
-        };
-        if let Some(result) = handoff.result {
-            return Ok(FeedbackTriageJob::Acknowledged(result));
-        }
-        if handoff.attempt != attempt_ref(attempt.status.attempt.id)? {
-            return Err(invalid_job());
-        }
-        if erased {
-            return Ok(FeedbackTriageJob::Erased);
-        }
-        let skill = skill.ok_or_else(skill_unbound)?;
-        let item = if handoff.source_ref.source == FEEDBACK_TRIAGE_INBOX_SOURCE {
-            FeedbackTriageItem::Inbox(Box::new(inbox_note(self, &handoff.source_ref)?))
-        } else {
-            FeedbackTriageItem::Github(Box::new(github::evidence_issue(self, &handoff)?))
-        };
-        Ok(FeedbackTriageJob::Pending(Box::new(FeedbackTriageInput {
-            source_ref: handoff.source_ref,
-            evidence: handoff.evidence,
-            item,
-            skill,
-        })))
     }
 }

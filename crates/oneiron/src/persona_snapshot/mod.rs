@@ -26,6 +26,7 @@ mod codec;
 mod compile;
 mod copy;
 mod export;
+mod export_omit;
 mod types;
 
 pub use self::codec::{decode_persona_snapshot_export_body, encode_persona_snapshot_export_body};

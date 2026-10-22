@@ -4,7 +4,9 @@
 mod materialize;
 #[cfg(feature = "sync")]
 pub(crate) use materialize::run_in_txn as materialize_recovery_notes_in_txn;
+mod retained;
 mod workflow;
+pub(super) use retained::carried as retained_parents;
 
 use loro::LoroDoc;
 #[cfg(feature = "sync")]
@@ -146,6 +148,8 @@ pub(super) fn capture(
         .map(|row| row.id)
         .collect();
     let mut overrun = None;
+    // FIX 8829: the parents pending forks need beside their NOTE's head.
+    let required = retained::stored(vault, txn, &ids)?;
     for entity in &snapshot.entity_blobs {
         let header = crate::batch::EntityMetadataHeader::parse(&entity.blob)
             .ok_or(invalid("entity header"))?;
@@ -180,10 +184,17 @@ pub(super) fn capture(
         let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
         for row in NOTE_PROPOSAL_DOC.iter_from(&vault.store, txn, &note_prefix)? {
             let (DocKey(_, head), bytes) = row?;
-            let head = *head.as_bytes();
-            if head == *live_head.as_bytes() {
+            // A retained parent goes in below, from its own document; the
+            // value of a decided fork no pending fork needs stays out.
+            if head == live_head
+                || required.contains(&(note, head))
+                || NOTE_FORK
+                    .get(&vault.store, txn, &head)?
+                    .is_some_and(|fork| fork.decided)
+            {
                 continue;
             }
+            let head = *head.as_bytes();
             let doc = LoroDoc::from_snapshot(&bytes).map_err(|_| invalid("proposal document"))?;
             let row = from_doc(
                 entity.id,
@@ -196,6 +207,20 @@ pub(super) fn capture(
             take_document(budget, &row, &mut overrun)?;
             snapshot.doc_snapshots.push(row);
         }
+        let birth = (
+            core.author_ref.id().map(|author| *author.as_bytes()),
+            header.learned_at,
+        );
+        let retained = retained::capture_note(
+            vault,
+            txn,
+            entity.id,
+            &required,
+            birth,
+            budget,
+            &mut overrun,
+        )?;
+        snapshot.doc_snapshots.extend(retained);
     }
     if let Some(overrun) = overrun {
         tracing::warn!(%overrun, "canonical recovery measured NOTE births past its budget");
@@ -223,7 +248,7 @@ pub(super) fn capture(
         .sort_by_key(|row| (row.entity_id, row.head));
     snapshot.document_heads.sort_by_key(|row| row.entity_id);
     snapshot.head_move_receipts.sort_by_key(|row| row.id);
-    workflow::capture(vault, txn, snapshot, &ids, budget)?;
+    workflow::capture(vault, txn, snapshot, &ids, &required, budget)?;
     Ok(())
 }
 /// Takes `row` from `budget`: what it held before its birth was counted, as
@@ -293,6 +318,8 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         room_facts: Vec::new(),
         document_pins: Vec::new(),
         peer_origins: Vec::new(),
+        row_births: Vec::new(),
+        withdrawn_cutoffs: Vec::new(),
     };
     for (key, bytes) in super::canonical::binary_rows(doc, "documents")? {
         let value: CanonicalDocument =
@@ -411,6 +438,10 @@ impl CanonicalSnapshot {
         let txn = vault.store.env.read_txn()?;
         workflow::erase_actors_here(vault, &txn, &mut snapshot)?;
         crate::sync::room_facts::erase_carried_actors(vault, &txn, &mut snapshot.room_facts)?;
+        // FIX 3069, 8820: a birth whose maker this vault erased, and a floor
+        // of a session it removed, go as the window's own carriers do.
+        snapshot.settle_row_births_here(vault, &txn)?;
+        snapshot.settle_cutoffs_here(vault, &txn)?;
         Ok(snapshot)
     }
 }
