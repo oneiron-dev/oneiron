@@ -4,7 +4,7 @@
 //! call receipt: the organ and its version are the process, the args digest
 //! the replay key, the vault versions it read the inputs.
 
-use oneiron::edit_settle::{NativeOutput, PendingProposalView};
+use oneiron::edit_settle::{MadeByReader, NativeOutput, PendingProposalView};
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
@@ -74,7 +74,9 @@ impl OrganOutcome {
 }
 
 /// Offers every export file of one organ call to `artifact`, each a proposal
-/// waiting for Keep, with the call receipt as its made_by.
+/// waiting for Keep, with the call receipt as its made_by. No caller
+/// credential reaches this rail, so the envelope waits as the host built it
+/// ([`MadeByReader::OrganReceipt`], FIX 1229).
 ///
 /// # Errors
 ///
@@ -93,6 +95,14 @@ pub fn propose_organ_outputs(
     outcome
         .native_outputs(run_ref, Some(&made_by))
         .iter()
-        .map(|output| vault.propose_native_output(artifact, output, actor, now))
+        .map(|output| {
+            vault.propose_native_output(
+                artifact,
+                output,
+                Some(MadeByReader::OrganReceipt),
+                actor,
+                now,
+            )
+        })
         .collect()
 }

@@ -24,7 +24,7 @@ use crate::edit_roundtrip::{
     SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
 };
 use crate::edit_settle::{
-    KeepUndo, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
+    KeepUndo, MadeByReader, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -751,6 +751,7 @@ impl Memory<'_> {
                 &artifact,
                 proposal,
                 made_by.as_ref(),
+                self.made_by_reader(made_by.as_ref())?,
                 actor,
                 at,
             )?),
@@ -944,6 +945,7 @@ impl Memory<'_> {
                 &artifact,
                 proposal,
                 made_by.as_ref(),
+                self.made_by_reader(made_by.as_ref())?,
                 actor,
                 at,
             )?),
@@ -1033,6 +1035,7 @@ impl Memory<'_> {
                     &artifact,
                     &proposal,
                     input.made_by.as_ref(),
+                    self.made_by_reader(input.made_by.as_ref())?,
                     self.artifact_actor(),
                     self.vault().now_recorded_at(),
                 )?),
@@ -1064,9 +1067,25 @@ impl Memory<'_> {
         Ok(self.vault().propose_native_output(
             &entity(&input.artifact_ref)?,
             &output,
+            self.made_by_reader(output.made_by.as_ref())?,
             self.artifact_actor(),
             self.vault().now_recorded_at(),
         )?)
+    }
+
+    /// The read a named made_by is admitted under as its proposal is
+    /// retained (FIX 1229): this handle's own lane, built only when an
+    /// envelope is named.
+    pub(crate) fn made_by_reader(
+        &self,
+        made_by: Option<&MadeBy>,
+    ) -> MemoryResult<Option<MadeByReader<'_>>> {
+        made_by
+            .map(|_| {
+                self.read_lane(ClaimReadStatus::Recorded)
+                    .map(MadeByReader::Lane)
+            })
+            .transpose()
     }
 
     /// `vault.artifacts.keep`: settles one waiting proposal into a version.

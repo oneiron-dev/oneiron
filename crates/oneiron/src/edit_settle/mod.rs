@@ -111,7 +111,8 @@ pub use carry::{ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, Wit
 pub use organ_wait::{ORGAN_WAIT_CALL_MAX_BYTES, OrganWait, OrganWaitView};
 pub(crate) use pending::DeckExportHold;
 pub use pending::{
-    NATIVE_OUTPUT_REPORT_MAX_BYTES, NativeOutput, PendingProposalKind, PendingProposalView,
+    MadeByReader, NATIVE_OUTPUT_REPORT_MAX_BYTES, NativeOutput, PendingProposalKind,
+    PendingProposalView,
 };
 pub use stranded::StrandedEditProposal;
 pub use undo::{KeepUndo, KeepUndoOutcome};

@@ -20,7 +20,7 @@ use crate::blob_artifact::{
     read_blob_artifact_head_in_txn,
 };
 use crate::edit_roundtrip::VaultAssets;
-use crate::edit_settle::{DeckExportHold, NativeOutput, PendingProposalView};
+use crate::edit_settle::{DeckExportHold, MadeByReader, NativeOutput, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::provenance::made_by::MadeBy;
@@ -166,14 +166,15 @@ impl Vault {
     /// projected over: the Keep door lands its bytes as the next blob version
     /// under a person's consent, forked from that version when the head is
     /// another, and binds the deck to it ([`Self::keep_deck_export_in_txn`]);
-    /// Discard drops it.
+    /// Discard drops it. A named `made_by` is admitted under `reader` as it
+    /// waits (FIX 1229).
     pub fn propose_pptx_export(
         &self,
         artifact: &EntityId,
         export: &PptxExport,
         run_ref: &str,
-        actor: WriteActor,
-        made_by: &MadeBy,
+        (actor, made_by): (WriteActor, &MadeBy),
+        reader: Option<MadeByReader<'_>>,
     ) -> Result<PendingProposalView> {
         if export.authoritative {
             return Err(invalid("an authoritative export lands; it is not proposed"));
@@ -213,6 +214,7 @@ impl Vault {
         self.propose_deck_export(
             artifact,
             &output,
+            reader,
             (actor, self.now_recorded_at()),
             (export.base_version, export.base_hash),
             hold,

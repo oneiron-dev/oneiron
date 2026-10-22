@@ -435,26 +435,8 @@ impl Vault {
         artifact_id: &EntityId,
         thread_id: &EntityId,
     ) -> Result<Option<TaskBrief>> {
-        let mut best: Option<(EntityId, TaskBrief)> = None;
-        for (claim_id, body) in self.active_annotation_claims_in_txn(rtxn, artifact_id)? {
-            if body.predicate != ANNOTATION_BRIEF_PREDICATE {
-                continue;
-            }
-            let brief = match decode_brief_value(&body.value, *artifact_id) {
-                Ok(brief) => brief,
-                Err(err) => {
-                    warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
-                    continue;
-                }
-            };
-            if brief.thread_id != *thread_id {
-                continue;
-            }
-            if best.as_ref().is_none_or(|(id, _)| claim_id > *id) {
-                best = Some((claim_id, brief));
-            }
-        }
-        Ok(best.map(|(_, brief)| brief))
+        let claims = self.active_annotation_claims_in_txn(rtxn, artifact_id)?;
+        Ok(newest_thread_brief(*artifact_id, &claims, thread_id).map(|(_, brief)| brief))
     }
 
     /// The comment thread `task` was assigned from, as `(artifact, thread)`,
@@ -649,7 +631,7 @@ impl Vault {
     }
 
     /// Reads the display cohort through the caller's transaction.
-    fn active_annotation_claims_in_txn(
+    pub(super) fn active_annotation_claims_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         artifact_id: &EntityId,
@@ -665,6 +647,37 @@ impl Vault {
         }
         Ok(out)
     }
+}
+
+/// The newest brief assigned from `thread_id` in a live-read annotation claim
+/// cohort, beside the CLAIM it was read from, so a scoped listing admits that
+/// claim before it shows the brief's task (FIX 8063). A malformed brief is
+/// skipped; an older brief never stands in for the newest.
+pub(super) fn newest_thread_brief(
+    artifact_id: EntityId,
+    claims: &[(EntityId, ClaimBody)],
+    thread_id: &EntityId,
+) -> Option<(EntityId, TaskBrief)> {
+    let mut best: Option<(EntityId, TaskBrief)> = None;
+    for (claim_id, body) in claims {
+        if body.predicate != ANNOTATION_BRIEF_PREDICATE {
+            continue;
+        }
+        let brief = match decode_brief_value(&body.value, artifact_id) {
+            Ok(brief) => brief,
+            Err(err) => {
+                warn_malformed_annotation_claim(*claim_id, &body.predicate, &err);
+                continue;
+            }
+        };
+        if brief.thread_id != *thread_id {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(id, _)| claim_id > id) {
+            best = Some((*claim_id, brief));
+        }
+    }
+    best
 }
 
 /// Groups a live-read annotation claim cohort into one [`AnnotationThread`] per

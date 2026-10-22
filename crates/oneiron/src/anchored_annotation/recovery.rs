@@ -31,6 +31,8 @@ use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
+mod scoped;
+
 /// The most prior-anchor hops one restore walks back.
 const MAX_PRIOR_HOPS: usize = 4_096;
 
