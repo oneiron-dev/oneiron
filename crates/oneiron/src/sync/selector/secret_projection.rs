@@ -63,7 +63,9 @@ use crate::ports::EntityStoreRead;
 use crate::secret_custody::KeyPlaces;
 
 pub(crate) use history::ProjectedHistory;
-pub use release::{RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame};
+pub use release::{
+    RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame, repo_copy_generation,
+};
 pub(crate) use release::{released_item_blob, released_update};
 pub(crate) use rows::{CopyRow, InboundRow};
 

@@ -331,6 +331,46 @@ impl SyncSecretProjection {
         })
     }
 
+    /// The copy generation `doc`'s state carries: one fingerprint over the
+    /// stamp of every marked row it holds; `None` when it holds none.
+    pub(crate) fn window_generation(&self, doc: &LoroDoc) -> Option<[u8; 32]> {
+        if self.is_empty() {
+            return None;
+        }
+        let LoroValue::Map(roots) = doc.get_deep_value() else {
+            return None;
+        };
+        let Some(LoroValue::Map(rows)) = roots.get(ROWS) else {
+            return None;
+        };
+        let mut carried = BTreeMap::new();
+        for (key, value) in rows.iter() {
+            let (Ok(id), LoroValue::Binary(raw)) = (EntityId::from_hex(key), value) else {
+                continue;
+            };
+            let hash = match self.sources.get(&id) {
+                Some(hash) => *hash,
+                None => match raw.get(ENTITY_METADATA_HEADER_LEN..) {
+                    Some(body) => *blake3::hash(body).as_bytes(),
+                    None => continue,
+                },
+            };
+            if let Some(blob) = self.blobs.get(&hash) {
+                carried.insert(id, blob.stamp);
+            }
+        }
+        if carried.is_empty() {
+            return None;
+        }
+        let mut hasher = blake3::Hasher::new_derive_key(super::GENERATION_CONTEXT);
+        hasher.update(&Self::SCHEMA.to_be_bytes());
+        for (id, stamp) in carried {
+            hasher.update(id.as_bytes());
+            hasher.update(&stamp);
+        }
+        Some(*hasher.finalize().as_bytes())
+    }
+
     /// Whether `row`'s body is a copy this pass makes.
     fn is_copy_row(&self, row: &[u8]) -> bool {
         row.get(ENTITY_METADATA_HEADER_LEN..)

@@ -537,6 +537,27 @@ fn export_frame(
         withhold(withheld.as_ref()),
     )
     .map_err(map_delta_export_err)?;
+    // FIX 7608 slice 4 (C3): a socket last sent another generation of this
+    // window's masked repo copies gets the replacement, at any vector.
+    let export = super::window_copy::bind_generation(
+        server.vault.as_ref(),
+        conn_state,
+        key,
+        doc,
+        &VersionVector::decode(remote_vv).unwrap_or_default(),
+        export,
+        protocol::installs_window_replacements(conn_state.protocol_version),
+        || {
+            oneiron::sync::window::export_window_replacement_for(
+                server.vault.as_ref(),
+                key,
+                doc,
+                conn_state.promotion_baselines.get(key),
+                withhold(withheld.as_ref()),
+            )
+        },
+    )
+    .map_err(map_delta_export_err)?;
     let (sub_tag, bytes) = match export {
         WindowExport::Update(bytes) => (window_sub_tags::UPDATE, bytes),
         WindowExport::Replacement(bytes)

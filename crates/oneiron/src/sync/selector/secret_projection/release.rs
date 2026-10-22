@@ -78,6 +78,16 @@ pub fn admit_repo_sync_frame<'a>(
     )
 }
 
+/// The generation of the masked repo copies `doc`'s state carries; `None`
+/// when it carries no marked repo item. A peer last sent another generation
+/// gets the window's replacement, even at an equal version vector (C3).
+///
+/// # Errors
+/// A store failure, or a mark that does not decode.
+pub fn repo_copy_generation(vault: &Vault, doc: &LoroDoc) -> Result<Option<[u8; 32]>> {
+    Ok(SyncSecretProjection::read(vault)?.window_generation(doc))
+}
+
 /// A self-contained window update (a detached selector document's) as a
 /// peer gets it.
 ///
