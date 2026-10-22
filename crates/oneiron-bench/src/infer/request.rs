@@ -171,6 +171,7 @@ impl Shape {
             tools: Vec::new(),
             params,
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         if solo {
             mark_solo(&mut request);

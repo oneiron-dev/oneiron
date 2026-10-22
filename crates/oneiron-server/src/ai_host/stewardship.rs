@@ -257,6 +257,7 @@ async fn draft_one(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     let call = runtime
         .admit_role(vault, CHAT_ROLE, request)

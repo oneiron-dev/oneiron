@@ -346,6 +346,7 @@ impl StepRunner {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         // A route the vault narrowed past what this server serves ends the
         // step here, before any call leaves.

@@ -1466,6 +1466,7 @@ pub(crate) fn chat_request(seat: &Seat, messages: Vec<LlmMessage>) -> LlmRequest
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     }
 }
 
