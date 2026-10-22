@@ -134,9 +134,19 @@ fn ask_record(
         proposal_ref: stamp.proposal_ref.clone(),
         standing,
         ask_id: stamp.ask_id,
-        failed,
+        failed: failed.map(error_kind_wire_name),
         parent_proposal_ref: None,
     })
+}
+
+/// `kind`'s stable snake_case wire name (FIX 9177), as a failed ask's record
+/// carries it. A string, not the enum, so the facade mirrors (UniFFI caps an enum
+/// at 256 variants) need not copy every error category.
+fn error_kind_wire_name(kind: ErrorKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{kind:?}"))
 }
 
 /// Where a completed ask's answers stand, by the walk the next ask's baseline takes.

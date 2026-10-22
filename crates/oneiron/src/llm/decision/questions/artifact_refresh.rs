@@ -558,7 +558,7 @@ pub struct ArtifactAskRecord {
     /// The kind of error that stopped a failed ask, which held nothing, by its stable
     /// wire name (FIX 9177); none when the ask completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failed: Option<ErrorKind>,
+    pub failed: Option<String>,
     /// For a wake's re-ask of withdrawn answers, the proposal they were withdrawn from
     /// (FIX 9174); none for the question's own ask.
     #[serde(default, skip_serializing_if = "Option::is_none")]
