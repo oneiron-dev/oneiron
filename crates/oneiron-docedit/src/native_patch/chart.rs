@@ -4,8 +4,10 @@
 //! category reference reads as its block, level by level ([`categories`]).
 mod cache;
 mod categories;
+mod placeholder;
 
 pub(crate) use categories::{Count, declared, level_cache};
+pub(crate) use placeholder::stock_placeholder;
 
 use super::table::graphic_frame;
 use super::workbook::{CellKey, DATE_FORMAT, Range, Workbook, header, number, serial};
@@ -121,6 +123,9 @@ impl Model {
             .filter(|(_, node)| node.namespace == C && node.name.ends_with("Chart"))
         {
             for (ser, _) in tree.children(family).filter(|(_, node)| node.is(C, "ser")) {
+                if stock_placeholder(&tree, ser) {
+                    continue;
+                }
                 let mut entry = Series::default();
                 for (slot, node) in tree.children(ser) {
                     let sequence = match node.name.as_str() {

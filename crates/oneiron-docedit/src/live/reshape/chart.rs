@@ -10,7 +10,7 @@ use super::retained::{Slots, retained};
 use super::special::{self, Context};
 use super::{
     Points, READ_BACK, SHEET, Writer, close, format_code, fresh_plot, int, is_axis, kept_plot,
-    own_workbook, piece, remap, retyped_axis, same_data, series, workbook,
+    own_workbook, piece, remap, retyped_axis, same_data, same_settings, series, workbook,
 };
 use crate::edit::xml;
 use crate::live::LiveError;
@@ -286,6 +286,51 @@ fn rewrite(
             }
         })
     };
+    // Each target's series in the order it writes them: a stock plot's in
+    // its price order, a placeholder (`None`) in each price none of its
+    // series draws, so it keeps three or four series and each price its
+    // place (FIX 9374).
+    let plans: Vec<Vec<Option<usize>>> = targets
+        .iter()
+        .enumerate()
+        .map(|(at, target)| {
+            let roles = settings
+                .iter()
+                .find(|plot| target.kind == ChartKind::Stock && plot.is(target.kind, nths[at]))
+                .and_then(|plot| plot.stock);
+            let Some(roles) = roles else {
+                return assigned[at].iter().copied().map(Some).collect();
+            };
+            let mut used = BTreeSet::new();
+            let mut plan: Vec<Option<usize>> = Vec::with_capacity(assigned[at].len().max(4));
+            for (_, id) in roles.slots() {
+                let index = id.and_then(|id| {
+                    assigned[at]
+                        .iter()
+                        .copied()
+                        .find(|index| series[*index].id == Some(id) && !used.contains(index))
+                });
+                used.extend(index);
+                plan.push(index);
+            }
+            plan.extend(
+                assigned[at]
+                    .iter()
+                    .copied()
+                    .filter(|index| !used.contains(index))
+                    .map(Some),
+            );
+            plan
+        })
+        .collect();
+    // Where a plan pads or reorders a plot, every series takes its place
+    // in the written order as its `c:order`.
+    let renumber = plans
+        .iter()
+        .zip(&assigned)
+        .any(|(plan, assigned)| !plan.iter().copied().eq(assigned.iter().copied().map(Some)));
+    let keep_order = keep_order && !renumber;
+    let mut written_at: u32 = 0;
     let mut plot_xml: Vec<Vec<u8>> = Vec::with_capacity(targets.len());
     let mut emitted: Vec<usize> = Vec::with_capacity(seats.len());
     for (at_target, target) in targets.iter().enumerate() {
@@ -298,10 +343,22 @@ fn rewrite(
             .and_then(|plot| plot.stock)
             .and_then(|roles| roles.close);
         let mut sers = Vec::new();
-        for &index in &assigned[at_target] {
+        for &entry in &plans[at_target] {
+            let place_at = written_at;
+            written_at = written_at.saturating_add(1);
+            let Some(index) = entry else {
+                let minted = next_idx;
+                next_idx = next_idx.saturating_add(1);
+                sers.extend(special::placeholder(&tree, &writer, (minted, place_at)));
+                continue;
+            };
             emitted.push(index);
             let seat = seats[index];
-            let place = u32::try_from(index).unwrap_or(u32::MAX);
+            let place = if renumber {
+                place_at
+            } else {
+                u32::try_from(index).unwrap_or(u32::MAX)
+            };
             let (idx, order) = match seat.held {
                 Some(ser) => (
                     int(&tree, ser, "idx").unwrap_or(next_idx),
@@ -345,10 +402,11 @@ fn rewrite(
             // Each category series writes the set it draws, flat or
             // multi-level, its own reference to it.
             let set = line.set.and_then(|set| sets.get(set));
+            // Text x values are written as text (FIX 9277).
             let cat_xml = match (&line.x, scatter, set) {
                 (Some(x), true, _) => writer.slot(
                     cat_name,
-                    true,
+                    !line.x_text,
                     refs.first.as_deref(),
                     x,
                     &format_code(&bytes, &tree, cat_slot),
@@ -409,6 +467,7 @@ fn rewrite(
             let is_close = close.is_some() && close == series[index].id;
             let stock = (kind == ChartKind::Stock && from != ChartKind::Stock)
                 .then(|| special::stock_style(&tree, &writer, is_close));
+            let mut dropped = Vec::new();
             sers.extend(match seat.held {
                 Some(ser) => retained(
                     &bytes,
@@ -426,6 +485,7 @@ fn rewrite(
                         stock,
                     },
                     &points,
+                    &mut dropped,
                 )?,
                 None if kind == ChartKind::Stock => special::stock_series(
                     &tree,
@@ -454,6 +514,13 @@ fn rewrite(
                     )
                 }
             });
+            if !dropped.is_empty() {
+                done.push(Conversion::SeriesSettingsDropped {
+                    series: series[index].name.clone(),
+                    family: kind,
+                    settings: dropped,
+                });
+            }
         }
         let place = (kind, nths[at_target]);
         let ids = &ids_of[at_target];
@@ -476,19 +543,30 @@ fn rewrite(
                 &writer,
                 split_points,
             )?,
-            None => fresh_plot(
-                place,
-                &writer,
-                &sers,
-                ids,
-                settings,
-                &Context {
-                    bytes: &bytes,
-                    tree: &tree,
-                    from: target.held.map(|at| plots[at].1),
-                    points: split_points,
-                },
-            )?,
+            None => {
+                let mut dropped = Vec::new();
+                let xml = fresh_plot(
+                    place,
+                    &writer,
+                    &sers,
+                    ids,
+                    settings,
+                    &Context {
+                        bytes: &bytes,
+                        tree: &tree,
+                        from: target.held.map(|at| plots[at].1),
+                        points: split_points,
+                    },
+                    &mut dropped,
+                )?;
+                if !dropped.is_empty() {
+                    done.push(Conversion::PlotSettingsDropped {
+                        family: kind,
+                        settings: dropped,
+                    });
+                }
+                xml
+            }
         });
     }
     // The axes: each held axis a plot still plots on (turned where its plot
@@ -588,17 +666,27 @@ fn rewrite(
         }
         done.extend(notes);
     }
-    // The part reads back as the live series in the order it holds them.
+    // The part reads back as the live series in the order it holds them,
+    // and as the settings of each plot it wrote and its 3D view (FIX 9274).
+    let places: Vec<(ChartKind, u32)> = targets
+        .iter()
+        .zip(&nths)
+        .map(|(target, &nth)| (target.kind, nth))
+        .collect();
     let written = NodePayload::Chart {
         family: *family,
         categories: categories.clone(),
         series: emitted.iter().map(|&index| series[index].clone()).collect(),
         source: *source,
-        plots: settings.clone(),
+        plots: settings
+            .iter()
+            .filter(|plot| places.contains(&(plot.family, plot.nth)))
+            .cloned()
+            .collect(),
         view: *view,
     };
     let read = held::chart(package, chart)?.ok_or(LiveError::Invalid(READ_BACK))?;
-    if !same_data(&read, &written) {
+    if !same_data(&read, &written) || !same_settings(&read, &written) {
         return Err(LiveError::Invalid(READ_BACK));
     }
     // Its stock prices and custom splits read back by identity, through the

@@ -206,6 +206,8 @@ fn carried(
                             ],
                             family: None,
                             x: None,
+                            x_labels: None,
+                            plot: None,
                             categories: None,
                             bubble_size: None,
                             bubble_3d: None,

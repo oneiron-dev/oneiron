@@ -234,6 +234,7 @@ pub(super) fn drawn(family: ChartKind, chart: &mut ChartCategories, series: &mut
             continue;
         }
         line.x = None;
+        line.x_labels = None;
         if let Some(own) = &mut line.categories
             && !own.is_empty()
         {

@@ -7,7 +7,7 @@
 use super::families;
 use super::*;
 use crate::live::held::children;
-use crate::live::pptx::ChartPlot;
+use crate::live::pptx::{ChartPlot, surface};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A held x axis turned into the other kind of axis, a value axis
@@ -144,9 +144,16 @@ pub(super) fn ser_axis(writer: &Writer, id: u32, cross: u32) -> String {
 
 /// A new pair of axes under ids `fresh` and `fresh + 1`, crossing each
 /// other: an x axis (a value axis for a scatter plot, `value`, else a
-/// category axis) and a value axis. A `secondary` pair, beside a plot that
-/// already has axes, hides its x axis and puts its value axis on the right.
-pub(super) fn axes(writer: &Writer, fresh: u32, value: bool, secondary: bool) -> String {
+/// category axis) and a value axis, crossing between categories, or at
+/// them for a scatter plot and a surface (`mid_cat`, as Office writes a
+/// surface's, FIX 9376). A `secondary` pair, beside a plot that already has
+/// axes, hides its x axis and puts its value axis on the right.
+pub(super) fn axes(
+    writer: &Writer,
+    fresh: u32,
+    (value, mid_cat): (bool, bool),
+    secondary: bool,
+) -> String {
     let (x, y) = (fresh, fresh.saturating_add(1));
     let el = |name: &str| writer.el(name);
     let flag = |name: &str, val: &str| format!(r#"<{} val="{val}"/>"#, el(name));
@@ -198,7 +205,11 @@ pub(super) fn axes(writer: &Writer, fresh: u32, value: bool, secondary: bool) ->
     } else {
         format!("<{}/>", el("majorGridlines"))
     };
-    let between = if value { "midCat" } else { "between" };
+    let between = if value || mid_cat {
+        "midCat"
+    } else {
+        "between"
+    };
     format!(
         "{x_axis}<{va}>{}{}</{va}>",
         common(y, "0", side, &gridlines, x, crosses),
@@ -321,7 +332,12 @@ pub(super) fn plot_axes(
             ids
         } else {
             let secondary = ids_of.iter().any(|ids| !ids.is_empty());
-            new_axes.push_str(&axes(writer, fresh, wants_value, secondary));
+            new_axes.push_str(&axes(
+                writer,
+                fresh,
+                (wants_value, surface(target.kind)),
+                secondary,
+            ));
             value_x.insert(fresh, wants_value);
             let mut ids = vec![fresh, fresh.saturating_add(1)];
             if depth {

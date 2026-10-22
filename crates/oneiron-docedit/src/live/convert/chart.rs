@@ -16,19 +16,25 @@ use crate::live::pptx::{
 use crate::live::reshape;
 use std::collections::BTreeMap;
 
-/// A chart payload's plots as the reader lists them: its series' families
-/// in runs, after an empty first plot when the chart's family is not its
-/// first series'; and the plot each series is drawn in, by its identity.
+/// A chart payload's plots as the reader lists them, each by its own
+/// series (FIX 9377, 9278): its series' families in runs, a run ending
+/// where the next series is drawn in another plot of its family
+/// ([`ChartSeries::plot`]), so two adjacent plots of one family stay two;
+/// after an empty first plot when the chart's family is not its first
+/// series'; and the plot each series is drawn in, by its identity.
 fn held_plots(was: &NodePayload) -> (Vec<(ChartKind, usize)>, BTreeMap<NodeId, usize>) {
     let NodePayload::Chart { family, series, .. } = was else {
         return (Vec::new(), BTreeMap::new());
     };
     let mut runs: Vec<(ChartKind, usize)> = Vec::new();
     let mut own = BTreeMap::new();
+    let mut last_plot = None;
     for line in series {
         let kind = line.family.unwrap_or(*family);
+        let same_plot = last_plot == Some((kind, line.plot));
+        last_plot = Some((kind, line.plot));
         match runs.last_mut() {
-            Some((last, count)) if *last == kind => *count += 1,
+            Some((last, count)) if *last == kind && same_plot => *count += 1,
             _ => runs.push((kind, 1)),
         }
         if let Some(id) = line.id {
@@ -90,17 +96,38 @@ fn x_categories(x: &[Option<serde_json::Number>]) -> ChartCategories {
     }
 }
 
+/// Text x values as a flat category set of new points (FIX 9277).
+fn label_categories(labels: &[Option<String>]) -> ChartCategories {
+    ChartCategories {
+        level_count: 1,
+        points: labels
+            .iter()
+            .map(|label| ChartCategory {
+                id: None,
+                levels: vec![label.clone()],
+            })
+            .collect(),
+    }
+}
+
+/// The x values one series holds, numbers or text, to compare.
+type XValues = (
+    Option<Vec<Option<serde_json::Number>>>,
+    Option<Vec<Option<String>>>,
+);
+
 /// Categories and x values turned between category and scatter series,
 /// each series by the set it draws ([`effective_categories`]), never by
-/// another series': a category series with x values and no categories to
-/// draw takes its own x values as them (the chart's, when it draws the
-/// chart's empty set and no earlier series gave it others; else its own),
-/// and one that has categories drops its x values; a scatter series with no
-/// x values takes the leaf labels of the set it would draw as them (higher
-/// levels named as dropped), and holds no categories of its own. Then each
-/// set is padded to the longest category series that draws it, and each
-/// such series' values to its set. A chart of scatter plots only holds no
-/// categories.
+/// another series': a category series with x values (numbers, or text
+/// labels, FIX 9277) and no categories to draw takes its own x values as
+/// them (the chart's, when it draws the chart's empty set and no earlier
+/// series gave it others; else its own), and one that has categories drops
+/// its x values; a scatter series with no x values takes the leaf labels of
+/// the set it would draw as them (higher levels named as dropped), one with
+/// numeric x values holds no text ones, and none holds categories of its
+/// own. Then each set is padded to the longest category series that draws
+/// it, and each such series' values to its set. A chart of scatter plots
+/// only holds no categories.
 fn settle_categories(
     categories: &mut ChartCategories,
     lines: &mut [ChartSeries],
@@ -110,7 +137,7 @@ fn settle_categories(
 ) {
     let chart_was_empty = categories.is_empty();
     // Scatter to category.
-    let mut shared: Option<Vec<Option<serde_json::Number>>> = None;
+    let mut shared: Option<XValues> = None;
     for (line, kind) in lines.iter_mut().zip(kinds) {
         if kind.draws_x() {
             continue;
@@ -122,16 +149,22 @@ fn settle_categories(
         if !empty {
             continue;
         }
-        let Some(x) = line.x.take() else {
-            continue;
+        let x: XValues = match (line.x.take(), line.x_labels.take()) {
+            (None, None) => continue,
+            (Some(x), _) => (Some(x), None),
+            (None, labels) => (None, labels),
+        };
+        let set = match &x {
+            (Some(x), _) => x_categories(x),
+            (None, labels) => label_categories(labels.as_deref().unwrap_or_default()),
         };
         let inherits = line.categories.is_none();
         if inherits && shared.is_none() {
-            *categories = x_categories(&x);
+            *categories = set;
             shared = Some(x);
             done.push(Conversion::XBecameCategories);
         } else if !(inherits && shared.as_ref() == Some(&x)) {
-            line.categories = Some(x_categories(&x));
+            line.categories = Some(set);
             done.push(Conversion::XBecameSeriesCategories {
                 series: line.name.clone(),
             });
@@ -143,7 +176,10 @@ fn settle_categories(
     let mut dropped = Vec::new();
     for (line, kind) in lines.iter_mut().zip(kinds) {
         if kind.draws_x() {
-            if line.x.is_none() {
+            if line.x.is_some() {
+                line.x_labels = None;
+            }
+            if line.x.is_none() && line.x_labels.is_none() {
                 let set = effective_categories(categories, line);
                 if !set.is_empty() {
                     let (x, text) = x_of(&set.labels());
@@ -164,8 +200,17 @@ fn settle_categories(
             {
                 x.resize(count, None);
             }
-        } else if line.x.take().is_some() {
-            dropped.push(line.name.clone());
+            if let Some(labels) = line.x_labels.as_mut()
+                && labels.len() < count
+            {
+                labels.resize(count, None);
+            }
+        } else {
+            let numbers = line.x.take().is_some();
+            let labels = line.x_labels.take().is_some();
+            if numbers || labels {
+                dropped.push(line.name.clone());
+            }
         }
     }
     if let Some(numbered) = numbered {
@@ -424,10 +469,23 @@ pub(in crate::live) fn settle_chart(
         done.push(Conversion::SeriesRegrouped);
     }
     let kinds: Vec<ChartKind> = order.iter().map(|&index| resolved[index]).collect();
+    // Each series names its plot among several of its family, as the
+    // export lays them out (FIX 9377, 9278).
+    let ordinals: Vec<Option<u32>> = targets
+        .iter()
+        .enumerate()
+        .map(|(at, target)| {
+            let same = |other: &&reshape::PlotTarget| other.kind == target.kind;
+            (targets.iter().filter(same).count() > 1).then(|| {
+                u32::try_from(targets[..at].iter().filter(same).count()).unwrap_or(u32::MAX)
+            })
+        })
+        .collect();
     let mut lines: Vec<ChartSeries> = order
         .iter()
         .map(|&index| ChartSeries {
             family: combo.then_some(resolved[index]),
+            plot: ordinals.get(assign[index]).copied().flatten(),
             ..series[index].clone()
         })
         .collect();
@@ -450,9 +508,10 @@ pub(in crate::live) fn settle_chart(
         (&targets, &line_targets),
         &mut done,
     );
-    // A chart turned 3D with no view takes its first 3D plot's default.
-    let turned = was.is_none() || !plots.iter().any(|(kind, _)| kind.is_3d());
-    let view = match targets.iter().find(|target| target.kind.is_3d()) {
+    // A chart turned 3D (or contour, FIX 9376) with no view takes its first
+    // such plot's default.
+    let turned = was.is_none() || !plots.iter().any(|(kind, _)| kind.takes_view());
+    let view = match targets.iter().find(|target| target.kind.takes_view()) {
         Some(target) if view.is_none() && turned => {
             done.push(Conversion::ViewAdded {
                 family: target.kind,

@@ -13,6 +13,7 @@ use crate::live::pptx::{
     ChartKind, ChartPlot, NodeId, OfPieType, SeriesBinding, SplitType, StockRoles, SurfaceBand,
     lines_and_bars, surface,
 };
+use crate::native_patch::stock_placeholder;
 use crate::ooxml::XmlTree;
 use std::collections::BTreeSet;
 
@@ -100,13 +101,15 @@ pub(crate) fn split(tree: &XmlTree, at: usize) -> Vec<usize> {
 }
 
 /// One stock or of-pie plot as its part holds it, without identities: the
-/// nth plot of its family, the places of its `c:ser` among every `c:ser`
-/// of the part (its plots in document order), and an of-pie plot's custom
-/// split point indices.
+/// nth plot of its family, the places of its `c:ser` among every series of
+/// the part (its plots in document order), a stock plot's placeholder
+/// (FIX 9374) holding its own place in the plot's price order but none
+/// among the series (`None`), and an of-pie plot's custom split point
+/// indices.
 pub(crate) struct Evidence {
     kind: ChartKind,
     nth: u32,
-    series: Vec<usize>,
+    series: Vec<Option<usize>>,
     split: Option<Vec<usize>>,
 }
 
@@ -118,7 +121,15 @@ pub(crate) fn evidence(tree: &XmlTree) -> Vec<Evidence> {
     let mut out = Vec::new();
     let mut place = 0;
     for (index, &(kind, at)) in plots.iter().enumerate() {
-        let count = children(tree, at, C, "ser").count();
+        let mut series = Vec::new();
+        for ser in children(tree, at, C, "ser") {
+            if stock_placeholder(tree, ser) {
+                series.push(None);
+            } else {
+                series.push(Some(place));
+                place += 1;
+            }
+        }
         if matches!(kind, ChartKind::Stock | ChartKind::OfPie) {
             let nth = plots[..index]
                 .iter()
@@ -127,44 +138,45 @@ pub(crate) fn evidence(tree: &XmlTree) -> Vec<Evidence> {
             out.push(Evidence {
                 kind,
                 nth: u32::try_from(nth).unwrap_or(u32::MAX),
-                series: (place..place + count).collect(),
+                series,
                 split: (kind == ChartKind::OfPie && xml::child(tree, at, C, "custSplit").is_some())
                     .then(|| split(tree, at)),
             });
         }
-        place += count;
     }
     out
 }
 
 /// The stock prices and custom splits `evidence` names through `bound`
-/// (each `c:ser`'s series identity and category identities, in part
-/// order): a stock plot's series take its prices in their order (three
-/// series high, low and close; four or more open first, a fifth and later
-/// one none), and an of-pie plot's split points are the points of the set
-/// its first series draws at those indices. Each as the nth plot of its
-/// family, holding only these settings, with the category identities its
-/// first series draws.
+/// (each series' identity and category identities, in part order): a
+/// stock plot's `c:ser` take its prices in their order (three high, low
+/// and close; four or more open first, a fifth and later one none), a
+/// placeholder's price left empty; and an of-pie plot's split points are
+/// the points of the set its first series draws at those indices. Each as
+/// the nth plot of its family, holding only these settings, with the
+/// category identities its first series draws.
 pub(crate) fn named(evidence: &[Evidence], bound: &SeriesBinding) -> Vec<(ChartPlot, Vec<NodeId>)> {
     evidence
         .iter()
         .map(|plot| {
             let set = plot
                 .series
-                .first()
+                .iter()
+                .flatten()
+                .next()
                 .and_then(|&at| bound.categories.get(at))
                 .cloned()
                 .unwrap_or_default();
             let mut out = ChartPlot::new(plot.kind, plot.nth);
             if plot.kind == ChartKind::Stock {
-                let ids: Vec<NodeId> = plot
+                let ids: Vec<Option<NodeId>> = plot
                     .series
                     .iter()
-                    .filter_map(|&at| bound.series.get(at).copied())
+                    .map(|at| at.and_then(|at| bound.series.get(at).copied()))
                     .collect();
                 let mut roles = StockRoles::empty(StockRoles::order_for(ids.len()));
                 for (slot, id) in roles.slots_mut().into_iter().zip(ids) {
-                    *slot = Some(id);
+                    *slot = id;
                 }
                 out.stock = Some(roles);
             }
@@ -185,9 +197,10 @@ pub(crate) fn named(evidence: &[Evidence], bound: &SeriesBinding) -> Vec<(ChartP
 
 /// Whether the chart part `tree` holds the stock prices and custom splits
 /// `wanted` sets, through `bound`: each stock plot's priced series in its
-/// price order (a price the part's plot does not draw is one `wanted`
-/// leaves empty), and each of-pie plot's split the same points of the set
-/// its first series draws.
+/// price order, each at its own price's place (a price the part's plot
+/// does not draw is one `wanted` leaves empty, its placeholder holding its
+/// place, FIX 9374), and each of-pie plot's split the same points of the
+/// set its first series draws.
 pub(crate) fn same_named(tree: &XmlTree, bound: &SeriesBinding, wanted: &[ChartPlot]) -> bool {
     let held = named(&evidence(tree), bound);
     wanted.iter().all(|plot| {
@@ -196,13 +209,16 @@ pub(crate) fn same_named(tree: &XmlTree, bound: &SeriesBinding, wanted: &[ChartP
         let set = found.map_or(&[][..], |(_, set)| set.as_slice());
         let roles = plot.stock.as_ref().is_none_or(|roles| {
             let drawn = roles.drawn();
-            let have: Vec<NodeId> = have
-                .and_then(|have| have.stock.as_ref())
+            let held_roles = have.and_then(|have| have.stock.as_ref());
+            let have: Vec<NodeId> = held_roles
                 .map_or_else(Vec::new, StockRoles::drawn)
                 .into_iter()
                 .filter(|id| drawn.contains(id))
                 .collect();
             have == drawn
+                && drawn.iter().all(|id| {
+                    held_roles.and_then(|held| held.rank(Some(*id))) == roles.rank(Some(*id))
+                })
         });
         let split = plot.custom_split.as_ref().is_none_or(|split| {
             let want: BTreeSet<NodeId> = split

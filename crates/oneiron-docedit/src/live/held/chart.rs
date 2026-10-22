@@ -20,7 +20,7 @@ use crate::live::pptx::{
     ChartCategories, ChartCategory, ChartKind, ChartPlot, ChartSeries, ChartSource, NodeId,
     NodePayload, SeriesBinding, draws_categories, effective_categories,
 };
-use crate::native_patch::{Count, chart_data, declared, level_cache};
+use crate::native_patch::{Count, chart_data, declared, level_cache, stock_placeholder};
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
 use oneiron_contracts::limit_ask::available_memory_bytes;
@@ -78,6 +78,14 @@ pub(crate) fn plots(tree: &XmlTree) -> Option<(usize, Vec<(ChartKind, usize)>)> 
         .map(|at| Some((plot_family(&tree.nodes[at].name)?, at)))
         .collect::<Option<Vec<_>>>()?;
     (!plots.is_empty()).then_some((area, plots))
+}
+
+/// The series of the plot element `plot`, in document order: each `c:ser`
+/// but a stock plot's placeholder ([`stock_placeholder`], FIX 9374), which
+/// is no series. Every reader that lists a part's series, or names them in
+/// a binding's order, lists them so.
+pub(crate) fn series_of(tree: &XmlTree, plot: usize) -> impl Iterator<Item = usize> + '_ {
+    children(tree, plot, C, "ser").filter(move |&ser| !stock_placeholder(tree, ser))
 }
 
 /// One series sequence as its cache or literal holds it: its cells level
@@ -432,6 +440,30 @@ fn grow_set(set: &mut ChartCategories, count: usize) -> Result<(), LiveError> {
     Ok(())
 }
 
+/// A text x slot's points as labels, one per point and grown to `count`,
+/// measured first: a missing or empty cell holds no label.
+fn labels_of(points: &Points, count: usize) -> Result<Vec<Option<String>>, LiveError> {
+    let cells = points.cells();
+    let owned = cells
+        .iter()
+        .map(|cell| match cell {
+            Cell::Text(text) | Cell::Date(text) => text.len(),
+            _ => 0,
+        })
+        .sum();
+    let mut out = Vec::new();
+    reserve(&mut out, cells.len().max(count), owned)?;
+    out.extend(
+        cells
+            .iter()
+            .map(|cell| Some(label(cell)).filter(|text| !text.is_empty())),
+    );
+    if out.len() < count {
+        out.resize(count, None);
+    }
+    Ok(out)
+}
+
 /// `values` grown to `count` with missing points, measured first.
 fn grow_values(
     values: &mut Vec<Option<serde_json::Number>>,
@@ -447,15 +479,18 @@ fn grow_values(
 /// A chart part's data as the live model holds it, read from its caches
 /// and literals: the first plot's family, its categories, and each series'
 /// name and values, with a combo chart's plot family, a scatter or bubble
-/// series' x values, a bubble series' sizes (missing and negative ones
-/// kept as data) and 3D flag, and a category series' own categories where
-/// they are not the chart's; each plot's settings and the chart's 3D view. When every category series reads the same labels (multi-level
-/// ones level by level), they are the chart's, once; otherwise the first
-/// category series' are the chart's, and each series whose labels differ
-/// (one with none, too) holds its own, never folded into the first's. A
-/// text value, or a plot the reader does not read, leaves the chart without
-/// a live form; a declared count the host cannot hold refuses
-/// ([`LiveError::MemoryFloor`]).
+/// series' x values (numbers, or text labels, FIX 9277), a bubble series'
+/// sizes (missing and negative ones kept as data) and 3D flag, which plot
+/// of its family draws a series where the chart holds several (FIX 9377,
+/// 9278), and a category series' own categories where they are not the
+/// chart's; each plot's settings and the chart's 3D view. A stock plot's
+/// placeholder is no series ([`series_of`]). When every category series
+/// reads the same labels (multi-level ones level by level), they are the
+/// chart's, once; otherwise the first category series' are the chart's,
+/// and each series whose labels differ (one with none, too) holds its own,
+/// never folded into the first's. A text value, or a plot the reader does
+/// not read, leaves the chart without a live form; a declared count the
+/// host cannot hold refuses ([`LiveError::MemoryFloor`]).
 pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload>, LiveError> {
     let Ok((_, tree)) = xml::read(package, chart) else {
         return Ok(None);
@@ -471,7 +506,7 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
     // The categories each category series' own `c:cat` reads.
     let mut read: Vec<Option<ChartCategories>> = Vec::new();
     let mut referenced = false;
-    for &(plot, at) in &plots {
+    for (index, &(plot, at)) in plots.iter().enumerate() {
         let scatter = plot.draws_x();
         let bubble = plot == ChartKind::Bubble;
         let (cat, val) = if scatter {
@@ -479,7 +514,14 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
         } else {
             ("cat", "val")
         };
-        for ser in children(&tree, at, C, "ser") {
+        // Which plot of its family this is, where the chart holds several.
+        let nth = plots[..index]
+            .iter()
+            .filter(|(other, _)| *other == plot)
+            .count();
+        let several = plots.iter().filter(|(other, _)| *other == plot).count() > 1;
+        let ordinal = several.then(|| u32::try_from(nth).unwrap_or(u32::MAX));
+        for ser in series_of(&tree, at) {
             let (Some(name), Some(held), Some(values)) = (
                 slot(&tree, ser, "tx")?,
                 slot(&tree, ser, cat)?,
@@ -513,16 +555,18 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
                 },
                 None => Vec::new(),
             };
-            let (x, own) = match held {
+            let (x, x_labels, own) = match held {
                 Some(points) if scatter && points.numeric => {
                     let Some(mut x) = numbers(points.cells())? else {
                         return Ok(None);
                     };
                     grow_values(&mut x, values.len())?;
-                    (Some(x), None)
+                    (Some(x), None, None)
                 }
-                Some(points) if !scatter => (None, Some(categories_of(points)?)),
-                _ => (None, None),
+                // Text x values are kept as labels (FIX 9277).
+                Some(points) if scatter => (None, Some(labels_of(&points, values.len())?), None),
+                Some(points) => (None, None, Some(categories_of(points)?)),
+                None => (None, None, None),
             };
             if let Some(size) = &mut bubble_size {
                 grow_values(size, values.len())?;
@@ -535,6 +579,8 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
                 values,
                 family: combo.then_some(plot),
                 x,
+                x_labels,
+                plot: ordinal,
                 categories: None,
                 bubble_size,
                 bubble_3d: bubble.then(|| flag(&tree, ser, "bubble3D")).flatten(),

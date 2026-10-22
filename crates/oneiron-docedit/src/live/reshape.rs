@@ -19,6 +19,7 @@ mod families;
 mod layout;
 mod points;
 mod retained;
+mod retype;
 mod series;
 mod special;
 mod table;
@@ -239,14 +240,15 @@ pub(super) fn plan(
     else {
         return None;
     };
-    // Plot settings, the 3D view and bubble sizes are written by the full
-    // rewrite.
+    // Plot settings, the 3D view, bubble sizes and text x values are
+    // written by the full rewrite.
     if family != want_family
         || !same_settings(have, wanted)
         || held_series.len() != series.len()
         || held_series.iter().zip(series).any(|(was, now)| {
             was.family.unwrap_or(*family) != now.family.unwrap_or(*want_family)
                 || was.x.is_some() != now.x.is_some()
+                || was.x_labels != now.x_labels
                 || was.bubble_size != now.bubble_size
                 || was.bubble_3d != now.bubble_3d
         })
@@ -323,7 +325,8 @@ pub(super) fn plan(
 /// in the same plot family drawing the same categories (by label, level by
 /// level, whatever their identities and whichever set holds them), and the
 /// same values, x values and bubble sizes (as numbers; a sequence ending in
-/// missing points reads as one without them).
+/// missing points reads as one without them) and text x values (FIX 9277,
+/// the same way).
 pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
     let (
         NodePayload::Chart {
@@ -361,6 +364,15 @@ pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
                 }
                 && match (&a.bubble_size, &b.bubble_size) {
                     (Some(a), Some(b)) => padded(a.as_slice(), b.as_slice()),
+                    (None, None) => true,
+                    _ => false,
+                }
+                && match (&a.x_labels, &b.x_labels) {
+                    (Some(a), Some(b)) => (0..a.len().max(b.len())).all(|at| {
+                        let read = a.get(at).and_then(Option::as_deref).unwrap_or_default();
+                        let want = b.get(at).and_then(Option::as_deref).unwrap_or_default();
+                        read == want
+                    }),
                     (None, None) => true,
                     _ => false,
                 }

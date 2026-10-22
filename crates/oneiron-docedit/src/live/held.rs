@@ -28,7 +28,7 @@ pub(super) mod table;
 
 pub(crate) use chart::{
     bind, chart, chart_evidence, chart_part, descriptor, fill, flag, label, plot_family,
-    plot_settings, plots, points, same_named, split, view,
+    plot_settings, plots, points, same_named, series_of, split, view,
 };
 
 /// A slide part's parsed tree; [`ShapeView::node`] indexes into it.

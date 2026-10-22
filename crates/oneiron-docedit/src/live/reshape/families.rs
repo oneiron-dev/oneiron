@@ -5,9 +5,11 @@
 //! written where the model's view differs from the one it holds. Each plot
 //! takes the settings of the nth plot of its family ([`ChartPlot`]); a
 //! stock, surface or of-pie plot's compound settings are written by
-//! [`special`].
+//! [`special`]. A plot converted to another family carries every child of
+//! its held plot the new family holds (FIX 9275).
 //! Entry: `kept_plot`, `fresh_plot`, `view`, `same_settings`.
 
+use super::retype;
 use super::special::{self, Context};
 use super::*;
 use crate::edit::xml::Splice;
@@ -215,7 +217,14 @@ fn tokens(plot: &ChartPlot) -> Vec<(&'static str, String)> {
             "splitType",
             plot.split_type.map(|value| value.token().to_owned()),
         ),
-        ("splitPos", plot.split_pos.as_ref().map(ToString::to_string)),
+        // As a number reads back, whatever form the model holds it in.
+        (
+            "splitPos",
+            plot.split_pos
+                .as_ref()
+                .and_then(serde_json::Number::as_f64)
+                .map(|value| value.to_string()),
+        ),
         (
             "secondPieSize",
             plot.second_pie_size.map(|value| value.to_string()),
@@ -379,11 +388,44 @@ pub(super) fn kept_plot(
     applied(bytes, tree, plot, splices)
 }
 
+/// `plot`'s scalar settings over `settings`, each it leaves unset kept.
+fn scalars_over(plot: &ChartPlot, settings: ChartPlot) -> ChartPlot {
+    ChartPlot {
+        bar_dir: plot.bar_dir.or(settings.bar_dir),
+        grouping: plot.grouping.or(settings.grouping),
+        shape: plot.shape.or(settings.shape),
+        gap_depth: plot.gap_depth.or(settings.gap_depth),
+        bubble_3d: plot.bubble_3d.or(settings.bubble_3d),
+        bubble_scale: plot.bubble_scale.or(settings.bubble_scale),
+        show_neg_bubbles: plot.show_neg_bubbles.or(settings.show_neg_bubbles),
+        size_represents: plot.size_represents.or(settings.size_represents),
+        ..settings
+    }
+}
+
+/// Whether a plot converted from `from` to `kind` carries the held plot's
+/// child `name`: any child `kind` holds but its series, its axes and its
+/// `varyColors` (the new family's own: a pie varies its colours by point,
+/// a bar does not), a bar plot's gap between bars only from a bar plot (an
+/// of-pie plot's gap is the space between its two plots).
+fn carries(name: &str, kind: ChartKind, from: ChartKind) -> bool {
+    let bars = |kind: ChartKind| matches!(kind, ChartKind::Bar | ChartKind::Bar3D);
+    match name {
+        "ser" | "axId" | "varyColors" => false,
+        "gapWidth" => bars(kind) && bars(from),
+        name => order(kind).contains(&name),
+    }
+}
+
 /// A plot written fresh in `kind`: that family's required elements, its
-/// settings the model's (`plots`, the `nth` plot of `kind`) and else the
-/// family's defaults, its compound settings as [`special::fresh`] writes
-/// them (carried from the held plot it converts, `context.from`), the
-/// series, and the axis ids it plots on.
+/// settings the model's (`plots`, the `nth` plot of `kind`), else the held
+/// plot's it converts (`context.from`) where `kind` holds them, else the
+/// family's defaults; its compound settings as [`special::fresh`] writes
+/// them; every other child the held plot holds and `kind` does too
+/// ([`carries`]: its data labels, their positions retyped, its drop lines
+/// and extensions; FIX 9275), the family's own default only for one it
+/// lacks; the series, and the axis ids it plots on. A label position the
+/// new family does not hold is named in `dropped`.
 pub(super) fn fresh_plot(
     (kind, nth): (ChartKind, u32),
     writer: &Writer,
@@ -391,20 +433,19 @@ pub(super) fn fresh_plot(
     ids: &[u32],
     plots: &[ChartPlot],
     context: &Context<'_>,
+    dropped: &mut Vec<String>,
 ) -> Result<Vec<u8>, LiveError> {
     let mut settings = defaults(kind);
+    let from = context.from.and_then(|at| {
+        let family = held::plot_family(&context.tree.nodes[at].name)?;
+        Some((at, family))
+    });
+    if let Some((at, family)) = from {
+        let own = held::plot_settings(context.tree, family, nth, at);
+        settings = scalars_over(&own.fit(kind, nth).0, settings);
+    }
     if let Some(plot) = wanted(plots, kind, nth) {
-        settings = ChartPlot {
-            bar_dir: plot.bar_dir.or(settings.bar_dir),
-            grouping: plot.grouping.or(settings.grouping),
-            shape: plot.shape.or(settings.shape),
-            gap_depth: plot.gap_depth.or(settings.gap_depth),
-            bubble_3d: plot.bubble_3d.or(settings.bubble_3d),
-            bubble_scale: plot.bubble_scale.or(settings.bubble_scale),
-            show_neg_bubbles: plot.show_neg_bubbles.or(settings.show_neg_bubbles),
-            size_represents: plot.size_represents.or(settings.size_represents),
-            ..settings
-        };
+        settings = scalars_over(&plot, settings);
         special::overlay(&plot, &mut settings);
     }
     let pie = matches!(
@@ -419,21 +460,38 @@ pub(super) fn fresh_plot(
     parts.push(("ser", sers.to_vec()));
     parts.push(("axId", ids_xml(writer, ids)));
     parts.extend(special::fresh(context, kind, &settings, writer)?);
-    match kind {
-        ChartKind::Bar | ChartKind::Bar3D => {
-            parts.push(("gapWidth", flag(writer, "gapWidth", "150")));
+    let has = |parts: &[(&str, Vec<u8>)], name: &str| parts.iter().any(|(held, _)| *held == name);
+    if let Some((at, family)) = from {
+        for &child in &context.tree.nodes[at].children {
+            let node = &context.tree.nodes[child];
+            if node.namespace != C || !carries(&node.name, kind, family) || has(&parts, &node.name)
+            {
+                continue;
+            }
+            let Some(&name) = order(kind).iter().find(|held| **held == node.name) else {
+                continue;
+            };
+            let bytes = if name == "dLbls" {
+                retype::labels(context.bytes, context.tree, child, kind, dropped)?
+            } else {
+                piece(context.bytes, context.tree, child).to_vec()
+            };
+            parts.push((name, bytes));
         }
-        ChartKind::Line => parts.push(("marker", flag(writer, "marker", "1"))),
-        ChartKind::Radar => parts.push(("radarStyle", flag(writer, "radarStyle", "marker"))),
-        ChartKind::Scatter => {
-            parts.push(("scatterStyle", flag(writer, "scatterStyle", "lineMarker")));
+    }
+    let needed: &[(&str, &str)] = match kind {
+        ChartKind::Bar | ChartKind::Bar3D => &[("gapWidth", "150")],
+        ChartKind::Line => &[("marker", "1")],
+        ChartKind::Radar => &[("radarStyle", "marker")],
+        ChartKind::Scatter => &[("scatterStyle", "lineMarker")],
+        ChartKind::Pie => &[("firstSliceAng", "0")],
+        ChartKind::Doughnut => &[("firstSliceAng", "0"), ("holeSize", "50")],
+        _ => &[],
+    };
+    for &(name, value) in needed {
+        if !has(&parts, name) {
+            parts.push((name, flag(writer, name, value)));
         }
-        ChartKind::Pie => parts.push(("firstSliceAng", flag(writer, "firstSliceAng", "0"))),
-        ChartKind::Doughnut => {
-            parts.push(("firstSliceAng", flag(writer, "firstSliceAng", "0")));
-            parts.push(("holeSize", flag(writer, "holeSize", "50")));
-        }
-        _ => {}
     }
     let name = writer.el(kind.element());
     let mut out = format!("<{name}>").into_bytes();

@@ -116,7 +116,13 @@ pub(super) fn workbook_dataset(wanted: &Wanted) -> Dataset {
     }
     for line in data {
         if let Some(x) = &line.x {
-            columns.push(column(format!("{} (x)", line.name), ColumnKind::Number));
+            // Text x values stay text cells (FIX 9277).
+            let kind = if line.x_text {
+                ColumnKind::Text
+            } else {
+                ColumnKind::Number
+            };
+            columns.push(column(format!("{} (x)", line.name), kind));
             cells.push(x.clone());
         }
         columns.push(column(line.name.clone(), ColumnKind::Number));

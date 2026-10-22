@@ -9,7 +9,7 @@
 use crate::design_plan::Cell;
 use crate::edit::xml;
 use crate::live::LiveError;
-use crate::live::held::{self, C, children};
+use crate::live::held::{self, C, series_of};
 use crate::live::pptx::{
     ChartCategories, ChartKind, ChartSeries, NodeId, NodePayload, WRITTEN_FRAME,
     effective_categories, positions,
@@ -25,6 +25,17 @@ pub(super) fn number_cells(values: &[Option<serde_json::Number>], count: usize) 
                 .get(at)
                 .and_then(|value| value.as_ref()?.as_f64())
                 .map_or(Cell::Missing, Cell::Number)
+        })
+        .collect()
+}
+
+/// Text labels as cells, one per point up to `count`: a missing or empty
+/// label is a missing cell.
+fn text_cells(labels: &[Option<String>], count: usize) -> Vec<Cell> {
+    (0..count)
+        .map(|at| match labels.get(at) {
+            Some(Some(label)) if !label.is_empty() => Cell::Text(label.clone()),
+            _ => Cell::Missing,
         })
         .collect()
 }
@@ -124,7 +135,7 @@ pub(super) fn first_category(tree: &XmlTree) -> Option<usize> {
     let (_, plots) = held::plots(tree)?;
     plots
         .iter()
-        .flat_map(|&(_, at)| children(tree, at, C, "ser"))
+        .flat_map(|&(_, at)| series_of(tree, at))
         .find_map(|ser| xml::child(tree, ser, C, "cat"))
 }
 
@@ -137,6 +148,9 @@ pub(super) struct Data {
     pub(super) y_col: u32,
     pub(super) size_col: Option<u32>,
     pub(super) x: Option<Vec<Cell>>,
+    /// Whether its x values are text labels (FIX 9277), written as a
+    /// `c:strRef` over text cells.
+    pub(super) x_text: bool,
     pub(super) values: Vec<Cell>,
     /// A bubble series' sizes, one per point (a missing one a missing
     /// cell).
@@ -191,13 +205,14 @@ pub(super) struct Wanted {
     pub(super) data: Vec<Data>,
 }
 
-/// Every `c:ser` of the chart, its plots in document order, each plot's
-/// series in document order: the order a binding names them in.
+/// Every series of the chart, its plots in document order, each plot's
+/// series in document order, a stock plot's placeholder none
+/// ([`series_of`]): the order a binding names them in.
 pub(super) fn held_series(tree: &XmlTree) -> Vec<usize> {
     held::plots(tree).map_or_else(Vec::new, |(_, plots)| {
         plots
             .iter()
-            .flat_map(|&(_, at)| children(tree, at, C, "ser"))
+            .flat_map(|&(_, at)| series_of(tree, at))
             .collect()
     })
 }
@@ -302,17 +317,23 @@ pub(super) fn wanted(
                 .bubble_size
                 .as_ref()
                 .filter(|_| *kind == ChartKind::Bubble);
+            // Text x values stand where numbers would (FIX 9277).
+            let labels = line
+                .x_labels
+                .as_ref()
+                .filter(|_| scatter && line.x.is_none());
             let count = match (&line.x, scatter, set) {
                 (Some(x), true, _) => x.len().max(line.values.len()),
-                (None, true, _) | (_, false, None) => line.values.len(),
+                (None, true, _) => labels.map_or(0, Vec::len).max(line.values.len()),
+                (_, false, None) => line.values.len(),
                 (_, false, Some(set)) => sets[set].count(),
             }
             .max(size.map_or(0, Vec::len));
-            let x = line
-                .x
-                .as_ref()
-                .filter(|_| scatter)
-                .map(|x| number_cells(x, count));
+            let x = match (line.x.as_ref().filter(|_| scatter), labels) {
+                (Some(x), _) => Some(number_cells(x, count)),
+                (None, Some(labels)) => Some(text_cells(labels, count)),
+                (None, None) => None,
+            };
             let x_col = x.as_ref().map(|_| take());
             let y_col = take();
             let size = size.map(|size| number_cells(size, count));
@@ -322,6 +343,7 @@ pub(super) fn wanted(
                 y_col,
                 size_col: size.as_ref().map(|_| take()),
                 x,
+                x_text: labels.is_some(),
                 values: number_cells(&line.values, count),
                 size,
                 set,
@@ -379,7 +401,7 @@ pub(super) fn layout(
     let (area, plots) = held::plots(tree)?;
     let held_sers: Vec<Vec<usize>> = plots
         .iter()
-        .map(|&(_, at)| children(tree, at, C, "ser").collect())
+        .map(|&(_, at)| series_of(tree, at).collect())
         .collect();
     let held_plots: Vec<(ChartKind, usize)> = plots
         .iter()

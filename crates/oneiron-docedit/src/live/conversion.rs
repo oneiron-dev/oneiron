@@ -65,6 +65,16 @@ pub enum Conversion {
         family: ChartKind,
         settings: Vec<String>,
     },
+    /// A series moved into a `family` plot from another family dropped
+    /// these settings (as its chart part names them) the new family does
+    /// not hold: a data label position, a point's marker, explosion, 3D
+    /// bubble, picture or negative inversion. Each label keeps its text and
+    /// its other settings (FIX 9276).
+    SeriesSettingsDropped {
+        series: String,
+        family: ChartKind,
+        settings: Vec<String>,
+    },
     /// The chart turned 3D with no 3D view, and takes a plot of `family`'s
     /// default view (CALLS, D9b fresh 3D view).
     ViewAdded { family: ChartKind },
@@ -285,6 +295,15 @@ impl Conversion {
             ),
             Self::PlotSettingsDropped { family, settings } => format!(
                 "the {} plot drops settings it does not hold: {}",
+                family_name(*family),
+                settings.join(", ")
+            ),
+            Self::SeriesSettingsDropped {
+                series,
+                family,
+                settings,
+            } => format!(
+                "series {series} drawn as {} drops settings it does not hold: {}",
                 family_name(*family),
                 settings.join(", ")
             ),
