@@ -95,53 +95,7 @@ impl Vault {
         // Claim and summary bodies and a TURN's message text (FIX 8826) have a
         // canonical re-embedding path. Diagnostics are deliberately
         // runtime-only. Other explicit vectors must not silently disappear.
-        for row in self.store.port_vector_rows(&txn, |id, _| {
-            crate::EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
-        })? {
-            let id = row??;
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?;
-            let reconstructable = match raw.as_deref() {
-                Some(raw) => {
-                    rebuild::has_checkpoint_embedding_source(self, &txn, &id, raw)?
-                        || crate::batch::EntityMetadataHeader::parse(raw).is_some_and(|header| {
-                            header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-                        })
-                }
-                None => false,
-            };
-            if !reconstructable {
-                return Err(Error::InvalidConfig(
-                    "checkpoint vector lacks a canonical re-embedding source".into(),
-                ));
-            }
-        }
-        // A pre-witness index is not silently restored as an empty search surface.
-        for row in self
-            .store
-            .port_index_rows(&txn, IndexRows::TextForward, |id, _| {
-                EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
-            })?
-        {
-            let id = row??;
-            if !INDEX_SOURCE_TEXT.contains(&self.store, &txn, &id)? {
-                return Err(Error::InvalidConfig(
-                    "text index lacks canonical rebuild input".into(),
-                ));
-            }
-        }
-        for row in self
-            .store
-            .port_index_rows(&txn, IndexRows::PhoneticForward, |id, _| {
-                EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
-            })?
-        {
-            let id = row??;
-            if !INDEX_SOURCE_PHONETIC.contains(&self.store, &txn, &id)? {
-                return Err(Error::InvalidConfig(
-                    "phonetic index lacks canonical rebuild input".into(),
-                ));
-            }
-        }
+        self.validate_checkpoint_rebuild_sources(&txn)?;
         let mut excluded = std::collections::BTreeSet::<Vec<u8>>::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (key, value) = row?;
@@ -303,6 +257,59 @@ impl Vault {
             evidence,
             checkpoint_fact,
         }))
+    }
+
+    /// Every explicit vector and text or phonetic index row has the canonical
+    /// source a restore rebuilds it from.
+    fn validate_checkpoint_rebuild_sources(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        for row in self.store.port_vector_rows(txn, |id, _| {
+            crate::EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
+        })? {
+            let id = row??;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?;
+            let reconstructable = match raw.as_deref() {
+                Some(raw) => {
+                    rebuild::has_checkpoint_embedding_source(self, txn, &id, raw)?
+                        || crate::batch::EntityMetadataHeader::parse(raw).is_some_and(|header| {
+                            header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
+                        })
+                }
+                None => false,
+            };
+            if !reconstructable {
+                return Err(Error::InvalidConfig(
+                    "checkpoint vector lacks a canonical re-embedding source".into(),
+                ));
+            }
+        }
+        // A pre-witness index is not silently restored as an empty search surface.
+        for row in self
+            .store
+            .port_index_rows(txn, IndexRows::TextForward, |id, _| {
+                EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
+            })?
+        {
+            let id = row??;
+            if !INDEX_SOURCE_TEXT.contains(&self.store, txn, &id)? {
+                return Err(Error::InvalidConfig(
+                    "text index lacks canonical rebuild input".into(),
+                ));
+            }
+        }
+        for row in self
+            .store
+            .port_index_rows(txn, IndexRows::PhoneticForward, |id, _| {
+                EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
+            })?
+        {
+            let id = row??;
+            if !INDEX_SOURCE_PHONETIC.contains(&self.store, txn, &id)? {
+                return Err(Error::InvalidConfig(
+                    "phonetic index lacks canonical rebuild input".into(),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

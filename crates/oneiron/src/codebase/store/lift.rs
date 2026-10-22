@@ -19,7 +19,9 @@ use crate::Vault;
 use crate::batch::secret_scan::scan_file_content_reader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::secret_snapshot::{SecretLiftProposal, SnapshotCustodyReport, suggested_secret_name};
+use crate::secret_snapshot::{
+    SnapshotCustodyReport, SnapshotSecretLiftProposal, suggested_secret_name,
+};
 
 /// A snapshot, the custody report beside it and each hit in a file the
 /// report does not withhold yet, by path.
@@ -61,7 +63,7 @@ impl Vault {
             return Ok(None);
         };
         for (path, reason) in hits {
-            report.proposals.push(SecretLiftProposal {
+            report.proposals.push(SnapshotSecretLiftProposal {
                 suggested_secret_name: suggested_secret_name(&path),
                 path: path.clone(),
                 detector_reason: reason.to_owned(),

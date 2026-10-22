@@ -1991,8 +1991,8 @@ declare namespace Sdk {
   type SecretLiftReceipt = { receipt_id: string; trigger: LiftTrigger; requested_by?: string | null; requested_at: number; finished_at: number; families: LiftCounts[]; masked: number; proposals: number; failed: number };
   type LiftCause = "unplaceable" | "immutable" | "held" | "file" | "no_door" | "history";
   type LiftCauseCount = { cause: LiftCause; open: number };
-  type SecretLiftProposal = { path: string; detector_reason: string; suggested_secret_name: string; project_id: string };
-  type SecretLiftHistoryProposal = { id?: string; family: LiftFamily; cause: LiftCause; proposal: SecretLiftProposal; run_id: string; filed_at: number; closed_at?: number | null; closed_by?: string | null; close_reason?: LiftCloseReason | null; close_receipt?: string | null };
+  type SnapshotSecretLiftProposal = { path: string; detector_reason: string; suggested_secret_name: string; project_id: string };
+  type SecretLiftHistoryProposal = { id?: string; family: LiftFamily; cause: LiftCause; proposal: SnapshotSecretLiftProposal; run_id: string; filed_at: number; closed_at?: number | null; closed_by?: string | null; close_reason?: LiftCloseReason | null; close_receipt?: string | null };
   type SecretLiftStatus = { mode: SecretScanMode; paused: boolean; running?: SecretLiftProgress | null; last?: SecretLiftReceipt | null; open_proposals: number; open_by_cause: LiftCauseCount[]; closed_proposals: number; proposals: SecretLiftHistoryProposal[] };
   type WidenProposalState = "pending" | "approved" | "declined";
   type WidenProposalsRequest = { state?: WidenProposalState | null };

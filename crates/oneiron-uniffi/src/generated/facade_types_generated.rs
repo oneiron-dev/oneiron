@@ -30018,9 +30018,9 @@ pub struct LiftCauseCount {
     pub open: u64,
 }
 
-/// `oneiron::secret_snapshot::SecretLiftProposal`.
+/// `oneiron::secret_snapshot::SnapshotSecretLiftProposal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct SecretLiftProposal {
+pub struct SnapshotSecretLiftProposal {
     #[serde(rename = "path")]
     pub path: String,
     #[serde(rename = "detector_reason")]
@@ -30041,7 +30041,7 @@ pub struct SecretLiftHistoryProposal {
     #[serde(rename = "cause")]
     pub cause: LiftCause,
     #[serde(rename = "proposal")]
-    pub proposal: SecretLiftProposal,
+    pub proposal: SnapshotSecretLiftProposal,
     #[serde(rename = "run_id")]
     pub run_id: String,
     #[serde(rename = "filed_at")]

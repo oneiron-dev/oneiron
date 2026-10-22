@@ -3,7 +3,7 @@
 //! existed, is read again by the batch door's rules. Each secret they place
 //! goes to custody through the row's own writer door, which leaves its handle
 //! where the secret was. A hit the sweep cannot place is never skipped: it
-//! files a value-free lift proposal for the owner ([`SecretLiftProposal`]).
+//! files a value-free lift proposal for the owner ([`SnapshotSecretLiftProposal`]).
 //!
 //! A run is queued when the switch goes from off to on, in the switch's own
 //! transaction, or when the owner asks ([`Vault::start_secret_lift`]). A
@@ -45,7 +45,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, GateError, Result};
 use crate::secret_custody::KnownValues;
-use crate::secret_snapshot::SecretLiftProposal;
+use crate::secret_snapshot::SnapshotSecretLiftProposal;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
@@ -313,7 +313,7 @@ pub struct SecretLiftHistoryProposal {
     /// The record or row (`record:<id>`, `side:<table>:<key>`,
     /// `carrier:<table>:<key>`), the detector's reason and a suggested
     /// custody name. No value.
-    pub proposal: SecretLiftProposal,
+    pub proposal: SnapshotSecretLiftProposal,
     pub run_id: String,
     pub filed_at: u64,
     /// When it closed; none while it is open.
@@ -870,7 +870,7 @@ fn file_in_txn(
             id: hex(&row_key),
             family,
             cause,
-            proposal: SecretLiftProposal {
+            proposal: SnapshotSecretLiftProposal {
                 suggested_secret_name: format!("lifted.{}.{}", family.code(), short(&path)),
                 path,
                 detector_reason: reason.to_owned(),

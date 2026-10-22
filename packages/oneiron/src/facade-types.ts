@@ -3946,10 +3946,10 @@ export type SecretLiftReceipt = { receipt_id: string; trigger: LiftTrigger; requ
 export type LiftCause = "unplaceable" | "immutable" | "held" | "file" | "no_door" | "history"
 /** `oneiron::batch::secret_scan::lift_history::LiftCauseCount` */
 export type LiftCauseCount = { cause: LiftCause; open: number }
-/** `oneiron::secret_snapshot::SecretLiftProposal` */
-export type SecretLiftProposal = { path: string; detector_reason: string; suggested_secret_name: string; project_id: string }
+/** `oneiron::secret_snapshot::SnapshotSecretLiftProposal` */
+export type SnapshotSecretLiftProposal = { path: string; detector_reason: string; suggested_secret_name: string; project_id: string }
 /** `oneiron::batch::secret_scan::lift_history::SecretLiftHistoryProposal` */
-export type SecretLiftHistoryProposal = { id?: string; family: LiftFamily; cause: LiftCause; proposal: SecretLiftProposal; run_id: string; filed_at: number; closed_at?: number | null; closed_by?: string | null; close_reason?: LiftCloseReason | null; close_receipt?: string | null }
+export type SecretLiftHistoryProposal = { id?: string; family: LiftFamily; cause: LiftCause; proposal: SnapshotSecretLiftProposal; run_id: string; filed_at: number; closed_at?: number | null; closed_by?: string | null; close_reason?: LiftCloseReason | null; close_receipt?: string | null }
 /** `oneiron::batch::secret_scan::lift_history::SecretLiftStatus` */
 export type SecretLiftStatus = { mode: SecretScanMode; paused: boolean; running?: SecretLiftProgress | null; last?: SecretLiftReceipt | null; open_proposals: number; open_by_cause: LiftCauseCount[]; closed_proposals: number; proposals: SecretLiftHistoryProposal[] }
 /** `oneiron::agent_dispatch::widen_doors::WidenProposalState` */
