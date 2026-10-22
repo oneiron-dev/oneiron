@@ -10,7 +10,9 @@ mod checkpoint_roots;
 mod custody;
 mod home_handoff;
 mod machine_history;
+mod pad_custody;
 mod pad_objects;
+mod pad_refill;
 mod pages;
 
 use base64::Engine;
@@ -319,6 +321,10 @@ pub(super) fn run(
             "residence.bundle.pads.replace" => {
                 bundle_pads_replace(server, auth, peer, request.params)
             }
+            "residence.bundle.pads.refill" => {
+                pad_refill::bundle_pads_refill(server, auth, peer, request.params)
+            }
+            "residence.pad.fetch" => pad_custody::pad_fetch(server, auth, peer, request.params),
             "residence.bundle.access" => {
                 bundle_access::bundle_access(server, auth, peer, request.params)
             }
