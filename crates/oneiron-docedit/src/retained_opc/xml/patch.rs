@@ -84,7 +84,11 @@ impl ValidatedXmlPart<'_> {
             .and_then(|n| n.checked_add(suffix.len()))
             .ok_or(Error::Edit("edited XML size overflow"))?;
         if length > max_part_bytes {
-            return Err(Error::Edit("edited XML size limit"));
+            return Err(Error::capacity_hit(
+                crate::resource::Dimension::PartBytes,
+                length,
+                max_part_bytes,
+            ));
         }
         let escaped = escape_text(value, escaped_bytes);
         let mut candidate = Vec::with_capacity(length);
