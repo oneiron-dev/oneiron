@@ -20,6 +20,7 @@ pub(crate) mod skill_execution;
 mod stream_reads;
 mod tasks_response;
 mod tool_receipt;
+mod type_feedback_release;
 mod verb_hooks;
 mod wakes;
 mod wire;

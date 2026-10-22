@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, ExecutorStorage, ProgramPreparationNote, TypeDiagnostics,
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, ExecutorStorage, ProgramPreparationNote,
+    ProgramStepFeedbackRelease, TypeDiagnostics,
     fold_api::{FoldHistoryRequest, FoldUnfoldRequest},
 };
 use crate::compaction::{FoldDescription, FoldList, FoldReply, FoldUnfold, SelfFoldCall};
@@ -51,6 +52,13 @@ pub struct FoldHistoryStep {
     /// it was not JavaScript Oxc accepts (FIX 8276).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preparation_note: Option<ProgramPreparationNote>,
+    /// The step's feedback withheld from this answer's destination, in place
+    /// of `type_diagnostics` and `preparation_note`, when its own release
+    /// check holds it (FIX 10390): its identity, `check_ref`, state, facts
+    /// and measures, with none of its text. None as the run reads it; only
+    /// an MCP answer's release sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_feedback: Option<ProgramStepFeedbackRelease>,
 }
 
 /// Reads only checkpointed steps under the host's sealed live lease. The host
@@ -147,6 +155,7 @@ pub fn read_fold_history(
             console: load_context_output(&storage, &record, &observation_output_path(step))?,
             type_diagnostics,
             preparation_note,
+            type_feedback: None,
         });
     }
     proof.leased_record(vault)?;

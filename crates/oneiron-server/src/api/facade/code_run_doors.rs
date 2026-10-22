@@ -10,7 +10,7 @@
 //! one program step's type feedback by its check reference.
 use std::sync::Arc;
 
-use oneiron::code_run::ProgramStepFeedback;
+use oneiron::code_run::ProgramStepFeedbackRelease;
 use oneiron::memory::code_run_doors::{
     CodeRunModelHealCountRequest, CodeRunModelHealCountView, CodeRunTypeDiagnosticsRequest,
 };
@@ -54,7 +54,7 @@ pub(crate) async fn vault_code_type_diagnostics(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: CodeRunTypeDiagnosticsRequest,
-) -> Listed<Option<ProgramStepFeedback>> {
+) -> Listed<Option<ProgramStepFeedbackRelease>> {
     let owner = match owner_proof(auth, server, TYPE_DIAGNOSTICS_VERB) {
         Ok(owner) => owner,
         Err(refusal) => return refused(refusal),

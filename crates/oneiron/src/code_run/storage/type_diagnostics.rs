@@ -16,9 +16,9 @@ use super::super::replay::{
     ResultOccurrence,
 };
 use super::super::type_diagnostics::{
-    DiagnosticCollection, DiagnosticMeasures, ProgramPreparationNote, ProgramStepFeedback,
-    ProgramStepIdentity, TYPE_CHECK_INTERRUPTED, TypeCheckFacts, TypeDiagnostic, TypeDiagnostics,
-    check_incarnation,
+    DiagnosticCollection, DiagnosticMeasures, KeptProgramSteps, ProgramPreparationNote,
+    ProgramStepFeedback, ProgramStepIdentity, TYPE_CHECK_INTERRUPTED, TypeCheckFacts,
+    TypeDiagnostic, TypeDiagnostics, check_incarnation,
 };
 use super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
 use super::routing::ExecutorStorage;
@@ -266,6 +266,25 @@ impl Vault {
     ) -> Result<Vec<(StepKey, StoredStepFeedback)>> {
         let rtxn = self.store.env.read_txn()?;
         ROWS.scan_from(&self.store, &rtxn, run.as_bytes())
+    }
+
+    /// Every program step's feedback `run` keeps, in step order, each under
+    /// its stable identity and as it stands now, for a trusted host's answer
+    /// about the run (FIX 10389): a read of the rows its steps kept, which
+    /// never runs a step or a check again. A read that fails is the typed
+    /// fact that the feedback was not kept, never the run's own failure.
+    #[must_use]
+    pub fn kept_program_steps(&self, run: EntityId) -> KeptProgramSteps {
+        match self.type_diagnostics_rows(run) {
+            Ok(rows) => KeptProgramSteps::Kept(
+                rows.into_iter()
+                    .map(|(key, row)| row.feedback(key))
+                    .collect(),
+            ),
+            Err(error) => KeptProgramSteps::NotKept {
+                detail: error.to_string(),
+            },
+        }
     }
 
     /// The bodies `run`'s stored diagnostics collections are kept in, for

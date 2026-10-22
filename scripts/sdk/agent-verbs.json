@@ -9474,9 +9474,9 @@
     },
     {
       "name": "vault.code.type_diagnostics",
-      "description": "Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again.",
+      "description": "Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again.",
       "input": "crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest",
-      "output": "Option<crate::code_run::ProgramStepFeedback>",
+      "output": "Option<crate::code_run::ProgramStepFeedbackRelease>",
       "call": "memory.code_run_type_diagnostics_as(&memory.embedded_owner(\"vault.code.type_diagnostics\")?, input)?",
       "scope": "Read",
       "admission": {
