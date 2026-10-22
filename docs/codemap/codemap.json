@@ -4747,7 +4747,7 @@
      "purpose": "OF-499 A3: a real, current Admin proof for the weave, behind an MFA step-up witness",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 2
      }
@@ -12417,6 +12417,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/actor_key/weave_admin.rs",
+     "purpose": "The weave Admin's read key (OF-499 A3, L02 seam): the Admin's verified request instrument as every slip key…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -12800,6 +12810,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_correction/admin.rs",
+     "purpose": "A weave Admin's wrong labels (OF-499 A3): the one-tap wrong on a link, claim, project, budget or sieve audit…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -12816,7 +12836,7 @@
       "crate-vis": 11,
       "enum": 2,
       "fn": 10,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -12828,6 +12848,20 @@
      "purpose": "FIX 5778: an agent acting for the owner inside its Grant acknowledges his weave digest's due notice, and…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveAdminKey"
+     ],
+     "path": "src/claim/scoped_read/weave_digest/admin.rs",
+     "purpose": "The weave Admin's digest namespace (OF-499 A3): its key, its saved and newest period read, its kept live…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -12987,10 +13021,20 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 3,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/admin.rs",
+     "purpose": "The weave Admin's lane and live report (OF-499 A3)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -13072,6 +13116,16 @@
       "enum": 2,
       "fn": 13,
       "struct": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_serve/admin.rs",
+     "purpose": "The served weave Admin lens (OF-499 A3): an Admin's live report, its live lens's two reads, its saved digest…",
+     "surface": {
+      "fn": 7
      }
     },
     {
@@ -74508,7 +74562,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 98,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75847,7 +75901,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4940,
+   "source_files": 4945,
    "test_files": 902
   },
   "oneiron-android": {
