@@ -49272,6 +49272,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/policy_model/clock.rs",
+     "purpose": "One policy call's clock (FIX 10034; ARCH-0036:135, the owner's ruling of 2026-10-16)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/policy_model/concurrent.rs",
      "purpose": "Running both planes' classify calls at once",
      "surface": {
@@ -49303,7 +49313,7 @@
      "path": "src/policy_model/decide.rs",
      "purpose": "Registered owner and hosted policy questions through the shared ladder: a host-selected ladder's row…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -49399,7 +49409,7 @@
      "path": "src/policy_model/notice.rs",
      "purpose": "The one notice a policy verdict emits — and the one audit row it files",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -49425,7 +49435,7 @@
      "path": "src/policy_model/owner_rows/ledger.rs",
      "purpose": "Append-only row change history and proposal inbox",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -49444,6 +49454,16 @@
       "enum": 1,
       "fn": 5,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/notification_receipt.rs",
+     "purpose": "A queued policy-change notice, delivered as the change it records (FIX 10031)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -49639,7 +49659,7 @@
      "path": "src/policy_model/planes.rs",
      "purpose": "The two policy planes, the documents they enforce, and the rows they contribute",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 7,
       "enum": 2,
       "fn": 3,
@@ -54514,6 +54534,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/saved_query/memo_lifetime.rs",
+     "purpose": "A verdict memo lives no longer than the evidence it explains (FIX 10089)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "MemoryWatch"
      ],
@@ -54532,7 +54562,7 @@
      "path": "src/saved_query/mod.rs",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 11
      }
     },
@@ -54611,6 +54641,16 @@
      "path": "src/saved_query/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/saved_query/value_fingerprint.rs",
+     "purpose": "A lossless identity for an accepted MessagePack claim value (FIX 10090)",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -58055,7 +58095,7 @@
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 13,
       "struct": 2
      }
@@ -58142,12 +58182,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/hub_owner.rs",
      "purpose": "Served hub skill doors (OF-213): the owner imports a skill from a configured hub ref, refetches one at its…",
      "surface": {
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -66622,7 +66663,7 @@
      "path": "src/task_verb/policy_change_followup.rs",
      "purpose": "Atomic, idempotent human TASK notification for one landed policy change",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -68953,6 +68994,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ShapeApprovalDependencies"
+     ],
+     "path": "src/vault_shape/approval.rs",
+     "purpose": "A waiting approval stands on the reach its preview showed (FIX 10200)",
+     "surface": {
+      "crate-vis": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ShapeCard"
      ],
      "path": "src/vault_shape/card.rs",
@@ -69071,10 +69125,10 @@
      "path": "src/vault_shape/mod.rs",
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand",
      "surface": {
-      "const": 2,
+      "const": 1,
       "enum": 3,
       "fn": 5,
-      "re-export": 11,
+      "re-export": 12,
       "struct": 3
      }
     },
@@ -69166,6 +69220,16 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/visibility.rs",
+     "purpose": "What the visible shape APIs read of the seed and the open applies (FIX 10199)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -75867,7 +75931,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 56,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76028,7 +76092,7 @@
      "purpose": "Runtime hooks (ARCH-0080)"
     },
     "saved_query": {
-     "files": 15,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76357,7 +76421,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 16,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76436,7 +76500,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4987,
+   "source_files": 4993,
    "test_files": 902
   },
   "oneiron-android": {
@@ -109862,6 +109926,7 @@
       "ShapeApplyReceipt",
       "ShapeApplyRequest",
       "ShapeApplyRun",
+      "ShapeApprovalDependencies",
       "ShapeCard",
       "ShapeCeiling",
       "ShapeChange",
@@ -110603,7 +110668,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1011,
-      "struct": 3104
+      "struct": 3105
      }
     },
     {
