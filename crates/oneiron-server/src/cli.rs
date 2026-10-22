@@ -7,6 +7,8 @@ use crate::config::ServeArgs;
 
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
+mod files_args;
+pub use files_args::{FilesAttachArgs, FilesCommand, FilesListArgs, FilesPathArgs, FilesRescanArgs};
 mod graph_fs_args;
 mod hook_args;
 pub use graph_fs_args::GraphFsCommand;
@@ -133,6 +135,11 @@ pub enum Command {
     /// one whole import batch.
     #[command(subcommand)]
     Import(ImportCommand),
+    /// Your Files world on a stopped vault: the folders this install keeps
+    /// searchable on this install only. Attach (opting in), rescan, detach,
+    /// list them, or read one's files.
+    #[command(subcommand)]
+    Files(FilesCommand),
     /// Agent runs waiting for consent: list, review, approve or decline whole.
     #[command(subcommand)]
     Runs(RunsCommand),
@@ -1046,6 +1053,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::VaultKey(command) => commands::vault_key(command),
         Command::RecoveryKit(command) => commands::recovery_kit(command),
         Command::Import(command) => commands::import(command),
+        Command::Files(command) => commands::files(command),
         Command::Runs(command) => commands::runs(command),
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         Command::LearningSettings(command) => commands::learning_settings(command),

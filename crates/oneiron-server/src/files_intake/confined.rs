@@ -11,7 +11,9 @@ use std::path::{Component, Path};
 
 use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags, openat, statat};
 
-use super::MAX_WALK_DEPTH;
+/// How far below the given path a history walk looks. A Claude Code subagent
+/// log sits four below `~/.claude/projects`.
+const MAX_WALK_DEPTH: usize = 6;
 
 fn directory_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
@@ -41,7 +43,7 @@ fn kind(dir: &OwnedFd, name: &OsStr, listed: FileType) -> anyhow::Result<FileTyp
 /// not block, so an entry swapped for a FIFO after it was listed is refused
 /// by the type check rather than waited on; reading a regular file is the
 /// same either way.
-pub(super) fn open_file(dir: &OwnedFd, name: &OsStr, shown: &Path) -> anyhow::Result<File> {
+pub(crate) fn open_file(dir: &OwnedFd, name: &OsStr, shown: &Path) -> anyhow::Result<File> {
     let file = File::from(
         openat(
             dir,
@@ -65,7 +67,7 @@ pub(super) fn open_file(dir: &OwnedFd, name: &OsStr, shown: &Path) -> anyhow::Re
 }
 
 /// `name` in the folder at `dir`, when it is a regular file there.
-pub(super) fn open_in(dir: &Path, name: &str) -> anyhow::Result<Option<File>> {
+pub(crate) fn open_in(dir: &Path, name: &str) -> anyhow::Result<Option<File>> {
     let root = open_root(dir)?;
     let name = OsStr::new(name);
     match statat(&root, name, AtFlags::SYMLINK_NOFOLLOW) {
@@ -78,7 +80,7 @@ pub(super) fn open_in(dir: &Path, name: &str) -> anyhow::Result<Option<File>> {
 
 /// Visits every `.jsonl` file under `root`, or under its `history` folder when
 /// it has one (the tool's whole home was given): the path shown, and the file.
-pub(super) fn walk_logs(
+pub(crate) fn walk_logs(
     root: &Path,
     history: &str,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
@@ -102,7 +104,7 @@ pub(super) fn walk_logs(
 /// Visits every `.md` and `.pdf` file under `root`, passing over hidden files and
 /// folders (an editor's settings, its trash, a `.git`): the path shown, and
 /// the file.
-pub(super) fn walk_notes(
+pub(crate) fn walk_notes(
     root: &Path,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
@@ -120,13 +122,14 @@ pub(super) enum WalkRefused {
 }
 
 /// The files a walk visits: their extensions, also in other case when
-/// `any_case`; whether hidden entries count; how deep it goes; and how many
-/// entries it lists before it is refused. Past `depth`, a log walk passes
-/// over the folder; a notes walk refuses, since a batch without those notes
-/// would read as the whole folder.
+/// `any_case`, or every file; whether hidden entries count; how deep it
+/// goes; and how many entries it lists before it is refused. Past `depth`, a
+/// log walk passes over the folder; a notes walk refuses, since a batch
+/// without those notes would read as the whole folder.
 #[derive(Clone, Copy)]
-pub(super) struct Wanted {
+pub(crate) struct Wanted {
     extensions: &'static [&'static str],
+    every_file: bool,
     any_case: bool,
     hidden: bool,
     depth: usize,
@@ -134,8 +137,9 @@ pub(super) struct Wanted {
     entries: usize,
 }
 
-pub(super) const LOGS: Wanted = Wanted {
+pub(crate) const LOGS: Wanted = Wanted {
     extensions: &["jsonl"],
+    every_file: false,
     any_case: false,
     hidden: true,
     depth: MAX_WALK_DEPTH,
@@ -148,6 +152,7 @@ pub(super) const LOGS: Wanted = Wanted {
 /// Markdown and PDF folder).
 const NOTES: Wanted = Wanted {
     extensions: &["md", "pdf"],
+    every_file: false,
     any_case: true,
     hidden: false,
     depth: 32,
@@ -157,10 +162,21 @@ const NOTES: Wanted = Wanted {
     entries: usize::MAX,
 };
 
+/// A Files source's walk (FIX 6942): every regular file, hidden ones too,
+/// since what it passes over is the owner's exclusions, judged before any
+/// entry is opened. Its depth and width are a notes walk's.
+const FILES: Wanted = Wanted {
+    extensions: &[],
+    every_file: true,
+    hidden: true,
+    ..NOTES
+};
+
 impl Wanted {
     /// Whether a file named `name` is one this walk visits.
     fn visits(self, name: &OsStr) -> bool {
-        Path::new(name).extension().is_some_and(|extension| {
+        self.every_file
+            || Path::new(name).extension().is_some_and(|extension| {
             self.extensions.iter().any(|wanted| {
                 if self.any_case {
                     extension.eq_ignore_ascii_case(wanted)
@@ -176,7 +192,7 @@ impl Wanted {
 /// Every folder below `root` is opened relative to the one above it and never
 /// through a link, so a queued path can reach nothing outside `root`; links
 /// in `root` itself are the owner's, as in a path they type.
-pub(super) fn open_below(root: &Path, relative: &Path) -> anyhow::Result<(OwnedFd, File)> {
+pub(crate) fn open_below(root: &Path, relative: &Path) -> anyhow::Result<(OwnedFd, File)> {
     let mut dir = open_root(root)?;
     let mut shown = root.to_path_buf();
     let mut components = relative.components().peekable();
@@ -201,7 +217,7 @@ pub(super) fn open_below(root: &Path, relative: &Path) -> anyhow::Result<(OwnedF
 
 /// The folder `name` in `dir`, never through a link; `None` when there is
 /// no such folder.
-pub(super) fn open_dir_in(dir: &OwnedFd, name: &OsStr) -> anyhow::Result<Option<OwnedFd>> {
+pub(crate) fn open_dir_in(dir: &OwnedFd, name: &OsStr) -> anyhow::Result<Option<OwnedFd>> {
     match statat(dir, name, AtFlags::SYMLINK_NOFOLLOW) {
         Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::Directory => {
             Ok(Some(openat(dir, name, directory_flags(), Mode::empty())?))
@@ -212,23 +228,41 @@ pub(super) fn open_dir_in(dir: &OwnedFd, name: &OsStr) -> anyhow::Result<Option<
 
 /// Visits every file `wanted` names under the open folder `dir`, shown as
 /// `shown`, in name order.
-pub(super) fn walk(
+pub(crate) fn walk(
     dir: &OwnedFd,
     shown: &Path,
     wanted: Wanted,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut left = wanted.entries;
-    walk_below(dir, shown, 0, wanted, &mut left, visit)
+    walk_below(dir, shown, 0, (wanted, &nothing_excluded), &mut left, visit)
 }
 
-/// One folder of a walk, `depth` below where it started; `left` is how many
-/// more entries the walk may list.
+/// A walk that excludes nothing beyond its own profile.
+fn nothing_excluded(_: &Path) -> bool {
+    false
+}
+
+/// Visits every regular file under `root` a Files source reads (FIX 6942),
+/// hidden ones too: the path shown, and the file. An entry `excluded` names
+/// by its shown path is passed over before it is opened, a folder before
+/// anything under it is listed.
+pub(crate) fn walk_files(
+    root: &Path,
+    excluded: &dyn Fn(&Path) -> bool,
+    visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let mut left = FILES.entries;
+    walk_below(&open_root(root)?, root, 0, (FILES, excluded), &mut left, visit)
+}
+
+/// One folder of a walk, `depth` below where it started, passing over what
+/// the walk excludes; `left` is how many more entries the walk may list.
 fn walk_below(
     dir: &OwnedFd,
     shown: &Path,
     depth: usize,
-    wanted: Wanted,
+    (wanted, excluded): (Wanted, &dyn Fn(&Path) -> bool),
     left: &mut usize,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
@@ -262,6 +296,9 @@ fn walk_below(
     entries.sort_by(|(left, _), (right, _)| left.cmp(right));
     for (name, listed) in entries {
         let path = shown.join(&name);
+        if excluded(&path) {
+            continue;
+        }
         // A symbolic link is neither a folder nor a file here.
         match kind(dir, &name, listed)? {
             FileType::Directory => {
@@ -272,7 +309,14 @@ fn walk_below(
                             path.display()
                         )
                     })?;
-                walk_below(&child, &path, depth + 1, wanted, left, visit)?;
+                walk_below(
+                    &child,
+                    &path,
+                    depth + 1,
+                    (wanted, excluded),
+                    left,
+                    visit,
+                )?;
             }
             FileType::RegularFile if wanted.visits(&name) => {
                 visit(&path, open_file(dir, &name, &path)?)?;
