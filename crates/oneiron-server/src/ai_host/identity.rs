@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oneiron::dreamer_runner::maintenance::identity::{IdentityDecisions, IdentityRuling};
+use oneiron::dreamer_runner::maintenance::identity::{self, IdentityDecisions, IdentityRuling};
 use oneiron::llm::decision::DecisionRung;
 use oneiron::retrieval_depth::RetrievalDeadline;
 
@@ -68,8 +68,13 @@ pub(crate) fn spawn(
 
 fn round(server: &SyncServer, resurface: bool) -> oneiron::Result<()> {
     let vault = server.vault();
+    // The Dreamer's own lane, which every ask is read through; none while no
+    // ask is open, so an idle round opens no write.
+    let Some(read) = identity::maintenance_reader(vault)? else {
+        return Ok(());
+    };
     let now = vault.now_recorded_at();
-    let due = vault.identity_asks_due(now, ROUND)?;
+    let due = vault.identity_asks_due(&read, now, ROUND)?;
     if !due.is_empty() {
         let principal = vault.ensure_embedded_owner_actor().map_err(|error| {
             oneiron::Error::InvalidConfig(format!("no owner principal: {error}"))
@@ -85,7 +90,7 @@ fn round(server: &SyncServer, resurface: bool) -> oneiron::Result<()> {
                 wording: WORDING.to_owned(),
                 deadline: &deadline,
             };
-            match vault.decide_identity_ask(&decisions, &ask, now) {
+            match vault.decide_identity_ask(&read, &decisions, &ask, now) {
                 Ok(IdentityRuling::Retry) => {
                     tracing::debug!("an identity decision failed; it is asked again later");
                 }
@@ -97,7 +102,7 @@ fn round(server: &SyncServer, resurface: bool) -> oneiron::Result<()> {
         }
     }
     if resurface {
-        vault.resurface_identity_asks(now)?;
+        vault.resurface_identity_asks(&read, now)?;
     }
     Ok(())
 }

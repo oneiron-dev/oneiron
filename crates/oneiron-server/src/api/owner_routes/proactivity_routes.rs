@@ -56,6 +56,7 @@ use serde::{Deserialize, Serialize};
 use super::{OwnerReply, blocking, owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
+use crate::error::ApiError;
 use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -668,16 +669,23 @@ async fn identity_asks(
             .unwrap_or_else(|| IDENTITY_SOMEONE_NEW.to_owned()),
         provisional: query.provisional,
     };
-    let asks = blocking(move || -> OwnerResult<Vec<IdentityAskCard>> {
-        let vault = server.vault();
-        let mut cards = Vec::new();
-        for ask in vault.identity_asks()? {
-            let card = vault.identity_card(&ask.ask, &copy)?;
-            cards.push(IdentityAskCard { ask, card });
-        }
-        Ok(cards)
-    })
-    .await?;
+    // Each ask and candidate through the request's own lane (FIX 8711).
+    let asks = blocking(
+        move || -> OwnerResult<Result<Vec<IdentityAskCard>, ApiError>> {
+            let vault = server.vault();
+            let read = match crate::api::scoped_read_for_core_auth(vault, &auth) {
+                Ok(read) => read,
+                Err(error) => return Ok(Err(error)),
+            };
+            let mut cards = Vec::new();
+            for ask in vault.identity_asks(&read)? {
+                let card = vault.identity_card(&read, &ask.ask, &copy)?;
+                cards.push(IdentityAskCard { ask, card });
+            }
+            Ok(Ok(cards))
+        },
+    )
+    .await??;
     Ok(Json(asks))
 }
 
@@ -703,16 +711,24 @@ async fn answer_identity_ask(
     let owner = owner(&auth, &server)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
     let request = json_payload(payload)?;
-    let settled = blocking(move || -> OwnerResult<IdentitySettled> {
-        Ok(server.vault().answer_identity_ask_as(
+    // The ask and the chosen candidate through the request's own lane (FIX
+    // 8711).
+    let settled = blocking(move || -> OwnerResult<Result<IdentitySettled, ApiError>> {
+        let vault = server.vault();
+        let read = match crate::api::scoped_read_for_core_auth(vault, &auth) {
+            Ok(read) => read,
+            Err(error) => return Ok(Err(error)),
+        };
+        Ok(Ok(vault.answer_identity_ask_as(
+            &read,
             &owner,
             surface,
             &request.ask,
             &request.choice,
             now_secs(),
-        )?)
+        )?))
     })
-    .await?;
+    .await??;
     Ok(Json(settled))
 }
 

@@ -154,12 +154,14 @@ side_tables! {
     /// Elected MACRO-scope home-node designation (node_id, class, elected_at). Key: ().
     DREAMER_HOME_NODE: VaultMeta b"dreamer:home_node_macro:v1" Raw;
     /// One open identity ask: a saved mention the Dreamer could not settle, or one an agent must
-    /// act on now (OF-123). Key: hash32(turn, message, span).
-    DREAMER_IDENTITY_ASK: VaultMeta b"dreamer:identity:v1:ask:" Named;
+    /// act on now (OF-123). Key: hash32(turn, message, span). Its scrub also reaches the hints
+    /// and the identity rows of DREAMER_MAINTENANCE_APPLIED (FIX 8707).
+    DREAMER_IDENTITY_ASK: VaultMeta b"dreamer:identity:v1:ask:" Named
+        => crate::dreamer_runner::maintenance::identity::erase_actor_sources_in_txn;
     /// The identity re-check's page cursor: the last TURN a nightly pass read. Key: ().
     DREAMER_IDENTITY_CURSOR: VaultMeta b"dreamer:identity:v1:cursor" Named;
-    /// A settled identity's context hint: a name, the words around it and the entity it named.
-    /// Key: u8(kind) + hash32(name) + id16(entity).
+    /// A settled identity's context hint: each answered mention's own name, the words around it
+    /// and its span, for the entity it named. Key: u8(kind) + hash32(name) + id16(entity).
     DREAMER_IDENTITY_HINT: VaultMeta b"dreamer:identity:v1:hint:" Named;
     /// The original mention and its resolving evidence, written with the link.
     /// Key: id16(turn) + hash32(message, span).

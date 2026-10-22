@@ -40,13 +40,25 @@
 //! apply at once and leave the Dreamer's receipt with what they changed
 //! before and after, which the owner reverts into the question to them
 //! (FIX 3327); an owner's own answer is his act and leaves none.
+//!
+//! Every door that lists, renders, decides or answers an ask reads it
+//! through its caller's own lane (FIX 8711, [`maintenance_reader`] for the
+//! host), and an erase reaches every kept copy of a mention's bytes: asks,
+//! hints and the Dreamer's inverses (FIX 8707).
+mod admission;
+mod erase;
 mod evidence;
+mod hints;
 mod settle_undo;
+pub use admission::maintenance_reader;
+pub(crate) use erase::{erase_actor_sources_in_txn, erase_sources_in_txn};
 pub use evidence::{
     IdentityAnswerEvidenceRequest, IdentityMentionState, IdentityMentionView,
     IdentityResolutionView,
 };
 pub(crate) use evidence::{clear_mention_resolutions_in_txn, erase_mention_resolutions_in_txn};
+pub(crate) use hints::hinted_mention_in_txn;
+use hints::{hinted_in_txn, put_hint_in_txn};
 pub(super) use settle_undo::{SettleInverse, revert_settle_in_txn};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,7 +70,7 @@ use serde_json::json;
 use super::MAINTENANCE_QUEUE_KIND;
 use super::applied::{MaintenanceInverse, MaintenanceRevert, MaintenanceTarget};
 use crate::authority::{ActAuthority, ActSurface};
-use crate::claim::ClaimSource;
+use crate::claim::{ClaimReadStatus, ClaimSource, ScopedRead};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
 use crate::identity_topology::{
@@ -128,9 +140,6 @@ const ASKS: SideTable<[u8; 32], IdentityAsk, Named> =
     SideTable::new(&side_table::DREAMER_IDENTITY_ASK);
 /// The last turn the nightly pass read.
 const CURSOR: SideTable<(), EntityId, Named> = SideTable::new(&side_table::DREAMER_IDENTITY_CURSOR);
-/// Context hints. Key: kind, the name's identity-hint digest, the entity.
-const HINTS: SideTable<([u8; 1], [u8; 32], EntityId), IdentityHint, Named> =
-    SideTable::new(&side_table::DREAMER_IDENTITY_HINT);
 
 /// What an agent must do to the person now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -186,7 +195,8 @@ pub struct IdentityAsk {
     pub kept_separate_at: Option<u64>,
 }
 
-/// The words an answer about a name was given in.
+/// The words answers about a name were given in, summed over the saved
+/// contributions a read counts, once each.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityHint {
@@ -262,7 +272,8 @@ pub enum IdentityRuling {
     KeptSeparate,
     /// The ladder failed: the ask waits and is decided again.
     Retry,
-    /// The ask was answered or changed meanwhile.
+    /// The ask was answered or changed meanwhile, or the deciding lane does
+    /// not read it whole (FIX 8711).
     Gone,
 }
 
@@ -569,132 +580,6 @@ fn uncertain_in_txn(
     }))
 }
 
-fn hint_prefix(kind: u8, name: &str) -> Vec<u8> {
-    let mut prefix = vec![kind];
-    prefix.extend_from_slice(&crate::ingest::identity_hint_digest(name));
-    prefix
-}
-
-/// The hints saved for a name, by the entity each named.
-fn hints_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    kind: u8,
-    name: &str,
-) -> Result<BTreeMap<EntityId, IdentityHint>> {
-    Ok(HINTS
-        .scan_from(&vault.store, txn, &hint_prefix(kind, name))?
-        .into_iter()
-        .map(|((_, _, entity), hint)| (entity, hint))
-        .collect())
-}
-
-/// The one candidate whose hint shares the most words with `terms`; none on
-/// no shared word or a tie.
-fn hinted_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    ask: &IdentityAsk,
-) -> Result<Option<EntityId>> {
-    let mut best: Option<(EntityId, usize)> = None;
-    let mut tied = false;
-    for (entity, hint) in hints_in_txn(vault, txn, ask.kind, &ask.name)? {
-        if !ask.candidates.contains(&entity) {
-            continue;
-        }
-        let shared = hint
-            .context
-            .iter()
-            .filter(|term| ask.context.contains(term))
-            .count();
-        if shared == 0 {
-            continue;
-        }
-        match best {
-            Some((_, top)) if shared < top => {}
-            Some((_, top)) if shared == top => tied = true,
-            _ => {
-                best = Some((entity, shared));
-                tied = false;
-            }
-        }
-    }
-    Ok(best.filter(|_| !tied).map(|(entity, _)| entity))
-}
-
-/// The one of `candidates` a saved hint picks for a mention of `name` at
-/// `start..end` of `text`, as the nightly re-check settles an ask: the
-/// candidate whose hint shares the most words with the mention's context;
-/// none on no shared word or a tie. The Linker reads it when it saves a
-/// turn, so a saved hint settles a mention live.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn hinted_mention_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    kind: u8,
-    name: &str,
-    text: &str,
-    start: usize,
-    end: usize,
-    candidates: &[EntityId],
-) -> Result<Option<EntityId>> {
-    let context = context_terms(text, start, end, name);
-    let mut best: Option<(EntityId, usize)> = None;
-    let mut tied = false;
-    for (entity, hint) in hints_in_txn(vault, txn, kind, name)? {
-        if !candidates.contains(&entity) {
-            continue;
-        }
-        let shared = hint
-            .context
-            .iter()
-            .filter(|term| context.contains(term))
-            .count();
-        if shared == 0 {
-            continue;
-        }
-        match best {
-            Some((_, top)) if shared < top => {}
-            Some((_, top)) if shared == top => tied = true,
-            _ => {
-                best = Some((entity, shared));
-                tied = false;
-            }
-        }
-    }
-    Ok(best.filter(|_| !tied).map(|(entity, _)| entity))
-}
-
-/// Saves the words an answer was given in for its name and entity, each
-/// new one beside every word earlier answers saved (Rule 5: none is cut).
-fn put_hint_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    ask: &IdentityAsk,
-    entity: EntityId,
-    now: u64,
-) -> Result<()> {
-    let key = (
-        [ask.kind],
-        crate::ingest::identity_hint_digest(&ask.name),
-        entity,
-    );
-    let mut hint = HINTS
-        .get(&vault.store, txn, &key)?
-        .unwrap_or_else(|| IdentityHint {
-            name: ask.name.clone(),
-            context: Vec::new(),
-            saved_at: now,
-        });
-    for term in &ask.context {
-        if !hint.context.contains(term) {
-            hint.context.push(term.clone());
-        }
-    }
-    hint.saved_at = now;
-    HINTS.put(&vault.store, txn, &key, &hint)
-}
-
 /// The person an option names, when it is one of the ask's.
 fn parse_choice(ask: &IdentityAsk, choice: &str) -> Option<Answer> {
     if choice == SOMEONE_NEW {
@@ -878,11 +763,13 @@ fn notify_in_txn(
 }
 
 /// A nightly abstention's inverse: the ask as it stood before the names were
-/// kept separate, and when they were.
+/// kept separate, none once an erase reached its mention (FIX 8707), where
+/// that mention is, and when they were.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProvisionalInverse {
-    prior: IdentityAsk,
+    prior: Option<IdentityAsk>,
+    source: erase::SourceAnchor,
     kept_at: u64,
 }
 
@@ -903,6 +790,7 @@ fn keep_separate_in_txn(
         ..ask.clone()
     };
     ASKS.put(&vault.store, txn, key, &kept)?;
+    let source = erase::ask_anchor_in_txn(vault, txn, &ask)?;
     let actor = vault.dreamer_authority_in_txn(txn, now)?;
     super::applied::record_disposition_in_txn(
         vault,
@@ -911,7 +799,8 @@ fn keep_separate_in_txn(
         IDENTITY_RECHECK_FACET,
         actor,
         MaintenanceInverse::IdentityProvisional(Box::new(ProvisionalInverse {
-            prior: ask,
+            prior: Some(ask),
+            source,
             kept_at: now,
         })),
         now,
@@ -921,7 +810,8 @@ fn keep_separate_in_txn(
 /// The owner's revert of a kept-separate ask: the ask as it stood before
 /// goes to them as today's question, an inbox Ask with its choice card, as
 /// reverting "keep them separate for now" means "ask me". An ask answered,
-/// decided again or taken up for an act-now effect since is left alone.
+/// decided again or taken up for an act-now effect since, one an erase
+/// reached, or one whose mention no longer reads as it did is left alone.
 pub(super) fn revert_provisional_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -932,15 +822,21 @@ pub(super) fn revert_provisional_in_txn(
     let MaintenanceTarget::IdentityAsk(key) = out.target else {
         return Err(invalid("the revert names no ask"));
     };
+    let Some(prior) = &inverse.prior else {
+        out.left_alone.push(key_hex(&key));
+        return Ok(());
+    };
     let kept = IdentityAsk {
         kept_separate_at: Some(inverse.kept_at),
-        ..inverse.prior.clone()
+        ..prior.clone()
     };
-    if ASKS.get(&vault.store, txn, &key)?.as_ref() != Some(&kept) {
+    if ASKS.get(&vault.store, txn, &key)?.as_ref() != Some(&kept)
+        || !erase::anchor_reads_in_txn(vault, txn, &inverse.source, &prior.name)?
+    {
         out.left_alone.push(key_hex(&key));
         return Ok(());
     }
-    escalate_in_txn(vault, txn, &key, inverse.prior.clone(), now)?;
+    escalate_in_txn(vault, txn, &key, prior.clone(), now)?;
     out.asked.push(key_hex(&key));
     Ok(())
 }
@@ -1295,20 +1191,28 @@ pub(super) fn run(vault: &Vault, _attempt: &DreamerAdmittedAttempt, now: u64) ->
 impl Vault {
     /// Open asks the host decides now, act-now ones first, up to `limit`,
     /// as 64 hex: none sent to the person yet, none kept separate, none
-    /// waiting on a retry.
-    pub fn identity_asks_due(&self, now: u64, limit: usize) -> Result<Vec<String>> {
+    /// waiting on a retry, and only those `read` reads whole (FIX 8711): one
+    /// with a candidate or a span it does not read waits for the owner.
+    pub fn identity_asks_due(
+        &self,
+        read: &ScopedRead<'_>,
+        now: u64,
+        limit: usize,
+    ) -> Result<Vec<String>> {
         let txn = self.store.env.read_txn()?;
-        let mut due: Vec<(bool, u64, [u8; 32])> = ASKS
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .filter(|(_, ask)| {
-                ask.escalated_at.is_none() && ask.kept_separate_at.is_none() && ask.retry_at <= now
-            })
-            .map(|(key, ask)| {
-                let later = !matches!(ask.reason, IdentityAskReason::ActNow { .. });
-                (later, ask.opened_at, key)
-            })
-            .collect();
+        let admit = admission::Admit::in_txn(read, &txn)?;
+        let mut due: Vec<(bool, u64, [u8; 32])> = Vec::new();
+        for (key, ask) in ASKS.scan(&self.store, &txn)? {
+            if ask.escalated_at.is_some() || ask.kept_separate_at.is_some() || ask.retry_at > now {
+                continue;
+            }
+            let later = !matches!(ask.reason, IdentityAskReason::ActNow { .. });
+            let opened_at = ask.opened_at;
+            if admission::admitted_in_txn(self, &admit, &txn, ask)?.is_some_and(|seen| seen.whole())
+            {
+                due.push((later, opened_at, key));
+            }
+        }
         due.sort_unstable();
         Ok(due
             .into_iter()
@@ -1317,22 +1221,33 @@ impl Vault {
             .collect())
     }
 
-    /// Every open ask, as the owner reads it.
-    pub fn identity_asks(&self) -> Result<Vec<IdentityAskView>> {
+    /// Every open ask `read` reads, as the owner reads it: only the
+    /// candidates it reads are options (FIX 8711).
+    pub fn identity_asks(&self, read: &ScopedRead<'_>) -> Result<Vec<IdentityAskView>> {
         let txn = self.store.env.read_txn()?;
-        ASKS.scan(&self.store, &txn)?
-            .iter()
-            .map(|(key, ask)| view_in_txn(self, &txn, key, ask))
-            .collect()
+        let admit = admission::Admit::in_txn(read, &txn)?;
+        let mut views = Vec::new();
+        for (key, ask) in ASKS.scan(&self.store, &txn)? {
+            if let Some(seen) = admission::admitted_in_txn(self, &admit, &txn, ask)? {
+                views.push(view_in_txn(self, &txn, &key, &seen.ask)?);
+            }
+        }
+        Ok(views)
     }
 
-    /// One open ask's choice card, worded by `copy`.
-    pub fn identity_card(&self, ask: &str, copy: &IdentityCardCopy) -> Result<GeneratedUiCard> {
+    /// One open ask's choice card, worded by `copy`, with a button for each
+    /// candidate `read` reads; an ask it does not read is no such open ask.
+    pub fn identity_card(
+        &self,
+        read: &ScopedRead<'_>,
+        ask: &str,
+        copy: &IdentityCardCopy,
+    ) -> Result<GeneratedUiCard> {
         let key = parse_key(ask).ok_or_else(|| invalid("the ask is 64 hex"))?;
         let txn = self.store.env.read_txn()?;
-        let held = ASKS
-            .get(&self.store, &txn, &key)?
-            .ok_or_else(|| invalid("no such open ask"))?;
+        let held = admission::open_ask_in_txn(self, read, &txn, &key, false)?
+            .ok_or_else(|| invalid("no such open ask"))?
+            .ask;
         let options = options_in_txn(self, &txn, &held)?;
         card(&key, &held, &options, copy)
     }
@@ -1351,17 +1266,25 @@ impl Vault {
     /// move it.
     pub fn decide_identity_ask(
         &self,
+        read: &ScopedRead<'_>,
         decisions: &IdentityDecisions<'_>,
         ask: &str,
         now: u64,
     ) -> Result<IdentityRuling> {
         let key = parse_key(ask).ok_or_else(|| invalid("the ask is 64 hex"))?;
         let txn = self.store.env.read_txn()?;
-        let Some(held) = ASKS.get(&self.store, &txn, &key)? else {
+        // Only an ask `read` reads whole is decided, from the hint words it
+        // reads (FIX 8711); any other is gone to it and waits for the owner.
+        let Some(admitted) = admission::open_ask_in_txn(self, read, &txn, &key, true)? else {
             return Ok(IdentityRuling::Gone);
         };
+        let admission::AdmittedIdentityAsk {
+            stored,
+            ask: held,
+            hints,
+            evidence,
+        } = admitted;
         let options = options_in_txn(self, &txn, &held)?;
-        let hints = hints_in_txn(self, &txn, held.kind, &held.name)?;
         drop(txn);
         let listed = listed_candidates(&held);
         // Each candidate as its id, its option when listed, its row and the
@@ -1462,7 +1385,7 @@ impl Vault {
             match decisions.ladder.run(
                 &question,
                 decisions.principal,
-                &[held.turn, held.message],
+                &evidence,
                 &state,
                 decisions.dial,
                 &decisions.bands,
@@ -1493,10 +1416,13 @@ impl Vault {
             None
         };
         self.with_write_txn_grouped(|txn| {
-            let Some(current) = ASKS.get(&self.store, txn, &key)? else {
+            // Against the ask as stored, not as `read` saw it, and only while
+            // `read` still reads it whole under its policy now.
+            let Some(current) = admission::open_ask_in_txn(self, read, txn, &key, true)? else {
                 return Ok(IdentityRuling::Gone);
             };
-            if current.candidates != held.candidates
+            let current = current.stored;
+            if current.candidates != stored.candidates
                 || current.escalated_at.is_some()
                 || current.kept_separate_at.is_some()
             {
@@ -1529,25 +1455,40 @@ impl Vault {
 
     /// Sends each ask that waits on the person again where its name was
     /// said since: one more inbox Ask in the conversation of the newest turn
-    /// that mentions the name. Returns how many went.
-    pub fn resurface_identity_asks(&self, now: u64) -> Result<usize> {
+    /// that mentions the name. Returns how many went. Only asks and newer
+    /// mentions `read` reads count (FIX 8711).
+    pub fn resurface_identity_asks(&self, read: &ScopedRead<'_>, now: u64) -> Result<usize> {
         let waiting: Vec<([u8; 32], IdentityAsk)> = {
             let txn = self.store.env.read_txn()?;
-            ASKS.scan(&self.store, &txn)?
-                .into_iter()
-                .filter(|(_, ask)| ask.escalated_at.is_some())
-                .collect()
+            let admit = admission::Admit::in_txn(read, &txn)?;
+            let mut waiting = Vec::new();
+            for (key, ask) in ASKS.scan(&self.store, &txn)? {
+                if ask.escalated_at.is_some()
+                    && let Some(seen) = admission::admitted_in_txn(self, &admit, &txn, ask)?
+                {
+                    waiting.push((key, seen.stored));
+                }
+            }
+            waiting
         };
         let mut sent = 0;
         for (key, ask) in waiting {
             let since = ask.surfaced_turn.unwrap_or(ask.turn);
-            let Some(newest) = self
-                .tagged_mentions_of_name(ask.kind, &ask.name)?
-                .into_iter()
-                .map(|hit| hit.turn)
-                .filter(|turn| *turn > since)
-                .max()
-            else {
+            // The hits open their own read; the lane judges them in another.
+            let hits = self.tagged_mentions_of_name(ask.kind, &ask.name)?;
+            let txn = self.store.env.read_txn()?;
+            let admit = admission::Admit::in_txn(read, &txn)?;
+            let mut newest = None;
+            for hit in hits {
+                if hit.turn > since
+                    && newest.is_none_or(|held| hit.turn > held)
+                    && admit.reads_source(&txn, &hit.turn, &hit.mention.message)?
+                {
+                    newest = Some(hit.turn);
+                }
+            }
+            drop(txn);
+            let Some(newest) = newest else {
                 continue;
             };
             let moved = self.with_write_txn_grouped(|txn| {
@@ -1571,20 +1512,25 @@ impl Vault {
     /// [`Self::answer_identity_ask_as`] on this install's own surface.
     pub fn answer_identity_ask(
         &self,
+        read: &ScopedRead<'_>,
         owner: &AuthenticatedOwner,
         ask: &str,
         choice: &str,
         now: u64,
     ) -> Result<IdentitySettled> {
-        self.answer_identity_ask_as(owner, ActSurface::ThisInstall, ask, choice, now)
+        self.answer_identity_ask_as(read, owner, ActSurface::ThisInstall, ask, choice, now)
     }
 
     /// The owner's answer to one open ask, from the needs-you strip, which
     /// reached this install from `surface` (audit only). A someone-new
     /// answer's distinct assertions are his decision, bound to the ask (mesh
     /// PR2-topology): their seals carry his act and hold on every replica.
+    /// `read` is the lane his request reads under (FIX 8711): an ask it does
+    /// not read is no such open ask, and a candidate it does not read is no
+    /// option.
     pub fn answer_identity_ask_as(
         &self,
+        read: &ScopedRead<'_>,
         owner: &AuthenticatedOwner,
         surface: ActSurface,
         ask: &str,
@@ -1596,11 +1542,11 @@ impl Vault {
             .answering(ask_answer_id(&key)?);
         self.with_write_txn_grouped(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            let held = ASKS
-                .get(&self.store, txn, &key)?
+            let seen = admission::open_ask_in_txn(self, read, txn, &key, false)?
                 .ok_or_else(|| invalid("no such open ask"))?;
-            let answer = parse_choice(&held, choice)
+            let answer = parse_choice(&seen.ask, choice)
                 .ok_or_else(|| invalid("not one of the ask's options"))?;
+            let held = seen.stored;
             let entity = settle_ask_in_txn(
                 self,
                 txn,
@@ -1638,6 +1584,10 @@ impl Memory<'_> {
     ) -> MemoryResult<IdentitySettled> {
         let key = parse_key(&input.ask)
             .ok_or_else(|| MemoryError::bad_request("ask is 64 hex: an open identity ask"))?;
+        // The caller's own lane (FIX 8711), opened before the write: an ask
+        // it does not read is no such open ask, and a candidate it does not
+        // read is no option.
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let now = self.vault().now_recorded_at();
         let seal = match owner {
             Some(owner) => {
@@ -1670,12 +1620,12 @@ impl Memory<'_> {
                     &["Answer from the owner's own session."],
                 ));
             }
-            let held = ASKS
-                .get(&self.vault().store, txn, &key)?
+            let seen = admission::open_ask_in_txn(self.vault(), &lane, txn, &key, false)?
                 .ok_or_else(|| MemoryError::not_found("no such open identity ask"))?;
-            let answer = parse_choice(&held, &input.choice).ok_or_else(|| {
+            let answer = parse_choice(&seen.ask, &input.choice).ok_or_else(|| {
                 MemoryError::bad_request("choice is one of the ask's options or someone_new")
             })?;
+            let held = seen.stored;
             let entity = settle_ask_in_txn(
                 self.vault(),
                 txn,
@@ -1725,9 +1675,13 @@ impl Memory<'_> {
         let vault = self.vault();
         let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, name.len() as u64);
         let hits = vault.tagged_mentions_of_name(ENTITY_TYPE_PERSON, name)?;
+        // The caller's own lane (FIX 8711): a mention, candidate or hint word
+        // it does not read looks absent.
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let now = vault.now_recorded_at();
         let effect = input.effect;
         self.with_verified_actor_write_txn(|txn| {
+            let admit = admission::Admit::in_txn(&lane, txn)?;
             let mut newest: Option<&crate::tagging::MentionHit> = None;
             for hit in &hits {
                 if let Some(conversation) = &conversation
@@ -1736,7 +1690,9 @@ impl Memory<'_> {
                 {
                     continue;
                 }
-                if newest.is_none_or(|held| hit.turn > held.turn) {
+                if newest.is_none_or(|held| hit.turn > held.turn)
+                    && admit.reads_source(txn, &hit.turn, &hit.mention.message)?
+                {
                     newest = Some(hit);
                 }
             }
@@ -1745,10 +1701,14 @@ impl Memory<'_> {
             };
             let mention = &hit.mention;
             let key = ask_key(&hit.turn, &mention.message, mention.start, mention.end);
-            if let Some(mut held) = ASKS.get(&vault.store, txn, &key)? {
+            if let Some(held) = ASKS.get(&vault.store, txn, &key)? {
+                let Some(seen) = admission::admitted_in_txn(vault, &admit, txn, held)? else {
+                    return Ok(IdentityActNow::Unknown);
+                };
+                let mut held = seen.stored;
                 if held.escalated_at.is_some() {
-                    let options = options_in_txn(vault, txn, &held)?;
-                    let card = serde_json::to_value(card(&key, &held, &options, &copy)?)
+                    let options = options_in_txn(vault, txn, &seen.ask)?;
+                    let card = serde_json::to_value(card(&key, &seen.ask, &options, &copy)?)
                         .map_err(|_| invalid("choice card encoding"))?;
                     return Ok(IdentityActNow::NeedsPerson {
                         ask: key_hex(&key),
@@ -1791,16 +1751,23 @@ impl Memory<'_> {
                 now,
             )?
             else {
-                return Ok(match current.link.entities() {
-                    [entity] => IdentityActNow::Settled {
+                // One entity answers only when the lane reads it.
+                if let [entity] = current.link.entities()
+                    && admission::candidate_in_txn(vault, &admit, txn, entity)?
+                {
+                    return Ok(IdentityActNow::Settled {
                         entity: entity.to_hex(),
-                    },
-                    _ => IdentityActNow::Unknown,
-                });
+                    });
+                }
+                return Ok(IdentityActNow::Unknown);
             };
             // The hint's settle answers the agent at once, and leaves the
-            // Dreamer's receipt the owner reverts (FIX 3327).
-            if let Some(entity) = hinted_in_txn(vault, txn, &ask)? {
+            // Dreamer's receipt the owner reverts (FIX 3327): only from the
+            // candidates and hint words the lane reads, on an ask whose spans
+            // it reads.
+            if let Some(seen) = admission::admitted_in_txn(vault, &admit, txn, ask.clone())?
+                && let Some(entity) = hints::pick(&seen.hints, &seen.ask.candidates, &ask.context)
+            {
                 let entity = settle_undo::settle_in_txn(
                     vault,
                     txn,

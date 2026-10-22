@@ -29,7 +29,9 @@ use crate::{ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 
 mod action_mode_row;
+mod identity_erase;
 pub(super) use action_mode_row::{action_mode_applied_in_txn, record_action_mode_in_txn};
+pub(super) use identity_erase::erase_identity_inverses_in_txn;
 
 const APPLIED: SideTable<MaintenanceTarget, AppliedRow, Named> =
     SideTable::new(&side_table::DREAMER_MAINTENANCE_APPLIED);

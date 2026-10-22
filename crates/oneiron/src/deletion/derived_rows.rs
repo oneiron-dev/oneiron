@@ -29,6 +29,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::task_verb::erase_report_journal_in_txn,
     crate::task_verb::erase_lifecycle_receipts_in_txn,
     crate::vault_cleanup::erase_in_txn,
+    crate::dreamer_runner::maintenance::erase_source_copies_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
 ];
