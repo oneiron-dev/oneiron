@@ -181,6 +181,23 @@ impl BrowserSession {
         }
     }
 
+    /// The operand the newest receipt that typed into `target` (its live
+    /// handle, or its locator) kept (FIX 8344, 8345).
+    pub(super) fn typed_into(&self, target: &str) -> Option<TypeOperand> {
+        self.trail
+            .iter()
+            .rev()
+            .filter_map(Event::receipt)
+            .find_map(|receipt| match &receipt.action {
+                Some(ReplayAction::Type {
+                    locator, operand, ..
+                }) if locator == target || receipt.target.as_deref() == Some(target) => {
+                    Some(operand.clone())
+                }
+                _ => None,
+            })
+    }
+
     /// Keeps an effect's receipt in the history.
     pub(super) fn keep(&mut self, receipt: EffectReceipt) {
         self.trail.push(Event::Effect(Box::new(receipt)));

@@ -250,7 +250,7 @@ impl Pipe {
                 {
                     routes.remove(&id);
                 }
-                Err(BrowserError::Timeout(method.to_owned()))
+                Err(BrowserError::CallTimeout(method.to_owned()))
             }
         }
     }

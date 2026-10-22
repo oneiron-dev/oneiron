@@ -1250,6 +1250,11 @@ pub enum BrowserError {
     Navigation(String),
     #[error("timed out waiting for {0}")]
     Timeout(String),
+    /// FIX 8046: a protocol call the engine did not answer in its time (a
+    /// CDP method, a desktop driver's tool), by its name. Its code is the
+    /// timeout's own; a batch names it the protocol's clock.
+    #[error("timed out waiting for {0}")]
+    CallTimeout(String),
     #[error("browser protocol: {0}")]
     Protocol(String),
     #[error("image {0} no longer shows the page as it is; take a new screenshot")]
@@ -1436,6 +1441,14 @@ pub trait BrowserDriver: Send {
         None
     }
 
+    /// The operand the driver's newest receipt typed into `target`, a live
+    /// handle or a locator, as it kept it for a replay (CUA E7; FIX 8344,
+    /// 8345): a secret by its handle and kind, else its text. None where no
+    /// receipt typed there, or the driver keeps no history.
+    fn typed_operand(&self, _target: &str) -> Option<TypeOperand> {
+        None
+    }
+
     /// Starts recording a demonstration of the attached browser (CUA E9a):
     /// only a browser session on a Chromium guest records one; any other
     /// driver records none, and never answers an empty recording.
@@ -1582,6 +1595,12 @@ pub trait BrowserDriver: Send {
         for (index, step) in input.steps.into_iter().enumerate() {
             let counts = step.counts_for_progress();
             let name = step.name();
+            // The caller's clock is the batch's one clock (FIX 8043): past
+            // its `until_ms`, the batch hands up before the step.
+            if let Some(stop) = stop::clock_out(routine.until_ms) {
+                stop::noted(self, name, &stop);
+                return Ok(stop::stopped(self, output, index, stop, base, started));
+            }
             monitor.before(self, counts);
             // The targets this step matched by their locators.
             let mut rebindings = Vec::new();
@@ -2109,7 +2128,7 @@ impl BrowserError {
             Self::NoImage(_) => "browser_no_image",
             Self::Url(_) => "browser_url_refused",
             Self::Navigation(_) => "browser_navigation_failed",
-            Self::Timeout(_) => "browser_timeout",
+            Self::Timeout(_) | Self::CallTimeout(_) => "browser_timeout",
             Self::Protocol(_) => "browser_protocol",
             Self::StaleImage(_) => "browser_stale_image",
             Self::AskUp(_) => "routine_ask_up",

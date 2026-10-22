@@ -585,7 +585,9 @@ impl CdpDriver {
     fn observation(&mut self, base: &Base) -> Result<Observation, BrowserError> {
         let capture = match self.capture() {
             Ok(capture) => capture,
-            Err(BrowserError::Timeout(_)) => return self.timed_out(),
+            Err(BrowserError::Timeout(_) | BrowserError::CallTimeout(_)) => {
+                return self.timed_out();
+            }
             Err(error) => return Err(error),
         };
         let (url, title) = self.page_info()?;

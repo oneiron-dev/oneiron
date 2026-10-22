@@ -36,6 +36,8 @@ mod live_run;
 mod secret_slots;
 mod targets;
 
+pub(crate) use secret_slots::handle_form;
+
 pub use admission::{
     AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal,
     WorkflowSeed, validate_replay_args,

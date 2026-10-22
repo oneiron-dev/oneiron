@@ -136,12 +136,16 @@ impl BrowserSession {
             Err(Halt { stage, error }) => return Ok(no_fresh_guest(stage, &error)),
         };
         fresh.policy = std::mem::take(&mut self.policy);
+        // The replay's sends run under this session's presses: its grants'
+        // live read, and the batches already paid (FIX 4615).
+        fresh.presses = std::mem::take(&mut self.presses);
         let mut decider = fresh.decider.take();
         let output = match decider.as_deref_mut() {
             Some(decider) => replay_and_file(&mut fresh, decider, library, solved, guest),
             None => replay_and_file(&mut fresh, &mut NoDecider, library, solved, guest),
         };
         self.policy = std::mem::take(&mut fresh.policy);
+        self.presses = std::mem::take(&mut fresh.presses);
         // A fresh guest abandoned under its replay lands its own receipt,
         // however the replay ended.
         if fresh.abandoned()

@@ -129,13 +129,32 @@ impl FieldWriter for RunFieldWriter {
         let call = format!("field-writer:{}", oneiron::EntityId::now().to_hex());
         // Sent once, on the server's runtime while this thread waits.
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        self.runtime.spawn(async move {
+        let sent = self.runtime.spawn(async move {
             let _ = sender.send(ladder.generate_served(&line, request, None).await);
         });
-        let (response, served) = receiver
-            .recv()
-            .map_err(|_| FieldWriteError::Failed("the writer's call did not answer".to_owned()))?
-            .map_err(|error| FieldWriteError::Failed(error.to_string()))?;
+        let unanswered = || FieldWriteError::Failed("the writer's call did not answer".to_owned());
+        // The subgoal's one clock ends the call itself, not only this wait
+        // (FIX 8903); with none set, the call answers in its own time.
+        let answered = match ask.until_ms {
+            Some(until) => {
+                let left = until.saturating_sub(now_ms());
+                receiver
+                    .recv_timeout(std::time::Duration::from_millis(left))
+                    .map_err(|error| match error {
+                        std::sync::mpsc::RecvTimeoutError::Timeout => {
+                            sent.abort();
+                            FieldWriteError::OutOfTime(
+                                "the subgoal's clock (until_ms) ran out before the writer answered"
+                                    .to_owned(),
+                            )
+                        }
+                        std::sync::mpsc::RecvTimeoutError::Disconnected => unanswered(),
+                    })
+            }
+            None => receiver.recv().map_err(|_| unanswered()),
+        };
+        let (response, served) =
+            answered?.map_err(|error| FieldWriteError::Failed(error.to_string()))?;
         let text = response
             .message
             .content
@@ -210,6 +229,15 @@ fn writer_request(
     })
 }
 
+/// Now, in Unix milliseconds: the clock a subgoal's `until_ms` reads.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 /// A Fill's text check (CUA E6): one `ai.verdict` of the run's caller, a
 /// yes/no (`Noul`) outside the routine ladder (`routine: false`), through
 /// the same door the run's routine steps take. Only an explicit YES is yes;
@@ -230,7 +258,8 @@ pub(super) fn check_text(
         routine: false,
         image: None,
         misses: 0,
-        until_ms: None,
+        // The subgoal's one clock (FIX 8903).
+        until_ms: check.until_ms,
     };
     let input = serde_json::to_value(&request).map_err(|e| BrowserError::Decider(e.to_string()))?;
     let output = decider

@@ -107,7 +107,7 @@ use crate::{
     Rebound, ReceiptEvidenceSink, ReplayAction, RoutineDecider, Row, ScreenshotInput,
     ScreenshotOutput, ScreenshotTrigger, SecretCustody, SecretKind, SelectInput, SendPolicy,
     StepStop, StoragePhase, SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover,
-    TakeoverRecord, TextProvenance, TypeInput, ViewInput, WaitForInput, WaitForOutput,
+    TakeoverRecord, TextProvenance, TypeInput, TypeOperand, ViewInput, WaitForInput, WaitForOutput,
     WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
@@ -1215,6 +1215,10 @@ impl BrowserDriver for BrowserSession {
 
     fn sent_receipt(&mut self) -> Option<EffectReceipt> {
         self.unread.take()
+    }
+
+    fn typed_operand(&self, target: &str) -> Option<TypeOperand> {
+        self.typed_into(target)
     }
 
     fn demonstration_start(

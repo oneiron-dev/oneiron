@@ -301,7 +301,7 @@ fn receive(inbound: &Receiver<Event>, deadline: Instant) -> Result<Vec<u8>, Brow
         Ok(Event::Ended) | Err(RecvTimeoutError::Disconnected) => {
             Err(refused("the guest ended first"))
         }
-        Err(RecvTimeoutError::Timeout) => Err(BrowserError::Timeout(
+        Err(RecvTimeoutError::Timeout) => Err(BrowserError::CallTimeout(
             "lightpanda's CDP WebSocket".to_owned(),
         )),
     }

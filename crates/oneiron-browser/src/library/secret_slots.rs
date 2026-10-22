@@ -50,7 +50,7 @@ pub struct SecretParam {
 
 /// Whether `text` names a run-bound handle, bare (`sc12`, `sc12:ab`) or as
 /// a row shows it (`[secret sc12]`, a card's `…1234 [secret sc12]`).
-fn handle_form(text: &str) -> bool {
+pub(crate) fn handle_form(text: &str) -> bool {
     let text = text.trim();
     let bare = match text.split_once("[secret ") {
         Some((_, rest)) => match rest.strip_suffix(']') {
@@ -120,7 +120,13 @@ impl Targets {
         steps: &[BatchStep],
         checks: &[ExpectInput],
     ) -> Self {
-        let kind = |target: &String| -> Option<SecretKind> { driver.handle_info(target)?.secret };
+        // The handle's record, else what the session's receipts kept of the
+        // act that typed there (FIX 8344): a record gone, or a row the
+        // solved page no longer shows, still slots the secret it took.
+        let kind = |target: &String| -> Option<SecretKind> {
+            let held = driver.handle_info(target).and_then(|info| info.secret);
+            held.or_else(|| operand_kind(&driver.typed_operand(target)?))
+        };
         Self {
             steps: steps
                 .iter()
@@ -153,18 +159,24 @@ impl Targets {
             replay_args,
         };
         for (step, held) in program.steps.iter_mut().zip(self.steps) {
-            let target = held.or_else(|| shown_kind(rows, step));
+            let target = held.or_else(|| shown_kind(driver, rows, step));
             match step {
                 BatchStep::Type { text, secret, .. } => slots.arm(secret, text, target)?,
                 BatchStep::Expect { value, secret, .. } => slots.arm(secret, value, target)?,
                 BatchStep::Decide(step) => slots.arm(&mut step.secret, &mut step.text, target)?,
+                // A Fill takes a secret slot as a type does (FIX 8900).
+                BatchStep::Fill { field, .. } => {
+                    slots.arm(&mut field.secret, &mut field.supplied, target)?;
+                }
                 _ => {}
             }
+            stable_names(step);
         }
         for (check, held) in program.postcondition.iter_mut().zip(self.checks) {
             let target = held
                 .or_else(|| checked_kind(rows, check.target.as_ref(), &check.role, &check.name));
             slots.arm(&mut check.secret, &mut check.value, target)?;
+            stable_name(&mut check.name);
         }
         Ok(())
     }
@@ -353,10 +365,67 @@ fn row_kind(row: &Row) -> Option<SecretKind> {
     row.secret.as_ref().map(|secret| secret.kind)
 }
 
-/// The kind of secret the solved page shows where `step` acts: its type's
-/// target, its check's row, or any of its routine step's candidates.
+/// The kind of secret an act's kept operand is: its handle's or its
+/// withheld secret's; none for text the classifier called none.
 #[cfg(feature = "driver")]
-fn shown_kind(rows: &[Row], step: &BatchStep) -> Option<SecretKind> {
+fn operand_kind(operand: &TypeOperand) -> Option<SecretKind> {
+    match operand {
+        TypeOperand::Secret { kind, .. } => Some(*kind),
+        TypeOperand::Withheld { kind, .. } => *kind,
+        TypeOperand::Literal { .. } => None,
+    }
+}
+
+/// The run-local handle a row's name shows, cut from a match text a
+/// program keeps (FIX 8343): the text up to its first `[secret ` display,
+/// that display's opening kept, so it still names a secret's row as each
+/// run shows it (a name matches as a substring), with no handle that
+/// dies with this run.
+#[cfg(feature = "driver")]
+fn stable_name(name: &mut Option<String>) {
+    let Some(text) = name.as_mut() else {
+        return;
+    };
+    let mut from = 0;
+    while let Some(at) = text[from..].find(SECRET_DISPLAY).map(|at| at + from) {
+        let open = at + SECRET_DISPLAY.len();
+        let shown = text[open..]
+            .find(']')
+            .map(|close| &text[at..=open + close])
+            .filter(|shown| handle_form(shown));
+        if shown.is_some() {
+            text.truncate(open);
+            return;
+        }
+        from = open;
+    }
+}
+
+/// How a row shows a secret's handle: `[secret sc12]`.
+#[cfg(feature = "driver")]
+const SECRET_DISPLAY: &str = "[secret ";
+
+/// A step's role/name match texts, as [`stable_name`] keeps them.
+#[cfg(feature = "driver")]
+fn stable_names(step: &mut BatchStep) {
+    match step {
+        BatchStep::WaitFor { name, .. } | BatchStep::Expect { name, .. } => stable_name(name),
+        BatchStep::Decide(step) => stable_name(&mut step.name),
+        _ => {}
+    }
+}
+
+/// The kind of secret the solved page shows where `step` acts: its type's
+/// target, its check's row, or its routine step's candidates. A routine
+/// step's text that the session's receipts show was typed as text into
+/// one of its candidates is no secret, whatever another candidate holds
+/// (FIX 8345).
+#[cfg(feature = "driver")]
+fn shown_kind<D: BrowserDriver + ?Sized>(
+    driver: &D,
+    rows: &[Row],
+    step: &BatchStep,
+) -> Option<SecretKind> {
     match step {
         BatchStep::Type { target, .. } => named(rows, target).and_then(row_kind),
         BatchStep::Expect {
@@ -368,7 +437,8 @@ fn shown_kind(rows: &[Row], step: &BatchStep) -> Option<SecretKind> {
                 name: step.name.clone(),
                 cursor: None,
             };
-            rows.iter()
+            let candidates: Vec<&Row> = rows
+                .iter()
                 .filter(|row| {
                     if step.targets.is_empty() {
                         query.matches(row)
@@ -378,7 +448,19 @@ fn shown_kind(rows: &[Row], step: &BatchStep) -> Option<SecretKind> {
                             .any(|target| *target == row.locator || *target == row.target)
                     }
                 })
-                .find_map(row_kind)
+                .collect();
+            let typed_as_text = step.text.as_ref().is_some_and(|text| {
+                candidates.iter().any(|row| {
+                    matches!(
+                        driver.typed_operand(&row.locator),
+                        Some(TypeOperand::Literal { text: typed }) if typed == *text
+                    )
+                })
+            });
+            if typed_as_text {
+                return None;
+            }
+            candidates.into_iter().find_map(row_kind)
         }
         _ => None,
     }
