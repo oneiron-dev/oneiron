@@ -235,6 +235,49 @@ pub(in crate::repo_mutation) fn require_received_files_source(
     require_received_files_source_in_txn(vault, &txn, request)
 }
 
+/// A masked copy's bundle's uncleared typed cause, in `txn` (FIX 7608
+/// 2b-ii-B2): `None` for every other bundle, read with no graph or grant
+/// IO.
+///
+/// # Errors
+/// A store failure, or a record that does not decode.
+pub(in crate::repo_mutation) fn projected_hold_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    row: &RepoProposal,
+) -> Result<Option<&'static str>> {
+    let Some(candidate) = row.received_candidate() else {
+        return Ok(None);
+    };
+    Ok(vault
+        .projected_candidate_clearance_in_txn(txn, row.provenance_claim, candidate)?
+        .map(|cause| cause.as_str()))
+}
+
+/// The received files' effect admission, recovered execution included:
+/// the source proof, then a masked copy's clearance (its uncleared typed
+/// cause refuses the effect, its bundle kept). An ordinary bundle is
+/// judged exactly as by [`require_received_files_source`].
+///
+/// # Errors
+/// As [`require_received_files_source_in_txn`], or the cause.
+pub(in crate::repo_mutation) fn require_received_files_execution(
+    vault: &Vault,
+    request: &RepoMutationRequest,
+) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    require_received_files_source_in_txn(vault, &txn, request)?;
+    let (RepoMutationOperation::ReceivedFiles { candidate, .. }, Some(provenance)) =
+        (&request.operation, request.provenance_claim_id)
+    else {
+        return Ok(());
+    };
+    match vault.projected_candidate_clearance_in_txn(&txn, provenance, *candidate)? {
+        Some(cause) => Err(invalid(cause.as_str())),
+        None => Ok(()),
+    }
+}
+
 /// Lowers every file of the received bundle `row` into its document, in
 /// ONE grouped ingress under each file's deterministic operation: text
 /// and metadata together, a removal keeping its text and freeing its path,
@@ -248,6 +291,14 @@ pub(in crate::repo_mutation) fn land_received_files_documents(
     vault: &Vault,
     row: &RepoProposal,
 ) -> Result<()> {
+    // A masked copy's bundle lands only once its typed cause is cleared
+    // (FIX 7608 2b-ii-B2); an ordinary one is judged as before.
+    if let Some(cause) = {
+        let txn = vault.store.env.read_txn()?;
+        projected_hold_in_txn(vault, &txn, row)?
+    } {
+        return Err(invalid(cause));
+    }
     let repo = RepoRef::parse(&row.repo)?;
     let before = vault.mount_repo_ref(&repo, RepoMountRef::Fork(row.pre_action_fork_hash))?;
     let scope = super::oplog::repo_mutation_repo_key(&repo);

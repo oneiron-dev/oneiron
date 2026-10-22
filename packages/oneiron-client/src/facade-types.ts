@@ -4561,7 +4561,7 @@ export type ReceivedFileOperation = { operation_id: string; actor_id: string; se
 /** `oneiron::origin::document_candidate_types::CodePushCandidateState` */
 export type CodePushCandidateState = "pending" | "held_base" | "held_predecessor" | "held_review_policy" | "held_shape" | "proposed" | "rejected" | "queued" | "quarantined" | "rolled_back" | "landed" | "sealed"
 /** `oneiron::origin::document_candidate_types::CodePushCandidateView` */
-export type CodePushCandidateView = { candidate: EntityId; state: CodePushCandidateState; reason?: string | null; base_revision?: EntityId | null; fork_session?: EntityId | null; proposal_refs: EntityId[]; batch_refs: string[]; check_work_refs: string[]; revision_refs: EntityId[] }
+export type CodePushCandidateView = { candidate: EntityId; state: CodePushCandidateState; reason?: string | null; base_revision?: EntityId | null; fork_session?: EntityId | null; proposal_refs: EntityId[]; batch_refs: string[]; check_work_refs: string[]; revision_refs: EntityId[]; detail?: string | null }
 /** `oneiron::memory::origin_doors::workbench_types::CodePushIngressView` */
 export type CodePushIngressView = { repo: EntityId; provenance: EntityId; ref_name: string; old_oid?: string | null; new_oid?: string | null; received_at: number; published: boolean; publication?: EntityId | null; operations: ReceivedFileOperation[]; candidate?: CodePushCandidateView | null }
 /** `oneiron::memory::merge_queue_doors::checker_types::MergeQueueCheckWorkKind` */

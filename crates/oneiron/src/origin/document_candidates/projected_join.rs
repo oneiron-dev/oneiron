@@ -12,10 +12,10 @@ use super::super::document_candidate_types::{
     CodePushCandidate, ReceivedCandidateRef, ReceivedRefIngress,
 };
 use super::super::document_ingress::{CODE_OPERATIONS, ProvenanceRefKey};
+use super::CandidateQueue;
 use super::projected_source::{
     record_projected_translation_in_txn, require_projected_candidate_source_in_txn,
 };
-use super::CandidateQueue;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
 use crate::origin::lfs::lfs_repo_id;
@@ -81,7 +81,8 @@ impl Vault {
         let Some(operation) = receive_operation_in_txn(self, txn, provenance)? else {
             return Ok(None);
         };
-        let Some(ingress) = RepoProjectionClaim::load_ingress_in_txn(self, txn, &graph, &operation)?
+        let Some(ingress) =
+            RepoProjectionClaim::load_ingress_in_txn(self, txn, &graph, &operation)?
         else {
             return Ok(None);
         };
@@ -90,13 +91,33 @@ impl Vault {
         {
             return Ok(None);
         }
-        let ingress = RepoProjectionClaim::of(graph, RepoProjectionRecord::Ingress(ingress)).id()?;
+        let ingress =
+            RepoProjectionClaim::of(graph, RepoProjectionRecord::Ingress(ingress)).id()?;
         Ok(Some(ProjectedRowSource {
             graph,
             canonical_store,
             operation,
             ingress,
         }))
+    }
+
+    /// Whether `row`, received into a masked copy's private ingress,
+    /// stands for the canonical store whose identity is `canonical`, by its
+    /// projection join in `txn` (the owner workbench's cross-store read).
+    ///
+    /// # Errors
+    /// A store failure, or a record that does not decode.
+    pub(crate) fn received_ingress_targets_canonical_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        row: &ReceivedRefIngress,
+        provenance: EntityId,
+        canonical: &str,
+    ) -> Result<bool> {
+        let store = lfs_repo_id(canonical)?;
+        Ok(self
+            .projected_row_source_in_txn(txn, row, provenance, store)?
+            .is_some())
     }
 
     /// The identities of every private ingress seeded for the canonical
@@ -233,8 +254,8 @@ impl Vault {
         digest: [u8; 32],
         source: &ProjectedRowSource,
     ) -> Result<bool> {
-        let decided =
-            self.decide_projected_candidate(wire, repo, queue, provenance, row, id, digest, source)?;
+        let decided = self
+            .decide_projected_candidate(wire, repo, queue, provenance, row, id, digest, source)?;
         let Some(decided) = decided else {
             return Ok(false);
         };
@@ -278,8 +299,9 @@ impl Vault {
         let (Some(pins), Some(resolved)) = (&candidate.projected, &candidate.resolved) else {
             return Ok(());
         };
-        let operation = receive_operation_in_txn(self, wtxn, provenance)?
-            .ok_or(Error::ConcurrentWrite("a projected candidate's receive is gone"))?;
+        let operation = receive_operation_in_txn(self, wtxn, provenance)?.ok_or(
+            Error::ConcurrentWrite("a projected candidate's receive is gone"),
+        )?;
         record_projected_translation_in_txn(
             self,
             wtxn,
@@ -295,7 +317,9 @@ impl Vault {
             candidate.candidate,
             operation,
         )? {
-            return Err(Error::ConcurrentWrite("a projected candidate source changed"));
+            return Err(Error::ConcurrentWrite(
+                "a projected candidate source changed",
+            ));
         }
         Ok(())
     }

@@ -14,7 +14,11 @@ use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWirePlan, GitWireRepo};
 /// A tree's Git mode.
 const MODE_TREE: u32 = 0o040_000;
 
-pub(super) fn commit_tree(wire: &GitWire<'_>, repo: &GitWireRepo, commit: &GitOid) -> Result<GitOid> {
+pub(super) fn commit_tree(
+    wire: &GitWire<'_>,
+    repo: &GitWireRepo,
+    commit: &GitOid,
+) -> Result<GitOid> {
     wire.commit_trees(repo, std::slice::from_ref(commit))?
         .remove(commit)
         .ok_or(Error::EntityNotFound)
@@ -58,7 +62,12 @@ pub(super) fn file_input<'f>(
     Ok(Some((GitOid::parse_hex(oid.clone())?, bytes)))
 }
 
-pub(super) fn write_blob(wire: &GitWire<'_>, repo: &GitWireRepo, bytes: &[u8], now: u64) -> Result<GitOid> {
+pub(super) fn write_blob(
+    wire: &GitWire<'_>,
+    repo: &GitWireRepo,
+    bytes: &[u8],
+    now: u64,
+) -> Result<GitOid> {
     let mut plan = GitWirePlan::new();
     plan.write_blob(bytes.to_vec())?;
     wire.write_objects(repo, &plan, now)?

@@ -48,14 +48,18 @@ use crate::origin::secret_projection::clearance::RepoProjectionHoldCause;
 use crate::origin::secret_projection::edit::RepoProjectedFileCopy;
 use crate::origin::secret_projection::git::projection_ingress_dir;
 use crate::repo_mutation::proposal::RepoProposedFile;
-use crate::repo_mutation::{ReceivedFilesProposalInput, received_file_operation, received_proposal_id};
+use crate::repo_mutation::{
+    ReceivedFilesProposalInput, received_file_operation, received_proposal_id,
+};
 use crate::secret_custody::KeyPlaces;
 use crate::{EntityId, Vault};
 
 /// A projected decision: the prepared attachment, or a hold with the pins
 /// it keeps (none when no translation was reached).
-pub(super) type ProjectedDecision =
-    std::result::Result<PreparedPushCandidate, (CodePushCandidateHold, Option<RepoProjectedCandidatePins>)>;
+pub(super) type ProjectedDecision = std::result::Result<
+    PreparedPushCandidate,
+    (CodePushCandidateHold, Option<RepoProjectedCandidatePins>),
+>;
 
 fn held(state: CodePushCandidateState, reason: &str) -> Result<Option<ProjectedDecision>> {
     Ok(Some(Err((
@@ -190,7 +194,10 @@ impl Vault {
             .collect();
         let mut operations = BTreeMap::new();
         for operation in &row.operations {
-            if operations.insert(operation.path.as_str(), operation).is_some() {
+            if operations
+                .insert(operation.path.as_str(), operation)
+                .is_some()
+            {
                 return held(HeldShape, "source_operation_mismatch");
             }
         }
@@ -200,8 +207,11 @@ impl Vault {
         for (path, operation) in &operations {
             let before = tree_blob(&copy_entries, &copy_files, path);
             let after = tree_blob(&new_entries, &new_files, path);
-            if !super::files::validate_received_operation(operation, before.as_ref(), after.as_ref())
-            {
+            if !super::files::validate_received_operation(
+                operation,
+                before.as_ref(),
+                after.as_ref(),
+            ) {
                 return held(HeldShape, "source_operation_mismatch");
             }
         }
@@ -326,9 +336,9 @@ impl Vault {
                 ProjectedCanonicalAfter::KeepOriginal => original_files
                     .get(path)
                     .map(|original| original.content.clone()),
-                ProjectedCanonicalAfter::Held(_) => {
-                    new_files.get(path).map(|submitted| submitted.content.clone())
-                }
+                ProjectedCanonicalAfter::Held(_) => new_files
+                    .get(path)
+                    .map(|submitted| submitted.content.clone()),
             };
             // Present at the submitted mode while the push keeps the path.
             let after = new_entries
@@ -345,7 +355,9 @@ impl Vault {
             blob_ids.insert(path.clone(), entry);
         }
         let target = rebuild_tree(wire, canonical, Some(&original_tree), &blob_ids, now, true)?
-            .ok_or(Error::InvariantViolation("a canonical target tree is written"))?;
+            .ok_or(Error::InvariantViolation(
+                "a canonical target tree is written",
+            ))?;
         pins.canonical_target_tree = Some(target.as_str().to_owned());
         for pin in &mut pins.files {
             pin.canonical_blob = blob_ids
@@ -359,7 +371,9 @@ impl Vault {
         for (path, after) in &after_files {
             let operation = operations
                 .get(path.as_str())
-                .ok_or(Error::InvariantViolation("a translated file has its operation"))?;
+                .ok_or(Error::InvariantViolation(
+                    "a translated file has its operation",
+                ))?;
             let before = tree_blob(&original_entries, &original_files, path);
             let after_blob = match (after, blob_ids.get(path).and_then(|entry| entry.as_ref())) {
                 (Some((bytes, mode)), Some((oid, _))) => Some(CodeTreeBlob {

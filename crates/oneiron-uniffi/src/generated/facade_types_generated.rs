@@ -34841,6 +34841,8 @@ pub struct CodePushCandidateView {
     pub check_work_refs: Vec<String>,
     #[serde(rename = "revision_refs")]
     pub revision_refs: Vec<String>,
+    #[serde(rename = "detail", default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// `oneiron::memory::origin_doors::workbench_types::CodePushIngressView`.

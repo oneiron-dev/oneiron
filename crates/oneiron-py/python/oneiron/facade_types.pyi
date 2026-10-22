@@ -11228,6 +11228,7 @@ class CodePushCandidateView(TypedDict):
     batch_refs: list[str]
     check_work_refs: list[str]
     revision_refs: list[EntityId]
+    detail: NotRequired[str | None]
 class CodePushIngressView(TypedDict):
     repo: EntityId
     provenance: EntityId
