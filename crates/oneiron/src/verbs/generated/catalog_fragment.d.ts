@@ -899,7 +899,7 @@ declare namespace Sdk {
   type WeaveItemCorrectionView = { label_ref: string; item: string; item_ref: string; project_ref?: string | null; actor_ref: string; recorded_at: number };
   type WeaveEnqueueRequest = { skill_ref: string; subject_ref: string; evidence_ref: string };
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
-  type WeaveReaderKind = "person" | "owner" | "agent";
+  type WeaveReaderKind = "person" | "owner" | "agent" | "admin";
   type WeaveReaderRef = { kind: WeaveReaderKind; reader_ref: string };
   type WeaveDigestCadence = "daily" | "weekly";
   type WeaveScheduleHold = { until: number; because?: string | null };
