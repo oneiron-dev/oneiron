@@ -85,6 +85,13 @@ impl HostRootProfile {
                 enrolled: false,
                 wrong_root,
             },
+            // No profile stood and the given root is not the settled one:
+            // nothing was enrolled, and the open stands under the settled
+            // root (FIX 8120).
+            LocalOpenProfile::UnprofiledWrongRoot => Self {
+                enrolled: false,
+                wrong_root: true,
+            },
             LocalOpenProfile::Skipped => Self {
                 enrolled: false,
                 wrong_root: false,
