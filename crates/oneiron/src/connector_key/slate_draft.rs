@@ -10,6 +10,7 @@ use super::slate::{
     SlateRow, SlateToolManifest, declaration_expands, elicitation_expands, new_slate,
     read_slate_in_store_txn, scan_slates_in_txn,
 };
+use super::slate_revision::SlateRevisionCause;
 use crate::error::{Error, Result};
 use crate::llm::decision::catalogue::CONNECTOR_SLATE_DRAFT;
 use crate::llm::decision::{
@@ -505,7 +506,8 @@ impl Vault {
             Some(&prior),
             Some(prior_id),
             reask.clone(),
-        )?;
+        )?
+        .with_cause(SlateRevisionCause::ManifestDrift);
         Ok(ConnectorSlateDelta {
             slate_id: self.put_new_slate(slate)?,
             reask,

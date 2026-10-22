@@ -854,6 +854,21 @@ impl OneironClient {
                 "vault.connectors.slates.narrow" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorSlateNarrowView,
                 >(client, verb, &input),
+                "vault.connectors.slates.scope_outcome" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorScopeOutcomeView,
+                >(client, verb, &input),
+                "vault.connectors.slates.revision_offers" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorSlateRevisionOffersView,
+                >(client, verb, &input),
+                "vault.connectors.slates.defer_revision" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorRevisionSnoozeView,
+                >(client, verb, &input),
+                "vault.connectors.slates.accept_revision" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorSlateRevisionAcceptedView,
+                >(client, verb, &input),
+                "vault.connectors.slates.reask_issuer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorCredentialBindingView,
+                >(client, verb, &input),
                 "vault.connectors.subscriptions.put" => remote_agent_verb_output::<
                     oneiron::connector_key::ChannelMessageSubscription,
                 >(client, verb, &input),
@@ -6887,6 +6902,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.connectors.slates.narrow", value)
+    }
+    pub fn vault_connectors_slates_scope_outcome(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorScopeOutcomeRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorScopeOutcomeView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.slates.scope_outcome", value)
+    }
+    pub fn vault_connectors_slates_revision_offers(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorSlateRevisionOffersRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorSlateRevisionOffersView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.slates.revision_offers", value)
+    }
+    pub fn vault_connectors_slates_defer_revision(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorSlateRevisionDeferRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorRevisionSnoozeView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.slates.defer_revision", value)
+    }
+    pub fn vault_connectors_slates_accept_revision(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorSlateRevisionAcceptRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorSlateRevisionAcceptedView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.slates.accept_revision", value)
+    }
+    pub fn vault_connectors_slates_reask_issuer(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorIssuerReaskRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorCredentialBindingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.slates.reask_issuer", value)
     }
     pub fn vault_connectors_subscriptions_put(
         &self,

@@ -300,6 +300,22 @@ pub(crate) fn record_ramp_outcome_in_txn(
     Ok(())
 }
 
+/// [`record_outcome_for_scope_in_txn`] for an owner door's ruling inside the
+/// caller's write txn, which has already proved the owner: the ruling lands
+/// as its Door witness row first. For a surface whose ruling has no topology
+/// ledger record (FIX 988: a connector call's scope exceed).
+pub(crate) fn record_door_ramp_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: &RampScope,
+    outcome: ProposalOutcome,
+    at: u64,
+) -> Result<()> {
+    scope.validate()?;
+    record_outcome_for_scope_in_txn(vault, wtxn, scope, outcome, at, OutcomeWitness::Door)?;
+    Ok(())
+}
+
 impl Vault {
     /// Every fold input, in [`FoldKey`] order.
     pub(super) fn ramp_fold_events_in_txn(

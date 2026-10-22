@@ -96,7 +96,8 @@ pub use self::state::{DemotionReason, RampState, ScopeOutcomeStats};
 pub(crate) use self::doors::accept_graduation_offer_in_txn;
 pub(crate) use self::fold::{
     active_grant_ref_in_txn, offer_is_standing_in_txn, ramp_floor_override_in_txn,
-    ramp_stats_in_txn, record_ramp_outcome_in_txn, reset_ramp_streak_in_txn,
+    ramp_stats_in_txn, record_door_ramp_outcome_in_txn, record_ramp_outcome_in_txn,
+    reset_ramp_streak_in_txn,
 };
 pub(crate) use self::receipts::ramp_receipts;
 

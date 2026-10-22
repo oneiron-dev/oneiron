@@ -297,6 +297,11 @@ vaultConnectorsProxyAdmit(input: unknown): unknown
 vaultConnectorsProxyRevokeWrite(input: unknown): unknown
 vaultConnectorsSlatesRedraft(input: unknown): unknown
 vaultConnectorsSlatesNarrow(input: unknown): unknown
+vaultConnectorsSlatesScopeOutcome(input: unknown): unknown
+vaultConnectorsSlatesRevisionOffers(input: unknown): unknown
+vaultConnectorsSlatesDeferRevision(input: unknown): unknown
+vaultConnectorsSlatesAcceptRevision(input: unknown): unknown
+vaultConnectorsSlatesReaskIssuer(input: unknown): unknown
 vaultConnectorsSubscriptionsPut(input: unknown): unknown
 vaultConnectorsSubscriptionsList(input: unknown): unknown
 vaultConnectorsSubscriptionsRevoke(input: unknown): unknown
