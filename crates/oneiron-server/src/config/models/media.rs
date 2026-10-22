@@ -42,8 +42,8 @@ use serde::Deserialize;
 use super::levels::ModelRef;
 use super::provider::{ProviderConfig, ProviderKind};
 
-/// Process-lifetime meter for the `ai.*` media calls.
-const DEFAULT_MEDIA_BUDGET_UNITS: u64 = 10_000_000;
+/// Process-lifetime meter for the `ai.*` media calls: uncapped when omitted.
+const DEFAULT_MEDIA_BUDGET_UNITS: u64 = super::UNCAPPED_LIFETIME_UNITS;
 /// The languages a live soniox rung listens for when its `rung_options`
 /// name none (CALLS.md: Soniox language hints).
 const DEFAULT_LIVE_ASR_LANGUAGE_HINTS: [&str; 2] = ["ja", "en"];

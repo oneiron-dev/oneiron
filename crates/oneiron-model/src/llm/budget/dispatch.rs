@@ -80,7 +80,23 @@ impl BudgetGuard {
         &self,
         binding: DispatchBinding,
     ) -> Result<BudgetAdmission, BudgetDenied> {
-        if binding.locality != ModelLocality::OnDevice {
+        self.admit_free_work(binding, false)
+    }
+
+    /// [`Self::admit_unmetered`] for all of a host's free work (FIX 9482): a
+    /// call the host attests runs on-device, or on the owner's own server
+    /// sent with no key (`keyless`, the host's custody fact, never the
+    /// request's). It reserves nothing and is charged nothing; its one-use
+    /// dispatch check still binds it. Any other route is refused: paid work
+    /// reserves on the line.
+    pub fn admit_free_work(
+        &self,
+        binding: DispatchBinding,
+        keyless: bool,
+    ) -> Result<BudgetAdmission, BudgetDenied> {
+        let free = binding.locality == ModelLocality::OnDevice
+            || (keyless && binding.locality == ModelLocality::OwnServer);
+        if !free {
             return Err(BudgetDenied::AdmissionDenied);
         }
         let mut state = self.lock_state();

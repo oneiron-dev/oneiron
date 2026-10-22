@@ -60,6 +60,10 @@ pub struct DecisionReadSettings {
     /// The start value a host gives `DecisionBandPolicy::set_think_threshold`
     /// (the ThinkThreshold row), in (0, 1].
     pub think_threshold: f64,
+    /// Whether the `local_reasoner` rung's locality is one its role permits
+    /// (`ModelsConfig::role_permits`): false for a third-party rung under
+    /// `leave_device = "never"`, so the house reader is unavailable (FIX 9481).
+    pub permitted: bool,
 }
 
 // The thresholds are checked to lie in (0, 1], so neither is NaN.
@@ -116,6 +120,7 @@ impl DecisionReadFile {
             max_response_bytes,
             person_threshold,
             think_threshold,
+            permitted: models.role_permits(ModelRole::LocalReasoner, provider.locality),
         })
     }
 }
