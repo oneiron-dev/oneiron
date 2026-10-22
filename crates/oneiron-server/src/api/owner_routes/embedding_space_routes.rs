@@ -23,7 +23,8 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::embed::{
-    EmbeddingSpace, InputKind, MediaRefused, SpaceMove, SpaceMoveOutcome, SpaceProbe, SpaceRef,
+    EmbeddingSpace, InputKind, MediaRefused, PendingEmbedderBinding, SpaceMove, SpaceMoveOutcome,
+    SpaceProbe, SpaceRef,
 };
 use oneiron::task_verb::sdk::{
     EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceDeclareRequest,
@@ -74,6 +75,9 @@ struct Spaces {
     /// Documents each space's model refused by their content, by space id; a
     /// space with none is absent.
     refused: BTreeMap<String, usize>,
+    /// Each owner-approved embedder binding a space move stages: waiting,
+    /// filling, applied, not applied or undone (O3b PR B).
+    binding_moves: Vec<PendingEmbedderBinding>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +173,7 @@ fn spaces(vault: &oneiron::Vault) -> OwnerResult<Spaces> {
         moves: vault.space_moves()?,
         probes,
         refused: vault.media_refusal_counts()?,
+        binding_moves: vault.embedder_binding_moves()?,
     })
 }
 

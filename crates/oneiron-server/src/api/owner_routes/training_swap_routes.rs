@@ -20,6 +20,7 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
+use oneiron::embed::PendingEmbedderBinding;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::task_verb::TrainingSwapAskView;
 use oneiron::training_pack::{
@@ -83,6 +84,9 @@ struct TrainingRunView {
     authorization: Option<TrainingAuthorization>,
     /// Why the host cannot advance the run, while it waits on the host.
     hold: Option<TrainingHold>,
+    /// An embedder run's swap, staged through a space move: waiting, filling,
+    /// applied, not applied or undone (O3b PR B); `None` when none was staged.
+    staged: Option<PendingEmbedderBinding>,
 }
 
 /// A question run's question: its pins and the new model, with the
@@ -200,6 +204,7 @@ async fn view(
             hold: run.hold.filter(|_| waits),
             evaluation: run.evaluation,
             authorization: run.authorization,
+            staged: vault.embedder_binding_move(&id)?,
         })
     })
     .await?;

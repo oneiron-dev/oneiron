@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
+use crate::embed::{BindingSource, PendingEmbedderBinding};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::manifest::{ModelBinding, ModelManifest, ModelRole, TeacherProbeApproval};
@@ -79,11 +80,40 @@ pub enum ViewedSwap {
     Embedder,
 }
 
+/// What the owner's swap choice did: bound its role, or, for a trained embedder, staged its
+/// binding through a space move (O3b PR B; ARCH-0053 R13: search uses the old index meanwhile).
+#[derive(Debug)]
+pub enum RoleSwapOutcome {
+    /// The role binds the run's checkpoint, now or already.
+    Bound(Box<RoleSwapReceipt>),
+    /// The embedder binding waits on its move; its receipt and `Bound` commit at that swap.
+    Staged(Box<PendingEmbedderBinding>),
+}
+
 /// Why no role door binds a question head.
 const QUESTION_HAS_NO_ROLE: &str = "a question head binds no role; its approval is separate";
 
 fn role_key(role: ModelRole) -> Result<String> {
     serde_json::to_string(&role).map_err(|_| invalid("training role encoding failed"))
+}
+
+/// Binds a trained embedder's staged swap at its move's swap, in the write that applies its
+/// manifest binding (O3b PR B): the receipt the owner's choice staged, the role's current
+/// receipt and the run's `Bound`.
+///
+/// # Errors
+///
+/// A run that is gone, or storage errors.
+pub(crate) fn bind_staged_role_swap_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &RoleSwapReceipt,
+) -> Result<()> {
+    let mut run = run_in_txn(vault, txn, &receipt.run)?;
+    SWAPS.put(&vault.store, txn, &receipt.id, receipt)?;
+    ROLES.put(&vault.store, txn, &role_key(receipt.role)?, receipt)?;
+    run.state = TrainingState::Bound;
+    RUNS.put(&vault.store, txn, &receipt.run, &run)
 }
 
 /// Every training run as `txn` reads it, in id order. Read-only.
@@ -270,7 +300,7 @@ impl Vault {
         id: &EntityId,
         choice: SwapChoice,
         teacher_approval: Option<&TeacherProbeApproval>,
-    ) -> Result<RoleSwapReceipt> {
+    ) -> Result<RoleSwapOutcome> {
         self.recheck_owner(owner)?;
         self.with_write_txn_grouped(|txn| {
             self.approve_training_role_swap_in_txn(txn, owner, id, choice, teacher_approval, None)
@@ -308,7 +338,7 @@ impl Vault {
             {
                 return Ok(ViewedSwap::Stale);
             }
-            let receipt = self.approve_training_role_swap_in_txn(
+            let outcome = self.approve_training_role_swap_in_txn(
                 txn,
                 owner,
                 id,
@@ -318,7 +348,10 @@ impl Vault {
             )?;
             let now = self.store.clock.now_recorded_at();
             crate::task_verb::void_training_swap_asks_in(self, txn, id, None, now)?;
-            Ok(ViewedSwap::Bound(Box::new(receipt)))
+            Ok(match outcome {
+                RoleSwapOutcome::Bound(receipt) => ViewedSwap::Bound(receipt),
+                RoleSwapOutcome::Staged(_) => ViewedSwap::Embedder,
+            })
         })
     }
 
@@ -326,7 +359,10 @@ impl Vault {
     /// the manifest, the receipt and `Bound` commit or roll back together.
     /// With `expected`, a run or role binding that moved since it was taken
     /// refuses. The same run already bound returns its receipt, serving no
-    /// exposure.
+    /// exposure. A trained embedder stages its binding through a space move
+    /// instead (O3b PR B): the exposure counts now, and the manifest, the
+    /// receipt and `Bound` commit at that move's swap; the same run staged
+    /// again returns its pending binding.
     pub(crate) fn approve_training_role_swap_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -335,7 +371,7 @@ impl Vault {
         choice: SwapChoice,
         teacher_approval: Option<&TeacherProbeApproval>,
         expected: Option<&SwapExpectation>,
-    ) -> Result<RoleSwapReceipt> {
+    ) -> Result<RoleSwapOutcome> {
         let actor = owner.revalidate_in_txn(self, txn)?;
         let mut run = run_in_txn(self, txn, id)?;
         // A question head binds no role, explicit override or not.
@@ -379,7 +415,12 @@ impl Vault {
             && current.run == *id
             && manifest.roles.get(&role) == Some(&current.binding)
         {
-            return Ok(current);
+            return Ok(RoleSwapOutcome::Bound(Box::new(current)));
+        }
+        if role == ModelRole::RetrievalEmbedder
+            && let Some(pending) = crate::embed::live_binding_move_in(self, txn, id)?
+        {
+            return Ok(RoleSwapOutcome::Staged(Box::new(pending)));
         }
         let previous = manifest.roles.get(&role).cloned();
         if previous
@@ -408,8 +449,6 @@ impl Vault {
         } else {
             None
         };
-        manifest.roles.insert(role, binding.clone());
-        self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
         let receipt = RoleSwapReceipt {
             id: self.store.clock.entity_id()?,
             run: *id,
@@ -425,11 +464,24 @@ impl Vault {
             promotion_exposure,
             choice,
         };
+        if role == ModelRole::RetrievalEmbedder {
+            // The old index serves while the candidate space fills (ARCH-0053 R13).
+            let previous = receipt.previous.clone();
+            let binding = receipt.binding.clone();
+            let source = BindingSource::Training {
+                receipt: Box::new(receipt),
+            };
+            let pending =
+                crate::embed::stage_embedder_binding_in_txn(self, txn, source, previous, binding)?;
+            return Ok(RoleSwapOutcome::Staged(Box::new(pending)));
+        }
+        manifest.roles.insert(role, receipt.binding.clone());
+        self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
         SWAPS.put(&self.store, txn, &receipt.id, &receipt)?;
         ROLES.put(&self.store, txn, &key, &receipt)?;
         run.state = TrainingState::Bound;
         RUNS.put(&self.store, txn, id, &run)?;
-        Ok(receipt)
+        Ok(RoleSwapOutcome::Bound(Box::new(receipt)))
     }
 
     /// Every swap receipt that bound `run`, oldest first.
