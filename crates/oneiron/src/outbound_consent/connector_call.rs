@@ -53,8 +53,9 @@ use serde_json::Value;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::{
-    ConnectorCallRoute, ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance,
-    SlateDataClass, SlateDisposition, canonical_scoped_server_segment,
+    CONNECTOR_ISSUER_HOLD_REASON, ConnectorCallRoute, ConnectorKeyRecord, ConnectorKeyStatus,
+    ConnectorScopeEvidence, ScopeExceedCall, ScopedCapabilityProvenance, SlateDataClass,
+    SlateDisposition, canonical_scoped_server_segment,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -894,6 +895,7 @@ impl Vault {
             .chain(pending.grant.map(|grant| grant.grant()));
         pending.list_rows(named.collect::<Vec<_>>());
         // A call that names a custody record sends with it or not at all.
+        let mut scope_evidence = None;
         let step = if host.present_credential(pending.credential, pending.grant) {
             // A call its row already holds resumes through the ledger row it
             // admitted, if any; only a call with none resolves and prepares
@@ -904,7 +906,7 @@ impl Vault {
             };
             match resumed {
                 Some(step) => step,
-                None => self.connector_call_step(&mut pending, host)?,
+                None => self.connector_call_step(&mut pending, host, &mut scope_evidence)?,
             }
         } else {
             refused(CONNECTOR_CALL_CREDENTIAL_UNSUPPORTED)
@@ -1006,6 +1008,17 @@ impl Vault {
                 // same writer, when the call came from a code run.
                 let (call_ref, code_owned) =
                     self.keep_held_connector_call(call_ref.or(new_ref), &row, &reasons)?;
+                // FIX 988: a typed scope exceed is kept, once per logical
+                // call, as evidence for the owner's revision offer.
+                if let Some(evidence) = scope_evidence {
+                    crate::connector_key::keep_connector_scope_signal(
+                        self,
+                        evidence,
+                        call_ref,
+                        decision_ref.as_deref(),
+                        ask.as_ref().map(|ask| ask.approval_digest.as_str()),
+                    );
+                }
                 // The hold is durable: ask the owner about it, once. The
                 // settler's pass repairs an ask that did not queue here. A
                 // code consent wait asks its own question instead.
@@ -1036,11 +1049,13 @@ impl Vault {
 
     /// One pass: route, grant, governing key, approved schema, prepare,
     /// execute. Records the grant it ran under on `pending`, and lists there
-    /// each row it reads to pick them (FIX 5455).
+    /// each row it reads to pick them (FIX 5455). A typed scope exceed on
+    /// its own grant lands in `scope_evidence` (FIX 988).
     fn connector_call_step<H: ConnectorCallHost>(
         &self,
         pending: &mut PendingConnectorCall,
         host: &mut H,
+        scope_evidence: &mut Option<ConnectorScopeEvidence>,
     ) -> Result<Step, IntentLedgerError> {
         let (route, catalog_key) = self.route_connector_call_listing(&pending.name)?;
         pending.list_rows(catalog_key);
@@ -1085,6 +1100,21 @@ impl Vault {
             ConnectorKeyStatus::Revoked => return Ok(refused("connector_key_revoked")),
             ConnectorKeyStatus::Suspended => return Ok(held("connector_key_suspended")),
             ConnectorKeyStatus::Pending => return Ok(held("connector_key_pending")),
+        }
+        // FIX 988: a row that depends on a credential binding whose issuer
+        // changed holds until the owner accepts its re-ask.
+        let issuer_held = {
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            crate::connector_key::connector_issuer_hold_in_txn(
+                &self.store,
+                &txn,
+                &key_id,
+                &key,
+                &pending.tool,
+            )?
+        };
+        if issuer_held {
+            return Ok(held(CONNECTOR_ISSUER_HOLD_REASON));
         }
         let Some(manifest) = key.retained_manifest.as_ref() else {
             return Ok(held("connector_manifest_unapproved"));
@@ -1164,6 +1194,7 @@ impl Vault {
         if let Some(left) = host.take_awaiting_input() {
             host.abandon_awaiting_input(&left.handle);
         }
+        let sent = prepared.call().clone();
         let dispatch = prepared.execute(
             self,
             &authority,
@@ -1175,6 +1206,21 @@ impl Vault {
             now_ms(),
             &mut *host,
         )?;
+        if let ScopedMcpConsentDecision::Escalate(reason) = dispatch.decision {
+            *scope_evidence = crate::connector_key::connector_scope_evidence(
+                reason,
+                &grant,
+                grant_id,
+                key_id,
+                ScopeExceedCall {
+                    connector: &pending.name,
+                    principal_ref: &pending.principal_ref,
+                    attempt: pending.attempt_id.as_bytes(),
+                    call_seq: pending.call_seq,
+                    call: &sent,
+                },
+            );
+        }
         Ok(step_from_host(&dispatch, host))
     }
 
