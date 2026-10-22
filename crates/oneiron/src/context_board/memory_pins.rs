@@ -145,11 +145,13 @@ pub(super) fn pinned_row(
     disclosure: Option<&crate::disclosure::DisclosureContext>,
 ) -> Result<(ScopedReadReceipt, Option<MemoryRow>)> {
     // The revision is taken in the read's own snapshot, so a board history
-    // records the text this pin served, not a later edit.
+    // records the text this pin served, not a later edit. So is a non-CLAIM
+    // row's world, where its birth stamp places it (FIX 9744): a CLAIM names
+    // its own below.
     let hydrated = reader.read_projected(&[read], None, |txn, rows| {
         let row = rows.into_iter().next().flatten();
         let Some(found) = &row else {
-            return Ok::<_, crate::Error>((None, None, None, None));
+            return Ok::<_, crate::Error>((None, None, None, None, Some(None)));
         };
         let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
             &reader.vault().store,
@@ -166,10 +168,22 @@ pub(super) fn pinned_row(
                 .map(|(short_id, _)| short_id),
         };
         let text = pin_text(reader, txn, found)?;
-        Ok((row, revision, short_id, text))
+        let world = match &found.body {
+            Some(body) if found.entity_type != crate::registry::ENTITY_TYPE_CLAIM => {
+                crate::federation::record_scope::record_world_in(
+                    &reader.vault().store,
+                    txn,
+                    found.id,
+                    found.entity_type,
+                    body,
+                )?
+            }
+            _ => Some(None),
+        };
+        Ok((row, revision, short_id, text, world))
     })?;
     let mut receipt = hydrated.receipt;
-    let (hydrated, source_revision, short_id, text) = hydrated.value;
+    let (hydrated, source_revision, short_id, text, birth_world) = hydrated.value;
     let (Some(hydrated), Some(short_id)) = (hydrated, short_id) else {
         return Ok((receipt, None));
     };
@@ -206,7 +220,14 @@ pub(super) fn pinned_row(
         short_id,
         score: 0.0,
         claim_source: claim.as_ref().and_then(|c| c.source),
-        world: claim.as_ref().and_then(|c| c.world).map(|id| id.to_hex()),
+        // A row whose birth world cannot be proven is labelled unknown,
+        // never base, and still shows (FIX 9744).
+        world: match &claim {
+            Some(claim) => claim.world,
+            None => birth_world.flatten(),
+        }
+        .map(|id| id.to_hex()),
+        world_unproven: claim.is_none() && birth_world.is_none(),
         tier: MemoryTier::Pinned,
         snippet: None,
         hook: None,

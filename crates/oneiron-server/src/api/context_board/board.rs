@@ -32,6 +32,25 @@ pub(crate) struct ContextBoardRoomControls {
     /// Hex Channel Conversation id the caller sits in.
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     conversation_id: String,
+    /// The `room_page.next_cursor` a previous board answered, to render the
+    /// room's next page of members and rules; absent for its first page.
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+/// Where the ROOM rows this board rendered sit in the room's whole stream
+/// (FIX 9746, 9747): its members by actor id, then its rules by claim id.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ContextBoardRoomPage {
+    /// Members on the room's whole roster.
+    roster_total: u64,
+    /// Rules the caller reads in the room, on every page together.
+    rules_total: u64,
+    /// Pass as `room.cursor` for the room's next page; absent once `end`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
+    /// No member or rule of the room is past this page.
+    end: bool,
 }
 
 /// Names the project whose view rides TASKS.
@@ -79,6 +98,8 @@ struct RoomTarget {
     /// that only rides the retrieval request renders when the caller sits
     /// in it, and is otherwise the retrieval's audience alone.
     explicit: bool,
+    /// Where in the room's stream the page starts.
+    cursor: Option<String>,
 }
 
 /// What a hydration asks of its board beyond retrieval, checked before any
@@ -132,7 +153,11 @@ pub(super) fn board_targets(
                     Some("room"),
                 ));
             }
-            Some(RoomTarget { id, explicit: true })
+            Some(RoomTarget {
+                id,
+                explicit: true,
+                cursor: room.cursor.clone(),
+            })
         }
         None => retrieval_room
             .filter(|_| actor.is_some())
@@ -140,6 +165,7 @@ pub(super) fn board_targets(
             .map(|id| RoomTarget {
                 id,
                 explicit: false,
+                cursor: None,
             }),
     };
     let project = project
@@ -164,6 +190,8 @@ pub(super) struct BoardParts {
     pub(super) worlds: Vec<String>,
     pub(super) tasks: Vec<String>,
     pub(super) room: Option<Vec<String>>,
+    /// Where the ROOM rows sit in the room's whole stream.
+    pub(super) room_page: Option<ContextBoardRoomPage>,
     pub(super) skills: Vec<String>,
     /// The task intents, worlds, room, room rules and project the board
     /// named: rows a keyed replay re-admits.
@@ -231,10 +259,15 @@ pub(super) fn board_parts(
     });
 
     // ROOM, read fresh through the caller's own facade handle, with its host
-    // among the board session's present participants.
+    // among the board session's present participants: one page of the
+    // room's rows, its next page behind `room_page.next_cursor`.
     let room = match (&targets.room, &memory) {
         (Some(target), Some(memory)) => {
-            match memory.rooms_render_hosted(target.id, targets.session) {
+            match memory.rooms_render_page_hosted(
+                target.id,
+                targets.session,
+                target.cursor.as_deref(),
+            ) {
                 Ok(room) => Some(room),
                 Err(error) if !target.explicit && caller_fault(&error) => None,
                 Err(error) => {
@@ -253,6 +286,13 @@ pub(super) fn board_parts(
         .map(|room| room.board_section(people))
         .transpose()
         .map_err(board_frame_error)?;
+    let room_page = room.as_ref().map(|page| ContextBoardRoomPage {
+        roster_total: page.roster_total,
+        rules_total: page.rules_total,
+        next_cursor: page.next_cursor.clone(),
+        end: page.end,
+    });
+    let room = room.map(|page| page.section);
     if let Some(room) = &room {
         named.push(room.room);
         named.extend(
@@ -436,6 +476,7 @@ pub(super) fn board_parts(
         worlds: worlds.detail_rows().to_vec(),
         tasks: tasks_section.detail_rows().to_vec(),
         room: room_section.map(|room| room.pinned_rows().to_vec()),
+        room_page,
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
         named,
         hook_blocks,
