@@ -11692,7 +11692,7 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => "Every legal hold the owner may see.",
             Self::VaultLegalHoldsLog => "The owner-visible legal hold log, oldest first.",
             Self::VaultLegalHoldsLiftAndErase => {
-                "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."
+                "The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."
             }
             Self::VaultCourtesyDeleteSend => {
                 "The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."

@@ -2925,7 +2925,7 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_log(json.dumps({} if spec is None else spec))))
         def lift_and_erase(self, spec):
-            """The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."""
+            """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
     class _VaultCourtesyDeleteVerbs:
         def __init__(self, client: _NativeClient) -> None:

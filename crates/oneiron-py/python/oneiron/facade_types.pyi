@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1154 facade rows, 4088 declarations.
+Census: 1154 facade rows, 4093 declarations.
 Inputs: 1089 of 1154 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1154 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
@@ -7359,10 +7359,12 @@ class RecordEraseConfirmRequest(TypedDict):
     record: EntityId
     preview_digest: str
     also_same_bytes: NotRequired[bool]
+DeleteRequestState = Literal["applied", "completion_pending"]
 class DeleteReceipt(TypedDict):
     existed: bool
     reason: str
     receipt_ref: NotRequired[str | None]
+    state: DeleteRequestState
 class EraseSameBytesRow(TypedDict):
     record: str
     outcome: str
@@ -8698,7 +8700,7 @@ class LegalHold(TypedDict):
 class LegalHoldWidenRequest(TypedDict):
     hold_id: EntityId
     targets: list[LegalHoldTarget]
-LegalHoldEventKind = Literal["placed", "scope_changed", "delete_refused", "lift_and_erase_confirmed", "erase_completed", "lifted"]
+LegalHoldEventKind = Literal["placed", "scope_changed", "delete_refused", "lift_and_erase_confirmed", "erase_confirmed", "erase_completed", "lifted"]
 LegalHoldReason = Literal["owner_placed", "host_placed", "legal_order", "scope_widened", "scope_narrowed_by_erase", "end_date_changed", "held_record", "privacy_erase_kept", "owner_confirmed", "completion_pending", "receipt_completed", "authority_released", "order_ended", "host_released", "secrecy_ended"]
 class LegalHoldEvent(TypedDict):
     hold_id: EntityId
@@ -8711,9 +8713,23 @@ class LegalHoldEvent(TypedDict):
     reason: LegalHoldReason
     matter_ref: NotRequired[str | None]
     request_id: NotRequired[str | None]
+class ShownCustomerHold(TypedDict):
+    hold_id: EntityId
+    targets: list[LegalHoldTarget]
+    placed_by: NotRequired[str | None]
+    placed_at: int
+    matter_ref: NotRequired[str | None]
+class LiftAndEraseShownState(TypedDict):
+    title: str
+    prompt: str
+    records: list[EntityId]
+    claim_free_partition: NotRequired[bool]
+    holds: list[ShownCustomerHold]
 class LegalHoldLiftAndEraseRequest(TypedDict):
     records: list[EntityId]
-ErasePendingReason = Literal["historical_sweep", "custody_retirement"]
+    claim_free_partition: NotRequired[bool]
+    shown_state: LiftAndEraseShownState
+ErasePendingReason = Literal["historical_sweep", "custody_retirement", "veto_window"]
 LegalHoldBoundKind = Literal["law"]
 class LegalHoldBound(TypedDict):
     kind: LegalHoldBoundKind
@@ -8744,6 +8760,7 @@ class LegalHoldErasedRecord(TypedDict):
 class LegalHoldLiftAndErased(TypedDict):
     holds: list[EntityId]
     records: list[LegalHoldErasedRecord]
+    changed: NotRequired[LiftAndEraseShownState | None]
 class CourtesyDeleteSendRequest(TypedDict):
     pact: str
     worlds: NotRequired[list[str]]
@@ -8762,12 +8779,23 @@ class CourtesyDeleteAskedWorld(TypedDict):
     stale: NotRequired[str | None]
     stale_epoch: NotRequired[int | None]
 CooperativeDeletionDispositionKind = Literal["delete", "redact", "restrict_pending_review", "retain_under_basis", "legal_hold", "decline"]
+class CourtesyDeleteHold(TypedDict):
+    hold: str
+    status: str
+    records: list[str]
+    lifted: NotRequired[str | None]
+class CourtesyDeleteRecordProgress(TypedDict):
+    record: str
+    state: str
 class CourtesyDeleteChoice(TypedDict):
     choice: CooperativeDeletionDispositionKind
     reason_code: NotRequired[str | None]
     review: NotRequired[str | None]
     deleted: list[str]
     recorded: str
+    holds: list[CourtesyDeleteHold]
+    excluded: list[str]
+    progress: list[CourtesyDeleteRecordProgress]
 class CourtesyDeleteIncoming(TypedDict):
     request: str
     pact: str
@@ -8780,6 +8808,7 @@ class CourtesyDeleteIncoming(TypedDict):
     received: str
     answer: NotRequired[CourtesyDeleteChoice | None]
     reply_status: NotRequired[str | None]
+    holds: list[CourtesyDeleteHold]
 class CourtesyDeleteAnswerRequest(TypedDict):
     pact: str
     request: str
