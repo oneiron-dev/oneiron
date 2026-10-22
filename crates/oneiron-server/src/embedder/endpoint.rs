@@ -927,7 +927,11 @@ impl HttpEmbedder {
                 for request in requests(&refs, ONEIRON_REQUEST_BYTES) {
                     release(&rows[sent..sent + request.len()])?;
                     sent += request.len();
-                    vectors.extend(self.marked(self.post_embeddings(request, side, destination)?));
+                    vectors.extend(self.marked(self.post_embeddings(
+                        request,
+                        side,
+                        destination,
+                    )?));
                 }
                 Ok(vectors)
             }

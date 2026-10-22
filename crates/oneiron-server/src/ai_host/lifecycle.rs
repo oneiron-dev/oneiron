@@ -163,7 +163,10 @@ impl AiHost {
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
-        Self::start_with(vault, models, host_root, receipts, account, None, None, None).await
+        Self::start_with(
+            vault, models, host_root, receipts, account, None, None, None,
+        )
+        .await
     }
 
     /// `start_receipted`, `attached` to a server when `Some`, on a device

@@ -151,7 +151,9 @@ impl Memory<'_> {
         let guard = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
             if let Err(error) = self.verify_actor_write_in_txn(txn) {
                 refusal = Some(error);
-                return Err(Error::InvariantViolation("a bound raw write's actor was refused"));
+                return Err(Error::InvariantViolation(
+                    "a bound raw write's actor was refused",
+                ));
             }
             if let Err(unread) = &lane {
                 let store = &self.vault().store;

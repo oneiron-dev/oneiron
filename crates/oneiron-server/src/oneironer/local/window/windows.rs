@@ -274,7 +274,9 @@ pub(crate) fn merge_window_outputs(
     if windows.parts.len() == 1 {
         return outputs.into_iter().next().ok_or_else(extraction_failed);
     }
-    let stack = outputs.first().and_then(|output| output.stack_sha16.clone());
+    let stack = outputs
+        .first()
+        .and_then(|output| output.stack_sha16.clone());
     if outputs.iter().any(|output| output.stack_sha16 != stack) {
         return Err(extraction_failed());
     }

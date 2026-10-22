@@ -165,13 +165,17 @@ impl Vault {
         writer: &ScopedRead<'_>,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
-        self.write_core_conversation_turn_admitted(input, announcement, |txn, conversation, turn| {
-            if self.turn_doors_owner_in(writer, txn)? {
-                return Ok(true);
-            }
-            Ok(writer.is_entity_readable_in(txn, conversation)?
-                && crate::batch::put_target_admitted_in(writer, txn, turn)?)
-        })?
+        self.write_core_conversation_turn_admitted(
+            input,
+            announcement,
+            |txn, conversation, turn| {
+                if self.turn_doors_owner_in(writer, txn)? {
+                    return Ok(true);
+                }
+                Ok(writer.is_entity_readable_in(txn, conversation)?
+                    && crate::batch::put_target_admitted_in(writer, txn, turn)?)
+            },
+        )?
         .ok_or_else(|| {
             MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
