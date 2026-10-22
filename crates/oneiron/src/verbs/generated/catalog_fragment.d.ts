@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1206 code-mode rows (1166 host rows, 40 run rows), 4150 declarations.
+// Census: 1206 code-mode rows (1166 host rows, 40 run rows), 4152 declarations.
 // Replies: 1086 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
@@ -246,12 +246,14 @@ declare namespace Sdk {
   type PersonaSnapshotPreviewRequest = { subject: EntityId };
   type PersonaSnapshotPreviewRow = { row_id: string; kind: string; text: string; provenance_refs: string[]; attribution?: string | null; struck: boolean };
   type PersonaSnapshotPreview = { subject: EntityId; stamp: string; identity_line: string; rows: PersonaSnapshotPreviewRow[]; compiled_at: string; stale_after_secs: number };
-  type PersonaSnapshotCopyRequest = { subject: EntityId; stamp: string; strike?: string[]; unstrike?: string[] };
+  type CopyRefs = "preserve" | "omit";
+  type CopyTravelChoice = { refs?: CopyRefs };
+  type PersonaSnapshotCopyRequest = { subject: EntityId; stamp: string; strike?: string[]; unstrike?: string[]; travel?: CopyTravelChoice | null };
   type PersonaSnapshotMemoryPackRow = { row_id: string; kind: string; text: string; subject_ref?: EntityId | null; provenance_refs?: string[] | null; salience?: number | null; attribution?: string | null };
-  type PersonaSnapshotMemoryPack = { schema: string; kind: string; subject_ref: EntityId; identity_line?: string | null; audience_ref?: string | null; takes_included: boolean; compiled_at_secs: number; stale_after_secs: number; persona_compile_stamp: string; rows: PersonaSnapshotMemoryPackRow[] };
+  type PersonaSnapshotMemoryPack = { schema: string; kind: string; subject_ref?: EntityId | null; identity_line?: string | null; audience_ref?: string | null; takes_included: boolean; compiled_at_secs: number; stale_after_secs: number; persona_compile_stamp: string; rows: PersonaSnapshotMemoryPackRow[] };
   type PersonaSnapshotExportedCopy = { export_id: EntityId; subject: EntityId; stamp: string; previous_export_id?: EntityId | null; memory_pack: PersonaSnapshotMemoryPack; markdown: string; included_row_ids: string[]; struck_row_ids: string[]; compiled_at: string; stale_after_secs: number };
   type PersonaSnapshotTextEdit = { row_id: string; text: string };
-  type PersonaSnapshotCopyEditRequest = { export_id: EntityId; stamp: string; edits: PersonaSnapshotTextEdit[]; strike?: string[]; unstrike?: string[] };
+  type PersonaSnapshotCopyEditRequest = { export_id: EntityId; stamp: string; edits: PersonaSnapshotTextEdit[]; strike?: string[]; unstrike?: string[]; travel?: CopyTravelChoice | null };
   type DiaryQueryRequest = { agent: string; reason: string };
   type DiaryQueryEntry = { id: EntityId; learned_at: number; markdown: string };
   type DiaryQueryOutcome = { state: "granted"; read?: EntityId | null; entries: DiaryQueryEntry[] } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" };
@@ -2327,7 +2329,7 @@ declare namespace Sdk {
   type ExternalImportPhase = "pending" | "fetch_refused" | "source_moved" | "held_base" | "door_refused" | "transport_unknown" | "received";
   type ReceivedFileOperation = { operation_id: string; actor_id: string; session_id: string; ref_name: string; path: string; before_hash: number[]; after_hash: number[]; old_mode?: number | null; new_mode?: number | null; document_edit: boolean };
   type CodePushCandidateState = "pending" | "held_base" | "held_predecessor" | "held_review_policy" | "held_shape" | "proposed" | "rejected" | "queued" | "quarantined" | "rolled_back" | "landed" | "sealed";
-  type CodePushCandidateView = { candidate: EntityId; state: CodePushCandidateState; reason?: string | null; base_revision?: EntityId | null; fork_session?: EntityId | null; proposal_refs: EntityId[]; batch_refs: string[]; check_work_refs: string[]; revision_refs: EntityId[] };
+  type CodePushCandidateView = { candidate: EntityId; state: CodePushCandidateState; reason?: string | null; base_revision?: EntityId | null; fork_session?: EntityId | null; proposal_refs: EntityId[]; batch_refs: string[]; check_work_refs: string[]; revision_refs: EntityId[]; detail?: string | null };
   type CodePushIngressView = { repo: EntityId; provenance: EntityId; ref_name: string; old_oid?: string | null; new_oid?: string | null; received_at: number; published: boolean; publication?: EntityId | null; operations: ReceivedFileOperation[]; candidate?: CodePushCandidateView | null };
   type MergeQueueCheckWorkKind = "init" | "check" | "diagnose";
   type MergeQueueCheckState = "queued" | "running" | "needs_configuration" | "held" | "passed" | "failed" | "settled";
@@ -3018,7 +3020,7 @@ declare namespace Sdk {
   type AiReplyReader = { definition: string; task_family?: string | null };
   type ContextPackRetrievalBudgetControls = { claims?: number | null; turns?: number | null; summaries?: number | null; facets?: number | null; other?: number | null; selected_edges?: number | null };
   type ContextPackBudgetControls = { token_budget?: number | null; max_item_tokens?: number | null; max_field_chars?: number | null; retrieval?: ContextPackRetrievalBudgetControls | null };
-  type AiReplyCompanion = { person_ref?: string | null; persona_ref?: string | null; expression?: string | null };
+  type AiReplyCompanion = { person_ref?: string | null; counterpart_person_ref?: string | null; expression?: string | null };
   type AiReplyStanding = { world_ref?: string | null; token_budget: number; block_tokens?: number | null };
   type AiReplyRequest = { model: string; conversation_id: string; message: string; session_id?: string | null; reader?: AiReplyReader | null; budget?: ContextPackBudgetControls | null; limit?: number | null; pinned_refs?: string[]; companion?: AiReplyCompanion | null; standing?: AiReplyStanding | null; reasoning_effort?: string | null };
   type AiReplyL2Base = { content_hash: string; body: string };

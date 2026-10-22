@@ -15,7 +15,7 @@ use oneiron::memory::code_run_doors::{
     CodeRunModelHealCountRequest, CodeRunModelHealCountView, CodeRunTypeDiagnosticsRequest,
 };
 
-use super::host_doors::{Listed, credential_listing, owner_proof, refused};
+use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

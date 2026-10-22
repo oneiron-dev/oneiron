@@ -375,6 +375,10 @@ impl Vault {
             if let Err(wait) = row.queue_review_admission(&requirement, &batch.id)? {
                 return Ok(Err(wait.hold(&candidate.id)));
             }
+            // A masked copy's uncleared typed cause holds it (FIX 7608).
+            if let Some(cause) = super::received_file::projected_hold_in_txn(self, &txn, &row)? {
+                return Ok(Err(cause.to_owned()));
+            }
         }
         Ok(Ok(()))
     }
@@ -520,6 +524,13 @@ impl Vault {
         for row in rows.into_iter().skip(outcomes.len()) {
             // An erased actor's member never runs again, so its failed attempt stays failed.
             row.actor.live()?;
+            // A not-yet-effected masked copy's member runs only cleared (FIX 7608).
+            if let Some(cause) = {
+                let txn = self.store.env.read_txn()?;
+                super::received_file::projected_hold_in_txn(self, &txn, &row)?
+            } {
+                return Err(invalid(cause));
+            }
             let step = StackStep {
                 key: key(&stack.repo_identity, &stack.batch),
                 stack: stack.batch.clone(),
@@ -666,6 +677,10 @@ impl Vault {
                 return Err(invalid(
                     "every stack member needs unused unanimous critic approval",
                 ));
+            }
+            if let Some(cause) = super::received_file::projected_hold_in_txn(self, &txn, &current)?
+            {
+                return Err(invalid(cause));
             }
             let requirement =
                 crate::merge_queue::queue_review_requirement_in_txn(self, &txn, &current.review)?;

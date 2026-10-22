@@ -2,7 +2,7 @@
 
 use super::super::bridge;
 use super::super::egress::push_terminal_quarantine_marker;
-use super::super::loro_support::map_for_each_value_bytes;
+use super::super::loro_support::{map_for_each_value_bytes, map_get_bytes};
 use super::super::quarantine::{self, QuarantineContainer};
 use super::{RematCtx, RematLedger};
 
@@ -10,13 +10,36 @@ use crate::batch::EdgeValueFields;
 use crate::edge::decode_edge_value_for_kind;
 use crate::error::{Error, Result};
 
-/// Run the edge pass: iterate the window `edges` map, filter tombstoned
+/// The edge pass's keys in the order it lands them, so a recovery can run
+/// the pass a page at a time (FIX 8821). FIX 5972: a `regenerates` link is
+/// proven on its MESSAGEs' axes, so it lands after every ordinary edge,
+/// whatever the map's key order.
+pub(super) fn order(ctx: &RematCtx<'_>) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut regenerates = Vec::new();
+    map_for_each_value_bytes(&ctx.edges_map, |key, buf| {
+        match (buf, bridge::parse_edge_key(key)) {
+            (Some(_), Some((_, crate::edge::EdgeKind::Regenerates, _))) => {
+                regenerates.push(key.to_owned());
+            }
+            _ => keys.push(key.to_owned()),
+        }
+    });
+    keys.extend(regenerates);
+    keys
+}
+
+/// Run the edge pass over `keys`, in their order: filter tombstoned
 /// endpoints, byte-compare against LMDB, and write what differs.
-pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
+pub(super) fn run_page(
+    ctx: &RematCtx<'_>,
+    ledger: &mut RematLedger,
+    keys: &[String],
+) -> Result<()> {
     let vault = ctx.vault;
     let window_key = ctx.window_key;
     let edges_map = &ctx.edges_map;
-    let tombstones = &ctx.tombstones;
+    let tombstones = ctx.tombstones;
     let marked = &ledger.marked;
     let healed = &mut ledger.healed;
     let terminal_quarantines = &mut ledger.terminal_quarantines;
@@ -541,19 +564,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
             }
         };
-        // FIX 5972: a `regenerates` link is proven on its MESSAGEs' axes, so
-        // it lands after every ordinary edge, whatever the map's key order.
-        let mut regenerates = Vec::new();
-        map_for_each_value_bytes(edges_map, |key, buf| {
-            match (buf, bridge::parse_edge_key(key)) {
-                (Some(buf), Some((_, crate::edge::EdgeKind::Regenerates, _))) => {
-                    regenerates.push((key.to_owned(), buf.to_vec()));
-                }
-                _ => remat_edge(key, buf),
-            }
-        });
-        for (key, buf) in &regenerates {
-            remat_edge(key.as_str(), Some(buf.as_slice()));
+        for key in keys {
+            let buf = map_get_bytes(edges_map, key);
+            remat_edge(key.as_str(), buf.as_deref());
         }
         if let Some(err) = edge_error {
             return Err(err);

@@ -51,10 +51,7 @@ pub(super) fn capture(
     Ok(())
 }
 
-/// Files each origin back in the rebuilt window's map, beside its row.
-pub(super) fn rebuild(doc: &LoroDoc, snapshot: &CanonicalSnapshot) -> Result<()> {
-    for row in &snapshot.peer_origins {
-        insert(doc, PEER_ORIGINS, &id(row.id)?.to_hex(), &row.digest)?;
-    }
-    Ok(())
+/// Files one origin back in the rebuilt window's map, beside its row.
+pub(super) fn rebuild_row(doc: &LoroDoc, row: &CanonicalPeerOrigin) -> Result<()> {
+    insert(doc, PEER_ORIGINS, &id(row.id)?.to_hex(), &row.digest)
 }

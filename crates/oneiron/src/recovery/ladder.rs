@@ -1,4 +1,5 @@
-//! Three-tier repair driver with all-or-nothing bounded work admission.
+//! Three-tier repair driver: whole validation and publication, the work
+//! between them paged on the vault's fair task-work line (FIX 8821).
 
 use super::canonical::{CanonicalSnapshot, invalid, pack, rebuild_vault_window_from_canonical};
 use super::{decode_recovery_artifact, encode_recovery_artifact};
@@ -44,6 +45,8 @@ impl RecoveryManifest {
         add("head_move_receipts", pack(&snapshot.head_move_receipts)?);
         add("note_forks", pack(&snapshot.note_forks)?);
         add("note_proposals", pack(&snapshot.note_proposals)?);
+        add("row_births", pack(&snapshot.row_births)?);
+        add("withdrawn_cutoffs", pack(&snapshot.withdrawn_cutoffs)?);
         add("schema", pack(&snapshot.schema_manifest)?);
         add("containers", pack(&snapshot.container_manifests)?);
         for document in &snapshot.doc_snapshots {
@@ -108,6 +111,9 @@ fn classify(manifest: Option<&RecoveryManifest>, expected: &RecoveryManifest) ->
 #[derive(Debug, Clone, Copy)]
 pub struct RecoveryBudget {
     pub max_bytes: usize,
+    /// The rows one page of a recovery's rebuild, replay or verification
+    /// takes before it hands its turn on: a page size, never a total a
+    /// recovery refuses past (Rule 5, FIX 8821). Zero reads as one.
     pub max_obligations: usize,
 }
 impl Default for RecoveryBudget {
@@ -130,17 +136,30 @@ pub struct PreparedRecovery {
     manifest: RecoveryManifest,
 }
 
-/// Quarantine happens after complete payload/budget validation and before rebuild.
-/// Run with window writers stopped, as for canonical capture.
+/// Quarantine happens after complete payload/budget validation and the
+/// rebuild, before any replay write. Run with window writers stopped, as for
+/// canonical capture.
 pub fn prepare_recovery(
     manifest_path: impl AsRef<Path>,
     snapshot: &CanonicalSnapshot,
     budget: RecoveryBudget,
 ) -> Result<PreparedRecovery> {
+    let window = rebuild_vault_window_from_canonical(snapshot)?;
+    prepare_rebuilt(manifest_path.as_ref(), snapshot, budget, window)
+}
+
+/// [`prepare_recovery`] with `window` already rebuilt from `snapshot`. Every
+/// obligation is admitted: how many there are sizes the pages that repair
+/// them, and never refuses the recovery (Rule 5, FIX 8821).
+pub(super) fn prepare_rebuilt(
+    path: &Path,
+    snapshot: &CanonicalSnapshot,
+    budget: RecoveryBudget,
+    window: LoroDoc,
+) -> Result<PreparedRecovery> {
     let encoded = snapshot.encode()?;
     limit(encoded.len(), budget.max_bytes)?;
     let expected = RecoveryManifest::from_snapshot(snapshot)?;
-    let path = manifest_path.as_ref();
     let bytes = match fs::File::open(path) {
         Ok(file) => {
             limit(
@@ -171,7 +190,6 @@ pub fn prepare_recovery(
         })
         .map(|(key, _)| key.clone())
         .collect();
-    limit(obligations.len(), budget.max_obligations)?;
     let quarantine_path = if tier != RecoveryTier::Healthy {
         bytes
             .as_ref()
@@ -180,7 +198,6 @@ pub fn prepare_recovery(
     } else {
         None
     };
-    let window = rebuild_vault_window_from_canonical(snapshot)?;
     Ok(PreparedRecovery {
         tier,
         window,
@@ -189,7 +206,7 @@ pub fn prepare_recovery(
         manifest: expected,
     })
 }
-fn limit(required: usize, limit: usize) -> Result<()> {
+pub(super) fn limit(required: usize, limit: usize) -> Result<()> {
     if required > limit {
         return Err(ArtifactError::OverlayLimit { required, limit }.into());
     }
@@ -201,7 +218,7 @@ impl PreparedRecovery {
     /// A normal atomic rename would overwrite a concurrent publisher; the
     /// exclusive rename instead keeps both bytes and reports a retryable race.
     #[cfg(feature = "sync")]
-    fn publish(&self, path: &Path) -> Result<()> {
+    pub(super) fn publish(&self, path: &Path) -> Result<()> {
         let temporary = path.with_extension(format!("repair-{}", crate::EntityId::now().to_hex()));
         let mut file = fs::OpenOptions::new()
             .create_new(true)
@@ -236,6 +253,8 @@ impl PreparedRecovery {
 /// Recovery replay uses the exact same forward validator/materializer as sync.
 /// Targeted repair benefits from its byte-compare skips: unaffected LMDB rows
 /// and entity documents are not replaced. A failed pass never publishes Healthy.
+/// The work runs a page at a time on the vault's task-work line, as host
+/// work served after every caller's (FIX 8821), and this call drains it.
 #[cfg(feature = "sync")]
 pub fn recover_vault_window(
     vault: &crate::Vault,
@@ -244,35 +263,45 @@ pub fn recover_vault_window(
     snapshot: &CanonicalSnapshot,
     budget: RecoveryBudget,
 ) -> Result<PreparedRecovery> {
-    let path = manifest_path.as_ref();
-    // An actor this vault erased reads as no one in the artifact too (FIX
-    // 3878): the recovery checks, installs and compares only that form.
-    let snapshot = &snapshot.with_actors_erased_here(vault)?;
-    // Full domain validation precedes quarantine and every durable write.
-    limit(snapshot.encode()?.len(), budget.max_bytes)?;
-    let candidate = rebuild_vault_window_from_canonical(snapshot)?;
-    crate::sync::bridge::preflight_canonical_recovery(vault, materializer, snapshot, &candidate)?;
-    let prepared = prepare_recovery(path, snapshot, budget)?;
-    // A task whose fact the source refused reads as a refusal here before
-    // the replay can read its authority.
-    if !snapshot.suppressed_tasks.is_empty() {
-        vault.with_write_txn(|txn| {
-            crate::task_authority::restore_suppressed_in_txn(
-                &vault.store,
-                txn,
-                &snapshot.suppressed_tasks,
-            )
-        })?;
-    }
-    let key = crate::sync::types::WindowKey::new(&snapshot.window);
-    crate::sync::window::forward_recovery(vault, &prepared.window, materializer, &key, snapshot)?;
-    // A pad row the artifact names by bare reference completes only with its
-    // pad here, its stored row's or current custody's, checked before the
-    // byte-equal comparisons below: one not here stays pending, refused as
-    // not here yet, never a Healthy or repaired manifest (KS-5).
-    {
-        let txn = vault.store.env.read_txn()?;
-        for entity in &snapshot.entity_blobs {
+    super::work::RecoveryWork::new(manifest_path.as_ref(), snapshot, budget, None)
+        .drain(vault, materializer)
+}
+
+/// Verifies a replayed recovery a page of checks at a time (FIX 8821), in
+/// the order one run takes them: each pad row the artifact names by bare
+/// reference completes only with its pad here, its stored row's or current
+/// custody's: one not here stays pending, refused as not here yet, never a
+/// Healthy or repaired manifest (KS-5). Then the recapture must be
+/// equivalent to the artifact, a check of the whole: forward replay may
+/// quarantine semantic/authority failures, and a partial replay is never
+/// complete merely because that door reported its row count. Then every
+/// entity and edge must have landed, and last the window's pads are carried.
+/// `at` counts the checks done; returns whether all are.
+#[cfg(feature = "sync")]
+pub(super) fn verify_page(
+    vault: &crate::Vault,
+    prepared: &PreparedRecovery,
+    snapshot: &CanonicalSnapshot,
+    at: &mut usize,
+    page: usize,
+) -> Result<bool> {
+    let entities = snapshot.entity_blobs.len();
+    let landed_edges = 2 * entities + 1;
+    let total = landed_edges + snapshot.base_edges.len() + 1;
+    let end = at.saturating_add(page.max(1)).min(total);
+    while *at < end {
+        let check = *at;
+        if check == entities {
+            let actual =
+                super::capture_canonical_window(vault, &snapshot.window, &prepared.window)?;
+            if &pad_equivalent(vault, actual, snapshot) != snapshot {
+                return Err(invalid("recovery materialization is not equivalent"));
+            }
+        } else if check + 1 == total {
+            carry_window_pads(vault, &prepared.window)?;
+        } else if check < entities {
+            let entity = &snapshot.entity_blobs[check];
+            let txn = vault.store.env.read_txn()?;
             let id = crate::EntityId::from_bytes(entity.id)?;
             if let Some(waits) = crate::world_keys::pad_reference_waits_in_txn(
                 &vault.store,
@@ -282,73 +311,68 @@ pub fn recover_vault_window(
             )? {
                 return Err(waits);
             }
+        } else if check < landed_edges {
+            entity_landed(vault, &snapshot.entity_blobs[check - entities - 1])?;
+        } else {
+            edge_landed(vault, &snapshot.base_edges[check - landed_edges])?;
         }
+        *at += 1;
     }
-    // Forward replay may quarantine semantic/authority failures. Never mark a
-    // partial replay complete merely because that door reported its row count.
-    let actual = super::capture_canonical_window(vault, &snapshot.window, &prepared.window)?;
-    if &pad_equivalent(vault, actual, snapshot) != snapshot {
-        return Err(invalid("recovery materialization is not equivalent"));
-    }
-    {
-        let txn = vault.store.env.read_txn()?;
-        for entity in &snapshot.entity_blobs {
-            let id = crate::EntityId::from_bytes(entity.id)?;
-            // A pad row the artifact names by reference rests with its pad:
-            // it landed when the same key's pad is here (KS-5).
-            let landed =
-                match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)? {
-                    Some(stored) => {
-                        stored == entity.blob
-                            || crate::world_keys::pad_echo_equal(
-                                &vault.store,
-                                &stored,
-                                &entity.blob,
-                            )
-                    }
-                    None => false,
-                };
-            if !landed {
-                return Err(invalid("entity materialization incomplete"));
-            }
+    Ok(*at == total)
+}
+
+/// A pad row the artifact names by reference rests with its pad: it landed
+/// when the same key's pad is here (KS-5).
+#[cfg(feature = "sync")]
+fn entity_landed(vault: &crate::Vault, entity: &super::CanonicalEntity) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    let id = crate::EntityId::from_bytes(entity.id)?;
+    let landed = match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)? {
+        Some(stored) => {
+            stored == entity.blob
+                || crate::world_keys::pad_echo_equal(&vault.store, &stored, &entity.blob)
         }
-        for edge in &snapshot.base_edges {
-            let source = crate::EntityId::from_bytes(edge.source)?;
-            let target = crate::EntityId::from_bytes(edge.target)?;
-            let kind = crate::EdgeKind::try_from_u8(edge.kind)
-                .ok_or_else(|| invalid("edge kind materialization"))?;
-            let stored = crate::ports::EdgeStoreStaging::port_edge_encoded(
-                &vault.store,
-                &txn,
-                &source,
-                kind,
-                &target,
-            )?;
-            // Local invalidation outranks the image's support stamp: the
-            // replay lands it retracted where every local wrapper withdrew.
-            let landed = match stored.as_deref() {
-                Some(stored) => {
-                    stored == edge.value.as_slice()
-                        || crate::provenance::holds_withdrawn_image(
-                            &vault.store,
-                            &txn,
-                            &crate::provenance::EdgeRef::new(source, kind, target),
-                            &edge.value,
-                            stored,
-                        )?
-                }
-                None => false,
-            };
-            if !landed {
-                return Err(invalid("edge materialization incomplete"));
-            }
+        None => false,
+    };
+    if !landed {
+        return Err(invalid("entity materialization incomplete"));
+    }
+    Ok(())
+}
+
+/// Local invalidation outranks the image's support stamp: the replay lands
+/// it retracted where every local wrapper withdrew.
+#[cfg(feature = "sync")]
+fn edge_landed(vault: &crate::Vault, edge: &super::CanonicalBaseEdge) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    let source = crate::EntityId::from_bytes(edge.source)?;
+    let target = crate::EntityId::from_bytes(edge.target)?;
+    let kind = crate::EdgeKind::try_from_u8(edge.kind)
+        .ok_or_else(|| invalid("edge kind materialization"))?;
+    let stored = crate::ports::EdgeStoreStaging::port_edge_encoded(
+        &vault.store,
+        &txn,
+        &source,
+        kind,
+        &target,
+    )?;
+    let landed = match stored.as_deref() {
+        Some(stored) => {
+            stored == edge.value.as_slice()
+                || crate::provenance::holds_withdrawn_image(
+                    &vault.store,
+                    &txn,
+                    &crate::provenance::EdgeRef::new(source, kind, target),
+                    &edge.value,
+                    stored,
+                )?
         }
+        None => false,
+    };
+    if !landed {
+        return Err(invalid("edge materialization incomplete"));
     }
-    carry_window_pads(vault, &prepared.window)?;
-    if prepared.tier != RecoveryTier::Healthy {
-        prepared.publish(path)?;
-    }
-    Ok(prepared)
+    Ok(())
 }
 
 /// `actual`, a recapture of a recovered window, with each pad row naming the

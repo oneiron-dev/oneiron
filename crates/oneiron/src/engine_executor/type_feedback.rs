@@ -127,14 +127,8 @@ impl EngineNativeExecutor<'_> {
                 }
             }
         }
-        let held: Vec<Arc<StepCell>> = self
-            .held_checks()
-            .iter()
-            .filter(|cell| cell.key().0 == run)
-            .cloned()
-            .collect();
-        for cell in held {
-            self.keep_row(&cell);
+        for cell in self.held_checks().iter().filter(|cell| cell.key().0 == run) {
+            self.keep_row(cell);
             steps.insert(cell.key(), cell.feedback());
         }
         steps.into_values().collect()

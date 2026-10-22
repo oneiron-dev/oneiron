@@ -9,6 +9,7 @@ pub(crate) mod home_handoff;
 mod index;
 mod kit_fetch;
 mod machine_history;
+mod pad_custody;
 mod promoted_pads;
 mod search;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
@@ -619,6 +620,9 @@ impl SyncClient {
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES {
             return Err(refused());
         }
+        // The world's pads reach custody here before the snapshot (FIX 6706).
+        self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
+            .await;
         // Do not merge a canonical frontier into an independently authored
         // sparse window. Its prior ops would not be a causal continuation.
         // A key pad held here is not mirrored into it: the snapshot carries
@@ -772,6 +776,9 @@ impl SyncClient {
         let snapshot = base64::engine::general_purpose::STANDARD
             .decode(reply.snapshot)
             .map_err(|_| refused())?;
+        // The world's pads reach custody here before the snapshot (FIX 6706).
+        self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
+            .await;
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES
             || !import_promotion_snapshot_with(&self.vault, &loaded.doc, &snapshot)
         {
