@@ -234,6 +234,8 @@ export type RecallScope = {
   facet?: string
   /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
   kinds?: string[]
+  /** Project audience ids to select from. Unset or empty adds no narrowing to what the caller may read. */
+  projectRefs?: string[]
 }
 
 /** A recall's media query (OF-370): bytes the server embeds into one declared space, searched as that space's list beside the query's. An embedded client returns `MODEL_UNAVAILABLE`. */
@@ -387,8 +389,8 @@ export type MemoryExport = { format: string; archive: string; digest: string }
 
 /** One read scope: which entity types, sensitivity, staleness, confidence and salience it admits. */
 export type ReadScope = {
-  /** Admitted entity type bytes; absent means every registered type. */
-  entityTypes?: number[]
+  /** Admitted entity types as registry kinds (`CLAIM`, `MESSAGE`, ...); absent means every registered type. */
+  entityTypes?: string[]
   maxSensitivityBand: number
   includeStale: boolean
   minConfidence: number
