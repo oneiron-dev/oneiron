@@ -56,7 +56,7 @@ pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey, CheckpointSeque
 pub use commitment::CheckpointSigner;
 pub use credential_custody::CredentialRestoreNote;
 pub use custody_head::*;
-pub use host_holds::{BackupHolds, HostOrderHolds};
+pub use host_holds::{BackupHoldVisibility, BackupHolds, HostOrderHolds};
 use image::{CheckpointImage, read_image, read_image_required};
 pub use pad_custody::PadRestoreNote;
 use serde::{Deserialize, Serialize};
