@@ -22393,6 +22393,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/gap/intent.rs",
+     "purpose": "The owner's stated intent (FIX 8949; ARCH-0040, ARCH-0026)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -23228,6 +23239,16 @@
       "crate-vis": 2,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/task_realize/landing.rs",
+     "purpose": "A realization's answer and its row's result in one write (FIX 1334)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -26191,6 +26212,16 @@
      "surface": {
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/recipe/landing.rs",
+     "purpose": "Where a recipe's output lands (FIX 8725, FIX 8726)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -42963,7 +42994,7 @@
      "path": "src/note/verbs.rs",
      "purpose": "Actor-bound NOTE creation, edit and source-entity bridge",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6
      }
     },
@@ -72397,7 +72428,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 127,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72439,7 +72470,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73449,7 +73480,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4732,
+   "source_files": 4735,
    "test_files": 902
   },
   "oneiron-android": {
@@ -87520,6 +87551,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/confession_wording.rs",
+     "purpose": "The wording a run is asked for its confession in (OF-544, FIX 8696): `[models.dreamer.wording]`'s, else the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/connector_event.rs",
      "purpose": "The served connector-event responder (OF-519): what a Dreamer pass runs when a subscribed Slack or LINE…",
      "surface": {
@@ -91994,6 +92035,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/intent_routes.rs",
+     "purpose": "`/v1/owner/intents`: the owner states an intent in his own words (FIX 8949)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/learning_setting_routes.rs",
      "purpose": "`/v1/owner/settings/learning`: the owner reads the learned-setting catalog and its own rows, and lays or…",
      "surface": {
@@ -94524,6 +94575,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DreamerWording"
+     ],
+     "path": "src/config/models/dreamer_wording.rs",
+     "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ModelRef",
       "Rung"
      ],
@@ -94570,7 +94635,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
-      "re-export": 11,
+      "re-export": 12,
       "struct": 7
      }
     },
@@ -100921,14 +100986,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 79,
+     "files": 80,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 508,
+     "files": 509,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -101005,7 +101070,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 54,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101385,7 +101450,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1108,
+   "source_files": 1111,
    "test_files": 182
   },
   "oneiron-spawn": {
