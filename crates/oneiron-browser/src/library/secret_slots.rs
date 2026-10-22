@@ -27,12 +27,14 @@ use super::WorkflowProgram;
 use super::{AdmissionRefusal, fill_slots};
 use crate::{BatchStep, ExpectInput, SecretKind};
 #[cfg(feature = "driver")]
-use crate::{BrowserDriver, BrowserError, EffectReceipt, FindInput, Row, WorkflowCheck};
+use crate::{
+    BrowserDriver, BrowserError, EffectReceipt, FindInput, OperandGap, ReplayAction, Row,
+    TypeOperand, WorkflowCheck,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "driver")]
 use serde_json::Value;
-#[cfg(feature = "driver")]
 use std::collections::BTreeMap;
 
 /// One of a program's parameters that takes a secret: its name, among the
@@ -230,9 +232,45 @@ impl<D: BrowserDriver + ?Sized> Slots<'_, D> {
         Ok(())
     }
 
+    /// The slot a secret of `kind` with these values takes, in the book.
+    fn mint(&mut self, kind: SecretKind, solved: String, replay: Option<String>) -> String {
+        self.book().mint(kind, solved, replay)
+    }
+
+    /// Marks parameter `name` as taking a secret of `kind`, once.
+    fn mark(&mut self, name: &str, kind: SecretKind) {
+        self.book().mark(name, kind);
+    }
+
+    /// The proposal's parameters and values, as the book that slots them.
+    fn book(&mut self) -> SlotBook<'_> {
+        SlotBook {
+            params: &mut *self.params,
+            secret: &mut *self.secret,
+            args: &mut *self.args,
+            replay_args: &mut *self.replay_args,
+        }
+    }
+}
+
+/// A proposal's parameters and values as its secrets take slots: the one
+/// book admission's slots and a draft's (CUA E7) are written in.
+pub(super) struct SlotBook<'a> {
+    pub(super) params: &'a mut Vec<String>,
+    pub(super) secret: &'a mut Vec<SecretParam>,
+    pub(super) args: &'a mut BTreeMap<String, String>,
+    pub(super) replay_args: &'a mut BTreeMap<String, String>,
+}
+
+impl SlotBook<'_> {
     /// The slot a secret of `kind` with these values takes: the secret slot
     /// that holds them already, else a new one named for its kind.
-    fn mint(&mut self, kind: SecretKind, solved: String, replay: Option<String>) -> String {
+    pub(super) fn mint(
+        &mut self,
+        kind: SecretKind,
+        solved: String,
+        replay: Option<String>,
+    ) -> String {
         let taken = self.secret.iter().find(|slot| {
             slot.kind == kind
                 && self.args.get(&slot.name) == Some(&solved)
@@ -259,7 +297,7 @@ impl<D: BrowserDriver + ?Sized> Slots<'_, D> {
     }
 
     /// Marks parameter `name` as taking a secret of `kind`, once.
-    fn mark(&mut self, name: &str, kind: SecretKind) {
+    pub(super) fn mark(&mut self, name: &str, kind: SecretKind) {
         if !self.secret.iter().any(|slot| slot.name == name) {
             self.secret.push(SecretParam {
                 name: name.to_owned(),
@@ -270,7 +308,6 @@ impl<D: BrowserDriver + ?Sized> Slots<'_, D> {
 }
 
 /// The name a new slot of `kind` starts from.
-#[cfg(feature = "driver")]
 const fn slot_word(kind: SecretKind) -> &'static str {
     match kind {
         SecretKind::Card => "card",
@@ -401,20 +438,94 @@ pub(super) fn replay_check(
     }
 }
 
+/// Each secret slot's own text a run gave as its value (not a handle),
+/// with the slot's kind: what a proof's receipts keep no copy of (CUA E7).
+#[cfg(feature = "driver")]
+pub(super) fn values(
+    program: &WorkflowProgram,
+    args: &BTreeMap<String, String>,
+    replay_args: &BTreeMap<String, String>,
+) -> Vec<(String, SecretKind)> {
+    program
+        .secret_params
+        .iter()
+        .flat_map(|slot| {
+            [args.get(&slot.name), replay_args.get(&slot.name)]
+                .into_iter()
+                .flatten()
+                .filter(|value| !value.is_empty() && !handle_form(value))
+                .map(move |value| (value.clone(), slot.kind))
+        })
+        .collect()
+}
+
+/// A receipt's replay as a proof keeps it (CUA E7, FIX 8028): a type's
+/// secret, by its handle or as text holding one of `values`, and a Fill
+/// whose field holds one, withheld (`unbound`), never the handle or text.
+#[cfg(feature = "driver")]
+fn withhold(receipt: &mut EffectReceipt, values: &[(String, SecretKind)]) {
+    let held = |text: &str| {
+        values
+            .iter()
+            .find(|(value, _)| text.contains(value.as_str()))
+            .map(|(_, kind)| *kind)
+    };
+    let cut = |kind| TypeOperand::Withheld {
+        kind,
+        cause: OperandGap::Unbound,
+    };
+    let Some(action) = &mut receipt.action else {
+        return;
+    };
+    match action {
+        ReplayAction::Type { operand, .. } => {
+            let kind = match operand {
+                TypeOperand::Secret { kind, .. } => Some(Some(*kind)),
+                TypeOperand::Literal { text } => held(text.as_str()).map(Some),
+                TypeOperand::Withheld { .. } => None,
+            };
+            if let Some(kind) = kind {
+                *operand = cut(kind);
+            }
+        }
+        ReplayAction::Fill { locator, field } => {
+            let mut texts = field
+                .supplied
+                .iter()
+                .chain(&field.template)
+                .chain(&field.instruction)
+                .chain(field.references.iter().map(|reference| &reference.text))
+                .chain(field.enum_values.iter().flatten());
+            if let Some(kind) = texts.find_map(|text| held(text.as_str())) {
+                let locator = std::mem::take(locator);
+                *action = ReplayAction::Type {
+                    locator,
+                    operand: cut(Some(kind)),
+                    clear: true,
+                };
+            }
+        }
+        ReplayAction::Open { .. } | ReplayAction::Click { .. } | ReplayAction::Select { .. } => {}
+    }
+}
+
 /// A replay's receipts and decisions as a proof keeps them: `[secret]` in
 /// place of every handle a row's name or value showed, as a locator holds
-/// it, so the proof keeps no handle of a run.
+/// it, and each receipt's replay withheld where it holds a secret
+/// (`withhold`), so the proof keeps no handle of a run.
 #[cfg(feature = "driver")]
 pub(super) fn unbound(
     receipts: Vec<EffectReceipt>,
     mut decisions: Vec<Value>,
+    values: &[(String, SecretKind)],
 ) -> (Vec<EffectReceipt>, Vec<Value>) {
     for decision in &mut decisions {
         unbind(decision);
     }
     let receipts = receipts
         .into_iter()
-        .map(|receipt| {
+        .map(|mut receipt| {
+            withhold(&mut receipt, values);
             let Ok(mut value) = serde_json::to_value(&receipt) else {
                 return receipt;
             };

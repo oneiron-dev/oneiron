@@ -6,6 +6,10 @@
 //! through the binding, never through a read. A count a cache declares is
 //! measured before it is expanded (FIX 8589).
 
+mod families;
+
+pub(crate) use families::{flag, plot as plot_settings, view};
+
 use super::{C, FRAME_DATA, children};
 use crate::design_plan::Cell;
 use crate::edit::xml::{self, R};
@@ -47,6 +51,11 @@ pub(crate) fn plot_family(name: &str) -> Option<ChartKind> {
         "scatterChart" => ChartKind::Scatter,
         "doughnutChart" => ChartKind::Doughnut,
         "radarChart" => ChartKind::Radar,
+        "bar3DChart" => ChartKind::Bar3D,
+        "line3DChart" => ChartKind::Line3D,
+        "pie3DChart" => ChartKind::Pie3D,
+        "area3DChart" => ChartKind::Area3D,
+        "bubbleChart" => ChartKind::Bubble,
         _ => return None,
     })
 }
@@ -431,9 +440,10 @@ fn grow_values(
 
 /// A chart part's data as the live model holds it, read from its caches
 /// and literals: the first plot's family, its categories, and each series'
-/// name and values, with a combo chart's plot family, a scatter series' x
-/// values, and a category series' own categories where they are not the
-/// chart's. When every category series reads the same labels (multi-level
+/// name and values, with a combo chart's plot family, a scatter or bubble
+/// series' x values, a bubble series' sizes (missing and negative ones
+/// kept as data) and 3D flag, and a category series' own categories where
+/// they are not the chart's; each plot's settings and the chart's 3D view. When every category series reads the same labels (multi-level
 /// ones level by level), they are the chart's, once; otherwise the first
 /// category series' are the chart's, and each series whose labels differ
 /// (one with none, too) holds its own, never folded into the first's. A
@@ -456,7 +466,8 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
     let mut read: Vec<Option<ChartCategories>> = Vec::new();
     let mut referenced = false;
     for &(plot, at) in &plots {
-        let scatter = plot == ChartKind::Scatter;
+        let scatter = plot.draws_x();
+        let bubble = plot == ChartKind::Bubble;
         let (cat, val) = if scatter {
             ("xVal", "yVal")
         } else {
@@ -470,10 +481,25 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
             ) else {
                 return Ok(None);
             };
-            referenced |= [&name, &held, &values]
+            // A bubble series' sizes: missing and negative sizes stay data.
+            let Some(size) = (if bubble {
+                slot(&tree, ser, "bubbleSize")?
+            } else {
+                Some(None)
+            }) else {
+                return Ok(None);
+            };
+            referenced |= [&name, &held, &values, &size]
                 .into_iter()
                 .flatten()
                 .any(|points| points.formula.is_some());
+            let mut bubble_size = match size {
+                Some(points) => match numbers(points.cells())? {
+                    Some(size) => Some(size),
+                    None => return Ok(None),
+                },
+                None => None,
+            };
             let values = match values {
                 Some(points) => match numbers(points.cells())? {
                     Some(values) => values,
@@ -492,6 +518,9 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
                 Some(points) if !scatter => (None, Some(categories_of(points)?)),
                 _ => (None, None),
             };
+            if let Some(size) = &mut bubble_size {
+                grow_values(size, values.len())?;
+            }
             series.push(ChartSeries {
                 id: None,
                 name: name
@@ -501,6 +530,8 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
                 family: combo.then_some(plot),
                 x,
                 categories: None,
+                bubble_size,
+                bubble_3d: bubble.then(|| flag(&tree, ser, "bubble3D")).flatten(),
             });
             read.push(own);
         }
@@ -556,6 +587,8 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
         categories,
         series,
         source,
+        plots: families::plots(&tree, &plots),
+        view: view(&tree),
     }))
 }
 
