@@ -40,10 +40,12 @@ use super::storage::{
 /// Native means the vault ALREADY knows them. The POSITIVE fact is the pair
 /// that only an existing relationship can produce: one of our own ACTIVE
 /// channel identities, plus a live counterparty contact on it for this
-/// person's address. The `comm.*` standing state is read as a VETO over that
-/// pair — an opt-out, or an explicit `comm.reachable_via: false`, removes the
-/// channel. That direction is deliberate: consent facts must be able to take a
-/// route away without being able to invent one.
+/// person's address. An explicit `comm.reachable_via: false` is read as a
+/// VETO over that pair and removes the channel: consent facts must be able to
+/// take a route away without being able to invent one. An opt-out, the
+/// contact's or a channel's, is no loss of transport (FIX 9865): the route
+/// resolves and the outbound gate applies the restriction, its owner override
+/// and its receipted hold.
 ///
 /// No pack is installed, no MACHINE assignee is synthesized, and an unknown
 /// person is never quietly routed through an external marketplace — the
@@ -57,7 +59,7 @@ pub fn resolve_native_human_route(
 }
 
 /// [`resolve_native_human_route_in`] for the identity `owner_ref` sends from.
-/// Each `comm.*` CLAIM whose veto takes an active channel away is pushed
+/// Each `comm.*` CLAIM that restricts an active channel it reads is pushed
 /// onto `vetoes`: the route read is derived from it.
 pub(crate) fn resolve_native_human_route_for_actor_in(
     vault: &Vault,
@@ -117,9 +119,11 @@ pub(super) fn resolve_native_human_route_with_sender_in(
             continue;
         }
         let channel = facts.channel.as_str();
-        if let Some(claims) = vetoed.get(channel) {
+        if let Some((claims, unreachable)) = vetoed.get(channel) {
             vetoes.extend(claims.iter().copied());
-            continue;
+            if *unreachable {
+                continue;
+            }
         }
         if let Some(owner) = owner_ref {
             // The notice scheduler's outbound chokepoint selects this exact
@@ -146,7 +150,7 @@ pub(super) fn resolve_native_human_route_with_sender_in(
         else {
             continue;
         };
-        if contact.status != CounterpartyContactStatus::Active || contact.opt_out.is_some() {
+        if contact.status != CounterpartyContactStatus::Active {
             continue;
         }
         return Ok(NativeHumanRoute {
@@ -193,16 +197,17 @@ fn comm_party_key(
 
 // ── follow-up cursor ────────────────────────────────────────────────────────
 
-/// Channel classes this person's standing `comm.*` state takes off the table,
-/// each with the CLAIMs that take it: an active opt-out, or an explicit "not
-/// reachable here".
+/// Channel classes this person's standing `comm.*` state restricts, each with
+/// the CLAIMs that restrict it (an active opt-out, or an explicit "not
+/// reachable here") and whether one of them is that "not reachable here",
+/// the only one that takes the channel off the table.
 fn vetoed_channel_classes(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person_ref: EntityId,
     now: u64,
-) -> Result<BTreeMap<String, Vec<EntityId>>> {
-    let mut vetoed = BTreeMap::<String, Vec<EntityId>>::new();
+) -> Result<BTreeMap<String, (Vec<EntityId>, bool)>> {
+    let mut vetoed = BTreeMap::<String, (Vec<EntityId>, bool)>::new();
     // A veto fold: a restriction lands whether or not its owner has answered
     // its critical confirm, so this read takes no confirm barrier.
     for claim_ref in vault.claims_for_subject_in_txn(txn, &person_ref)? {
@@ -228,13 +233,17 @@ fn vetoed_channel_classes(
             CommClaimValue::OptOut {
                 channel_class: Some(channel_class),
                 ..
+            } => {
+                vetoed.entry(channel_class).or_default().0.push(claim_ref);
             }
-            | CommClaimValue::ReachableVia {
+            CommClaimValue::ReachableVia {
                 channel_class,
                 reachable: false,
                 ..
             } => {
-                vetoed.entry(channel_class).or_default().push(claim_ref);
+                let row = vetoed.entry(channel_class).or_default();
+                row.0.push(claim_ref);
+                row.1 = true;
             }
             // ONE-1752 fan-out only. This helper answers a PER-CLASS question,
             // and neither a party-wide (channel-less) opt-out nor a send
@@ -353,6 +362,9 @@ impl<'a> HumanTaskFollowupDriver<'a> {
                 self.complete(&record, now)?;
                 continue;
             }
+            let Some(record) = self.reconcile_assignee(record, now)? else {
+                continue;
+            };
             let ask_schedule = {
                 let txn = self.vault.store.env.read_txn()?;
                 crate::task_verb::ask_notice_at_in(
@@ -590,6 +602,43 @@ impl<'a> HumanTaskFollowupDriver<'a> {
             };
             put_followup_record_in_txn(self.vault, wtxn, &next)
         })
+    }
+
+    /// `record` against its TASK's live assignee (FIX 9866): a follow-up
+    /// reaches the person the TASK is assigned to now, never the one its
+    /// cursor copied. A takeover by another person moves the cursor to them,
+    /// its ladder from the start under a new generation, so no stage key
+    /// the former person was sent is reused; a TASK that left the human lane
+    /// retires its cursor. An assignee that does not read keeps the cursor as
+    /// it stands.
+    fn reconcile_assignee(
+        &self,
+        record: HumanTaskFollowupRecord,
+        now: u64,
+    ) -> Result<Option<HumanTaskFollowupRecord>> {
+        let Ok(live) = task_human_assignee(self.vault, record.task_ref) else {
+            return Ok(Some(record));
+        };
+        match live {
+            Some(assignee) if assignee == record.assignee_ref => Ok(Some(record)),
+            Some(assignee) => {
+                let next = HumanTaskFollowupRecord {
+                    assignee_ref: assignee,
+                    stage: HumanFollowupStage::Tracking,
+                    stage_generation: record.stage_generation.saturating_add(1),
+                    last_receipt_ref: None,
+                    ..record
+                };
+                self.vault.with_write_txn_grouped(|wtxn| {
+                    put_followup_record_in_txn(self.vault, wtxn, &next)
+                })?;
+                Ok(Some(next))
+            }
+            None => {
+                self.complete(&record, now)?;
+                Ok(None)
+            }
+        }
     }
 
     fn complete(&self, record: &HumanTaskFollowupRecord, now: u64) -> Result<()> {

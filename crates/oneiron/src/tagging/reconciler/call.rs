@@ -19,7 +19,7 @@ impl TaggingReconciler {
     /// panic is caught and returned.
     pub(super) fn call(&self, prepared: &mut PreparedTagging) -> Called {
         let PreparedTagging { trace, call, .. } = prepared;
-        trace.record_call(|| self.encoder.infer(&call.input, call.work))
+        trace.record_call(|| self.encoder.infer_for(&call.input, call.work, &self.caller))
     }
 
     /// What `called` gave, checked against `call`'s input and the stack its

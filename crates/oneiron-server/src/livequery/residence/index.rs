@@ -217,9 +217,16 @@ pub(super) fn index(
                 .is_some_and(|last| last.entity_id > id.to_hex())
         })
         .map(|id| id.to_hex());
+    // FIX 7608 slice 4: rows stay source-bound; listed copy ids name sources.
+    let aliases = oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
+        .map_err(|_| AppError::internal_server_error("index aliases unavailable"))?;
     let rows = items
         .iter()
-        .map(|item| EntityId::from_hex(&item.entity_id).ok())
+        .map(|item| {
+            EntityId::from_hex(&item.entity_id)
+                .ok()
+                .map(|id| aliases.stored(&id))
+        })
         .collect();
     Ok((
         json!({
@@ -295,7 +302,12 @@ pub(super) fn touch(
             "blob": base64::engine::general_purpose::STANDARD.encode(blob),
             "document": base64::engine::general_purpose::STANDARD.encode(document),
         }),
-        Some(vec![id]),
+        // FIX 7608 slice 4: the row a copy id names is its source.
+        Some(vec![
+            oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
+                .map_err(|_| AppError::internal_server_error("item aliases unavailable"))?
+                .stored(&id),
+        ]),
     ))
 }
 
@@ -308,6 +320,10 @@ pub(super) fn promote(
     let input: PromotionRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
+    // FIX 7608 slice 4: a copy id promotes from its source.
+    let id = oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
+        .map_err(|_| AppError::internal_server_error("item aliases unavailable"))?
+        .stored(&id);
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     let admission = admitted(server, auth, peer, &selector)?;
     if !admission
