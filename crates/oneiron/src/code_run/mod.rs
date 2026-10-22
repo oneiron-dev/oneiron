@@ -81,12 +81,12 @@ pub use self::consent_wait::{
     CodeConsentAnswerInput, CodeConsentChoice, CodeConsentEffectHost, CodeConsentSavedCredential,
     CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView,
 };
+pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{
     ContributionForkModel, ContributionForkReceipt, ContributionForkScorer,
     ContributionReplayUnavailable, ForkMismatch, ForkTreatment, ReplayAnchor, ScoredFork,
     contribution_fork_receipts, run_contribution_forks,
 };
-pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
 };
