@@ -70,6 +70,8 @@ pub use field::{
     FieldWritten, NoWriter, TextCheck, TextCheckReply, TextProvenance, TextReference, TextSource,
     TextVerdict,
 };
+#[cfg(feature = "driver")]
+pub use library::filled_checks;
 pub use library::{
     AdmissionRefusal, Admitted, DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput,
     DraftPage, DraftStep, FiledWorkflow, LibraryCard, LibraryFindInput, LibraryFindOutput,
@@ -98,7 +100,8 @@ pub use secret::{SecretCustody, SecretUse};
 pub use secret_fields::{RowSecret, SecretKind, SecretNote};
 #[cfg(feature = "driver")]
 pub use session::{
-    BrowserGuest, BrowserGuestStarter, BrowserSession, FreshGuest, PressGrants, StartedGuest,
+    BrowserGuest, BrowserGuestStarter, BrowserSession, CapturedSolvedSpan, FreshGuest, PressGrants,
+    SOLVED_PAST_PRESS, SolvedSnapshotGap, StartedGuest,
 };
 pub use stop::{
     AskUpReason, BatchStopCause, CheckReceipt, ClockScope, FailedStepReceipt, STRICT_DENIED,

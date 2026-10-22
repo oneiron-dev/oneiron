@@ -33,11 +33,18 @@
 mod admission;
 mod cards;
 mod draft;
+#[cfg(feature = "driver")]
+mod durable;
 mod live_run;
 mod secret_slots;
 mod targets;
 
 pub(crate) use secret_slots::handle_form;
+
+#[cfg(feature = "driver")]
+pub(crate) use draft::draft_with_secrets;
+#[cfg(feature = "driver")]
+pub(crate) use durable::durable_draft;
 
 pub use admission::{
     AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal,
@@ -51,6 +58,8 @@ pub use draft::{
     DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput, DraftPage, DraftStep,
     PressedThrough, SlotCandidate, SlotField, draft_from_steps,
 };
+#[cfg(feature = "driver")]
+pub use live_run::filled_checks;
 #[cfg(feature = "driver")]
 pub(crate) use live_run::run;
 pub use live_run::{
