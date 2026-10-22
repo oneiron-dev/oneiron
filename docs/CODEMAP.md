@@ -14,10 +14,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4742 | 902 | 157 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4747 | 902 | 155 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 47 | 1 | 0 |
-| [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 144 | 18 | 0 |
+| [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 145 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 16 | 5 | 0 |
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 51 | 0 | 4 |
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs, run beside them | 9 | 1 | 0 |
@@ -34,10 +34,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-keystore](codemap/oneiron-keystore.md) | This-device-only key slots for one install | 6 | 0 | 0 |
 | [oneiron-linear](codemap/oneiron-linear.md) | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror | 7 | 1 | 0 |
 | [oneiron-llm-anthropic](codemap/oneiron-llm-anthropic.md) | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 7 | 1 | 0 |
-| [oneiron-llm-gemini](codemap/oneiron-llm-gemini.md) | Gemini wire adapter | 5 | 1 | 0 |
+| [oneiron-llm-gemini](codemap/oneiron-llm-gemini.md) | Gemini wire adapter | 6 | 1 | 0 |
 | [oneiron-llm-local](codemap/oneiron-llm-local.md) | Local in-process adapter for Oneiron's `LlmBackend` seam | 7 | 0 | 0 |
-| [oneiron-llm-openai](codemap/oneiron-llm-openai.md) | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 9 | 1 | 1 |
-| [oneiron-llm-own-server](codemap/oneiron-llm-own-server.md) | Own-server LlmBackend | 5 | 2 | 0 |
+| [oneiron-llm-openai](codemap/oneiron-llm-openai.md) | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 10 | 1 | 1 |
+| [oneiron-llm-own-server](codemap/oneiron-llm-own-server.md) | Own-server LlmBackend | 8 | 2 | 0 |
 | [oneiron-llm-systemone](codemap/oneiron-llm-systemone.md) | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` | 1 | 1 | 0 |
 | [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 5 | 2 | 0 |
 | [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 42 | 6 | 0 |
@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 19 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 48 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1111 | 182 | 52 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1115 | 182 | 52 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 11 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 49 | 1 | 0 |
@@ -127,7 +127,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `deletion` | dir | 38 | L | yes | ARCH-0038 deletion/redaction contract types |
 | `delivery_window` | dir | 8 | m | — | Delivery-window policy claims and evaluator for OF-327 O3 |
 | `disclosure` | dir | 12 | m | yes | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
-| `dispatch_byoa` | dir | 23 | L | yes | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
+| `dispatch_byoa` | dir | 24 | L | yes | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
 | `distance` | file | 1 | s | — | Cosine distance kernels, defined in `oneiron-retrieval` |
 | `dreamer_consolidation` | dir | 129 | L | yes | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `dreamer_plugin_suggest` | dir | 2 | m | — | Dreamer proactive-help × pack catalog (ONE-1707) |
@@ -211,7 +211,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `query_expansion` | file+dir | 2 | s | — | Host-injected HyDE query-expansion seam |
 | `reaction` | dir | 18 | m | yes | Message reactions as `conversation.reaction` claims (OF-372) |
 | `receipt` | dir | 34 | m | yes | Unified receipt-family query surface over existing receipt emitters |
-| `recovery` | file+dir | 81 | L | yes | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
+| `recovery` | file+dir | 82 | L | yes | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
 | `registry` | dir | 8 | m | yes | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `repo_mutation` | dir | 41 | m | yes | — |
 | `rerank` | file+dir | 4 | m | — | RET-010 host-injected top-N rerank seam (1186-D1/D2) |
@@ -220,7 +220,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `retrieval_depth` | file+dir | 7 | m | — | ONE-207: the retrieval half of the effort dial |
 | `retrieval_quality` | file | 1 | s | — | Retrieval quality report vocabulary |
 | `run_tree` | dir | 9 | m | — | Run tree projection and control adapter over generic AttemptQueue rows |
-| `runtime_hooks` | dir | 35 | L | yes | Runtime hooks (ARCH-0080) |
+| `runtime_hooks` | dir | 38 | m | yes | Runtime hooks (ARCH-0080) |
 | `saved_query` | dir | 15 | L | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
 | `scan_check` | file+dir | 3 | m | yes | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
 | `scope_summary` | dir | 22 | L | yes | Retained spawned sub-sessions and Dreamer-composed scope summaries |
@@ -304,7 +304,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `cua` | dir | 19 | m | — | Synthetic browser bench: engine outcomes are not oracle passes |
 | `eval` | file+dir | 3 | m | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `fleet` | dir | 8 | m | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
-| `infer` | dir | 13 | m | — | `infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an… |
+| `infer` | dir | 14 | m | — | `infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an… |
 | `interface_bench` | dir | 10 | m | — | Campaign #5 interface bench task generation and smoke harness |
 | `load` | dir | 9 | m | yes | `load` subcommand — the engine's load bench on the shipped server binary |
 | `oneironer_shadow` | file | 1 | m | — | Checkpoint-backed NER shadow proof beside an indexed fixture turn |
@@ -540,7 +540,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `media` | file | 1 | m | Gemini API media wires for the `ai.*` calls past text |
+| `media` | file+dir | 2 | m | Gemini API media wires for the `ai.*` calls past text |
 | `stream` | file | 1 | s | Gemini typed stream decoding |
 | `tests` | file | 1 | — | Decoder checks over provider-shaped replies |
 | `transport` | file | 1 | s | Lease-bearing host transport; no SDK, retries, or call policy |
@@ -556,13 +556,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `lib` | dir | 10 | L | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
+| `lib` | dir | 11 | L | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
 
 ## oneiron-llm-own-server
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `mesh` | dir | 4 | m | Models on the owner's other nodes (OF-575, owner ruling MESH: "a phone uses the MacBook's model") |
+| `emitted` | file | 1 | s | What a checked stream has already shown its caller (FIX 8617): each part in the order it started, its text… |
+| `mesh` | dir | 6 | m | Models on the owner's other nodes (OF-575, owner ruling MESH: "a phone uses the MacBook's model") |
 | `tests` | file | 1 | — | — |
 
 ## oneiron-llm-systemone
@@ -736,7 +737,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `managed` | dir | 81 | XL | Managed serve mode: the vault engine as a supervised child process |
 | `mcp` | dir | 23 | L | MCP connector actor registry |
 | `model_artifacts` | dir | 5 | m | Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later… |
-| `models` | dir | 64 | XL | The one provider abstraction: `[models]` in, one backend per seat out |
+| `models` | dir | 67 | XL | The one provider abstraction: `[models]` in, one backend per seat out |
 | `oauth_relay` | file | 1 | L | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `oneironer` | dir | 41 | m | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
 | `owner` | dir | 39 | m | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
@@ -744,7 +745,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `protocol` | file | 1 | m | Custom Oneiron sync protocol — server-side extensions |
 | `replay_judge` | file+dir | 3 | m | The serve host's skill judge (OF-495) |
 | `residence_machines` | file | 1 | s | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
-| `runtime` | dir | 12 | L | — |
+| `runtime` | dir | 13 | L | — |
 | `saved_query_sweep` | file | 1 | m | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
 | `server` | dir | 60 | XL | Sync server state and maintenance jobs, split by concern |
 | `skills_pack` | file | 1 | s | — |

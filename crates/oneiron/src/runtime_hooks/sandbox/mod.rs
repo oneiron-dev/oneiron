@@ -4,19 +4,21 @@
 //! `ai.verdict` and the one outcome return, and exports `run-hook`. No WASI,
 //! clock, random, file, network or verb import is linked. A verdict is
 //! answered only for a fact hook the runner lets call one. Each run gets a fresh Store under the
-//! code-mode limits, with a deadline from the hook's `budget_ms` that also
-//! covers start-up and host reads.
+//! code-mode limits. Its `budget_ms` is an accounting deadline on the run's
+//! [`HookRunContext`], never a stop (FIX 8842): start-up, reads and verdicts
+//! are measured against it, each admitted callback's answer is delivered
+//! even when late, and the body runs to its own end under its fuel and
+//! memory.
 
 /// Types generated from the hook world.
 pub mod bindings {
     wasmtime::component::bindgen!({ path: "wit/hook/hook.wit", world: "hook" });
 }
 
-use super::{HookBodyRun, HookBodyRuntime, HookVerdictCall};
+use super::{HookBodyRun, HookBodyRuntime, HookRunContext, HookVerdictCall};
 use crate::code_sandbox::wasmtime_runtime::ComponentBudget;
 use crate::{Error, Result};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store, StoreContextMut, StoreLimits, StoreLimitsBuilder};
 
@@ -64,7 +66,6 @@ pub fn hook_component_bytes() -> (&'static [u8], [u8; 32]) {
 /// A pinned, checked hook component. Compiled once; each run gets its own
 /// Store and instance, so no state crosses runs.
 pub struct HookSandbox {
-    engine: Engine,
     pre: bindings::HookPre<State>,
     budget: ComponentBudget,
 }
@@ -74,21 +75,21 @@ impl HookBodyRuntime for HookSandbox {
         &self,
         body: &str,
         input_json: &str,
-        budget_ms: u32,
+        context: &mut HookRunContext,
         read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
     ) -> Result<HookBodyRun> {
-        Self::run_hook(self, body, input_json, budget_ms, read)
+        Self::run_hook(self, body, input_json, context, read)
     }
 
     fn run_fact_hook(
         &self,
         body: &str,
         input_json: &str,
-        budget_ms: u32,
+        context: &mut HookRunContext,
         read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
         verdict: HookVerdictCall<'_>,
     ) -> Result<HookBodyRun> {
-        self.run(body, input_json, budget_ms, read, verdict)
+        self.run(body, input_json, context, read, verdict)
     }
 }
 
@@ -107,7 +108,6 @@ impl HookSandbox {
         config
             .wasm_component_model(true)
             .consume_fuel(true)
-            .epoch_interruption(true)
             .max_wasm_stack(WASM_STACK_BYTES);
         let engine = Engine::new(&config).map_err(|_| failure("hook engine creation failed"))?;
         let component =
@@ -128,7 +128,6 @@ impl HookSandbox {
         let pre = bindings::HookPre::new(pre)
             .map_err(|_| failure("hook component run-hook ABI mismatch"))?;
         let sandbox = Self {
-            engine,
             pre,
             budget: ComponentBudget::default(),
         };
@@ -142,47 +141,41 @@ impl HookSandbox {
         &self,
         body: &str,
         input_json: &str,
-        budget_ms: u32,
+        context: &mut HookRunContext,
         read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
     ) -> Result<HookBodyRun> {
         let mut verdict = |_: &str| Err(NO_VERDICT.to_owned());
-        self.run(body, input_json, budget_ms, read, &mut verdict)
+        self.run(body, input_json, context, read, &mut verdict)
     }
 
     fn run(
         &self,
         body: &str,
         input_json: &str,
-        budget_ms: u32,
+        context: &mut HookRunContext,
         read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
         verdict: HookVerdictCall<'_>,
     ) -> Result<HookBodyRun> {
+        let budget_ms = context.budget_ms();
         if budget_ms == 0 || budget_ms > MAX_BUDGET_MS {
             return Err(failure("hook budget_ms is out of bounds"));
         }
         if body.len() > self.budget.message_bytes || input_json.len() > self.budget.message_bytes {
             return Err(failure("hook body or input exceeds the message limit"));
         }
-        let deadline = Instant::now()
-            .checked_add(Duration::from_millis(u64::from(budget_ms)))
-            .ok_or(failure("invalid hook deadline"))?;
         // Wasmtime needs 'static store data, so the body runs on a scoped
         // worker and the borrowed `read` answers on this thread over a bounded
-        // channel. The worker stays in process.
+        // channel. The worker stays in process, and is joined before this
+        // returns: the run's accounting ends after it.
         let (events, requests) = mpsc::sync_channel(1);
         let budget = self.budget;
         let pre = &self.pre;
         std::thread::scope(|scope| {
             scope.spawn(move || {
-                let result = execute(pre, budget, body, input_json, events.clone(), deadline);
+                let result = execute(pre, budget, body, input_json, events.clone());
                 let _ = events.send(Event::Finished(result));
             });
-            let result = serve_reads(&requests, read, verdict, deadline);
-            // Wakes a worker still running after a timeout; its own deadline
-            // check then stops it. Siblings re-check theirs and go on.
-            drop(requests);
-            self.engine.increment_epoch();
-            result
+            serve_reads(&requests, read, verdict, context)
         })
     }
 
@@ -194,7 +187,8 @@ impl HookSandbox {
             && typeof ai.verdict === 'function' ? {kind: 'nothing'} : {kind: 'skip', reason: 'probe'};";
         let input =
             r#"{"hook":{"binding":"00000000000000000000000000000001"},"now":1700000000000}"#;
-        let run = self.run_hook(body, input, 5_000, &mut |request: &str| {
+        let mut context = HookRunContext::new(5_000);
+        let run = self.run_hook(body, input, &mut context, &mut |request: &str| {
             if request == r#"{"claim":"00000000000000000000000000000001"}"# {
                 Ok(r#"{"seen":7}"#.to_owned())
             } else {
@@ -211,7 +205,6 @@ impl HookSandbox {
 struct State {
     events: mpsc::SyncSender<Event>,
     limits: StoreLimits,
-    remaining_reads: u32,
     host_calls: u32,
     message_bytes: usize,
     outcome: Option<String>,
@@ -238,14 +231,11 @@ impl State {
         wasmtime::Error::msg(reason)
     }
 
-    /// One scoped read. It debits the host-call budget; an exhausted budget
-    /// traps the body. Oversized requests and answers come back as codes.
+    /// One scoped read, counted in the run's host calls: a count never
+    /// refuses one (FIX 8841). Oversized requests and answers come back as
+    /// codes.
     fn read(&mut self, request: String) -> wasmtime::Result<Reply<String>> {
         self.host_calls = self.host_calls.saturating_add(1);
-        if self.remaining_reads == 0 {
-            return Err(self.refuse("hook host call budget exceeded"));
-        }
-        self.remaining_reads -= 1;
         if request.len() > READ_REQUEST_BYTES {
             return Ok(Err("read_request_over_budget".into()));
         }
@@ -263,14 +253,10 @@ impl State {
         })
     }
 
-    /// One `ai.verdict` call, on the same host-call budget as a read. The
-    /// host answers it, or refuses it for a body that may not call a model.
+    /// One `ai.verdict` call, counted as a read is. The host answers it, or
+    /// refuses it for a body that may not call a model.
     fn verdict(&mut self, request: String) -> wasmtime::Result<Reply<String>> {
         self.host_calls = self.host_calls.saturating_add(1);
-        if self.remaining_reads == 0 {
-            return Err(self.refuse("hook host call budget exceeded"));
-        }
-        self.remaining_reads -= 1;
         if request.len() > VERDICT_REQUEST_BYTES {
             return Ok(Err("verdict_request_over_budget".into()));
         }
@@ -343,7 +329,6 @@ fn execute(
     body: &str,
     input_json: &str,
     events: mpsc::SyncSender<Event>,
-    deadline: Instant,
 ) -> Result<HookBodyRun> {
     let limits = StoreLimitsBuilder::new()
         .memory_size(budget.memory_bytes)
@@ -358,7 +343,6 @@ fn execute(
         State {
             events,
             limits,
-            remaining_reads: budget.host_calls,
             host_calls: 0,
             message_bytes: budget.message_bytes,
             outcome: None,
@@ -369,19 +353,6 @@ fn execute(
     store
         .set_fuel(budget.fuel)
         .map_err(|_| failure("hook fuel setup failed"))?;
-    store.set_epoch_deadline(1);
-    // Epochs belong to the Engine. A sibling's wake must not stop this store
-    // before its own deadline.
-    store.epoch_deadline_callback(move |_| {
-        if Instant::now() >= deadline {
-            Err(wasmtime::Error::msg("hook deadline exceeded"))
-        } else {
-            Ok(wasmtime::UpdateDeadline::Continue(1))
-        }
-    });
-    if Instant::now() >= deadline {
-        return Err(failure("hook deadline exceeded before execution"));
-    }
     let hook = pre
         .instantiate(&mut store)
         .map_err(|_| failure("hook component instantiation refused"))?;
@@ -392,7 +363,7 @@ fn execute(
     match ran {
         Err(error) => Err(match state.trap {
             Some(reason) => failure(reason),
-            None => trap_failure(&error, deadline),
+            None => trap_failure(&error),
         }),
         Ok(Err(message)) => Err(guest_failure(&message)),
         Ok(Ok(())) => Ok(HookBodyRun {
@@ -405,38 +376,37 @@ fn execute(
     }
 }
 
+/// Answers the worker's reads and verdicts until the body ends. The budget
+/// stops nothing (FIX 8842): it waits on the body however long it runs,
+/// runs each admitted callback to its end, measured on `context`, and sends
+/// its answer even when late. Only the worker's end, or its channel closing
+/// without one, ends the wait.
 fn serve_reads(
     requests: &mpsc::Receiver<Event>,
     read: &mut dyn FnMut(&str) -> Reply<String>,
     verdict: HookVerdictCall<'_>,
-    deadline: Instant,
+    context: &mut HookRunContext,
 ) -> Result<HookBodyRun> {
     loop {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .filter(|left| !left.is_zero())
-            .ok_or(failure("hook deadline exceeded"))?;
-        match requests.recv_timeout(remaining) {
+        match requests.recv() {
             Ok(Event::Read { request, reply }) => {
-                let _ = reply.send(read(&request));
+                let _ = reply.send(context.read(|| read(&request)));
             }
             Ok(Event::Verdict { request, reply }) => {
-                let _ = reply.send(verdict(&request));
+                let _ = reply.send(context.verdict(|| verdict(&request)));
             }
             Ok(Event::Finished(result)) => return result,
-            Err(_) => return Err(failure("hook deadline exceeded or worker failed")),
+            Err(mpsc::RecvError) => return Err(failure("hook worker stopped without an end")),
         }
     }
 }
 
-fn trap_failure(error: &wasmtime::Error, deadline: Instant) -> Error {
+fn trap_failure(error: &wasmtime::Error) -> Error {
     if matches!(
         error.downcast_ref::<wasmtime::Trap>(),
         Some(wasmtime::Trap::OutOfFuel)
     ) {
         failure("hook body ran out of fuel")
-    } else if Instant::now() >= deadline {
-        failure("hook deadline exceeded")
     } else {
         failure("hook body trapped")
     }

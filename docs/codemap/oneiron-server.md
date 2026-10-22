@@ -889,7 +889,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/wire.rs` | src | m | 15 crate-vis | — | Version-8 app envelopes |
 | `src/logging.rs` | src | s | 1 re-export · 4 crate-vis | — | What the binaries write to their log sinks, and the panic hook |
 | `src/logging/tests.rs` | test | s | 4 crate-vis | — | — |
-| `src/machine.rs` | src | m | 24 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
+| `src/machine.rs` | src | m | 26 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
 | `src/main.rs` | src | s | — | — | — |
 | `src/managed/args.rs` | src | m | 1 struct · 2 enum · 3 fn · 1 const · 1 re-export · 3 crate-vis | ManagedArgs, ManagedError, SettingsRefusal | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
 | `src/managed/args/policy.rs` | src | m | 1 crate-vis | — | The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every… |
@@ -1018,7 +1018,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/forward.rs` | src | s | 2 crate-vis | — | One rung's stream handed to the caller event by event, up to its terminal or its failure |
 | `src/models/gemini_media.rs` | src | s | 1 crate-vis | — | The Gemini API's media leg: one request per call over [`ProviderHttp`], the key in `x-goog-api-key` |
 | `src/models/hosted_speech.rs` | src | m | 1 struct · 4 fn · 3 crate-vis | HostedCloner | Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic… |
-| `src/models/http.rs` | src | m | 22 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
+| `src/models/http.rs` | src | m | 23 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
+| `src/models/http/reply_line.rs` | src | s | 5 crate-vis | — | The media-reply line (FIX 8615): the bytes the media replies providers send this server (an image, a clip… |
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | XL | 1 struct · 12 fn · 21 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/ladder/cache_warmth.rs` | src | m | 6 crate-vis | — | Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route… |
@@ -1029,6 +1030,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
 | `src/models/llama_identity.rs` | src | s | 8 crate-vis | — | What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch… |
 | `src/models/media.rs` | src | L | 3 struct · 17 fn · 24 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
+| `src/models/media/booked.rs` | src | s | 1 crate-vis | — | A media rung's backend with its replies' bytes held (FIX 8615): each of its calls (an answer, a job's… |
+| `src/models/media/fit.rs` | src | s | 1 crate-vis | — | Whether a media rung takes a call (FIX 8612, FIX 8614, FIX 8627): its row serves the call's operation and… |
 | `src/models/media/jobs.rs` | src | s | 8 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
 | `src/models/media/jobs/custody.rs` | src | s | 2 crate-vis | — | A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2) |
 | `src/models/mod.rs` | src | L | 2 struct · 20 fn · 14 re-export · 16 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
@@ -1152,15 +1155,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/replay_judge/axis_bandit.rs` | src | s | 1 struct · 2 fn | ServeAxisBandit | The goal-axis bandit's live arm attribution for one open optimizer proposal, on the serve judge's arms: each… |
 | `src/replay_judge/replays.rs` | src | m | 4 crate-vis | — | The serve judge's replay evidence: each reserved receipt's task and response, read whole from its attempt… |
 | `src/residence_machines.rs` | src | s | 2 crate-vis | — | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
-| `src/runtime/config.rs` | src | s | 1 struct · 7 fn · 2 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |
+| `src/runtime/config.rs` | src | s | 1 struct · 7 fn · 3 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |
 | `src/runtime/defaults.rs` | src | m | 5 struct · 11 fn · 6 crate-vis | RuntimeConfigOverride, RuntimeRoleDefaultOverrides, RuntimeRoleDefaults, RuntimeRoleTarget, RuntimeRoleTargetOverride | Per-role default targets, explicitness tracking, and the full override-merge cluster |
 | `src/runtime/gpu.rs` | src | s | 4 struct · 1 enum · 12 fn · 2 const | GpuDerivationLease, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError | Per-region single-writer GPU registry, suitable for a Durable Object owner |
 | `src/runtime/gpu_pool.rs` | src | m | 5 struct · 13 fn · 4 crate-vis | GpuDerivationJob, GpuLeaseGuard, GpuPodConfig, GpuPool, GpuPoolConfig | The serve host's owner of the per-region GPU registry |
 | `src/runtime/mod.rs` | src | s | 2 mod · 8 re-export · 1 crate-vis | — | — |
 | `src/runtime/mode.rs` | src | s | 3 enum · 7 fn · 1 const · 2 crate-vis | RuntimeMode, RuntimeProviderKind, RuntimeRole | Runtime mode, provider-kind, and role taxonomies with string conversions |
 | `src/runtime/routes.rs` | src | s | 4 struct · 3 enum · 2 fn | RuntimeHealthStatus, RuntimeRoute, RuntimeRouteProvenance, RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState, RuntimeStatus | Resolved route decisions and redacted/full status views for health and discovery |
+| `src/runtime/seat_host.rs` | src | m | 1 crate-vis | — | The served seat host (FIX 4552, DOOR-124): the run host that runs the official signed-in CLIs (`claude`… |
 | `src/runtime/seat_login.rs` | src | L | 12 struct · 10 fn | OfficialCliSeatExecutor, OfficialRunnerSeatSettings, OfficialSeatDreamerExecutor, RunnerPolicySeatRow, RunnerPolicySurface, RunnerProviderRow, RunnerSeatDreamerExecutor, RunnerSeatPolicySettings +4 | Host surface for official subscription seats (OF-375) |
-| `src/runtime/secret_destinations.rs` | src | m | 4 struct · 5 fn · 1 const | RunSecretDestinations, SecretDestination, SecretDestinations, ServedSecretDelivery | T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the… |
+| `src/runtime/secret_destinations.rs` | src | m | 4 struct · 6 fn · 1 const · 1 crate-vis | RunSecretDestinations, SecretDestination, SecretDestinations, ServedSecretDelivery | T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the… |
 | `src/runtime/staged_input.rs` | src | s | 1 struct | WorkdirStager | The host half of a BYOA run's staged job (`oneiron::dispatch_byoa`'s staged input): the job is written whole… |
 | `src/runtime/usage.rs` | src | m | 1 struct · 3 fn · 2 crate-vis | VaultUsage | Trusted-host attribution of served run settlements to one vault |
 | `src/runtime/usage/pricing.rs` | src | s | 3 crate-vis | — | The list price an admitted model call is metered at (FIX 2629): the vault's priced catalog row for that… |

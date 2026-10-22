@@ -144,7 +144,12 @@ pub struct MediaCaps {
     pub outputs: BTreeSet<Modality>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub native_rates: Vec<NativeRate>,
-    /// The most reference images one call may carry; 0 takes none.
+    /// How many reference images the seat's offers are said to take: an
+    /// advisory hint an options listing shows, 0 when unsaid. Nothing
+    /// refuses a call by it; an offer whose wire cannot carry a call's whole
+    /// reference set says so itself
+    /// ([`MediaBackend::reference_compatibility`](super::MediaBackend::reference_compatibility)),
+    /// and the call goes to an offer that can (FIX 8627).
     #[serde(default)]
     pub max_references: usize,
 }
@@ -158,11 +163,7 @@ impl MediaCaps {
             inputs: operation.default_inputs(),
             outputs: [operation.output()].into(),
             native_rates: vec![NativeRate::default_for(operation)],
-            max_references: if operation == AiOperation::Image {
-                8
-            } else {
-                0
-            },
+            max_references: 0,
         }
     }
 
