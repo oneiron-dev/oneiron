@@ -54,8 +54,10 @@ pub const THING_CHILD_CODE_MODE_OFF: &str = "thing_child_code_mode_off";
 /// factory).
 pub const THING_CHILD_HOST_ABSENT: &str = "thing_child_host_absent";
 
-/// ... a slice or a prior head of the branch is low-trust: its framed input
-/// would be lent as clean, which the loan may not do.
+/// ... every slice of the branch is low-trust (one of its TURNs imported, or
+/// a low-trust prior head it shows): its framed input would be lent as
+/// clean, which the loan may not do. With some slices clean, those are lent
+/// and only the low-trust ones stay on today's path (FIX 9017).
 pub const THING_CHILD_LOW_TRUST: &str = "thing_child_low_trust";
 
 /// ... the host has no verified code runtime, no reader runner or no scoped
@@ -111,7 +113,8 @@ pub const THING_CHILD_PARENT_FAILED: &str = "thing_child_parent_failed";
 /// ports, so the engine never depends on a server.
 pub trait ThingChildHost: Send + Sync {
     /// The input window, in tokens, of the model the agent runs on, when the
-    /// host knows it: the inputs are packed by it.
+    /// host knows it: the inputs are packed by it. With none, they are
+    /// packed by the vault's `thing_child_fallback_window_tokens` (FIX 9020).
     fn window_tokens(&self) -> Option<u64>;
 
     /// Why the host cannot launch an agent now, if it cannot: checked before
@@ -275,7 +278,9 @@ pub struct ThingDecideOutput {
     /// The pack's input name.
     pub pack: String,
     /// `decided` once its kept answers are staged; `pending` while a slice
-    /// it reads is not extracted yet.
+    /// it reads is not extracted yet; `deferred` when it reads a low-trust
+    /// slice the agent was not lent, so the engine decides it on its own
+    /// path once that slice is extracted (FIX 9017).
     pub state: String,
     /// The candidates the pack decided for.
     pub questions: u32,

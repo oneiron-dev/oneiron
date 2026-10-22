@@ -67,12 +67,13 @@ impl ConsolidationExecutor<'_> {
         let call = self.role(DREAMER_EXTRACTION_ROLE);
         let rules = failure_rules::load(ctx.vault)?;
         // The people a reply declares are minted under its queued parent's
-        // namespace, so nightly children and retry chunks share one (FIX 7506).
+        // namespace, so nightly children and retry chunks share one (FIX 7506);
+        // with no parent, under its lineage's first try (FIX 7579).
         let parent = DreamerRunnerStore::new(ctx.vault)
             .status(attempt_id)?
             .and_then(|status| status.payload.parent_attempt);
         let namespace = MintNamespace::new(
-            attempt_id,
+            super::extracted_people::original_try(ctx.vault, attempt_id)?,
             parent,
             axes.world_ref,
             axes.facet_ref,
@@ -87,13 +88,13 @@ impl ConsolidationExecutor<'_> {
         ));
         // A thing's branch runs as one scoped code-mode agent first (FIX
         // 7508): each slice it extracts is the very durable step below, so
-        // the fan-out below replays it from its memo.
+        // the fan-out below replays it from its memo. Its low-trust slices
+        // are never lent: the fan-out runs them (FIX 9017).
         if branch.thing.is_some() {
             let pass = ThingPass {
                 ctx,
                 resources,
                 slices: &slices,
-                low_trust,
                 step: &step_ctx,
                 namespace,
                 rules: rules.as_ref(),

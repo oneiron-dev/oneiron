@@ -26,6 +26,9 @@ const KEY_THING: &str = "thing";
 const KEY_ORIGIN: &str = "origin";
 /// The payload key holding the branch's conversation parts.
 const KEY_PARTS: &str = "parts";
+/// A part's payload key naming the slice line it is read in (FIX 8724);
+/// absent on a part of line zero.
+const KEY_LINE: &str = "line";
 
 /// The thing a nightly child is cut for (OF-498c, FIX 7497), carried in its
 /// payload: the entity a span's reading bound (`None`: the partition's
@@ -90,7 +93,7 @@ pub(crate) fn encode_branch_payload<T: BranchTurn>(
         .parts
         .iter()
         .map(|part| {
-            Value::Map(vec![
+            let mut entries = vec![
                 (
                     Value::from(KEY_CONVERSATION),
                     Value::Binary(part.conversation_ref.as_bytes().to_vec()),
@@ -108,7 +111,11 @@ pub(crate) fn encode_branch_payload<T: BranchTurn>(
                             .collect(),
                     ),
                 ),
-            ])
+            ];
+            if part.line != 0 {
+                entries.push((Value::from(KEY_LINE), Value::from(part.line)));
+            }
+            Value::Map(entries)
         })
         .collect();
     let mut entries = vec![
@@ -215,10 +222,20 @@ fn decode_part(value: &Value) -> Result<ConversationPart<EntityId>> {
     let mut conversation = None;
     let mut watermark = None;
     let mut turns = None;
+    let mut line = 0;
     for (key, value) in entries {
         match expect_key(key)? {
             KEY_CONVERSATION => conversation = entity_ref_from_value(value),
             KEY_WATERMARK => watermark = value.as_u64(),
+            KEY_LINE => {
+                line = value
+                    .as_u64()
+                    .and_then(|line| u32::try_from(line).ok())
+                    .filter(|line| *line != 0)
+                    .ok_or(invalid_consolidation(
+                        "partition payload part line must be a nonzero u32",
+                    ))?;
+            }
             KEY_TURNS => {
                 let Value::Array(items) = value else {
                     return Err(invalid_consolidation(
@@ -249,6 +266,7 @@ fn decode_part(value: &Value) -> Result<ConversationPart<EntityId>> {
         ))?,
         watermark_last_learned_at: watermark
             .ok_or(invalid_consolidation("partition payload missing watermark"))?,
+        line,
     })
 }
 

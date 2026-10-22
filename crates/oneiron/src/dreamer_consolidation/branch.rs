@@ -42,13 +42,18 @@ impl BranchTurn for WorkingSetTurn {
     }
 }
 
-/// One conversation's share of a branch: its ordered TURNs and the
-/// watermark a retry of it widens from.
+/// One conversation's share of a branch: its ordered TURNs, the watermark
+/// a retry of it widens from, and the slice line it is read in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConversationPart<T = WorkingSetTurn> {
     pub conversation_ref: EntityId,
     pub turns: Vec<T>,
     pub watermark_last_learned_at: u64,
+    /// The line its TURNs are sliced in (FIX 8724): one extraction slice
+    /// holds TURNs of one line only. A nightly thing's parts share a line
+    /// where their exposure agrees; any other part is a line of its own.
+    /// Zero on every part of a one-line branch.
+    pub line: u32,
 }
 
 /// One consolidation attempt's normalized input: the world and facet every
@@ -229,6 +234,7 @@ impl ConsolidationPartitionPlan {
                 conversation_ref: self.key.conversation_ref,
                 turns: self.turns.clone(),
                 watermark_last_learned_at: self.watermark_last_learned_at,
+                line: 0,
             }],
         }
     }

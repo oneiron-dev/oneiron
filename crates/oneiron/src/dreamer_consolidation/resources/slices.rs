@@ -13,33 +13,46 @@ pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     /// it renders, before they render. The request, its reply check, its
     /// candidates and its people all read this one map.
     pub(in crate::dreamer_consolidation) labels: CallLabelMap,
+    /// Whether one of its own TURNs is imported or a prior head it shows is
+    /// not the user's own words (FIX 9017): its framed input may not be
+    /// lent as clean, so it stays on the per-slice path.
+    pub(in crate::dreamer_consolidation) low_trust: bool,
 }
 
 impl BranchResources<'_> {
-    /// Group by co-mentioned known entities, then chunk each group. Every
-    /// TURN appears once, and every child sees only its own source versions,
-    /// its own TURNs' conversations and the neighbourhood heads that
-    /// accompany them. A child may span the branch's conversation parts.
+    /// Group by slice line (FIX 8724) and co-mentioned known entities, then
+    /// chunk each group. Every TURN appears once, and every child sees only
+    /// its own source versions, its own TURNs' conversations and the
+    /// neighbourhood heads that accompany them. A child may span the parts of
+    /// one line, never two lines. The flag is the whole branch's low trust;
+    /// each slice also carries its own.
     pub(in crate::dreamer_consolidation) fn extraction_slices(
         &self,
         turns: &[EntityId],
         turns_per_child: usize,
     ) -> Result<(Vec<ExtractionSlice>, bool)> {
-        let mut groups = BTreeMap::<Vec<EntityId>, Vec<(EntityId, TurnBodyFacts)>>::new();
-        let mut low_trust = self.priors.values().any(|prior| {
-            prior.body.source != Some(crate::claim::ClaimSource::UserStated)
-                || crate::claim::claim_evidence_taint(&prior.body)
-                    .is_some_and(|source| source != crate::claim::ClaimSource::UserStated)
-        });
+        type Group = Vec<(EntityId, TurnBodyFacts)>;
+        let mut groups = BTreeMap::<(u32, Vec<EntityId>), Group>::new();
+        let lines: BTreeMap<EntityId, u32> = self
+            .branch
+            .parts
+            .iter()
+            .flat_map(|part| part.turns.iter().map(move |turn| (*turn, part.line)))
+            .collect();
+        let mut low_trust = self.priors.values().any(low_trust_prior);
         for id in turns {
             let facts = self.turn(self.scope(), id)?;
             low_trust |= facts.imported;
             let (_, body) = self.source(self.scope(), id)?;
             let mentioned = self.known.mentioned(&body, facts.text.as_deref());
-            groups.entry(mentioned).or_default().push((*id, facts));
+            let line = lines.get(id).copied().unwrap_or_default();
+            groups
+                .entry((line, mentioned))
+                .or_default()
+                .push((*id, facts));
         }
         let mut slices = Vec::new();
-        for (entities, group) in groups {
+        for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);
             for chunk in group.chunks(turns_per_child) {
                 let ids: BTreeSet<_> = chunk.iter().map(|(id, _)| *id).collect();
@@ -100,14 +113,30 @@ impl BranchResources<'_> {
                         facts.text.as_deref().unwrap_or_default(),
                     ));
                 }
+                // A slice is low-trust by what it reads: its own TURNs and
+                // the prior heads it shows (FIX 9017).
+                let slice_low_trust = chunk.iter().any(|(_, facts)| facts.imported)
+                    || self
+                        .priors
+                        .iter()
+                        .any(|(id, prior)| known.shows(*id) && low_trust_prior(prior));
                 slices.push(ExtractionSlice {
                     turns: chunk.iter().map(|(id, _)| *id).collect(),
                     transcript,
                     scope,
                     labels,
+                    low_trust: slice_low_trust,
                 });
             }
         }
         Ok((slices, low_trust))
     }
+}
+
+/// Whether a prior head is not the user's own words, by its source or its
+/// evidence's taint.
+fn low_trust_prior(prior: &crate::dreamer_consolidation::PriorHead) -> bool {
+    prior.body.source != Some(crate::claim::ClaimSource::UserStated)
+        || crate::claim::claim_evidence_taint(&prior.body)
+            .is_some_and(|source| source != crate::claim::ClaimSource::UserStated)
 }

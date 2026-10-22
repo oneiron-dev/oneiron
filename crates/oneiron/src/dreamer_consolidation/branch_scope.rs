@@ -78,14 +78,31 @@ pub(crate) fn decode_branch_scope(value: &Value) -> Result<Option<Scope>> {
 }
 
 pub(super) fn effective_scope(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
     queued: Option<Scope>,
     caller: Option<&Scope>,
 ) -> Result<Option<Scope>> {
     match (queued, caller) {
-        (Some(parent), Some(child)) => parent.attenuate(child.clone()).map(Some),
+        (Some(parent), Some(child)) => attenuate(vault, txn, &parent, child.clone()).map(Some),
         (Some(parent), None) => Ok(Some(parent)),
         (None, caller) => Ok(caller.cloned()),
     }
+}
+
+/// `child` under `parent`: a child project proven in `txn` to descend from
+/// the parent's narrows it too, as agent dispatch admits it (FIX 8999). A
+/// project that does not read is no proof, so nothing admitted before
+/// changes.
+fn attenuate(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    parent: &Scope,
+    child: Scope,
+) -> Result<Scope> {
+    parent.attenuate_with(child, |project, ancestor| {
+        crate::agent_dispatch::project_descends_from_in_txn(vault, txn, project, ancestor)
+    })
 }
 
 /// The real queue parent is an upper bound too. Missing scope on a parent is
@@ -97,16 +114,19 @@ pub(super) fn resolve_scope(
     queued: Option<Scope>,
     caller: Option<&Scope>,
 ) -> Result<Option<Scope>> {
+    let txn = vault.store.env.read_txn()?;
     let inherited = if let Some(parent) = parent {
-        effective_scope(Some(stored_parent_scope(vault, parent)?), queued.as_ref())?
+        let bound = stored_parent_scope(vault, &txn, parent)?;
+        effective_scope(vault, &txn, Some(bound), queued.as_ref())?
     } else {
         queued
     };
-    effective_scope(inherited, caller)
+    effective_scope(vault, &txn, inherited, caller)
 }
 
 fn stored_parent_scope(
     vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
     parent: crate::attempt_queue::AttemptId,
 ) -> Result<Scope> {
     let mut seen = std::collections::BTreeSet::new();
@@ -117,7 +137,7 @@ fn stored_parent_scope(
             return Err(invalid_consolidation("cyclic branch scope lineage"));
         }
         let record = crate::attempt_queue::AttemptQueue::new(vault)
-            .get(id)?
+            .get_in_txn(txn, id)?
             .ok_or_else(|| invalid_consolidation("branch parent is missing"))?;
         let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)?;
         let own_scope = if payload.attempt_type
@@ -143,7 +163,7 @@ fn stored_parent_scope(
     }
     let mut bound = chain.pop().flatten().unwrap_or_default();
     for child in chain.into_iter().rev().flatten() {
-        bound = bound.attenuate(child)?;
+        bound = attenuate(vault, txn, &bound, child)?;
     }
     Ok(bound)
 }
@@ -223,23 +243,23 @@ pub(super) fn execution_scope_in(
     let inherited = if recipe_root {
         let mut bound = None;
         for child in chain.into_iter().rev() {
-            bound = effective_scope(bound, child.as_ref())?;
+            bound = effective_scope(vault, txn, bound, child.as_ref())?;
         }
-        effective_scope(bound, queued.as_ref())?
+        effective_scope(vault, txn, bound, queued.as_ref())?
     } else if parent.is_some() {
         let mut bound = chain.pop().flatten().unwrap_or_default();
         for child in chain.into_iter().rev().flatten() {
-            bound = bound.attenuate(child)?;
+            bound = attenuate(vault, txn, &bound, child)?;
         }
-        effective_scope(Some(bound), queued.as_ref())?
+        effective_scope(vault, txn, Some(bound), queued.as_ref())?
     } else {
         queued
     };
     let stored = SELECTION_SCOPE
         .get(&vault.store, txn, attempt.as_bytes())?
         .flatten();
-    let bound = effective_scope(inherited, caller)?;
-    effective_scope(stored, bound.as_ref())
+    let bound = effective_scope(vault, txn, inherited, caller)?;
+    effective_scope(vault, txn, stored, bound.as_ref())
 }
 
 /// Persist a caller's attenuation before work can produce a scheduled retry.
@@ -253,7 +273,7 @@ pub(super) fn pin_execution_scope(
         let stored = SELECTION_SCOPE
             .get(&vault.store, txn, attempt.as_bytes())?
             .flatten();
-        let effective = effective_scope(stored, requested)?;
+        let effective = effective_scope(vault, txn, stored, requested)?;
         SELECTION_SCOPE.put(&vault.store, txn, attempt.as_bytes(), &effective)?;
         Ok(effective)
     })

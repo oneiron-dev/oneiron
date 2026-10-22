@@ -10,12 +10,15 @@
 //! verifies and promotes exactly what it would have, and no question is
 //! asked twice.
 //!
-//! A host that cannot lend what the agent needs, a low-trust branch, a
-//! policy that turns the agent off for a new attempt, or any engine error
-//! before a child is queued leaves the branch on today's path, with the
-//! typed reason in the attempt's log. A child cut short by its clock, its
-//! lease or its spend leaves its slices as continuation debt; a child that
-//! settled with slices it never extracted leaves them to today's path.
+//! Only the branch's clean slices are lent (FIX 9017): a low-trust slice
+//! stays on today's path, which runs it after the agent settles beside the
+//! lent slices it replays, and the pack is decided there. A host that
+//! cannot lend what the agent needs, a branch with no clean slice, a policy
+//! that turns the agent off for a new attempt, or any engine error before a
+//! child is queued leaves the branch on today's path, with the typed reason
+//! in the attempt's log. A child cut short by its clock, its lease or its
+//! spend leaves its slices as continuation debt; a child that settled with
+//! slices it never extracted leaves them to today's path.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -31,10 +34,7 @@ use super::{
     ThingDecideOutput, ThingExtractOutput, ThingPortRequest,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue};
-use crate::code_run::{
-    DEFAULT_READER_WINDOW_TOKENS, ReaderJobState, SCOPED_CHILD_PARENT_LEASE_LOST,
-    commit_host_inputs, read_host_output,
-};
+use crate::code_run::{ReaderJobState, SCOPED_CHILD_PARENT_LEASE_LOST, commit_host_inputs};
 use crate::dreamer_consolidation::executor::extraction::{self, CitationCheck};
 use crate::dreamer_consolidation::executor::{ConsolidationExecutor, PartitionRun};
 use crate::dreamer_consolidation::extracted_people::{MintNamespace, bind_people};
@@ -52,14 +52,13 @@ use crate::llm::{
 };
 
 /// What a thing branch's pass is handed by its partition attempt: the wake,
-/// the branch's resources and slices, whether any of them is low-trust, the
-/// slices' durable-step context, people namespace, failure rules and
-/// citation check, and the attempt.
+/// the branch's resources and every slice (each saying whether it is
+/// low-trust), the slices' durable-step context, people namespace, failure
+/// rules and citation check, and the attempt.
 pub(in crate::dreamer_consolidation) struct ThingPass<'p, 'r> {
     pub(in crate::dreamer_consolidation) ctx: &'p WakeAttemptContext<'p>,
     pub(in crate::dreamer_consolidation) resources: &'p BranchResources<'r>,
     pub(in crate::dreamer_consolidation) slices: &'p [ExtractionSlice],
-    pub(in crate::dreamer_consolidation) low_trust: bool,
     pub(in crate::dreamer_consolidation) step: &'p DurableStepContext<'p>,
     pub(in crate::dreamer_consolidation) namespace: MintNamespace,
     pub(in crate::dreamer_consolidation) rules: Option<&'p FailureRules>,
@@ -76,12 +75,23 @@ pub(in crate::dreamer_consolidation) enum ThingPassEnd {
     Run(PartitionRun),
 }
 
-/// A queued child and what its parent keeps of it.
+/// A queued child and what its parent keeps of it: the branch slice each
+/// lent slice is (by its place in the plan), and how many low-trust slices
+/// were held back for today's path.
 struct LaunchedChild {
     session: Box<dyn ThingChildSession>,
     plan: ThingPlan,
+    lent: Vec<usize>,
+    held: usize,
     parent_run: EntityId,
     generation: u32,
+}
+
+impl LaunchedChild {
+    /// The branch slice lent as plan slice `slice`.
+    fn slice<'s>(&self, pass: &ThingPass<'s, '_>, slice: usize) -> Option<&'s ExtractionSlice> {
+        self.lent.get(slice).and_then(|at| pass.slices.get(*at))
+    }
 }
 
 /// What the parent served of its child so far: each extracted slice, the
@@ -162,30 +172,52 @@ impl ConsolidationExecutor<'_> {
         if !policy.thing_child_code_mode && earlier.is_none() {
             return Ok(Err(THING_CHILD_CODE_MODE_OFF));
         }
-        if pass.low_trust {
+        // Only the clean slices are lent; the loan never carries a tainted
+        // one (FIX 9017).
+        let lent: Vec<usize> = pass
+            .slices
+            .iter()
+            .enumerate()
+            .filter(|(_, slice)| !slice.low_trust)
+            .map(|(at, _)| at)
+            .collect();
+        if lent.is_empty() {
             return Ok(Err(THING_CHILD_LOW_TRUST));
         }
         if let Some(reason) = host.unavailable() {
             return Ok(Err(reason));
         }
-        let checkpoint = match earlier {
-            Some(run) => read_host_output(ctx.vault, run, proposals::CHECKPOINT_PATH)?,
-            None => None,
-        };
-        let window = host.window_tokens().unwrap_or(DEFAULT_READER_WINDOW_TOKENS);
+        let held = pass.slices.len() - lent.len();
+        if held > 0 {
+            tracing::info!(
+                attempt = %bytes_to_hex_lower(pass.attempt_id.as_bytes()),
+                reason = THING_CHILD_LOW_TRUST,
+                lent = lent.len(),
+                held,
+                "a thing branch lends its clean slices; its low-trust ones take the per-slice path"
+            );
+        }
+        let lent_slices: Vec<&ExtractionSlice> =
+            lent.iter().filter_map(|at| pass.slices.get(*at)).collect();
+        let checkpoint = proposals::newest_checkpoint(ctx.vault, pass.attempt_id, generation)?;
+        // The host's real window when it lends one; else the vault's
+        // overridable fallback (FIX 9020), never a refusal.
+        let window = host
+            .window_tokens()
+            .unwrap_or(policy.thing_child_fallback_window_tokens);
         let grain = window / u64::from(policy.thing_child_input_window_divisor.max(1));
-        let (inputs, plan) = input::frame_inputs(pass.slices, grain, checkpoint);
+        let (inputs, plan) = input::frame_inputs(&lent_slices, grain, checkpoint);
         let parent_run = proposals::host_parent_run(pass.attempt_id, generation)?;
-        let lent = commit_host_inputs(ctx.vault, parent_run, inputs)?;
+        let inputs = commit_host_inputs(ctx.vault, parent_run, self.actor.entity_ref(), inputs)?;
         let bound = pass.resources.request_scope();
-        let scope = input::lent_scope(&bound, pass.slices);
+        let scope = input::lent_scope(&bound, &lent_slices);
         let launch = ThingChildLaunch {
             ctx,
             leased: &leased,
             guard: self.guard,
             actor: self.actor,
             parent_run,
-            inputs: lent,
+            inputs,
             bound,
             scope,
             ports: thing_ports(),
@@ -196,6 +228,8 @@ impl ConsolidationExecutor<'_> {
             ThingChildStart::Launched(session) => Ok(LaunchedChild {
                 session,
                 plan,
+                lent,
+                held,
                 parent_run,
                 generation,
             }),
@@ -274,7 +308,7 @@ impl ConsolidationExecutor<'_> {
         if let Some(done) = table.extracted.get(&index) {
             return Ok(PortServed::Answer(done.answer.clone()));
         }
-        let Some(slice) = pass.slices.get(index) else {
+        let Some(slice) = launched.slice(pass, index) else {
             return Ok(PortServed::Refused(THING_PORT_INPUT_UNKNOWN));
         };
         let steps = self
@@ -372,7 +406,10 @@ impl ConsolidationExecutor<'_> {
 
     /// One decide: the branch's correction pack over every slice's
     /// candidates, read as today's path reads them, once every slice is
-    /// extracted. Its kept decisions are the durable step's own.
+    /// extracted. Its kept decisions are the durable step's own. While a
+    /// low-trust slice is held back, the pack reads candidates the agent
+    /// was not lent: it is deferred to today's path, which decides it once
+    /// over every slice (FIX 9017).
     async fn serve_decide(
         &self,
         pass: &ThingPass<'_, '_>,
@@ -383,6 +420,14 @@ impl ConsolidationExecutor<'_> {
     ) -> DurableStepResult<PortServed> {
         if pack != CORRECTIONS_PACK {
             return Ok(PortServed::Refused(THING_PORT_INPUT_UNKNOWN));
+        }
+        if launched.held > 0 {
+            return Ok(PortServed::Answer(encode(&ThingDecideOutput {
+                pack: pack.to_owned(),
+                state: "deferred".to_owned(),
+                questions: 0,
+                missing: Vec::new(),
+            })?));
         }
         let missing: Vec<String> = (0..launched.plan.slice_count())
             .filter(|slice| !table.extracted.contains_key(slice))
@@ -401,8 +446,10 @@ impl ConsolidationExecutor<'_> {
         }
         let rules = failure_rules::load(pass.ctx.vault)?;
         let mut parsed = Vec::new();
-        for (index, slice) in pass.slices.iter().enumerate() {
-            let Some(done) = table.extracted.get(&index) else {
+        for index in 0..launched.plan.slice_count() {
+            let (Some(slice), Some(done)) =
+                (launched.slice(pass, index), table.extracted.get(&index))
+            else {
                 continue;
             };
             if !accepted(rules.as_ref(), done.failure_policy, &done.response) {

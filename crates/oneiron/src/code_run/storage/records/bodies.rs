@@ -5,6 +5,7 @@
 use super::*;
 use crate::result_body::ResultBodyPin;
 
+mod host_occurrence;
 mod reader;
 
 pub(crate) use self::reader::CodeRunResultBodyReader;

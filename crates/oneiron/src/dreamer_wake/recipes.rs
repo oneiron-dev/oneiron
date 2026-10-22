@@ -68,6 +68,11 @@ pub struct WakeRecipePolicy {
     /// fill: one part in this many. A slice past it is split into pieces,
     /// every piece lent. At least one.
     pub thing_child_input_window_divisor: u32,
+    /// The input window, in tokens, a thing's agent's inputs are packed by
+    /// when its host lends no model window (FIX 9020); the host's real
+    /// window wins whenever it lends one. Shipped at 32768. An unknown
+    /// window is never a refusal.
+    pub thing_child_fallback_window_tokens: u64,
 }
 
 impl WakeRecipePolicy {

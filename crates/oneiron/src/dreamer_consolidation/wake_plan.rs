@@ -9,6 +9,7 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod chunk_identity;
 mod chunks;
 mod retry;
 mod sources;
@@ -192,6 +193,7 @@ impl PreparedWake {
         let txn = super::turn_text::snapshot(vault)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
         let records = crate::attempt_queue::AttemptQueue::new(vault).list_in_txn(&txn)?;
+        let completed = chunk_identity::completed_chunks(&records, scope.attempt_kind());
         let left = if only_attempt.is_some() {
             BTreeSet::new()
         } else {
@@ -387,6 +389,7 @@ impl PreparedWake {
             txn: &txn,
             scope,
             sources: &sources,
+            completed: &completed,
             rounds: &rounds,
             lineage: &lineage,
         }
@@ -423,14 +426,21 @@ impl PreparedWake {
             let AttemptPreparation::Ready(plan) = outcome else {
                 continue;
             };
-            // A part that cannot be read whole splits off; the rest run.
+            // A part that cannot be read whole splits off, as does one the
+            // effective scope does not name (FIX 7728); the rest run.
             let held = lineage.get(plan.attempt_id.as_bytes());
+            let pin = chunk_identity::ChunkPin {
+                sources: &sources,
+                completed: &completed,
+            };
             owed.extend(sources::split_unreadable(
                 plan,
                 &sources,
                 &refused_texts,
                 held,
+                pin,
             ));
+            owed.extend(sources::split_unnamed(plan, held, pin));
             let mut ids: BTreeSet<_> = plan
                 .branch
                 .conversations()

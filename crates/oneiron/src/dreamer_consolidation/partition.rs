@@ -449,8 +449,8 @@ pub(crate) fn enqueue_partition_plans_in_txn(
 /// holds and naming its thing in its payload. The interest queue has done
 /// selection; running the statistical prefilter again here would consume
 /// work without giving it a child. The advisory dedupe key is
-/// `hex(parent):hex(branch identity):hex(round hash)`: a one-part child
-/// keeps the key its partition hash gave it.
+/// `hex(parent):hex(branch identity):hex(round hash)`, then the thing's
+/// entity and audience (`-` for none) for a child cut for one (FIX 8723).
 pub(crate) fn enqueue_parented_branch_plans_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -463,12 +463,20 @@ pub(crate) fn enqueue_parented_branch_plans_in_txn(
     let store = DreamerRunnerStore::new(vault);
     let mut outcomes = Vec::with_capacity(branches.len());
     for branch in branches {
-        let dedupe_key = format!(
+        let mut dedupe_key = format!(
             "{}:{}:{}",
             bytes_to_hex_lower(parent.as_bytes()),
             bytes_to_hex_lower(&branch.identity()),
             bytes_to_hex_lower(&branch.round_hash()),
         );
+        // Two things may hold the same TURNs of one conversation (FIX 8723):
+        // each keeps its own child, never one coalesced into the other's.
+        if let Some(thing) = branch.thing {
+            for axis in [thing.entity, thing.audience] {
+                dedupe_key.push(':');
+                dedupe_key.push_str(&axis.map_or_else(|| "-".to_owned(), |id| id.to_hex()));
+            }
+        }
         outcomes.push(store.enqueue_consolidation_in_txn(
             txn,
             EnqueueDreamerConsolidationAttempt {
