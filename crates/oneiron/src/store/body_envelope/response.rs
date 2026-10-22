@@ -209,6 +209,9 @@ pub(crate) enum ResponseFamily {
     /// A Dreamer agent dispatch's attempt row: its target's instructions,
     /// briefing and direct spawn receipt (FIX 7115).
     AttemptPayload,
+    /// A public model-step submission: its request and its result, kept
+    /// beside the receipt's metadata (FIX 9929).
+    ModelStepSubmission,
     /// A row of the voice reference bank (FIX 8972): a pack, an identity,
     /// its incarnation, a target pointer, the current render decision, a
     /// recorded render event or an owner index entry, carried whole and
@@ -227,6 +230,10 @@ impl ResponseFamily {
                 (&side_table::CODE_RUN_REPLAY, Self::Replay),
                 (&side_table::COACH_BLOCKED_SOURCE, Self::BlockedCapture),
                 (&side_table::CODE_RUN_WAIT_DELIVERY, Self::WaitDelivery),
+                (
+                    &side_table::MODEL_STEP_SUBMISSION,
+                    Self::ModelStepSubmission,
+                ),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
@@ -264,6 +271,7 @@ impl ResponseFamily {
             | Self::BlockedCapture
             | Self::WaitDelivery
             | Self::WaitSettled
+            | Self::ModelStepSubmission
             | Self::VoiceBank => ResponseDb::VaultMeta,
         }
     }
@@ -303,6 +311,7 @@ impl ResponseFamily {
             }
             Self::WaitDelivery | Self::WaitSettled => crate::code_run::wait_reply_scan(value),
             Self::AttemptPayload => crate::attempt_queue::attempt_payload_scan(key, value),
+            Self::ModelStepSubmission => crate::llm::submission_carriage(value),
             Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
         }
     }
@@ -387,6 +396,7 @@ impl ResponseFamily {
             Self::WaitDelivery => crate::code_run::wait_delivery_owners(store, txn, key),
             Self::WaitSettled => crate::code_run::wait_settled_owners(store, txn, key),
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
+            Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
             // A bank row's are its subject's or creator's, as far as the
             // bank's own rows prove them; the rest are reported.
             Self::VoiceBank => {
@@ -447,7 +457,8 @@ impl ResponseFamily {
             | Self::MediaJob
             | Self::WaitDelivery
             | Self::WaitSettled
-            | Self::AttemptPayload => Ok(()),
+            | Self::AttemptPayload
+            | Self::ModelStepSubmission => Ok(()),
         }
     }
 
@@ -481,7 +492,8 @@ impl ResponseFamily {
             | Self::StepState
             | Self::Replay
             | Self::WaitDelivery
-            | Self::WaitSettled => store.side_vault_meta().put(wtxn, key, kept()?),
+            | Self::WaitSettled
+            | Self::ModelStepSubmission => store.side_vault_meta().put(wtxn, key, kept()?),
             Self::BlockedCapture | Self::VoiceBank => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())

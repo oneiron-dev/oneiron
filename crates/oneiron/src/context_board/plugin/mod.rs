@@ -28,6 +28,7 @@ mod doors;
 mod errors;
 mod install;
 mod manifest;
+mod pages;
 mod render;
 mod state;
 mod validate;
@@ -51,15 +52,20 @@ pub use self::doors::{
 pub use self::errors::{PluginResult, PluginSectionError};
 pub use self::install::{PluginInstallOrigin, PluginInstallTarget, ValidatedSectionManifest};
 pub use self::manifest::{
-    AuthorityLaneRef, PluginInstallExecutor, PluginInstallSource, SECTION_MANIFEST_SCHEMA_VERSION,
-    SectionBindingResolver, SectionId, SectionManifest, SectionManifestEnvelope,
-    SectionManifestProvenance, SectionVerbAllowlist, SectionVerbRef, SkillLifecycleSource,
-    StateFamilyRef,
+    ApprovedPluginIdentity, AuthorityLaneRef, PluginInstallExecutor, PluginInstallSource,
+    SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver, SectionId, SectionManifest,
+    SectionManifestEnvelope, SectionManifestProvenance, SectionVerbAllowlist, SectionVerbRef,
+    SkillLifecycleSource, StateFamilyRef,
+};
+pub use self::pages::{
+    BoardBlockPage, PLUGIN_PROPOSAL_PAGE_DEFAULT, PluginProposalPage, PluginSectionSnapshotPage,
+    pending_plugin_proposal_page, pending_plugin_proposal_rows,
 };
 pub use self::render::{
     PLUGIN_PROPOSALS_SECTION_NAME, PluginProposalRow, PluginSectionRow, PluginSectionSnapshot,
-    pending_plugin_proposal_rows, quoted_leaf, render_pack_sections, render_plugin_proposal_row,
-    render_plugin_proposal_section, render_plugin_row, render_plugin_sections,
+    quoted_leaf, render_pack_sections, render_plugin_proposal_page, render_plugin_proposal_row,
+    render_plugin_proposal_section, render_plugin_row, render_plugin_section_pages,
+    render_plugin_sections,
 };
 pub use self::state::{BoardBlockKind, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope};
 pub use self::validate::{

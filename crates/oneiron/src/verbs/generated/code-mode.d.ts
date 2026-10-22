@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1206 code-mode rows (1166 host rows, 40 run rows), 4163 declarations.
-// Replies: 1084 fully typed, 118 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4183 declarations.
+// Replies: 1085 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -899,7 +899,7 @@ declare namespace Sdk {
   type WeaveItemCorrectionView = { label_ref: string; item: string; item_ref: string; project_ref?: string | null; actor_ref: string; recorded_at: number };
   type WeaveEnqueueRequest = { skill_ref: string; subject_ref: string; evidence_ref: string };
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
-  type WeaveReaderKind = "person" | "owner" | "agent";
+  type WeaveReaderKind = "person" | "owner" | "agent" | "admin";
   type WeaveReaderRef = { kind: WeaveReaderKind; reader_ref: string };
   type WeaveDigestCadence = "daily" | "weekly";
   type WeaveScheduleHold = { until: number; because?: string | null };
@@ -1115,11 +1115,11 @@ declare namespace Sdk {
   type PluginSectionTargetInput = { kind: "existing_skill"; skill_ref: EntityId } | { kind: "hub_package"; hub_ref: HubRef; target_skill_ref: EntityId };
   type PluginSectionProposeRequest = { manifest: SectionManifestEnvelope; target: PluginSectionTargetInput; turn_ref: string };
   type PluginSectionProposal = { claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; manifest: SectionManifestEnvelope };
-  type PluginSectionListRequest = { limit?: number | null };
+  type PluginSectionListRequest = { limit?: number | null; cursor?: string | null };
   type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean };
   type PluginSectionAdmittedRow = { claim_ref: string; section_id: string; manifest: SectionManifestEnvelope };
   type PluginSectionPackRow = { section_id: string; pack_name: string; source_id: string; content_hash: string; section: PackSection };
-  type PluginSectionsView = { pending: PluginSectionPendingRow[]; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] };
+  type PluginSectionsView = { pending: PluginSectionPendingRow[]; pending_total: number; pending_remaining: number; next_cursor?: string | null; end: boolean; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] };
   type PluginSectionGrantRequest = { claim_ref: string; review_id?: string | null };
   type PluginSectionGrantState = "admitted" | "pending_activation";
   type PluginSectionGrant = { claim_ref: string; state: PluginSectionGrantState; section_id?: string | null; skill_ref: string; settlement_receipt_ref?: string | null; manifest: SectionManifestEnvelope };
@@ -1497,7 +1497,8 @@ declare namespace Sdk {
   type EraseLfsChunk = { chunk_hash: string; other_owners: string[] };
   type RecordErasePreview = { record: string; shared_with: EraseShare[]; held_bytes: EraseHeldBytes[]; lfs_chunks: EraseLfsChunk[]; same_bytes: string[]; remote_copies_may_remain: boolean; preview_digest: string };
   type RecordEraseConfirmRequest = { record: EntityId; preview_digest: string; also_same_bytes?: boolean };
-  type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null };
+  type DeleteRequestState = "applied" | "completion_pending";
+  type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null; state: DeleteRequestState };
   type EraseSameBytesRow = { record: string; outcome: string; receipt?: DeleteReceipt | null; reason?: string | null; act_id?: string | null; error?: string | null };
   type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
   type RecordEraseSweepRequest = { receipt_ref: string };
@@ -1548,8 +1549,8 @@ declare namespace Sdk {
   type CampaignArchivePin = { campaign_id: string; task: EntityId; goal_ref: EntityId; goal_digest: string; quality_metric: ArchiveQualityMetric; proposal_receipt: EntityId; sample_outputs: ArchiveOutputRef[]; descriptor: ArchiveDescriptor };
   type HeldOutCall = "promote" | "reject" | "escalate_tradeoff";
   type ConfirmationReceipt = { cohort: EntityId; consumed_at: number; exposure?: EntityId | null };
-  type SufficiencyInput = { families: number; floor_slices: Record<string, number>; min_families_per_slice: number; retest_noise?: number | null; owner_margin?: number | null; paired_interval?: [number, number] | null; detectable_effect?: number | null; set_changed: boolean; rubric_changed: boolean; canary_diverged: boolean };
-  type UnknownReason = "no_retest_noise" | "no_interval" | "interval_spans_margin" | { too_few_families: { slice: string; families: number } } | "set_changed" | "rubric_changed" | "canary_diverged";
+  type SufficiencyInput = { families: number; floor_slices: Record<string, number>; min_families_per_slice: number; retest_noise?: number | null; owner_margin?: number | null; paired_interval?: [number, number] | null; detectable_effect?: number | null; set_changed: boolean; rubric_changed: boolean; canary_diverged?: boolean | null };
+  type UnknownReason = "no_retest_noise" | "no_interval" | "interval_spans_margin" | { too_few_families: { slice: string; families: number } } | "set_changed" | "rubric_changed" | "canary_diverged" | "no_canary";
   type SufficiencyVerdict = "not_worse" | "worse" | { unknown: UnknownReason[] };
   type SufficiencyCard = { input: SufficiencyInput; margin?: number | null; verdict: SufficiencyVerdict };
   type PromotionDisposition = "promoted" | "lost_sealed" | "held_insufficient" | "held_gate";
@@ -1731,6 +1732,20 @@ declare namespace Sdk {
   type CleanupKind = "claimless_extraction_person" | "empty_summary" | "completed_task" | "completed_attempt" | "retained_note";
   type CleanupCandidate = { entity: EntityId; kind: CleanupKind };
   type CleanupRunView = { attempt: string; posture: CleanupPosture; candidates: CleanupCandidate[]; proposal?: EntityId | null; archived: EntityId[]; digest?: EntityId | null };
+  type CleanupReviewRequest = { proposal: EntityId };
+  type CleanupReviewCounts = { total: number; claimless_extraction_persons: number; empty_summaries: number; completed_tasks: number; completed_attempts: number; retained_notes: number; erased: number };
+  type CleanupItemState = "erased" | "eligible" | "changed" | "gone" | "unreadable";
+  type CleanupReviewEvidence = { rule: string; holds_now: boolean; live_claims?: number | null; linked_edges: string[]; extraction_minted?: boolean | null; since?: number | null; keep_days?: number | null };
+  type CleanupReviewContent = { record?: ScopedReadResult<EntityView | null> | null; note?: ScopedReadResult<NoteReadView | null> | null; attempt?: unknown | null; refused: string[] };
+  type CleanupAcceptEffect = "archive" | "skip" | "nothing" | "fails";
+  type CleanupReviewItem = { slot: number; state: CleanupItemState; entity?: EntityId | null; kind?: CleanupKind | null; revision?: string | null; evidence?: CleanupReviewEvidence | null; content?: CleanupReviewContent | null; accept: CleanupAcceptEffect };
+  type CleanupReviewView = { proposal: EntityId; attempt: string; created_at: number; read_at: number; revision: string; task_retention_days: number; counts: CleanupReviewCounts; items: CleanupReviewItem[] };
+  type CleanupItemDecision = "accept" | "reject";
+  type CleanupItemChoice = { slot: number; decision: CleanupItemDecision };
+  type CleanupDecideRequest = { proposal: EntityId; choices: CleanupItemChoice[]; expected_revision?: string | null };
+  type CleanupItemResult = "archived" | "skipped" | "rejected" | "erased";
+  type CleanupItemOutcome = { slot: number; entity?: EntityId | null; kind?: CleanupKind | null; outcome: CleanupItemResult };
+  type CleanupDecideView = { proposal: EntityId; items: CleanupItemOutcome[]; digest?: EntityId | null };
   type ArchiveDeletePreviewRequest = { targets: string[] };
   type ArchiveDeleteExpectation = { record_hash: string; archive_marker: string };
   type ArchiveDeletePreviewRow = { record_bytes: number; expected: ArchiveDeleteExpectation };
@@ -1760,22 +1775,26 @@ declare namespace Sdk {
   type LegalHoldActorKind = "owner" | "member" | "agent" | "timer" | "host" | "unattributed";
   type LegalHold = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; placed_by?: string | null; placed_by_kind: LegalHoldActorKind; placed_at: number; ends_at?: number | null; secret_until?: number | null; matter_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; lifted_at?: number | null; owner_told?: boolean; requires_non_use?: boolean };
   type LegalHoldWidenRequest = { hold_id: EntityId; targets: LegalHoldTarget[] };
-  type LegalHoldEventKind = "placed" | "scope_changed" | "delete_refused" | "lift_and_erase_confirmed" | "erase_completed" | "lifted";
+  type LegalHoldEventKind = "placed" | "scope_changed" | "delete_refused" | "lift_and_erase_confirmed" | "erase_confirmed" | "erase_completed" | "lifted";
   type LegalHoldReason = "owner_placed" | "host_placed" | "legal_order" | "scope_widened" | "scope_narrowed_by_erase" | "end_date_changed" | "held_record" | "privacy_erase_kept" | "owner_confirmed" | "completion_pending" | "receipt_completed" | "authority_released" | "order_ended" | "host_released" | "secrecy_ended";
   type LegalHoldEvent = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; actor_ref?: string | null; actor_kind: LegalHoldActorKind; at: number; event: LegalHoldEventKind; reason: LegalHoldReason; matter_ref?: string | null; request_id?: string | null };
-  type LegalHoldLiftAndEraseRequest = { records: EntityId[] };
-  type ErasePendingReason = "historical_sweep" | "custody_retirement";
+  type ShownCustomerHold = { hold_id: EntityId; targets: LegalHoldTarget[]; placed_by?: string | null; placed_at: number; matter_ref?: string | null };
+  type LiftAndEraseShownState = { title: string; prompt: string; records: EntityId[]; claim_free_partition?: boolean; holds: ShownCustomerHold[] };
+  type LegalHoldLiftAndEraseRequest = { records: EntityId[]; claim_free_partition?: boolean; shown_state: LiftAndEraseShownState };
+  type ErasePendingReason = "historical_sweep" | "custody_retirement" | "veto_window";
   type LegalHoldBoundKind = "law";
   type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
   type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
-  type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[] };
+  type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[]; changed?: LiftAndEraseShownState | null };
   type CourtesyDeleteSendRequest = { pact: string; worlds?: string[]; epoch_cutoff?: number | null; peer: string; signed?: string | null };
   type CourtesyDeleteSent = { request: string; pact: string; recipient: string; status: string; created: string; updated: string };
   type CourtesyDeleteAskedWorld = { world: string; stale?: string | null; stale_epoch?: number | null };
   type CooperativeDeletionDispositionKind = "delete" | "redact" | "restrict_pending_review" | "retain_under_basis" | "legal_hold" | "decline";
-  type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string };
-  type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null };
+  type CourtesyDeleteHold = { hold: string; status: string; records: string[]; lifted?: string | null };
+  type CourtesyDeleteRecordProgress = { record: string; state: string };
+  type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string; holds: CourtesyDeleteHold[]; excluded: string[]; progress: CourtesyDeleteRecordProgress[] };
+  type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null; holds: CourtesyDeleteHold[] };
   type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null };
   type EvidenceFloors = { floor: number; strong: number };
   type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: EvidenceFloors | null };
@@ -3006,7 +3025,7 @@ declare namespace Sdk {
   type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied";
   type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
   type ModelStepFailure = { class: ModelStepFailureClass; message: string; llm?: LlmError | null; validation_attempts?: number | null; validation_errors: string[]; spent_usage?: LlmUsage | null };
-  type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string };
+  type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string } | { status: "erased" };
   type ModelStepReceipt = { step_ref: string; step_hash: string; model: ModelId; retry: ModelStepRetryPolicy; progression?: StepProgression | null; result?: ModelStepResult | null };
   type ModelStepReceiptRequest = { step_key: string };
   type ModelStreamOpen = { stream_key: string; request: LlmRequest };
@@ -3090,13 +3109,14 @@ declare namespace Sdk {
   type PricedModelBackend = { pin: ModelBackendPin; price: LlmCatalogCost };
   type FrozenTrialCase = { selection: HeldOutSelection; unit: EntityId; source_frontier: number[]; fact_value_hash: number[]; label: boolean; noise_weight: number; derived_from: EntityId[] };
   type TrialAdmission = "ready" | "ask_exploration";
-  type ModelTrialEvidence = { measurements_hash: number[]; incumbent_loss?: number | null; candidate_loss?: number | null; independent_families: number; incumbent_cost_per_thousand: number; candidate_cost_per_thousand: number; trial_cost: number };
+  type ModelTrialExecutionState = "not_started" | "running" | "interrupted" | "measured";
+  type ModelTrialEvidence = { measurements_hash: number[]; incumbent_loss?: number | null; candidate_loss?: number | null; independent_families: number; incumbent_cost_per_thousand: number; candidate_cost_per_thousand: number; trial_cost: number; unknown_arms: number };
   type PairedQualityInterval = { low: number; high: number };
   type TrialAssessment = { set: TrialSetPin; measurements_hash: number[]; paired_gain?: PairedQualityInterval | null; retest_noise: number; stricter_margin?: number | null; required_families: number; rare_slices_sufficient: boolean; versions_match: boolean; canary_diverged: boolean };
   type TrialQuality = "better" | "not_worse" | "worse" | "unknown";
   type ModelTrialAction = "stay" | "offer" | "auto_approve" | "ask_tradeoff" | "unknown";
   type ModelTrialReceipt = { assessment: TrialAssessment; quality: TrialQuality; action: ModelTrialAction; candidate_cost_per_unit: number; added_cost_per_thousand: number; added_future_cost: number; completed_at: number };
-  type ModelTrialView = { catalog_revision: string; id: EntityId; request: ModelTrialRequest; incumbent: PricedModelBackend; candidate: PricedModelBackend; nominated_score: number; score_fetched_at: number; cases: FrozenTrialCase[]; estimated_cost: number; admission: TrialAdmission; prepared_at: number; execution_started: boolean; evidence?: ModelTrialEvidence | null; receipt?: ModelTrialReceipt | null };
+  type ModelTrialView = { catalog_revision: string; id: EntityId; request: ModelTrialRequest; incumbent: PricedModelBackend; candidate: PricedModelBackend; nominated_score: number; score_fetched_at: number; cases: FrozenTrialCase[]; estimated_cost: number; admission: TrialAdmission; prepared_at: number; execution_started: boolean; execution: ModelTrialExecutionState; arms_completed: number; arms_unknown: number; arms_total: number; evidence?: ModelTrialEvidence | null; receipt?: ModelTrialReceipt | null };
   type ModelTrialRef = { question: EntityId; trial: EntityId };
   type ModelTrialComplete = { question: EntityId; trial: EntityId; assessment: TrialAssessment };
   type ModelBindingPropose = { question: EntityId; trial: EntityId; role: ModelRole; binding: ModelBinding };
@@ -4199,9 +4219,9 @@ declare const ai: {
   /** Speech audio out of text, from the host's speech model. */
   speech(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   steps: {
-    /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
+    /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain. */
     receipt(input: Sdk.ModelStepReceiptRequest): Promise<Sdk.ModelStepReceipt | StoredResult>;
-    /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
+    /** Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result. */
     submit(input: Sdk.ModelStepSubmit): Promise<Sdk.ModelStepReceipt | StoredResult>;
   };
   streams: {
@@ -5116,6 +5136,10 @@ declare const vault: Sdk.VaultHost & {
     vetting(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
   };
   cleanup: {
+    /** The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected. */
+    decide(input: Sdk.CleanupDecideRequest): Promise<Sdk.CleanupDecideView | StoredResult>;
+    /** The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts. */
+    review(input: Sdk.CleanupReviewRequest): Promise<Sdk.CleanupReviewView | StoredResult>;
     /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
     run(input: Sdk.CleanupRunRequest): Promise<Sdk.CleanupRunView | StoredResult>;
   };
@@ -5935,7 +5959,7 @@ declare const vault: Sdk.VaultHost & {
     read(input: Sdk.LearningReadRequest): Promise<Sdk.LearningCellView | StoredResult>;
   };
   legal_holds: {
-    /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
+    /** The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records. */
     lift_and_erase(input: Sdk.LegalHoldLiftAndEraseRequest): Promise<Sdk.LegalHoldLiftAndErased | StoredResult>;
     /** Every legal hold the owner may see. */
     list(input: Sdk.EmptyRequest): Promise<Sdk.LegalHold[] | StoredResult>;
@@ -6029,7 +6053,7 @@ declare const vault: Sdk.VaultHost & {
       deny(input: Sdk.ModelBindingProposalRef): Promise<Sdk.ModelBindingProposal | StoredResult>;
       /** Reads an owner-reviewed model role-binding proposal and its pinned trial evidence. */
       get(input: Sdk.ModelBindingProposalRef): Promise<Sdk.ModelBindingProposal | StoredResult>;
-      /** Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it. */
+      /** Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it. */
       propose(input: Sdk.ModelBindingPropose): Promise<Sdk.ModelBindingProposal | StoredResult>;
       /** Reads the currently active manifest binding for a model role. */
       read(input: Sdk.ModelBindingRead): Promise<Sdk.ModelBinding | StoredResult>;
@@ -6069,11 +6093,11 @@ declare const vault: Sdk.VaultHost & {
       approve(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
       /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
       complete(input: Sdk.ModelTrialComplete): Promise<Sdk.ModelTrialView | StoredResult>;
-      /** Reads a retained held-out trial, its catalog revision, independent labels and measured cost. */
+      /** Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown. */
       get(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
       /** Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority. */
       nominate(input: Sdk.ModelTrialNominate): Promise<Sdk.ModelTrialView | StoredResult>;
-      /** Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost. */
+      /** Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome. */
       run(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
     };
   };
@@ -6231,7 +6255,7 @@ declare const vault: Sdk.VaultHost & {
     sections: {
       /** The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent. */
       grant(input: Sdk.PluginSectionGrantRequest): Promise<Sdk.PluginSectionGrant | StoredResult>;
-      /** Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project. */
+      /** Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project. */
       list(input: Sdk.PluginSectionListRequest): Promise<Sdk.PluginSectionsView | StoredResult>;
       /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
       propose(input: Sdk.PluginSectionProposeRequest): Promise<Sdk.PluginSectionProposal | StoredResult>;

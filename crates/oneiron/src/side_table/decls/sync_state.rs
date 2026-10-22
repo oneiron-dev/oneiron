@@ -61,6 +61,9 @@ side_tables! {
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
     USAGE_BUDGET_LIMIT: SyncState b"budget:usage:rollup:vault:" Named;
+    /// Runtime spool of artifact publication parts, sent (`tx`) and received (`rx`) (FIX 9575).
+    /// Key: side ":" hex32 ":" (`m` | `p:` u64hex16 | `s`).
+    ARTIFACT_PUBLICATION_PARTS: SyncState b"bulk:artifact:publication:parts:v1:" Named;
     /// Device-only in-progress marker between a received BulkTransfer chunk and its BulkTransferDone.
     /// Key: yyyy-mm.
     SYNC_BULK_TRANSFER_MARKER: SyncState b"bulk:w:" Raw;
