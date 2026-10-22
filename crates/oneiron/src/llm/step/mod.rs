@@ -23,6 +23,8 @@ mod peer_wait;
 mod response_bodies;
 // FIX 6225: a step claim holds its oversize response's exact version.
 mod response_pins;
+// FIX 9930: transport retries; past the schedule, its last interval paces.
+mod retry;
 mod settled;
 mod step_claim;
 mod step_only;
