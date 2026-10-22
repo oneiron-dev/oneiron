@@ -223,6 +223,7 @@ async fn serve_generation(
         SealedBundleObject::Pads,
     )
     .await?
+    .whole()?
     else {
         return Ok(0);
     };
@@ -403,6 +404,7 @@ impl SyncClient {
                 SealedBundleObject::Pads,
             )
             .await?
+            .whole()?
             else {
                 report.pending.push(generation);
                 continue;

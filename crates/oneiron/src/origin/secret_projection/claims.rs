@@ -23,10 +23,12 @@
 
 #![allow(
     dead_code,
-    reason = "FIX 7608 slice 2b-i: preparation only; slice 2b-ii is the first caller"
+    reason = "FIX 7608: some records are read only by later slices"
 )]
 
 use heed::{RoTxn, RwTxn};
+
+mod lookup;
 use rmpv::Value;
 
 use crate::Vault;
@@ -119,6 +121,32 @@ pub(crate) enum RepoProjectionRecord {
     /// A projection-bound update proved not copy-derived, forwarded as it
     /// was pushed.
     ExactForward(RepoProjectionExactForward),
+    /// A checkout lease bound to this copy (FIX 7608 2b-ii-B2).
+    Checkout(RepoProjectionCheckout),
+    /// The private ingress seeded from this copy (FIX 7608 2b-ii-B2).
+    IngressStore(RepoProjectionIngressStore),
+}
+
+/// A checkout lease bound to a copy: the lease's checkout and epoch, its
+/// holder, the ORIGINAL it pins and the copy commit it checks out. Its id
+/// is derived from the checkout and epoch alone, so the lease finds it;
+/// it is about the graph, so the graph's erasure reaches it. Ids only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RepoProjectionCheckout {
+    pub(crate) checkout: String,
+    pub(crate) epoch: u64,
+    pub(crate) holder: String,
+    pub(crate) original: GitOid,
+    pub(crate) copy: GitOid,
+}
+
+/// The private ingress seeded from a copy: its object-store identity and
+/// the canonical store it stands for. Its id is derived from the ingress
+/// identity alone, so a received row's store finds its copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RepoProjectionIngressStore {
+    pub(crate) ingress_store: String,
+    pub(crate) canonical_store: EntityId,
 }
 
 /// The ingress proof's record: the receive operation, the canonical store
@@ -209,6 +237,10 @@ impl RepoProjectionClaim {
     pub(crate) fn id(&self) -> Result<EntityId> {
         match self.record {
             RepoProjectionRecord::Graph { .. } => Ok(self.graph),
+            // Found from the lease or the ingress alone, never the graph.
+            RepoProjectionRecord::Checkout(_) | RepoProjectionRecord::IngressStore(_) => {
+                derive_id(None, &identity_part(&self.record))
+            }
             _ => derive_id(Some(&self.graph), &identity_part(&self.record)),
         }
     }
@@ -425,7 +457,28 @@ fn identity_part(record: &RepoProjectionRecord) -> Value {
             Value::from(forward.operation.to_hex()),
             Value::from(forward.ref_name.as_str()),
         ]),
+        RepoProjectionRecord::Checkout(checkout) => {
+            checkout_key(&checkout.checkout, checkout.epoch)
+        }
+        RepoProjectionRecord::IngressStore(ingress) => ingress_store_key(&ingress.ingress_store),
     }
+}
+
+/// The identity a checkout binding's id is derived from.
+fn checkout_key(checkout: &str, epoch: u64) -> Value {
+    Value::Array(vec![
+        Value::from("checkout"),
+        Value::from(checkout),
+        Value::from(epoch),
+    ])
+}
+
+/// The identity an ingress store's record id is derived from.
+fn ingress_store_key(ingress_store: &str) -> Value {
+    Value::Array(vec![
+        Value::from("ingress_store"),
+        Value::from(ingress_store),
+    ])
 }
 
 fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str, Value)> {
@@ -544,6 +597,22 @@ fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str, Value)> {
             ("old", forward.old.as_ref().map_or(Value::Nil, oid)),
             ("new", oid(&forward.new)),
             ("marks", ids(&forward.marks)),
+        ],
+        RepoProjectionRecord::Checkout(checkout) => vec![
+            ("kind", Value::from("checkout")),
+            ("checkout", Value::from(checkout.checkout.as_str())),
+            ("epoch", Value::from(checkout.epoch)),
+            ("holder", Value::from(checkout.holder.as_str())),
+            ("original", oid(&checkout.original)),
+            ("copy", oid(&checkout.copy)),
+        ],
+        RepoProjectionRecord::IngressStore(ingress) => vec![
+            ("kind", Value::from("ingress_store")),
+            ("ingress_store", Value::from(ingress.ingress_store.as_str())),
+            (
+                "canonical_store",
+                Value::from(ingress.canonical_store.to_hex()),
+            ),
         ],
     }
 }
