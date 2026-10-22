@@ -502,7 +502,15 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "restore from the recovery kit"
   - "fetch the sealed bundle with the kit"
   - "read a sealed bundle slice"
-- safety: Serves ciphertext only, to the kit's recovery root. No bearer: each request is signed by that root's owner anchor, within 300 seconds of the home's clock, with a nonce the home takes once. A request that does not verify looks exactly like a missing generation (`404`).
+- safety: Serves ciphertext only, to the kit's recovery root. No bearer: each request is signed by that root's owner anchor, within 300 seconds of the home's clock, with a nonce the home takes once. A request that does not verify looks exactly like a missing generation (`404`). A kept pad object whose bytes the home lacks answers `409` with `outcome: PAD_OBJECT_UNAVAILABLE` and its generation's entry, never as missing.
+
+#### recovery-sealed-bundle-index - `POST /v1/recovery/sealed-bundle/index`
+
+- when-to-use: List the generations the home keeps for the recovery kit's root, newest committed first, with the revision of the home's read that named them, before reading one with the kit alone.
+- trigger phrases:
+  - "which sealed bundles does the home keep for my kit"
+  - "list the kit's sealed bundle generations"
+- safety: Read-only metadata: generation ids, lengths and ciphertext digests, only those named for the kit's root. No bearer: signed by that root's owner anchor like a part request, under its own domain and path. A request that does not verify looks exactly like a root with no generation (`404`).
 
 #### booking-agent-instructions - `GET /api/booking/{page_token}/agent-instructions`
 
@@ -1207,6 +1215,7 @@ Authentication: no bearer and no slip. The body's `signature` is the authenticat
 - `authority`, `"POST"`, the path and `object` each go in as their byte length (u64 BE), then their UTF-8 bytes. `generation` is `0x01` and its 24 bytes, or `0x00` for the newest.
 - `authority` is the home's address: the host, then `:port` when the address names a port other than its scheme's, in lower case. The home checks the signature against the address the request names, read from the URI authority (HTTP/2) or the `Host` header, never from a forwarded host, and against the host and port of each public URL it is configured with: `kit_bundle_public_urls` (env `ONEIRON_KIT_BUNDLE_PUBLIC_URLS`), one for each address a kit may dial, or, when that list is empty, `oauth_resource_indicator`. A reverse proxy in front of the home must pass `Host` on unchanged, port included, unless one of those URLs is the address the kit dials (`DEPLOYMENT.md`).
 - A home serves a generation only to the root its publisher named for it.
+- The index request (`/v1/recovery/sealed-bundle/index`) signs `b"oneiron/kit-pad-index-fetch/v1\0" || vault_id || root || authority || "POST" || "/v1/recovery/sealed-bundle/index" || timestamp (u64 BE) || nonce`, the length-prefixed fields as above.
 
 Request body (JSON, at most 4 KiB; unknown fields are refused):
 

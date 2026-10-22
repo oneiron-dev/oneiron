@@ -60,7 +60,8 @@ pub(crate) use self::residence::custody::relay_custody;
 pub(crate) use self::residence::home_handoff::{HandoffLane, TargetCancel, TargetStanding};
 pub use self::residence::{
     OpenedItem, PadAdmissionReport, ResidenceHit, ResidenceIndexWindow, ResidenceSearch,
-    SealedBundleRelay, SearchSource, ThinItem, fetch_sealed_bundle_with_kit,
+    SealedBundleRelay, SearchSource, ThinItem, fetch_sealed_bundle_index_with_kit,
+    fetch_sealed_bundle_with_kit,
 };
 pub(crate) use self::residence::{
     catch_up_authority, exchange_checkpoint_roots, fetch_owed_machine_history,

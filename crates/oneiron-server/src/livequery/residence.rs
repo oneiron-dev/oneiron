@@ -10,19 +10,20 @@ mod checkpoint_roots;
 mod custody;
 mod home_handoff;
 mod machine_history;
+mod pad_objects;
 mod pages;
 
 use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
-    IndexPage, RESIDENCE_PAGE_REPLY_BYTES, ResidenceAdmission, SealedBundleEntry,
+    BundlePartRead, IndexPage, RESIDENCE_PAGE_REPLY_BYTES, ResidenceAdmission, SealedBundleEntry,
     SealedBundleObject, SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn,
     authority_append_progress_for, authority_checkpoint_part_for, authority_range_for,
     authority_tail_for, authority_wanted, home_search_candidates, index_selection_revision,
-    promotion_snapshot_with, replace_sealed_bundle_pads, sealed_bundle_generations,
-    sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
-    sealed_generation_hex, selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
+    promotion_snapshot_with, replace_sealed_bundle_pads, sealed_bundle_index, sealed_bundle_part,
+    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
     window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
@@ -1023,12 +1024,16 @@ fn bundle_list(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let request = bundle_request(request.as_deref())?;
     server.transfers.reconcile_sealed_stages(&server.vault);
-    let generations: Vec<Value> = sealed_bundle_generations(&server.vault, peer, request)
-        .map_err(|_| AppError::not_found("sealed bundle", None))?
-        .iter()
-        .map(bundle_entry)
-        .collect();
-    Ok((json!({"generations": generations}), Some(Vec::new())))
+    let index = sealed_bundle_index(&server.vault, peer, request)
+        .map_err(|_| AppError::not_found("sealed bundle", None))?;
+    let generations: Vec<Value> = index.entries.iter().map(bundle_entry).collect();
+    Ok((
+        json!({
+            "generations": generations,
+            "retainedRevision": sealed_digest_hex(&index.retained_revision),
+        }),
+        Some(Vec::new()),
+    ))
 }
 
 /// One slice of a kept generation's bundle or pad object from `offset`, with
@@ -1045,7 +1050,7 @@ fn bundle_get(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<A
         .transpose()?;
     let object = bundle_object(&input.object)?;
     let request = bundle_request(input.request.as_deref())?;
-    let (entry, part) = sealed_bundle_part(
+    let (entry, read) = sealed_bundle_part(
         &server.vault,
         peer,
         generation,
@@ -1055,6 +1060,16 @@ fn bundle_get(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<A
     )
     .map_err(|_| AppError::not_found("sealed bundle", None))?
     .ok_or_else(|| AppError::not_found("sealed bundle", None))?;
+    let part = match read {
+        BundlePartRead::Part(part) => part,
+        BundlePartRead::End => return Err(AppError::not_found("sealed bundle", None)),
+        BundlePartRead::PadObjectUnavailable(unavailable) => {
+            return Ok((
+                pad_objects::unavailable(&entry, &unavailable),
+                Some(Vec::new()),
+            ));
+        }
+    };
     let (total, digest) = entry.object(object);
     Ok((
         json!({

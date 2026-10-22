@@ -29,11 +29,23 @@
 //! reference, and a restore takes the pad from current custody
 //! (`pad_image`).
 
+mod reference;
+
+#[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
+pub(crate) use self::reference::{
+    PAD_CAPTURE_FAULT, PadCaptureFault, PadReferenceProjection, WorldPadRef,
+    pad_reference_projection, projected_pad_row_equal,
+};
+#[cfg(feature = "sync")]
+#[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
+pub(crate) use self::reference::{WindowPadProjection, project_window_pad_refs};
+
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
+use super::bundle::stage_retained_pad_key_erase_in_txn;
 use super::pads::{WorldKeyPad, pad_row_id, world_keys_destroyed_in_txn};
 use super::{WorldKeyId, refused};
 use crate::Vault;
@@ -474,7 +486,11 @@ pub(crate) fn stage_pad_row_erase_in_txn(
         return Ok(());
     }
     match decode_pad_body(body) {
-        Ok(body) => store.stage_world_pad_key_erase_in_txn(wtxn, &pad_item(body.key())),
+        Ok(body) => {
+            // Its key leaves the home's kept pad objects too (FIX 7294).
+            stage_retained_pad_key_erase_in_txn(store, wtxn, id, &pad_item(body.key()));
+            store.stage_world_pad_key_erase_in_txn(wtxn, &pad_item(body.key()))
+        }
         Err(_) => {
             tracing::warn!(
                 row = %id.to_hex(),
@@ -516,7 +532,11 @@ fn stage_local_pad_row_retirement_in_txn(
         return store.stage_world_pad_row_erase_in_txn(wtxn, id);
     }
     match decode_pad_body(body) {
-        Ok(body) => store.stage_world_pad_key_retirement_in_txn(wtxn, &pad_item(body.key())),
+        Ok(body) => {
+            // Its key leaves the home's kept pad objects too (FIX 7294).
+            stage_retained_pad_key_erase_in_txn(store, wtxn, id, &pad_item(body.key()));
+            store.stage_world_pad_key_retirement_in_txn(wtxn, &pad_item(body.key()))
+        }
         Err(_) => {
             tracing::warn!(
                 row = %id.to_hex(),

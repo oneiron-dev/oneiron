@@ -206,6 +206,7 @@ use utoipa::OpenApi;
         super::cooperative_deletion::take_reply,
         super::cooperative_deletion::take_succession,
         super::recovery_bundle::part,
+        super::recovery_bundle::index,
 
         lease_revoke
     ),
@@ -416,6 +417,10 @@ use utoipa::OpenApi;
         LeaseRevokeResponse,
         super::recovery_bundle::KitBundlePartRequest,
         super::recovery_bundle::KitBundlePartResponse,
+        super::recovery_bundle::KitPadObjectUnavailableResponse,
+        super::recovery_bundle::KitPadIndexRequest,
+        super::recovery_bundle::KitPadIndexResponse,
+        super::recovery_bundle::KitPadIndexEntry,
 
         UsageEvent,
         UsageRecordResult,

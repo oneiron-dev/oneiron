@@ -48,6 +48,8 @@ mod tests;
 
 #[cfg(feature = "sync")]
 pub(crate) use self::bundle::BundleCarry;
+#[cfg(feature = "sync")]
+pub(crate) use self::bundle::PadEraseSubject;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
@@ -73,6 +75,14 @@ pub use self::owner_work::{
     PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics, ReassertKey,
     ReassertKeyState, ReassertUnread, RelayObservation,
 };
+#[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
+pub(crate) use self::pad_custody::{
+    PAD_CAPTURE_FAULT, PadCaptureFault, PadReferenceProjection, WorldPadRef,
+    pad_reference_projection, projected_pad_row_equal,
+};
+#[cfg(feature = "sync")]
+#[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
+pub(crate) use self::pad_custody::{WindowPadProjection, project_window_pad_refs};
 pub(crate) use self::pad_custody::{
     admit_pad_put_in_txn, image_pad_row, live_route_row, pad_row_erased_in_txn, pad_row_of_item,
     stage_local_pad_row_erase_in_txn, stage_pad_row_erase_in_txn,

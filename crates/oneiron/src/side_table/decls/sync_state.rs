@@ -309,10 +309,10 @@ side_tables! {
     /// one grant of that generation's pad object outer key to that machine: 0 pending, or 1 ‖ the
     /// sealed grant. Key: string.
     SYNC_RESIDENCE_BUNDLE_ACCESS: SyncState b"rb:a:" Raw;
-    /// One generation of the vault's sealed cloud bundle the home keeps (FIX 922): u64be bundle
-    /// length ‖ bundle digest (32) ‖ u64be pad object length ‖ pad object digest (32), then, when
-    /// its publisher named a recovery root, the root id (32) ‖ its anchor key (32). Key: hex48
-    /// (the generation).
+    /// One generation of the vault's sealed cloud bundle the home keeps (FIX 922): u64be commit
+    /// order (FIX 8885) ‖ u64be bundle length ‖ bundle digest (32) ‖ u64be pad object length ‖ pad
+    /// object digest (32), then, when its publisher named a recovery root, the root id (32) ‖ its
+    /// anchor key (32). Key: hex48 (the generation).
     SYNC_RESIDENCE_BUNDLE_GENERATION: SyncState b"rb:g:" Raw;
     /// A nonce the home's kit door took from a signed bundle fetch (FIX 922), kept a day past
     /// its signed time (empty marker). Key: u64hex16 (the signed time) ":" hex64 (the nonce).
@@ -346,9 +346,12 @@ side_tables! {
     /// stays, with no expiry and no count bound, until the request has its result here. Key:
     /// hex64 (the request's entry hash).
     SYNC_RESIDENCE_BUNDLE_ATTEMPT: SyncState b"rbc:" Raw;
-    /// A world erased here whose pads this machine stripped from every pad object the home
-    /// keeps (FIX 922): empty, or the u64be slot a pad object that did not open here held it
-    /// back in. Key: hex32 (the world).
+    /// One erase subject this machine sweeps from every pad object the home keeps (FIX 922, 7294,
+    /// 8868): empty while only owed (a hard erase of one key's pad row stages it), else its proof:
+    /// the home (16) ‖ the revision of the home's list it was made against (32) ‖ 1 and the u64be
+    /// slot a pad object that did not open here held it back in, or 0 and eight zero bytes ‖
+    /// u32be count ‖ each kept pad object swept, its generation (24) ‖ its digest (32). Key: "w:"
+    /// hex32 (a world whose keys were destroyed here) or "k:" hex80 (one key's full id).
     SYNC_RESIDENCE_BUNDLE_SWEPT: SyncState b"rbe:" Raw;
     /// This machine's sealed bundle cursor (FIX 922): the u64be UTC slot it last finished ‖ the
     /// generation (24) it last took in, when it took one. Key: ().

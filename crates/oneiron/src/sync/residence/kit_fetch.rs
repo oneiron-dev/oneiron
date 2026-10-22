@@ -18,11 +18,19 @@
 //! The door asks no device class (FIX 3349; CALLS: KIT_BUNDLE_PHONE_POLICY,
 //! allow): a kit restore installs the vault from a generation and keeps no
 //! sealed copy, so a phone that holds the kit may restore from it.
+//!
+//! The kit reads the home's current index of the generations named for its
+//! root the same way, through its own signed door (`pad_index`, FIX 7106).
+
+mod pad_index;
+
+pub use self::pad_index::{KIT_PAD_INDEX_FETCH_PATH, KitPadIndexFetch, kit_sealed_bundle_index};
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
 use super::bundle::{
-    SealedBundleEntry, SealedBundleObject, denied, entries_in, entry_in, hex, read_part_in,
+    BundlePartRead, SealedBundleEntry, SealedBundleObject, denied, entries_in, entry_in, hex,
+    read_part_in,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -126,10 +134,16 @@ fn named_entry_in(
     })
 }
 
-/// Takes `fetch`'s nonce, once: a nonce taken before refuses. Nonces signed a
-/// day before `now` go in the same transaction.
-fn take_nonce(vault: &Vault, fetch: &KitBundleFetch, now: u64) -> Result<()> {
-    let key = format!("{:016x}:{}", fetch.timestamp, hex(&fetch.nonce));
+/// Takes a request's `nonce` signed at `timestamp`, once: a nonce taken
+/// before refuses. Nonces signed a day before `now` go in the same
+/// transaction.
+fn take_nonce(
+    vault: &Vault,
+    timestamp: u64,
+    nonce: &[u8; KIT_BUNDLE_FETCH_NONCE_BYTES],
+    now: u64,
+) -> Result<()> {
+    let key = format!("{timestamp:016x}:{}", hex(nonce));
     let floor = format!(
         "{:016x}",
         now.saturating_sub(KIT_BUNDLE_FETCH_NONCE_RETAIN_SECS)
@@ -157,8 +171,9 @@ fn take_nonce(vault: &Vault, fetch: &KitBundleFetch, now: u64) -> Result<()> {
 /// `SEALED_BUNDLE_READ_PART_MAX` bytes from `fetch`'s offset, with the
 /// generation's entry: a generation whose publisher named `fetch`'s root, and
 /// the newest such when `fetch` names none. `signature` is that root's anchor
-/// over [`KitBundleFetch::transcript`]. `None` at or past the object's end, and
-/// for a generation retired since the request was checked.
+/// over [`KitBundleFetch::transcript`]. `None` for a generation retired since
+/// the request was checked; the read says when the offset is at or past the
+/// object's end, and when a kept pad object's bytes there are missing.
 ///
 /// # Errors
 ///
@@ -169,7 +184,7 @@ pub fn kit_sealed_bundle_part(
     vault: &Vault,
     fetch: &KitBundleFetch,
     signature: &[u8; 64],
-) -> Result<Option<(SealedBundleEntry, Vec<u8>)>> {
+) -> Result<Option<(SealedBundleEntry, BundlePartRead)>> {
     let now = vault.store.clock.wall_now();
     if now.abs_diff(fetch.timestamp) > KIT_BUNDLE_FETCH_MAX_AGE_SECS {
         return Err(denied());
@@ -185,11 +200,12 @@ pub fn kit_sealed_bundle_part(
     VerifyingKey::from_bytes(&kit.anchor_key)
         .and_then(|key| key.verify_strict(&fetch.transcript(), &Signature::from_bytes(signature)))
         .map_err(|_| denied())?;
-    take_nonce(vault, fetch, now)?;
+    take_nonce(vault, fetch.timestamp, &fetch.nonce, now)?;
     let txn = vault.store.env.read_txn()?;
     let Some(entry) = entry_in(vault, &txn, &generation)?.filter(|entry| entry.kit == Some(kit))
     else {
         return Ok(None);
     };
-    Ok(read_part_in(vault, &txn, &entry, fetch.object, fetch.offset)?.map(|part| (entry, part)))
+    let read = read_part_in(vault, &txn, &entry, fetch.object, fetch.offset)?;
+    Ok(Some((entry, read)))
 }
