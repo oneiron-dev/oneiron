@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use self::engine::read_granted_in_txn;
+use self::admission::{read_granted_in_txn, settle_in_txn};
 use self::instruction::{CoachReplay, CoachScrubber, Ran};
 use self::work::{
     enqueue_run_in_txn, keep_in_txn, keep_run_in_txn, not_run, redraft_invented_example,
@@ -62,10 +62,12 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
+mod admission;
 mod engine;
 mod instruction;
 mod publisher;
 mod work;
+pub(crate) use self::admission::{CaptureRefs, CoachReplayAdmission};
 pub use self::publisher::{
     CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary,
     EngineCallUsage, EngineCandidateRun, EngineNotRun, EnginePairState, PublisherCandidateKind,
@@ -468,6 +470,8 @@ impl Vault {
                     }) {
                         continue;
                     }
+                    // FIX 8704: kept only while its Grant still admits it.
+                    let run = settle_in_txn(self, &*txn, &work.source, coach, run)?;
                     let run = keep_run_in_txn(self, txn, &work.source, run)?;
                     // A pair kept not run at another shadow protocol, or for
                     // want of a Grant the Coach now holds, is run again, in
@@ -483,6 +487,7 @@ impl Vault {
             });
         }
         let unkept = self.code_fix_run(&work.source, work.proposal, route, decisions, host, now)?;
+        let coach = self.coach_authority()?.entity_ref();
         self.with_write_txn_grouped(|txn| {
             let mut work = WORK
                 .get(&self.store, &*txn, &key)?
@@ -494,7 +499,11 @@ impl Vault {
             let candidates: Vec<CandidateRun> = unkept
                 .candidates
                 .into_iter()
-                .map(|run| keep_run_in_txn(self, txn, &work.source, run))
+                .map(|run| {
+                    // FIX 8704: kept only while its Grant still admits it.
+                    let run = settle_in_txn(self, &*txn, &work.source, coach, run)?;
+                    keep_run_in_txn(self, txn, &work.source, run)
+                })
                 .collect::<Result<_>>()?;
             let settled = CodeFixSettled {
                 at: unkept.at,

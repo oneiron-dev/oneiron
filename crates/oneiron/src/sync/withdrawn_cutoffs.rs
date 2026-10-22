@@ -42,7 +42,7 @@ use crate::error::{Error, Result};
 pub(crate) const WITHDRAWN_CUTOFFS_MAP: &str = "withdrawn_cutoffs";
 
 /// The key prefix of a session's epoch floor in the cutoff map.
-const EPOCH_FLOOR: &str = "epoch_floor/";
+pub(in crate::sync) const EPOCH_FLOOR: &str = "epoch_floor/";
 
 /// One row of a window's cutoff map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
