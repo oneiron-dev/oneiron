@@ -21,6 +21,7 @@ const FORWARD_TOMBSTONE_CHUNK: usize = 128;
 /// Outcome of the tombstone pass. The error is DEFERRED past the marker
 /// bookkeeping txn (Trap 2): the caller runs that txn first and only then
 /// returns `deferred_error`.
+#[derive(Default)]
 pub(super) struct TombstonePassOutcome {
     pub(super) purge_failures: Vec<EntityId>,
     /// Each failed replay's tombstone value, for the fence its delete earns
@@ -31,10 +32,25 @@ pub(super) struct TombstonePassOutcome {
     pub(super) deferred_error: Option<Error>,
 }
 
-/// Run the tombstone pass: replay each tombstone through the shared
-/// primitive and collect the marker bookkeeping inputs. Returns the outcome
-/// struct instead of falling through — never `?` at the call site.
-pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePassOutcome {
+/// The tombstones the pass replays, in its order: every value, so a
+/// recovery can run the pass a page at a time (FIX 8821).
+pub(super) fn entries(ctx: &RematCtx<'_>) -> Vec<(String, Vec<u8>)> {
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    map_for_each_tombstone_value(ctx.tombstones.map(), |key, value| {
+        entries.push((key.to_owned(), value.to_vec()));
+    });
+    entries
+}
+
+/// Run the tombstone pass over `entries`, a run of the pass's [`entries`]:
+/// replay each tombstone through the shared primitive and collect the
+/// marker bookkeeping inputs. Returns the outcome struct instead of falling
+/// through — never `?` at the call site.
+pub(super) fn run_page(
+    ctx: &RematCtx<'_>,
+    ledger: &mut RematLedger,
+    entries: &[(String, Vec<u8>)],
+) -> TombstonePassOutcome {
     // Tombstones — reason-aware replay (ONE-1133 / ARCH-0038): the VALUE
     // decides the effect, routed through the shared primitive, never a
     // bare purge. Known-soft `user_delete` keeps the 25 B shell (SoftErase
@@ -59,10 +75,6 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     // recorded before its parent commits. A chunk whose parent fails replays
     // one by one, each in its own transaction, and so does the rest of a
     // chunk from a child that ran out of room in its parent.
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-    map_for_each_tombstone_value(ctx.tombstones.map(), |key, value| {
-        entries.push((key.to_owned(), value.to_vec()));
-    });
     let mut pass = Pass {
         ctx,
         ledger,
@@ -431,7 +443,7 @@ fn residence_in(
             ctx.vault,
             txn,
             ctx.doc,
-            &ctx.tombstones,
+            ctx.tombstones,
             id,
             &raw,
             ctx.window_key,
