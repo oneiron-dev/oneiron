@@ -30,6 +30,8 @@ use crate::origin::secret_marks::{
 use crate::origin::secret_projection::{RepoBodyProjection, project_repo_bytes_in_txn};
 use crate::registry::ENTITY_TYPE_ASSET;
 
+mod reveal;
+
 /// The body a masked reader reads of the hydrated row `id`, in `txn`:
 /// `None` unless the row is a repo snapshot ASSET whose inline bytes a repo
 /// mark covers, and then their projection.
@@ -136,7 +138,7 @@ impl Memory<'_> {
     /// actor, admission or anything but which repo bytes are returned.
     #[must_use]
     pub fn for_repo_tool_recipient(mut self) -> Self {
-        self.repo_tool_recipient = true;
+        self.repo_tool_recipient.mask();
         self
     }
 
@@ -144,7 +146,7 @@ impl Memory<'_> {
     /// credential other than the owner's, or a call a code run's host
     /// origin rides.
     pub(crate) fn repo_reads_masked(&self) -> MemoryResult<bool> {
-        Ok(self.repo_tool_recipient
+        Ok(self.repo_tool_recipient.masked()
             || self.host_origin.is_some()
             || self.reads_lifted_keys_masked()?)
     }
@@ -171,7 +173,7 @@ impl Memory<'_> {
         body: Vec<u8>,
     ) -> MemoryResult<Vec<u8>> {
         if entity_type != ENTITY_TYPE_ASSET
-            || !(self.repo_tool_recipient
+            || !(self.repo_tool_recipient.masked()
                 || self.host_origin.is_some()
                 || self.reads_lifted_keys_masked_in_txn(txn)?)
         {

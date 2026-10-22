@@ -253,6 +253,8 @@ pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 // WILL-PLAN L13 row 03: a room's whole off-record stretch, which no
 // consent record admits a session row to manage.
+/// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).
+pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,

@@ -13,6 +13,7 @@ mod device_scan;
 mod model;
 mod paging;
 mod readdir;
+mod repo_projection;
 mod scoped_files;
 mod snapshot;
 mod walk;

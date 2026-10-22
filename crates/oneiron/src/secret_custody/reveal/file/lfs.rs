@@ -68,6 +68,7 @@ impl Vault {
                     handle: LFS_OBJECT_HANDLE.to_owned(),
                 }],
                 per_class: false,
+                repo: None,
             };
             self.read_sight_in_txn(txn, &read)
         })?;

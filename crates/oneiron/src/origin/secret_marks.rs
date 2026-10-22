@@ -53,7 +53,7 @@ use crate::temporal::TimeRange;
 mod read;
 pub(crate) use read::{
     RepoBlobAddress, RepoBlobMarks, RepoMarkFacts, RepoSecretMarkLookup, add_place,
-    repo_secret_marks_for_hash_in_txn,
+    for_each_repo_secret_mark_in_txn, repo_secret_marks_for_hash_in_txn,
 };
 
 /// The predicate of one pushed key's mark.
@@ -352,6 +352,39 @@ fn span_of(key: &RetainedRepoPlacedKey) -> RepoSecretPlacement {
         custody: key.custody,
         handle: key.handle.clone(),
     }
+}
+
+/// The marks a projection-bound push's ingress recorded, carried to the
+/// canonical store `store_id` (identity `store_identity`) when the push is
+/// forwarded exactly (FIX 7608 2b-ii): the same placements and opaque
+/// facts, still linked to the ingress operation that saw the bytes, with no
+/// scan and no second custody mint, before the canonical publication.
+/// Gives each forwarded mark's id, sorted and once each.
+///
+/// # Errors
+/// A store failure, or another record under a mark's id.
+#[allow(
+    dead_code,
+    reason = "FIX 7608 2b-ii-A: the exact forward calls it in 2b-ii-B"
+)]
+pub(crate) fn readdress_forward_secret_marks_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    marks: &[RepoSecretMark],
+    store_id: EntityId,
+    store_identity: &str,
+) -> Result<Vec<EntityId>> {
+    let mut forwarded_ids = Vec::with_capacity(marks.len());
+    for mark in marks {
+        let mut forwarded = mark.clone();
+        forwarded.store_id = store_id;
+        forwarded.store_identity = store_identity.to_owned();
+        put_repo_secret_mark_in_txn(vault, wtxn, &forwarded)?;
+        forwarded_ids.push(forwarded.id()?);
+    }
+    forwarded_ids.sort_unstable();
+    forwarded_ids.dedup();
+    Ok(forwarded_ids)
 }
 
 /// Writes `mark` once at its id, and says whether it wrote it: the same

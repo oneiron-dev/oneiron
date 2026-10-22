@@ -109,6 +109,21 @@ impl RepoBlobMarks {
     fn push(&mut self, mark: RepoSecretMark) {
         self.marks.push(mark);
     }
+
+    /// Each span mark's custody record, once each, in mark order: the keys
+    /// a real-byte file reveal of this blob asks for (FIX 7608 2b-ii). A
+    /// record id, never a value.
+    pub(crate) fn custody(&self) -> Vec<EntityId> {
+        let mut custody: Vec<EntityId> = Vec::new();
+        for mark in &self.marks {
+            if let RepoSecretPlacement::Span { custody: id, .. } = &mark.placement
+                && !custody.contains(id)
+            {
+                custody.push(*id);
+            }
+        }
+        custody
+    }
 }
 
 fn sorted_ids(marks: &[RepoSecretMark]) -> Result<Vec<EntityId>> {

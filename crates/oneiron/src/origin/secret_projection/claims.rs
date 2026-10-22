@@ -109,6 +109,65 @@ pub(crate) enum RepoProjectionRecord {
         child_original: GitOid,
         child_copy: GitOid,
     },
+    /// A push received into a private ingress seeded from this copy (FIX
+    /// 7608 2b-ii): the proof its admission binds.
+    Ingress(RepoProjectionIngress),
+    /// A received copy change translated onto the ORIGINAL.
+    Translation(RepoProjectionTranslation),
+    /// The owner's settlement of one held projected edit, exactly.
+    Clearance(RepoProjectionClearance),
+    /// A projection-bound update proved not copy-derived, forwarded as it
+    /// was pushed.
+    ExactForward(RepoProjectionExactForward),
+}
+
+/// The ingress proof's record: the receive operation, the canonical store
+/// the copy stands for, the private ingress store it was received into and
+/// a digest of the canonical authority its admission bound (repo, CODE,
+/// project, actor, G1 arm, Grant, lease epoch, holder and attempt, host
+/// authority). Ids and digests only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RepoProjectionIngress {
+    pub(crate) operation: EntityId,
+    pub(crate) canonical_store: EntityId,
+    pub(crate) ingress_store: String,
+    pub(crate) authority: [u8; 32],
+}
+
+/// A received copy change's translation: its candidate and operation, the
+/// submitted COPY tip, the ORIGINAL base it maps onto, the canonical
+/// target tree it resolved (none while it holds) and its pins' digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RepoProjectionTranslation {
+    pub(crate) candidate: EntityId,
+    pub(crate) operation: EntityId,
+    pub(crate) submitted_new: GitOid,
+    pub(crate) canonical_base: GitOid,
+    pub(crate) canonical_target: Option<GitOid>,
+    pub(crate) pins: [u8; 32],
+}
+
+/// The owner's settlement of one held projected edit: the candidate, the
+/// cause, the digest of the exact file set it settles, the canonical
+/// target it approved and the owner who approved it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RepoProjectionClearance {
+    pub(crate) candidate: EntityId,
+    pub(crate) cause: String,
+    pub(crate) files: [u8; 32],
+    pub(crate) target: Option<GitOid>,
+    pub(crate) owner: EntityId,
+}
+
+/// One exact forward: the receive operation, the ref, its canonical old
+/// and new tips and the marks carried to the canonical store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RepoProjectionExactForward {
+    pub(crate) operation: EntityId,
+    pub(crate) ref_name: String,
+    pub(crate) old: Option<GitOid>,
+    pub(crate) new: GitOid,
+    pub(crate) marks: Vec<EntityId>,
 }
 
 /// One record as it is kept: its graph (its own id, for the graph record)
@@ -246,6 +305,65 @@ impl RepoProjectionClaim {
         let claim = decode_graph(graph, &body)?;
         Ok(Some(claim))
     }
+
+    /// Whether this exact record stands at its id: approved, active and
+    /// saying exactly this, about exactly its subject.
+    ///
+    /// # Errors
+    /// A store failure, or a failed id derivation.
+    pub(crate) fn stands_in_txn(&self, vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
+        let Some(stored) = vault.get_claim_in_txn(txn, &self.id()?)? else {
+            return Ok(false);
+        };
+        let body = self.claim()?;
+        Ok(stored.approval == ClaimApprovalStatus::Approved
+            && stored.lifecycle == ClaimLifecycleStatus::Active
+            && stored.predicate == body.predicate
+            && stored.subject == body.subject
+            && stored.value == body.value)
+    }
+
+    /// The ingress record of `operation` under `graph`, decoded strictly
+    /// and checked against its id and stored value; `None` when none
+    /// stands.
+    ///
+    /// # Errors
+    /// A store failure, or a record that does not decode.
+    pub(crate) fn load_ingress_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        graph: &EntityId,
+        operation: &EntityId,
+    ) -> Result<Option<RepoProjectionIngress>> {
+        let key = Value::Array(vec![
+            Value::from("ingress"),
+            Value::from(operation.to_hex()),
+        ]);
+        let id = derive_id(Some(graph), &key)?;
+        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+            return Ok(None);
+        };
+        if body.approval != ClaimApprovalStatus::Approved
+            || body.lifecycle != ClaimLifecycleStatus::Active
+        {
+            return Ok(None);
+        }
+        let map = body.value.as_map().ok_or_else(corrupt)?;
+        if text(field(map, "kind")?)? != "ingress" {
+            return Err(corrupt());
+        }
+        let ingress = RepoProjectionIngress {
+            operation: *operation,
+            canonical_store: entity(field(map, "canonical_store")?)?,
+            ingress_store: text(field(map, "ingress_store")?)?.to_owned(),
+            authority: digest_of(field(map, "authority")?)?,
+        };
+        let claim = Self::of(*graph, RepoProjectionRecord::Ingress(ingress.clone()));
+        if claim.value() != body.value || claim.claim()?.subject != body.subject {
+            return Err(corrupt());
+        }
+        Ok(Some(ingress))
+    }
 }
 
 fn corrupt() -> Error {
@@ -286,6 +404,26 @@ fn identity_part(record: &RepoProjectionRecord) -> Value {
             oid(parent),
             place_value(place),
             oid(child_original),
+        ]),
+        RepoProjectionRecord::Ingress(ingress) => Value::Array(vec![
+            Value::from("ingress"),
+            Value::from(ingress.operation.to_hex()),
+        ]),
+        RepoProjectionRecord::Translation(translation) => Value::Array(vec![
+            Value::from("translation"),
+            Value::from(translation.candidate.to_hex()),
+        ]),
+        RepoProjectionRecord::Clearance(clearance) => Value::Array(vec![
+            Value::from("clearance"),
+            Value::from(clearance.candidate.to_hex()),
+            Value::from(clearance.cause.as_str()),
+            digest_value(&clearance.files),
+            clearance.target.as_ref().map_or(Value::Nil, oid),
+        ]),
+        RepoProjectionRecord::ExactForward(forward) => Value::Array(vec![
+            Value::from("exact_forward"),
+            Value::from(forward.operation.to_hex()),
+            Value::from(forward.ref_name.as_str()),
         ]),
     }
 }
@@ -365,6 +503,47 @@ fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str, Value)> {
             ("place", place_value(place)),
             ("child_original", oid(child_original)),
             ("child_copy", oid(child_copy)),
+        ],
+        RepoProjectionRecord::Ingress(ingress) => vec![
+            ("kind", Value::from("ingress")),
+            ("operation", Value::from(ingress.operation.to_hex())),
+            (
+                "canonical_store",
+                Value::from(ingress.canonical_store.to_hex()),
+            ),
+            ("ingress_store", Value::from(ingress.ingress_store.as_str())),
+            ("authority", digest_value(&ingress.authority)),
+        ],
+        RepoProjectionRecord::Translation(translation) => vec![
+            ("kind", Value::from("translation")),
+            ("candidate", Value::from(translation.candidate.to_hex())),
+            ("operation", Value::from(translation.operation.to_hex())),
+            ("submitted_new", oid(&translation.submitted_new)),
+            ("canonical_base", oid(&translation.canonical_base)),
+            (
+                "canonical_target",
+                translation
+                    .canonical_target
+                    .as_ref()
+                    .map_or(Value::Nil, oid),
+            ),
+            ("pins", digest_value(&translation.pins)),
+        ],
+        RepoProjectionRecord::Clearance(clearance) => vec![
+            ("kind", Value::from("clearance")),
+            ("candidate", Value::from(clearance.candidate.to_hex())),
+            ("cause", Value::from(clearance.cause.as_str())),
+            ("files", digest_value(&clearance.files)),
+            ("target", clearance.target.as_ref().map_or(Value::Nil, oid)),
+            ("owner", Value::from(clearance.owner.to_hex())),
+        ],
+        RepoProjectionRecord::ExactForward(forward) => vec![
+            ("kind", Value::from("exact_forward")),
+            ("operation", Value::from(forward.operation.to_hex())),
+            ("ref_name", Value::from(forward.ref_name.as_str())),
+            ("old", forward.old.as_ref().map_or(Value::Nil, oid)),
+            ("new", oid(&forward.new)),
+            ("marks", ids(&forward.marks)),
         ],
     }
 }
@@ -467,6 +646,23 @@ fn text(value: &Value) -> Result<&str> {
 
 fn entity(value: &Value) -> Result<EntityId> {
     EntityId::from_hex(text(value)?).map_err(|_| corrupt())
+}
+
+fn digest_value(digest: &[u8; 32]) -> Value {
+    Value::from(crate::entity_id::bytes_to_hex_lower(digest))
+}
+
+fn digest_of(value: &Value) -> Result<[u8; 32]> {
+    let hex = text(value)?.as_bytes();
+    let mut digest = [0_u8; 32];
+    if hex.len() != 64 {
+        return Err(corrupt());
+    }
+    for (at, pair) in hex.chunks(2).enumerate() {
+        let pair = std::str::from_utf8(pair).map_err(|_| corrupt())?;
+        digest[at] = u8::from_str_radix(pair, 16).map_err(|_| corrupt())?;
+    }
+    Ok(digest)
 }
 
 fn git_oid(value: &Value) -> Result<GitOid> {

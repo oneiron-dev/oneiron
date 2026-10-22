@@ -108,6 +108,27 @@ pub struct CodePushSourceLink {
     pub new_commit: String,
     pub base_revision: EntityId,
     pub candidate_digest: [u8; 32],
+    /// A push from a masked copy: what ties it to the canonical tree it was
+    /// translated to (FIX 7608 2b-ii); none for every other push.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<CodePushProjectionSourceLink>,
+}
+
+/// A projected push's tie to the canonical tree it was translated to: its
+/// masked copy's graph and ingress proof, the submitted COPY tips, the
+/// ORIGINAL base and the canonical target tree, and the digest of the
+/// candidate's projection pins. A complete link is earned only when the
+/// checked canonical tree is this target, never the submitted tree.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodePushProjectionSourceLink {
+    pub graph: EntityId,
+    pub ingress: EntityId,
+    pub submitted_old: Option<String>,
+    pub submitted_new: String,
+    pub canonical_base: String,
+    pub canonical_target_tree: String,
+    pub pins_digest: [u8; 32],
 }
 
 /// Which seal a driver step works on.

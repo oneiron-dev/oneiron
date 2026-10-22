@@ -53,6 +53,10 @@ use crate::vault::Vault;
 pub(crate) use self::actor_erase::erase_reveal_actor_in_txn;
 pub(super) use self::actor_erase::names_no_actor;
 pub use self::actor_erase::{ACTOR_ERASE_REVEAL_ASK, RevealAskErase};
+pub(crate) use self::file::{
+    RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
+    RepoFileRevealTarget, RepoFileSight,
+};
 
 /// How long a pending reveal waits for its answer and its collection, in
 /// seconds. Canon names no window; a widen proposal's one-hour cap is the
@@ -529,6 +533,10 @@ struct FileSight {
     /// handles, value-free; none for a read of one group (FIX 6738).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     siblings: Vec<(String, String)>,
+    /// A repo file read's ORIGINAL file and actual recipient (FIX 7608
+    /// 2b-ii); none for every other read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repo: Option<file::RepoFileRevealTarget>,
 }
 
 impl RevealRow {
@@ -547,9 +555,15 @@ impl RevealRow {
             .connection
             .as_deref()
             .ok_or(Error::CorruptedIndex("secret reveal connection"))?;
-        match &self.person {
-            Some(_) => disclosure_bound(connection, "names", self.project.as_ref()),
-            None => reveal_bound(connection, self.class()?, self.project.as_ref()),
+        match (
+            &self.person,
+            self.file.as_ref().and_then(|file| file.repo.as_ref()),
+        ) {
+            (Some(_), _) => disclosure_bound(connection, "names", self.project.as_ref()),
+            (None, Some(repo)) => {
+                repo.standing_bound(connection, self.class()?, self.project.as_ref())
+            }
+            (None, None) => reveal_bound(connection, self.class()?, self.project.as_ref()),
         }
     }
 
@@ -603,6 +617,9 @@ impl RevealRow {
                 part(secret.as_bytes());
                 part(handle.as_bytes());
             }
+            if let Some(repo) = &file.repo {
+                repo.bind_digest(&mut part);
+            }
         }
         EffectDigest::from_bytes(*hasher.finalize().as_bytes())
     }
@@ -616,6 +633,9 @@ impl RevealRow {
     fn disclosure(&self) -> Option<String> {
         let connection = self.connection.as_deref()?;
         let what = match &self.file {
+            Some(FileSight {
+                repo: Some(repo), ..
+            }) => repo.disclosure_what(&self.handle),
             Some(file) => format!(
                 "Reading file {} unmasked sends its keys {}",
                 file.artifact.to_hex(),

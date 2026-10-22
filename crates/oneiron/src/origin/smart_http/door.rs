@@ -30,6 +30,12 @@ pub struct DoorAdmissionStamp {
     pub(super) origin_authority: Option<OriginAuthorityStamp>,
     /// The push authority the receive-pack decision admitted (G1-PUSH).
     pub(super) push: Option<crate::federation::git_push::GitPushStamp>,
+    /// The ingress proof a projection-bound push is received under (FIX
+    /// 7608 2b-ii): its record's id, never an authority of its own; the
+    /// canonical authority lives in the proof. None on every ordinary
+    /// admission.
+    #[allow(dead_code, reason = "FIX 7608 2b-ii-A: 2b-ii-B binds and reads it")]
+    pub(super) ingress_proof: Option<EntityId>,
 }
 
 impl DoorAdmissionStamp {
@@ -49,6 +55,7 @@ impl DoorAdmissionStamp {
             operation_id,
             origin_authority: None,
             push: None,
+            ingress_proof: None,
         }
     }
 
@@ -74,6 +81,7 @@ impl DoorAdmissionStamp {
             operation_id,
             origin_authority: None,
             push: None,
+            ingress_proof: None,
         }
     }
 
