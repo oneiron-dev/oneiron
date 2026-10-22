@@ -492,7 +492,8 @@ fn start_turn(
     // saved. A turn runs on no attempt. Only the notes the caller's own read
     // admits are shown (SCAN C009), read through the handle its self-chat
     // log reads through. It joins the request once the history and the
-    // user's turn are in it (FIX 6676).
+    // user's turn are in it (FIX 6676), under the one layout this turn reads.
+    let layout = server.ai.prompt_layout();
     let lead = messages.len();
     let craft = crate::server::blocking(|| {
         let reader = match auth.principal_ref() {
@@ -504,6 +505,7 @@ fn start_turn(
             &reader,
             &agent,
             vault.now_recorded_at(),
+            layout,
         )
     });
     if let Some(craft) = &craft {
@@ -553,8 +555,12 @@ fn start_turn(
     // user's own text, and the kept log never holds it.
     let (craft, turn_context) = match craft {
         Some(craft) => {
-            let at =
-                crate::ai_host::resident_craft::place_craft(&mut messages, lead, craft.message);
+            let at = crate::ai_host::resident_craft::place_craft(
+                &mut messages,
+                lead,
+                craft.message,
+                layout,
+            );
             (Some(craft.entries), at)
         }
         None => (None, None),
@@ -604,8 +610,7 @@ fn start_turn(
         // The history before the turn's context is the prefix the next turn
         // sends again, so its end is marked beside the request's own. Today's
         // layout keeps today's marks.
-        let stable_prefix = oneiron::prompt::session_prompt_layout()
-            == oneiron::prompt::PromptLayout::StableHistoryThenTurnContext;
+        let stable_prefix = layout == oneiron::prompt::PromptLayout::StableHistoryThenTurnContext;
         if let Some(history_end) = turn_context
             .filter(|_| stable_prefix)
             .and_then(|at| at.checked_sub(1))

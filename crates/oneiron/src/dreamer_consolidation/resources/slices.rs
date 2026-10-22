@@ -21,10 +21,14 @@ pub(in crate::dreamer_consolidation) struct ExtractionSlice {
 
 impl BranchResources<'_> {
     /// Group by slice line (FIX 8724) and co-mentioned known entities, then
-    /// chunk each group. Every TURN appears once, and every child sees only
-    /// its own source versions, its own TURNs' conversations and the
+    /// chunk each group. Every TURN appears in one chunk, and every child sees
+    /// only its own source versions, its own TURNs' conversations and the
     /// neighbourhood heads that accompany them. A child may span the parts of
-    /// one line, never two lines. The flag is the whole branch's low trust;
+    /// one line, never two lines. Each group's whole listing (its thing
+    /// first) is paged (FIX 7580, 9347), and a chunk is one call per page:
+    /// each page's call reads the chunk's turns, and every page's call holds
+    /// all of the chunk's heads, so a candidate is decided against every head
+    /// listed about its subject. The flag is the whole branch's low trust;
     /// each slice also carries its own.
     pub(in crate::dreamer_consolidation) fn extraction_slices(
         &self,
@@ -54,6 +58,7 @@ impl BranchResources<'_> {
         let mut slices = Vec::new();
         for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);
+            let pages = known.pages(|id| self.priors.contains_key(id));
             for chunk in group.chunks(turns_per_child) {
                 let ids: BTreeSet<_> = chunk.iter().map(|(id, _)| *id).collect();
                 let parents: BTreeSet<_> = ids.iter().filter_map(|id| self.turns.get(id)).collect();
@@ -87,46 +92,47 @@ impl BranchResources<'_> {
                         scope.writable.remove(version);
                     }
                 }
-                let mut labels = CallLabelMap::default();
-                let mut transcript = String::new();
-                let mut current = None;
-                for (at, (id, facts)) in chunk.iter().enumerate() {
-                    // A conversation's header leads its run of turns; the
-                    // listing follows the first, as a one-part child's does.
-                    let conversation = self.turns.get(id).copied();
-                    if at == 0 || conversation != current {
-                        current = conversation;
-                        if let Some(conversation) = conversation {
-                            let conversation = labels.assign(LabelKind::Conversation, conversation);
-                            transcript.push_str(&format!("conversation {conversation}\n"));
+                for page in &pages {
+                    let mut labels = CallLabelMap::default();
+                    let mut transcript = String::new();
+                    let mut current = None;
+                    for (at, (id, facts)) in chunk.iter().enumerate() {
+                        // A conversation's header leads its run of turns; the
+                        // page follows the first, as a one-part child's does.
+                        let conversation = self.turns.get(id).copied();
+                        if at == 0 || conversation != current {
+                            current = conversation;
+                            if let Some(conversation) = conversation {
+                                let conversation =
+                                    labels.assign(LabelKind::Conversation, conversation);
+                                transcript.push_str(&format!("conversation {conversation}\n"));
+                            }
+                            if at == 0 {
+                                transcript.push_str(&page.render(&mut labels, scope.relationship));
+                            }
                         }
-                        if at == 0 {
-                            transcript.push_str(
-                                &known.render(&mut labels, |id| self.priors.contains_key(id)),
-                            );
-                        }
+                        let turn = labels.assign(LabelKind::Turn, *id);
+                        transcript.push_str(&format!(
+                            "[{turn} {}] {}\n",
+                            facts.speaker.as_deref().unwrap_or("unknown"),
+                            facts.text.as_deref().unwrap_or_default(),
+                        ));
                     }
-                    let turn = labels.assign(LabelKind::Turn, *id);
-                    transcript.push_str(&format!(
-                        "[{turn} {}] {}\n",
-                        facts.speaker.as_deref().unwrap_or("unknown"),
-                        facts.text.as_deref().unwrap_or_default(),
-                    ));
+                    // A slice is low-trust by what it reads: its own TURNs and
+                    // the prior heads its page shows (FIX 9017).
+                    let slice_low_trust = chunk.iter().any(|(_, facts)| facts.imported)
+                        || self
+                            .priors
+                            .iter()
+                            .any(|(id, prior)| page.shows(*id) && low_trust_prior(prior));
+                    slices.push(ExtractionSlice {
+                        turns: chunk.iter().map(|(id, _)| *id).collect(),
+                        transcript,
+                        scope: scope.clone(),
+                        labels,
+                        low_trust: slice_low_trust,
+                    });
                 }
-                // A slice is low-trust by what it reads: its own TURNs and
-                // the prior heads it shows (FIX 9017).
-                let slice_low_trust = chunk.iter().any(|(_, facts)| facts.imported)
-                    || self
-                        .priors
-                        .iter()
-                        .any(|(id, prior)| known.shows(*id) && low_trust_prior(prior));
-                slices.push(ExtractionSlice {
-                    turns: chunk.iter().map(|(id, _)| *id).collect(),
-                    transcript,
-                    scope,
-                    labels,
-                    low_trust: slice_low_trust,
-                });
             }
         }
         Ok((slices, low_trust))
