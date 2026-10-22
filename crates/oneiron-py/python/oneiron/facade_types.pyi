@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1154 facade rows, 4088 declarations.
+Census: 1154 facade rows, 4089 declarations.
 Inputs: 1089 of 1154 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1154 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
@@ -9748,7 +9748,7 @@ LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "hist
 class LiftCauseCount(TypedDict):
     cause: LiftCause
     open: int
-class SecretLiftProposal(TypedDict):
+class SnapshotSecretLiftProposal(TypedDict):
     path: str
     detector_reason: str
     suggested_secret_name: str
@@ -9757,7 +9757,7 @@ class SecretLiftHistoryProposal(TypedDict):
     id: NotRequired[str]
     family: LiftFamily
     cause: LiftCause
-    proposal: SecretLiftProposal
+    proposal: SnapshotSecretLiftProposal
     run_id: str
     filed_at: int
     closed_at: NotRequired[int | None]
@@ -13402,6 +13402,10 @@ class DeckIdentityAmbiguityDuplicateSlideCreationId(TypedDict):
     kind: Literal["duplicate_slide_creation_id"]
     creation_id: int
     slides: list[int]
+class DeckIdentityAmbiguityDuplicateSlideId(TypedDict):
+    kind: Literal["duplicate_slide_id"]
+    sld_id: int
+    slides: list[int]
 class DeckIdentityAmbiguityDuplicateShapeId(TypedDict):
     kind: Literal["duplicate_shape_id"]
     slide: int
@@ -13412,7 +13416,7 @@ class DeckIdentityAmbiguityDuplicateShapeCreationId(TypedDict):
     slide: int
     id: str
     shapes: list[int]
-DeckIdentityAmbiguity = DeckIdentityAmbiguityDuplicateSlideCreationId | DeckIdentityAmbiguityDuplicateShapeId | DeckIdentityAmbiguityDuplicateShapeCreationId
+DeckIdentityAmbiguity = DeckIdentityAmbiguityDuplicateSlideCreationId | DeckIdentityAmbiguityDuplicateSlideId | DeckIdentityAmbiguityDuplicateShapeId | DeckIdentityAmbiguityDuplicateShapeCreationId
 class PptxShapeIdentity(TypedDict):
     shape_id: int
     creation_id: NotRequired[str | None]
@@ -13589,6 +13593,11 @@ class DeckRejectionCheck(TypedDict):
 class DeckRejectionReport(TypedDict):
     ok: bool
     checks: list[DeckRejectionCheck]
+class DeckAnchorCandidate(TypedDict):
+    shape: int
+    kind: DeckShapeKind
+    name: NotRequired[str | None]
+    creation_id: NotRequired[str | None]
 class DeckNativeRefusalExternalChartSource(TypedDict):
     kind: Literal["external_chart_source"]
     detail: str
@@ -13638,6 +13647,7 @@ class DeckStepRefusalTargetChanged(TypedDict):
 class DeckStepRefusalAmbiguousAnchor(TypedDict):
     kind: Literal["ambiguous_anchor"]
     detail: str
+    candidates: list[DeckAnchorCandidate]
 class DeckStepRefusalAnimatedTextStructureChanged(TypedDict):
     kind: Literal["animated_text_structure_changed"]
 class DeckStepRefusalAnimationDependencyUnsupported(TypedDict):

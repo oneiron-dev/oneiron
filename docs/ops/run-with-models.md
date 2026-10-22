@@ -770,6 +770,10 @@ with the same engine id and locality. A route the server cannot serve is
 refused with `503 model_route_not_served` before anything is sent. Without a
 manifest the `[models]` ladder is the role's binding.
 
+`prompt_layout` under `[models]` places each turn's context in its request:
+`early_system` (the default) or `stable_history_then_turn_context`. It wins
+over `ONEIRON_PROMPT_LAYOUT` (DEPLOYMENT.md, "Prompt layout").
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat

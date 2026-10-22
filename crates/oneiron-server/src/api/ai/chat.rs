@@ -73,6 +73,7 @@ mod assertions;
 mod compaction;
 mod hook_ask;
 mod recall;
+mod segments;
 mod sitting;
 mod sources;
 
@@ -491,7 +492,8 @@ fn start_turn(
     // saved. A turn runs on no attempt. Only the notes the caller's own read
     // admits are shown (SCAN C009), read through the handle its self-chat
     // log reads through. It joins the request once the history and the
-    // user's turn are in it (FIX 6676).
+    // user's turn are in it (FIX 6676), under the one layout this turn reads.
+    let layout = server.ai.prompt_layout();
     let lead = messages.len();
     let craft = crate::server::blocking(|| {
         let reader = match auth.principal_ref() {
@@ -503,11 +505,13 @@ fn start_turn(
             &reader,
             &agent,
             vault.now_recorded_at(),
+            layout,
         )
     });
     if let Some(craft) = &craft {
         sources.craft(&craft.entries);
     }
+    let system_end = messages.len();
     // FIX 4465 D: a self agent on its live fork reads its log from the
     // retained ledger, as the caller reads it where it sits; every other
     // turn takes the caller's lines as before.
@@ -543,6 +547,7 @@ fn start_turn(
             }
         }
     }
+    let log_end = messages.len();
     messages.push(text_message(LlmMessageRole::User, request.text.clone()));
     // FIX 6676: the craft goes where the session layout places it, the
     // user's turn as typed staying the latest user message. The turn's
@@ -550,8 +555,12 @@ fn start_turn(
     // user's own text, and the kept log never holds it.
     let (craft, turn_context) = match craft {
         Some(craft) => {
-            let at =
-                crate::ai_host::resident_craft::place_craft(&mut messages, lead, craft.message);
+            let at = crate::ai_host::resident_craft::place_craft(
+                &mut messages,
+                lead,
+                craft.message,
+                layout,
+            );
             (Some(craft.entries), at)
         }
         None => (None, None),
@@ -566,6 +575,12 @@ fn start_turn(
     let board_at = messages
         .iter()
         .rposition(|message| message.role == LlmMessageRole::User);
+    // DESIGN-V2 R2: the messages and the board as assembled, for the call's
+    // segment manifest.
+    let assembled = messages.clone();
+    let board_view = board
+        .as_ref()
+        .map(|board| (board.block.clone(), board.sections.clone()));
     let board_rows = board.as_ref().map(|board| board.rows.clone());
     let (admitted, recalled, context) =
         recall::admit(&server.ai, &vault, &seat, auth, messages, board);
@@ -595,8 +610,7 @@ fn start_turn(
         // The history before the turn's context is the prefix the next turn
         // sends again, so its end is marked beside the request's own. Today's
         // layout keeps today's marks.
-        let stable_prefix = oneiron::prompt::session_prompt_layout()
-            == oneiron::prompt::PromptLayout::StableHistoryThenTurnContext;
+        let stable_prefix = layout == oneiron::prompt::PromptLayout::StableHistoryThenTurnContext;
         if let Some(history_end) = turn_context
             .filter(|_| stable_prefix)
             .and_then(|at| at.checked_sub(1))
@@ -605,6 +619,33 @@ fn start_turn(
         }
         compaction::mark_prefix(&mut admitted.request);
     }
+    // DESIGN-V2 R2: the call's typed segments, set once it is admitted and
+    // only when they describe the admitted messages exactly.
+    let session_reader = segments::Reader {
+        vault: Arc::clone(&vault),
+        auth: auth.clone(),
+        actor,
+        class,
+        locality,
+    };
+    let turn_segments = segments::admitted(
+        &session_reader,
+        segments::Assembled {
+            layout: segments::Layout {
+                system_end,
+                log_end,
+            },
+            self_chat: self_chat.as_ref(),
+            messages: &assembled,
+            board: board_view.as_ref().filter(|_| recalled),
+            agent,
+            craft: craft.as_deref(),
+        },
+        &admitted.request.messages,
+    );
+    admitted.request.host_segments = turn_segments
+        .as_ref()
+        .map(|segments| Arc::clone(&segments.manifest));
     // FIX 6921: what the admitted board showed, frozen against the call it
     // rides in.
     let context = context
@@ -794,6 +835,16 @@ fn start_turn(
         agent,
         WriteActor::new(actor, class),
         session_key,
+        answering,
+    );
+    // DESIGN-V2 R2: once the reply lands whole, the session coordinator
+    // stages its canonical successor.
+    let answering = segments::commit_on_answer(
+        turn_segments,
+        &session_reader,
+        &credential,
+        written.as_deref(),
+        turn,
         answering,
     );
     Ok(Started {
@@ -1520,6 +1571,7 @@ pub(crate) fn chat_request(seat: &Seat, messages: Vec<LlmMessage>) -> LlmRequest
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     }
 }
 
