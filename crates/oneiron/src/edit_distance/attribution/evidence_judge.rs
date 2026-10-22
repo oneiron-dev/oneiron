@@ -17,7 +17,8 @@ use crate::error::{Error, Result};
 use crate::skill_attribution::{
     AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, UnclearAttribution,
     delete_unclear_in_txn, draw_proposal_sequence_in_txn, ground_attempt_receipt,
-    mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor, withdraw_edit_proposal_in_txn,
+    mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor_sourced,
+    withdraw_edit_proposal_in_txn,
 };
 
 // ---------------------------------------------------------------------------
@@ -200,7 +201,8 @@ pub fn judge_amendment_hunks(
     let Some(delta) = amendment_delta(vault, receipt_id)? else {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
-    let floor = unclear_floor(vault)?;
+    // The floor where the amended attempt ran, when one is named (FIX 2957).
+    let (floor, _) = unclear_floor_sourced(vault, evidence.attempt_receipt.as_deref())?;
     let Some(split) = classify_amendment(&evidence, decisions, hunks, floor)? else {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
@@ -249,7 +251,8 @@ pub fn judge_amendment_verdicts(
                 .edit_mass()
         })
         .collect();
-    let floor = unclear_floor(vault)?;
+    // The floor where the amended attempt ran, when one is named (FIX 2957).
+    let (floor, _) = unclear_floor_sourced(vault, evidence.attempt_receipt.as_deref())?;
     let split = crate::skill_attribution::split_from_verdicts(
         AttributionLane::Amendment,
         &masses,

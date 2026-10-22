@@ -92,7 +92,6 @@ pub fn run_attribution_projector_with_decisions(
     decisions: Option<&AttributionDecisions<'_>>,
 ) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
-    let (floor, floor_rows) = unclear_floor_sourced(vault)?;
     let mut judgments = Vec::new();
     let mut revisions = Vec::new();
     let mut unclear = Vec::new();
@@ -100,10 +99,13 @@ pub fn run_attribution_projector_with_decisions(
     let mut highest = since_cursor;
     for (sequence, evidence) in pending {
         highest = highest.max(sequence);
+        // The floor where this outcome ran, at its receipt's project and
+        // type (FIX 2957).
+        let (floor, floor_rows) = unclear_floor_sourced(vault, Some(&evidence.receipt_ref))?;
         // The rows a model-tier note reads (FIX 7101); the rule tier writes
         // no note, so it reads none.
         let sources = if decisions.is_some() {
-            union_source_rows([evidence_rows(vault, &evidence), floor_rows.clone()])
+            union_source_rows([evidence_rows(vault, &evidence), floor_rows])
         } else {
             None
         };
