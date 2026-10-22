@@ -543,8 +543,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/lift_history/authored.rs` | src | s | 1 crate-vis | — | The authored carriers whose writers already mask a new write: an owner-policy ruling or proposal, an eval… |
 | `src/batch/secret_scan/lift_history/carriers.rs` | src | s | 4 crate-vis | — | Carriers no door rewrites |
 | `src/batch/secret_scan/lift_history/loro_blocks.rs` | src | s | 2 crate-vis | — | Loro blocks a carrier stores, read decompressed before the census scans them (OF-067) |
-| `src/batch/secret_scan/lift_history/mod.rs` | src | L | 8 struct · 4 enum · 8 fn · 4 crate-vis | LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger, SecretLiftClose, SecretLiftHistoryProposal +4 | The historical lift sweep (OF-067; ARCH-0069 #mask-on-write) |
+| `src/batch/secret_scan/lift_history/mod.rs` | src | L | 8 struct · 4 enum · 8 fn · 1 re-export · 4 crate-vis | LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger, SecretLiftClose, SecretLiftHistoryProposal +4 | The historical lift sweep (OF-067; ARCH-0069 #mask-on-write) |
 | `src/batch/secret_scan/lift_history/notice.rs` | src | s | 2 crate-vis | — | The needs-you notice of the lift proposals (OF-067) |
+| `src/batch/secret_scan/lift_history/projection.rs` | src | s | 1 fn · 1 crate-vis | — | The lift sweep's state as a caller toward one destination may read it (FIX 8165): its proposals and their… |
 | `src/batch/secret_scan/lift_history/proposals.rs` | src | m | 7 crate-vis | — | Closing a lift proposal (OF-067) |
 | `src/batch/secret_scan/lift_history/record_text.rs` | src | s | 3 crate-vis | — | Text a record keeps beside its body and the text it was indexed with, which the records census reads too… |
 | `src/batch/secret_scan/lift_history/records.rs` | src | m | 6 crate-vis | — | The entity table |
@@ -4246,7 +4247,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime_hooks/verb/redact.rs` | src | s | 3 crate-vis | — | A post-hook's Redact (ARCH-0080 §3): fields removed or masked in this caller's view of the result |
 | `src/runtime_hooks/verb/resume.rs` | src | s | 1 fn · 3 crate-vis | — | Settlement resumes a stopped call once (ARCH-0080 §3 Ask) |
 | `src/runtime_hooks/verb/served.rs` | src | s | 3 crate-vis | — | Served rows (ARCH-0080 §11 p15, the automation link): the rows a call served its caller, read off the… |
-| `src/runtime_hooks/verb/state.rs` | src | m | 3 struct · 1 enum · 7 fn · 22 crate-vis | InvocationClaim, InvocationEntry, InvocationOutcome, InvocationWait | What a vault holds in memory for verb hooks: the process switch, the cached binding list, the sandbox, the… |
+| `src/runtime_hooks/verb/state.rs` | src | m | 4 struct · 1 enum · 7 fn · 22 crate-vis | InvocationClaim, InvocationEntry, InvocationOutcome, InvocationRelease, InvocationWait | What a vault holds in memory for verb hooks: the process switch, the cached binding list, the sandbox, the… |
 | `src/runtime_hooks/verb/storage.rs` | src | m | 35 crate-vis | — | Where one verb hook chain reads content and keeps its records (WILL L11-01 S01-2c): the vault, or a… |
 | `src/runtime_hooks/verb/storage/named_pause.rs` | src | s | 1 crate-vis | — | Which call a named hook pause is (FIX 5526): a retry names its pause by the ask handle, and one request may… |
 | `src/runtime_hooks/verb/storage/room_pause.rs` | src | s | 5 crate-vis | — | A room's hook pause (FIX 5524; Engine 10-20, a widening of the 2c-3 call): a hook in an off-record room asks… |
@@ -4361,7 +4362,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/admission.rs` | src | s | 4 crate-vis | — | Content-address and occurrence binding shared by local and replicated puts |
 | `src/self_heal/admission_tests.rs` | test | s | — | — | Address and validity checks shared by diagnostic admission doors |
 | `src/self_heal/audit.rs` | src | m | 8 struct · 1 enum · 7 fn · 1 mod · 7 crate-vis | AttemptConfession, AuditDraw, ObjectiveConfession, ObjectiveFinding, SealCheckKind, SealCheckOutcome, SealCheckReceipt, SealCheckRequest +1 | OF-544: immutable attempt confessions, directed rechecks and random audit draws |
-| `src/self_heal/audit/doors.rs` | src | s | 6 struct · 6 fn | SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealReceiptView, SealRunReceipt, SealRunRequest | Typed owner doors for the seal's existing receipts and check lifecycle |
+| `src/self_heal/audit/doors.rs` | src | s | 6 struct · 8 fn | SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealReceiptView, SealRunReceipt, SealRunRequest | Typed owner doors for the seal's existing receipts and check lifecycle |
 | `src/self_heal/blocked_reports.rs` | src | m | 1 fn · 15 crate-vis | — | Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418) |
 | `src/self_heal/blocked_reports/source.rs` | src | m | 18 crate-vis | — | A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX… |
 | `src/self_heal/blocked_reports/source/response.rs` | src | s | 2 crate-vis | — | A blocked report's captured requests in checkpoint images (FIX 6708, KEY STORE = A): each receipt row and… |
@@ -4819,6 +4820,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/pending_gate_consent/mod.rs` | src | s | 1 re-export · 7 crate-vis | — | Pending gate-consent claim records — run/group/hash indexes, sequence counter, pagination, sweep-state… |
 | `src/store/pending_gate_consent/obligation.rs` | src | s | 7 crate-vis | — | Claim-scoped owner-answer obligations: the durable hold a critical confirm opens, which only its owner's… |
 | `src/store/pending_gate_consent/records.rs` | src | s | 2 struct · 13 crate-vis | PendingGateConsentGroup, PendingGateConsentRecord | Pending gate-consent record and index-state types, ABI-pinned versions, msgpack codecs, and validation |
+| `src/store/pending_gate_consent/run_groups.rs` | src | s | 1 fn · 1 crate-vis | — | Each waiting run with every proposal it holds, read in one snapshot (FIX 9524) |
 | `src/store/pending_gate_consent/sequence_sweep.rs` | src | s | 9 crate-vis | — | Monotonic sequence allocator, high-water read, and sweep-state cursors for expiry/list sweeps |
 | `src/store/pending_gate_consent/tray.rs` | src | m | 2 fn · 14 crate-vis | — | Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads |
 | `src/store/ppr_community.rs` | src | s | 10 crate-vis | — | Bounded, local community snapshots in the existing `vault_meta` database |

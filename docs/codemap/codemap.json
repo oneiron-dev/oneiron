@@ -6457,6 +6457,7 @@
       "crate-vis": 4,
       "enum": 4,
       "fn": 8,
+      "re-export": 1,
       "struct": 8
      }
     },
@@ -6468,6 +6469,17 @@
      "purpose": "The needs-you notice of the lift proposals (OF-067)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/projection.rs",
+     "purpose": "The lift sweep's state as a caller toward one destination may read it (FIX 8165): its proposals and their…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -54161,6 +54173,7 @@
       "InvocationClaim",
       "InvocationEntry",
       "InvocationOutcome",
+      "InvocationRelease",
       "InvocationWait"
      ],
      "path": "src/runtime_hooks/verb/state.rs",
@@ -54169,7 +54182,7 @@
       "crate-vis": 22,
       "enum": 1,
       "fn": 7,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -55646,7 +55659,7 @@
      "path": "src/self_heal/audit/doors.rs",
      "purpose": "Typed owner doors for the seal's existing receipts and check lifecycle",
      "surface": {
-      "fn": 6,
+      "fn": 8,
       "struct": 6
      }
     },
@@ -61320,6 +61333,17 @@
      "surface": {
       "crate-vis": 13,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/pending_gate_consent/run_groups.rs",
+     "purpose": "Each waiting run with every proposal it holds, read in one snapshot (FIX 9524)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -74783,7 +74807,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 143,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76008,7 +76032,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 145,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76241,7 +76265,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4969,
+   "source_files": 4971,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92698,7 +92722,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -93955,6 +93979,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/release.rs",
+     "purpose": "A facade answer's destination release, once its call has nothing left to wait on (FIX 8170), and again for…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/reply_doors.rs",
      "purpose": "The generated context-bearing reply door, under the existing owner's inference authority",
      "surface": {
@@ -94809,6 +94843,16 @@
      "notable": [],
      "path": "src/api/mcp_gateway/call_meta.rs",
      "purpose": "What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/claimed_release.rs",
+     "purpose": "What a claimed MCP `tools/call` keeps of its answer for the calls waiting on it, and how each waiter's reply…",
      "surface": {
       "crate-vis": 4
      }
@@ -100132,7 +100176,7 @@
      "path": "src/livequery/history.rs",
      "purpose": "Retained scoped app payloads live in a separate journal, not the cursor document",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -100398,6 +100442,16 @@
      "path": "src/livequery/source/projection.rs",
      "purpose": "The owner feed's live projection: what a bound source derives, exports and replays",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/source/readmit.rs",
+     "purpose": "A bound source's re-admission of retained pushes at resume (FIX 9493): every row a retained result was…",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "s",
@@ -105305,7 +105359,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 550,
+     "files": 552,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -105585,7 +105639,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -105769,7 +105823,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1219,
+   "source_files": 1222,
    "test_files": 182
   },
   "oneiron-spawn": {

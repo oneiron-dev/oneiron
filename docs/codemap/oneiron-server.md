@@ -225,7 +225,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/notice_worker.rs` | src | s | 1 crate-vis | — | The e-sign notice worker (FIX 6219, Engine design B): staged transition notices (pending, completed… |
 | `src/api/esign/presentation.rs` | src | s | 8 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
-| `src/api/facade.rs` | src | m | 25 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | m | 26 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 15 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/action_routes/execution.rs` | src | s | 4 crate-vis | — | How one action runs (OF-181): the principal its call reads as, and the blocking thread it runs on with its… |
 | `src/api/facade/action_routes/row_door.rs` | src | s | 3 crate-vis | — | The verb door of one action call (OF-181), split from its parent: each verb-table row runs as its own… |
@@ -351,6 +351,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/proxy_doors.rs` | src | s | 2 crate-vis | — | Owner-only OpenAI proxy admission and selective remember-grant withdrawal |
 | `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
 | `src/api/facade/receipts.rs` | src | s | 1 crate-vis | — | The call receipt a facade route writes for each verb call it serves |
+| `src/api/facade/release.rs` | src | s | 7 crate-vis | — | A facade answer's destination release, once its call has nothing left to wait on (FIX 8170), and again for… |
 | `src/api/facade/reply_doors.rs` | src | s | 1 crate-vis | — | The generated context-bearing reply door, under the existing owner's inference authority |
 | `src/api/facade/repo_doors.rs` | src | m | 15 crate-vis | — | The public `vault.repo.*` run doors (FIX 6867, G1 PR3b): an external agent's own attached live run reads and… |
 | `src/api/facade/research_doors.rs` | src | s | 3 crate-vis | — | Owner-authenticated child admission and sealed-cohort setup |
@@ -438,6 +439,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/board_setup/setup.rs` | src | s | 4 crate-vis | — | The MCP `setup` tool: its help text, its grammar and its one keyframe-minting call |
 | `src/api/mcp_gateway/booking_call.rs` | src | s | 4 crate-vis | — | A managed vault's attested holder the vault no longer records as its live owner, calling a booking tool on… |
 | `src/api/mcp_gateway/call_meta.rs` | src | s | 4 crate-vis | — | What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and… |
+| `src/api/mcp_gateway/claimed_release.rs` | src | s | 4 crate-vis | — | What a claimed MCP `tools/call` keeps of its answer for the calls waiting on it, and how each waiter's reply… |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | m | 5 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 6 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
 | `src/api/mcp_gateway/code_mode_verbs/dispatch.rs` | src | m | 10 crate-vis | — | How a code-mode run's agent verbs reach their doors: admitted, executed and answered |
@@ -936,7 +938,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/connection.rs` | src | m | 21 crate-vis | — | Socket attachment and bounded reconnect retention |
 | `src/livequery/device_local_tests.rs` | test | m | — | — | Sol on the device-local reads (F6, R2 F1 and F8, R3 F1): a live subscription keeps the pushes it derived… |
 | `src/livequery/error.rs` | src | s | 16 crate-vis | — | The HTTP facade error body on app frames |
-| `src/livequery/history.rs` | src | s | 6 crate-vis | — | Retained scoped app payloads live in a separate journal, not the cursor document |
+| `src/livequery/history.rs` | src | s | 7 crate-vis | — | Retained scoped app payloads live in a separate journal, not the cursor document |
 | `src/livequery/membership.rs` | src | s | 1 crate-vis | — | Insertion/edge membership checks, separate from served entity dependencies |
 | `src/livequery/production_socket_tests.rs` | test | m | 6 crate-vis | — | Full production socket + Hub + BoundSource + engine writes |
 | `src/livequery/production_tests.rs` | test | XL | 9 crate-vis | — | Real vault, verified slips and production facade/source; no injected read source |
@@ -964,6 +966,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/socket_tests.rs` | test | m | — | — | Real TCP/WebSocket ownership tests |
 | `src/livequery/source.rs` | src | s | 3 crate-vis | — | Authority-bound coarse projection |
 | `src/livequery/source/projection.rs` | src | m | — | — | The owner feed's live projection: what a bound source derives, exports and replays |
+| `src/livequery/source/readmit.rs` | src | s | 2 crate-vis | — | A bound source's re-admission of retained pushes at resume (FIX 9493): every row a retained result was… |
 | `src/livequery/subscriptions/delivery.rs` | src | s | 2 crate-vis | — | How live query subscriptions are delivered: a refresh, and resyncs on published changes |
 | `src/livequery/subscriptions/materialize.rs` | src | s | 2 crate-vis | — | What a subscription's retained ring buffers and how a change materializes into its views |
 | `src/livequery/subscriptions/mod.rs` | src | m | 21 crate-vis | — | Coarse derivation, retained rings and cumulative cursor acknowledgements |
