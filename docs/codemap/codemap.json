@@ -43386,7 +43386,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -47370,6 +47370,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/persona_snapshot/export_omit.rs",
+     "purpose": "Both persona copy renders for a copy made without its vault refs (FIX 1199, `CopyRefs::Omit`): the same…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/persona_snapshot/mod.rs",
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)",
      "surface": {
@@ -47423,7 +47433,7 @@
      "purpose": "Snapshot/export row, consent, and artifact domain types with pinned key and schema consts",
      "surface": {
       "const": 10,
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 3,
       "struct": 9
@@ -50767,10 +50777,10 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 2,
-      "fn": 8,
-      "re-export": 1,
+      "fn": 7,
+      "re-export": 4,
       "struct": 18
      }
     },
@@ -50785,6 +50795,43 @@
      "surface": {
       "crate-vis": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/canonical/rebuild.rs",
+     "purpose": "Layer 1 rebuilt from a canonical snapshot's values, never by importing an old CRDT snapshot",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CanonicalRowBirth"
+     ],
+     "path": "src/recovery/canonical/row_births.rs",
+     "purpose": "The row births a window carries (ARCH-0035 Rule A), through canonical capture and rebuild (FIX 3069)",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CanonicalCutoff"
+     ],
+     "path": "src/recovery/canonical/withdrawn_cutoffs.rs",
+     "purpose": "The withdrawal fences and session epoch floors a window carries (OF-013, FIX 2867), through canonical…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1
      }
     },
     {
@@ -51533,7 +51580,7 @@
      "path": "src/recovery/document.rs",
      "purpose": "Canonical entity-local documents and their bound workflows",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1,
       "struct": 3
      }
@@ -51552,6 +51599,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/recovery/document/retained.rs",
+     "purpose": "The retained parent values a pending NOTE fork needs (FIX 8829)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/recovery/document/workflow.rs",
      "purpose": "Durable NOTE workflow capture and reference validation without CRDT op IDs",
      "surface": {
@@ -51568,10 +51625,10 @@
       "RecoveryTier"
      ],
      "path": "src/recovery/ladder.rs",
-     "purpose": "Three-tier repair driver with all-or-nothing bounded work admission",
+     "purpose": "Three-tier repair driver: whole validation and publication, the work between them paged on the vault's fair…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 7,
       "struct": 3
@@ -51707,6 +51764,16 @@
      "purpose": "Fail-closed whole-payload validation before a recovery mutation",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/work.rs",
+     "purpose": "A canonical window recovery as resumable work (Rule 5, FIX 8821)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -55809,7 +55876,7 @@
       "enum": 1,
       "fn": 3,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 3
      }
     },
@@ -55860,6 +55927,21 @@
       "crate-vis": 1,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CopyRefs",
+      "CopyTravelChoice"
+     ],
+     "path": "src/share_travel/copy.rs",
+     "purpose": "The ref choice a copy door takes (FIX 1199)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -63046,7 +63128,7 @@
      "path": "src/sync/row_birth/actor_erase.rs",
      "purpose": "An erased actor's births leave the window carriers (FIX 6279)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -63432,7 +63514,7 @@
      "path": "src/sync/window/forward.rs",
      "purpose": "Forward rematerialization of window state into the CRDT doc",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -63453,7 +63535,7 @@
      "path": "src/sync/window/forward/edge_pass.rs",
      "purpose": "Edge pass of forward rematerialization: materialize window edge rows into LMDB",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -63463,7 +63545,7 @@
      "path": "src/sync/window/forward/entity_pass.rs",
      "purpose": "Entity pass of forward rematerialization: every window entity blob through the shared ingest entry, one…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -63473,7 +63555,7 @@
      "path": "src/sync/window/forward/tombstone_pass.rs",
      "purpose": "Tombstone pass of forward rematerialization: reason-aware replay of window tombstones",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -63507,7 +63589,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 6,
       "mod": 1,
       "re-export": 8,
@@ -64609,13 +64691,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/create_origin.rs",
      "purpose": "The creator a created TASK's realizing agent runs under (OF-532)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -65044,10 +65126,20 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 55,
+      "crate-vis": 56,
       "fn": 1,
       "mod": 5,
       "re-export": 29
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/office_origin.rs",
+     "purpose": "The try an office fork originates from (FIX 3551, OF-505): the exact running attempt a host sealed into this…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -70235,7 +70327,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 18,
+      "fn": 19,
       "struct": 4,
       "trait": 2
      }
@@ -74134,7 +74226,7 @@
      "purpose": "The content-free panic report a host installs before it opens a vault"
     },
     "persona_snapshot": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -74239,7 +74331,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 83,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -74407,7 +74499,7 @@
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -74540,7 +74632,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 144,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74717,7 +74809,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4840,
+   "source_files": 4848,
    "test_files": 902
   },
   "oneiron-android": {
@@ -104408,6 +104500,8 @@
       "CopingOutcomeView",
       "CopingStrategy",
       "CopingVadDelta",
+      "CopyRefs",
+      "CopyTravelChoice",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
@@ -107512,8 +107606,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 997,
-      "struct": 3072
+      "enum": 998,
+      "struct": 3073
      }
     },
     {
