@@ -17,6 +17,13 @@
 //! once the draw is full. Every source is read as the sieve reads it,
 //! through the Dreamer's gate: a source it may not read gives no window and
 //! is never refused anew.
+//!
+//! A reply's discovery whose quote the window holds nowhere, or more than
+//! once, is kept as an unlocated discovery (FIX 7901), never refused with
+//! the rest of its reply and never given offsets it does not have. Every
+//! discovery has a stable identity ([`finding_identity`], FIX 7903), so one
+//! found again from an overlapping window or a later draw reads as the same
+//! discovery, while every audit keeps its own occurrence.
 
 use std::collections::BTreeSet;
 
@@ -34,6 +41,9 @@ use crate::dreamer_runner::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{Scope, ScopeResource};
 use crate::{EntityId, Error, Result, Vault};
+
+mod finding_identity;
+pub(crate) use finding_identity::distinct_discoveries;
 
 /// A byte range of one source of a turn, read at the version
 /// `source_digest`, where the turn's current reading flagged nothing.
@@ -88,15 +98,51 @@ pub struct SieveAuditDiscovery {
     pub confidence: u8,
 }
 
+/// Why a span the expensive path named has no offsets (FIX 7901).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SieveUnlocatedCause {
+    /// The window's words hold its quote nowhere.
+    QuoteNotFound,
+    /// The window's words hold its quote more than once.
+    QuoteAmbiguous,
+}
+
+/// One span the expensive path named in a window whose quote binds no one
+/// place there (FIX 7901): kept as it was named, with no offsets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SieveUnlocatedDiscovery {
+    pub kind: SpanKind,
+    /// Percent.
+    pub confidence: u8,
+    pub cause: SieveUnlocatedCause,
+    /// The words the reply quoted, as it wrote them.
+    pub quote: String,
+}
+
 /// What the expensive path found in an audited range: the rules'
-/// expectation, and every span it found there, zero or more. None found is
-/// a negative label: the rules missed nothing in the range.
+/// expectation, and every span it found there, zero or more, located or
+/// not. None found is a negative label: the rules missed nothing in the
+/// range.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SieveAuditFinding {
     pub expectation: SieveAuditExpectation,
     pub window: SieveAuditWindow,
     pub discovered: Vec<SieveAuditDiscovery>,
+    /// What it found whose quote locates no one place (FIX 7901); a
+    /// finding whose every quote bound holds none and keeps its bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unlocated: Vec<SieveUnlocatedDiscovery>,
+}
+
+impl SieveAuditFinding {
+    /// Whether the expensive path agrees with the rules: it found nothing,
+    /// located or not, in the range.
+    pub fn agrees(&self) -> bool {
+        self.discovered.is_empty() && self.unlocated.is_empty()
+    }
 }
 
 /// An unflagged window's audit receipt: its finding and what it spent.
@@ -142,6 +188,7 @@ pub(crate) enum WindowRead {
 /// What a window audit's call found, and what it spent.
 pub(crate) struct WindowOutcome {
     pub(crate) discovered: Vec<SieveAuditDiscovery>,
+    pub(crate) unlocated: Vec<SieveUnlocatedDiscovery>,
     pub(crate) completed_units: u64,
     pub(crate) step_hashes: Vec<[u8; 32]>,
     pub(crate) at: u64,
@@ -508,6 +555,7 @@ pub(crate) fn finish_window_audit(
                     expectation: SieveAuditExpectation::Unflagged,
                     window: input.window,
                     discovered: outcome.discovered,
+                    unlocated: outcome.unlocated,
                 },
                 at: outcome.at,
                 completed_units: outcome.completed_units,

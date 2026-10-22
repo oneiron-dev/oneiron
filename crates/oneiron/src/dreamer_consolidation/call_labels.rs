@@ -11,6 +11,10 @@
 //! from the listed `P1`; the engine binds each declaration to an id it
 //! derives (`extracted_people::bindings`).
 //!
+//! An extraction call lists the relationships a candidate may hold within
+//! as `R1`, `R2` (FIX 7575, [`relationships`]); a candidate's `rel` names
+//! one by that label and reads back to its relationship id.
+//!
 //! A decision read (FIX 7506 P2) names its questions `Q1`, `Q2`, and shows a
 //! choice's options as its call registered them, each listed claim by its
 //! `C` label; the read answers the canonical option at the same index, so
@@ -31,7 +35,9 @@ use crate::llm::LlmRequest;
 use crate::llm::decision::DecisionWireLabels;
 
 mod decision_rungs;
+mod relationships;
 pub(super) use decision_rungs::LabelledRungs;
+pub(super) use relationships::{CandidateRel, relationship_lines};
 
 /// The key a call's label binding rides under in the host's own
 /// provider-options namespace.
@@ -58,6 +64,8 @@ pub(super) enum LabelKind {
     Conversation,
     /// `S`: another source, such as the MESSAGE a sieve span indexes.
     Source,
+    /// `R`: a relationship a listed claim or the branch holds within.
+    Relationship,
     /// `Q`: a decision read's question, its paired and person questions too.
     /// Only that read names one back ([`DecisionWireLabels`]); a reply's
     /// own label never parses as a question.
@@ -73,6 +81,7 @@ impl LabelKind {
             Self::Note => 'N',
             Self::Conversation => 'V',
             Self::Source => 'S',
+            Self::Relationship => 'R',
             Self::Question => 'Q',
         }
     }
@@ -85,6 +94,7 @@ impl LabelKind {
             b'N' => Some(Self::Note),
             b'V' => Some(Self::Conversation),
             b'S' => Some(Self::Source),
+            b'R' => Some(Self::Relationship),
             _ => None,
         }
     }
@@ -202,6 +212,24 @@ impl CallLabelMap {
             kind,
             number: *number,
         })
+    }
+
+    /// Each id this call labelled as `kind`, with its label, in label order.
+    pub(super) fn labelled(&self, kind: LabelKind) -> impl Iterator<Item = (CallLabel, EntityId)> {
+        self.ids
+            .get(&kind)
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(move |(index, id)| {
+                (
+                    CallLabel {
+                        kind,
+                        number: index + 1,
+                    },
+                    *id,
+                )
+            })
     }
 
     /// The id `label` names in this call, when it names one.

@@ -18,6 +18,10 @@ use crate::registry::{
 use crate::{EntityId, Result};
 use rmpv::Value;
 
+/// The door a consolidation's promotion stamps its claims' births with:
+/// a claim born there is a review the Dreamer completed about its subject.
+const PROMOTION_DOOR: &str = "dreamer.promotion";
+
 impl BranchResources<'_> {
     pub(in crate::dreamer_consolidation) fn require_signals(&self, scope: &Scope) -> Result<()> {
         self.check_axes(scope)?;
@@ -44,12 +48,18 @@ impl BranchResources<'_> {
         // The target must itself be actor-readable. A genuinely new subject has
         // no stored graph yet; that is absence of data, not absence of rights.
         if self.read.is_entity_readable(&facts.subject)? {
+            // A reference is fresh when it came after the subject's last
+            // completed consolidation review (FIX 8699); a subject never
+            // reviewed counts from this candidate's own time, as before.
+            let since = self
+                .last_reviewed(&facts.subject)?
+                .unwrap_or(candidate.learned_at);
             for edge in self.read.vault().edges_in(&facts.subject)? {
                 // edges_in uses `target` for the incoming source. Do not expose
                 // a raw count first: private and other-slice rows never count.
                 if self.graph_source_in_slice(scope, &edge.target)? {
                     fan_in += 1;
-                    new_refs += u64::from(edge.created_at > candidate.learned_at);
+                    new_refs += u64::from(edge.created_at > since);
                 }
             }
         }
@@ -94,6 +104,28 @@ impl BranchResources<'_> {
         }
         let vector = self.read.vault().get_vector(&candidate.claim_id)?;
         Ok((fan_in, new_refs, vector))
+    }
+
+    /// When consolidation last completed a review of `subject`, in Unix
+    /// seconds: the newest birth among the claims about it the promotion
+    /// door wrote that this branch's reader may read. `None` when there is
+    /// none.
+    fn last_reviewed(&self, subject: &EntityId) -> Result<Option<u64>> {
+        let vault = self.read.vault();
+        let txn = vault.store.env.read_txn()?;
+        let mut newest = None;
+        for id in vault.claims_for_subject_in_txn(&txn, subject)? {
+            let Some(birth) = crate::provenance::birth::row_birth_in_txn(&vault.store, &txn, &id)?
+            else {
+                continue;
+            };
+            if birth.made_by.process.identity == PROMOTION_DOOR
+                && self.read.is_entity_readable_in(&txn, &id)?
+            {
+                newest = newest.max(Some(birth.made_by.at));
+            }
+        }
+        Ok(newest)
     }
 
     fn graph_source_in_slice(&self, scope: &Scope, id: &EntityId) -> Result<bool> {

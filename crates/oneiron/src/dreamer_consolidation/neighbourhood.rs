@@ -15,9 +15,15 @@
 //!
 //! Extraction children group the queued turns by the known entities they name.
 //! JointIE and typed supersede or merge questions are separate jobs.
+//!
+//! The listing is whole (Rule 5, FIX 7580): every entity the passage names,
+//! a nightly child's thing first, and every head about each that the branch
+//! may hold, newest first. Nothing is dropped for room: a child's listing is
+//! split into stable pages ([`pages`]), and each page goes to its own call.
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod pages;
 mod render;
 
 use super::PriorHead;
@@ -33,15 +39,6 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, EN
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Result, Vault};
 
-/// At most this many entities per branch: a few turns rarely name more known
-/// people or places, and each one costs the transcript room.
-const MAX_ENTITIES: usize = 8;
-/// k: at most this many claims per entity, newest first. A correction
-/// touches a current fact, and the newest few hold them.
-const CLAIMS_PER_ENTITY: usize = 6;
-/// The listing's byte budget, about a thousand tokens: context for the
-/// transcript, never larger than a typical Micro transcript itself.
-const MAX_BYTES: usize = 4 * 1024;
 /// A listed value is cut here: enough to recognise the fact, not to replay a
 /// long body into every later pass.
 const VALUE_BYTES: usize = 96;
@@ -49,12 +46,6 @@ const VALUE_BYTES: usize = 96;
 const LABEL_BYTES: usize = 64;
 /// Names of up to four words ("Mary Ann van Dyke").
 const SPAN_WORDS: usize = 4;
-/// Identity-index probes per branch: a Meso round's words at four spans each,
-/// over three kinds, stay under it.
-const MAX_PROBES: usize = 8 * 1024;
-/// Claims read through the scoped read per entity while looking for k it
-/// admits, newest first.
-const CLAIM_WALK: usize = 64;
 /// Kinds a passage names by an identity hint.
 const NAMED_KINDS: [u8; 3] = [ENTITY_TYPE_PERSON, ENTITY_TYPE_ORG, ENTITY_TYPE_PLACE];
 /// The persona compile's owner floor: a restricted (or ambiguous) band is
@@ -78,11 +69,14 @@ type Pins = Vec<(EntityId, Vec<EntityId>)>;
 const PINS: SideTable<[u8; 16], Pins, LegacyJson> =
     SideTable::new(&side_table::DREAMER_NEIGHBOURHOOD);
 
-/// The bounded listing one branch shows its extraction model, and the heads
-/// it may hold as priors.
+/// The whole listing one branch shows its extraction model, in pages, and
+/// the heads it may hold as priors.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Neighbourhood {
     entities: Vec<KnownEntity>,
+    /// The entity a nightly child is cut for (FIX 7497), when it is listed:
+    /// every child slice lists it first.
+    thing: Option<EntityId>,
     /// Heads the branch may hold that a pinned listing does not show: what
     /// the passage names now, beyond what the attempt listed first.
     unlisted: Vec<KnownClaim>,
@@ -106,6 +100,8 @@ struct KnownClaim {
     version: ScopeResource,
     predicate: String,
     value: String,
+    /// The relationship the head holds within, when it names one (FIX 7575).
+    rel: Option<EntityId>,
 }
 
 impl Neighbourhood {
@@ -154,16 +150,20 @@ impl Neighbourhood {
         ids
     }
 
-    /// A child's listing and exact heads. Unlisted replay heads never enter
-    /// its prompt or its request scope.
+    /// A child's listing and exact heads: the branch's thing first, when it
+    /// has one, then the entities `ids` names, in the listing's order.
+    /// Unlisted replay heads never enter its prompt or its request scope.
     pub(super) fn slice(&self, ids: &[EntityId]) -> Self {
+        let thing = self
+            .thing
+            .and_then(|thing| self.entities.iter().find(|entity| entity.id == thing));
+        let named = self
+            .entities
+            .iter()
+            .filter(|entity| ids.contains(&entity.id) && Some(entity.id) != self.thing);
         Self {
-            entities: self
-                .entities
-                .iter()
-                .filter(|entity| ids.contains(&entity.id))
-                .cloned()
-                .collect(),
+            entities: thing.into_iter().chain(named).cloned().collect(),
+            thing: thing.map(|entity| entity.id),
             ..Self::default()
         }
     }
@@ -261,9 +261,11 @@ pub(super) fn discover_in(
     }
     let (fresh, mut rows) = fresh_in(vault, txn, read, passage)?;
     let Some(pins) = PINS.get(&vault.store, txn, attempt.as_bytes())? else {
+        let thing = listed_thing(&fresh, passage.thing);
         return Ok((
             Neighbourhood {
                 entities: fresh,
+                thing,
                 mentions,
                 ..Neighbourhood::default()
             },
@@ -323,15 +325,22 @@ pub(super) fn discover_in(
         .flat_map(|entity| entity.claims)
         .filter(|claim| !listed.contains(&claim.id))
         .collect();
+    let thing = listed_thing(&entities, passage.thing);
     Ok((
         Neighbourhood {
             entities,
+            thing,
             unlisted,
             gone,
             mentions,
         },
         rows,
     ))
+}
+
+/// `thing`, when the listing holds its entity.
+fn listed_thing(entities: &[KnownEntity], thing: Option<EntityId>) -> Option<EntityId> {
+    thing.filter(|thing| entities.iter().any(|entity| entity.id == *thing))
 }
 
 fn mention_key(body: &[u8], text: Option<&str>) -> ([u8; 32], [u8; 32]) {
@@ -341,7 +350,9 @@ fn mention_key(body: &[u8], text: Option<&str>) -> ([u8; 32], [u8; 32]) {
     )
 }
 
-/// The bounded listing the passage names at this snapshot.
+/// The whole listing the passage names at this snapshot: a nightly child's
+/// thing first (FIX 7497), then each entity in the order the passage names
+/// it, each with every head the branch may hold about it.
 fn fresh_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -349,35 +360,23 @@ fn fresh_in(
     passage: &Passage<'_>,
 ) -> Result<(Vec<KnownEntity>, ListedRows)> {
     let mut named = named_entities(vault, txn, passage.turns)?;
-    // A nightly child's thing is listed after what its passage names, in
-    // the room the listing leaves, so it never pushes a named entity out.
-    if let Some(thing) = passage.thing
-        && !named.contains(&thing)
-    {
-        named.push(thing);
+    if let Some(thing) = passage.thing {
+        named.retain(|id| *id != thing);
+        named.insert(0, thing);
     }
     let rows = read.get_entities_parts_in_txn(txn, &named)?;
     let mut entities = Vec::new();
     let mut pinned = Vec::new();
-    let mut bytes = 0;
-    'entities: for (id, row) in named.into_iter().zip(rows) {
+    for (id, row) in named.into_iter().zip(rows) {
         let Some((kind, _, body)) = row else {
             continue;
         };
         if !NAMED_KINDS.contains(&kind) || !named_within(passage.bound, id, &body) {
             continue;
         }
-        if entities.len() == MAX_ENTITIES {
-            break;
-        }
-        let label = label(&body);
-        bytes += render::entity_line_bytes(id, label.as_deref());
-        if bytes > MAX_BYTES {
-            break;
-        }
         let mut entity = KnownEntity {
             id,
-            label,
+            label: label(&body),
             claims: Vec::new(),
         };
         let claims = match passage.axes {
@@ -385,11 +384,6 @@ fn fresh_in(
             None => Vec::new(),
         };
         for (claim, row) in claims {
-            bytes += render::claim_line_bytes(&claim);
-            if bytes > MAX_BYTES {
-                entities.push(entity);
-                break 'entities;
-            }
             entity.claims.push(claim);
             pinned.push(row);
         }
@@ -420,7 +414,6 @@ fn named_entities(
         }
     }
     let mut probed = BTreeSet::new();
-    let mut probes = 0;
     for (_, text) in turns {
         let words = words(text.unwrap_or_default());
         for start in 0..words.len() {
@@ -430,10 +423,6 @@ fn named_entities(
                     continue;
                 }
                 for kind in NAMED_KINDS {
-                    if probes == MAX_PROBES {
-                        return Ok(named);
-                    }
-                    probes += 1;
                     for id in vault.lookup_identity_key_in_txn(txn, kind, &span)? {
                         if seen.insert(id) {
                             named.push(id);
@@ -469,9 +458,9 @@ fn words(text: &str) -> Vec<String> {
     .collect()
 }
 
-/// Up to k heads about `subject` the Dreamer may read and the branch may
-/// hold as priors, newest first but an observed head below a stated one on
-/// its question, with their rows.
+/// Every head about `subject` the Dreamer may read and the branch may hold
+/// as a prior, newest first but an observed head below a stated one on its
+/// question, with their rows.
 fn newest_claims(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -495,7 +484,6 @@ fn newest_claims(
         }
     }
     ordered.sort_unstable();
-    ordered.truncate(CLAIM_WALK);
     let ids: Vec<_> = ordered.into_iter().map(|(_, id)| id).collect();
     // The worlds this device keeps to itself; none without sync.
     #[cfg(feature = "sync")]
@@ -524,13 +512,12 @@ fn newest_claims(
         }
     }
     // Held both (OF-023): an observed head never lists above a stated one
-    // on its question, so the stated one keeps its place in the k.
+    // on its question.
     crate::context_pack::source_ranking::clamp_order(
         &mut claims,
         &Default::default(),
         |(_, body)| body.as_ref(),
     )?;
-    claims.truncate(CLAIMS_PER_ENTITY);
     Ok(claims.into_iter().map(|(claim, _)| claim).collect())
 }
 
@@ -569,6 +556,7 @@ fn listable(
         version,
         predicate: prior.body.predicate.clone(),
         value: cut(&rmpv_to_json(&prior.body.value).to_string(), VALUE_BYTES),
+        rel: prior.body.rel,
     })
 }
 

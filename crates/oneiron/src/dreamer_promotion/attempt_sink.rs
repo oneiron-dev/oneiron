@@ -4,13 +4,14 @@
 use std::sync::Arc;
 
 use super::{DreamerRunContext, promote_scoped_consolidation};
+use crate::EntityId;
 use crate::Vault;
 use crate::attempt_queue::AttemptQueue;
 use crate::dreamer_consolidation::{
     ConsolidationSink, PromotionCandidate, ScopedConsolidationWrite,
 };
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, ErrorKind, GateError, Result};
 use crate::llm::BoundedAutoChecker;
 
 /// [`ConsolidationSink`] over the one promotion door, owned rather than
@@ -123,7 +124,8 @@ impl AttemptPromotionSink {
             Ok(())
         } else {
             // Each rejected candidate's code was logged where the door
-            // rejected it (FIX 7271); the write's one error stays as it was.
+            // rejected it (FIX 7271); the write's one error carries the
+            // typed kind its door refused with (FIX 9429).
             tracing::warn!(
                 attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
                 rejected = outcome.rejected.len(),
@@ -132,9 +134,44 @@ impl AttemptPromotionSink {
                 held = outcome.held.len(),
                 "scoped consolidation write refused"
             );
-            Err(Error::InvalidClaimBody(
-                "scoped consolidation write refused",
-            ))
+            Err(write_refusal(&outcome.rejected_kinds))
         }
     }
+}
+
+/// What a refused write's candidates were refused for.
+const WRITE_REFUSED: &str = "scoped consolidation write refused";
+
+/// A refused sealed write's one error (FIX 9429): the typed kind of its
+/// first rejection whose kind waits on an owner act, else of its first
+/// typed rejection, so the driver's existing park rules read the kind the
+/// promotion door refused with. A door's own fields beyond its kind stay in
+/// its logged code and its gate record. A write no typed rejection refused
+/// stays `InvalidClaimBody`, as before.
+pub(super) fn write_refusal(kinds: &[(EntityId, ErrorKind)]) -> Error {
+    let typed = |kind: ErrorKind| -> Option<Error> {
+        match kind {
+            ErrorKind::ActorLacksClaimAuthority => Some(
+                ClaimError::ActorLacksClaimAuthority {
+                    reason: WRITE_REFUSED,
+                }
+                .into(),
+            ),
+            ErrorKind::GateWriteRejected => Some(
+                GateError::GateWriteRejected {
+                    outcome: "deny",
+                    reason_codes: Vec::new(),
+                }
+                .into(),
+            ),
+            ErrorKind::EntityNotFound => Some(Error::EntityNotFound),
+            _ => None,
+        }
+    };
+    kinds
+        .iter()
+        .filter(|(_, kind)| crate::dreamer_wake::waits_on_owner_act(*kind))
+        .chain(kinds)
+        .find_map(|(_, kind)| typed(*kind))
+        .unwrap_or(Error::InvalidClaimBody(WRITE_REFUSED))
 }

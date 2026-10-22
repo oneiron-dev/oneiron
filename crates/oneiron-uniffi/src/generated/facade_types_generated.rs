@@ -12289,14 +12289,20 @@ pub struct WeaveReportRequest {
 /// `oneiron::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveDiscoveryView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WeaveSieveDiscoveryView {
-    #[serde(rename = "start")]
-    pub start: u64,
-    #[serde(rename = "end")]
-    pub end: u64,
+    #[serde(rename = "start", default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<u64>,
+    #[serde(rename = "end", default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<u64>,
     #[serde(rename = "kind")]
     pub kind: String,
     #[serde(rename = "confidence")]
     pub confidence: u8,
+    #[serde(rename = "discovery_ref")]
+    pub discovery_ref: String,
+    #[serde(rename = "unlocated", default, skip_serializing_if = "Option::is_none")]
+    pub unlocated: Option<String>,
+    #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveFindingView`.
@@ -12450,6 +12456,8 @@ pub struct WeaveSieveScoreView {
     pub sampled: u64,
     #[serde(rename = "agreeing")]
     pub agreeing: u64,
+    #[serde(rename = "discoveries")]
+    pub discoveries: u64,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveSectionView`.

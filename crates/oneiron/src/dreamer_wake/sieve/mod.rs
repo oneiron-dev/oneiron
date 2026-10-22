@@ -41,10 +41,10 @@
 mod audit_windows;
 pub use audit_windows::{
     SieveAuditDiscovery, SieveAuditExpectation, SieveAuditFinding, SieveAuditWindow,
-    SieveWindowAudit,
+    SieveUnlocatedCause, SieveUnlocatedDiscovery, SieveWindowAudit,
 };
 pub(crate) use audit_windows::{
-    WindowAuditInput, WindowOutcome, WindowRead, audit_window_sample_in_txn,
+    WindowAuditInput, WindowOutcome, WindowRead, audit_window_sample_in_txn, distinct_discoveries,
     enqueue_window_audit_in_txn, finish_window_audit, window_read,
 };
 mod chunks;

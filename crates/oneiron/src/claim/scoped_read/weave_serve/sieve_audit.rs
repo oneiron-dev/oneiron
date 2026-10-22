@@ -21,11 +21,23 @@ pub struct WeaveSieveFindingView {
 }
 
 /// One span the expensive path found in a window, by its byte offsets into
-/// the window's source text.
+/// the window's source text, or, when its quote locates no one place there,
+/// unlocated, with no offsets (FIX 7901).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeaveSieveDiscoveryView {
-    pub start: u64,
-    pub end: u64,
+    /// `None` on an unlocated discovery.
+    pub start: Option<u64>,
+    /// `None` on an unlocated discovery.
+    pub end: Option<u64>,
     pub kind: String,
     pub confidence: u8,
+    /// The discovery's stable identity, hex (FIX 7903): the same span
+    /// another audit found has the same ref.
+    pub discovery_ref: String,
+    /// Why an unlocated discovery has no offsets, `quote_not_found` or
+    /// `quote_ambiguous`; `None` on a located one.
+    pub unlocated: Option<String>,
+    /// The words an unlocated discovery's reply quoted; `None` on a
+    /// located one.
+    pub quote: Option<String>,
 }

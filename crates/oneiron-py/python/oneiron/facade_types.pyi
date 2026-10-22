@@ -4052,10 +4052,13 @@ class WeaveSectionInput(TypedDict):
 class WeaveReportRequest(TypedDict):
     sections: list[WeaveSectionInput]
 class WeaveSieveDiscoveryView(TypedDict):
-    start: int
-    end: int
+    start: NotRequired[int | None]
+    end: NotRequired[int | None]
     kind: str
     confidence: int
+    discovery_ref: str
+    unlocated: NotRequired[str | None]
+    quote: NotRequired[str | None]
 class WeaveSieveFindingView(TypedDict):
     expectation: str
     window_ref: str
@@ -4126,6 +4129,7 @@ WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget 
 class WeaveSieveScoreView(TypedDict):
     sampled: int
     agreeing: int
+    discoveries: int
 class WeaveSectionView(TypedDict):
     kind: WeaveSectionKind
     items: list[WeaveItemView]

@@ -196,8 +196,11 @@ fn put_person(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     name: &str,
-    now: u64,
+    now_ms: u64,
 ) -> Result<()> {
+    // The wake's clock is milliseconds; an entity's times are Unix seconds
+    // (FIX 8695).
+    let now = now_ms / 1_000;
     let mut body = Vec::new();
     rmpv::encode::write_value(
         &mut body,

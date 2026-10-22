@@ -573,6 +573,9 @@ fn merged_candidate(
     let combined = combined
         .ok_or_else(|| invalid_consolidation("merge has no verified members"))?
         .restrict(meet);
+    // A claim's times are Unix seconds; the wake's clock is milliseconds
+    // (FIX 8695).
+    let at = now_ms / 1_000;
     Ok(VerifiedCandidate {
         proposal: PromotionCandidate {
             claim_id,
@@ -581,11 +584,8 @@ fn merged_candidate(
             provenance_chain: chain,
             supersedes: conflict.prior_head,
             evidence_meet: meet,
-            occurred: TimeRange {
-                start: now_ms,
-                end: now_ms,
-            },
-            learned_at: now_ms,
+            occurred: TimeRange { start: at, end: at },
+            learned_at: at,
             decisions,
         },
         evidence: combined,

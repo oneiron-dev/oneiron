@@ -208,11 +208,12 @@ pub(crate) fn conflict_close_candidate(
         provenance_chain: Vec::new(),
         supersedes: None,
         evidence_meet: meet,
+        // A claim's times are Unix seconds (FIX 8695).
         occurred: crate::TimeRange {
-            start: run.now_ms,
-            end: run.now_ms,
+            start: run.now_ms / 1_000,
+            end: run.now_ms / 1_000,
         },
-        learned_at: run.now_ms,
+        learned_at: run.now_ms / 1_000,
         decisions: Vec::new(),
     })
 }
