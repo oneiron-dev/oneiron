@@ -19,8 +19,8 @@ use crate::owner::OwnerResult;
 ///
 /// # Errors
 ///
-/// What the consent doors refuse, typed; the route records the answer
-/// either way.
+/// What the consent doors refuse, typed; the route then records no answer,
+/// so the ask stays open and the owner can press again.
 pub(crate) fn press_owner_consent(
     server: &SyncServer,
     owner: &AuthenticatedOwner,

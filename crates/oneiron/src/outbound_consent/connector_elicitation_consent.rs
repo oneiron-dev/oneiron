@@ -225,15 +225,16 @@ impl Vault {
     /// `answer` mints through the consent doors in one writer with the
     /// call's row. Approve once marks the answer's once digest; approve and
     /// stop asking adds the standing grant its scope names, with no expiry,
-    /// beside the once mark; deny records the refusal. Any other ask, a
-    /// linked part, an ask no longer open, an answer that names no outcome,
-    /// or one already pressed is left alone, so its answer goes on as
-    /// before.
+    /// beside the once mark; deny records the refusal. A stop-asking press
+    /// whose scope the consent bound does not admit approves once, its
+    /// grant not kept and logged. Any other ask, a linked part, an ask no
+    /// longer open, an answer that names no outcome, or one already
+    /// pressed is left alone, so its answer goes on as before.
     ///
     /// # Errors
     ///
-    /// A proof that is not the owner's, a scope the consent bound does not
-    /// admit, and storage errors.
+    /// A proof that is not the owner's, and storage errors; nothing is
+    /// pressed then.
     pub fn press_connector_elicitation_consent(
         &self,
         owner: &AuthenticatedOwner,
@@ -289,9 +290,18 @@ impl Vault {
                     self.approve_once_in_txn(txn, owner, once)?;
                 }
                 ConsentConfirmOutcome::ApproveAndStopAsking => {
-                    let minted =
-                        self.create_standing_grant_in_txn(txn, owner, consent.scope.bound()?)?;
-                    consent.grant_ref = minted.grant_ref();
+                    // A scope the consent bound does not admit keeps no
+                    // standing grant; the approval still goes, once.
+                    match consent.scope.bound() {
+                        Ok(bound) => {
+                            let minted = self.create_standing_grant_in_txn(txn, owner, bound)?;
+                            consent.grant_ref = minted.grant_ref();
+                        }
+                        Err(error) => tracing::warn!(
+                            %error,
+                            "connector elicitation stop asking not kept; approved once"
+                        ),
+                    }
                     self.approve_once_in_txn(txn, owner, once)?;
                 }
                 ConsentConfirmOutcome::Deny => {

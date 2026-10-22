@@ -63,6 +63,7 @@ use oneiron::task_verb::sdk::{
     ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorCallReply, ConnectorQuestionAnswer,
 };
 use rand_core::{OsRng, RngCore as _};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::connector_call_host::elicitation_response;
@@ -82,8 +83,9 @@ const OWNER_ASK_POLL: Duration = Duration::from_secs(2);
 
 /// What one live question set binds: who may answer it and under what
 /// authority. Ids and names only, never a question's text, an answer or a
-/// credential.
-#[derive(Debug, Clone)]
+/// credential. A round's resume state keeps it (FIX 9157).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct QuestionBinding {
     /// The original call's principal: the verified actor of its caller.
     pub(crate) principal: EntityId,
@@ -250,9 +252,14 @@ impl ConnectorElicitationRegistry {
     }
 
     /// Binds the questions `handle` names to the call `call_ref` whose row
-    /// keeps them (FIX 3837). A set whose worker already ended leaves the
-    /// row's questions uncertain.
-    pub(crate) fn bind_call(&self, vault: &oneiron::Vault, handle: &str, call_ref: EntityId) {
+    /// keeps them (FIX 3837); `true` when it bound them. A set whose worker
+    /// already ended leaves the row's questions uncertain.
+    pub(crate) fn bind_call(
+        &self,
+        vault: &oneiron::Vault,
+        handle: &str,
+        call_ref: EntityId,
+    ) -> bool {
         let bound = match self.lock().get_mut(handle) {
             Some(entry) => {
                 entry.call_ref = Some(call_ref);
@@ -263,6 +270,52 @@ impl ConnectorElicitationRegistry {
         if !bound && let Err(error) = vault.mark_connector_input_uncertain(&call_ref, handle) {
             tracing::warn!(%error, "connector call questions not marked uncertain");
         }
+        bound
+    }
+
+    /// Whether the question set `handle` names is live here.
+    pub(crate) fn holds(&self, handle: &str) -> bool {
+        self.lock().contains_key(handle)
+    }
+
+    /// Takes in again, after a restart, the question set `handle` names on
+    /// the call `call_ref` at round `generation` (FIX 9157): the same
+    /// handle, binding and questions, bound to that call, with a fresh lease
+    /// and channel. `None` when the set is live already.
+    pub(crate) fn restore(
+        &self,
+        handle: &str,
+        call_ref: EntityId,
+        generation: u64,
+        binding: QuestionBinding,
+        questions: &[ConnectorQuestion],
+    ) -> Option<Registered> {
+        let mut live = self.lock();
+        if live.contains_key(handle) {
+            return None;
+        }
+        let (sender, commands) = mpsc::channel();
+        let (lease, live_until_ms) = round_lease();
+        live.insert(
+            handle.to_owned(),
+            LiveQuestions {
+                binding,
+                generation,
+                questions: questions.to_vec(),
+                lease,
+                live_until_ms,
+                claimed: false,
+                commands: sender,
+                call_ref: Some(call_ref),
+                owner_ask: None,
+            },
+        );
+        Some(Registered {
+            handle: handle.to_owned(),
+            live_until_ms,
+            commands,
+            live: live.len(),
+        })
     }
 
     /// The call whose row keeps the questions `handle` names, once bound.

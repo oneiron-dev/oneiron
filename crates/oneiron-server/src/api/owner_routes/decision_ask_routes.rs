@@ -109,22 +109,21 @@ async fn answer(
             ));
         }
         // A connector elicitation's decisive ask mints the owner's consent
-        // first (FIX 8808); the answer is recorded either way.
-        let pressed = crate::connector_elicitation::press_owner_consent(
+        // first (FIX 8808); a press that fails records no answer, so the ask
+        // stays open for the owner to press again.
+        crate::connector_elicitation::press_owner_consent(
             &server,
             &owner,
             request.seq,
             &request.answer,
-        );
-        let ask = asks
-            .answer_with_reason(
-                &owner,
-                request.seq,
-                request.answer,
-                request.reason.as_deref(),
-            )
-            .map_err(|error| OwnerError::Invalid(error.to_string()))?;
-        pressed.map(|()| ask)
+        )?;
+        asks.answer_with_reason(
+            &owner,
+            request.seq,
+            request.answer,
+            request.reason.as_deref(),
+        )
+        .map_err(|error| OwnerError::Invalid(error.to_string()))
     })
     .await?;
     Ok(Json(ask))

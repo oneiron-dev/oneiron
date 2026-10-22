@@ -26,6 +26,10 @@
 //! after a doubling delay, from [`CONNECTOR_SETTLE_INTERVAL`] up to
 //! [`CONNECTOR_SETTLE_MAX_BACKOFF`], kept in memory and reset by a restart.
 //! There is no notification of a consent answer to wake the loop sooner.
+//!
+//! Each pass first takes up again the live exchanges a restart left with a
+//! resume state on their calls' rows (FIX 9157), before it lists the pending
+//! calls, which leave out every call waiting on its connector's questions.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,9 +51,14 @@ pub(crate) const CONNECTOR_SETTLE_INTERVAL: Duration = Duration::from_secs(30);
 /// its resumes.
 pub(crate) const CONNECTOR_SETTLE_MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
 
-/// When each call that stayed pending is next due, and its current delay.
+/// When each call that stayed pending is next due, and its current delay;
+/// and how often this run tried to take each call's live exchange up again
+/// (FIX 9157).
 #[derive(Default)]
-struct Backoffs(HashMap<EntityId, (Instant, Duration)>);
+struct Backoffs(
+    HashMap<EntityId, (Instant, Duration)>,
+    HashMap<EntityId, u32>,
+);
 
 impl Backoffs {
     fn due(&self, call_ref: EntityId, now: Instant) -> bool {
@@ -137,6 +146,7 @@ fn settle_connector_calls(
     if let Err(error) = vault.repair_connector_call_owner_asks() {
         tracing::warn!(%error, "connector call owner ask repair failed");
     }
+    crate::connector_call_host::resume_exchanges(server, &mut backoffs.1);
     let pending = vault.pending_connector_calls()?;
     backoffs
         .0
