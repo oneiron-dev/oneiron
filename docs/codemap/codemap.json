@@ -47179,7 +47179,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorCallInput"
@@ -47233,8 +47233,20 @@
      "path": "src/outbound_consent/connector_elicitation_asks.rs",
      "purpose": "The owner ask an answer to a connector's question takes (ONE-2510)",
      "surface": {
+      "crate-vis": 2,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_elicitation_consent.rs",
+     "purpose": "The owner's consent on an answer to a connector's question under `always ask` (FIX 8808): DEC-0006's three…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 3
      }
     },
     {
@@ -47372,8 +47384,20 @@
      "surface": {
       "crate-vis": 14,
       "enum": 3,
-      "fn": 19,
+      "fn": 18,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/tool_call/headers.rs",
+     "purpose": "The `x-mcp-header` declarations of a tool's input schema (FIX 8810, 9284): which arguments go as HTTP…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -47383,7 +47407,7 @@
      "path": "src/outbound_consent/tool_schema.rs",
      "purpose": "Fail-closed structural JSON Schema subset for resolved outbound descriptors",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -74807,7 +74831,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 23,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75432,7 +75456,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4904,
+   "source_files": 4906,
    "test_files": 902
   },
   "oneiron-android": {
@@ -97705,7 +97729,7 @@
      "path": "src/connector_call_host/live_exchange.rs",
      "purpose": "The live half of the call host: the worker that owns an exchange once its send returned",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 17
      }
     },
     {
@@ -97725,7 +97749,17 @@
      "path": "src/connector_call_host/reply_read.rs",
      "purpose": "The reply readers both halves of the call host share: one reply body, JSON read whole or an event stream…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_host/stream_pump.rs",
+     "purpose": "A live stream's reader while its round waits for an answer (FIX 9286)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -97745,7 +97779,7 @@
      "path": "src/connector_elicitation.rs",
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -97755,7 +97789,7 @@
      "path": "src/connector_elicitation/owner.rs",
      "purpose": "The owner's ruling on an answer under `always ask` (FIX 3837, 3842): the ask raised or reused for exactly…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -104233,7 +104267,7 @@
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -104606,7 +104640,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1199,
+   "source_files": 1200,
    "test_files": 182
   },
   "oneiron-spawn": {
