@@ -20,11 +20,15 @@
 //! sealed copy, so a phone that holds the kit may restore from it.
 //!
 //! The kit reads the home's current index of the generations named for its
-//! root the same way, through its own signed door (`pad_index`, FIX 7106).
+//! root the same way, through its own signed door (`pad_index`, FIX 7106), a
+//! page at a time (FIX 9364).
 
 mod pad_index;
 
-pub use self::pad_index::{KIT_PAD_INDEX_FETCH_PATH, KitPadIndexFetch, kit_sealed_bundle_index};
+pub use self::pad_index::{
+    KIT_PAD_INDEX_FETCH_PATH, KIT_PAD_INDEX_REPLY_MAX, KitPadIndexFetch, KitPadIndexPage,
+    kit_sealed_bundle_index,
+};
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 

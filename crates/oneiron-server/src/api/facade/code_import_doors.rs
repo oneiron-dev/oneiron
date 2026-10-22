@@ -19,7 +19,7 @@ use oneiron::memory::origin_doors::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::repo_mutation::external_import::ExternalGitSourceHost;
 
-use super::host_doors::{Listed, credential_listing};
+use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

@@ -501,8 +501,13 @@ impl Memory<'_> {
     /// Receipts a refused assertion on its own write, as a refused typed ref
     /// is (`admit_row_references`), and returns the refusal; if the receipt
     /// cannot be written, the store's error instead. Inside an anonymous
-    /// off-record session the refusal stands with no receipt.
-    fn settle_refused_assertion(&self, pointer: &str) -> MemoryError {
+    /// off-record session the refusal stands with no receipt. A model
+    /// stream's continuation terminal settles its own through it too (FIX
+    /// 3416).
+    pub(in crate::memory::witness) fn settle_refused_assertion(
+        &self,
+        pointer: &str,
+    ) -> MemoryError {
         let facts = crate::receipt::ReferenceRefusalFacts {
             actor: self.actor,
             actor_class: self.actor_class,

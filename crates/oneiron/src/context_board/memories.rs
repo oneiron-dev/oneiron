@@ -128,7 +128,8 @@ pub struct CompanionAssembly {
     pub scope: Option<String>,
     pub scope_source: Option<String>,
     pub person_ref: Option<String>,
-    pub persona_ref: Option<String>,
+    /// The PERSON at the relationship's other end (FIX 871).
+    pub counterpart_person_ref: Option<String>,
     pub expression: Option<String>,
 }
 
@@ -178,6 +179,15 @@ pub struct MemoryRow {
     /// below a stated row of its question (OF-023). Not on the wire.
     #[serde(skip)]
     pub question: Option<[u8; 32]>,
+    /// The FICTION fence: this row's WORLD is admitted and its kind is not
+    /// `base` (FIX 7756). Set from the WORLD, never the row's text. Not on
+    /// the wire.
+    #[serde(skip)]
+    pub fiction: bool,
+    /// A claim in a constraint namespace, which sorts above every other row
+    /// of its tier (FIX 7983). Not on the wire.
+    #[serde(skip)]
+    pub constraint: bool,
 }
 
 /// Deterministic MEMORIES section envelope.

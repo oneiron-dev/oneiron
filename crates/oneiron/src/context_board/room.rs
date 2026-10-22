@@ -173,8 +173,9 @@ pub struct RoomSection {
     /// participants (ARCH-0067 §8). `None` when no session was read, so the
     /// section renders no host line rather than guessing who is present.
     pub host: Option<crate::workspace_roster::RoomHosting>,
-    /// The PERSONs the reader may bring into the room by a roster write it
-    /// could sign (FIX 1163): the only ones `invite?:` suggests.
+    /// The PERSONs the reader may bring into the room, the only ones
+    /// `invite?:` suggests: for an ordinary room, the owner-only
+    /// `rooms.invite` set (`workspace_roster::invites_into_room_in_txn`).
     pub invitable: std::collections::BTreeSet<EntityId>,
 }
 

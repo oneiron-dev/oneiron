@@ -9,7 +9,7 @@ use oneiron::slim::public::{
 };
 use oneiron::task_verb::sdk::EmptyRequest;
 
-use super::host_doors::{Listed, internal, owner_proof, refused};
+use super::host_doors::support::{Listed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
