@@ -5,8 +5,9 @@
 //! every other stop names its true cause, never a guess.
 
 use crate::{
-    BatchOutput, BrowserDriver, BrowserError, EffectReceipt, ExpectInput, ExpectOutput,
-    FieldTextReason, Observation, ObservationBase, ObserveInput, StepStop, SubgoalStatus,
+    BatchOutput, BrowserDriver, BrowserError, DestinationRefusal, EffectReceipt, ExpectInput,
+    ExpectOutput, FieldTextReason, Observation, ObservationBase, ObserveInput, StepStop,
+    SubgoalStatus,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -53,8 +54,12 @@ pub enum ClockScope {
     Wait,
     /// The time a page has to load, or a desktop app to show its window.
     Navigation,
-    /// The subgoal's one clock, which its routine decisions run under.
+    /// The subgoal's one clock (its `until_ms`), which its steps, its
+    /// routine decisions and a Fill's writer and check run under.
     Decision,
+    /// A protocol call's own time: the engine did not answer a method (a
+    /// CDP call, a desktop driver's tool) in its time (FIX 8046).
+    Protocol,
 }
 
 /// Why a routine step went up to the planner.
@@ -169,6 +174,15 @@ pub struct FailedStepReceipt {
     /// The stop's stable code, as the batch's `error`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The host's refusal of a page request's destination that stopped the
+    /// step, in the host's words (FIX 7406): the batch's `error` names only
+    /// its code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<DestinationRefusal>,
+    /// The cursor of `observation`'s next page, when it is answered in
+    /// pages (FIX 8044), as the batch's own `next` pages its observation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
 }
 
 impl BatchStopCause {
@@ -187,6 +201,9 @@ impl BatchStopCause {
             },
             BrowserError::Decider(_) => Self::DeciderAskedUp {
                 reason: AskUpReason::NoAnswer,
+            },
+            BrowserError::CallTimeout(_) => Self::Clock {
+                scope: ClockScope::Protocol,
             },
             other => Self::Browser {
                 code: other.code().to_owned(),
@@ -319,15 +336,39 @@ pub(crate) fn stopped<D: BrowserDriver + ?Sized>(
     output.receipts.extend(stop.receipt);
     output.error = Some(code.clone());
     output.stop_cause = Some(stop.cause.clone());
+    let refusal = match stop.error {
+        BrowserError::DestinationRefused(refusal) => Some(refusal),
+        _ => None,
+    };
     output.failed_receipt = Some(FailedStepReceipt {
         step: Some(step),
         stop_cause: stop.cause,
         missed: stop.missed,
         observation,
         error: Some(code),
+        refusal,
+        next: None,
     });
     output.elapsed_ms = elapsed_ms(started);
     output
+}
+
+/// The subgoal's own clock run out (FIX 8043, 8903): once now reaches the
+/// caller's `until_ms`, the stop a batch hands up before its next step, or
+/// a Fill before its writer or its check, which then sends nothing. No
+/// clock set is none invented: the batch runs on.
+pub(crate) fn clock_out(until_ms: Option<u64>) -> Option<Stop> {
+    let until = until_ms?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        });
+    (now >= until).then(|| {
+        let error = BrowserError::Timeout("the subgoal's clock (until_ms)".to_owned());
+        let scope = ClockScope::Decision;
+        Stop::new(BatchStopCause::Clock { scope }, error)
+    })
 }
 
 /// The detail of a batch `expect` step's unmet refusal.

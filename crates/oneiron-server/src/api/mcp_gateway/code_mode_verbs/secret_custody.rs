@@ -12,13 +12,22 @@ use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::secret_custody::{RunSecretHolder, RunSecretSeat};
-use oneiron_browser::{BrowserError, SecretCustody, SecretKind};
+use oneiron_browser::{BrowserError, SecretCustody, SecretKind, SecretUse};
 
 use super::VerdictAsker;
 
-/// The use a run-bound secret's Gate record names: the guest's own type or
-/// expect, which the custody cannot tell apart.
+/// The use a run-bound secret's Gate record names where the session names
+/// no operation: the guest's own type or expect.
 const BROWSER_SECRET_USE: &str = "browser.secret";
+
+/// The use a Gate record names for the session's own operation (FIX 8342):
+/// a type's send or an expect's comparison.
+const fn browser_secret_use(operation: SecretUse) -> &'static str {
+    match operation {
+        SecretUse::Type => "browser.secret.type",
+        SecretUse::Expect => "browser.secret.expect",
+    }
+}
 
 /// One call's custody of its run's secrets, on one seat of the run.
 pub(super) struct RunSecretCustody {
@@ -75,25 +84,44 @@ impl SecretCustody for RunSecretCustody {
         handle: &str,
         use_: &mut dyn FnMut(&str) -> Result<(), BrowserError>,
     ) -> Result<(), BrowserError> {
+        self.lend(handle, BROWSER_SECRET_USE, use_)
+    }
+
+    fn with_value_as(
+        &self,
+        handle: &str,
+        operation: SecretUse,
+        use_: &mut dyn FnMut(&str) -> Result<(), BrowserError>,
+    ) -> Result<(), BrowserError> {
+        self.lend(handle, browser_secret_use(operation), use_)
+    }
+}
+
+impl RunSecretCustody {
+    /// Lends `handle`'s bytes to `use_` once, its Gate record naming
+    /// `operation`.
+    fn lend(
+        &self,
+        handle: &str,
+        operation: &str,
+        use_: &mut dyn FnMut(&str) -> Result<(), BrowserError>,
+    ) -> Result<(), BrowserError> {
         // The guest's own error, kept apart from the custody's, so a send
         // that failed answers as it failed.
         let mut failed = None;
-        let lent = self.vault.with_run_secret(
-            &self.holder,
-            handle,
-            BROWSER_SECRET_USE,
-            &mut |bytes: &[u8]| {
-                let text = std::str::from_utf8(bytes).map_err(|_| {
-                    oneiron::Error::InvariantViolation("a run-bound secret is not text")
-                })?;
-                use_(text).map_err(|error| {
-                    failed = Some(error);
-                    oneiron::Error::InvariantViolation(
-                        "the guest's use of a run-bound secret failed",
-                    )
-                })
-            },
-        );
+        let lent =
+            self.vault
+                .with_run_secret(&self.holder, handle, operation, &mut |bytes: &[u8]| {
+                    let text = std::str::from_utf8(bytes).map_err(|_| {
+                        oneiron::Error::InvariantViolation("a run-bound secret is not text")
+                    })?;
+                    use_(text).map_err(|error| {
+                        failed = Some(error);
+                        oneiron::Error::InvariantViolation(
+                            "the guest's use of a run-bound secret failed",
+                        )
+                    })
+                });
         match (lent, failed) {
             (_, Some(error)) => Err(error),
             (Ok(()), None) => Ok(()),

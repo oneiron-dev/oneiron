@@ -17,7 +17,8 @@ use super::{WeaveItem, WeaveReport, WeaveSection, WeaveSectionKind};
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{
-    SieveAudit, SieveAuditExpectation, SieveAuditRecord, SieveWindowAudit, SpanKind,
+    SieveAudit, SieveAuditExpectation, SieveAuditRecord, SieveUnlocatedCause, SieveWindowAudit,
+    SpanKind,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
@@ -217,13 +218,22 @@ pub(crate) fn sieve_score_view(section: &WeaveSection) -> Option<WeaveSieveScore
     let mut score = WeaveSieveScoreView {
         sampled: 0,
         agreeing: 0,
+        discoveries: 0,
     };
+    let mut findings = Vec::new();
     for item in &section.items {
         if let WeaveItem::SieveAudit { audit, .. } = item {
             score.sampled = score.sampled.saturating_add(1);
             score.agreeing = score.agreeing.saturating_add(u64::from(audit.agrees()));
+            if let SieveAuditRecord::Window(window) = audit {
+                findings.push(&window.finding);
+            }
         }
     }
+    // A discovery found by more than one audit counts once (FIX 7903).
+    score.discoveries =
+        u64::try_from(crate::dreamer_wake::sieve::distinct_discoveries(&findings).len())
+            .unwrap_or(u64::MAX);
     Some(score)
 }
 
@@ -256,29 +266,54 @@ fn flagged_audit_view(attempt: AttemptId, audit: &SieveAudit) -> WeaveItemView {
 }
 
 /// An unflagged window's finding as a report serves it: hex refs, byte
-/// offsets and named kinds.
+/// offsets and named kinds, each discovery by its stable ref (FIX 7903),
+/// the located ones first, then the unlocated ones, with no offsets (FIX
+/// 7901).
 fn window_finding_view(audit: &SieveWindowAudit) -> WeaveSieveFindingView {
-    let window = &audit.finding.window;
+    let finding = &audit.finding;
+    let window = &finding.window;
+    let located = finding
+        .discovered
+        .iter()
+        .map(|found| WeaveSieveDiscoveryView {
+            start: Some(found.start),
+            end: Some(found.end),
+            kind: span_kind_name(found.kind).to_owned(),
+            confidence: found.confidence,
+            discovery_ref: bytes_to_hex_lower(&found.identity(window)),
+            unlocated: None,
+            quote: None,
+        });
+    let unlocated = finding
+        .unlocated
+        .iter()
+        .map(|found| WeaveSieveDiscoveryView {
+            start: None,
+            end: None,
+            kind: span_kind_name(found.kind).to_owned(),
+            confidence: found.confidence,
+            discovery_ref: bytes_to_hex_lower(&found.identity(window)),
+            unlocated: Some(unlocated_cause_name(found.cause).to_owned()),
+            quote: Some(found.quote.clone()),
+        });
     WeaveSieveFindingView {
-        expectation: expectation_name(audit.finding.expectation).to_owned(),
+        expectation: expectation_name(finding.expectation).to_owned(),
         window_ref: bytes_to_hex_lower(&window.id()),
         turn_ref: window.turn.to_hex(),
         source_ref: window.source.to_hex(),
         start: window.start,
         end: window.end,
-        discovered: audit
-            .finding
-            .discovered
-            .iter()
-            .map(|found| WeaveSieveDiscoveryView {
-                start: found.start,
-                end: found.end,
-                kind: span_kind_name(found.kind).to_owned(),
-                confidence: found.confidence,
-            })
-            .collect(),
-        agrees: audit.finding.discovered.is_empty(),
+        discovered: located.chain(unlocated).collect(),
+        agrees: finding.agrees(),
         audited_at: audit.at,
+    }
+}
+
+/// Why an unlocated discovery has no offsets, as a report serves it.
+fn unlocated_cause_name(cause: SieveUnlocatedCause) -> &'static str {
+    match cause {
+        SieveUnlocatedCause::QuoteNotFound => "quote_not_found",
+        SieveUnlocatedCause::QuoteAmbiguous => "quote_ambiguous",
     }
 }
 
@@ -326,8 +361,12 @@ fn window_audit_cells(attempt: AttemptId, audit: &SieveWindowAudit) -> Vec<(&'st
             "expectation",
             expectation_name(audit.finding.expectation).to_owned(),
         ),
-        ("discovered", audit.finding.discovered.len().to_string()),
-        ("agrees", audit.finding.discovered.is_empty().to_string()),
+        (
+            "discovered",
+            (audit.finding.discovered.len() + audit.finding.unlocated.len()).to_string(),
+        ),
+        ("unlocated", audit.finding.unlocated.len().to_string()),
+        ("agrees", audit.finding.agrees().to_string()),
         ("audited_at", audit.at.to_string()),
     ]
 }

@@ -60,10 +60,14 @@ impl Vault {
         };
         let live: Vec<&CodeRunResultBinding> = record.bindings.iter().collect();
         let target = JsResultTarget::parse(reference);
+        // Its steps' type diagnostics kept whole are its results too (FIX
+        // 8277), read under the same checks.
+        let feedback = self.type_diagnostics_bodies(run_id);
         let outputs = record
             .outputs
             .iter()
-            .filter(|output| is_result_output_path(&output.path));
+            .filter(|output| is_result_output_path(&output.path))
+            .chain(&feedback);
         let selected = match &target.reference {
             crate::engine_executor::JsResultRef::Handle(reference)
                 if reference.starts_with("occurrence:") =>

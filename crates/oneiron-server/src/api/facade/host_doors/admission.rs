@@ -522,6 +522,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.results.read"
         | "vault.results.slice"
         | "vault.code.model_heal_count"
+        | "vault.code.type_diagnostics"
         | "vault.code.waits.resolve"
         | "vault.code.waits.receipt"
         | "vault.code.export"
