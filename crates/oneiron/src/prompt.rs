@@ -173,7 +173,11 @@ pub fn build_session_request(
 ) -> Result<StampedLlmRequest, io::Error> {
     let (assembly, context) = assemble_session(prompt_path, package_root, parts)?;
     request.messages = assembly.messages;
-    rebuild_cache_boundaries(&mut request, context);
+    // Only a placed context message moves the indices today's marks name;
+    // with none (today's layout among them) the caller's marks stand.
+    if context.is_some() {
+        rebuild_cache_boundaries(&mut request, context);
+    }
     Ok(StampedLlmRequest {
         request,
         stamp: assembly.stamp,

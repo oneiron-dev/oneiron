@@ -591,8 +591,14 @@ fn start_turn(
     })?;
     if self_chat.is_some() {
         // The history before the turn's context is the prefix the next turn
-        // sends again, so its end is marked beside the request's own.
-        if let Some(history_end) = turn_context.and_then(|at| at.checked_sub(1)) {
+        // sends again, so its end is marked beside the request's own. Today's
+        // layout keeps today's marks.
+        let stable_prefix = oneiron::prompt::session_prompt_layout()
+            == oneiron::prompt::PromptLayout::StableHistoryThenTurnContext;
+        if let Some(history_end) = turn_context
+            .filter(|_| stable_prefix)
+            .and_then(|at| at.checked_sub(1))
+        {
             mark_history_end(&mut admitted.request, history_end);
         }
         compaction::mark_prefix(&mut admitted.request);
