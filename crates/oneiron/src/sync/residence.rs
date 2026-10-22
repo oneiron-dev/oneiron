@@ -222,7 +222,12 @@ pub fn index_selection_revision(vault: &Vault) -> Result<([u8; 32], u64, u64)> {
     let txn = vault.store.env.read_txn()?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
     Ok((
-        policy.read_frontier_hash()?,
+        // FIX 7608 slice 4: a re-mask of a marked repo copy is a new selection.
+        super::selector::secret_projection::with_copy_generation_in_txn(
+            vault,
+            &txn,
+            policy.read_frontier_hash()?,
+        )?,
         crate::ppr::read_graph_version(&vault.store, &txn)?,
         crate::federation::record_scope::read_scope_revision(&vault.store, &txn)?,
     ))
@@ -292,6 +297,10 @@ pub fn window_index_projection_with(
         }
     });
     result?;
+    // FIX 7608 slice 4: a marked repo item is listed by its copy id and title.
+    super::selector::secret_projection::alias_index_entries(vault, &mut entries, |body| {
+        title_from_body(body, title_max_chars)
+    })?;
     entries.sort_unstable_by(|a, b| a.entity_id.cmp(&b.entity_id));
     Ok(entries)
 }
