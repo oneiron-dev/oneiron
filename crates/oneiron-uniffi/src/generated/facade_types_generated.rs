@@ -29981,8 +29981,8 @@ pub struct LearningProjectionView {
 pub struct ObjectiveConfession {
     #[serde(rename = "objective")]
     pub objective: String,
-    #[serde(rename = "met")]
-    pub met: bool,
+    #[serde(rename = "met", default, skip_serializing_if = "Option::is_none")]
+    pub met: Option<bool>,
     #[serde(rename = "flaw", default, skip_serializing_if = "Option::is_none")]
     pub flaw: Option<String>,
     #[serde(

@@ -13,8 +13,8 @@ use super::record::{
     KEY_DEP_SKILL_ID, KEY_DEPENDENCIES, KEY_DESC, KEY_FORKED_FROM, KEY_GENERATED,
     KEY_GOVERNANCE_TIER, KEY_HUMAN_AUTHORED, KEY_LIFECYCLE_STATUS, KEY_PROVENANCE, KEY_ROLE,
     KEY_SKILL_ID, KEY_SOURCE, KEY_VERSION, SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES,
-    SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES, SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES,
-    SkillDependency, SkillRecord,
+    SKILL_ID_MAX_BYTES, SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency,
+    SkillRecord,
 };
 use super::role::{SkillCallContract, SkillRole};
 use super::validate::{validate_skill_record, validate_text_field};
@@ -336,11 +336,7 @@ fn decode_skill_dependencies(value: &Value) -> Result<Vec<SkillDependency>> {
             "dependencies must be a MessagePack array",
         )));
     };
-    if values.len() > SKILL_MAX_DEPENDENCIES {
-        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-            "dependencies must contain at most 64 entries",
-        )));
-    }
+    // Every dependency decodes, however many there are (FIX 10151).
     values.iter().map(decode_skill_dependency).collect()
 }
 
