@@ -4,11 +4,6 @@
 //! into the mount, so `cat`, `head`, `grep` and `wc` share one projection.
 //! No request field sets it.
 
-#![allow(
-    dead_code,
-    reason = "FIX 7608 2b-ii-A: the nine mount sites switch to it in 2b-ii-B"
-)]
-
 use super::super::{Memory, MemoryResult};
 use crate::claim::ScopedRead;
 use crate::graph_fs::{GraphFsOptions, GraphFsReference, GraphFsResolver};

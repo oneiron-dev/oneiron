@@ -250,7 +250,10 @@ impl GraphFsResolver<'_, '_> {
                 {
                     return Ok(None);
                 }
-                let owner = self.scoped_read.actor_key().reads_as_vault_owner();
+                // A mount whose handle reads repo bytes masked (a tool or a
+                // run on the owner's key, FIX 8964) reads as a non-owner.
+                let owner =
+                    self.scoped_read.actor_key().reads_as_vault_owner() && !self.repo_masked();
                 // A file a repo mark covers reads as its projection to all
                 // but the owner, before its bytes are read (FIX 7608).
                 let marked = if owner {

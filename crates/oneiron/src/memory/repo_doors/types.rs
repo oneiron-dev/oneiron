@@ -36,6 +36,11 @@ pub struct RepoSnapshotsReadInput {
     pub snapshot: String,
     /// The normalized repo-relative path; a readable glob must match it.
     pub path: String,
+    /// Why the caller needs this marked file's real bytes (FIX 7608,
+    /// CALL 3): absent reads the masked copy as before; a why from a proven
+    /// agent asks the owner for this file's stored bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `self.code.symbols.definitions`: exact-name Rust definitions in such a
@@ -65,6 +70,11 @@ pub struct RepoViewsGetInput {
 pub struct RepoViewsReadInput {
     pub work: EntityId,
     pub path: String,
+    /// Why the caller needs this marked file's real bytes (FIX 7608,
+    /// CALL 3): absent reads the masked copy as before; a why from a proven
+    /// agent asks the owner for this file's stored bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `self.code.merge_queue.observe`: the queue its own work is pinned under.

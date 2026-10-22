@@ -3,11 +3,6 @@
 //! It shares the mount's admitted scoped read and changes nothing a mount
 //! admits, pages or cursors; only which repo bytes a file read returns.
 
-#![allow(
-    dead_code,
-    reason = "FIX 7608 2b-ii-A: the snapshot and live-file reads select on it in 2b-ii-B"
-)]
-
 use super::GraphFsResolver;
 
 impl GraphFsResolver<'_, '_> {

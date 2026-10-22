@@ -5,6 +5,7 @@ use crate::claim::{PointRead, ReadRow, ScopedReadResult};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::RetrievalFilter;
+use crate::memory::repo_secret_reads::repo_asset_body_in_txn;
 
 impl GraphFsResolver<'_, '_> {
     pub(super) fn file_rows(
@@ -17,6 +18,22 @@ impl GraphFsResolver<'_, '_> {
                 rows.into_iter()
                     .map(|row| {
                         let Some(mut row) = row else { return Ok(None) };
+                        // A repo ASSET reads as its projection on a mount
+                        // whose handle reads repo bytes masked, the owner's
+                        // key included (FIX 8964), before the owner's
+                        // exact return.
+                        if self.repo_masked()
+                            && let Some(body) = row.body.as_mut()
+                            && let Some(projected) = repo_asset_body_in_txn(
+                                self.scoped_read.vault(),
+                                txn,
+                                &row.id,
+                                row.entity_type,
+                                body,
+                            )?
+                        {
+                            *body = projected;
+                        }
                         if self.scoped_read.actor_key().reads_as_vault_owner() {
                             return Ok(Some(row));
                         }

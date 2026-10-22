@@ -16,7 +16,7 @@ use super::snapshot::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshotMount};
 use crate::Vault;
 use crate::error::Result;
 use crate::origin::secret_marks::{
-    RepoMarkFacts, RepoSecretMarkLookup, repo_secret_marks_for_hash_in_txn,
+    RepoBlobMarks, RepoMarkFacts, RepoSecretMarkLookup, repo_secret_marks_for_hash_in_txn,
 };
 use crate::origin::secret_projection::{
     RepoBodyProjection, RepoFileProjectionView, RepoOpaqueFile, RepoSecretAudience,
@@ -52,6 +52,34 @@ impl CodebaseSnapshotMount<'_> {
             read_asset_blob(self.vault, &hash)
         })
         .map(Some)
+    }
+
+    /// The content hash and readable marks of the listed file `path`, for a
+    /// per-file read that may ask for its real bytes (FIX 7608 2b-ii-B):
+    /// `None` exactly where [`Self::read_file_projected`] is `None`. No byte
+    /// of the file is read.
+    ///
+    /// # Errors
+    /// As [`Self::read_file_projected`].
+    pub(crate) fn file_marks(
+        &self,
+        path: &str,
+    ) -> Result<Option<([u8; CODEBASE_CONTENT_HASH_LEN], RepoBlobMarks)>> {
+        validate_manifest_path(path)?;
+        if self.withheld.contains(path) {
+            return Ok(None);
+        }
+        let Ok(index) = self
+            .snapshot
+            .files
+            .binary_search_by(|entry| entry.path.as_str().cmp(path))
+        else {
+            return Ok(None);
+        };
+        let hash = self.snapshot.files[index].content_hash;
+        let txn = self.vault.store.env.read_txn()?;
+        let marks = repo_secret_marks_for_hash_in_txn(self.vault, &txn, &hash)?;
+        Ok(Some((hash, marks)))
     }
 
     /// The projection each listed file `select` admits reads as, when a mark

@@ -124,6 +124,20 @@ impl RepoBlobMarks {
         }
         custody
     }
+
+    /// The one canonical store identity and blob every readable mark of
+    /// this blob names: the ORIGINAL a per-file reveal binds (FIX 7608
+    /// 2b-ii-B). `None` with no mark, or with marks that name more than one
+    /// store or blob, which a reader then reads masked, never guessed.
+    pub(crate) fn single_origin(&self) -> Option<(&str, &GitOid)> {
+        let first = self.marks.first()?;
+        self.marks
+            .iter()
+            .all(|mark| {
+                mark.store_identity == first.store_identity && mark.blob_oid == first.blob_oid
+            })
+            .then_some((first.store_identity.as_str(), &first.blob_oid))
+    }
 }
 
 fn sorted_ids(marks: &[RepoSecretMark]) -> Result<Vec<EntityId>> {

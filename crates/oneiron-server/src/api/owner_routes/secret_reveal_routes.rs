@@ -152,6 +152,11 @@ struct AnswerReveal {
     expected_digest: String,
     /// `once`, `standing` or `deny`.
     outcome: Answer,
+    /// For a standing answer to a repo file reveal, its reach (FIX 9236):
+    /// `file`, `file_task`, `repo` or `repo_task`. Absent: this file, until
+    /// revoked.
+    #[serde(default)]
+    repo_scope: Option<oneiron::secret_custody::RepoFileRevealScope>,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,7 +238,13 @@ async fn answer(
         let digest = digest_bytes(&request.expected_digest)?;
         Ok(server
             .vault()
-            .answer_secret_reveal(&owner, &reveal, &digest, request.outcome.into())?
+            .answer_secret_reveal_scoped(
+                &owner,
+                &reveal,
+                &digest,
+                request.outcome.into(),
+                request.repo_scope,
+            )?
             .into())
     })
     .await?;
