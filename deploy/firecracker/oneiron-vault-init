@@ -111,6 +111,16 @@ if [ "$config" = "1" ]; then
       set -- "$@" "--$flag" "$(head -n 1 "/config/$flag")"
     fi
   done
+  # The operator's trusted organ builds (FIX 7889, the contract's
+  # VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE): one blake3 per line, each passed on
+  # as its own --trusted-organ-build, as written, for the engine's parser to
+  # judge. Blank lines pass nothing; no file, or an empty one, lists none.
+  if [ -f /config/trusted-organ-builds ]; then
+    while IFS= read -r digest || [ -n "$digest" ]; do
+      [ -n "$digest" ] || continue
+      set -- "$@" --trusted-organ-build "$digest"
+    done < /config/trusted-organ-builds
+  fi
 fi
 
 # The provision prelude, the credential frame and the ready byte ride the
