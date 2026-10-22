@@ -148,7 +148,7 @@ pub enum DeckRejectionInspection {
 impl DeckRejectionInspection {
     /// `base` read as a deck under the transaction's own package `limits`.
     fn of_base(base: &[u8], limits: Limits) -> Self {
-        let read = Package::open(base, limits)
+        let read = Package::open(base, limits, &crate::office_body::document_resources())
             .map_err(|error| format!("the deck package cannot be opened: {error}"))
             .and_then(|package| {
                 let deck = inspect_deck(&package)
@@ -182,7 +182,13 @@ pub fn run_deck_transaction(
         .map_err(|_| invalid("deck transaction is invalid"))?;
     transaction.marks.join(history);
     let package = opc::read(input)?;
-    let (bytes, report) = match run_transaction(input, &transaction, limits, assets) {
+    let (bytes, report) = match run_transaction(
+        input,
+        &transaction,
+        limits,
+        assets,
+        &crate::office_body::document_resources(),
+    ) {
         Ok(run) => run,
         Err(refusal) => {
             return Ok(DeckEditOutcome::Rejected(Box::new(DeckEditRejection {
@@ -344,8 +350,14 @@ pub(crate) fn verify_deck_proposal(
             "deck transaction is not canonical or its marks are below managed history",
         ));
     }
-    let (bytes, expected) = run_transaction(base, &parsed, limits, assets)
-        .map_err(|_| invalid("deck transaction cannot replay against its pinned base"))?;
+    let (bytes, expected) = run_transaction(
+        base,
+        &parsed,
+        limits,
+        assets,
+        &crate::office_body::document_resources(),
+    )
+    .map_err(|_| invalid("deck transaction cannot replay against its pinned base"))?;
     let touched: std::collections::BTreeSet<_> = expected
         .parts
         .iter()

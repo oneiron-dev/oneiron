@@ -4,7 +4,7 @@ use super::codec::{
     decode_agent_definition, encode_agent_definition, legacy_logical_id_row,
     validate_agent_definition_update,
 };
-use super::types::{AgentDefinition, AgentScope};
+use super::types::{AgentDefinition, AgentScope, DreamingMode};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
@@ -78,12 +78,41 @@ fn within_author_slice(request: &AgentDefinition, author: &AgentDefinition) -> b
             .code_mode_mcps
             .iter()
             .all(|mcp| author.code_mode_mcps.contains(mcp))
-        && (request.model_tier.is_none() || request.model_tier == author.model_tier)
-        // The owner's model list and compaction model hold as the tier does
-        // (FIX 4472): an authored put cannot change them.
-        && (request.models.is_empty() || request.models == author.models)
-        && (request.compaction_model.is_none()
-            || request.compaction_model == author.compaction_model)
+        // The owner's model choices hold as they are (FIX 4472): an authored
+        // put cannot change them. `request` has already taken every choice it
+        // left out from the author (FIX 9557), so each resolved choice is
+        // checked, the dreaming ones included; turning its own dreaming off
+        // is the one narrowing a model choice allows.
+        && request.model_tier == author.model_tier
+        && request.models == author.models
+        && request.compaction_model == author.compaction_model
+        && request.dreaming_model == author.dreaming_model
+        && (request.dreaming_mode() == author.dreaming_mode()
+            || request.dreaming_mode() == DreamingMode::Off)
+}
+
+/// `requested` with every model choice it leaves out taken from `author`
+/// (FIX 9557): an omitted model list, tier, compaction model, dreaming mode
+/// or dreaming model inherits the author's live bound, so an omission never
+/// lifts it. A choice the request names is kept whole.
+fn inherit_model_choices(requested: &AgentDefinition, author: &AgentDefinition) -> AgentDefinition {
+    let mut filled = requested.clone();
+    if filled.models.is_empty() {
+        filled.models.clone_from(&author.models);
+    }
+    if filled.model_tier.is_none() {
+        filled.model_tier.clone_from(&author.model_tier);
+    }
+    if filled.compaction_model.is_none() {
+        filled.compaction_model.clone_from(&author.compaction_model);
+    }
+    if filled.dreaming.is_none() {
+        filled.dreaming = author.dreaming;
+    }
+    if filled.dreaming_model.is_none() {
+        filled.dreaming_model.clone_from(&author.dreaming_model);
+    }
+    filled
 }
 
 impl Vault {
@@ -168,8 +197,8 @@ impl Vault {
         };
         let mut bounded_author = author_def.clone();
         bounded_author.ceiling = effective;
-        let within = !scope_widens && within_author_slice(requested, &bounded_author);
-        let mut definition = requested.clone();
+        let mut definition = inherit_model_choices(requested, &bounded_author);
+        let within = !scope_widens && within_author_slice(&definition, &bounded_author);
         definition.source = crate::claim::ClaimSource::Generated;
         definition.generated = true;
         definition.human_authored = false;
