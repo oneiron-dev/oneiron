@@ -39,9 +39,9 @@ enum CarryOrder {
 
 const SEALED_BUNDLE_CARRY_ORDER: CarryOrder = CarryOrder::Lapse;
 
-/// How long the holder may go without asking again or staging a part, in a
-/// slot that has no generation yet, before its turn lapses (CALLS:
-/// SEALED_BUNDLE_PUBLISH_LEASE_SECS). It counts from the slot's start at the
+/// How long the holder may go without asking again or staging a part before
+/// its turn lapses (CALLS: SEALED_BUNDLE_PUBLISH_LEASE_SECS), in a slot that
+/// has a generation already too (FIX 8885). It counts from the slot's start at the
 /// earliest, so a machine that came to hold the turn as the last slot was won
 /// has the first hour of the next one. A lapsed holder leaves the queue, and
 /// holds the next slot first.
@@ -67,9 +67,8 @@ const TURN: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_RESID
 struct Turns {
     /// When the holder's turn began, or it last renewed it.
     since: u64,
-    /// The machines whose turn lapsed in a slot with no generation, in
-    /// [`SEALED_BUNDLE_CARRY_ORDER`], each with the next slot, which it holds
-    /// first.
+    /// The machines whose turn lapsed, in [`SEALED_BUNDLE_CARRY_ORDER`], each
+    /// with the next slot, which it holds first.
     carried: Vec<(EntityId, u64)>,
     queue: Vec<EntityId>,
 }
@@ -169,8 +168,7 @@ fn store_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, turns: &Turns) -> Result<
 
 /// The queue as it stands at `now`: without the machines, waiting or carried,
 /// no longer trusted as the owner's here nor asked by him to publish here
-/// (WILL L04 row 03), and without a holder whose turn lapsed in a slot that
-/// has no generation yet. A turn that changed hands, or that no machine held,
+/// (WILL L04 row 03), and without a holder whose turn lapsed. A turn that changed hands, or that no machine held,
 /// is handed on ([`Turns::hand_on`]).
 fn settle_in(vault: &Vault, wtxn: &heed::RwTxn<'_>, now: u64) -> Result<Turns> {
     let mut turns = load_in(vault, wtxn)?;
@@ -190,19 +188,22 @@ fn settle_in(vault: &Vault, wtxn: &heed::RwTxn<'_>, now: u64) -> Result<Turns> {
         .last()
         .is_none_or(|latest| latest.generation.slot < now_slot);
     let from = turns.since.max(start);
-    if open
-        && turns.holder().is_some()
+    if turns.holder().is_some()
         && turns.holder() == holder
         && from.saturating_add(SEALED_BUNDLE_PUBLISH_LEASE_SECS) < now
     {
         let lapsed = turns.queue.remove(0);
-        // A machine whose turn lapses in the slot it held first leaves; any
-        // other is carried to the next slot, once.
-        match turns
+        let at = turns
             .carried
             .iter()
-            .position(|(carried, _)| *carried == lapsed)
-        {
+            .position(|(carried, _)| *carried == lapsed);
+        match at {
+            // A holder idle in a slot already won no longer keeps a machine
+            // waiting there from its turn (FIX 8885); it holds the next slot
+            // first, as it would have.
+            Some(at) if !open => turns.carried[at].1 = now_slot.saturating_add(1),
+            // A machine whose turn lapses in the slot it held first leaves; any
+            // other is carried to the next slot, once.
             Some(at) if turns.carried[at].1 == now_slot => {
                 turns.carried.remove(at);
             }

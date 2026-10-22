@@ -28,19 +28,7 @@ pub const ACTOR_ERASE_GATE_ATTRIBUTION: GateAttributionErase =
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the ledger.
-fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the Gate decisions (FIX 4230, 4231): each decision
 /// whose actor it is names no actor, as [`ACTOR_ERASE_GATE_ATTRIBUTION`]

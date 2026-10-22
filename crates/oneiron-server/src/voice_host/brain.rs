@@ -488,7 +488,7 @@ fn room_audience<'a>(
         .principal_ref()
         .and_then(|id| EntityId::from_hex(id).ok());
     let (members, live) = vault.room_audience_with_live_under(&read, room, principal)?;
-    let audience = RoomAudience::resolve(vault, auth, &members, live)
+    let audience = RoomAudience::resolve(vault, auth, &read, &members, live)
         .map_err(|error| refused(format!("{error:?}")))?;
     Ok((read, members, audience))
 }

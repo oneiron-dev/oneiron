@@ -411,6 +411,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.runners.seats.quotas",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dispatch_byoa::RunnerSeatQuotasRequest,
+                >(),
+            ),
+            (
+                "vault.runners.seats.top_up",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dispatch_byoa::RunnerSeatCreditTopUpRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.resume",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutResumeRequest,
@@ -1323,6 +1335,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.connectors.proxy.revoke_write",
                 crate::code_run::vault_read::request_schema::<ProxyConnectorRevokeWriteRequest>(),
+            ),
+            (
+                "vault.connectors.slates.redraft",
+                crate::code_run::vault_read::request_schema::<ConnectorSlateRedraftRequest>(),
+            ),
+            (
+                "vault.connectors.slates.narrow",
+                crate::code_run::vault_read::request_schema::<ConnectorSlateNarrowRequest>(),
             ),
             (
                 "vault.connectors.subscriptions.put",
@@ -2527,6 +2547,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::consent::lifecycle::ApproveOnceRequest,
                 >(),
+            ),
+            (
+                "vault.connectors.calls.approve_once",
+                crate::code_run::vault_read::request_schema::<ConnectorCallApproveOnceRequest>(),
             ),
             (
                 "vault.consent.deny",
@@ -6277,6 +6301,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.browser.library.draft",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryDraftInput,
+                    >,
+                >(),
+            ),
+            (
                 "self.browser.library.propose",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<
@@ -6591,6 +6623,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.rsi.top_up",
     "vault.budgets.rsi.hold",
     "vault.budgets.rsi.hold.resume",
+    "vault.runners.seats.quotas",
+    "vault.runners.seats.top_up",
     "vault.commit_message",
     "vault.begin_message_stream",
     "vault.append_to_stream",
@@ -6745,6 +6779,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.chat.completions",
     "vault.connectors.proxy.admit",
     "vault.connectors.proxy.revoke_write",
+    "vault.connectors.slates.redraft",
+    "vault.connectors.slates.narrow",
     "vault.authority.history.export",
     "vault.authority.history.import",
     "vault.wire_health.thresholds.get",
@@ -6873,6 +6909,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.policy.owner.configure",
     "vault.policy.owner.row.change",
     "vault.consent.approve_once",
+    "vault.connectors.calls.approve_once",
     "vault.consent.deny",
     "vault.consent.create_standing_grant",
     "vault.consent.registry",
@@ -7305,6 +7342,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.browser.zoom",
     "self.browser.batch",
     "self.browser.library.find",
+    "self.browser.library.draft",
     "self.browser.library.propose",
     "self.browser.library.retire",
     "self.browser.library.retired",
@@ -7456,6 +7494,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.budgets.rsi.hold.resume" => {
             crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
         }
+        "vault.runners.seats.quotas" => crate::code_run::vault_read::request_schema::<
+            crate::dispatch_byoa::RunnerSeatQuotasView,
+        >(),
+        "vault.runners.seats.top_up" => crate::code_run::vault_read::request_schema::<
+            crate::dispatch_byoa::RunnerSeatTopUpReceipt,
+        >(),
         "vault.commit_message" => {
             crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
         }
@@ -7914,6 +7958,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.connectors.proxy.revoke_write" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ProxyConnectorRegistration,
         >(),
+        "vault.connectors.slates.redraft" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorSlateRedraftReply,
+        >(),
+        "vault.connectors.slates.narrow" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorSlateNarrowView,
+        >(),
         "vault.authority.history.export" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SignedAuthorityHistory,
         >(),
@@ -8306,6 +8356,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::policy_model::PolicyRowReceipt>()
         }
         "vault.consent.approve_once" => crate::code_run::vault_read::request_schema::<
+            crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.connectors.calls.approve_once" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
         "vault.consent.deny" => crate::code_run::vault_read::request_schema::<
@@ -9624,6 +9677,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.browser.library.find" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserLibraryFindOutput,
         >(),
+        "self.browser.library.draft" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryDraftOutput,
+        >(),
         "self.browser.library.propose" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserLibraryProposeOutput,
         >(),
@@ -10276,6 +10332,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.budgets.rsi.hold.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runners.seats.quotas" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runners.seats.top_up" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11600,6 +11670,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.connectors.proxy.revoke_write" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.redraft" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.narrow" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13004,6 +13088,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.approve_once" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.calls.approve_once" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17544,6 +17635,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.browser.library.draft" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.browser.library.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17940,6 +18038,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.budgets.rsi.hold.resume" => {
             let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
+        }
+        "vault.runners.seats.quotas" => {
+            let _input: crate::dispatch_byoa::RunnerSeatQuotasRequest = decode(value.clone())?;
+        }
+        "vault.runners.seats.top_up" => {
+            let _input: crate::dispatch_byoa::RunnerSeatCreditTopUpRequest = decode(value.clone())?;
         }
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
@@ -18549,6 +18653,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.connectors.proxy.revoke_write" => {
             let _input: ProxyConnectorRevokeWriteRequest = decode(value.clone())?;
+        }
+        "vault.connectors.slates.redraft" => {
+            let _input: ConnectorSlateRedraftRequest = decode(value.clone())?;
+        }
+        "vault.connectors.slates.narrow" => {
+            let _input: ConnectorSlateNarrowRequest = decode(value.clone())?;
         }
         "vault.connectors.subscriptions.put" => {
             let _input: ChannelSubscriptionRequest = decode(value.clone())?;
@@ -19230,6 +19340,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.consent.approve_once" => {
             let _input: crate::consent::lifecycle::ApproveOnceRequest = decode(value.clone())?;
+        }
+        "vault.connectors.calls.approve_once" => {
+            let _input: ConnectorCallApproveOnceRequest = decode(value.clone())?;
         }
         "vault.consent.deny" => {
             let _input: crate::consent::lifecycle::DenyConsentRequest = decode(value.clone())?;
@@ -21493,6 +21606,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 crate::task_verb::sdk::BrowserLibraryFindInput,
             > = decode(value.clone())?;
         }
+        "self.browser.library.draft" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryDraftInput,
+            > = decode(value.clone())?;
+        }
         "self.browser.library.propose" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::task_verb::sdk::BrowserLibraryProposeInput,
@@ -21613,6 +21731,9 @@ pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryRe
         }
         "self.browser.library.find" => {
             let _input: crate::task_verb::sdk::BrowserLibraryFindInput = decode(value.clone())?;
+        }
+        "self.browser.library.draft" => {
+            let _input: crate::task_verb::sdk::BrowserLibraryDraftInput = decode(value.clone())?;
         }
         "self.browser.library.propose" => {
             let _input: crate::task_verb::sdk::BrowserLibraryProposeInput = decode(value.clone())?;
@@ -21802,6 +21923,8 @@ pub fn invoke(
         "vault.budgets.rsi.hold.resume" => {
             encode(vault_budgets_rsi_hold_resume(memory, decode(value)?)?)
         }
+        "vault.runners.seats.quotas" => encode(vault_runners_seats_quotas(memory, decode(value)?)?),
+        "vault.runners.seats.top_up" => encode(vault_runners_seats_top_up(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
@@ -22150,6 +22273,12 @@ pub fn invoke(
         }
         "vault.connectors.proxy.revoke_write" => {
             encode(vault_connectors_proxy_revoke_write(memory, decode(value)?)?)
+        }
+        "vault.connectors.slates.redraft" => {
+            encode(vault_connectors_slates_redraft(memory, decode(value)?)?)
+        }
+        "vault.connectors.slates.narrow" => {
+            encode(vault_connectors_slates_narrow(memory, decode(value)?)?)
         }
         "vault.connectors.subscriptions.put" => {
             encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
@@ -22610,6 +22739,9 @@ pub fn invoke(
         }
         "vault.policy.relay.decide" => encode(vault_policy_relay_decide(memory, decode(value)?)?),
         "vault.consent.approve_once" => encode(vault_consent_approve_once(memory, decode(value)?)?),
+        "vault.connectors.calls.approve_once" => {
+            encode(vault_connectors_calls_approve_once(memory, decode(value)?)?)
+        }
         "vault.consent.deny" => encode(vault_consent_deny(memory, decode(value)?)?),
         "vault.consent.create_standing_grant" => {
             encode(vault_consent_create_standing_grant(memory, decode(value)?)?)
@@ -23731,6 +23863,7 @@ pub fn invoke(
         "self.browser.zoom" => encode(self_browser_zoom(memory, decode(value)?)?),
         "self.browser.batch" => encode(self_browser_batch(memory, decode(value)?)?),
         "self.browser.library.find" => encode(self_browser_library_find(memory, decode(value)?)?),
+        "self.browser.library.draft" => encode(self_browser_library_draft(memory, decode(value)?)?),
         "self.browser.library.propose" => {
             encode(self_browser_library_propose(memory, decode(value)?)?)
         }
@@ -23883,6 +24016,12 @@ pub fn invoke_browser(
             let input: crate::task_verb::sdk::BrowserLibraryFindInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = oneiron_browser::BrowserAnswer::of(driver.library_find(input)?);
+            serde_json::to_value(output)
+        }
+        "self.browser.library.draft" => {
+            let input: crate::task_verb::sdk::BrowserLibraryDraftInput =
+                serde_json::from_value(value).map_err(invalid)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.library_draft(input)?);
             serde_json::to_value(output)
         }
         "self.browser.library.propose" => {
@@ -24691,6 +24830,24 @@ pub fn vault_budgets_rsi_hold_resume(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_runners_seats_quotas(
+    memory: &Memory<'_>,
+    input: crate::dispatch_byoa::RunnerSeatQuotasRequest,
+) -> MemoryResult<crate::dispatch_byoa::RunnerSeatQuotasView> {
+    memory.vault().runner_seat_quotas_as_owner(
+        &memory.embedded_owner("vault.runners.seats.quotas")?,
+        &input,
+    )
+}
+pub fn vault_runners_seats_top_up(
+    memory: &Memory<'_>,
+    input: crate::dispatch_byoa::RunnerSeatCreditTopUpRequest,
+) -> MemoryResult<crate::dispatch_byoa::RunnerSeatTopUpReceipt> {
+    memory.vault().top_up_runner_seat_as_owner(
+        &memory.embedded_owner("vault.runners.seats.top_up")?,
+        &input,
+    )
 }
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
@@ -26252,6 +26409,18 @@ pub fn vault_connectors_proxy_revoke_write(
     input: ProxyConnectorRevokeWriteRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ProxyConnectorRegistration> {
     crate::task_verb::sdk::host_only(memory, "vault.connectors.proxy.revoke_write", &input)
+}
+pub fn vault_connectors_slates_redraft(
+    memory: &Memory<'_>,
+    input: ConnectorSlateRedraftRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorSlateRedraftReply> {
+    crate::task_verb::sdk::host_only(memory, "vault.connectors.slates.redraft", &input)
+}
+pub fn vault_connectors_slates_narrow(
+    memory: &Memory<'_>,
+    input: ConnectorSlateNarrowRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorSlateNarrowView> {
+    crate::task_verb::sdk::narrow_connector_slate_embedded(memory, input)
 }
 pub fn vault_connectors_subscriptions_put(
     memory: &Memory<'_>,
@@ -27982,6 +28151,16 @@ pub fn vault_consent_approve_once(
     crate::consent::lifecycle::approve_once(
         memory.vault(),
         &memory.embedded_owner("vault.consent.approve_once")?,
+        input,
+    )
+}
+pub fn vault_connectors_calls_approve_once(
+    memory: &Memory<'_>,
+    input: ConnectorCallApproveOnceRequest,
+) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    crate::task_verb::sdk::approve_connector_call_once(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.calls.approve_once")?,
         input,
     )
 }
@@ -31150,7 +31329,7 @@ pub fn vault_questions_read(
 pub fn vault_questions_answers(
     memory: &Memory<'_>,
     input: crate::receipt::QuestionAnswersRequest,
-) -> MemoryResult<Vec<crate::receipt::QuestionAnswer>> {
+) -> MemoryResult<crate::receipt::QuestionAnswersReply> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
 }
 pub fn vault_questions_refresh(
@@ -33446,6 +33625,12 @@ pub fn self_browser_library_find(
     input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>,
 ) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryFindOutput> {
     crate::task_verb::sdk::host_only(memory, "self.browser.library.find", &input)
+}
+pub fn self_browser_library_draft(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryDraftInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryDraftOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.draft", &input)
 }
 pub fn self_browser_library_propose(
     memory: &Memory<'_>,

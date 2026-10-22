@@ -178,6 +178,21 @@ impl ServeCommand {
         Ok(Self { argv, env })
     }
 
+    /// The writable invocation over a projection-bound push's private
+    /// ingress store (FIX 7608 2b-ii): exactly [`Self::http_backend`]'s
+    /// frozen argv, closed environment and vetted door hook, pointed at the
+    /// ingress its proof names. No new spawn, argv or escape.
+    ///
+    /// # Errors
+    /// As [`Self::http_backend`].
+    pub(crate) fn http_backend_ingress(
+        ingress_dir: &Path,
+        project_root: &Path,
+        door_hooks_dir: &Path,
+    ) -> Result<Self> {
+        Self::http_backend(ingress_dir, project_root, door_hooks_dir)
+    }
+
     /// The read-only invocation over a masked copy's bare store (FIX 7608
     /// slice 2b-i): the same pinned git and pinned-off maintenance, fsmonitor
     /// and signers as [`Self::http_backend`], but `http.receivepack=false`

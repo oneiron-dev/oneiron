@@ -89,19 +89,7 @@ impl TypedForkState {
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the body rows.
-pub(crate) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+pub(crate) use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the body forks (FIX 3520): an open fork it opened is
 /// work a merge could still land, so it goes with its snapshot; a merged or

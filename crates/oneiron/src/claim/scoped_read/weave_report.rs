@@ -5,7 +5,7 @@ use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::dreamer_runner::maintenance::agent_health::{
-    AgentHealthCard, AgentHealthOutcome, agent_health_cards_in_txn,
+    AgentHealthCard, AgentHealthOutcome, AgentHealthPadRead, agent_health_cards_in_txn,
 };
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
@@ -87,17 +87,23 @@ pub enum WeaveItem {
     },
     /// One of the Coach's open agent-health cards (OF-568), in a Digest
     /// section read by one of its recipients or a live owner.
+    /// `draft_erased`: a saved copy's Coach draft lost its diagnosis and
+    /// proposal because a row they were drafted from was erased (FIX 8672).
     AgentHealth {
         card: AgentHealthCard,
+        draft_erased: bool,
     },
     /// One sampled sieve audit (OF-499), in a SieveScore section after its
     /// predicate rows: the attempt that wrote it, and the rule's reading
     /// beside the expensive path's label, or an unflagged window's finding
     /// (OF-498f). Its turn, source and the entities it names each passed
-    /// the reader's own floor.
+    /// the reader's own floor. A served copy's decisions keep only the
+    /// candidate refs that floor admits; `redacted` marks each decision it
+    /// left a ref out of (FIX 8322). A stored row keeps its decisions whole.
     SieveAudit {
         attempt: crate::attempt_queue::AttemptId,
         audit: crate::dreamer_wake::SieveAuditRecord,
+        redacted: Vec<sieve_score::RedactedSieveDecision>,
     },
     /// One loop decision (OF-499 A2), in an Admissions section after its
     /// predicate rows: a loop's run or action admitted, held or refused, as
@@ -156,7 +162,7 @@ impl WeaveReport {
                 } => rows.extend([*project, *budget_ref]),
                 WeaveItem::Link { source, target, .. } => rows.extend([*source, *target]),
                 WeaveItem::DreamProgress { resident, .. } => rows.push(*resident),
-                WeaveItem::AgentHealth { card } => rows.extend(card_rows(card)),
+                WeaveItem::AgentHealth { card, .. } => rows.extend(card_rows(card)),
                 WeaveItem::SieveAudit { audit, .. } => {
                     rows.extend(sieve_score::sieve_audit_rows(audit));
                 }
@@ -171,8 +177,10 @@ impl WeaveReport {
 }
 
 /// The rows an agent-health card is built from, as the card keeps them:
-/// its agent, TASK, attempts, diagnostics and evidence, and the Coach's
-/// ask on it (the diagnostic it was asked on and the attempt that answers).
+/// its agent, TASK, attempts (the newest and every one it witnessed),
+/// diagnostics and evidence, and the Coach's ask on it (the diagnostic it was
+/// asked on, the attempt that answers and, for a pad read that was granted,
+/// its read-log row and the pads it returned). A pad count is never an id.
 fn card_rows(card: &AgentHealthCard) -> Vec<EntityId> {
     let mut rows = vec![card.subject];
     rows.extend(
@@ -181,10 +189,17 @@ fn card_rows(card: &AgentHealthCard) -> Vec<EntityId> {
             .chain(card.attempt)
             .chain(card.confession),
     );
+    rows.extend(card.witnessed_attempts.iter().copied());
     rows.extend(card.diagnostics.iter().chain(&card.evidence).copied());
     if let Some(ask) = &card.coach {
         rows.extend(ask.diagnostic);
         rows.extend(EntityId::from_hex(&ask.attempt).ok());
+        if let Some(answer) = &ask.answer
+            && let AgentHealthPadRead::Read { read, pad_ids, .. } = &answer.pads
+        {
+            rows.extend(*read);
+            rows.extend(pad_ids.iter().copied());
+        }
     }
     rows
 }
@@ -193,8 +208,24 @@ impl ScopedRead<'_> {
     /// Project live vault rows for one bound reader, with a mandatory scoped
     /// receipt. The recipe cannot elevate a role or expand the actor's floor.
     /// Past the policy's `max_rows` a scan raises one scan check and reads on
-    /// (rule 5).
+    /// (rule 5). Each sampled audit's decisions serve past the reader's own
+    /// floor (FIX 8322).
     pub fn weave_report(
+        &self,
+        reader: WeaveReader<'_>,
+        recipe: &[WeaveSectionSpec],
+    ) -> Result<ScopedReadResult<WeaveReport>> {
+        let txn = self.grant_read_txn()?;
+        let mut report = self.weave_report_in_txn(&txn, reader, recipe)?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        self.redact_sieve_decisions_in(&txn, &policy, &filter, &mut report.value);
+        Ok(report)
+    }
+
+    /// The live report as a period publishes it: [`Self::weave_report`]'s
+    /// rows with each audit's decisions whole, as the publication recheck
+    /// reads them and the saved period stores them. Never served as is.
+    pub(super) fn weave_report_snapshot(
         &self,
         reader: WeaveReader<'_>,
         recipe: &[WeaveSectionSpec],
@@ -422,7 +453,10 @@ impl ScopedRead<'_> {
                     if card.outcome == AgentHealthOutcome::Open
                         && weave_card_admitted(self.vault, txn, &card, id)?
                     {
-                        items.push(WeaveItem::AgentHealth { card });
+                        items.push(WeaveItem::AgentHealth {
+                            card,
+                            draft_erased: false,
+                        });
                     }
                 }
             }
