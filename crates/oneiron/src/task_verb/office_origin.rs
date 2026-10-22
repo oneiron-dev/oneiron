@@ -34,10 +34,6 @@ const OFFICE_FORK_WORDS: BoundRunWords = BoundRunWords {
 ///
 /// A stale or foreign binding refuses, and never reads as unbound; storage
 /// errors.
-#[expect(
-    dead_code,
-    reason = "L12-A's office fork transaction consumes it (FIX 3551)"
-)]
 pub(crate) fn office_fork_origin_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
