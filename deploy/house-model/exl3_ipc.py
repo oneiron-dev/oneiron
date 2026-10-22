@@ -41,6 +41,16 @@ Ops, host to worker, and what each gets back:
   accepted call has ended, with no deadline.
 - `shutdown`: `shutdown`, then the server stops; what is left fails.
 
+Codec v1.1 adds the session ops (DESIGN-V2 R2, `exl3_session/ops.py`),
+advertised as `capabilities.sessions` `{minor: 1, ops}` only when the server
+loaded its session layer: `session.create`, `session.fork` and
+`session.append` (each with an input region), `session.suffix_commit`,
+`session.checkpoint`, `session.drop`, each answered by a frame of its own
+name or `refused`; and `session.generate`, a `generate` whose `session`
+field names the working branch it runs on, with the same events. A
+connection's close cancels its calls, never its sessions: a session lives
+until it is dropped, evicted, or the incarnation ends.
+
 A connection that closes cancels its calls. The HTTP routes are untouched.
 """
 import array
@@ -73,6 +83,12 @@ INPUT_ENCODINGS = ("chat_json",)
 OPS = ("hello", "generate", "cancel", "stats", "drain", "shutdown")
 # Generate fields v1 takes and does not act on yet (R4 enforces them).
 RESERVED_FIELDS = ("priority", "deadline", "work_class")
+# Linux's memfd seal ABI (fcntl.h: F_LINUX_SPECIFIC_BASE + 10, F_SEAL_*),
+# for a Python built without the names; the kernel's values never change.
+F_GET_SEALS = getattr(fcntl, "F_GET_SEALS", 1034)
+F_SEAL_SHRINK = getattr(fcntl, "F_SEAL_SHRINK", 0x0002)
+F_SEAL_GROW = getattr(fcntl, "F_SEAL_GROW", 0x0004)
+F_SEAL_WRITE = getattr(fcntl, "F_SEAL_WRITE", 0x0008)
 # Ancillary room per read: a v1 frame carries at most one descriptor; the
 # room for more lets a frame that carries more be seen and refused.
 FD_ROOM = 8
@@ -236,11 +252,12 @@ def map_region(fd, offset, length):
     if sys.platform.startswith("linux"):
         if not stat.S_ISREG(mode):
             raise Refusal("invalid_input", "the input is not a memory region")
-        get_seals = getattr(fcntl, "F_GET_SEALS", None)
-        if get_seals is None:
-            raise Refusal("invalid_input", "this Python cannot read a region's seals")
-        needed = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK
-        if fcntl.fcntl(fd, get_seals) & needed != needed:
+        try:
+            seals = fcntl.fcntl(fd, F_GET_SEALS)
+        except OSError as error:
+            raise Refusal("invalid_input", f"the input region's seals cannot be read: {error}") from error
+        needed = F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK
+        if seals & needed != needed:
             raise Refusal("invalid_input", "the input region is not sealed read-only")
         if info.st_size != end:
             raise Refusal("invalid_input", f"the input region holds {info.st_size} bytes, not {end}")
@@ -350,6 +367,8 @@ class NativeServer:
                              "tool_calls": True, "reserved": list(RESERVED_FIELDS)},
             "versions": reported_versions(),
         }
+        if self.state.sessions is not None:
+            body["capabilities"]["sessions"] = self.state.sessions.capability()
         if identity.launch_manifest is not None:
             body[cache_usage.LAUNCH_MANIFEST_KEY] = identity.launch_manifest
         return body
@@ -434,6 +453,16 @@ class Connection:
         if op == "generate":
             self.generate(envelope, fds)
             return
+        sessions = self.state.sessions
+        if sessions is not None and op in sessions.capability()["ops"]:
+            if op == "session.generate":
+                self.generate(envelope, fds, session=True)
+            else:
+                # A commit or a drop waits on the scheduler, with no
+                # deadline: each op runs on a thread of its own.
+                threading.Thread(target=self.session_op, args=(envelope, fds), name="exl3-native-session",
+                                 daemon=True).start()
+            return
         if fds:
             close_fds(fds)
             self.send("refused", request_id, Refusal("invalid_input", f"{op} carries no descriptor").body())
@@ -453,9 +482,40 @@ class Connection:
         else:
             self.send("refused", request_id, Refusal("unknown_op", f"no op {op!r}").body())
 
-    def generate(self, envelope, fds):
+    def session_op(self, envelope, fds):
+        """One session op other than `session.generate`, answered by a frame
+        of its own name or `refused` (exl3_session/ops.py)."""
+        op, request_id, body = envelope["op"], envelope["request_id"], envelope["body"]
+        sessions = self.state.sessions
+        try:
+            if envelope.get("epoch") != self.state.identity.epoch:
+                raise Refusal("epoch_mismatch", "the op names another incarnation of this worker")
+            conversation = None
+            if op in sessions.WITH_INPUT:
+                conversation = read_input(body.get("input"), fds)
+            elif fds:
+                raise Refusal("invalid_input", f"{op} carries no descriptor")
+            answer = sessions.answer(op, body, conversation)
+        except Refusal as refusal:
+            close_fds(fds)
+            self.send("refused", request_id, refusal.body())
+            return
+        except sessions.Refused as refused:
+            self.send("refused", request_id, Refusal(refused.code, str(refused)).body())
+            return
+        except Exception as error:
+            print(f"NATIVE_SESSION_ERROR op={op} {type(error).__name__}: {error}", flush=True)
+            self.send("refused", request_id, Refusal("server_error", f"{type(error).__name__}: {error}").body())
+            return
+        self.send(op, request_id, answer)
+
+    def generate(self, envelope, fds, session=False):
+        """A `generate`, or with `session` a `session.generate`: the same call
+        on the working branch its `session` field names."""
         request_id, body = envelope["request_id"], envelope["body"]
         epoch = self.state.identity.epoch
+        sessions = self.state.sessions
+        branch = None
         try:
             if envelope.get("epoch") != epoch:
                 raise Refusal("epoch_mismatch", "the call names another incarnation of this worker")
@@ -466,6 +526,11 @@ class Connection:
             if not isinstance(stream, bool):
                 raise Refusal("invalid_request", "stream must be true or false")
             conversation = read_input(body.get("input"), fds)
+            if session:
+                try:
+                    branch = sessions.claim_call(body.get("session"))
+                except sessions.Refused as refused:
+                    raise Refusal(refused.code, str(refused)) from None
         except Refusal as refusal:
             close_fds(fds)
             self.send("refused", request_id, refusal.body())
@@ -480,11 +545,17 @@ class Connection:
                 refusal = Refusal("draining", "the worker takes no new call")
             else:
                 refusal = None
-                call = NativeCall(self, request_id, params, conversation, stream, accepted_ns)
+                call = NativeCall(self, request_id, params, conversation, stream, accepted_ns, branch)
                 self.calls[request_id] = call
         if refusal is not None:
+            if branch is not None:
+                # Nothing ran on it: the branch stays open.
+                sessions.unclaim(branch)
             self.send("refused", request_id, refusal.body())
             return
+        if branch is not None:
+            # A drop of its session cancels the call.
+            sessions.bind_call(branch, lambda: call.cancel(ack=False))
         call.emit("accepted", {"epoch": epoch})
         threading.Thread(target=call.run, name="exl3-native-call", daemon=True).start()
 
@@ -530,7 +601,7 @@ class NativeCall:
     """One `generate`: run on its own thread through the scheduler, its
     events numbered in the order they go out, and exactly one terminal."""
 
-    def __init__(self, connection, request_id, params, conversation, stream, accepted_ns):
+    def __init__(self, connection, request_id, params, conversation, stream, accepted_ns, branch=None):
         self.connection = connection
         self.state = connection.state
         self.request_id = request_id
@@ -538,6 +609,9 @@ class NativeCall:
         self.conversation = conversation
         self.stream = stream
         self.accepted_ns = accepted_ns
+        # A `session.generate`'s working branch (exl3_session), which ends
+        # with the call.
+        self.branch = branch
         self.lock = threading.Lock()
         self.seq = 0
         self.terminal = False
@@ -606,6 +680,9 @@ class NativeCall:
                 body["tools"] = self.conversation["tools"]
             model = body.get("model") or state.model_id
             req = state.prepare(body, "native-" + uuid.uuid4().hex, self.accepted_ns)
+            if self.branch is not None:
+                req.branch = self.branch
+                req.shared = state.sessions.shared_pages(self.branch, req.ids)
             self.req = req
             if self.cancelled.is_set():
                 self.end("released", {"outcome": "cancelled"})
@@ -641,6 +718,9 @@ class NativeCall:
                     finish = "tool_calls"
             else:
                 final["message"], finish = exl3_tools.answer_message(reasoning, content, req.tools, finish)
+            if finish == "tool_calls":
+                # The receipt says so too (FIX 9300).
+                cache_usage.mark_tool_calls(result["usage"])
             final["finish_reason"] = finish
             final["usage"] = result["usage"]
             final["timings"] = result["timings"]
@@ -660,5 +740,8 @@ class NativeCall:
         finally:
             if req is not None and not req.ended:
                 scheduler.cancel(req)
+            if self.branch is not None and (req is None or not req.queued):
+                # The scheduler never had it, so never ends its branch.
+                state.sessions.end_branch_later(self.branch)
             scheduler.settle()
             self.connection.forget(self.request_id)

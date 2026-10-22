@@ -12,30 +12,47 @@ use crate::{EntityId, Vault};
 const TASK_ARCHIVE: SideTable<TaskAttemptKey, (), Raw> =
     SideTable::new(&side_table::VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE);
 
-/// Index key: an owner-facing task reference string, `/`, then the archived
-/// attempt's raw 16 bytes. The attempt is always the trailing 16 bytes, so a
-/// task reference containing `/` still decodes correctly.
+/// The BLAKE3 context that names a task reference in the index key.
+const TASK_DIGEST_CONTEXT: &str = "oneiron vault_cleanup task attempt index v1";
+
+/// Index key: the domain-separated BLAKE3 of the exact task reference, then
+/// the archived attempt's raw 16 bytes (FIX 10196). The key is 48 bytes past
+/// its prefix whatever the reference's length, so every task reference the
+/// queue admits fits the store's key limit. The reference is hashed whole,
+/// never shortened.
 struct TaskAttemptKey {
-    task: String,
+    task_digest: [u8; 32],
     attempt: [u8; 16],
+}
+
+impl TaskAttemptKey {
+    fn new(task: &str, attempt: [u8; 16]) -> Self {
+        Self {
+            task_digest: task_digest(task),
+            attempt,
+        }
+    }
 }
 
 impl SideKey for TaskAttemptKey {
     fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.task.as_bytes());
-        out.push(b'/');
+        out.extend_from_slice(&self.task_digest);
         out.extend_from_slice(&self.attempt);
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let split = bytes.len().checked_sub(16)?;
-        let (head, attempt) = bytes.split_at(split);
-        let task = head.strip_suffix(b"/")?;
+        let (task_digest, attempt) = bytes.split_at_checked(32)?;
         Some(Self {
-            task: String::from_utf8(task.to_vec()).ok()?,
+            task_digest: task_digest.try_into().ok()?,
             attempt: attempt.try_into().ok()?,
         })
     }
+}
+
+/// The index's name for `task`, and the prefix of its rows: the one
+/// derivation archive, forget, erase and every restore share.
+fn task_digest(task: &str) -> [u8; 32] {
+    blake3::derive_key(TASK_DIGEST_CONTEXT, task.as_bytes())
 }
 
 /// Whether the queue row `raw` of `id` is archived: a cleanup run's mark
@@ -55,8 +72,9 @@ pub(crate) fn attempt_is_archived(
 /// Moves an attempt's cleanup mark to the bytes its row was rewritten to in
 /// this transaction, when the mark bound the row as it stood (`before`): an
 /// erase that rewrites a row in place leaves it archived by the same run
-/// (FIX 7076), or kept by the owner. An absent, unreadable or stale mark
-/// stays as it is; none is made.
+/// (FIX 7076), or kept by the owner. A stale or unreadable mark bound bytes
+/// the row no longer holds, so it is removed, never rebound: no hash of
+/// those bytes outlives the erase (FIX 7615). An absent mark stays absent.
 pub(crate) fn refresh_archived_attempt_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -66,12 +84,13 @@ pub(crate) fn refresh_archived_attempt_in_txn(
 ) -> Result<()> {
     let bound = marks::revision_of(before);
     let revision = marks::revision_of(after);
-    let Some(moved) = marks::mark_in_txn(store, txn, id.as_bytes())?
-        .and_then(|mark| mark.moved(&bound, &revision))
-    else {
+    let Some(raw) = marks::raw_in_txn(store, txn, id.as_bytes())? else {
         return Ok(());
     };
-    marks::put_in_txn(store, txn, id.as_bytes(), moved)
+    match CleanupMark::decode(&raw).and_then(|mark| mark.moved(&bound, &revision)) {
+        Some(moved) => marks::put_in_txn(store, txn, id.as_bytes(), moved),
+        None => marks::delete_in_txn(store, txn, id.as_bytes()),
+    }
 }
 
 /// [`refresh_archived_attempt_in_txn`] over a checkpoint image's sorted
@@ -109,16 +128,16 @@ pub(crate) fn forget_archived_attempt_in_txn(
         TASK_ARCHIVE.delete(
             store,
             txn,
-            &TaskAttemptKey {
-                task: task.clone(),
-                attempt: *record.id.as_bytes(),
-            },
+            &TaskAttemptKey::new(task, *record.id.as_bytes()),
         )?;
     }
     Ok(())
 }
 
-fn eligible(
+/// The record of attempt `id`'s queue row `raw` when the retention arm would
+/// archive it now; none when retention is off, the owner kept or a run
+/// archived these bytes, the row is job state, or it is not old enough.
+pub(super) fn eligible(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: AttemptId,
@@ -198,19 +217,16 @@ pub(super) fn archive(
         TASK_ARCHIVE.put(
             &vault.store,
             txn,
-            &TaskAttemptKey {
-                task,
-                attempt: *id.as_bytes(),
-            },
+            &TaskAttemptKey::new(&task, *id.as_bytes()),
             &(),
         )?;
     }
     Ok(Some(CleanupSnapshotEntry {
         entity,
         kind: CleanupKind::CompletedAttempt,
-        revision,
+        revision: Some(revision),
         before,
-        after: after.encode(),
+        after: Some(after.encode()),
     }))
 }
 
@@ -234,10 +250,6 @@ pub(super) fn keep_attempt_in_txn(
     Ok(())
 }
 
-fn task_prefix_bytes(task: &str) -> Vec<u8> {
-    [task.as_bytes(), b"/"].concat()
-}
-
 /// Drops every archived-attempt index row of an erased `task` (FIX 7517):
 /// the index is private and keyed by the task's id, so its rows go by that
 /// key. The attempts' own marks stay as they are, archived or kept: this
@@ -247,16 +259,40 @@ pub(super) fn erase_task_index_in_txn(
     txn: &mut heed::RwTxn<'_>,
     task: &EntityId,
 ) -> Result<()> {
-    TASK_ARCHIVE.delete_from(store, txn, &task_prefix_bytes(&task.to_hex()))?;
+    TASK_ARCHIVE.delete_from(store, txn, &task_digest(&task.to_hex()))?;
     Ok(())
 }
 
+/// What a TASK restore does with the attempts archived under the task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AttemptRestore {
+    /// A re-mention or a returning file: each attempt's mark goes, and none
+    /// is kept.
+    Ordinary,
+    /// The owner brought the TASK back: each attempt is kept at its current
+    /// queue row, so retention does not archive those bytes again (FIX 7518).
+    OwnerKeeps,
+}
+
+/// Restores every attempt archived under `task`, as a re-mention does: each
+/// attempt's mark goes and none is kept.
 pub(crate) fn restore_task_attempts(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     task: EntityId,
 ) -> Result<()> {
-    let prefix = task_prefix_bytes(&task.to_hex());
+    restore_task_attempts_as(vault, txn, task, AttemptRestore::Ordinary)
+}
+
+/// [`restore_task_attempts`] under `intent`. The task's index rows go in the
+/// same write either way.
+pub(super) fn restore_task_attempts_as(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+    intent: AttemptRestore,
+) -> Result<()> {
+    let prefix = task_digest(&task.to_hex());
     let attempts: Vec<[u8; 16]> = TASK_ARCHIVE
         .scan_keys(&vault.store, txn, &prefix)?
         .into_iter()
@@ -264,6 +300,9 @@ pub(crate) fn restore_task_attempts(
         .collect();
     for attempt in &attempts {
         marks::delete_in_txn(&vault.store, txn, attempt)?;
+        if intent == AttemptRestore::OwnerKeeps {
+            keep_attempt_in_txn(vault, txn, AttemptId::from_bytes(attempt)?)?;
+        }
     }
     TASK_ARCHIVE.delete_from(&vault.store, txn, &prefix)?;
     Ok(())
@@ -339,10 +378,7 @@ pub(super) fn restore_archived_attempt_in_txn(
         TASK_ARCHIVE.delete(
             &vault.store,
             txn,
-            &TaskAttemptKey {
-                task,
-                attempt: *id.as_bytes(),
-            },
+            &TaskAttemptKey::new(&task, *id.as_bytes()),
         )?;
     }
     Ok(())
