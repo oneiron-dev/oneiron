@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 
 use super::codec::{
@@ -24,7 +25,7 @@ pub(crate) enum ProjectDepthDisposition {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectDepthResolution {
-    pub(crate) depth: u8,
+    pub(crate) depth: u64,
     pub(crate) frontier: Vec<EntityId>,
     pub(crate) disposition: ProjectDepthDisposition,
 }
@@ -40,26 +41,49 @@ fn unresolved(disposition: ProjectDepthDisposition) -> ProjectDepthResolution {
 /// An immutable default source must itself be a causally anchored policy
 /// chain. Verifying only its signature would let a forged orphan default fact
 /// act as the birth source while the real default fold is still pending.
+/// Every ancestor is read, however many (rule 5): past its threshold row the
+/// walk asks whether everything is okay, counted on every way out.
 fn default_source_disposition(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     posture: HostingPrivacyPosture,
     source: EntityId,
 ) -> Result<ProjectDepthDisposition> {
+    let mut walk = ScanCount::start(
+        store,
+        txn,
+        EngineScan::ProjectDepthSourceAncestors,
+        source.as_bytes(),
+    )?;
+    let mut visited = BTreeSet::new();
+    let disposition = source_ancestry_in(store, txn, posture, source, &mut visited);
+    walk.rows(visited.len());
+    walk.defer(store);
+    disposition
+}
+
+/// The walk [`default_source_disposition`] counts, each node it reaches in
+/// `visited`. Like the creation-default fold, only the pinned source's own
+/// authority is classified (C5): an explicitly superseded ancestor's
+/// authority never vetoes it, while every ancestor stays structurally
+/// checked and a missing one stays pending.
+fn source_ancestry_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: HostingPrivacyPosture,
+    source: EntityId,
+    visited: &mut BTreeSet<EntityId>,
+) -> Result<ProjectDepthDisposition> {
     let seed_id = super::codec::seeded_default_carrier()?.0;
     let authority =
         crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
     let mut stack = vec![source];
-    let mut visited = BTreeSet::new();
     let mut anchored = false;
     let mut pending = false;
     let mut quarantined = false;
     while let Some(next) = stack.pop() {
         if !visited.insert(next) {
             continue;
-        }
-        if visited.len() > 4096 {
-            return Ok(ProjectDepthDisposition::Quarantined);
         }
         if next == seed_id {
             anchored = true;
@@ -91,10 +115,12 @@ fn default_source_disposition(
                 stack.push(parent);
             }
         }
-        match edit_disposition(&edit, &authority)? {
-            ProjectDepthDisposition::Authorized => {}
-            ProjectDepthDisposition::Pending => pending = true,
-            ProjectDepthDisposition::Quarantined => quarantined = true,
+        if next == source {
+            match edit_disposition(&edit, &authority)? {
+                ProjectDepthDisposition::Authorized => {}
+                ProjectDepthDisposition::Pending => pending = true,
+                ProjectDepthDisposition::Quarantined => quarantined = true,
+            }
         }
     }
     if pending {
@@ -317,18 +343,13 @@ fn edit_disposition(
     Ok(ProjectDepthDisposition::Authorized)
 }
 
-/// Restrictive fold over the seeded creation row and signed vault-default
-/// overrides. A birth pins the selected immutable head, so later default
-/// changes cannot rewrite an already-created project's provenance.
-pub(crate) fn resolve_creation_default(
+/// Every signed creation-default edit stored, in `edits`.
+fn default_edits_in(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    posture: HostingPrivacyPosture,
-) -> Result<ProjectDepthResolution> {
-    let seed_id = super::codec::seeded_default_carrier()?.0;
-    let mut rows = BTreeMap::new();
-    rows.insert(seed_id, super::codec::seeded_default().depth);
-    let mut edits = BTreeMap::new();
+    seed_id: EntityId,
+    edits: &mut BTreeMap<EntityId, ProjectDepthEdit>,
+) -> Result<()> {
     for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = id?;
         if !is_project_depth_id(&id) || id == seed_id {
@@ -341,13 +362,36 @@ pub(crate) fn resolve_creation_default(
             .get(ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("default depth body"))?;
         if let ProjectDepthContribution::DefaultEdit(edit) = decode_contribution(body)? {
-            if edits.len() >= 4096 {
-                return Ok(unresolved(ProjectDepthDisposition::Quarantined));
-            }
-            rows.insert(id, edit.depth);
             edits.insert(id, edit);
         }
     }
+    Ok(())
+}
+
+/// Restrictive fold over the seeded creation row and signed vault-default
+/// overrides. A birth pins the selected immutable head, so later default
+/// changes cannot rewrite an already-created project's provenance. Every
+/// edit is read, however many (rule 5): past its threshold row the fold asks
+/// whether everything is okay.
+pub(crate) fn resolve_creation_default(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: HostingPrivacyPosture,
+) -> Result<ProjectDepthResolution> {
+    let seed_id = super::codec::seeded_default_carrier()?.0;
+    let mut count = ScanCount::start(
+        store,
+        txn,
+        EngineScan::ProjectDepthDefaultRows,
+        seed_id.as_bytes(),
+    )?;
+    let mut edits = BTreeMap::new();
+    let scanned = default_edits_in(store, txn, seed_id, &mut edits);
+    count.rows(edits.len());
+    count.defer(store);
+    scanned?;
+    let mut rows: BTreeMap<_, _> = edits.iter().map(|(id, edit)| (*id, edit.depth)).collect();
+    rows.insert(seed_id, super::codec::seeded_default().depth);
     let mut shadowed = BTreeSet::new();
     for edit in edits.values() {
         for predecessor in &edit.predecessors {
@@ -468,17 +512,13 @@ pub(crate) fn birth_for_project(
     Ok(found)
 }
 
-/// Derive one replica-independent depth from the immutable manifest set.
-/// Unresolved/revoked controlling facts refuse new depth rather than restore
-/// an older or more permissive birth value.
-pub(crate) fn resolve_project_depth(
+/// Every stored birth and edit naming `project`, in `rows`.
+fn project_rows_in(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    posture: HostingPrivacyPosture,
     project: EntityId,
-) -> Result<ProjectDepthResolution> {
-    let maximum = crate::gate::resolve_project_depth_max(store, txn)?;
-    let mut rows = BTreeMap::new();
+    rows: &mut BTreeMap<EntityId, ProjectDepthContribution>,
+) -> Result<()> {
     for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = id?;
         if !is_project_depth_id(&id) {
@@ -499,12 +539,34 @@ pub(crate) fn resolve_project_depth(
             ProjectDepthContribution::Edit(e) => &e.project_ref,
         };
         if named == &project.to_hex() {
-            if rows.len() >= 4096 {
-                return Ok(unresolved(ProjectDepthDisposition::Quarantined));
-            }
             rows.insert(id, contribution);
         }
     }
+    Ok(())
+}
+
+/// Derive one replica-independent depth from the immutable manifest set.
+/// Unresolved/revoked controlling facts refuse new depth rather than restore
+/// an older or more permissive birth value. Every row is read, however many
+/// (rule 5): past its threshold row the fold asks whether everything is okay.
+pub(crate) fn resolve_project_depth(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    posture: HostingPrivacyPosture,
+    project: EntityId,
+) -> Result<ProjectDepthResolution> {
+    let maximum = crate::gate::resolve_project_depth_max(store, txn)?;
+    let mut count = ScanCount::start(
+        store,
+        txn,
+        EngineScan::ProjectDepthPolicyRows,
+        project.as_bytes(),
+    )?;
+    let mut rows = BTreeMap::new();
+    let scanned = project_rows_in(store, txn, project, &mut rows);
+    count.rows(rows.len());
+    count.defer(store);
+    scanned?;
     if !rows
         .values()
         .any(|row| matches!(row, ProjectDepthContribution::Birth(_)))

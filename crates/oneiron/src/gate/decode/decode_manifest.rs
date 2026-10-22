@@ -116,8 +116,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) owner_policy_patterns_dropped: bool,
     pub(in crate::gate) signatures: Vec<PolicySignature>,
     pub(in crate::gate) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
-    pub(in crate::gate) project_depth_default: Option<u8>,
-    pub(in crate::gate) project_depth_max: Option<u8>,
+    pub(in crate::gate) project_depth_default: Option<u64>,
+    pub(in crate::gate) project_depth_max: Option<u64>,
     pub(in crate::gate) native_mail_policy: Vec<crate::gate::mail_policy::MailPolicy>,
     pub(in crate::gate) project_collaboration: Option<ProjectCollaborationPolicy>,
     /// The opaque host checker ref (ONE-1296), absent unless the manifest
@@ -1252,25 +1252,18 @@ fn parse_teacher_probe_row(value: &Value) -> Option<TeacherProbeRow> {
 }
 
 /// The project-depth creation default and vault ceiling rows. Each is
-/// optional, but a duplicate, a value past the projection walk bound, or a
-/// default above the ceiling rejects the manifest.
-fn parse_project_depth_rows(entries: &[(Value, Value)]) -> Option<(Option<u8>, Option<u8>)> {
+/// optional and owner-editable to any depth (rule 5: an engine walk count is
+/// never policy validity), but a duplicate, a non-integer, or a default above
+/// the ceiling rejects the manifest.
+fn parse_project_depth_rows(entries: &[(Value, Value)]) -> Option<(Option<u64>, Option<u64>)> {
     let row = |key: &str| match single_map_value(entries, key) {
         MapValue::Missing => Some(None),
         MapValue::Duplicate => None,
-        MapValue::Present(value) => u8::try_from(value.as_u64()?).ok().map(Some),
+        MapValue::Present(value) => value.as_u64().map(Some),
     };
     let default = row("project_depth_default")?;
     let max = row("project_depth_max")?;
-    let past_walk_bound = |depth: Option<u8>| {
-        depth.is_some_and(|depth| {
-            usize::from(depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
-        })
-    };
-    if past_walk_bound(default)
-        || past_walk_bound(max)
-        || default.zip(max).is_some_and(|(start, max)| start > max)
-    {
+    if default.zip(max).is_some_and(|(start, max)| start > max) {
         return None;
     }
     Some((default, max))
