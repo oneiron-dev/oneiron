@@ -367,9 +367,7 @@ pub(crate) fn ask_rows_kept_in(
 }
 
 pub(crate) use owner_index::{index_owner_fact, indexed_tasks_of_in};
-pub(crate) use policy_change_followup::{
-    enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
-};
+pub(crate) use policy_change_followup::enqueue_committed_policy_notice_in_txn;
 
 pub use symbol_lease::{SymbolLease, SymbolLeaseFence, SymbolLeaseOutcome, SymbolLeaseRun};
 pub(crate) use symbol_lease::{acquire_symbols, symbols_ready};

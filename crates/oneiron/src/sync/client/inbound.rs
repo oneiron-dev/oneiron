@@ -21,6 +21,7 @@ use crate::sync::transport::{
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
     LoadedWindow, WindowExport, apply_pending_window_updates, load_window_from_state,
+    persisted_window_pads,
 };
 use crate::sync::window_rows::BULK_TRANSFER_MARKER;
 
@@ -775,6 +776,9 @@ impl SyncClient {
                     return Err(map_delta_export_err(e));
                 }
             };
+            // Its pads persist by reference where custody here holds them
+            // (FIX 7107).
+            let missing = persisted_window_pads(&self.vault, &key, &missing, Some(&window.doc));
             if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
                 self.manager.discard_window(&key);
                 return Err(TransportError::Storage(format!(
@@ -786,8 +790,10 @@ impl SyncClient {
         // Remote imports never fire Observer A (local-only), so persist the
         // accepted update bytes ourselves: without a u:w: row, remote state —
         // including tombstones, whose LMDB purge already ran — would vanish
-        // from the doc on restart.
-        if let Err(e) = persist_window_update(&self.vault, window_key, payload) {
+        // from the doc on restart. Its pads persist by reference where
+        // custody here holds them (FIX 7107).
+        let persisted = persisted_window_pads(&self.vault, &key, payload, Some(&window.doc));
+        if let Err(e) = persist_window_update(&self.vault, window_key, &persisted) {
             // Never leave RAM ahead of durable state on a FAILED persist
             // (client analog of the ONE-1129 server evict-on-persist-failure):
             // the import advanced this doc's version vector, so keeping the

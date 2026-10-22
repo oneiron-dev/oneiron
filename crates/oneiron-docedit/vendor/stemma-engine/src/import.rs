@@ -109,33 +109,9 @@ pub(crate) fn resolve_relationship_target(target: &str, main_dir: &str) -> Strin
 }
 
 fn map_docx_error(err: DocxError) -> RuntimeError {
-    let code = if matches!(err, DocxError::ParseLimitExceeded { .. }) {
-        ErrorCode::ParseLimitExceeded
-    } else {
-        ErrorCode::InvalidDocx
-    };
-    let message = match err {
-        DocxError::ZipRead(source) => format!("docx read failed: {source}"),
-        DocxError::ZipWrite(source) => format!("docx write failed: {source}"),
-        DocxError::Io(source) => format!("docx io error: {source}"),
-        DocxError::MissingFile(name) => format!("docx missing file: {name}"),
-        DocxError::ZipBomb(detail) => format!("docx rejected: {detail}"),
-        DocxError::DuplicatePartName { name, existing } => format!(
-            "docx rejected: duplicate ZIP part name {name:?} (case-equivalent to {existing:?}); \
-             part names must be unique (OPC §6.2, §7.3) — Word reports such packages as corrupt"
-        ),
-        DocxError::InvalidWrittenZip(detail) => {
-            format!("docx write produced an invalid ZIP central directory: {detail}")
-        }
-        DocxError::ParseLimitExceeded { bound, limit } => {
-            crate::parse_budget::refusal(bound, limit)
-        }
-    };
-    RuntimeError {
-        code,
-        message,
-        details: ErrorDetails::default(),
-    }
+    // One mapping for both readers, so a ceiling or a memory refusal keeps
+    // its typed details here too (FIX 5354).
+    crate::runtime::map_docx_error(err)
 }
 
 pub(crate) fn parse_optional_docx_part<T, F>(

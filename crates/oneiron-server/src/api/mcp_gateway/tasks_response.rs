@@ -225,6 +225,8 @@ pub(crate) async fn execute_mcp_generated_verb(
     .await?;
     // The granted budget is ENFORCED here, not merely reported.
     mcp_cap_verb_rows(&mut output, &mut page, snapshot.source);
+    // A step's type feedback leaves on its own release (FIX 10390).
+    let feedback = super::type_feedback_release::hold_verb_feedback(args.tool.name, &mut output);
     let structured = json!({
         "tool": args.tool.name,
         "family": args.tool.family.as_str(),
@@ -252,7 +254,10 @@ pub(crate) async fn execute_mcp_generated_verb(
         carrier,
     )
     .await;
-    let result = mcp_release_listed(server, actor, snapshot.rows.as_deref(), continued, result);
+    let rows = snapshot.rows.as_deref();
+    let result = mcp_release_listed(server, actor, rows, continued, result).map(|result| {
+        super::type_feedback_release::attach_verb_feedback(server, actor, rows, feedback, result)
+    });
     if result.is_ok()
         && let Some(hooks) = &hooks
     {
@@ -605,6 +610,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("retry_after".to_owned(), json!(retry_after));
+    }
+    if let Some(steps) = error.program_steps
+        && let Some(object) = data.as_object_mut()
+    {
+        super::type_feedback_release::stamp_error_feedback(*steps, object);
     }
     json!({
         "jsonrpc": "2.0",
