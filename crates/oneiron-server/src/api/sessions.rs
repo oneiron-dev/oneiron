@@ -71,11 +71,9 @@ pub(super) async fn mode(
     // write itself (FIX 8218); its facets stay the ones named above.
     let actor = actor(&auth, req.actor)?;
     match auth.verified_slip() {
-        Some(proof) => {
-            server
-                .vault
-                .set_session_mode_bound(id, req.mode, facet_ref, actor, &facets, proof)
-        }
+        Some(proof) => server
+            .vault
+            .set_session_mode_bound(id, req.mode, facet_ref, actor, &facets, proof),
         None => server
             .vault
             .set_session_mode_within(id, req.mode, facet_ref, actor, &facets),

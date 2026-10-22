@@ -52,7 +52,11 @@ impl Vault {
         proof: &VerifiedSlip,
     ) -> Result<Option<ScopedReadActorKey>> {
         let txn = self.store.env.read_txn()?;
-        self.credential_key_in_with(&txn, proof, ScopedReadActorKey::from_verified_slip_as_target)
+        self.credential_key_in_with(
+            &txn,
+            proof,
+            ScopedReadActorKey::from_verified_slip_as_target,
+        )
     }
 
     /// Whether `proof`'s facet bounds leave its holder unbound (owner ruling

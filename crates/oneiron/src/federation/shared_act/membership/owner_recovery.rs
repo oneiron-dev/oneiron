@@ -25,10 +25,7 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 pub enum OwnerRecoveryAuthorization {
     /// A managed vault's account owner, his supervisor's attestation for
     /// this one request verified at managed ingress.
-    AccountOwner {
-        holder: EntityId,
-        note: [u8; 32],
-    },
+    AccountOwner { holder: EntityId, note: [u8; 32] },
     /// A self-hosted vault's host root, as the owner its host action names.
     SelfHostRoot {
         action: HostActionAuthority,

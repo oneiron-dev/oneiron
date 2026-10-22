@@ -224,8 +224,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        self.usage_repair_caller_in_txn(&txn, owner, verb)
-            .map(drop)
+        self.usage_repair_caller_in_txn(&txn, owner, verb).map(drop)
     }
 
     /// [`Self::with_usage_repair_txn`]'s admission, in its writer.
