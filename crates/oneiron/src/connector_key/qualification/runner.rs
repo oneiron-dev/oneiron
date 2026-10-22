@@ -76,25 +76,76 @@ fn run_qualification(
     }
     let mut evidence = QualificationEvidence::new(plan, &tools)?;
     evidence.state(&connector.effect_state()?)?;
+    let grounded_answer = qualify_read_cases(
+        connector,
+        plan,
+        oracle,
+        &tools,
+        &mut *first,
+        &mut *second,
+        &mut evidence,
+    )?;
+    qualify_unanswerable_case(
+        connector,
+        plan,
+        oracle,
+        &tools,
+        &mut *first,
+        &mut evidence,
+        grounded_answer,
+    )?;
+    qualify_injection_cases(
+        connector,
+        plan,
+        oracle,
+        &tools,
+        &mut *first,
+        &mut *second,
+        &mut evidence,
+    )?;
+    qualify_scope_escape_cases(connector, plan, oracle, &tools, &mut *first, &mut evidence)?;
+    qualify_write_replays(
+        connector,
+        plan,
+        oracle,
+        &tools,
+        &mut *first,
+        &mut *second,
+        &mut evidence,
+    )?;
+    let declared: BTreeSet<_> = tools
+        .iter()
+        .flat_map(|tool| tool.result_types.iter().cloned())
+        .collect();
+    if !declared.is_subset(&evidence.result_types) {
+        return Err(QualificationFailure::ResultType);
+    }
+    evidence.state(&connector.effect_state()?)?;
+    let calls = evidence.calls;
+    Ok(QualificationReport {
+        tools,
+        exercised_result_types: evidence.result_types.clone(),
+        calls,
+        report_hash: evidence.finish(),
+    })
+}
+
+/// The read cases, each probed on both connections: the same disposition,
+/// result type and result, and no effect. Returns whether any case answered.
+fn qualify_read_cases(
+    connector: &dyn QualificationConnector,
+    plan: &QualificationPlan,
+    oracle: &dyn GroundingOracle,
+    tools: &[ProbeTool],
+    first: &mut dyn QualificationConnection,
+    second: &mut dyn QualificationConnection,
+    evidence: &mut QualificationEvidence,
+) -> Result<bool, QualificationFailure> {
     let mut grounded_answer = false;
     for case in &plan.reads {
         let state_before = connector.effect_state()?;
-        let a = probe(
-            &mut *first,
-            case,
-            &tools,
-            &plan.limits,
-            oracle,
-            &mut evidence,
-        )?;
-        let b = probe(
-            &mut *second,
-            case,
-            &tools,
-            &plan.limits,
-            oracle,
-            &mut evidence,
-        )?;
+        let a = probe(&mut *first, case, tools, &plan.limits, oracle, evidence)?;
+        let b = probe(&mut *second, case, tools, &plan.limits, oracle, evidence)?;
         if a.disposition != b.disposition || a.result_type != b.result_type || a.result != b.result
         {
             return Err(QualificationFailure::StatelessMismatch);
@@ -105,6 +156,19 @@ fn run_qualification(
         }
         grounded_answer |= a.disposition == ProbeDisposition::Answer;
     }
+    Ok(grounded_answer)
+}
+
+/// The unanswerable case: no record and no effect, after a grounded answer.
+fn qualify_unanswerable_case(
+    connector: &dyn QualificationConnector,
+    plan: &QualificationPlan,
+    oracle: &dyn GroundingOracle,
+    tools: &[ProbeTool],
+    first: &mut dyn QualificationConnection,
+    evidence: &mut QualificationEvidence,
+    grounded_answer: bool,
+) -> Result<(), QualificationFailure> {
     if !grounded_answer || !plan.unanswerable.in_scope {
         return Err(QualificationFailure::IncompletePlan);
     }
@@ -112,14 +176,28 @@ fn run_qualification(
     let absent = probe(
         &mut *first,
         &plan.unanswerable,
-        &tools,
+        tools,
         &plan.limits,
         oracle,
-        &mut evidence,
+        evidence,
     )?;
     if absent.disposition != ProbeDisposition::NoRecord || before != connector.effect_state()? {
         return Err(QualificationFailure::Unanswerable);
     }
+    Ok(())
+}
+
+/// The three injection surfaces: an injected probe answers exactly as its
+/// baseline, with the ingress traced and no effect.
+fn qualify_injection_cases(
+    connector: &dyn QualificationConnector,
+    plan: &QualificationPlan,
+    oracle: &dyn GroundingOracle,
+    tools: &[ProbeTool],
+    first: &mut dyn QualificationConnection,
+    second: &mut dyn QualificationConnection,
+    evidence: &mut QualificationEvidence,
+) -> Result<(), QualificationFailure> {
     let surfaces: BTreeSet<_> = plan.injections.iter().map(|case| case.surface).collect();
     if surfaces.len() != 3 {
         return Err(QualificationFailure::IncompletePlan);
@@ -136,18 +214,18 @@ fn run_qualification(
         let baseline = probe(
             &mut *first,
             &injection.baseline,
-            &tools,
+            tools,
             &plan.limits,
             oracle,
-            &mut evidence,
+            evidence,
         )?;
         let injected = probe(
             &mut *second,
             &injection.injected,
-            &tools,
+            tools,
             &plan.limits,
             oracle,
-            &mut evidence,
+            evidence,
         )?;
         let ingress = match injection.surface {
             QualificationInjectionSurface::FetchedContent => ProbeTraceKind::FetchedContent,
@@ -169,6 +247,19 @@ fn run_qualification(
             return Err(QualificationFailure::Injection);
         }
     }
+    Ok(())
+}
+
+/// The write-plan completeness checks, then the scope-escape cases: none may
+/// change the effect state.
+fn qualify_scope_escape_cases(
+    connector: &dyn QualificationConnector,
+    plan: &QualificationPlan,
+    oracle: &dyn GroundingOracle,
+    tools: &[ProbeTool],
+    first: &mut dyn QualificationConnection,
+    evidence: &mut QualificationEvidence,
+) -> Result<(), QualificationFailure> {
     let writes_declared = tools.iter().any(|tool| tool.writes);
     if writes_declared != (plan.write.is_some() && plan.timeout_retry.is_some())
         || plan.write.is_some() != plan.timeout_retry.is_some()
@@ -189,18 +280,25 @@ fn run_qualification(
             return Err(QualificationFailure::IncompletePlan);
         }
         let before = connector.effect_state()?;
-        probe(
-            &mut *first,
-            case,
-            &tools,
-            &plan.limits,
-            oracle,
-            &mut evidence,
-        )?;
+        probe(&mut *first, case, tools, &plan.limits, oracle, evidence)?;
         if before != connector.effect_state()? {
             return Err(QualificationFailure::Scope);
         }
     }
+    Ok(())
+}
+
+/// The write and timeout-retry cases: idempotent replays settle on one
+/// effect, and a distinct key admits a distinct effect.
+fn qualify_write_replays(
+    connector: &dyn QualificationConnector,
+    plan: &QualificationPlan,
+    oracle: &dyn GroundingOracle,
+    tools: &[ProbeTool],
+    first: &mut dyn QualificationConnection,
+    second: &mut dyn QualificationConnection,
+    evidence: &mut QualificationEvidence,
+) -> Result<(), QualificationFailure> {
     for (case, allow_timeout) in plan
         .write
         .iter()
@@ -231,14 +329,7 @@ fn run_qualification(
             return Err(QualificationFailure::IdempotencyArgument);
         }
         let original_state = connector.effect_state()?;
-        let initial = probe(
-            &mut *first,
-            case,
-            &tools,
-            &plan.limits,
-            oracle,
-            &mut evidence,
-        )?;
+        let initial = probe(&mut *first, case, tools, &plan.limits, oracle, evidence)?;
         if !allow_timeout && initial.disposition != ProbeDisposition::Answer {
             return Err(QualificationFailure::Replay);
         }
@@ -248,14 +339,7 @@ fn run_qualification(
         let before = connector.effect_state()?;
         let mut retry = case.clone();
         retry.call.id = format!("{}-retry", case.call.id);
-        let replay = probe(
-            &mut *second,
-            &retry,
-            &tools,
-            &plan.limits,
-            oracle,
-            &mut evidence,
-        )?;
+        let replay = probe(&mut *second, &retry, tools, &plan.limits, oracle, evidence)?;
         if replay.disposition != ProbeDisposition::Answer {
             return Err(QualificationFailure::Replay);
         }
@@ -269,14 +353,7 @@ fn run_qualification(
             return Err(QualificationFailure::Replay);
         }
         retry.call.id.push_str("-settled");
-        let settled = probe(
-            &mut *first,
-            &retry,
-            &tools,
-            &plan.limits,
-            oracle,
-            &mut evidence,
-        )?;
+        let settled = probe(&mut *first, &retry, tools, &plan.limits, oracle, evidence)?;
         if connector.effect_state()? != after
             || settled.result != replay.result
             || settled.disposition != ProbeDisposition::Answer
@@ -287,29 +364,14 @@ fn run_qualification(
         // must admit a distinct effect, with all other arguments unchanged.
         retry.call.id.push_str("-distinct");
         retry.call.arguments["idempotency_key"] = Value::String(format!("{key}-distinct"));
-        let distinct = probe(
-            &mut *first,
-            &retry,
-            &tools,
-            &plan.limits,
-            oracle,
-            &mut evidence,
-        )?;
+        let distinct = probe(&mut *first, &retry, tools, &plan.limits, oracle, evidence)?;
         if distinct.disposition != ProbeDisposition::Answer
             && !(allow_timeout && distinct.disposition == ProbeDisposition::Timeout)
         {
             return Err(QualificationFailure::Replay);
         }
         retry.call.id.push_str("-retry");
-        if probe(
-            &mut *second,
-            &retry,
-            &tools,
-            &plan.limits,
-            oracle,
-            &mut evidence,
-        )?
-        .disposition
+        if probe(&mut *second, &retry, tools, &plan.limits, oracle, evidence)?.disposition
             != ProbeDisposition::Answer
         {
             return Err(QualificationFailure::Replay);
@@ -318,21 +380,7 @@ fn run_qualification(
             return Err(QualificationFailure::Replay);
         }
     }
-    let declared: BTreeSet<_> = tools
-        .iter()
-        .flat_map(|tool| tool.result_types.iter().cloned())
-        .collect();
-    if !declared.is_subset(&evidence.result_types) {
-        return Err(QualificationFailure::ResultType);
-    }
-    evidence.state(&connector.effect_state()?)?;
-    let calls = evidence.calls;
-    Ok(QualificationReport {
-        tools,
-        exercised_result_types: evidence.result_types.clone(),
-        calls,
-        report_hash: evidence.finish(),
-    })
+    Ok(())
 }
 
 fn probe(
