@@ -1,7 +1,8 @@
 //! One running worker process in its supervisor's custody: started in a
 //! process group of its own, reaped by one task, checked for liveness on its
 //! health route, asked what it holds on its native socket when it has one,
-//! and stopped by signals to that group alone.
+//! asked there to drain and shut down before it is stopped, and stopped by
+//! signals to that group alone.
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -126,6 +127,16 @@ impl RunningWorker for ProcessWorker {
         Box::pin(async move {
             if let Some(exit) = self.already_exited() {
                 return exit;
+            }
+            // An EXL3 worker with a native socket is asked to stop first: it
+            // drains what it accepted, with no deadline, then shuts down
+            // (FIX 9298). The signals stay for one that does not answer or
+            // does not exit.
+            if let Some(socket) = &self.native {
+                super::super::native_exl3::drain_and_shutdown(socket).await;
+                if let Ok(exit) = tokio::time::timeout(grace, self.exited()).await {
+                    return exit;
+                }
             }
             self.signal(Signal::TERM);
             if let Ok(exit) = tokio::time::timeout(grace, self.exited()).await {
