@@ -169,17 +169,23 @@ pub use self::report::{
     ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
 };
 pub use self::triage::{
-    COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, FEEDBACK_TRIAGE_FINDING_PREDICATE,
-    FEEDBACK_TRIAGE_GITHUB_PREFIX, FEEDBACK_TRIAGE_INBOX_SOURCE, FeedbackTriageBinding,
-    FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageContinuation,
-    FeedbackTriageErased, FeedbackTriageFinding, FeedbackTriageHandoff, FeedbackTriageHold,
-    FeedbackTriageInput, FeedbackTriageItem, FeedbackTriageJob, FeedbackTriageOutput,
-    FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageSourceError,
-    FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault, FeedbackTriageSourceRef,
-    FeedbackTriageStatus, FeedbackTriageStatusRequest, FeedbackTriageSweep, GithubIssueKind,
-    GithubIssuePage, GithubIssueRevision, GithubSweepContinuation,
+    COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER,
+    COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET,
+    FEEDBACK_TRIAGE_FINDING_PREDICATE, FEEDBACK_TRIAGE_GITHUB_PREFIX, FEEDBACK_TRIAGE_INBOX_SOURCE,
+    FeedbackTriageBinding, FeedbackTriageBindingRequest, FeedbackTriageChild,
+    FeedbackTriageContinuation, FeedbackTriageErased, FeedbackTriageFinding, FeedbackTriageHandoff,
+    FeedbackTriageHold, FeedbackTriageInput, FeedbackTriageItem, FeedbackTriageJob,
+    FeedbackTriageNodeAnswer, FeedbackTriageNodeInput, FeedbackTriageNodeJob, FeedbackTriageOutput,
+    FeedbackTriagePin, FeedbackTriageResult, FeedbackTriageRun, FeedbackTriageRunRequest,
+    FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault,
+    FeedbackTriageSourceRef, FeedbackTriageSpan, FeedbackTriageSplit, FeedbackTriageStatus,
+    FeedbackTriageStatusRequest, FeedbackTriageStep, FeedbackTriageSweep, FeedbackTriageWork,
+    FeedbackTriageWorkNode, GithubIssueKind, GithubIssuePage, GithubIssueRevision,
+    GithubSweepContinuation,
 };
-pub(crate) use self::triage::{acknowledge_feedback_triage_in_txn, job_handoff_in_txn};
+pub(crate) use self::triage::{
+    acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, job_handoff_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

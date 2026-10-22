@@ -11,10 +11,11 @@ use super::proposals;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::feedback::{
     COACH_FEEDBACK_TRIAGE_FACET, FEEDBACK_TRIAGE_FINDING_PREDICATE, FeedbackTriageOutput,
-    FeedbackTriageResult, acknowledge_feedback_triage_in_txn, job_handoff_in_txn,
+    FeedbackTriageResult, acknowledge_feedback_triage_in_txn, check_feedback_triage_findings,
+    job_handoff_in_txn,
 };
 use crate::limit_ask::EngineLimit;
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 impl Vault {
     /// Files one triaged revision's answer as the Coach, under its leased
@@ -29,7 +30,7 @@ impl Vault {
     /// An attempt that is not this facet's Coach attempt or not the
     /// revision's current job; a finding that cites anything but the note it
     /// was given or names no problem (nothing is filed, and the revision
-    /// stays unacknowledged); [`Error::Refused`] once the owner erased the
+    /// stays unacknowledged); [`crate::Error::Refused`] once the owner erased the
     /// revision's evidence (nothing is filed, and the next sweep settles it
     /// erased); storage errors.
     pub fn run_coach_feedback_triage(
@@ -94,18 +95,10 @@ pub(crate) fn record_feedback_triage_findings_in_txn(
         output.findings.len() as u64,
     );
     let own = &handoff.source_ref;
+    check_feedback_triage_findings(output, own)?;
     let mut findings = Vec::new();
     for finding in &output.findings {
         let problem = finding.problem.trim();
-        if problem.is_empty()
-            || finding.source_refs.is_empty()
-            || finding.source_refs.iter().any(|cited| cited != own)
-        {
-            return Err(Error::InvalidConfig(
-                "a feedback triage finding cites only the note it was given and names a problem"
-                    .into(),
-            ));
-        }
         let fix = finding
             .proposed_fix
             .as_deref()

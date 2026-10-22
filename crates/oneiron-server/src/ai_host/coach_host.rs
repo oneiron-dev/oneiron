@@ -47,10 +47,12 @@ use oneiron::dreamer_runner::maintenance::coach::{
     COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
-    AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
+    AbortDreamerBudgetReservation, AdmitDreamerAttempt, DreamerAdmissionOutcome,
+    DreamerAdmittedAttempt, DreamerRunnerStore,
 };
 use oneiron::feedback::{
     COACH_FEEDBACK_DELIVERY_FACET, COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET,
+    COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET,
 };
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{HumanAskReason, PersonChangedAnswer, PersonThreshold};
@@ -209,6 +211,23 @@ fn round(server: &SyncServer) -> oneiron::Result<()> {
             _ => return Ok(()),
         };
         let ran = run_one(server, &admitted, now);
+        // A triage revision parked on its part children stays pending under
+        // its park, and only its unit goes back (FIX 7549).
+        let ran = match ran {
+            Ok(()) => match super::feedback_triage::yielded(&store, &admitted, now) {
+                Ok(true) => {
+                    store.abort_budget_reservation(AbortDreamerBudgetReservation {
+                        budget_id: BUDGET_ID.to_owned(),
+                        child_attempt: admitted.status.attempt.id,
+                        now: vault.now_recorded_at(),
+                    })?;
+                    continue;
+                }
+                Ok(false) => Ok(()),
+                Err(error) => Err(error),
+            },
+            failed => failed,
+        };
         settle(vault, &store, &admitted, ran, BUDGET_ID)?;
     }
     Ok(())
@@ -228,6 +247,10 @@ fn run_one(
         COACH_EVAL_AUTHORING_FACET => super::eval_authoring::run(server, admitted, now),
         COACH_FEEDBACK_SWEEP_FACET => super::feedback_triage::run_sweep(server, admitted, now),
         COACH_FEEDBACK_TRIAGE_FACET => super::feedback_triage::run_revision(server, admitted, now),
+        COACH_FEEDBACK_TRIAGE_PART_FACET => super::feedback_triage::run_part(server, admitted, now),
+        COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET => {
+            super::feedback_triage::run_synthesis(server, admitted, now)
+        }
         COACH_FEEDBACK_DELIVERY_FACET => {
             super::feedback_report_delivery::run(server, admitted, now)
         }

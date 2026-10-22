@@ -290,6 +290,92 @@ impl Vault {
         })
     }
 
+    /// Loads the exact arm a job pinned (FIX 7549), in the caller's own
+    /// lease generation: `entity` at `version`, under the shared `skill` the
+    /// owner bound. `entity` is `skill` itself, or the open proposal of it
+    /// an exploration trial routed the pinning load to; no trial routes this
+    /// load and no trial charge is reserved. `skill` must still be an active
+    /// approved shared skill, and a revision that moved or is gone refuses.
+    /// The first executor stamps the attempt, and its manifest row lands
+    /// once, as the exact door's does.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] or [`Error::InvalidClaimBody`] when the
+    /// pinned arm no longer loads; an attempt not on its live lease; storage
+    /// errors.
+    pub fn load_attempt_pinned_skill_pack(
+        &self,
+        leased: &AttemptRecord,
+        skill: &EntityId,
+        pinned: (&EntityId, &str),
+        executor_model: &str,
+        at: u64,
+    ) -> Result<LoadedSkillPack> {
+        let lease_owner = leased
+            .lease_owner
+            .as_deref()
+            .ok_or(Error::InvalidClaimBody(
+                "a pinned pack load requires the caller's live attempt lease",
+            ))?;
+        let (entity, version) = pinned;
+        self.with_write_txn_grouped(|txn| {
+            if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
+                return Err(Error::EntityNotFound);
+            }
+            let current = self.read_skill_record_in_txn(txn, skill)?;
+            if super::resident_of(&current)?.is_some() || !skill_loadable(&current) {
+                return Err(Error::InvalidClaimBody(
+                    "a pinned pack load requires an active approved shared skill",
+                ));
+            }
+            let record = if entity == skill {
+                current
+            } else {
+                if !crate::vault::live_entity_row_in_txn(&self.store, txn, entity)?.is_live() {
+                    return Err(Error::EntityNotFound);
+                }
+                let proposal =
+                    crate::skill_optimize::skill_edit_trial_basis_in_txn(self, txn, entity)?
+                        .filter(|basis| basis.target == *skill)
+                        .map(|basis| basis.proposal)
+                        .ok_or(Error::InvalidClaimBody(
+                            "the pinned proposal no longer revises its skill",
+                        ))?;
+                if proposal.role != current.role || proposal.call != current.call {
+                    return Err(Error::InvalidClaimBody(
+                        "the pinned proposal no longer keeps its skill's interface",
+                    ));
+                }
+                proposal
+            };
+            if record.version != version {
+                return Err(Error::InvalidClaimBody(
+                    "the skill moved off the pinned revision",
+                ));
+            }
+            let source_files = self
+                .runtime_skill_package_in_txn(txn, entity, &record)?
+                .map(|package| package.files);
+            let entry =
+                ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at);
+            self.record_manifest_once_in_txn(txn, leased, lease_owner, executor_model, entry)?;
+            let read =
+                self.pack_source_rows_in_txn(txn, entity, &record, source_files.is_some())?;
+            self.record_attempt_sources_best_effort_in_txn(
+                txn,
+                leased.id,
+                ReadSetProducer::SKILL_PACK,
+                Some(read),
+            );
+            Ok(LoadedSkillPack {
+                entity: *entity,
+                record,
+                source_files,
+            })
+        })
+    }
+
     /// The rows a pack load read `entity`'s instructions from (FIX 7017):
     /// its SKILL row, which holds its local package, and the replicated
     /// carrier ASSET a `packaged` load absent locally was recovered from.
