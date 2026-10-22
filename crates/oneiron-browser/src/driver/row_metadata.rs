@@ -56,6 +56,13 @@ pub(super) struct Dom {
     /// The frames whose documents the read holds, as their own elements
     /// name them.
     frames: HashSet<String>,
+    /// The front tab's out-of-process frames, whose documents no read of
+    /// the tab's holds (FIX 8336): their rows join none of its nodes.
+    oopifs: HashSet<String>,
+    /// Whether the read holds shadow trees: Chromium's `pierce` does;
+    /// Lightpanda's writes light-DOM children only, so a node it does not
+    /// hold may be in a shadow tree, never proved stale (FIX 6964).
+    shadows_read: bool,
 }
 
 /// What one node of the read gives its rows.
@@ -107,8 +114,18 @@ impl CdpDriver {
             let Some(root) = read.get("root") else {
                 return DomRead::Failed;
             };
-            Dom::index(root)
+            let dom = Dom::index(root);
+            // A deep read is taken apart without nesting (FIX 6963).
+            crate::cdp::deep::dismantle(read);
+            dom
         };
+        dom.shadows_read = self.engine == BrowserEngine::Chromium;
+        dom.oopifs = self
+            .pipe
+            .oopifs(&self.session)
+            .into_iter()
+            .map(|(frame, _)| frame)
+            .collect();
         if dom.needs_main_base(lines) {
             dom.bases[0] = self.main_base();
         }
@@ -142,6 +159,8 @@ impl Dom {
             by_backend: HashMap::new(),
             bases: Vec::new(),
             frames: HashSet::new(),
+            oopifs: HashSet::new(),
+            shadows_read: true,
         };
         let mut documents = vec![root];
         while let Some(document) = documents.pop() {
@@ -203,6 +222,15 @@ impl Dom {
     /// The node `line` joins by its own backend node, or why it joins none.
     fn join(&self, line: &Line) -> Result<usize, RowGapReason> {
         let node = line.backend_node.ok_or(RowGapReason::NoDomNode)?;
+        // An out-of-process frame's node ids are its own process's: one
+        // never names a node of this read.
+        if line
+            .frame
+            .as_deref()
+            .is_some_and(|frame| self.oopifs.contains(frame))
+        {
+            return Err(RowGapReason::OutsideDomRead);
+        }
         self.by_backend
             .get(&node)
             .copied()
@@ -210,6 +238,7 @@ impl Dom {
                 Some(frame) if !self.frames.is_empty() && !self.frames.contains(frame) => {
                     RowGapReason::OutsideDomRead
                 }
+                _ if !self.shadows_read => RowGapReason::OutsideDomRead,
                 _ => RowGapReason::StaleNode,
             })
     }

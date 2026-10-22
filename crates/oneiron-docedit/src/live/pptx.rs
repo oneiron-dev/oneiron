@@ -1468,8 +1468,9 @@ pub struct DeckDiff {
     /// [`super::attach_evidence`] narrows it to the slides whose render
     /// identity the merged candidate changes.
     pub affected_slides: Vec<NodeId>,
-    /// Nodes the head changed and the proposal did not: exactly what a
-    /// switch would remove from the active head.
+    /// What a switch would remove from the active head: every node whose
+    /// head work since the base the proposal does not hold, an addition, a
+    /// removal undone, or a changed field (merge::switch_losses, FIX 8592).
     pub head_only: Vec<NodeId>,
     pub conflicts: Vec<Conflict>,
     /// Relationship additions, removals and changed targets the merged
@@ -1631,11 +1632,13 @@ pub fn land(
             }
             let (version, next_node) = (head.version, head.next_node);
             proposal.id_marks.join(&head.id_marks);
+            // What this switch takes off the head, read from the deck it lands.
+            let lost = merge::switch_losses(&fork.base, head, &proposal);
             *head = proposal;
             // Identity allocation stays monotonic across the switch.
             head.next_node = head.next_node.max(next_node);
             head.version = version + 1;
-            report.diff.head_only.clone()
+            lost
         }
     };
     Ok(LandingReceipt {

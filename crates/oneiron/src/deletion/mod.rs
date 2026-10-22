@@ -27,7 +27,8 @@ mod tests;
 
 pub use coop_delivery::{
     COOP_DELETION_DELIVERY_ATTEMPT_KIND, COOP_DELETION_GIVE_UP_SECS, COOP_DELETION_PEER_PATH,
-    COOP_DELETION_REPLY_PEER_PATH, CooperativeDeletionAnswer, CooperativeDeletionDelivery,
+    COOP_DELETION_REPLY_PEER_PATH, CooperativeDeleteOperation, CooperativeDeleteRecord,
+    CooperativeDeleteRecordState, CooperativeDeletionAnswer, CooperativeDeletionDelivery,
     CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice,
     CooperativeDeletionTry, IncomingCooperativeDeletion, cooperative_deletion_recipient_id,
@@ -62,7 +63,8 @@ pub use legal_hold::{
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LEGAL_HOLD_SELF_HOSTED_NOTE,
     LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind, LegalHoldEvent,
     LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance, LegalHoldReason, LegalHoldTarget,
-    LegalHoldUseLimit, LiftAndEraseOutcome, LiftAndEraseStatus,
+    LegalHoldUseLimit, LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
+    ShownCustomerHold,
 };
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{
