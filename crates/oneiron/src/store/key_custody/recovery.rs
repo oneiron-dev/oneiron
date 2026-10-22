@@ -125,7 +125,9 @@ impl Store {
     /// Nor is a credential's value or carrier key (KS-6): each is planned by
     /// the row or carrier that names it, never by the whole census. Nor is
     /// a connector call's resume key (FIX 9157): each is required by its
-    /// call row when one names it, never by the whole census.
+    /// call row when one names it, never by the whole census. Nor is an
+    /// inference snapshot's wrapped key: a missing one means a cold
+    /// recompute, never a failed restore.
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
@@ -151,6 +153,7 @@ impl Store {
                                 | CustodyKind::CustodyTransition
                                 | CustodyKind::CustodyRequestInput
                                 | CustodyKind::ConnectorResume
+                                | CustodyKind::InferenceSnapshot
                         )
                 })
                 .map(|(id, _)| RequiredId {
