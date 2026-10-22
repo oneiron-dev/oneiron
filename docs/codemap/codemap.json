@@ -3042,7 +3042,17 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent predicates",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/entry_transition_predicates.rs",
+     "purpose": "The per-entry consent and retired-op predicates; `entry_transition` re-exports them",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -9635,7 +9645,7 @@
      "path": "src/calendar/invite/hygiene.rs",
      "purpose": "Vault-hydrated consent evidence and sending-identity reads",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 6,
       "struct": 1
@@ -16426,7 +16436,7 @@
      "path": "src/codebase/secret_projection.rs",
      "purpose": "A snapshot file as a masked reader reads it (FIX 7608 slice 2a)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -18232,9 +18242,20 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 31,
-      "fn": 26,
+      "crate-vis": 25,
+      "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/grants.rs",
+     "purpose": "The owner's consent acts: approve once, standing grants, denials, revokes and reuse receipts",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 5
      }
     },
     {
@@ -18245,6 +18266,16 @@
      "purpose": "The opener's lineage and its forks never settle their own proposal (DEC-0006 \"Proposals, settlements and the…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/owner.rs",
+     "purpose": "The owner-proof doors: authenticate, bind, recheck and the proof's read key",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -18265,6 +18296,17 @@
      "purpose": "The owner's queued check approval (FIX 6868, L02 authority seam): the durable record that the owner approved…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/read.rs",
+     "purpose": "The consent reads: grant rows, active standing grants, the evaluator door and the registry",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5
      }
     },
     {
@@ -28395,7 +28437,7 @@
       "const": 5,
       "crate-vis": 4,
       "enum": 4,
-      "fn": 10,
+      "fn": 11,
       "struct": 5,
       "trait": 1
      }
@@ -31243,13 +31285,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/decode/decode_manifest.rs",
      "purpose": "Manifest envelope plus DecodedPolicyManifest assembly",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/decode_manifest/parse.rs",
+     "purpose": "The whole policy-manifest body decode; `decode_manifest` re-exports it",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -31545,13 +31597,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/effect/evaluate.rs",
+     "purpose": "The whole external-effect governance evaluation; `effect` re-exports it",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/effect/record.rs",
+     "purpose": "Recording external-effect governance: record, check and held; `effect` re-exports them",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -32000,14 +32072,34 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/manifest_fold/doors.rs",
+     "purpose": "The Vault doors that read document limits and the budget guard from the resolved manifest",
+     "surface": {
+      "crate-vis": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/manifest_fold/fold.rs",
+     "purpose": "The whole policy-manifest fold; `manifest_fold` re-exports it",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -33406,7 +33498,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GraphFsReference"
@@ -40893,13 +40985,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/repo_secret_reads/reveal.rs",
      "purpose": "A Memory handle's per-file repo read that may ask for real bytes (FIX 7608 slice 2b-ii-A, GAP-B / FIX 8960)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -44721,7 +44813,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -50118,15 +50210,16 @@
      "kind": "src",
      "notable": [
       "ArtifactUnlocks",
-      "CheckpointKey"
+      "CheckpointKey",
+      "CheckpointSequenceBelowFloor"
      ],
      "path": "src/recovery/checkpoint/artifact.rs",
      "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
      "surface": {
       "crate-vis": 17,
-      "fn": 8,
+      "fn": 10,
       "re-export": 1,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -50174,7 +50267,7 @@
      "path": "src/recovery/checkpoint/carried_bodies.rs",
      "purpose": "The bodies a checkpoint carries beside its rows (OF-597, FIX 3677, FIX 5348; KS-2A, FIX 5683 part A)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -50214,7 +50307,7 @@
      "purpose": "Custody heads at the vault's surface (KS-4A1/KS-4A2, FIX 5685): publishing a vault's exterior key custody to…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 17,
       "re-export": 1,
       "struct": 3
@@ -50286,7 +50379,7 @@
      "path": "src/recovery/checkpoint/decisions/consent.rs",
      "purpose": "What the engine grants on consent and standing it folds from rows a restore brings back: the ramp offer a…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -50495,6 +50588,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/landing_lengths.rs",
+     "purpose": "The length each image row lands at, known before anything is opened, so a restore claims its real size up…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -50578,13 +50681,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/rebuild.rs",
      "purpose": "Rebuild mechanical projections and reset leased attempt ownership",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -53251,7 +53354,7 @@
       "crate-vis": 21,
       "enum": 5,
       "fn": 3,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 6
      }
     },
@@ -53286,7 +53389,8 @@
      "path": "src/secret_custody/reveal/file.rs",
      "purpose": "An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): \"Agent with a…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 4,
+      "re-export": 1
      }
     },
     {
@@ -53302,11 +53406,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "RepoFileRevealScope"
+     ],
      "path": "src/secret_custody/reveal/file/repo.rs",
      "purpose": "An agent's real-byte read of one marked repo file (FIX 7608 slice 2b-ii-A, GAP-B / FIX 8960; ARCH-0069…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 22,
+      "enum": 1
      }
     },
     {
@@ -53316,7 +53423,7 @@
      "path": "src/secret_custody/reveal/owner.rs",
      "purpose": "The owner's doors: the asks and receipts, the answer to one ask, and the owner's own read of a value",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -58219,6 +58326,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/backup_change.rs",
+     "purpose": "What a commit changed for the backup watermark (FIX 6730): a write that moves nothing an owner backs up (a…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/body_envelope/custody.rs",
      "purpose": "Body instances in typed custody (KS-2A, FIX 5683 part A; owner KEY STORE = A)",
      "surface": {
@@ -58242,7 +58359,17 @@
      "path": "src/store/body_envelope/mod.rs",
      "purpose": "Body files and their instances (FIX 5348; KS-2A, FIX 5683 part A)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/opaque_response.rs",
+     "purpose": "Row-held responses that do not decode (FIX 6227)",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -58272,7 +58399,7 @@
      "path": "src/store/body_envelope/response.rs",
      "purpose": "Row-held response bodies under body custody (KS-2B1, FIX 5683 part B1; owner KEY STORE = A)",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 26
      }
     },
     {
@@ -58530,7 +58657,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -59004,6 +59131,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/key_custody/publish/pending.rs",
+     "purpose": "A publication pass that stays pending before it seals anything (FIX 8825): its policy did not read, so no…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/key_custody/recipients.rs",
      "purpose": "Released escrow recipients a cold managed restore retired (LC FIX 5384/5385), kept in the lineage's exterior…",
      "surface": {
@@ -59128,7 +59265,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 34,
       "mod": 1,
       "re-export": 17
      }
@@ -66155,7 +66292,7 @@
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
       "crate-vis": 3,
-      "fn": 26
+      "fn": 27
      }
     },
     {
@@ -72366,7 +72503,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 194,
+     "files": 195,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72646,7 +72783,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 27,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72940,7 +73077,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 148,
+     "files": 153,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73353,7 +73490,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 82,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -73598,7 +73735,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 136,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73829,9 +73966,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 154,
+   "over_bar": 151,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4762,
+   "source_files": 4775,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80625,6 +80762,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/convert/chart/special.rs",
+     "purpose": "A chart's stock, surface and of-pie settlement (OF-510, FIX 3493 D9c): each stock plot's prices bound to its…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -80693,7 +80840,7 @@
      "path": "src/live/held/chart.rs",
      "purpose": "A chart frame's data as the live model holds it: its chart part, its plots in document order, and each…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -80704,6 +80851,16 @@
      "purpose": "A chart part's family settings as the live model holds them (OF-510, FIX 3493 D9b): each plot's settings…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/held/chart/special.rs",
+     "purpose": "A chart part's stock, surface and of-pie settings as the live model holds them (OF-510, FIX 3493 D9c): each…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -80951,10 +81108,10 @@
      "path": "src/live/pptx/chart.rs",
      "purpose": "A live chart's model (ARCH-0077, \"One deck, one document\": \"Ordered category and series ids over one…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 4,
       "fn": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
      }
     },
@@ -80992,6 +81149,24 @@
       "crate-vis": 8,
       "enum": 4,
       "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OfPieType",
+      "SplitType",
+      "StockOrder",
+      "StockRoles",
+      "SurfaceBand"
+     ],
+     "path": "src/live/pptx/chart/special.rs",
+     "purpose": "A live chart's stock, surface and of-pie settings (OF-510, FIX 3493 D9c), held on each plot's own…",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 3,
       "struct": 2
      }
     },
@@ -81102,7 +81277,7 @@
      "path": "src/live/reshape/families.rs",
      "purpose": "A rewritten chart's plots and 3D view (OF-510, FIX 3493 D9b): a kept plot with its series replaced and only…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -81143,6 +81318,16 @@
      "purpose": "A new series' format (OF-510, FIX 3493)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/special.rs",
+     "purpose": "A rewritten chart's stock, surface and of-pie plots (OF-510, FIX 3493 D9c): the compound settings a plot…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -81831,7 +82016,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 51,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81903,7 +82088,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 144,
+   "source_files": 148,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -92679,7 +92864,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/secret_reveal_routes.rs",
@@ -104401,6 +104586,7 @@
       "Of360QaAnswer",
       "Of360RateMetric",
       "Of360Speaker",
+      "OfPieType",
       "OffRecordBackendClass",
       "OffRecordClaimRequest",
       "OffRecordClosed",
@@ -105704,6 +105890,7 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "SplitType",
       "StageDefinition",
       "StageEvidenceClass",
       "StageLadderDefinition",
@@ -105730,6 +105917,8 @@
       "StepSequence",
       "StepTarget",
       "StepXfrm",
+      "StockOrder",
+      "StockRoles",
       "StopCause",
       "StoragePhase",
       "StoredShapeSeed",
@@ -105778,6 +105967,7 @@
       "SupportGrantStatus",
       "SupportGrantView",
       "SupportHolderClass",
+      "SurfaceBand",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -106188,8 +106378,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 987,
-      "struct": 3042
+      "enum": 990,
+      "struct": 3044
      }
     },
     {

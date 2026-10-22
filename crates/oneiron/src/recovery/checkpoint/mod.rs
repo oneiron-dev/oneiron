@@ -28,6 +28,7 @@ mod decisions;
 mod host_holds;
 mod image;
 mod landing;
+mod landing_lengths;
 mod pad_custody;
 mod payload;
 mod rebuild;
@@ -51,7 +52,7 @@ pub use admission::{
     RetiredBy, RetiredRecipient, SourceExpectation, VerifiedSource,
 };
 pub(crate) use admission::{Rejected, because};
-pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
+pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey, CheckpointSequenceBelowFloor};
 pub use commitment::CheckpointSigner;
 pub use credential_custody::CredentialRestoreNote;
 pub use custody_head::*;
@@ -290,6 +291,14 @@ pub struct RestoreReport {
     /// (KS-5, FIX 5686 part 2): erased since the image, or withheld by
     /// their world's sealed copies setting.
     pub pad_notes: Vec<PadRestoreNote>,
+    /// The checkpoint sequence the artifact's verified commitment signs
+    /// (OF-570 (e)): what a wake or migrate supervisor compares across
+    /// copies. `None` for an activation, which lands no checkpoint.
+    pub checkpoint_sequence: Option<u64>,
+    /// The row-held responses that did not decode where they were taken,
+    /// carried sealed and landed exactly as they rested (FIX 6227): a step
+    /// claim among them indexes nothing and is not embedded again.
+    pub opaque_responses: usize,
     /// The credential values its rows commit to that it did not land
     /// readable, by handle and generation, each with its remedy (KS-6 part
     /// 2, CALLS `KS-6 restore note form`); empty when every one landed.
@@ -617,6 +626,8 @@ impl Vault {
             training_note: vault.training_link_restore_notice(),
             home_table_notes: Vec::new(),
             pad_notes: erased_pads.iter().map(PadRestoreNote::erased).collect(),
+            checkpoint_sequence: None,
+            opaque_responses: 0,
             credential_notes: credential_custody::notes(&vault.store, credentials),
         })
     }
