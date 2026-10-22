@@ -3,13 +3,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{SeatCandidate, SeatTask, invalid};
 use crate::llm::decision::catalogue::SEAT_PICK;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion, HeldLadder,
-    Reversibility, cut_text, fit_state,
+    Reversibility, TypedDecision, cut_text, fit_state,
 };
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::retrieval_depth::RetrievalDeadline;
@@ -17,6 +18,21 @@ use crate::{EntityId, Result};
 
 /// The effort answer that keeps the chosen model's first rung.
 const FIRST_RUNG: &str = "default";
+
+/// The most options one Choice read takes (`AnswerContract::Choice`'s own
+/// bound): a larger catalog is picked in rounds of reads this size (FIX 9925).
+const PICK_ROUND: usize = 64;
+
+/// The pick's complete typed reads (FIX 9926): every model-pick decision in
+/// the order asked (one for 64 or fewer candidates; for more, each round's
+/// batch reads, the final one last), and the effort decision when that pick
+/// ran.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeatPickReadings {
+    pub model_decisions: Vec<TypedDecision>,
+    pub effort_decision: Option<TypedDecision>,
+}
 
 /// Generation beside a decided seat pick: the plain-language `why` the seat's receipt
 /// keeps, from the host's own model transport. The model and effort are already decided;
@@ -59,46 +75,68 @@ impl SeatDecisions {
     /// clock its caller already runs on (FIX 7507): both questions share it, so a birth
     /// bound by a parent's clock never starts a new one. A caller passes its own deadline
     /// cut to the seat budget it allows. An abstained pick fails the birth, as a judge's
-    /// error did; an abstained effort keeps the first rung.
+    /// error did; an abstained effort keeps the first rung. Every read is returned whole
+    /// (FIX 9926).
+    ///
+    /// 64 or fewer candidates are one read, as before. More are read in rounds of 64 under
+    /// the same clock, each batch's choice going on to the next round until one remains
+    /// (FIX 9925): no candidate is dropped and no clock is added; a batch that abstains
+    /// sends none on, and its read is kept.
     pub fn pick_before(
         &self,
         task: &SeatTask,
         candidates: &[SeatCandidate],
         deadline: &RetrievalDeadline,
-    ) -> Result<(usize, Option<ReasoningEffort>)> {
+    ) -> Result<(usize, Option<ReasoningEffort>, SeatPickReadings)> {
         let ladder = self.ladder.ladder();
-        let ask = |question: &DecisionQuestion, chosen: Option<&ModelId>| {
+        let ask = |read: &DecisionQuestion, asked: &[SeatCandidate], chosen: Option<&ModelId>| {
             ladder.run(
-                question,
+                read,
                 self.principal,
                 &[],
-                &bounded_state(task, candidates, chosen),
+                &bounded_state(task, asked, chosen),
                 self.dial,
                 &self.bands,
                 Reversibility::ReversibleRead,
                 deadline,
             )
         };
-        let model = SEAT_PICK.question(
-            &[b"model".as_slice()],
-            self.model_wording.clone(),
-            AnswerContract::Choice {
-                options: candidates
-                    .iter()
-                    .map(|candidate| candidate.model.to_string())
-                    .collect(),
-            },
-        )?;
-        let DecisionAnswer::Choice(label) = ask(&model, None)?.answer else {
-            return Err(invalid("seat pick abstained"));
+        let mut readings = SeatPickReadings::default();
+        let mut pool: Vec<usize> = (0..candidates.len()).collect();
+        let (index, finalists) = loop {
+            let mut winners = Vec::new();
+            for batch in pool.chunks(PICK_ROUND) {
+                let asked: Vec<SeatCandidate> =
+                    batch.iter().map(|&at| candidates[at].clone()).collect();
+                let model = SEAT_PICK.question(
+                    &[b"model".as_slice()],
+                    self.model_wording.clone(),
+                    AnswerContract::Choice {
+                        options: asked
+                            .iter()
+                            .map(|candidate| candidate.model.to_string())
+                            .collect(),
+                    },
+                )?;
+                let decision = ask(&model, &asked, None)?;
+                if let DecisionAnswer::Choice(label) = &decision.answer {
+                    let at = asked
+                        .iter()
+                        .position(|candidate| candidate.model.as_str() == label)
+                        .ok_or_else(|| invalid("seat pick selected ineligible model"))?;
+                    winners.push((batch[at], asked));
+                }
+                readings.model_decisions.push(decision);
+            }
+            match winners.len() {
+                0 => return Err(invalid("seat pick abstained")),
+                1 => break winners.remove(0),
+                _ => pool = winners.into_iter().map(|(winner, _)| winner).collect(),
+            }
         };
-        let index = candidates
-            .iter()
-            .position(|candidate| candidate.model.as_str() == label)
-            .ok_or_else(|| invalid("seat pick selected ineligible model"))?;
         let candidate = &candidates[index];
         if task.override_effort.is_some() || candidate.allowed_efforts.len() < 2 {
-            return Ok((index, None));
+            return Ok((index, None, readings));
         }
         let labels = candidate
             .allowed_efforts
@@ -114,14 +152,18 @@ impl SeatDecisions {
                     .collect(),
             },
         )?;
-        let effort = match ask(&effort, Some(&candidate.model))?.answer {
+        // The effort read sees the batch its model was chosen from: every candidate when
+        // they fit one read, as before.
+        let decision = ask(&effort, &finalists, Some(&candidate.model))?;
+        let effort = match &decision.answer {
             DecisionAnswer::Choice(label) => labels
                 .iter()
-                .position(|known| *known == label)
+                .position(|known| known == label)
                 .map(|at| candidate.allowed_efforts[at]),
             _ => None,
         };
-        Ok((index, effort))
+        readings.effort_decision = Some(decision);
+        Ok((index, effort, readings))
     }
 }
 
