@@ -7057,12 +7057,13 @@
       "DeckOutlineRefRequest",
       "DeckOutlineSettleRequest",
       "DeckOutlineView",
+      "DeckPresentation",
       "KeptOutlineOmissionReason"
      ],
      "path": "src/blob_artifact/deck_creation/mod.rs",
      "purpose": "Typed outline approval, design and emission doors over the native deck engine",
      "surface": {
-      "enum": 2,
+      "enum": 3,
       "mod": 2,
       "struct": 10
      }
@@ -28893,6 +28894,7 @@
      "kind": "src",
      "notable": [
       "ArtifactVersionRef",
+      "CitedClaimLifecycle",
       "CreatedEstimate",
       "CreatedSlide",
       "DeckCreateError",
@@ -28903,17 +28905,28 @@
       "DesignSpec",
       "DirectionOutcome",
       "DirectionSlide",
+      "EvidenceChange",
+      "EvidenceObservation",
       "KeptOutline",
       "OutlineFreshness"
      ],
      "path": "src/edit_roundtrip/deck_create.rs",
      "purpose": "Deck creation from an approved outline (ARCH-0077, \"Create: an approved argument, then a design\")",
      "surface": {
-      "const": 1,
-      "crate-vis": 10,
-      "enum": 4,
+      "crate-vis": 11,
+      "enum": 5,
       "fn": 7,
-      "struct": 9
+      "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/deck_create/evidence_pins.rs",
+     "purpose": "The evidence pins of an outline's JSON, as the keep and its freshness read them: each in document order, the…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -28923,7 +28936,7 @@
      "path": "src/edit_roundtrip/deck_create/store.rs",
      "purpose": "Transaction-bound outline and version inputs shared by the engine and public doors",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -29268,7 +29281,7 @@
      "purpose": "Typed slide review model and API seam",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 3,
       "re-export": 1,
@@ -29323,7 +29336,7 @@
      "path": "src/edit_roundtrip/slides_review/verify.rs",
      "purpose": "Verification of retained slide judgment rows",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -44419,7 +44432,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 43,
+      "crate-vis": 44,
       "enum": 3,
       "fn": 4,
       "re-export": 17,
@@ -44626,7 +44639,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -44639,8 +44652,18 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/document_store/deck.rs",
+     "purpose": "What a deck keep reads of the NOTE spans its outline cites, in the deck's own transaction: a span with or…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -45546,7 +45569,7 @@
      "purpose": "Office proposals (DEC-0006, \"A content proposal is a set of forks that share its id\"; ARCH-0035's embedded…",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 18,
       "enum": 4,
       "fn": 2,
       "struct": 9
@@ -45576,7 +45599,7 @@
      "path": "src/office_body/doors.rs",
      "purpose": "Vault doors for office body import, edits, forks and export",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 17
      }
     },
@@ -68929,13 +68952,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/typed_body/discard.rs",
+     "purpose": "Letting an open fork's unlanded work go (FIX 10016): its opener's or the vault owner's own act, or a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/typed_body/lift.rs",
      "purpose": "Typed bodies the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -76252,7 +76285,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76581,7 +76614,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -77148,7 +77181,7 @@
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap"
     },
     "typed_body": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -77248,7 +77281,7 @@
    },
    "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5063,
+   "source_files": 5066,
    "test_files": 902
   },
   "oneiron-android": {
@@ -108029,6 +108062,7 @@
       "CheckpointResumeView",
       "CheckpointStepView",
       "CheckpointView",
+      "CitedClaimLifecycle",
       "ClaimAgingProfiles",
       "ClaimAgingProfilesConfigureRequest",
       "ClaimAgingProfilesReceipt",
@@ -108608,6 +108642,7 @@
       "DeckPlannedContent",
       "DeckPlannedRelationship",
       "DeckPlannedSlide",
+      "DeckPresentation",
       "DeckPreview",
       "DeckPreviewRequest",
       "DeckPreviewSlide",
@@ -108845,8 +108880,10 @@
       "EventOutcomeBasis",
       "EventOutcomeClaimValue",
       "EvidenceBasis",
+      "EvidenceChange",
       "EvidenceFloors",
       "EvidenceKind",
+      "EvidenceObservation",
       "EvidenceRef",
       "EvidenceRow",
       "EvidenceVerdict",
@@ -111596,8 +111633,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1011,
-      "struct": 3105
+      "enum": 1013,
+      "struct": 3107
      }
     },
     {
