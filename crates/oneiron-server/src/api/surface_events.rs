@@ -608,6 +608,7 @@ pub(crate) async fn submit_core_surface_event(
             let served = crate::idempotency::ServedRows {
                 rows: identity.clone(),
                 admit: Some(identity),
+                sources: Vec::new(),
             };
             (
                 axum::Extension(served),

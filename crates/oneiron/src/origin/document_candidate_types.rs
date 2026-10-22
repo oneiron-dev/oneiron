@@ -121,6 +121,10 @@ pub struct CodePushCandidate {
     pub source_digest: [u8; 32],
     pub resolved: Option<ResolvedPushCandidate>,
     pub hold: Option<CodePushCandidateHold>,
+    /// A candidate received from a masked copy: its immutable projection
+    /// pins and typed causes (FIX 7608 2b-ii); none for every other push.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected: Option<super::RepoProjectedCandidatePins>,
 }
 
 /// A candidate as the owner reads it: a projection of its saved source,
