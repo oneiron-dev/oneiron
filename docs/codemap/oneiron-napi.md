@@ -17,7 +17,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/bridge.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | ActorScopedVault, VaultBridge | VaultBridge root and ActorScopedVault handle plus the facade() accessor |
 | `src/facade/client.rs` | src | m | 4 struct · 12 fn | NapiHostRootProfile, NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
 | `src/facade/client/embedded_engine.rs` | src | s | 2 struct · 5 fn | NapiEngineOptions, NativeEngine | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
-| `src/facade/client/generated/agent_verbs.rs` | src | generated | 1138 fn | — | — |
+| `src/facade/client/generated/agent_verbs.rs` | src | generated | 1139 fn | — | — |
 | `src/facade/convert.rs` | src | m | 20 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
 | `src/facade/dtos.rs` | src | L | 63 struct | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +55 | All napi(object) DTO structs for the actor-scoped surface |
 | `src/facade/input_error.rs` | src | s | 1 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
