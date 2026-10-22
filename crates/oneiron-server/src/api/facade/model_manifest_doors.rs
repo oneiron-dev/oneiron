@@ -10,7 +10,8 @@ use oneiron::llm::manifest::doors::{
 };
 use oneiron::llm::manifest::{ModelManifest, ModelRole, ModelSlot};
 use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, ExtractionEncoder, ExtractionWork, infer_encoder,
+    EncoderInput, EncoderMessage, EncoderRegister, ExtractionCaller, ExtractionEncoder,
+    ExtractionWork, infer_encoder_for,
 };
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
@@ -397,11 +398,15 @@ async fn invoke(
                         text,
                     }],
                     context: Vec::new(),
+                    following: Vec::new(),
+                    register: EncoderRegister::Live,
                     language: None,
                     speaker: None,
                 };
-                // The owner waits on this call: a live one.
-                let attempt = infer_encoder(&input, ExtractionWork::Live, encoder);
+                // The owner waits on this call: a live one, at the owner's
+                // own turn (FIX 9519).
+                let caller = ExtractionCaller::new("owner");
+                let attempt = infer_encoder_for(&input, ExtractionWork::Live, encoder, &caller);
                 let output = attempt.result.map_err(MemoryError::bad_request)?;
                 let provider = slot.config().provider.as_str().to_owned();
                 Ok::<_, MemoryError>((output, attempt.execution, provider))

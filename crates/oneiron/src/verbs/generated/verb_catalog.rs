@@ -10661,16 +10661,16 @@ impl AgentVerb {
                 "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."
             }
             Self::VaultTaggingStatus => {
-                "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."
+                "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt."
             }
             Self::VaultTaggingTags => {
-                "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."
+                "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt."
             }
             Self::VaultTaggingHistory => {
-                "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."
+                "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt."
             }
             Self::VaultTaggingMentions => {
-                "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."
+                "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt."
             }
             Self::VaultAffectClaimsConsolidate => {
                 "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."

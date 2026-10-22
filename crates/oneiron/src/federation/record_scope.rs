@@ -374,6 +374,15 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
                 ..prior.clone()
             } == *proposed
         }
+        // A confirmed name keeps the facet `settle_source_birth` gave it.
+        crate::registry::ENTITY_TYPE_PERSON
+        | crate::registry::ENTITY_TYPE_ORG
+        | crate::registry::ENTITY_TYPE_PLACE => {
+            Scope {
+                facets: proposed.facets.clone(),
+                ..prior.clone()
+            } == *proposed
+        }
         _ => false,
     }
 }
@@ -403,6 +412,55 @@ pub(crate) fn settle_epoch_birth(
     }
     let mut scope = birth;
     scope.worlds = singleton(ScopeId(world));
+    scope.facets = singleton(ScopeId(facet));
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *anchor.as_bytes(),
+            scope,
+        },
+    )?;
+    Ok(())
+}
+/// Settles a confirmed provisional entity's birth position in its birth
+/// transaction (FIX 10168): born under `facet`, the facet of the turn its
+/// name was read from (ARCH-0022), never its own substrate facet. Only the
+/// default stamp `stamp_put` just wrote for a PERSON, ORG or PLACE may be
+/// settled; its structural anchor and every other axis stay, a settled
+/// birth is never moved again, and a later content put keeps the settled
+/// facet (`settled_at_birth`).
+pub(crate) fn settle_source_birth(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    facet: EntityId,
+) -> Result<()> {
+    let named = matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_PERSON
+            | crate::registry::ENTITY_TYPE_ORG
+            | crate::registry::ENTITY_TYPE_PLACE
+    );
+    let anchor = crate::claim::substrate_facet_id(id)?;
+    let birth = default_stamp(kind, anchor);
+    let prior = SCOPE_RECORD
+        .get(store, txn, &id)?
+        .ok_or(Error::InvalidClaimBody("unstamped source birth"))?;
+    if !named
+        || prior.version != 2
+        || prior.kind != kind
+        || prior.birth_facet != *anchor.as_bytes()
+        || prior.scope != birth
+    {
+        return Err(Error::InvalidClaimBody("record scope restamp refused"));
+    }
+    let mut scope = birth;
     scope.facets = singleton(ScopeId(facet));
     bump_scope_revision(store, txn)?;
     SCOPE_RECORD.put(

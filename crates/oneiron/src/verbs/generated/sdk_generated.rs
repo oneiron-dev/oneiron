@@ -7654,18 +7654,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.affect.annotations.put" => {
             crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
         }
-        "vault.tagging.status" => {
-            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingStatusView>()
-        }
-        "vault.tagging.tags" => {
-            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTagsView>()
-        }
-        "vault.tagging.history" => {
-            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingHistoryView>()
-        }
-        "vault.tagging.mentions" => {
-            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingMentionsView>()
-        }
+        "vault.tagging.status" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::tagging::TaggingStatusView>,
+        >(),
+        "vault.tagging.tags" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::tagging::TaggingTagsView>,
+        >(),
+        "vault.tagging.history" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::tagging::TaggingHistoryView>,
+        >(),
+        "vault.tagging.mentions" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::tagging::TaggingMentionsView>,
+        >(),
         "vault.affect.claims.consolidate" => crate::code_run::vault_read::request_schema::<
             crate::memory::affect::AffectClaimConsolidation,
         >(),
@@ -25426,7 +25426,7 @@ pub fn vault_affect_annotations_put(
 pub fn vault_tagging_status(
     memory: &Memory<'_>,
     input: crate::tagging::TaggingTurnRequest,
-) -> MemoryResult<crate::tagging::TaggingStatusView> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::tagging::TaggingStatusView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.tagging.status",
@@ -25438,7 +25438,7 @@ pub fn vault_tagging_status(
 pub fn vault_tagging_tags(
     memory: &Memory<'_>,
     input: crate::tagging::TaggingTurnRequest,
-) -> MemoryResult<crate::tagging::TaggingTagsView> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::tagging::TaggingTagsView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.tagging.tags",
@@ -25450,7 +25450,7 @@ pub fn vault_tagging_tags(
 pub fn vault_tagging_history(
     memory: &Memory<'_>,
     input: crate::tagging::TaggingTurnRequest,
-) -> MemoryResult<crate::tagging::TaggingHistoryView> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::tagging::TaggingHistoryView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.tagging.history",
@@ -25462,7 +25462,7 @@ pub fn vault_tagging_history(
 pub fn vault_tagging_mentions(
     memory: &Memory<'_>,
     input: crate::tagging::TaggingMentionsRequest,
-) -> MemoryResult<crate::tagging::TaggingMentionsView> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::tagging::TaggingMentionsView>> {
     crate::memory::caps::check_limit_nonzero(input.limit)?;
     memory.tagging_mentions(&input)
 }
