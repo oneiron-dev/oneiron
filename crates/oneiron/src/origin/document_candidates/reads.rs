@@ -134,6 +134,7 @@ impl Vault {
                 new_commit: new_commit.clone(),
                 base_revision: resolved.base_revision,
                 candidate_digest: candidate_digest(attached)?,
+                projection: None,
             },
             resolved.new_tree.clone(),
         )))
