@@ -12,6 +12,7 @@ use oneiron::task_verb::verb_hook_boundary::typed_row;
 use oneiron::{ClaimListFilter, SafeDeleteReason};
 
 use super::boundary::{boundary_error, facade_error, ts_from_engine};
+use super::input_error::{caller_input_error, witness_input_error};
 use super::bridge::ActorScopedVault;
 use super::convert::{
     claim_view_from_engine, commit_outcome_from_engine, commit_receipt_from_engine,
@@ -36,7 +37,7 @@ impl ActorScopedVault {
     /// lands nothing at all — no message, turn, edge or text posting.
     #[napi]
     pub fn witness(&self, turn: NapiWitnessTurn) -> napi::Result<NapiWitnessReceipt> {
-        let engine_turn = witness_turn_to_engine(&turn).map_err(boundary_error)?;
+        let engine_turn = witness_turn_to_engine(&turn).map_err(witness_input_error)?;
         let memory = self.facade()?;
         let receipt = typed_row(&memory, "vault.witness", engine_turn, |turn| {
             memory.witness(&turn)
@@ -114,7 +115,7 @@ impl ActorScopedVault {
                 predicate,
             }),
             _ => {
-                return Err(boundary_error(
+                return Err(caller_input_error(
                     "forget selector needs shortRef, or subjectRef + predicate".to_owned(),
                 ));
             }
@@ -176,7 +177,7 @@ impl ActorScopedVault {
         reason: String,
     ) -> napi::Result<NapiDeleteReceipt> {
         let reason = SafeDeleteReason::parse(&reason).ok_or_else(|| {
-            boundary_error(format!(
+            caller_input_error(format!(
                 "unknown delete reason {reason:?}; use user_delete, user_hard_delete, gdpr_delete, or policy_delete"
             ))
         })?;

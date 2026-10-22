@@ -5,6 +5,7 @@ use oneiron::{EntityId, Memory, Vault, VaultConfig, parse_actor_key};
 use std::sync::Arc;
 
 use super::boundary::{boundary_error, facade_error};
+use super::input_error::caller_input_error;
 use crate::boundary::host_device_class;
 use crate::host_root::HostRootOpenOptions;
 
@@ -33,7 +34,7 @@ impl VaultBridge {
         crate::facade::before_vault_open();
         let mut config = VaultConfig::device();
         config.machine_device_class =
-            host_device_class(device_class.as_deref()).map_err(boundary_error)?;
+            host_device_class(device_class.as_deref()).map_err(caller_input_error)?;
         if let Some(dimensions) = dimensions {
             config.dimensions = dimensions as usize;
         }
@@ -62,7 +63,7 @@ impl VaultBridge {
         options: HostRootOpenOptions,
         device_class: Option<String>,
     ) -> napi::Result<Self> {
-        let request = options.before_open(&path).map_err(boundary_error)?;
+        let request = options.before_open(&path).map_err(caller_input_error)?;
         let mut opened = Self::open(path, dimensions, device_class)?;
         opened.wrong_host_root = request
             .profile(&opened.vault)
@@ -116,7 +117,7 @@ impl ActorScopedVault {
     pub fn in_off_record_session(&self, session_ref: String) -> napi::Result<ActorScopedVault> {
         let session_ref = session_ref.trim();
         if session_ref.is_empty() {
-            return Err(boundary_error(
+            return Err(caller_input_error(
                 "invalid off-record session reference".to_owned(),
             ));
         }

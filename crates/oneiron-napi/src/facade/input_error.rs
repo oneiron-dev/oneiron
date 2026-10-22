@@ -22,3 +22,18 @@ pub(super) fn witness_input_error(reason: String) -> napi::Error {
         retry_after: None,
     })
 }
+
+/// Any caller-input conversion's refusal (FIX 8116): the typed
+/// `BAD_REQUEST` the facade's other doors raise for bad input, its
+/// suggestion naming the field the reason leads with. Engine refusals keep
+/// their own code, and an output or invariant failure keeps the plain
+/// `boundary_error`: only the caller's own input is blamed here.
+pub(super) fn caller_input_error(reason: String) -> napi::Error {
+    let field = reason
+        .split_whitespace()
+        .next()
+        .unwrap_or("the input")
+        .trim_end_matches([':', ',', ';']);
+    let suggestion = format!("Correct {field} as the message says, then call again.");
+    facade_error(MemoryError::bad_request_with(reason, &[suggestion.as_str()]))
+}

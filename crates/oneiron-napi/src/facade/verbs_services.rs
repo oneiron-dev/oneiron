@@ -18,6 +18,7 @@ use super::boundary::{
     ts_to_engine,
 };
 use super::bridge::ActorScopedVault;
+use super::input_error::caller_input_error;
 use super::convert::{
     calendar_event_from_engine, calendar_range_to_engine, calendar_selectors_to_engine,
     commit_outcome_from_engine, commit_receipt_from_engine, entity_ref_receipt_from_engine,
@@ -55,7 +56,7 @@ impl ActorScopedVault {
         &self,
         input: NapiStructuralPutInput,
     ) -> napi::Result<NapiEntityRefReceipt> {
-        let engine_input = structural_put_to_engine(&input).map_err(boundary_error)?;
+        let engine_input = structural_put_to_engine(&input).map_err(caller_input_error)?;
         let memory = self.facade()?;
         let receipt = typed_row(&memory, "vault.structural.put", engine_input, |input| {
             memory.put_structural(&input)
@@ -75,8 +76,10 @@ impl ActorScopedVault {
             habit_ref: input.habit_ref,
             id: input.id,
             data: input.data.map(super::js_json::js_json),
-            occurred_at: ts_to_engine(input.occurred_at, "occurred_at").map_err(boundary_error)?,
-            learned_at: ts_opt_to_engine(input.learned_at, "learned_at").map_err(boundary_error)?,
+            occurred_at: ts_to_engine(input.occurred_at, "occurred_at")
+                .map_err(caller_input_error)?,
+            learned_at: ts_opt_to_engine(input.learned_at, "learned_at")
+                .map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
         let receipt = typed_row(&memory, "vault.habits.checkin", engine_input, |input| {
@@ -100,8 +103,10 @@ impl ActorScopedVault {
             subject_ref: input.subject_ref,
             predicate: input.predicate,
             value: super::js_json::js_json(input.value),
-            occurred_at: ts_to_engine(input.occurred_at, "occurred_at").map_err(boundary_error)?,
-            learned_at: ts_opt_to_engine(input.learned_at, "learned_at").map_err(boundary_error)?,
+            occurred_at: ts_to_engine(input.occurred_at, "occurred_at")
+                .map_err(caller_input_error)?,
+            learned_at: ts_opt_to_engine(input.learned_at, "learned_at")
+                .map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
         let receipt = typed_row(&memory, "vault.claims.admit", engine_input, |input| {
@@ -121,8 +126,10 @@ impl ActorScopedVault {
             id: input.id,
             name: input.name,
             media_type: input.media_type,
-            occurred_at: ts_to_engine(input.occurred_at, "occurred_at").map_err(boundary_error)?,
-            learned_at: ts_opt_to_engine(input.learned_at, "learned_at").map_err(boundary_error)?,
+            occurred_at: ts_to_engine(input.occurred_at, "occurred_at")
+                .map_err(caller_input_error)?,
+            learned_at: ts_opt_to_engine(input.learned_at, "learned_at")
+                .map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
         let receipt = typed_row(&memory, "vault.artifacts.put", engine_input, |input| {
@@ -143,13 +150,13 @@ impl ActorScopedVault {
         occurred_at: i64,
         learned_at: Option<i64>,
     ) -> napi::Result<NapiBlobVersionView> {
-        let bytes = decode_blob_base64(&bytes_base64).map_err(boundary_error)?;
+        let bytes = decode_blob_base64(&bytes_base64).map_err(caller_input_error)?;
         let request = AppendBlobVersionRequest {
             artifact_ref,
             content_base64: bytes_base64.clone(),
             run_ref,
-            occurred_at: ts_to_engine(occurred_at, "occurred_at").map_err(boundary_error)?,
-            learned_at: ts_opt_to_engine(learned_at, "learned_at").map_err(boundary_error)?,
+            occurred_at: ts_to_engine(occurred_at, "occurred_at").map_err(caller_input_error)?,
+            learned_at: ts_opt_to_engine(learned_at, "learned_at").map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
         let view = typed_row(&memory, "vault.artifacts.append", request, |input| {
@@ -179,8 +186,8 @@ impl ActorScopedVault {
     /// standard N-API query (8 KiB) and result (1,000) caps apply.
     #[napi]
     pub fn query_bm25(&self, query: String, limit: u32) -> napi::Result<NapiLexicalHits> {
-        crate::validate_query_len(&query).map_err(boundary_error)?;
-        let limit = crate::parse_search_limit(limit).map_err(boundary_error)?;
+        crate::validate_query_len(&query).map_err(caller_input_error)?;
+        let limit = crate::parse_search_limit(limit).map_err(caller_input_error)?;
         let memory = self.facade()?;
         let hits = typed_row(
             &memory,
@@ -220,7 +227,7 @@ impl ActorScopedVault {
                     .min_weight
                     .map(narrow_to_f32)
                     .transpose()
-                    .map_err(boundary_error)?,
+                    .map_err(caller_input_error)?,
                 limit: opts.limit as usize,
             },
         };
@@ -261,10 +268,10 @@ impl ActorScopedVault {
         format: Option<String>,
         deadline_ms: Option<f64>,
     ) -> napi::Result<NapiMemoryPack> {
-        crate::validate_query_len(&query).map_err(boundary_error)?;
-        let limit = crate::parse_search_limit(limit).map_err(boundary_error)?;
+        crate::validate_query_len(&query).map_err(caller_input_error)?;
+        let limit = crate::parse_search_limit(limit).map_err(caller_input_error)?;
         let effort = RecallEffort::parse(&effort).ok_or_else(|| {
-            boundary_error(format!(
+            caller_input_error(format!(
                 "unknown effort {effort:?}; use light, medium, high, xhigh, max, or call"
             ))
         })?;
@@ -304,7 +311,7 @@ impl ActorScopedVault {
             input: super::js_json::js_json(input.input),
             run_id: input.run_id,
             dedupe_key: input.dedupe_key,
-            now: ts_opt_to_engine(input.now, "now").map_err(boundary_error)?,
+            now: ts_opt_to_engine(input.now, "now").map_err(caller_input_error)?,
         };
         let job = self
             .facade()?
@@ -378,7 +385,7 @@ impl ActorScopedVault {
         // invalid offset/label/level is rejected at the boundary, before any
         // TASK or attempt row can be written.
         let schedule_context =
-            outbound_schedule_context_to_engine(&draft).map_err(boundary_error)?;
+            outbound_schedule_context_to_engine(&draft).map_err(caller_input_error)?;
         let request = OutboundScheduleRequest {
             verb: draft.verb,
             channel: draft.channel,
@@ -391,8 +398,8 @@ impl ActorScopedVault {
             trigger_ref: draft.trigger_ref,
             job_ref: draft.job_ref,
             occurred_at: ts_opt_to_engine(draft.occurred_at, "occurred_at")
-                .map_err(boundary_error)?,
-            mention: mention_to_engine(draft.mention).map_err(boundary_error)?,
+                .map_err(caller_input_error)?,
+            mention: mention_to_engine(draft.mention).map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
         let receipt = typed_row(&memory, "connector.outbound.schedule", request, |input| {
@@ -438,7 +445,7 @@ impl ActorScopedVault {
         let engine_request = CalendarSearchRequest {
             calendars: calendar_selectors_to_engine(request.calendars),
             range: calendar_range_to_engine(request.range)
-                .map_err(boundary_error)?
+                .map_err(caller_input_error)?
                 .map(|range| CalendarRangeDto {
                     start: range.start,
                     end: range.end,
@@ -469,8 +476,8 @@ impl ActorScopedVault {
         range: NapiCalendarRange,
     ) -> napi::Result<NapiCalendarFreebusy> {
         let engine_range = calendar_range_to_engine(Some(range))
-            .map_err(boundary_error)?
-            .ok_or_else(|| boundary_error("range is required".to_owned()))?;
+            .map_err(caller_input_error)?
+            .ok_or_else(|| caller_input_error("range is required".to_owned()))?;
         let busy = self
             .facade()?
             .calendar_freebusy(&calendar_selectors_to_engine(calendars), engine_range)
@@ -499,7 +506,7 @@ impl ActorScopedVault {
         input: NapiCalendarInviteInput,
     ) -> napi::Result<NapiOutboundIntentReceipt> {
         let method = CalendarInviteSurfaceMethod::parse(&input.method).ok_or_else(|| {
-            boundary_error(format!(
+            caller_input_error(format!(
                 "method must be one of REQUEST, CANCEL; got {:?}",
                 input.method
             ))
@@ -512,7 +519,7 @@ impl ActorScopedVault {
                 sequence: input.sequence,
                 ics_blob_ref: input.ics_blob_ref,
                 recipient: input.recipient,
-                mention: mention_to_engine(input.mention).map_err(boundary_error)?,
+                mention: mention_to_engine(input.mention).map_err(caller_input_error)?,
             })
             .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
@@ -536,7 +543,7 @@ impl ActorScopedVault {
     ) -> napi::Result<Option<String>> {
         let request = ReadBlobVersionRequest {
             artifact_ref,
-            version: ts_to_engine(version, "version").map_err(boundary_error)?,
+            version: ts_to_engine(version, "version").map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
         let content = typed_row(&memory, "vault.artifacts.read", request, |input| {
