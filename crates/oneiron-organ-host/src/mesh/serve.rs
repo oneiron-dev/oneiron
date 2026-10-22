@@ -78,9 +78,10 @@ impl OrganService {
     ) -> Result<(), MeshError> {
         let request: Request = decode(&stream.recv().await?)?;
         let reply = match request {
+            // What this host can start now, never an install it refuses.
             Request::Offers => Reply::Offers(
                 self.host
-                    .installed()
+                    .offered()
                     .into_iter()
                     .map(|(organ, verbs)| Offer { organ, verbs })
                     .collect(),
@@ -233,7 +234,8 @@ fn failure(err: HostError, asks: Vec<AskReceipt>) -> PeerFailure {
         | HostError::StartFailed { .. }
         | HostError::BudgetTimeout
         | HostError::OverBudget
-        | HostError::MediaTypeNotGranted(_) => FailureKind::Absent,
+        | HostError::MediaTypeNotGranted(_)
+        | HostError::KindNotGranted(_) => FailureKind::Absent,
         HostError::Organ(_) => FailureKind::Organ,
         HostError::DeadlineExceeded => FailureKind::Deadline,
         HostError::Revoked => FailureKind::Revoked,

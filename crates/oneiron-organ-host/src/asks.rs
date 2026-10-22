@@ -9,7 +9,8 @@
 //! its receipt line carries are `[limits]` rows, which ask whether
 //! everything is okay, and the call's booking grows to hold every answer
 //! (FIX 5284). Handlers run on the caller's own thread, inside the call's
-//! deadline; while one runs, that thread may not call an organ.
+//! deadline, which its waits for room move on (FIX 6196); while one runs,
+//! that thread may not call an organ.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
@@ -23,6 +24,7 @@ use oneiron_organ_protocol::{
 };
 
 use crate::budget::{CallRoom, Stop};
+use crate::clock::Clock;
 use crate::error::HostError;
 use crate::fetch;
 use crate::handlers::{Answered, AskHandlers, AskRequest, HandlerScope};
@@ -55,7 +57,6 @@ pub(crate) struct CallAsks<'a> {
     context: AskContext<'a>,
     call_verb: &'a str,
     grant: &'a str,
-    deadline: Instant,
     inline_max: usize,
     asked: u32,
     per_verb: HashMap<String, u32>,
@@ -77,7 +78,6 @@ impl<'a> CallAsks<'a> {
         context: AskContext<'a>,
         call_verb: &'a str,
         grant: &'a str,
-        deadline: Instant,
         inline_max: usize,
     ) -> Self {
         Self {
@@ -86,7 +86,6 @@ impl<'a> CallAsks<'a> {
             context,
             call_verb,
             grant,
-            deadline,
             inline_max,
             asked: 0,
             per_verb: HashMap::new(),
@@ -96,6 +95,12 @@ impl<'a> CallAsks<'a> {
             signing: Mutex::new(None),
             receipts: Vec::new(),
         }
+    }
+
+    /// The call's room: its answers, its outputs, the organ's own buffers,
+    /// and the clock of its waits for room.
+    pub(crate) fn room(&self) -> &'a CallRoom {
+        self.context.room
     }
 
     /// Answer bytes this call has lent the organ: they draw on the same
@@ -129,7 +134,8 @@ impl<'a> CallAsks<'a> {
     /// count and size is measured against its row, never refused.
     /// `watched` says whether a watchdog keeps the call's deadline; with
     /// none the handler is not run and the ask is refused, retryable.
-    pub(crate) fn take(&mut self, ask: Ask, watched: bool) -> AskStep {
+    /// `clock` is the call's deadline as its waits for room move it.
+    pub(crate) fn take(&mut self, ask: Ask, watched: bool, clock: Clock<'_>) -> AskStep {
         let started = Instant::now();
         self.lent_last = 0;
         let line = line(&ask);
@@ -155,7 +161,7 @@ impl<'a> CallAsks<'a> {
         }
         let encoded = rmp_serde::to_vec_named(&ask.value).map_or(0, |bytes| bytes.len() as u64);
         vault.measure_limit(EngineLimit::OrganAskValueBytes, encoded);
-        self.ask(ask, line, cap.is_some(), watched, started)
+        self.ask(ask, line, (cap.is_some(), watched), clock, started)
     }
 
     /// An ask past its counts: runs its handler, if the grant names it.
@@ -163,8 +169,8 @@ impl<'a> CallAsks<'a> {
         &mut self,
         ask: Ask,
         mut line: AskReceipt,
-        granted: bool,
-        watched: bool,
+        (granted, watched): (bool, bool),
+        clock: Clock<'_>,
         started: Instant,
     ) -> AskStep {
         let Some(handler) = granted.then(|| self.handlers.get(&ask.verb)).flatten() else {
@@ -199,7 +205,8 @@ impl<'a> CallAsks<'a> {
             organ: &self.spec.name,
             call_verb: self.call_verb,
             grant: self.grant,
-            deadline: self.deadline,
+            deadline: clock.deadline(),
+            clock,
             max_bytes: self.spec.max_ask_bytes.saturating_sub(self.lent),
             fetch: &self.spec.fetch,
             signing: &self.signing,

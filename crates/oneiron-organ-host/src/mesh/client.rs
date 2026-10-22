@@ -14,6 +14,7 @@ use super::{
     PeerInput, PeerOutcome, PeerResult, Reply, Request, decode, encode, exchange,
 };
 use crate::budget::Stop;
+use crate::clock::Clock;
 use crate::error::HostError;
 use crate::handlers::{Answered, AskHandlers, AskRequest, HandlerScope};
 use crate::outcome::{OrganOutcome, OrganOutput, OutputBytes};
@@ -300,14 +301,17 @@ fn run_handler(
     let signing = Mutex::new(None);
     // A fetch runs where the organ runs, under that install's allowlist.
     let fetch = FetchGrant::default();
+    // At most the wire's u32 milliseconds, as a local call's deadline. This
+    // node holds no room for the call, so no wait for room moves it.
+    let deadline = Instant::now() + Duration::from_millis(ask.deadline_ms.min(u64::from(u32::MAX)));
     let request = AskRequest {
         verb: &ask.verb,
         value: &ask.value,
         organ: &ask.organ,
         call_verb: &ask.call_verb,
         grant: &ask.grant,
-        // At most the wire's u32 milliseconds, as a local call's deadline.
-        deadline: Instant::now() + Duration::from_millis(ask.deadline_ms.min(u64::from(u32::MAX))),
+        deadline,
+        clock: Clock::fixed(deadline),
         max_bytes: ask.max_bytes,
         fetch: &fetch,
         signing: &signing,

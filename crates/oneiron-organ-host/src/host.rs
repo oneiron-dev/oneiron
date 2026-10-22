@@ -36,6 +36,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// A reply's outcome, its descriptors, the room its frame holds, and the
+/// call's deadline as its waits for room moved it.
+type Exchanged = (Outcome, Vec<OwnedFd>, Lease, Instant);
+
 #[derive(Debug)]
 enum Held {
     Inline(Vec<u8>),
@@ -177,13 +181,32 @@ impl OrganHost {
         self.slot(organ).ok().map(|slot| slot.status())
     }
 
-    /// Every installed organ and the verbs its grant names, by name: what
-    /// this machine offers the owner's other nodes.
+    /// Every installed organ and the verbs its grant names, by name,
+    /// whether or not this host can start it now.
     #[must_use]
     pub fn installed(&self) -> Vec<(String, Vec<String>)> {
-        let mut offered: Vec<(String, Vec<String>)> = lock(&self.slots)
+        let mut installed: Vec<(String, Vec<String>)> = lock(&self.slots)
             .iter()
             .map(|(name, slot)| (name.clone(), slot.spec.verbs.clone()))
+            .collect();
+        installed.sort();
+        installed
+    }
+
+    /// The installed organs this host can start now, and the verbs each
+    /// grant names, by name: what this machine offers the owner's other
+    /// nodes (FIX 7888). It reads the start's own decision, a warm process
+    /// or none that refuses one; nothing starts or is checked to say so.
+    #[must_use]
+    pub fn offered(&self) -> Vec<(String, Vec<String>)> {
+        let slots: Vec<(String, Arc<Slot>)> = lock(&self.slots)
+            .iter()
+            .map(|(name, slot)| (name.clone(), Arc::clone(slot)))
+            .collect();
+        let mut offered: Vec<(String, Vec<String>)> = slots
+            .into_iter()
+            .filter(|(_, slot)| slot.startable())
+            .map(|(name, slot)| (name, slot.spec.verbs.clone()))
             .collect();
         offered.sort();
         offered
@@ -195,7 +218,7 @@ impl OrganHost {
     /// # Errors
     /// The organ is not installed, unavailable, backing off, or fails to start.
     pub fn warm(&self, organ: &str) -> Result<Duration, HostError> {
-        let room = self.budget.room();
+        let room = self.budget.room(self.floor.clone());
         Ok(self
             .slot(organ)?
             .process(&self.config, &room, None)?
@@ -388,6 +411,13 @@ impl OrganHost {
         if !slot.spec.verbs.iter().any(|verb| verb == &call.verb) {
             return Err(unknown());
         }
+        // The install grant's kinds, as the owner granted them (FIX 7985):
+        // a typed body of another kind is never dispatched.
+        if let (Some(body), Some(kinds)) = (&call.body, &slot.spec.kinds)
+            && !kinds.iter().any(|kind| kind == &body.kind)
+        {
+            return Err(HostError::KindNotGranted(body.kind.clone()));
+        }
         if call.inputs.len() + lent.len() > MAX_FDS_PER_FRAME {
             return Err(HostError::TooManyInputs);
         }
@@ -405,7 +435,7 @@ impl OrganHost {
         for (of, input) in lent {
             inputs.push(self.lend(&slot.spec, input, of)?);
         }
-        let frames = self.budget.room();
+        let frames = self.budget.room(self.floor.clone());
         let process = if how.fresh() {
             let memory = how.process_memory(&slot.spec);
             slot.fresh_process(&self.config, &frames, Some(deadline), memory)?
@@ -416,6 +446,8 @@ impl OrganHost {
             slot: slot.as_ref(),
             process: Arc::clone(&process),
         });
+        // The process's kernel limits follow what its buffers are granted.
+        room.bind(Arc::clone(&process));
         let offered = process
             .hello
             .verbs
@@ -439,12 +471,13 @@ impl OrganHost {
             context,
             &call.verb,
             &call.grant,
-            deadline,
             inline_max,
         );
         let exchanged = self.exchange(&slot, &process, &call, &inputs, &mut asked, deadline);
         how.measured(&process);
-        let (reply, fds, frame) = exchanged?;
+        // The deadline as the exchange's waits for room moved it: the
+        // outputs count on from there (FIX 8020).
+        let (reply, fds, frame, moved) = exchanged?;
         asked.frame_received(frame.bytes());
         measure_frames(vault, &slot.spec, asked.frames());
         // The lines also reach `asks` when `asked` drops, on every path.
@@ -466,7 +499,7 @@ impl OrganHost {
             frame,
             queued,
             sent_at,
-            deadline,
+            deadline: moved,
             asks,
             budget: self.budget.memory_bytes(),
         };
@@ -490,7 +523,7 @@ impl OrganHost {
         inputs: &[Resolved],
         asked: &mut CallAsks<'_>,
         deadline: Instant,
-    ) -> Result<(Outcome, Vec<OwnedFd>, Lease), HostError> {
+    ) -> Result<Exchanged, HostError> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let (wire_inputs, fds) = wire_inputs(inputs);
         let wire = Call {
@@ -514,7 +547,7 @@ impl OrganHost {
             grace,
         };
         match process.call(wire, &fds, wait) {
-            Ok((reply, fds, frame)) => Ok((reply.outcome, fds, frame)),
+            Ok((reply, fds, frame, moved)) => Ok((reply.outcome, fds, frame, moved)),
             Err(CallFailure::Deadline { stopped }) => {
                 // An organ that took the cancel lives on, still tracked;
                 // only a killed one leaves its slot.

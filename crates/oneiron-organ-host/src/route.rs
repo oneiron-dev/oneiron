@@ -315,6 +315,7 @@ fn cannot_here(err: &HostError) -> bool {
             | HostError::BudgetTimeout
             | HostError::OverBudget
             | HostError::MediaTypeNotGranted(_)
+            | HostError::KindNotGranted(_)
             | HostError::Io(_)
     )
 }
