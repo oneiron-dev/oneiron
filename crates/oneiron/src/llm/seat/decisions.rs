@@ -89,11 +89,9 @@ impl SeatDecisions {
         deadline: &RetrievalDeadline,
     ) -> Result<(usize, Option<ReasoningEffort>, SeatPickReadings)> {
         let ladder = self.ladder.ladder();
-        let ask = |question: &DecisionQuestion,
-                   asked: &[SeatCandidate],
-                   chosen: Option<&ModelId>| {
+        let ask = |read: &DecisionQuestion, asked: &[SeatCandidate], chosen: Option<&ModelId>| {
             ladder.run(
-                question,
+                read,
                 self.principal,
                 &[],
                 &bounded_state(task, asked, chosen),

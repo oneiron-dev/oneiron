@@ -171,11 +171,7 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         owned_trial(self, &txn, owner, &input, locality)?;
         self.record_trial_progress_measurements_in_txn(
-            &mut txn,
-            principal,
-            input.question,
-            input.trial,
-            locality,
+            &mut txn, principal, input.question, input.trial, locality,
         )?;
         let stored = self
             .model_trial_in_txn(&txn, principal, input.question, input.trial, locality)?

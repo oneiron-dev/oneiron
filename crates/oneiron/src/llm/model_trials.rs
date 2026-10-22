@@ -323,11 +323,13 @@ impl Vault {
             |record, backend, case, _| execute(record, backend, case),
         )?;
         let mut txn = self.store.env.write_txn()?;
-        let measured = self
-            .record_trial_progress_measurements_in_txn(&mut txn, principal, question, id, locality)?
-            .ok_or(Error::ConcurrentWrite("model trial arms are still in flight"))?;
+        let measured = self.record_trial_progress_measurements_in_txn(
+            &mut txn, principal, question, id, locality,
+        )?;
         txn.commit()?;
-        Ok(Some(measured))
+        measured
+            .map(Some)
+            .ok_or(Error::ConcurrentWrite("model trial arms are still in flight"))
     }
 
     /// Commit the billed reads before asking eval authoring for its sufficiency

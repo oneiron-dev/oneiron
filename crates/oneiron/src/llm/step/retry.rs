@@ -17,9 +17,9 @@ use super::types::DREAMER_STEP_RETRY_BACKOFF_MS;
 /// The wait before retry `retry` (from zero): the schedule's own interval,
 /// then its last one for every retry past it.
 pub(super) fn retry_delay_ms(retry: usize) -> u64 {
+    let last = DREAMER_STEP_RETRY_BACKOFF_MS.len().saturating_sub(1);
     DREAMER_STEP_RETRY_BACKOFF_MS
-        .get(retry)
-        .or(DREAMER_STEP_RETRY_BACKOFF_MS.last())
+        .get(retry.min(last))
         .copied()
         .unwrap_or(0)
 }
