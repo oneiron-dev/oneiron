@@ -363,6 +363,16 @@ export_facade! {
     let output = client.vault_budgets_rsi_hold_resume(&input)?;
     crate::codec::lift_record("vault.budgets.rsi.hold.resume", &output)
 };
+"vault.runners.seats.quotas" => fn vault_runners_seats_quotas(&self, input: RunnerSeatQuotasRequest) -> RunnerSeatQuotasView = |client| {
+    let input: oneiron::dispatch_byoa::RunnerSeatQuotasRequest = crate::codec::lower_record("vault.runners.seats.quotas", input)?;
+    let output = client.vault_runners_seats_quotas(&input)?;
+    crate::codec::lift_record("vault.runners.seats.quotas", &output)
+};
+"vault.runners.seats.top_up" => fn vault_runners_seats_top_up(&self, input: RunnerSeatCreditTopUpRequest) -> RunnerSeatTopUpReceipt = |client| {
+    let input: oneiron::dispatch_byoa::RunnerSeatCreditTopUpRequest = crate::codec::lower_record("vault.runners.seats.top_up", input)?;
+    let output = client.vault_runners_seats_top_up(&input)?;
+    crate::codec::lift_record("vault.runners.seats.top_up", &output)
+};
 "vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
     let output = client.vault_fanout_resume(&input)?;
@@ -4351,7 +4361,7 @@ export_facade! {
     let output = client.vault_questions_read(&input)?;
     crate::codec::lift_record("vault.questions.read", &output)
 };
-"vault.questions.answers" => fn vault_questions_answers(&self, input: QuestionAnswersRequest) -> Vec<QuestionAnswer> = |client| {
+"vault.questions.answers" => fn vault_questions_answers(&self, input: QuestionAnswersRequest) -> QuestionAnswersReply = |client| {
     let input: oneiron::receipt::QuestionAnswersRequest = crate::codec::lower_record("vault.questions.answers", input)?;
     let output = client.vault_questions_answers(&input)?;
     crate::codec::lift_record("vault.questions.answers", &output)
@@ -5600,6 +5610,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryFindInput> = crate::codec::lower_record("self.browser.library.find", input)?;
     let output = client.self_browser_library_find(&input)?;
     crate::codec::lift_record("self.browser.library.find", &output)
+};
+"self.browser.library.draft" => fn self_browser_library_draft(&self, input: LiveRunRequestDraftInput) -> BrowserAnswerDraftOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryDraftInput> = crate::codec::lower_record("self.browser.library.draft", input)?;
+    let output = client.self_browser_library_draft(&input)?;
+    crate::codec::lift_record("self.browser.library.draft", &output)
 };
 "self.browser.library.propose" => fn self_browser_library_propose(&self, input: LiveRunRequestProposeInput) -> BrowserAnswerProposeOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryProposeInput> = crate::codec::lower_record("self.browser.library.propose", input)?;

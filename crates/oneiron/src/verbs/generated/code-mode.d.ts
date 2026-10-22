@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1190 code-mode rows (1150 host rows, 40 run rows), 4032 declarations.
-// Replies: 1070 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1193 code-mode rows (1153 host rows, 40 run rows), 4056 declarations.
+// Replies: 1073 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -115,7 +115,7 @@ declare namespace Sdk {
   type AgentHealthMove = "note" | "steer" | "budget" | "reassign" | "ask_coach" | "hold";
   type AgentHealthOutcome = "open" | "confirmed" | "dismissed" | "unresolved";
   type HealthBriefPin = { task: EntityId; rev: number; digest: string; observed_at: number };
-  type AgentHealthPadRead = { state: "read"; read?: EntityId | null; pads: number } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" } | { state: "refused"; code: string };
+  type AgentHealthPadRead = { state: "read"; read?: EntityId | null; pads: number; pad_ids: EntityId[] } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" } | { state: "refused"; code: string };
   type AgentHealthCoachRoute = "skill_edit" | "prompt_inject" | "neither";
   type AgentHealthSkillTarget = { skill: string; version: string };
   type AgentHealthCoachDraft = { route: AgentHealthCoachRoute; diagnosis: string; proposal: string; target?: AgentHealthSkillTarget | null };
@@ -131,7 +131,7 @@ declare namespace Sdk {
   type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable";
   type ConcernMoveLink = { kind: "note"; room: string; turn?: string | null; messages: string[] } | { kind: "steer"; task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState; run_differs_from_card_attempt: boolean };
   type ConcernMoveReceipt = { actor: EntityId; actor_class: string; at: number; key: string; payload: string; observed?: ConcernMoveBasis | null; current: ConcernMoveBasis; evidence_changed: boolean; task?: EntityId | null; subject: EntityId; attempt?: EntityId | null; link: ConcernMoveLink };
-  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null; moves_taken: ConcernMoveReceipt[] };
+  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; witnessed_attempts: EntityId[]; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null; moves_taken: ConcernMoveReceipt[] };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
   type RunTreeFailure = { reason: string };
@@ -432,6 +432,16 @@ declare namespace Sdk {
   type RsiLineView = { work_line: RsiWorkLineView; shares: RsiShareView[]; exposure_line: RsiExposureLineView; suspended: boolean };
   type RsiLineRequest = Record<string, never>;
   type RsiTopUp = { line: "tokens"; units: number } | { line: "exploration"; units: number } | { line: "share"; share: string; units: number };
+  type SeatAuth = "vendor_login" | "api_key";
+  type RunnerSeat = { runner: string; auth: SeatAuth; egress_profile_ref: string; credential_handles?: string[] };
+  type RunnerSeatQuotasRequest = { seats: RunnerSeat[] };
+  type SpentKind = "window" | "credit";
+  type SeatSpent = { kind?: SpentKind | null; retry_after?: number | null; resets_at: number[] };
+  type RunnerSeatQuota = { seat: number; runner: string; spent?: SeatSpent | null; observed_at?: number | null; back_at?: number | null; available: boolean; last_capture?: string | null; topped_up_at?: number | null };
+  type RunnerSeatQuotasView = { quotas: RunnerSeatQuota[] };
+  type RunnerSeatCreditTopUpRequest = { seat: RunnerSeat; expected_spent_attempt: string };
+  type RunnerSeatTopUpEffect = "cleared" | "already_clear" | "observation_changed" | "not_credit";
+  type RunnerSeatTopUpReceipt = { effect: RunnerSeatTopUpEffect; quota: RunnerSeatQuota };
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type DetailsOnDevice = { details_on_device: boolean };
@@ -2495,7 +2505,8 @@ declare namespace Sdk {
   type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: number | null };
   type TaskTypeTreeReadReply = { project_ref?: EntityId | null; in_force_skill_ref?: EntityId | null; tree?: TaskTypeTreeView | null };
   type PlannedSpawnRead = { spawn_ref: EntityId };
-  type SpawnPhase = "planned" | "launched" | "refused";
+  type SpawnPhase = "planned" | "launched" | "refused" | "erased";
+  type SpawnErasure = "asker_erased" | "target_erased";
   type CoordinationPatternView = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type SkillRevisionView = { skill_ref: EntityId; version: string };
   type ProviderPinView = { rung: DecisionRung; model: string; version: string };
@@ -2513,10 +2524,10 @@ declare namespace Sdk {
   type DoorsLearningEvidenceView = { receipt_ref: string; at: number; anchor_kind: string; weight: number };
   type LearningObservation = { cell: DoorsLearningCellView; mean: number; own: boolean; own_runs: number; prior_origin: string; prior_weight_runs: number; borrowed_from?: BorrowedCellView | null; untested: boolean; window_half_life_secs: number; estimator_version: number; evidence: DoorsLearningEvidenceView[] };
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
-  type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
+  type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; erasure?: SpawnErasure | null; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
   type SpawnAskKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnIntentRequest = { intent_key: string; prompt: string; requested_type?: TypeStamp | null; need: string; care?: string | null; notes?: string | null; model?: SpawnAskKnob<string> | null; width?: SpawnAskKnob<number> | null; pattern?: SpawnAskKnob<string> | null; budget_cap_units?: SpawnAskKnob<number> | null };
-  type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?: TypeStamp | null; refusal?: string | null; root_attempt?: EntityId | null; member_attempts: EntityId[]; team_ref?: string | null; agent_def_ref?: EntityId | null; plan?: PlanObservation | null };
+  type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?: TypeStamp | null; refusal?: string | null; root_attempt?: EntityId | null; member_attempts: EntityId[]; team_ref?: string | null; agent_def_ref?: EntityId | null; plan?: PlanObservation | null; erasure?: SpawnErasure | null };
   type CancelForceRequest = { task_ref: EntityId; reason?: string | null };
   type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned" | "cancelled";
   type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null };
@@ -2913,7 +2924,6 @@ declare namespace Sdk {
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
   type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased";
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
-  type SpentKind = "window" | "credit";
   type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "ServerError" | "Timeout" | "StreamCut";
   type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied";
   type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
@@ -3067,7 +3077,7 @@ declare namespace Sdk {
   type OmittedNeighbor = { id: string; reason: SourceConflict };
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number; omitted?: OmittedNeighbor[] };
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
-  type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[] };
+  type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] };
   type GraphAdmitRequest = { question: DecisionQuestion; unit: EntityId; decision: TypedDecision };
   type DecisionDial = { first: DecisionRung; ceiling: DecisionRung; band: DecisionBand };
   type QuestionActivation = "one_off" | "standing";
@@ -3079,17 +3089,20 @@ declare namespace Sdk {
   type DecisionQuestionInput = { text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
   type QuestionCreateRequest = { definition: QuestionDefinitionInput };
-  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number };
+  type QuestionAskerClass = "human" | "agent" | "system";
+  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null };
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinitionInput };
   type QuestionPauseRequest = { id: EntityId; paused: boolean };
   type QuestionPaused = { id: EntityId; paused: boolean };
   type QuestionBackfillRequest = { id: EntityId; expected_version: number; at?: number | null };
   type ScheduledBackfill = { question: string; version: number; due_at: number };
   type QuestionReadRequest = { id: EntityId; version?: number | null };
-  type QuestionAnswersRequest = { id: EntityId };
+  type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
   type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" };
-  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding };
+  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
+  type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
+  type QuestionAnswersReply = QuestionAnswer[] | QuestionAnswersPage;
   type QuestionRefreshRequest = { id: EntityId };
   type QuestionOutcomesRequest = { id: EntityId };
   type QuestionOutcomes = { labels: OutcomeLabel[]; calibration: CalibrationPair[] };
@@ -3150,7 +3163,12 @@ declare namespace Sdk {
   type SwitchStage = "start" | "attach" | "cookies" | "navigate";
   type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string };
   type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; duration_ms: number };
+  type OperandGap = "no_custody" | "refused" | "unknown_kind" | "unbound";
+  type TypeOperand = { operand: "literal"; text: string } | { operand: "secret"; kind: SecretKind; handle: string } | { operand: "withheld"; kind?: SecretKind | null; cause: OperandGap };
+  type TextReference = { id: string; text: string };
+  type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null };
+  type ReplayAction = { action: "open"; url: string } | { action: "click"; locator: string } | { action: "type"; locator: string; operand: TypeOperand; clear?: boolean } | { action: "select"; locator: string; option: string } | { action: "fill"; locator: string; field: FieldSpec };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; tab?: string | null; result_tab?: string | null; duration_ms: number };
   type SecretParam = { name: string; kind: SecretKind };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
@@ -3181,8 +3199,6 @@ declare namespace Sdk {
   type CropInput = { image: string; x: number; y: number; width: number; height: number };
   type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null };
   type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; secret?: string | null; clear?: boolean; option?: string | null };
-  type TextReference = { id: string; text: string };
-  type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null };
   type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text?: string | null; secret?: string | null; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" }) | { step: "fill"; ref: string; field: FieldSpec };
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
@@ -3942,7 +3958,15 @@ declare namespace Sdk {
   type LibraryFindInput = { site?: string | null; subgoal?: string | null; type_ref?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type BrowserLibraryFindOutput = BrowserAnswer<LibraryFindOutput>;
+  type DraftInput = { subgoal: string; postcondition?: ExpectInput[]; after_seq?: number | null; through_seq?: number | null; past_press?: boolean };
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
+  type SlotField = "text" | "option";
+  type SlotCandidate = { step: number; seq: number; field: SlotField; literal: string; suggested_param: string };
+  type DraftGapKind = { why: "pre_press"; effect_class: string } | { why: "unknown_press" } | { why: "no_action" } | { why: "secret_withheld"; kind?: SecretKind | null; cause: OperandGap } | { why: "failed"; cause: BatchStopCause } | { why: "no_effect" } | { why: "missing_opening" } | { why: "empty_span" } | { why: "no_live_origin" } | { why: "foreign_origin"; origin?: string | null } | { why: "tab_change" } | { why: "missing_context" } | { why: "check_unknown_ref"; check: number } | { why: "check_secret_withheld"; check: number; cause: OperandGap } | { why: "no_postcondition" } | { why: "no_subgoal" };
+  type DraftGap = { seq?: number | null; verb?: string | null; gap: DraftGapKind };
+  type PressedThrough = { seq: number; effect_class: string };
+  type DraftOutput = { site?: string | null; origin?: string | null; after_seq: number; through_seq: number; proposal: ProposeInput; slot_candidates?: SlotCandidate[]; gaps?: DraftGap[]; pressed_through?: PressedThrough[]; complete: boolean };
+  type BrowserLibraryDraftOutput = BrowserAnswer<DraftOutput>;
   type WorkflowCheck = "solved" | "replay" | "secret_replay" | "held_out" | "fresh_guest" | "supersedes";
   type SupersedeRefusal = "malformed" | "not_on_site" | "same_record" | "not_filer";
   type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string; detail: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal } | { cause: "secret_replay"; slots: string[] };
@@ -4019,7 +4043,7 @@ declare namespace Sdk {
   type SpawnAskField = "need" | "care" | "notes" | "model" | "width" | "pattern";
   type SpawnUnappliedReason = "planner_unbound" | "agent_lease_unbound";
   type SpawnUnapplied = { field: SpawnAskField; reason: SpawnUnappliedReason };
-  type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null; unapplied?: SpawnUnapplied[] } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string; unapplied?: SpawnUnapplied[] };
+  type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null; unapplied?: SpawnUnapplied[] } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string; unapplied?: SpawnUnapplied[] } | { state: "target_erased"; kind: AgentSpawnKind };
   type WorkflowBoundDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId };
   type LeaderAdviceInput = { top?: number | null };
   type LeaderPatternInput = { skill: string };
@@ -4264,6 +4288,8 @@ declare namespace self {
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.BrowserHandoverOutput | StoredResult>;
     library: {
+      /** Drafts a proposal from this session's receipts and stops on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press. */
+      draft(input: Sdk.DraftInput): Promise<Sdk.BrowserLibraryDraftOutput | StoredResult>;
       /** The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
       /** Offers a solved run's program, fill steps too, to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
@@ -6166,7 +6192,8 @@ declare const vault: Sdk.VaultHost & {
     route_tradeoff(input: Sdk.ProjectTradeoffRouteRequest): Promise<Sdk.TaskAskReceipt | StoredResult>;
   };
   questions: {
-    answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.QuestionAnswer[] | StoredResult>;
+    /** Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each. */
+    answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.QuestionAnswersReply | StoredResult>;
     backfill(input: Sdk.QuestionBackfillRequest): Promise<Sdk.ScheduledBackfill | StoredResult>;
     create(input: Sdk.QuestionCreateRequest): Promise<Sdk.QuestionRecord | StoredResult>;
     edit(input: Sdk.QuestionEditRequest): Promise<Sdk.QuestionRecord | StoredResult>;
@@ -6488,6 +6515,14 @@ declare const vault: Sdk.VaultHost & {
     requests: {
       /** The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands. */
       cancel(input: Sdk.RootRequestCancelRequest): Promise<Sdk.OwnerWorkReceipt | StoredResult>;
+    };
+  };
+  runners: {
+    seats: {
+      /** The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from. */
+      quotas(input: Sdk.RunnerSeatQuotasRequest): Promise<Sdk.RunnerSeatQuotasView | StoredResult>;
+      /** The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so. */
+      top_up(input: Sdk.RunnerSeatCreditTopUpRequest): Promise<Sdk.RunnerSeatTopUpReceipt | StoredResult>;
     };
   };
   runs: {

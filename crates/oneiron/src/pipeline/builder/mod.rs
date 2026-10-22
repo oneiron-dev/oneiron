@@ -52,6 +52,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) apply_contiguity: bool,
     /// Internal memory allocation mask, not a caller authority predicate.
     pub(super) memory_category: bool,
+    /// A home's paged residence search (FIX 8865): see `residence_page`.
+    pub(super) residence_page: bool,
     pub(super) candidate_filter: Option<&'a super::CandidateFilter<'a>>,
     pub(super) type_filter: Option<Vec<u8>>,
     pub(super) criticality: Option<bool>,
@@ -155,6 +157,7 @@ impl<'a> PipelineBuilder<'a> {
             apply_gravity: false,
             apply_contiguity: false,
             memory_category: false,
+            residence_page: false,
             candidate_filter: None,
             type_filter: None,
             criticality: None,

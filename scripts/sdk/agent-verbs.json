@@ -1203,6 +1203,36 @@
       "openapi": true
     },
     {
+      "name": "vault.runners.seats.quotas",
+      "description": "The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from.",
+      "input": "crate::dispatch_byoa::RunnerSeatQuotasRequest",
+      "output": "crate::dispatch_byoa::RunnerSeatQuotasView",
+      "call": "memory.vault().runner_seat_quotas_as_owner(&memory.embedded_owner(\"vault.runners.seats.quotas\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runners.seats.top_up",
+      "description": "The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so.",
+      "input": "crate::dispatch_byoa::RunnerSeatCreditTopUpRequest",
+      "output": "crate::dispatch_byoa::RunnerSeatTopUpReceipt",
+      "call": "memory.vault().top_up_runner_seat_as_owner(&memory.embedded_owner(\"vault.runners.seats.top_up\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.fanout.resume",
       "description": "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.",
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
@@ -13629,8 +13659,9 @@
     },
     {
       "name": "vault.questions.answers",
+      "description": "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each.",
       "input": "crate::receipt::QuestionAnswersRequest",
-      "output": "Vec<crate::receipt::QuestionAnswer>",
+      "output": "crate::receipt::QuestionAnswersReply",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -14117,6 +14148,23 @@
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>",
         "description": "The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.browser.library.draft",
+      "description": "Drafts a proposal from this session's receipts and stops on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press.",
+      "input": "crate::task_verb::sdk::BrowserLibraryDraftInput",
+      "output": "crate::task_verb::sdk::BrowserLibraryDraftOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.library_draft(input)?)",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryDraftInput>",
+        "description": "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press.",
         "host_door_caller": true,
         "openapi": true
       }

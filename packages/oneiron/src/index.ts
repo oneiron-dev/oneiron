@@ -543,6 +543,14 @@ export class Oneiron {
         }),
       }),
     },
+    runners: {
+      seats: {
+        /** The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from. */
+        quotas: (input: Facade.RunnerSeatQuotasRequest): Facade.RunnerSeatQuotasView => this.#call(() => this.#client.vaultRunnersSeatsQuotas(input) as Facade.RunnerSeatQuotasView),
+        /** The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so. */
+        top_up: (input: Facade.RunnerSeatCreditTopUpRequest): Facade.RunnerSeatTopUpReceipt => this.#call(() => this.#client.vaultRunnersSeatsTopUp(input) as Facade.RunnerSeatTopUpReceipt),
+      },
+    },
     /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
     commit_message: (input: Facade.CommitMessageRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultCommitMessage(input) as Facade.WitnessReceipt),
     /** Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation. */
@@ -2515,7 +2523,8 @@ export class Oneiron {
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
       backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
-      answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
+      /** Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each. */
+      answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswersReply => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswersReply),
       /** Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it. */
       refresh: (input: Facade.QuestionRefreshRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsRefresh(input) as Facade.QuestionAnswer[]),
       /** Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label. */
@@ -3082,6 +3091,8 @@ export class Oneiron {
       library: {
         /** The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
         find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
+        /** Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press. */
+        draft: (input: Facade.LiveRunRequest<Facade.DraftInput>): Facade.BrowserLibraryDraftOutput => this.#call(() => this.#client.selfBrowserLibraryDraft(input) as Facade.BrowserLibraryDraftOutput),
         /** Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
         propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
         /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */

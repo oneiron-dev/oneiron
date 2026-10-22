@@ -77,6 +77,8 @@ pub enum AgentVerb {
     VaultBudgetsRsiTopUp,
     VaultBudgetsRsiHold,
     VaultBudgetsRsiHoldResume,
+    VaultRunnersSeatsQuotas,
+    VaultRunnersSeatsTopUp,
     VaultFanoutResume,
     VaultFanoutResumeAs,
     VaultFanoutAck,
@@ -1146,6 +1148,7 @@ pub enum AgentVerb {
     SelfBrowserZoom,
     SelfBrowserBatch,
     SelfBrowserLibraryFind,
+    SelfBrowserLibraryDraft,
     SelfBrowserLibraryPropose,
     SelfBrowserLibraryRetire,
     SelfBrowserLibraryRetired,
@@ -1241,6 +1244,8 @@ impl AgentVerb {
         Self::VaultBudgetsRsiTopUp,
         Self::VaultBudgetsRsiHold,
         Self::VaultBudgetsRsiHoldResume,
+        Self::VaultRunnersSeatsQuotas,
+        Self::VaultRunnersSeatsTopUp,
         Self::VaultFanoutResume,
         Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
@@ -2310,6 +2315,7 @@ impl AgentVerb {
         Self::SelfBrowserZoom,
         Self::SelfBrowserBatch,
         Self::SelfBrowserLibraryFind,
+        Self::SelfBrowserLibraryDraft,
         Self::SelfBrowserLibraryPropose,
         Self::SelfBrowserLibraryRetire,
         Self::SelfBrowserLibraryRetired,
@@ -2408,6 +2414,8 @@ impl AgentVerb {
             Self::VaultBudgetsRsiTopUp => "vault.budgets.rsi.top_up",
             Self::VaultBudgetsRsiHold => "vault.budgets.rsi.hold",
             Self::VaultBudgetsRsiHoldResume => "vault.budgets.rsi.hold.resume",
+            Self::VaultRunnersSeatsQuotas => "vault.runners.seats.quotas",
+            Self::VaultRunnersSeatsTopUp => "vault.runners.seats.top_up",
             Self::VaultFanoutResume => "vault.fanout.resume",
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
@@ -3505,6 +3513,7 @@ impl AgentVerb {
             Self::SelfBrowserZoom => "self.browser.zoom",
             Self::SelfBrowserBatch => "self.browser.batch",
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
+            Self::SelfBrowserLibraryDraft => "self.browser.library.draft",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
             Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
             Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
@@ -3602,6 +3611,8 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultRunnersSeatsQuotas
+                | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -4649,6 +4660,7 @@ impl AgentVerb {
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryDraft
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -4705,6 +4717,7 @@ impl AgentVerb {
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryDraft
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -4792,6 +4805,8 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultRunnersSeatsQuotas
+                | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -5839,6 +5854,7 @@ impl AgentVerb {
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryDraft
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -5952,7 +5968,6 @@ impl AgentVerb {
                 | Self::VaultRoomsUpkeepPending
                 | Self::SelfSkillsCallables
                 | Self::VaultVoicesLineage
-                | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
@@ -6125,6 +6140,8 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultRunnersSeatsQuotas
+                | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -7114,6 +7131,7 @@ impl AgentVerb {
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryDraft
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -7177,6 +7195,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -7944,6 +7963,8 @@ impl AgentVerb {
             Self::VaultBudgetsRsiTopUp => &["spec"],
             Self::VaultBudgetsRsiHold => &["spec"],
             Self::VaultBudgetsRsiHoldResume => &["spec"],
+            Self::VaultRunnersSeatsQuotas => &["spec"],
+            Self::VaultRunnersSeatsTopUp => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -9013,6 +9034,7 @@ impl AgentVerb {
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryDraft => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
@@ -9109,6 +9131,8 @@ impl AgentVerb {
             Self::VaultBudgetsRsiTopUp => &["spec"],
             Self::VaultBudgetsRsiHold => &["spec"],
             Self::VaultBudgetsRsiHoldResume => &["spec"],
+            Self::VaultRunnersSeatsQuotas => &["spec"],
+            Self::VaultRunnersSeatsTopUp => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -10178,6 +10202,7 @@ impl AgentVerb {
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryDraft => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
@@ -10414,6 +10439,12 @@ impl AgentVerb {
             }
             Self::VaultBudgetsRsiHoldResume => {
                 "The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."
+            }
+            Self::VaultRunnersSeatsQuotas => {
+                "The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."
+            }
+            Self::VaultRunnersSeatsTopUp => {
+                "The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."
             }
             Self::VaultFanoutResume => {
                 "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
@@ -12742,7 +12773,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "",
             Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
-            Self::VaultQuestionsAnswers => "",
+            Self::VaultQuestionsAnswers => {
+                "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."
+            }
             Self::VaultQuestionsRefresh => {
                 "Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it."
             }
@@ -13527,6 +13560,9 @@ impl AgentVerb {
             }
             Self::SelfBrowserLibraryFind => {
                 "The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."
+            }
+            Self::SelfBrowserLibraryDraft => {
+                "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."
             }
             Self::SelfBrowserLibraryPropose => {
                 "Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."

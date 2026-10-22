@@ -1,3 +1,7 @@
+//! Blind campaign judge inputs and taste decisions through the shared decision ladder.
+//! Entry type: `CampaignTasteDecisions`.
+//! Owns these definitions, re-exported by `crate::autoreason_campaign`.
+
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};

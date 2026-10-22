@@ -411,6 +411,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.runners.seats.quotas",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dispatch_byoa::RunnerSeatQuotasRequest,
+                >(),
+            ),
+            (
+                "vault.runners.seats.top_up",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dispatch_byoa::RunnerSeatCreditTopUpRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.resume",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutResumeRequest,
@@ -6289,6 +6301,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.browser.library.draft",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryDraftInput,
+                    >,
+                >(),
+            ),
+            (
                 "self.browser.library.propose",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<
@@ -6603,6 +6623,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.rsi.top_up",
     "vault.budgets.rsi.hold",
     "vault.budgets.rsi.hold.resume",
+    "vault.runners.seats.quotas",
+    "vault.runners.seats.top_up",
     "vault.commit_message",
     "vault.begin_message_stream",
     "vault.append_to_stream",
@@ -7320,6 +7342,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.browser.zoom",
     "self.browser.batch",
     "self.browser.library.find",
+    "self.browser.library.draft",
     "self.browser.library.propose",
     "self.browser.library.retire",
     "self.browser.library.retired",
@@ -7471,6 +7494,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.budgets.rsi.hold.resume" => {
             crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
         }
+        "vault.runners.seats.quotas" => crate::code_run::vault_read::request_schema::<
+            crate::dispatch_byoa::RunnerSeatQuotasView,
+        >(),
+        "vault.runners.seats.top_up" => crate::code_run::vault_read::request_schema::<
+            crate::dispatch_byoa::RunnerSeatTopUpReceipt,
+        >(),
         "vault.commit_message" => {
             crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
         }
@@ -9648,6 +9677,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.browser.library.find" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserLibraryFindOutput,
         >(),
+        "self.browser.library.draft" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryDraftOutput,
+        >(),
         "self.browser.library.propose" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserLibraryProposeOutput,
         >(),
@@ -10300,6 +10332,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.budgets.rsi.hold.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runners.seats.quotas" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runners.seats.top_up" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17589,6 +17635,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.browser.library.draft" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.browser.library.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17985,6 +18038,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.budgets.rsi.hold.resume" => {
             let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
+        }
+        "vault.runners.seats.quotas" => {
+            let _input: crate::dispatch_byoa::RunnerSeatQuotasRequest = decode(value.clone())?;
+        }
+        "vault.runners.seats.top_up" => {
+            let _input: crate::dispatch_byoa::RunnerSeatCreditTopUpRequest = decode(value.clone())?;
         }
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
@@ -21547,6 +21606,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 crate::task_verb::sdk::BrowserLibraryFindInput,
             > = decode(value.clone())?;
         }
+        "self.browser.library.draft" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryDraftInput,
+            > = decode(value.clone())?;
+        }
         "self.browser.library.propose" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::task_verb::sdk::BrowserLibraryProposeInput,
@@ -21667,6 +21731,9 @@ pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryRe
         }
         "self.browser.library.find" => {
             let _input: crate::task_verb::sdk::BrowserLibraryFindInput = decode(value.clone())?;
+        }
+        "self.browser.library.draft" => {
+            let _input: crate::task_verb::sdk::BrowserLibraryDraftInput = decode(value.clone())?;
         }
         "self.browser.library.propose" => {
             let _input: crate::task_verb::sdk::BrowserLibraryProposeInput = decode(value.clone())?;
@@ -21856,6 +21923,8 @@ pub fn invoke(
         "vault.budgets.rsi.hold.resume" => {
             encode(vault_budgets_rsi_hold_resume(memory, decode(value)?)?)
         }
+        "vault.runners.seats.quotas" => encode(vault_runners_seats_quotas(memory, decode(value)?)?),
+        "vault.runners.seats.top_up" => encode(vault_runners_seats_top_up(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
@@ -23794,6 +23863,7 @@ pub fn invoke(
         "self.browser.zoom" => encode(self_browser_zoom(memory, decode(value)?)?),
         "self.browser.batch" => encode(self_browser_batch(memory, decode(value)?)?),
         "self.browser.library.find" => encode(self_browser_library_find(memory, decode(value)?)?),
+        "self.browser.library.draft" => encode(self_browser_library_draft(memory, decode(value)?)?),
         "self.browser.library.propose" => {
             encode(self_browser_library_propose(memory, decode(value)?)?)
         }
@@ -23946,6 +24016,12 @@ pub fn invoke_browser(
             let input: crate::task_verb::sdk::BrowserLibraryFindInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = oneiron_browser::BrowserAnswer::of(driver.library_find(input)?);
+            serde_json::to_value(output)
+        }
+        "self.browser.library.draft" => {
+            let input: crate::task_verb::sdk::BrowserLibraryDraftInput =
+                serde_json::from_value(value).map_err(invalid)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.library_draft(input)?);
             serde_json::to_value(output)
         }
         "self.browser.library.propose" => {
@@ -24754,6 +24830,24 @@ pub fn vault_budgets_rsi_hold_resume(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_runners_seats_quotas(
+    memory: &Memory<'_>,
+    input: crate::dispatch_byoa::RunnerSeatQuotasRequest,
+) -> MemoryResult<crate::dispatch_byoa::RunnerSeatQuotasView> {
+    memory.vault().runner_seat_quotas_as_owner(
+        &memory.embedded_owner("vault.runners.seats.quotas")?,
+        &input,
+    )
+}
+pub fn vault_runners_seats_top_up(
+    memory: &Memory<'_>,
+    input: crate::dispatch_byoa::RunnerSeatCreditTopUpRequest,
+) -> MemoryResult<crate::dispatch_byoa::RunnerSeatTopUpReceipt> {
+    memory.vault().top_up_runner_seat_as_owner(
+        &memory.embedded_owner("vault.runners.seats.top_up")?,
+        &input,
+    )
 }
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
@@ -31235,7 +31329,7 @@ pub fn vault_questions_read(
 pub fn vault_questions_answers(
     memory: &Memory<'_>,
     input: crate::receipt::QuestionAnswersRequest,
-) -> MemoryResult<Vec<crate::receipt::QuestionAnswer>> {
+) -> MemoryResult<crate::receipt::QuestionAnswersReply> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
 }
 pub fn vault_questions_refresh(
@@ -33531,6 +33625,12 @@ pub fn self_browser_library_find(
     input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>,
 ) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryFindOutput> {
     crate::task_verb::sdk::host_only(memory, "self.browser.library.find", &input)
+}
+pub fn self_browser_library_draft(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryDraftInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryDraftOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.draft", &input)
 }
 pub fn self_browser_library_propose(
     memory: &Memory<'_>,

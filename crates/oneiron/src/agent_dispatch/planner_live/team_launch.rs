@@ -16,7 +16,10 @@
 //! A launched intent answers the identities it kept and never runs the
 //! runner or a dispatch again. Until a host binds a runner, a team plan
 //! refuses and stays planned. Only the asker's proof, the plan and the
-//! dispatcher's own admission bound a launch, never where an agent runs.
+//! dispatcher's own admission bound a launch, never where an agent runs. A
+//! launch on a target an erase took records that typed outcome on the
+//! intent and launches nothing (Engine 10-22): no pattern loads or runs,
+//! and the group writer queues nothing.
 
 mod child;
 
@@ -126,8 +129,9 @@ impl AgentDispatcher<'_> {
     /// Launches the planned intent `launch` names. A team's start is frozen
     /// once: its pattern skill, read by `load`, runs on `runner` with
     /// `prompt` as the work, and a frozen start never runs again. The group
-    /// then queues in one writer. A launched or refused intent answers what
-    /// it kept.
+    /// then queues in one writer. A launched, refused or erased intent
+    /// answers what it kept, and one whose target an erase took records
+    /// that before any pattern loads.
     fn launch_planned_group(
         &self,
         launch: GroupLaunch<'_>,
@@ -136,11 +140,16 @@ impl AgentDispatcher<'_> {
         load: impl FnOnce(&PatternSkillRef) -> Result<LoadedSkillPack>,
         at: u64,
     ) -> Result<PlannedIntentView> {
-        let stand = self.planned_launch_in_txn(&self.vault.store.env.read_txn()?, launch.name)?;
-        let planned = match stand {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let planned = match self.planned_launch_in_txn(&rtxn, launch.name)? {
             LaunchStand::Planned(planned) => planned,
             LaunchStand::Settled(view) => return Ok(*view),
         };
+        let erased = self.target_erased_in_txn(&rtxn, &planned);
+        drop(rtxn);
+        if erased {
+            return self.record_target_erased(launch.name, at);
+        }
         let pattern = planned.plan()?.plan.pattern_skill.clone();
         let planned = match pattern {
             // A team's start is frozen once; a frozen one never runs again.
@@ -204,9 +213,10 @@ impl AgentDispatcher<'_> {
     /// Launches a planned intent as one group. The leader's context resolves
     /// first against its real parent, as a public dispatch's does, and each
     /// member's declared context must narrow the leader's. One writer then
-    /// proves the asker and re-reads the intent, rechecks the pattern
-    /// revision, queues the leader and each member, binds the team, marks
-    /// the intent launched and commits once.
+    /// proves the asker and re-reads the intent, rechecks its target and the
+    /// pattern revision, queues the leader and each member, binds the team,
+    /// marks the intent launched and commits once. A target an erase took
+    /// since commits that outcome instead, with nothing queued.
     fn materialize_planned(
         &self,
         launch: GroupLaunch<'_>,
@@ -254,6 +264,9 @@ impl AgentDispatcher<'_> {
             LaunchStand::Planned(_) => return Err(invalid(START_MOVED)),
             LaunchStand::Settled(view) => return Ok(*view),
         };
+        if self.target_erased_in_txn(&wtxn, &current) {
+            return self.record_target_erased_in_txn(wtxn, *current, at);
+        }
         if let Some(pattern) = &plan.plan.pattern_skill
             && let Err(error) =
                 self.vault

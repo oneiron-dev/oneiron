@@ -140,6 +140,7 @@ pub(super) mod role_picks;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;
+mod runner_seat_doors;
 mod saved_query_doors;
 mod seal_doors;
 mod search_home_doors;

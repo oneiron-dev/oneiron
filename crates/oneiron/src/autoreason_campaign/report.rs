@@ -1,3 +1,7 @@
+//! Campaign arm and split reports built from the OF-360 evaluator.
+//! Entry function: `build_campaign_split_report`.
+//! Owns these definitions, re-exported by `crate::autoreason_campaign`.
+
 use serde::{Deserialize, Serialize};
 
 use crate::extraction_eval::{

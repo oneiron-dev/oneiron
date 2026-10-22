@@ -62,7 +62,8 @@ impl Vault {
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] when `machine` is not one of the owner's
-    /// machines here, when it is this install and this install is the elected
+    /// linked machines whose proof stands here, mine or not (FIX 8888), when
+    /// it is this install and this install is the elected
     /// home (which always syncs every window it may read), when an open names
     /// a window key that does not parse, or when `id` names another
     /// directive; an owner who no longer stands; an issuer that is not this
@@ -85,9 +86,11 @@ impl Vault {
         let home_here = super::local_is_elected_home(self)?;
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        // A linked machine whose answered proof stands here, mine or not:
+        // a work, school or rented machine takes directives too (FIX 8888).
         if self
             .authority_view_readonly_in_txn(&txn)?
-            .trusted_machine(machine)
+            .machine_proof_key(machine)
             .is_none()
         {
             return Err(refused(
@@ -221,16 +224,23 @@ fn directive_states_in_txn(
 }
 
 /// The accepted directives naming this install's machine that it has no
-/// result for yet, oldest first. None on a machine the owner has not marked
-/// "yours" under this install's key: its results would not stand.
+/// result for yet, oldest first. None on a machine whose proof does not
+/// stand here on this install's key, mine or not (FIX 8888): its results
+/// would not stand.
 pub(crate) fn pending_residence_directives(vault: &Vault) -> Result<Vec<ResidenceDirectiveState>> {
     let Some(local) = vault.local_machine()? else {
         return Ok(Vec::new());
     };
-    if !local.mine {
+    let txn = vault.store.env.read_txn()?;
+    let key = crate::identity::read_machine_signing_key_in_txn(vault, &txn)?
+        .map(|key| key.verifying_key().to_bytes());
+    let stands = local.mine || {
+        let fold = vault.authority_view_readonly_in_txn(&txn)?;
+        key.is_some_and(|key| fold.machine_proof_key(local.id) == Some(key))
+    };
+    if !stands {
         return Ok(Vec::new());
     }
-    let txn = vault.store.env.read_txn()?;
     let mut states = directive_states_in_txn(vault, &txn)?;
     states.retain(|state| state.directive.machine == local.id && state.result.is_none());
     Ok(states)
