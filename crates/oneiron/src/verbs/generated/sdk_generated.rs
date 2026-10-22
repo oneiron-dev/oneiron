@@ -411,6 +411,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.runners.seats.quotas",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dispatch_byoa::RunnerSeatQuotasRequest,
+                >(),
+            ),
+            (
+                "vault.runners.seats.top_up",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dispatch_byoa::RunnerSeatCreditTopUpRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.resume",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutResumeRequest,
@@ -6591,6 +6603,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.rsi.top_up",
     "vault.budgets.rsi.hold",
     "vault.budgets.rsi.hold.resume",
+    "vault.runners.seats.quotas",
+    "vault.runners.seats.top_up",
     "vault.commit_message",
     "vault.begin_message_stream",
     "vault.append_to_stream",
@@ -7456,6 +7470,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.budgets.rsi.hold.resume" => {
             crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
         }
+        "vault.runners.seats.quotas" => crate::code_run::vault_read::request_schema::<
+            crate::dispatch_byoa::RunnerSeatQuotasView,
+        >(),
+        "vault.runners.seats.top_up" => crate::code_run::vault_read::request_schema::<
+            crate::dispatch_byoa::RunnerSeatTopUpReceipt,
+        >(),
         "vault.commit_message" => {
             crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
         }
@@ -10276,6 +10296,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.budgets.rsi.hold.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runners.seats.quotas" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runners.seats.top_up" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17941,6 +17975,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.budgets.rsi.hold.resume" => {
             let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
         }
+        "vault.runners.seats.quotas" => {
+            let _input: crate::dispatch_byoa::RunnerSeatQuotasRequest = decode(value.clone())?;
+        }
+        "vault.runners.seats.top_up" => {
+            let _input: crate::dispatch_byoa::RunnerSeatCreditTopUpRequest = decode(value.clone())?;
+        }
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
         }
@@ -21802,6 +21842,8 @@ pub fn invoke(
         "vault.budgets.rsi.hold.resume" => {
             encode(vault_budgets_rsi_hold_resume(memory, decode(value)?)?)
         }
+        "vault.runners.seats.quotas" => encode(vault_runners_seats_quotas(memory, decode(value)?)?),
+        "vault.runners.seats.top_up" => encode(vault_runners_seats_top_up(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
@@ -24691,6 +24733,24 @@ pub fn vault_budgets_rsi_hold_resume(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_runners_seats_quotas(
+    memory: &Memory<'_>,
+    input: crate::dispatch_byoa::RunnerSeatQuotasRequest,
+) -> MemoryResult<crate::dispatch_byoa::RunnerSeatQuotasView> {
+    memory.vault().runner_seat_quotas_as_owner(
+        &memory.embedded_owner("vault.runners.seats.quotas")?,
+        &input,
+    )
+}
+pub fn vault_runners_seats_top_up(
+    memory: &Memory<'_>,
+    input: crate::dispatch_byoa::RunnerSeatCreditTopUpRequest,
+) -> MemoryResult<crate::dispatch_byoa::RunnerSeatTopUpReceipt> {
+    memory.vault().top_up_runner_seat_as_owner(
+        &memory.embedded_owner("vault.runners.seats.top_up")?,
+        &input,
+    )
 }
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
@@ -31150,7 +31210,7 @@ pub fn vault_questions_read(
 pub fn vault_questions_answers(
     memory: &Memory<'_>,
     input: crate::receipt::QuestionAnswersRequest,
-) -> MemoryResult<Vec<crate::receipt::QuestionAnswer>> {
+) -> MemoryResult<crate::receipt::QuestionAnswersReply> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
 }
 pub fn vault_questions_refresh(

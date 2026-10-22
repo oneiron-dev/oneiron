@@ -470,7 +470,9 @@ pub(super) fn fold_entry_state(
         return EntryFold::Ready(state);
     }
     if let AuthorityOp::FederationLifecycle(action) = &entry.op {
-        if let Err(reason) = apply_federation_lifecycle(&mut state, action, context) {
+        if let Err(reason) =
+            apply_federation_lifecycle(&mut state, action, context, (hash, &signer))
+        {
             return EntryFold::Invalid(AuthorityFoldIssue::FederationLifecycleRejected {
                 entry: hash,
                 reason,
@@ -503,8 +505,9 @@ pub(super) fn fold_entry_state(
 }
 
 /// Whether a residence result's signer is the install key of the machine it
-/// names under a chain that says "yours" in the result's parent state, past
-/// that key's last sequence there.
+/// names under a chain that says "yours" in the result's parent state, or
+/// under that machine's live, answered roster revision there, mine or not
+/// (FIX 8888), past that key's last sequence there.
 fn residence_result_stands(
     state: &FoldState,
     entry: &AuthorityLogEntry,
@@ -518,6 +521,11 @@ fn residence_result_stands(
         machine
             .chains()
             .any(|(_, chain)| chain.says_yours() && chain.profile.machine_key == *signer)
+            || machine.roster.as_ref().is_some_and(|roster| {
+                roster.is_live()
+                    && roster.profile.role.answered()
+                    && roster.profile.machine_key == *signer
+            })
     }) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }

@@ -77,6 +77,8 @@ pub enum AgentVerb {
     VaultBudgetsRsiTopUp,
     VaultBudgetsRsiHold,
     VaultBudgetsRsiHoldResume,
+    VaultRunnersSeatsQuotas,
+    VaultRunnersSeatsTopUp,
     VaultFanoutResume,
     VaultFanoutResumeAs,
     VaultFanoutAck,
@@ -1238,6 +1240,8 @@ impl AgentVerb {
         Self::VaultBudgetsRsiTopUp,
         Self::VaultBudgetsRsiHold,
         Self::VaultBudgetsRsiHoldResume,
+        Self::VaultRunnersSeatsQuotas,
+        Self::VaultRunnersSeatsTopUp,
         Self::VaultFanoutResume,
         Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
@@ -2402,6 +2406,8 @@ impl AgentVerb {
             Self::VaultBudgetsRsiTopUp => "vault.budgets.rsi.top_up",
             Self::VaultBudgetsRsiHold => "vault.budgets.rsi.hold",
             Self::VaultBudgetsRsiHoldResume => "vault.budgets.rsi.hold.resume",
+            Self::VaultRunnersSeatsQuotas => "vault.runners.seats.quotas",
+            Self::VaultRunnersSeatsTopUp => "vault.runners.seats.top_up",
             Self::VaultFanoutResume => "vault.fanout.resume",
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
@@ -3593,6 +3599,8 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultRunnersSeatsQuotas
+                | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -4780,6 +4788,8 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultRunnersSeatsQuotas
+                | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -5937,7 +5947,6 @@ impl AgentVerb {
                 | Self::VaultRoomsUpkeepPending
                 | Self::SelfSkillsCallables
                 | Self::VaultVoicesLineage
-                | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
@@ -6110,6 +6119,8 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultRunnersSeatsQuotas
+                | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -7159,6 +7170,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -7923,6 +7935,8 @@ impl AgentVerb {
             Self::VaultBudgetsRsiTopUp => &["spec"],
             Self::VaultBudgetsRsiHold => &["spec"],
             Self::VaultBudgetsRsiHoldResume => &["spec"],
+            Self::VaultRunnersSeatsQuotas => &["spec"],
+            Self::VaultRunnersSeatsTopUp => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -9085,6 +9099,8 @@ impl AgentVerb {
             Self::VaultBudgetsRsiTopUp => &["spec"],
             Self::VaultBudgetsRsiHold => &["spec"],
             Self::VaultBudgetsRsiHoldResume => &["spec"],
+            Self::VaultRunnersSeatsQuotas => &["spec"],
+            Self::VaultRunnersSeatsTopUp => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -10387,6 +10403,12 @@ impl AgentVerb {
             }
             Self::VaultBudgetsRsiHoldResume => {
                 "The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."
+            }
+            Self::VaultRunnersSeatsQuotas => {
+                "The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."
+            }
+            Self::VaultRunnersSeatsTopUp => {
+                "The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."
             }
             Self::VaultFanoutResume => {
                 "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
@@ -12706,7 +12728,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "",
             Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
-            Self::VaultQuestionsAnswers => "",
+            Self::VaultQuestionsAnswers => {
+                "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."
+            }
             Self::VaultQuestionsRefresh => {
                 "Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it."
             }
@@ -12742,7 +12766,7 @@ impl AgentVerb {
                 "One catalogued connector tool's approved input schema, as the caller's own grant resolves it."
             }
             Self::ConnectorCallStatus => {
-                "Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."
+                "Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."
             }
             Self::SelfDesktopOpen => {
                 "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor."

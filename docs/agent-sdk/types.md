@@ -986,6 +986,8 @@ class Oneiron:
         def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
         @property
         def budgets(self) -> "Oneiron._VaultBudgetsVerbs": ...
+        @property
+        def runners(self) -> "Oneiron._VaultRunnersVerbs": ...
         def commit_message(self, spec: Facade.CommitMessageRequest) -> Facade.WitnessReceipt:
             """Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."""
         def begin_message_stream(self, spec: Facade.BeginMessageStreamRequest) -> Facade.MessageStreamHandle:
@@ -1395,6 +1397,14 @@ class Oneiron:
             """The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."""
         def resume(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
             """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
+    class _VaultRunnersVerbs:
+        @property
+        def seats(self) -> "Oneiron._VaultRunnersSeatsVerbs": ...
+    class _VaultRunnersSeatsVerbs:
+        def quotas(self, spec: Facade.RunnerSeatQuotasRequest) -> Facade.RunnerSeatQuotasView:
+            """The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."""
+        def top_up(self, spec: Facade.RunnerSeatCreditTopUpRequest) -> Facade.RunnerSeatTopUpReceipt:
+            """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
@@ -3375,7 +3385,8 @@ class Oneiron:
         def pause(self, spec: Facade.QuestionPauseRequest) -> Facade.QuestionPaused: ...
         def backfill(self, spec: Facade.QuestionBackfillRequest) -> Facade.ScheduledBackfill: ...
         def read(self, spec: Facade.QuestionReadRequest) -> Facade.QuestionRecord | None: ...
-        def answers(self, spec: Facade.QuestionAnswersRequest) -> list[Facade.QuestionAnswer]: ...
+        def answers(self, spec: Facade.QuestionAnswersRequest) -> Facade.QuestionAnswersReply:
+            """Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."""
         def refresh(self, spec: Facade.QuestionRefreshRequest) -> list[Facade.QuestionAnswer]:
             """Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it."""
         @property
@@ -4135,7 +4146,7 @@ class Oneiron:
         def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
         def call_status(self, spec: Facade.ConnectorCallStatusRequest) -> Facade.ConnectorCallStatus:
-            """Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."""
+            """Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."""
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs": ...
         def answer(self, spec: Facade.ConnectorAnswerRequest) -> Facade.ConnectorCallReply:

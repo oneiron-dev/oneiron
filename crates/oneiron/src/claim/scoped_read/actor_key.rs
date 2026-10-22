@@ -623,6 +623,28 @@ impl ScopedReadActorKey {
         Some(key)
     }
 
+    /// [`Self::from_verified_slip`] for a credential that names a row it
+    /// writes about rather than reads (FIX 8155): the same holder, class,
+    /// proof and record, world, facet and channel bounds, its verb axis
+    /// taken to admit `read`, so a write-only credential is judged by its
+    /// bounds and never by a read verb it was not asked to hold.
+    #[must_use]
+    pub(crate) fn from_verified_slip_as_target(
+        proof: &crate::authority::VerifiedSlip,
+    ) -> Option<Self> {
+        let mut key = Self::from_parts(
+            proof.claims().holder_ref.clone(),
+            proof.claims().actor_class.clone(),
+        )?;
+        let mut authority = Self::read_authority(proof.scope());
+        if let crate::federation::ScopeAxis::Some(verbs) = &mut authority.verbs {
+            verbs.insert("read".to_owned());
+        }
+        key.authority = Some(authority);
+        key.proof = Some(proof.clone());
+        Some(key)
+    }
+
     /// A slip's Scope as every read door checks a proof of it: one that
     /// names `core:read` names `read` too.
     pub(crate) fn read_authority(scope: &crate::federation::Scope) -> crate::federation::Scope {

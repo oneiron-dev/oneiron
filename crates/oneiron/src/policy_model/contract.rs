@@ -135,9 +135,10 @@ pub(super) const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_
 ///
 /// Not the old per-answer cap that used to survive into the receipt — that one
 /// was arbitrary, silently dropped valid citations from a talkative model, and
-/// was removed deliberately. This is a parse-time FLOOD STOP, an order of
-/// magnitude above [`POLICY_PATTERN_RULES_MAX`], which is itself well above
-/// any legitimate policy's row count. Nothing honest comes near it.
+/// was removed deliberately. This is a parse-time FLOOD STOP, kept at the
+/// value it had when it was set an order of magnitude above the owner
+/// plane's former rule ceiling (removed by FIX 8774; this bound did not move
+/// with it). Nothing honest comes near it.
 ///
 /// It exists because the array is MODEL-SUPPLIED and arrives before anything
 /// has validated it: with no bound, one answer makes the reader materialize an
@@ -145,10 +146,7 @@ pub(super) const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_
 /// ever gets to throw it away. An answer that far out is not verbose, it is
 /// unusable — so this REFUSES rather than truncating, and an unreadable answer
 /// is a case every plane already knows how to handle.
-///
-/// [`POLICY_PATTERN_RULES_MAX`]: super::pattern::POLICY_PATTERN_RULES_MAX
-pub(super) const POLICY_MODEL_RULE_IDS_PARSE_MAX: usize =
-    super::pattern::POLICY_PATTERN_RULES_MAX * 10;
+pub(super) const POLICY_MODEL_RULE_IDS_PARSE_MAX: usize = 2_560;
 
 /// The rationale contract's audit fields, asked apart from its verdict once
 /// the verdict is decided.

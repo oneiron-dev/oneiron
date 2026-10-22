@@ -97,9 +97,28 @@ impl RepoBlobMarks {
         places
     }
 
+    /// Each mark's id, sorted and once each: what a masked Git copy
+    /// records it was made under (FIX 7608 slice 2b-i), never a key.
+    ///
+    /// # Errors
+    /// A failed id derivation.
+    pub(crate) fn ids(&self) -> Result<Vec<EntityId>> {
+        sorted_ids(&self.marks)
+    }
+
     fn push(&mut self, mark: RepoSecretMark) {
         self.marks.push(mark);
     }
+}
+
+fn sorted_ids(marks: &[RepoSecretMark]) -> Result<Vec<EntityId>> {
+    let mut ids = marks
+        .iter()
+        .map(RepoSecretMark::id)
+        .collect::<Result<Vec<_>>>()?;
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
 }
 
 /// `span` at `member` in `places`, once.
@@ -148,6 +167,15 @@ impl RepoMarkFacts {
     /// No mark anywhere: every reader serves as before.
     pub(crate) fn is_empty(&self) -> bool {
         self.marks.is_empty()
+    }
+
+    /// Every readable mark's id, sorted and once each (FIX 7608 slice
+    /// 2b-i): the set a masked Git copy is made under.
+    ///
+    /// # Errors
+    /// A failed id derivation.
+    pub(crate) fn ids(&self) -> Result<Vec<EntityId>> {
+        sorted_ids(&self.marks)
     }
 
     /// The marks of the blob whose whole bytes hash to `raw_blake3`, in any

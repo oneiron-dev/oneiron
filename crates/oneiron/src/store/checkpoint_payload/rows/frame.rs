@@ -20,6 +20,7 @@ fn db_code(db: RowDb) -> u8 {
         RowDb::EdgesIn => 3,
         RowDb::VaultMeta => 4,
         RowDb::SyncState => 5,
+        RowDb::SyncQueue => 6,
     }
 }
 
@@ -30,6 +31,7 @@ fn db_of(code: u8) -> Option<RowDb> {
         3 => Some(RowDb::EdgesIn),
         4 => Some(RowDb::VaultMeta),
         5 => Some(RowDb::SyncState),
+        6 => Some(RowDb::SyncQueue),
         _ => None,
     }
 }

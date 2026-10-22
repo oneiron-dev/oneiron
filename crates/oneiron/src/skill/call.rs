@@ -289,7 +289,11 @@ pub(crate) fn execute_callable_skill_cancellable(
         host,
         answer: CallableSkillAnswer::spool(),
     };
-    let outcome = runtime.run_step_cancellable(
+    // Prepared once (FIX 8276): a TypeScript skill runs as the JavaScript Oxc
+    // prints for it. The arguments line is the host's prelude, so a failed
+    // TypeScript skill names the line of its own stored file.
+    let prepared = crate::code_sandbox::source::prepare_source(&script).with_prelude_lines(1);
+    let outcome = runtime.run_prepared_step_cancellable(
         JsCodeModeStep {
             run_id,
             seq,
@@ -299,6 +303,7 @@ pub(crate) fn execute_callable_skill_cancellable(
             boundary: SandboxBoundaryContract::for_tier(tier).without_host_services(),
             determinism,
         },
+        &prepared,
         &mut lent,
         cancel,
     )?;
