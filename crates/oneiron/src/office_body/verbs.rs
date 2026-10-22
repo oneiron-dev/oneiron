@@ -548,7 +548,10 @@ impl Memory<'_> {
         })
     }
 
-    /// `vault.artifacts.body.fork.open`.
+    /// `vault.artifacts.body.fork.open`. The fork's run is the try a host
+    /// bound this surface to, proved in the writer that commits the fork
+    /// (FIX 3551); `run_root_ref` stays the caller's label, never what a run
+    /// scope matches. A surface no host bound opens a fork of no run.
     pub fn artifacts_body_fork_open(
         &self,
         input: &OfficeBodyForkOpenRequest,
@@ -564,12 +567,18 @@ impl Memory<'_> {
             .as_deref()
             .map(|reference| self.body_ref(reference))
             .transpose()?;
-        Ok(self.vault().open_office_body_fork(
-            &artifact,
-            self.body_actor(),
-            run_root.as_ref(),
-            proposal.as_ref(),
-        )?)
+        let actor = self.body_actor();
+        self.vault().try_with_write_txn_grouped(|wtxn| {
+            let origin = crate::task_verb::office_fork_origin_in_txn(self, wtxn)?;
+            Ok(self.vault().open_office_body_fork_in_txn(
+                wtxn,
+                &artifact,
+                actor,
+                run_root.as_ref(),
+                origin,
+                proposal.as_ref(),
+            )?)
+        })
     }
 
     /// `vault.artifacts.body.fork.edit`: the opener's operations.

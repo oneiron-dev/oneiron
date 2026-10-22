@@ -1,14 +1,22 @@
 //! Credential-bound admission; every write rechecks its inputs in its writer.
 use super::*;
+use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::consent::AuthenticatedOwner;
 use crate::edit_roundtrip::deck_create::{
     DeckCreateError, DeckCreateOutcome, DeckCreateRequest, DirectionOutcome,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
+use crate::secret_custody::SecretSight;
+use crate::typed_body::LiftedSources;
 use crate::{EntityId, WriteActor};
 use oneiron_docedit::design_plan::Brief;
 use oneiron_docedit::emit::Names;
+use serde::de::DeserializeOwned;
+
+/// The keys a masked reader's view of a deck response is judged and masked
+/// by, found in the outline texts the engine decoded for it (FIX 9605).
+type Lifted = Option<(LiftedKeys, LiftedSources)>;
 
 fn creation_error(error: DeckCreateError) -> MemoryError {
     match error {
@@ -73,6 +81,37 @@ fn readable_keep(
     }
 }
 
+fn view_error(_: serde_json::Error) -> MemoryError {
+    crate::Error::InvariantViolation("a deck response did not encode").into()
+}
+
+/// `view` with each lifted value its strings hold as its handle.
+fn masked_json<T: Serialize + DeserializeOwned>(
+    view: &mut T,
+    keys: &LiftedKeys,
+) -> MemoryResult<()> {
+    let mut value = serde_json::to_value(&*view).map_err(view_error)?;
+    if keys.mask_json(&mut value) {
+        *view = serde_json::from_value(value).map_err(view_error)?;
+    }
+    Ok(())
+}
+
+/// An outline view masked: its live outline, and a copy of the kept bytes
+/// decoded, masked and encoded again. The stored keep, its hash and the
+/// bytes a plan compiles from stay as they are.
+fn masked_outline(view: &mut DeckOutlineView, keys: &LiftedKeys) -> MemoryResult<()> {
+    masked_json(&mut view.outline, keys)?;
+    if let Some(kept) = &mut view.kept {
+        let mut held: serde_json::Value =
+            serde_json::from_slice(&kept.bytes).map_err(view_error)?;
+        if keys.mask_json(&mut held) {
+            kept.bytes = serde_json::to_vec(&held).map_err(view_error)?;
+        }
+    }
+    Ok(())
+}
+
 fn require_sources(
     lane: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
@@ -97,6 +136,7 @@ impl Memory<'_> {
         let receipt = self.author_deck_outline(&bytes)?;
         self.artifacts_outline(&DeckOutlineRefRequest {
             outline_ref: receipt.id_hex,
+            why: None,
         })
     }
 
@@ -116,7 +156,7 @@ impl Memory<'_> {
         let document = crate::note::deck_outline_document_in_txn(self.vault(), &txn, note)?;
         let bytes = outline_bytes(&document.markdown)?;
         require_sources(&lane, &txn, &outline_sources(&bytes)?)?;
-        let (kept, kept_omission) = readable_keep(
+        let (mut kept, mut kept_omission) = readable_keep(
             &lane,
             &txn,
             self.vault().kept_deck_outline_in_txn(&txn, note)?,
@@ -125,16 +165,88 @@ impl Memory<'_> {
             .vault()
             .deck_outline_freshness_in_txn(&txn, note)
             .map_err(creation_error)?;
+        // A masked reader's keys are those of the texts it is shown: the
+        // live outline's, and the kept outline's at its keep (FIX 9605).
+        let lifted = if self.reads_lifted_keys_masked_in_txn(&txn)? {
+            let mut texts = vec![document.markdown.clone()];
+            if let Some(held) = kept
+                .as_ref()
+                .filter(|held| held.frontier != document.frontier)
+            {
+                match crate::note::deck_outline_markdown_at_in_txn(
+                    self.vault(),
+                    &txn,
+                    note,
+                    &held.frontier,
+                )? {
+                    Some(text) => texts.push(text),
+                    None => {
+                        kept = None;
+                        kept_omission = Some(KeptOutlineOmissionReason::KeysUnknown);
+                    }
+                }
+            }
+            Some(self.vault().lifted_projection_texts_in_txn(&txn, texts)?)
+        } else {
+            None
+        };
+        // Evidence observations go out only beside a keep that does.
+        let evidence_changed = if kept.is_some() {
+            self.vault()
+                .deck_outline_evidence_in_txn(&txn, note)
+                .map_err(creation_error)?
+        } else {
+            Vec::new()
+        };
         let outline = serde_json::from_slice(&bytes)
             .map_err(|_| MemoryError::bad_request("outline wire grammar"))?;
-        Ok(DeckOutlineView {
+        drop(txn);
+        let view = DeckOutlineView {
             outline_ref: note.to_hex(),
             frontier: document.frontier,
             outline,
             kept,
             freshness,
             kept_omission,
-        })
+            evidence_changed,
+            presentation: DeckPresentation::Whole,
+        };
+        let (mut view, presentation) = self.present_deck(
+            &note,
+            view,
+            lifted,
+            input.why.as_deref(),
+            "oneiron deck outline view v1",
+            masked_outline,
+        )?;
+        view.presentation = presentation;
+        Ok(view)
+    }
+
+    /// `view` as this reader may see it (OF-067, FIX 9605): whole for the
+    /// owner, for texts that hold no lifted key, and for an agent that says
+    /// `why` once a grant covers their keys (`typed_body_read_sight`, after
+    /// the response's snapshot or writer closed, its receipts written); with
+    /// each lifted value as its handle otherwise.
+    fn present_deck<T: Serialize>(
+        &self,
+        note: &EntityId,
+        mut view: T,
+        lifted: Lifted,
+        why: Option<&str>,
+        domain: &str,
+        mask: impl FnOnce(&mut T, &LiftedKeys) -> MemoryResult<()>,
+    ) -> MemoryResult<(T, DeckPresentation)> {
+        let Some((keys, sources)) = lifted.filter(|(keys, _)| !keys.is_empty()) else {
+            return Ok((view, DeckPresentation::Whole));
+        };
+        let shown = serde_json::to_vec(&view).map_err(view_error)?;
+        let fingerprint = blake3::derive_key(domain, &shown);
+        if self.typed_body_read_sight(note, &fingerprint, &sources, why)? != SecretSight::Masked {
+            return Ok((view, DeckPresentation::Whole));
+        }
+        mask(&mut view, &keys)?;
+        Ok((view, DeckPresentation::Masked))
     }
 
     pub fn artifacts_keep_outline(
@@ -225,7 +337,7 @@ impl Memory<'_> {
     pub fn artifacts_design_deck(&self, input: &DeckDesignRequest) -> MemoryResult<DeckDesignView> {
         let note = resolve_entity_ref(self.vault(), &input.outline_ref)?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        self.with_verified_actor_write_txn(|txn| {
+        let (view, lifted) = self.with_verified_actor_write_txn(|txn| {
             let kept = self.admit_deck_keep(&lane, txn, note, &input.kept)?;
             let refs: Vec<_> = input
                 .templates
@@ -247,7 +359,17 @@ impl Memory<'_> {
                 .map_err(creation_error)?;
             let outline: DeckOutline = serde_json::from_slice(&kept.bytes)
                 .map_err(|_| MemoryError::bad_request("kept outline encoding"))?;
-            Ok(DeckDesignView {
+            // A fresh keep is the live outline's: its text holds the keys.
+            let lifted = if self.reads_lifted_keys_masked_in_txn(txn)? {
+                let document = crate::note::deck_outline_document_in_txn(self.vault(), txn, note)?;
+                Some(
+                    self.vault()
+                        .lifted_projection_texts_in_txn(txn, vec![document.markdown])?,
+                )
+            } else {
+                None
+            };
+            let view = DeckDesignView {
                 spec,
                 plans: plans
                     .iter()
@@ -265,8 +387,20 @@ impl Memory<'_> {
                             .collect()
                     })
                     .collect(),
-            })
-        })
+                presentation: DeckPresentation::Whole,
+            };
+            Ok((view, lifted))
+        })?;
+        let (mut view, presentation) = self.present_deck(
+            &note,
+            view,
+            lifted,
+            input.why.as_deref(),
+            "oneiron deck design view v1",
+            masked_json,
+        )?;
+        view.presentation = presentation;
+        Ok(view)
     }
 
     pub fn artifacts_create_deck(

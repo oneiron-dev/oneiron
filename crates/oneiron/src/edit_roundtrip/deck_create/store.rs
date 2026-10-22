@@ -24,26 +24,35 @@ impl crate::Vault {
             .ok_or_else(|| invalid("the outline is not kept"))
     }
 
-    /// Set each evidence pin's `drift` from its note cursors. A pin without
-    /// a cited CLAIM, or whose ids and cursors are not this engine's, keeps
-    /// the caller's flag.
+    /// Set each evidence pin's `drift` from its note cursors: a cited
+    /// CLAIM's pin always, and with `claimless`, a note document span named
+    /// without one (FIX 9814). A pin whose ids and cursors are not this
+    /// engine's keeps the caller's flag.
     pub(super) fn map_evidence_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         outline: &mut Value,
+        claimless: bool,
     ) -> std::result::Result<(), DeckCreateError> {
         let mut result = Ok(());
         pins_mut(outline, &mut |pin| {
             if result.is_err() {
                 return;
             }
-            let Some(note_pin) = note_pin(pin) else {
+            let drifted = if let Some(note_pin) = note_pin(pin) {
+                !matches!(
+                    crate::note::resolve_deck_pin_in_txn(self, txn, &note_pin),
+                    Ok(NoteSpanResolution::Mapped { .. })
+                )
+            } else if claimless
+                && let Some(span) = engine_span(pin).filter(|span| span.claim.is_none())
+            {
+                !self
+                    .observe_span_in_txn(txn, &span)
+                    .is_ok_and(|seen| seen.mapped)
+            } else {
                 return;
             };
-            let drifted = !matches!(
-                crate::note::resolve_deck_pin_in_txn(self, txn, &note_pin),
-                Ok(NoteSpanResolution::Mapped { .. })
-            );
             if let Some(object) = pin.as_object_mut() {
                 object.insert("drift".to_owned(), Value::Bool(drifted));
             } else {
@@ -51,6 +60,58 @@ impl crate::Vault {
             }
         });
         result
+    }
+
+    /// What the engine observes of each pin of `outline` it can address, in
+    /// document order: the cited document's frontier, the cited CLAIM's
+    /// lifecycle and whether the span maps (FIX 9813, 9814). A source that
+    /// no longer resolves is observed as such, never an error.
+    pub(super) fn observe_evidence_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        outline: &Value,
+    ) -> std::result::Result<Vec<EvidenceObservation>, DeckCreateError> {
+        let mut spans = Vec::new();
+        let mut index = 0;
+        pins(outline, &mut |pin| {
+            if let Some(span) = engine_span(pin) {
+                spans.push((index, span));
+            }
+            index += 1;
+        });
+        let mut observed = Vec::with_capacity(spans.len());
+        for (pin, span) in spans {
+            let seen = self.observe_span_in_txn(txn, &span).ok();
+            let lifecycle = match &span.claim {
+                Some(claim) => self
+                    .get_claim_in_txn(txn, claim)?
+                    .map(|body| cited_lifecycle(body.lifecycle)),
+                None => None,
+            };
+            observed.push(EvidenceObservation {
+                pin,
+                source_frontier: seen.as_ref().map(|seen| seen.frontier.clone()),
+                lifecycle,
+                mapped: seen.is_some_and(|seen| seen.mapped),
+            });
+        }
+        Ok(observed)
+    }
+
+    fn observe_span_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        span: &EngineSpan,
+    ) -> Result<crate::note::DeckSpanObservation> {
+        crate::note::observe_deck_span_in_txn(
+            self,
+            txn,
+            span.document,
+            span.claim,
+            &span.start,
+            &span.end,
+            &span.quote_hash,
+        )
     }
 
     pub(super) fn version_bytes_in_txn(

@@ -66,7 +66,10 @@ impl Vault {
             .get(base.log.len()..)
             .ok_or(Error::CorruptedIndex("deck fork log"))?;
         let ops = log::stamped(&self.store, txn, &record.artifact, logged)?;
-        let run_root = record.run_root.map(|root| root.to_hex());
+        // The stamped try, never a run a caller named (FIX 3551).
+        let run_root = record
+            .origin
+            .map(|origin| crate::entity_id::bytes_to_hex_lower(origin.as_bytes()));
         let mut work = base.deck.fork_at(
             &record.id.to_hex(),
             &record.opener.to_hex(),

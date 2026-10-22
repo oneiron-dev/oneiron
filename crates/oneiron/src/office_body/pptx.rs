@@ -529,15 +529,18 @@ impl Vault {
         Ok(())
     }
 
-    /// Open a deck fork at the live head for `actor`'s machine work in the run
-    /// `run_root`, so that run's approve-all scope covers it: a typed-body
-    /// fork of the document, with the office record that names the run.
+    /// Open a deck fork at the live head for `actor`'s machine work from
+    /// `origin`, the try its opening writer proved, so that run's
+    /// approve-all scope covers it (FIX 3551): a typed-body fork of the
+    /// document, with the office record that names the try and the caller's
+    /// `run_root` label.
     pub(super) fn open_deck_fork(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact: &EntityId,
         actor: WriteActor,
         run_root: Option<&EntityId>,
+        origin: Option<crate::attempt_queue::AttemptId>,
     ) -> Result<OfficeBodyFork> {
         let typed = open_typed_body_fork_in_txn(
             self,
@@ -555,6 +558,7 @@ impl Vault {
             opened_at: typed.opened_at,
             state: ForkState::Open,
             run_root: run_root.copied(),
+            origin,
         };
         FORKS.put(&self.store, wtxn, &(*artifact, fork.id), &fork)?;
         Ok(fork)

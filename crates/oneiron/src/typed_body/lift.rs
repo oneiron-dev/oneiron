@@ -331,6 +331,19 @@ impl Vault {
         if let Some(doc) = at {
             texts.extend(state_of(doc)?.1);
         }
+        self.lifted_projection_texts_in_txn(txn, texts)
+    }
+
+    /// The keys `texts` hold and their custody records, read in `txn`: the
+    /// exact carrier texts engine code decoded for a projection it releases,
+    /// a typed body's or another's (a deck outline NOTE's, FIX 9605), never
+    /// texts or custody ids a caller names. A read's sight
+    /// ([`Vault::typed_body_sight`]) judges the keys its view masks.
+    pub(crate) fn lifted_projection_texts_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        texts: Vec<String>,
+    ) -> Result<(LiftedKeys, LiftedSources)> {
         let sources = sources_in_txn(&self.store, txn, &texts)?;
         Ok((LiftedKeys::of_in_txn(&self.store, txn, texts)?, sources))
     }

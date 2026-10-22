@@ -95,9 +95,16 @@ pub struct OfficeBodyFork {
     pub commits: u64,
     pub opened_at: u64,
     pub state: ForkState,
-    /// The run the fork belongs to, whose approve-all scope covers it.
+    /// The run its opener named when it opened the fork: a label, never
+    /// what a scope matches (FIX 3551).
     #[serde(default)]
     pub run_root: Option<EntityId>,
+    /// The try the fork was opened from, which the host bound the opening
+    /// surface to and the opening writer proved live (FIX 3551): the run
+    /// whose approve-all scope covers it. `None` for an owner's or a direct
+    /// opening, which belongs to no run.
+    #[serde(default)]
+    pub origin: Option<crate::attempt_queue::AttemptId>,
 }
 
 pub struct OfficeBodyExportRequest<'a> {
