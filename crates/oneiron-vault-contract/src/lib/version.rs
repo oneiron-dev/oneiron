@@ -294,6 +294,27 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// against an engine at or after the floor, no reader of a status reply
 /// without it is kept, and no default stands in for it. Public `/api/health`
 /// carries none of it. No SDK row is added and this version stays 3.
+///
+/// Managed restore wake sequence floor (FIX 969): the cold restore plan's
+/// required `wake_sequence_floor`
+/// ([`ManagedRestorePlan`](crate::restore::ManagedRestorePlan)), the
+/// receipt's required `wake_sequence_floor` and `report.checkpoint_sequence`
+/// ([`ManagedRestoreReceipt`](crate::restore::ManagedRestoreReceipt)), and
+/// the `checkpoint_sequence_below_floor` failure reason with its required
+/// `floor` and `observed` carry a build floor, at the engine revision they
+/// merged in, with no `Ping` field. An artifact-backed wake or migrate sends
+/// the signed checkpoint sequence of the source copy the supervisor verified
+/// as its floor, a historical restore sends `null`, and an ordinary open
+/// sends no plan; the floor is never a custody sequence or a default. A
+/// signed sequence below it fails `artifact_open` with the destination
+/// removed, before the manifest opens, and never with a receipt. A verified
+/// receipt always carries the artifact's checkpoint sequence, a historical
+/// restore's too. The floor key is required even when `null`; an engine
+/// before the floor refuses a plan that carries it as an unknown field, so a
+/// supervisor sends it, and reads the receipt's new keys and the reason,
+/// only with installed engines and vault VM images at or after the floor.
+/// No reader of a plan or receipt without them is kept, the restore input
+/// and receipt schemas stay 1, and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

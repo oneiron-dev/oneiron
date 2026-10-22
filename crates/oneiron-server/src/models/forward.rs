@@ -10,6 +10,8 @@ pub(super) enum Ended {
         message: LlmMessage,
         usage: LlmUsage,
         finish_reason: oneiron::llm::FinishReason,
+        /// The terminal's own, forwarded as it came (FIX 3416).
+        reply_assertions: oneiron::llm::ReplyAssertions,
     },
     Failed {
         error: LlmError,
@@ -31,11 +33,13 @@ pub(super) async fn forward(
                 message,
                 usage,
                 finish_reason,
+                reply_assertions,
             })) => {
                 return Ended::Done {
                     message,
                     usage,
                     finish_reason,
+                    reply_assertions,
                 };
             }
             Some(Ok(event)) => {

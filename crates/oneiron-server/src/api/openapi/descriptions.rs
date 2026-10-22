@@ -278,8 +278,8 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Optional PERSON identity for companion-aware assembly metadata.",
             ),
             (
-                "persona_ref",
-                "Optional other relationship endpoint for companion-aware assembly metadata.",
+                "counterpart_person_ref",
+                "Optional PERSON at the relationship's other end, for companion-aware assembly metadata.",
             ),
         ],
     ),
@@ -477,8 +477,8 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Optional PERSON identity (32 hex) or opaque person label.",
             ),
             (
-                "persona_ref",
-                "Optional other relationship endpoint (32 hex) or opaque label.",
+                "counterpart_person_ref",
+                "Optional PERSON at the relationship's other end (32 hex) or opaque label.",
             ),
             (
                 "expression",

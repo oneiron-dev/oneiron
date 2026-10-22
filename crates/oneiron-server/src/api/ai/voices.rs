@@ -302,8 +302,11 @@ pub(crate) async fn provision_clone(
         .map_err(VoiceBankRefusal::Bank)?;
     // The vendor sees a name from the refs' digest, never the voice's id.
     let name = format!("oneiron-{}", &hex(&clone.ref_digest)[..16]);
-    // Each vendor call goes out on its own permit of this run (FIX 3009).
-    let created = match media.clone_run() {
+    // Each vendor call goes out on its own permit of this run (FIX 3009),
+    // naming the acting person or creator as its initiator (FIX 8970); who
+    // pays is the run's, unchanged.
+    let initiator = actor.and_then(|actor| actor.entity_for_read(&server.vault).ok());
+    let created = match media.clone_run().map(|run| run.initiated_by(initiator)) {
         Ok(run) => cloner
             .create(&run, &name, &clone.clips, language)
             .await
