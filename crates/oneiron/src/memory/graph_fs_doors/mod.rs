@@ -75,7 +75,7 @@ fn output(
 impl Memory<'_> {
     pub fn graph_fs_mount(&self, input: GraphFsMountRequest) -> MemoryResult<GraphFsMounted> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree = lane.mount_graph_fs(&input.reference, input.options())?;
+        let tree = self.mount_repo_graph_fs(&lane, &input.reference, input.options())?;
         Ok(GraphFsMounted {
             mount: descriptor(&tree, &input),
             root: "/".to_owned(),
@@ -88,7 +88,7 @@ impl Memory<'_> {
         input: GraphFsPathRequest,
     ) -> MemoryResult<GraphFsDirectoryView> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree = lane.mount_graph_fs(&input.mount.reference, input.mount.options())?;
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.readdir", &input.path)?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
         let page = tree.readdir(&input.path, cursor.as_deref())?;
@@ -130,7 +130,7 @@ impl Memory<'_> {
 
     fn graph_fs_bytes(&self, input: GraphFsPathRequest, verb: &str) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree = lane.mount_graph_fs(&input.mount.reference, input.mount.options())?;
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key(verb, &input.path)?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
         let result = tree.cat(&input.path, cursor.as_deref())?;
@@ -139,7 +139,7 @@ impl Memory<'_> {
 
     pub fn graph_fs_read_link(&self, input: GraphFsLinkRequest) -> MemoryResult<GraphFsLinkView> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree = lane.mount_graph_fs(&input.mount.reference, input.mount.options())?;
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         Ok(GraphFsLinkView {
             mount: descriptor(&tree, &input.mount),
             target: tree.read_link(&input.path)?,
@@ -149,7 +149,7 @@ impl Memory<'_> {
 
     pub fn graph_fs_ls(&self, input: GraphFsLsRequest) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree = lane.mount_graph_fs(&input.mount.reference, input.mount.options())?;
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.ls", (&input.path, input.by_time))?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
         let result = tree.ls(&input.path, input.by_time, cursor.as_deref())?;
@@ -158,7 +158,7 @@ impl Memory<'_> {
 
     pub fn graph_fs_find(&self, input: GraphFsFindRequest) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree = lane.mount_graph_fs(&input.mount.reference, input.mount.options())?;
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.find", (&input.path, input.newer_than))?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
         let result = tree.find(&input.path, input.newer_than, cursor.as_deref())?;
@@ -170,7 +170,7 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("grep needs a pattern"));
         }
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree = lane.mount_graph_fs(&input.mount.reference, input.mount.options())?;
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key(
             "graph_fs.grep",
             (&input.path, &input.pattern, input.recursive),
@@ -187,7 +187,7 @@ impl Memory<'_> {
 
     pub fn graph_fs_head(&self, input: GraphFsHeadRequest) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree = lane.mount_graph_fs(&input.mount.reference, input.mount.options())?;
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let lines = input.lines.unwrap_or(10);
         let call = call_key("graph_fs.head", (&input.path, lines))?;
         let cursor = tree.open_public_cursor(&call, input.cursor.as_deref())?;
@@ -197,7 +197,7 @@ impl Memory<'_> {
 
     pub fn graph_fs_wc(&self, input: GraphFsLinkRequest) -> MemoryResult<GraphFsOutput> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let tree = lane.mount_graph_fs(&input.mount.reference, input.mount.options())?;
+        let tree = self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
         let call = call_key("graph_fs.wc", &input.path)?;
         let result = tree.wc(&input.path)?;
         Ok(output(&tree, &input.mount, input.path, &call, result))

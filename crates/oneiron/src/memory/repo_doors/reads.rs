@@ -17,6 +17,7 @@ use super::{
     RepoViewsReadOutput, refusal_error, repo_target,
 };
 use crate::EntityId;
+use crate::EdgeActorClass;
 use crate::code_view::CodeViewSet;
 use crate::codebase::{CodebaseSnapshotMount, snapshot_asset_entity_id};
 use crate::entity_id::bytes_to_hex_lower;
@@ -24,6 +25,8 @@ use crate::error::Error;
 use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
 use crate::memory::codebase_doors::CodeSnapshotDefinition;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
+use crate::origin::secret_projection::RepoRevealRecipient;
+use crate::origin::secret_projection::reveal::RepoReadDoor;
 
 impl Memory<'_> {
     /// `self.code.snapshots.get` for a run: the manifest of the named
@@ -81,8 +84,12 @@ impl Memory<'_> {
             self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
         let absent = || MemoryError::not_found("the file is absent or withheld in this snapshot");
         // A run reads repo bytes masked (FIX 7608): a marked file's
-        // projection, its opaque residue found before a byte is read.
-        let read = mount.read_file_projected(&input.path)?.ok_or_else(absent)?;
+        // projection, its opaque residue found before a byte is read. A read
+        // that says why asks only after its lane admits the file (FIX 8960).
+        let early = match input.why {
+            None => Some(mount.read_file_projected(&input.path)?.ok_or_else(absent)?),
+            Some(_) => None,
+        };
         let entry = mount
             .snapshot()
             .files
@@ -92,8 +99,53 @@ impl Memory<'_> {
         let asset = snapshot_asset_entity_id(&entry.content_hash)?;
         self.repo_lane_reads(binding, &[asset])
             .map_err(|_| absent())?;
+        let (read, byte_route) = match early {
+            Some(read) => (read, None),
+            None => {
+                let changed = || Error::ConcurrentWrite("the run's repo read admission changed");
+                let artifact = mount.code_artifact_id();
+                let readmit = || -> crate::error::Result<()> {
+                    let txn = self.vault.store.env.read_txn()?;
+                    let again = self.vault.admit_repo_run_in_txn(
+                        &txn,
+                        binding,
+                        &target,
+                        RepoAccessIntent::Read,
+                    )?;
+                    drop(txn);
+                    let again = again
+                        .ok()
+                        .filter(|again| again.same_lease(&admitted))
+                        .ok_or_else(changed)?;
+                    let (pinned, _) = self
+                        .repo_pinned_snapshot(binding, &again, &input.git_ref, &input.snapshot)
+                        .map_err(|_| changed())?;
+                    if pinned.code_artifact_id() != artifact {
+                        return Err(changed());
+                    }
+                    self.repo_lane_reads(binding, &[asset])
+                        .map_err(|_| changed())
+                };
+                let read = run_reveal_reader(self, binding, &admitted)
+                    .snapshot_file_read_with_why(
+                        &mount,
+                        input.repo,
+                        &input.path,
+                        input.why.as_deref(),
+                        RepoReadDoor::Text,
+                        readmit,
+                    )?
+                    .ok_or_else(absent)?;
+                (read.projection, read.byte_route)
+            }
+        };
         let mut file = snapshot_file(entry);
         file.projection = read.view();
+        // CALL 4: granted bytes that are not text keep the masked reply,
+        // which names the byte route.
+        if let (Some(route), Some(view)) = (byte_route, file.projection.as_mut()) {
+            route.clone_into(&mut view.way_out);
+        }
         let bytes = read.into_bytes();
         let text_sha256 = bytes_to_hex_lower(&Sha256::digest(&bytes));
         let content = String::from_utf8(bytes)
@@ -204,9 +256,17 @@ impl Memory<'_> {
             ));
         };
         let set = CodeViewSet::open(self.vault)?;
-        let bytes = crate::code_view::read_view_file(&set.view_path(input.work)?, &input.path)?;
+        let mut bytes =
+            crate::code_view::read_view_file(&set.view_path(input.work)?, &input.path)?;
         if blake3::hash(&bytes).as_bytes() != expected {
             return Err(Error::CorruptedIndex("work file was modified").into());
+        }
+        // A read that says why may get the base file's stored bytes, while
+        // the work still holds that file's masked copy (FIX 8960).
+        if let Some(why) = input.why.as_deref() {
+            if let Some(revealed) = self.repo_view_base_reveal(binding, &own, &input.path, &bytes, why)? {
+                bytes = revealed;
+            }
         }
         Ok(RepoRunAnswer {
             rows: vec![own.stamp.repo],
@@ -273,6 +333,65 @@ impl Memory<'_> {
         Ok(own)
     }
 
+    /// The stored bytes of the work's base file `path`, for a read that
+    /// says `why`, when the work still holds exactly that file's masked copy
+    /// and the file reveal delivered them (FIX 8960); `None` otherwise, and
+    /// the work's bytes are read as they are. A base the run's ref no longer
+    /// pins, or a file the run changed, asks nothing.
+    fn repo_view_base_reveal(
+        &self,
+        binding: &RepoRunBinding,
+        own: &RepoOwnWork,
+        path: &str,
+        held: &[u8],
+        why: &str,
+    ) -> MemoryResult<Option<Vec<u8>>> {
+        let snapshot = bytes_to_hex_lower(&own.stamp.base_snapshot);
+        let Ok((mount, _)) =
+            self.repo_pinned_snapshot(binding, &own.admitted, &own.stamp.git_ref, &snapshot)
+        else {
+            return Ok(None);
+        };
+        let Some(masked) = mount.read_file_projected(path)? else {
+            return Ok(None);
+        };
+        if masked.view().is_none() || masked.into_bytes() != held {
+            return Ok(None);
+        }
+        let changed = || Error::ConcurrentWrite("the run's work admission changed");
+        let work = own.stamp.work;
+        let readmit = || -> crate::error::Result<()> {
+            let txn = self.vault.store.env.read_txn()?;
+            let again = self.vault.admitted_repo_work_in_txn(
+                &txn,
+                binding,
+                work,
+                [path],
+                RepoAccessIntent::Read,
+            )?;
+            drop(txn);
+            match again {
+                Ok(again)
+                    if again.stamp == own.stamp && again.admitted.same_lease(&own.admitted) =>
+                {
+                    Ok(())
+                }
+                _ => Err(changed()),
+            }
+        };
+        let read = run_reveal_reader(self, binding, &own.admitted).snapshot_file_read_with_why(
+            &mount,
+            own.stamp.repo,
+            path,
+            Some(why),
+            RepoReadDoor::Bytes,
+            readmit,
+        )?;
+        Ok(read
+            .filter(|read| read.proof.is_some())
+            .map(|read| read.projection.into_bytes()))
+    }
+
     /// The snapshot `snapshot` names of the admitted repo, at the commit the
     /// run's full ref names now, with that commit (CALLS "FIX 6867 run-only
     /// ref contract"): no snapshot of another commit or another repo is
@@ -328,4 +447,23 @@ fn parse_fork_hash(snapshot: &str) -> MemoryResult<[u8; 32]> {
             u8::from_str_radix(&snapshot[index * 2..index * 2 + 2], 16).map_err(|_| invalid())?;
     }
     Ok(hash)
+}
+
+/// A run's handle for a per-file read that may ask for real bytes (FIX
+/// 8960): masked whatever credential rides it, and bound to the run's own
+/// agent when the run's actor is one; never the owner standing in for one.
+fn run_reveal_reader<'v>(
+    memory: &Memory<'v>,
+    binding: &RepoRunBinding,
+    admitted: &RepoRunAdmitted,
+) -> Memory<'v> {
+    let reader = memory.clone().for_repo_tool_recipient();
+    if binding.actor.actor_class() != EdgeActorClass::Agent {
+        return reader;
+    }
+    reader.for_repo_reveal_recipient(
+        RepoRevealRecipient::proven_agent(binding.actor.entity_ref())
+            .in_project(Some(admitted.membership.bounds.project))
+            .for_run(Some(binding.executor_run.to_hex())),
+    )
 }
