@@ -381,15 +381,19 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
 | checker | built-candidate | 950.1 MiB (996,290,560) | 2.67 GiB (2,866,141,097) | 2-8 GiB provisional: within | 3.16 GiB (3,388,997,632; 864 MiB, 905,969,664) | 2.96 GiB | 2.13 GiB |
 | generic-agent | built-candidate | 105.5 MiB (110,622,720) | 270.3 MiB (283,428,090) | <= 1 GiB: within | 400.0 MiB (419,430,400; 3.61 GiB) | 302.8 MiB | 2.00 GiB |
 
-- **Three outputs are `boot-proved` by their acceptance smokes on kel**
-  (10-22 21:3x-21:4x, p5's images, `--network none`): the checker by L11-A's
+- **Four outputs are `boot-proved` by their acceptance smokes**, all on
+  p5's images. On kel (10-22 21:3x-21:4x, `--network none`): the checker by L11-A's
   offline-workspace-check smoke (5 of 5 legs, `cargo check --locked
   --workspace --all-features` rc=0 in 670 s), desktop-cua by L11-B's image
   legs (7 of 7: MCP initialize on stdio, 64 tools, the Xvfb display,
   get_screen_size, get_desktop_state; peak 58.1 MiB), and generic-agent by
   L11-B's image legs (9 of 9: python3, bun, tsrs and tsrs-wasm each
   `--version`, a clean and a failing `.ts`; peak 188.6 MiB). Each output's
-  `note` names its host, time, run and image id. @@BROWSER_NOTE@@
+  `note` names its host, time, run and image id. On nelly (10-23 01:05
+  JST, run `smoke-79a82238e311-1023-010505`): the browser by L11-B's OCI
+  Lightpanda acceptance leg (pack-verify, park, find, cancel; CAND-SMOKE
+  rc=0; peak guest RAM 13,641,973 bytes), after the archive's sha256
+  matched on nelly. Chromium is not measured.
 - **Every output was new bytes at this pin.** The engine pin
   moved from `95afa460192b…` to `79a82238e3…` (FIX 10353; the first main
   whose default oneiron-server build compiles, so the vault pack builds at

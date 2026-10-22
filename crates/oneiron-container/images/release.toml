@@ -451,7 +451,8 @@ cold_boot = "CDP usable <= 2 s"
 ram = "2 GiB runtime default retained (crates/oneiron-server/src/config/browser.rs:63-65)"
 
 [variants.browser.outputs."linux/amd64"]
-state = "built-candidate"
+state = "boot-proved"
+note = "L11-B OCI acceptance smoke (cand-smoke.sh, kind p5): nelly, 2026-10-23 01:05 JST, fleet job 1023-004220-bc28, run smoke-79a82238e311-1023-010505, SMOKE rc=0 and CAND-SMOKE rc=0, of run p5's archive (sha256 1af51098..., checked after the copy from kel), image sha256:6867151bc39779abb31ccbe8df6fc87f179e69ce5bb80badb3a39caad887d74d (nelly's store id; this output's manifest digest), with the server and the host fence built at engine 79a82238e3. Legs: pack-verify (verified, landlock-container), park, find (Lightpanda), cancel. Lightpanda leg only; peak guest RAM 13641973 B (docker stats). Chromium, Firecracker and cold boot were not measured."
 builder_commit = "0c86704876ba9ac8fd42f6b78a6a6821327a08f5"
 engine_commit = "79a82238e3115c24eb2b7212755f7b05b334c661"
 host = "kelly"
