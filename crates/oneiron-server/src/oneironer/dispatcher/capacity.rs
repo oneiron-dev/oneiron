@@ -17,11 +17,10 @@
 use std::sync::{Arc, PoisonError};
 use std::time::Instant;
 
-use oneiron::memory::extraction::{
-    EncoderAttempt, EncoderInput, ExtractionCaller, ExtractionWork,
-};
+use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, ExtractionCaller, ExtractionWork};
 use tokio::sync::{Notify, oneshot};
 
+use super::super::local::InferenceWindows;
 use super::policy::{BULK_PENDING_CAP, LIVE_PENDING_CAP};
 use super::{DISPATCH_TOOL, Job, NO_WORKER, Shared, answer, failure};
 
@@ -51,48 +50,51 @@ impl DispatchClaim {
         }
     }
 
-    /// Queues the call under this claim; it never waits. Its window is
-    /// counted first, once, with no lock held (FIX 6755): a call whose
+    /// Queues the call under this claim; it never waits. Its windows are
+    /// counted first, once, with no lock held (FIX 6755, 9518): a call whose
     /// window cannot be built fails as its infer would. A call no worker
     /// that can run it is ready or coming for, or one a closed dispatcher
     /// would never run, is answered at once. The room is the call's from
     /// here: given back when it is answered or stranded, never by this claim.
     pub(crate) fn submit(self, input: EncoderInput) -> Completion {
-        let counted = self.shared.count(&input);
-        self.submit_counted(input, counted)
+        let planned = self.shared.plan(input);
+        self.submit_planned(planned)
     }
 
-    /// [`Self::submit`] with the window already `counted` by the caller, on
-    /// its own blocking unit: the tagging coordinator counts it there, so the
-    /// tokenizer encode never runs on its async task (FIX 7331).
-    pub(crate) fn submit_counted(
+    /// [`Self::submit`] with the windows already `planned` by the caller, on
+    /// its own blocking unit: the tagging coordinator plans them there, so
+    /// the tokenizer encode never runs on its async task (FIX 7331).
+    pub(crate) fn submit_planned(
         mut self,
-        input: EncoderInput,
-        counted: oneiron::Result<usize>,
+        planned: oneiron::Result<InferenceWindows>,
     ) -> Completion {
         self.holds_room = false;
         let (reply, completion) = oneshot::channel();
+        let windows = match planned {
+            Ok(windows) => windows,
+            Err(error) => {
+                *self.shared.lock().pending(self.work) -= 1;
+                self.shared.room_freed([self.work]);
+                let _ = reply.send(EncoderAttempt {
+                    execution: None,
+                    result: Err(error),
+                });
+                return Completion { answer: completion };
+            }
+        };
         let job = Job {
-            input,
+            window: windows.tokens(),
+            windows,
             work: self.work,
-            window: counted.as_ref().copied().unwrap_or(0),
             queued_at: Instant::now(),
             reply,
         };
-        let unqueued = match counted {
-            Ok(_) => {
-                let queued = self.shared.lock().queue(job);
-                queued
-                    .err()
-                    .map(|job| (job, failure(DISPATCH_TOOL, NO_WORKER)))
-            }
-            Err(error) => Some((job, error)),
-        };
+        let unqueued = self.shared.lock().queue(job).err();
         self.shared.work.notify_all();
-        if let Some((job, error)) = unqueued {
+        if let Some(job) = unqueued {
             *self.shared.lock().pending(job.work) -= 1;
             self.shared.room_freed([job.work]);
-            answer(job, error);
+            answer(job, failure(DISPATCH_TOOL, NO_WORKER));
         }
         Completion { answer: completion }
     }

@@ -310,11 +310,11 @@ impl Coordinator {
         let control = self.control.clone();
         let unit = tokio::task::spawn_blocking(move || {
             let prepared = (!control.paused()).then(|| reconciler.prepare_next(work));
-            // A ready call's window is counted here, on the blocking unit, so
-            // its tokenizer encode never runs on this task (FIX 7331).
+            // A ready call's windows are planned here, on the blocking unit,
+            // so its tokenizer encode never runs on this task (FIX 7331).
             let window = match &prepared {
                 Some(Ok(TaggingPreparation::Ready(ready))) => {
-                    Some(tagger.count_window(ready.input()))
+                    Some(tagger.plan_windows(ready.input()))
                 }
                 _ => None,
             };
@@ -350,7 +350,7 @@ impl Coordinator {
         // Refilled at once, without waiting for older calls.
         self.dirty = true;
         let started = Instant::now();
-        let completion = self.tagger.submit(claim, prepared.input().clone(), window);
+        let completion = self.tagger.submit(claim, window);
         self.calls.push(Box::pin(async move {
             let attempt = completion.answer().await;
             Box::new(Called {

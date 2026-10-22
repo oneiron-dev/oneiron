@@ -24,7 +24,7 @@ use super::provisional;
 use crate::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::memory::extraction::{ExtractionWork, SpeakerTarget};
+use crate::memory::extraction::{ExtractionWork, MoodPart, SpeakerTarget};
 use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
@@ -52,6 +52,11 @@ pub struct DerivationEnvelope {
     /// names one: a head swap at a fixed checkpoint is another derivation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack: Option<String>,
+    /// Digest of the turn's own text, when `content_hash` is a conversation
+    /// register's, whose later turns move with the conversation (FIX 10167):
+    /// what tells whether the set still indexes the turn's words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_hash: Option<String>,
     /// The save path's version.
     pub version: String,
     /// Digest of the decode parameters: the label table and the live window.
@@ -203,6 +208,15 @@ pub struct TurnTags {
     pub merge_evidence: Vec<MergeEvidence>,
     /// The turn's mood, when the tagger returned one.
     pub mood: Option<Vad>,
+    /// Whether `mood` is an earlier set's, kept because this set's answer
+    /// measured the turn only in windows and gave no mood of the whole of
+    /// it: stale until a whole-turn mood is measured (FIX 9518).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mood_carried: bool,
+    /// The mood of each window of a turn read in several, as the model
+    /// measured them; never averaged into a mood of the whole turn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mood_parts: Vec<MoodPart>,
     /// Store-clock seconds of the save.
     pub saved_at: u64,
     /// How surprising this set is beside the one it replaced, by the model
@@ -479,10 +493,10 @@ pub(crate) fn current_tags_in_txn(
         2 * text + window
     };
     let read = &tags.envelope.content_hash;
-    Ok((
-        (*read == hash || *read == text_hash).then_some(tags),
-        hashed,
-    ))
+    let current = *read == hash
+        || *read == text_hash
+        || tags.envelope.text_hash.as_deref() == Some(text_hash.as_str());
+    Ok((current.then_some(tags), hashed))
 }
 
 /// Whether the provisional entity `entity` reads: its origin turn's tag set

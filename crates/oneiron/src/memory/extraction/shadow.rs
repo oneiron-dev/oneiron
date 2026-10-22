@@ -30,6 +30,8 @@ impl Memory<'_> {
                 turn: turn_id.to_hex(),
                 messages,
                 context: Vec::new(),
+                following: Vec::new(),
+                register: EncoderRegister::Live,
                 language: None,
                 // The side the witnessed messages' authors name, as the
                 // witness stores them.
@@ -45,6 +47,8 @@ impl Memory<'_> {
                     turn: witness.turn_short_id.clone(),
                     messages: Vec::new(),
                     context: Vec::new(),
+                    following: Vec::new(),
+                    register: EncoderRegister::Live,
                     language: None,
                     speaker: None,
                 };
@@ -137,8 +141,9 @@ pub fn infer_encoder_for(
 /// window folds in after them only when it holds a turn, so a turn read
 /// alone digests as it always has; a NUL cannot begin a message id, so the
 /// window never reads as one more message. A language, then the turns'
-/// speaker roles, fold in last and only when the input carries them, so an
-/// input without them digests as it did before they existed.
+/// speaker roles, fold in next and only when the input carries them, so an
+/// input without them digests as it did before they existed; a conversation
+/// register's later turns fold in last (`register::fold_register`).
 pub(crate) fn hash_input(input: &EncoderInput) -> String {
     let mut hash = Sha256::new();
     hash.update(input.turn.as_bytes());
@@ -178,6 +183,7 @@ pub(crate) fn hash_input(input: &EncoderInput) -> String {
             });
         }
     }
+    super::register::fold_register(&mut hash, input, message);
     format!("{:x}", hash.finalize())
 }
 /// The answer's structure, never its size: any number of spans and links
@@ -186,6 +192,7 @@ fn validate(input: &EncoderInput, output: &EncoderOutput) -> Result<(), &'static
     if output.vad.is_some_and(|vad| vad.validate().is_err()) {
         return Err("invalid_encoder_output");
     }
+    crate::tagging::check_mood_parts(input, output).map_err(|_| "invalid_encoder_output")?;
     for span in &output.spans {
         let Some(message) = input.messages.get(span.message) else {
             return Err("invalid_span_message");

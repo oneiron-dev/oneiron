@@ -10,8 +10,8 @@ use oneiron::llm::manifest::doors::{
 };
 use oneiron::llm::manifest::{ModelManifest, ModelRole, ModelSlot};
 use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, ExtractionCaller, ExtractionEncoder, ExtractionWork,
-    infer_encoder_for,
+    EncoderInput, EncoderMessage, EncoderRegister, ExtractionCaller, ExtractionEncoder,
+    ExtractionWork, infer_encoder_for,
 };
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
@@ -398,6 +398,8 @@ async fn invoke(
                         text,
                     }],
                     context: Vec::new(),
+                    following: Vec::new(),
+                    register: EncoderRegister::Live,
                     language: None,
                     speaker: None,
                 };

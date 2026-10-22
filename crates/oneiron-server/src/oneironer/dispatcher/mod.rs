@@ -50,7 +50,7 @@ use oneiron::memory::extraction::{
 };
 use tokio::sync::{Notify, oneshot};
 
-use super::local::WindowCounter;
+use super::local::{InferenceWindows, WindowCounter};
 
 mod capacity;
 mod eligibility;
@@ -76,9 +76,11 @@ const UNRANKED: usize = usize::MAX;
 
 /// One call, from its claim to its answer.
 pub(super) struct Job {
-    pub(super) input: EncoderInput,
+    /// Its windows: one, or the parts of a turn longer than a window
+    /// (FIX 9518), each run whole and merged into the call's one answer.
+    pub(super) windows: InferenceWindows,
     work: ExtractionWork,
-    /// Its live window in tokens with specials, counted once as it was
+    /// Its longest window in tokens with specials, counted once as it was
     /// submitted: which workers may run it. 0 in a slot that counts none,
     /// whose one worker runs every call.
     window: usize,
@@ -232,13 +234,15 @@ impl Shared {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// `input`'s window in tokens, counted with no lock held; 0 in a slot
-    /// that counts none. A window that cannot be built fails its call as
-    /// that call's infer would.
-    pub(super) fn count(&self, input: &EncoderInput) -> oneiron::Result<usize> {
-        self.windows
-            .as_ref()
-            .map_or(Ok(0), |windows| windows.count(input))
+    /// `input`'s windows, counted with no lock held: one, or the parts of
+    /// a turn longer than a window (FIX 9518); one counted 0 in a slot that
+    /// counts none. A window that cannot be built fails its call as that
+    /// call's infer would; a turn's length never does.
+    pub(super) fn plan(&self, input: EncoderInput) -> oneiron::Result<InferenceWindows> {
+        match &self.windows {
+            Some(windows) => InferenceWindows::plan(windows, input),
+            None => Ok(InferenceWindows::whole(input, 0)),
+        }
     }
 
     /// Blocks worker `index`'s thread until it has a unit; `None` once the
@@ -413,10 +417,11 @@ impl Dispatcher {
         self.shared.publish_rank(worker.0, rank);
     }
 
-    /// The window `input` builds, counted with the slot's tokenizer, `0`
-    /// for a slot that counts none: a blocking encode (FIX 7331).
-    pub(crate) fn count(&self, input: &EncoderInput) -> oneiron::Result<usize> {
-        self.shared.count(input)
+    /// The windows `input` runs as, counted with the slot's tokenizer, one
+    /// counted `0` for a slot that counts none: a blocking encode
+    /// (FIX 7331, 9518).
+    pub(crate) fn plan(&self, input: &EncoderInput) -> oneiron::Result<InferenceWindows> {
+        self.shared.plan(input.clone())
     }
 
     /// One call in `work`'s class for `caller`: claims room at its turn,

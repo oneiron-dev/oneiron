@@ -63,6 +63,7 @@ pub(super) fn check_moved_output(
     if output.vad.is_some_and(|vad| vad.validate().is_err()) {
         return Err(OutputRefusal::MoodOutOfRange);
     }
+    check_mood_parts(input, output)?;
     for span in &output.spans {
         let Some(message) = input.messages.get(span.message) else {
             return Err(OutputRefusal::UnknownMessage);
@@ -78,6 +79,33 @@ pub(super) fn check_moved_output(
         }
     }
     check_links(input, output)
+}
+
+/// The windows' moods of a turn read in several (FIX 9518): each in range,
+/// from a place in one of the input's messages to a later or equal place in
+/// another, on character boundaries.
+pub(crate) fn check_mood_parts(
+    input: &EncoderInput,
+    output: &EncoderOutput,
+) -> Result<(), OutputRefusal> {
+    let place = |message: usize, at: usize| {
+        input
+            .messages
+            .get(message)
+            .is_some_and(|each| at <= each.text.len() && each.text.is_char_boundary(at))
+    };
+    for part in &output.mood_parts {
+        if part.vad.validate().is_err() {
+            return Err(OutputRefusal::MoodOutOfRange);
+        }
+        if !place(part.message, part.start)
+            || !place(part.end_message, part.end)
+            || (part.message, part.start) > (part.end_message, part.end)
+        {
+            return Err(OutputRefusal::BadOffsets);
+        }
+    }
+    Ok(())
 }
 
 /// The order rule: spans come in (message, start, end) order and never
@@ -145,16 +173,14 @@ pub(crate) fn check_links(
     Ok(())
 }
 
-/// The text the input sent for `message` of context turn `turn`.
+/// The text the input sent for `message` of context turn `turn`: an earlier
+/// turn, or a later one of a conversation register (FIX 10167).
 pub(super) fn context_text<'a>(
     input: &'a EncoderInput,
     turn: &str,
     message: &str,
 ) -> Option<&'a str> {
-    input
-        .context
-        .iter()
-        .find(|each| each.turn == turn)?
+    crate::memory::extraction::register_turn(input, turn)?
         .messages
         .iter()
         .find(|each| each.id == message)

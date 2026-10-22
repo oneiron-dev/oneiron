@@ -31,7 +31,8 @@ use oneiron::feedback::{
     TextFilter, TextFilterError, TextFilterIdentity, UnredactedFeedback, apply_recognised_spans,
 };
 use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, ExtractionCaller, ExtractionEncoder, ExtractionWork,
+    EncoderInput, EncoderMessage, EncoderRegister, ExtractionCaller, ExtractionEncoder,
+    ExtractionWork,
 };
 
 use crate::oneironer::{EncoderNotSelected, TaggerSlot};
@@ -101,6 +102,8 @@ impl TextFilter for OneironerFilter {
                 text: text.to_owned(),
             }],
             context: Vec::new(),
+            following: Vec::new(),
+            register: EncoderRegister::Live,
             language: None,
             speaker: None,
         };
