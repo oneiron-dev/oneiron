@@ -76,12 +76,19 @@ impl Channel {
         Ok(frame)
     }
 
-    async fn generate(&mut self, id: u64, epoch: &str, body: Value) -> io::Result<()> {
+    /// Sends one `generate` with its input region; each failure names its
+    /// step, and whether any byte of the call had left.
+    async fn generate(
+        &mut self,
+        id: u64,
+        epoch: &str,
+        body: Value,
+    ) -> Result<(), OpenAiCompatTransportError> {
         let mut conversation = serde_json::Map::new();
         let mut params = body
             .as_object()
             .cloned()
-            .ok_or(io::ErrorKind::InvalidInput)?;
+            .ok_or_else(|| not_sent("params", "the request body is not an object"))?;
         for key in ["messages", "tools"] {
             if let Some(value) = params.remove(key) {
                 conversation.insert(key.to_owned(), value);
@@ -89,7 +96,8 @@ impl Channel {
         }
         params.remove("stream");
         params.remove("stream_options");
-        let input = SharedRegion::from_bytes(&serde_json::to_vec(&conversation)?)?;
+        let bytes = serde_json::to_vec(&conversation).map_err(|e| not_sent("encode input", e))?;
+        let input = SharedRegion::from_bytes(&bytes).map_err(|e| not_sent("input region", e))?;
         let frame = Self::bytes(
             "generate",
             id,
@@ -99,12 +107,16 @@ impl Channel {
                           "length": input.len(), "encoding": "chat_json"},
                 "params": params, "stream": true,
             }),
-        )?;
+        )
+        .map_err(|e| not_sent("encode frame", e))?;
         let fds = [input.fd()];
         let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
         let mut control = SendAncillaryBuffer::new(&mut space);
         if !control.push(SendAncillaryMessage::ScmRights(&fds)) {
-            return Err(io::ErrorKind::InvalidInput.into());
+            return Err(not_sent(
+                "SCM_RIGHTS",
+                "the descriptor does not fit its buffer",
+            ));
         }
         #[cfg(target_os = "linux")]
         let flags = SendFlags::NOSIGNAL;
@@ -116,12 +128,17 @@ impl Channel {
                 sendmsg(&self.0, &[IoSlice::new(&frame)], &mut control, flags)
                     .map_err(io::Error::from)
             })
-            .await?;
+            .await
+            .map_err(|e| not_sent("sendmsg SCM_RIGHTS", e))?;
         if sent == 0 {
-            return Err(io::ErrorKind::WriteZero.into());
+            return Err(not_sent("sendmsg SCM_RIGHTS", "no byte went out"));
         }
-        self.0.write_all(&frame[sent..]).await?;
-        Ok(())
+        self.0.write_all(&frame[sent..]).await.map_err(|e| {
+            fault(OpenAiCompatTransportError::Io {
+                stage: "frame suffix",
+                detail: e.to_string(),
+            })
+        })
     }
 }
 
@@ -189,6 +206,21 @@ impl Transport {
 
 impl oneiron::llm::SingleSend for Transport {}
 
+/// A failed step before the call left this side.
+fn not_sent(stage: &'static str, cause: impl std::fmt::Display) -> OpenAiCompatTransportError {
+    fault(OpenAiCompatTransportError::NotSent {
+        stage,
+        detail: cause.to_string(),
+    })
+}
+
+/// Every native call fault reaches the screen's log with its cause; the
+/// adapter turns each into the same retryable cut.
+fn fault(error: OpenAiCompatTransportError) -> OpenAiCompatTransportError {
+    eprintln!("NATIVE_CLIENT_ERROR {error}");
+    error
+}
+
 struct Live {
     channel: Channel,
     id: u64,
@@ -202,12 +234,11 @@ impl Live {
     async fn begin(transport: &Transport, body: Value) -> Result<Self, OpenAiCompatTransportError> {
         let mut channel = Channel::connect(&transport.socket)
             .await
-            .map_err(|_| OpenAiCompatTransportError::Connection)?;
+            .map_err(|e| not_sent("connect", e))?;
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         channel
             .generate(id, &transport.epoch, transport.shape(body))
-            .await
-            .map_err(|_| OpenAiCompatTransportError::StreamCut)?;
+            .await?;
         Ok(Self {
             channel,
             id,
@@ -226,15 +257,41 @@ impl Live {
     )> {
         loop {
             let frame = match self.channel.next().await {
-                Ok(frame)
-                    if frame.request_id == self.id
-                        && frame.epoch == self.epoch
-                        && frame.seq == Some(self.seq) =>
-                {
-                    frame
+                Ok(frame) => frame,
+                Err(e) => {
+                    let error = OpenAiCompatTransportError::Io {
+                        stage: "receive",
+                        detail: e.to_string(),
+                    };
+                    return Some((Err(fault(error)), None));
                 }
-                _ => return Some((Err(OpenAiCompatTransportError::StreamCut), None)),
             };
+            // A refusal carries no seq: read it before the envelope check.
+            if frame.op == "refused" && frame.request_id == self.id {
+                let error = OpenAiCompatTransportError::Refused {
+                    code: frame.body["code"].as_str().unwrap_or_default().to_owned(),
+                    message: frame.body["message"]
+                        .as_str()
+                        .map_or_else(|| frame.body.to_string(), str::to_owned),
+                };
+                return Some((Err(fault(error)), None));
+            }
+            if frame.request_id != self.id
+                || frame.epoch != self.epoch
+                || frame.seq != Some(self.seq)
+            {
+                let error = OpenAiCompatTransportError::UnexpectedFrame(format!(
+                    "`{}` id={} epoch={} seq={:?}; expected id={} epoch={} seq={}",
+                    frame.op,
+                    frame.request_id,
+                    frame.epoch,
+                    frame.seq,
+                    self.id,
+                    self.epoch,
+                    self.seq,
+                ));
+                return Some((Err(fault(error)), None));
+            }
             self.seq += 1;
             let mut body = frame.body;
             let mut chunk = json!({"choices": [{"index": 0, "delta": {}, "finish_reason": null}]});
@@ -265,7 +322,15 @@ impl Live {
                     chunk["usage"]["bench_stats_op"] = self.stats;
                     return Some((Ok(OpenAiCompatStreamFrame::Chunk(chunk)), None));
                 }
-                _ => return Some((Err(OpenAiCompatTransportError::StreamCut), None)),
+                "final" => {
+                    let error =
+                        OpenAiCompatTransportError::EndedWithError(body["error"].to_string());
+                    return Some((Err(fault(error)), None));
+                }
+                op => {
+                    let error = OpenAiCompatTransportError::UnexpectedFrame(format!("`{op}`"));
+                    return Some((Err(fault(error)), None));
+                }
             }
         }
     }
