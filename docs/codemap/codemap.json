@@ -3042,7 +3042,17 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent predicates",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/entry_transition_predicates.rs",
+     "purpose": "The per-entry consent and retired-op predicates; `entry_transition` re-exports them",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -18232,9 +18242,20 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 31,
-      "fn": 26,
+      "crate-vis": 25,
+      "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/grants.rs",
+     "purpose": "The owner's consent acts: approve once, standing grants, denials, revokes and reuse receipts",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 5
      }
     },
     {
@@ -18245,6 +18266,16 @@
      "purpose": "The opener's lineage and its forks never settle their own proposal (DEC-0006 \"Proposals, settlements and the…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/owner.rs",
+     "purpose": "The owner-proof doors: authenticate, bind, recheck and the proof's read key",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -18265,6 +18296,17 @@
      "purpose": "The owner's queued check approval (FIX 6868, L02 authority seam): the durable record that the owner approved…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/read.rs",
+     "purpose": "The consent reads: grant rows, active standing grants, the evaluator door and the registry",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5
      }
     },
     {
@@ -31243,13 +31285,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/decode/decode_manifest.rs",
      "purpose": "Manifest envelope plus DecodedPolicyManifest assembly",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/decode_manifest/parse.rs",
+     "purpose": "The whole policy-manifest body decode; `decode_manifest` re-exports it",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -31545,13 +31597,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/effect/evaluate.rs",
+     "purpose": "The whole external-effect governance evaluation; `effect` re-exports it",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/effect/record.rs",
+     "purpose": "Recording external-effect governance: record, check and held; `effect` re-exports them",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -32000,14 +32072,34 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/manifest_fold/doors.rs",
+     "purpose": "The Vault doors that read document limits and the budget guard from the resolved manifest",
+     "surface": {
+      "crate-vis": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/manifest_fold/fold.rs",
+     "purpose": "The whole policy-manifest fold; `manifest_fold` re-exports it",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -72407,7 +72499,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 194,
+     "files": 195,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72687,7 +72779,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 27,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72981,7 +73073,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 148,
+     "files": 153,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73870,9 +73962,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 154,
+   "over_bar": 151,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4766,
+   "source_files": 4775,
    "test_files": 902
   },
   "oneiron-android": {
