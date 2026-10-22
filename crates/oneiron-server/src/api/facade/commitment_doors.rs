@@ -1,38 +1,14 @@
 //! Owner-bound projections of the typed commitment lifecycle. The generated
 //! HTTP, SDK and MCP doors all use the caller's credential and existing gate.
-use super::FacadeApiError;
-use super::host_doors::{Listed, credential_listing, owner_proof, refused};
+use super::host_doors::Listed;
+use super::host_doors::support::owner_listing::as_owner;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
-use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::commitment_doors::{
     CommitmentCloseRequest, CommitmentCreateReceipt, CommitmentCreateRequest,
     CommitmentFulfillRequest, CommitmentRefRequest, CommitmentView, CommitmentWakeProposal,
 };
-use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use std::sync::Arc;
-
-async fn as_owner<T: Send + 'static>(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    verb: &'static str,
-    act: impl FnOnce(&Memory<'_>, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
-) -> Listed<T> {
-    let admitted = || {
-        let owner = owner_proof(auth, server, verb)?;
-        let caller =
-            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-        Ok::<_, MemoryError>((owner, caller))
-    };
-    let (owner, caller) = match admitted() {
-        Ok(admitted) => admitted,
-        Err(error) => return refused(error),
-    };
-    credential_listing(server, auth, caller, verb, move |_, _, memory| {
-        act(&memory, &owner)
-    })
-    .await
-}
 
 pub(crate) async fn vault_commitments_create(
     server: &Arc<SyncServer>,
