@@ -63,6 +63,9 @@ pub(super) struct StepRunner {
     pub(super) spent: Mutex<HashMap<AttemptId, u64>>,
     /// The server each step's `self.use` sends through, once bound.
     pub(super) host: StepHost,
+    /// The host's wording of the confession ask (FIX 8696), after the
+    /// step's objectives.
+    pub(super) confession: Arc<str>,
 }
 
 /// One model-backed step, with instructions supplied by its stored definition.
@@ -233,7 +236,10 @@ impl StepRunner {
             .or(asked_desc.then_some(definition.desc.as_str()));
         let objectives = step_objectives(step, request);
         if !objectives.is_empty() {
-            messages.push(message(LlmMessageRole::User, confession_ask(&objectives)));
+            messages.push(message(
+                LlmMessageRole::User,
+                confession_ask(&objectives, &self.confession),
+            ));
         }
         // A room-bound step, or a step of a member's bound run, must read
         // its payer (OF-531, FIX 5316).

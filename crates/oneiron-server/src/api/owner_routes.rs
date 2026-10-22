@@ -48,6 +48,7 @@ mod concern_routes;
 mod conflict_routes;
 pub(crate) mod connector_admission_routes;
 mod connector_consent_routes;
+pub(crate) mod connector_slate_routes;
 mod connector_subscription_routes;
 mod conversation_learning_routes;
 pub(super) mod cooperative_deletion_routes;
@@ -68,6 +69,7 @@ mod handoff_alarm_routes;
 mod history_routes;
 mod house_routes;
 mod inbox_routes;
+mod intent_routes;
 mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
@@ -145,6 +147,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(conflict_routes::routes())
         .merge(connector_admission_routes::routes())
         .merge(connector_consent_routes::routes())
+        .merge(connector_slate_routes::routes())
         .merge(connector_subscription_routes::routes())
         .merge(diary_routes::routes())
         .merge(disclosure_routes::routes())
@@ -156,6 +159,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(history_routes::routes())
         .merge(house_routes::routes())
         .merge(inbox_routes::routes())
+        .merge(intent_routes::routes())
         .merge(concern_routes::routes())
         .merge(learning_setting_routes::routes())
         .merge(machine_routes::routes())

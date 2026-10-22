@@ -178,7 +178,7 @@ struct Setup {
 
 /// An engine refusal as the owner reads it: a fixed sentence about the
 /// request is a bad request, a concurrent change asks for a fresh read.
-fn engine(error: oneiron::Error) -> OwnerError {
+pub(super) fn engine(error: oneiron::Error) -> OwnerError {
     match error {
         oneiron::Error::InvalidConfig(reason) => OwnerError::Invalid(reason),
         oneiron::Error::ConcurrentWrite(_) => {

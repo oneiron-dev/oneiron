@@ -13,6 +13,7 @@ use crate::server::SyncServer;
 
 mod hooks;
 mod page_seal;
+mod stop;
 pub(crate) use self::hooks::hook_sandbox;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::hooks::spawn_fact_hooks;
@@ -162,21 +163,41 @@ pub(super) async fn serve_anchored(
     let (stopping, mut stopped) = (started.stopping, started.stopped);
     let workers = started.workers;
     let mesh_server = Arc::clone(&sync_server);
-    let app = build_app(sync_server).layer(cors_layer);
-    // The paired-machine mesh listener (OF-535): off unless the host names
-    // its bind address.
-    let mesh = crate::handler::mesh::start(
-        Arc::clone(&mesh_server),
-        &crate::handler::mesh::MeshConfig::from_env()?,
-        &app,
-        config.limits.connections(),
-    )
-    .await?;
-    // A machine that is not the elected home dials its home, on that mesh
-    // when the home has a paired address there.
-    let device_sync =
-        crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
-    host.ready()?;
+    // Each socket upgraded on the API listener or the mesh sees the stop, and
+    // the stop waits for it and the calls it admitted (FIX 4757).
+    let (app, upgrades) = crate::embedded::upgrade_lifetime(
+        build_app(sync_server).layer(cors_layer),
+        stopped.clone(),
+    );
+    // A startup error from here on stops what started and joins every worker
+    // before it is returned (FIX 7386).
+    let (mut mesh, mut device_sync) = (None, None);
+    let startup = async {
+        // The paired-machine mesh listener (OF-535): off unless the host
+        // names its bind address.
+        mesh = crate::handler::mesh::start(
+            Arc::clone(&mesh_server),
+            &crate::handler::mesh::MeshConfig::from_env()?,
+            &app,
+            config.limits.connections(),
+        )
+        .await?;
+        // A machine that is not the elected home dials its home, on that
+        // mesh when the home has a paired address there.
+        device_sync =
+            crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
+        host.ready()?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(error) = startup {
+        let _ = stopping.send(true);
+        stop::stop_serving(&mesh_server, mesh, device_sync, upgrades).await;
+        if let Err(cleanup) = workers.shutdown(|| host.on_stop()).await {
+            tracing::warn!(error = %cleanup, "the workers of a failed start did not stop cleanly");
+        }
+        return Err(error);
+    }
     // Ready and bound: a client on this host can find it now. The file goes
     // when this returns, a clean stop or a late startup error alike.
     #[cfg(unix)]
@@ -232,15 +253,9 @@ pub(super) async fn serve_anchored(
             tracing::warn!("connections still open after the drain grace; stopping anyway");
         }
     }
-    if let Some(device_sync) = device_sync {
-        device_sync.stop().await;
-    }
-    if let Some(mesh) = mesh {
-        mesh.stop().await;
-    }
-    // Every public live voice session ends through its own teardown, its
-    // journal finished, and none starts after, as managed serve ends them.
-    mesh_server.live_voice.stop_all().await;
+    // Outside the grace: every upgraded socket and the calls it admitted end
+    // before the device-sync connection, the mesh and the workers stop.
+    stop::stop_serving(&mesh_server, mesh, device_sync, upgrades).await;
     workers.shutdown(|| host.on_stop()).await?;
 
     Ok(())
@@ -419,6 +434,9 @@ pub(crate) async fn start_desktop_workers(
     lifecycle_admission: impl FnOnce() -> crate::server::HousekeepingAdmission,
     drain_tagging: bool,
 ) -> anyhow::Result<StartedWorkers> {
+    // Read before any worker starts, so a candidate file that does not read
+    // stops the start with nothing running (FIX 7386).
+    let publisher_candidates = config.failure_signals.publisher_candidates()?;
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(config);
     // Model seats, the Dreamer and the workflow pump, from `[models]`. With
@@ -470,6 +488,8 @@ pub(crate) async fn start_desktop_workers(
             embedding,
             sync_server.spawn_media_embedding_worker(),
             sync_server.spawn_resident_pump(),
+            // The official CLIs' runs, on the person's own runtime (FIX 4552).
+            sync_server.spawn_seat_host(),
             Some(sync_server.spawn_connector_settler()),
         ];
         let tagging = tagging.map(|handle| (handle, stopping.clone()));
@@ -519,7 +539,7 @@ pub(crate) async fn start_desktop_workers(
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     workers.push(crate::ai_host::coach_heal::spawn(
         &sync_server,
-        config.failure_signals.publisher_candidates()?,
+        publisher_candidates,
         crate::server::admit_every_pass(),
     ));
     // The nightly Coach jobs that need the host's model or rules (OF-420).

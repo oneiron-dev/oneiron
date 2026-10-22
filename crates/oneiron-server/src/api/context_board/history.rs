@@ -117,13 +117,23 @@ pub(crate) async fn board_turn_idempotency(
         #[serde(default)]
         turn: Option<serde::de::IgnoredAny>,
     }
+    // A key replays only the request it was kept for, so this body is the
+    // first one's: its room is the one the kept board read in.
+    let keyed = std::sync::OnceLock::new();
     crate::idempotency::idempotency_for_mutating_form(
         state,
         request,
         next,
-        |body| serde_json::from_slice::<TurnForm>(body).is_ok_and(|form| form.turn.is_some()),
+        |body| {
+            let turn =
+                serde_json::from_slice::<TurnForm>(body).is_ok_and(|form| form.turn.is_some());
+            if turn {
+                let _ = keyed.set(body.to_vec());
+            }
+            turn
+        },
         |server, auth, replay| {
-            release_board_replay(server, auth, replay)
+            release_board_replay(server, auth, replay, keyed.get().map(Vec::as_slice))
                 .err()
                 .map(|error| EnvelopedApiError::from(error).into_response())
         },
@@ -139,6 +149,10 @@ pub(crate) async fn board_turn_idempotency(
 /// source, kept beside it as `admit`) is one the caller's read still reads
 /// (409 `board_document_unreadable` otherwise). A board kept before those
 /// rows were never replays.
+/// The room the request named is resolved again, so every check meets that
+/// room's read and clamp as they stand now, as a new board in it would; and
+/// each source the response carries without naming it, a standing block's
+/// CLAIMs, passes them as its documents do (FIX 8147, 8148).
 /// Off this device it goes out only while every row it was derived from
 /// (`rows`, listed when it was cached) may leave this device, and it names
 /// no row a device-local world keeps now. A refused replay records nothing
@@ -147,6 +161,7 @@ fn release_board_replay(
     server: &SyncServer,
     auth: Option<&CoreAuth>,
     replay: &crate::idempotency::Replay<'_>,
+    request: Option<&[u8]>,
 ) -> Result<(), ApiError> {
     #[derive(Deserialize)]
     struct Disclosed {
@@ -194,7 +209,24 @@ fn release_board_replay(
         return Err(refused());
     }
     let disclosed: Disclosed = serde_json::from_slice(replay.body).map_err(|_| unreadable())?;
-    let documents = disclosed
+    let request: super::ContextBoardRequest = request
+        .and_then(|body| serde_json::from_slice(body).ok())
+        .ok_or_else(refused)?;
+    let room = super::board::board_targets(
+        auth,
+        request.room.as_ref(),
+        request
+            .retrieval
+            .as_ref()
+            .and_then(super::super::CoreContextPackRequest::conversation_id),
+        request
+            .session
+            .as_ref()
+            .and_then(|s| s.session_id.as_deref()),
+        request.project.as_ref(),
+    )?
+    .room_id();
+    let mut documents = disclosed
         .memories
         .into_iter()
         .flat_map(|memories| memories.rows)
@@ -207,7 +239,8 @@ fn release_board_replay(
         .map(|row| EntityId::from_hex(&row.id))
         .collect::<Result<BTreeSet<_>, _>>()
         .map_err(|_| unreadable())?;
-    let (read, disclosure) = current_board_authority(&server.vault, auth)?;
+    documents.extend(replay.sources.iter().copied());
+    let (read, disclosure) = current_board_authority(&server.vault, auth, room)?;
     let admitted = server
         .vault
         .board_documents_admitted(&documents, &read, disclosure.as_ref())
@@ -219,10 +252,12 @@ fn release_board_replay(
 }
 
 /// The authority a board is handed back under: the caller's read scope and
-/// disclosure clamp as they stand now, the ones a new board would apply.
+/// disclosure clamp as they stand now, the ones a new board would apply, in
+/// room `room` when it read in one.
 fn current_board_authority<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
+    room: Option<EntityId>,
 ) -> Result<
     (
         oneiron::claim::ScopedRead<'a>,
@@ -231,10 +266,8 @@ fn current_board_authority<'a>(
     ApiError,
 > {
     let read = super::super::scoped_read_for_core_auth(vault, auth)?;
-    let interlocutors =
-        super::super::resolve_core_interlocutor_set(vault, auth, &read, None, None)?;
-    let disclosure = super::super::resolve_core_disclosure(vault, interlocutors.as_ref(), None)?;
-    Ok((read, disclosure))
+    let audience = super::super::resolve_core_audience(vault, auth, read, room)?;
+    Ok((audience.read, audience.disclosure))
 }
 
 /// Records the board `response` served for the caller's own TURN, under the
@@ -326,7 +359,7 @@ pub(crate) async fn context_board_turn_history(
     // Every item passes the caller's read scope and disclosure clamp as they
     // stand now, the ones a new board would apply: a past board never hands
     // back a document the caller can no longer read or be shown.
-    let (read, disclosure) = current_board_authority(&server.vault, &auth)?;
+    let (read, disclosure) = current_board_authority(&server.vault, &auth, None)?;
     let board = server
         .vault
         .reconstruct_board_for(&id, &read, disclosure.as_ref())
