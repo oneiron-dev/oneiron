@@ -52201,7 +52201,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CredentialRestoreNote"
@@ -55110,7 +55110,7 @@
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -55131,6 +55131,16 @@
      "purpose": "An input whose body passes one envelope's plaintext bound (FIX 5521; Rule 5: split, never refuse)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/input/witness.rs",
+     "purpose": "A relayed custody input's witness in numbered parts (FIX 8088)",
+     "surface": {
+      "crate-vis": 21
      }
     },
     {
@@ -55471,7 +55481,7 @@
      "path": "src/secret_custody/storage_seal/image.rs",
      "purpose": "A credential row in a checkpoint image, and a restore's or an archived vault's activation's plan of the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -60753,7 +60763,27 @@
      "path": "src/store/credential_custody.rs",
      "purpose": "The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/credential_custody/erase.rs",
+     "purpose": "An erased credential stays erased (KS-6 part 2, FIX-LIST 7403, 5687): one terminal fence per credential id…",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/credential_custody/fences.rs",
+     "purpose": "What a restore, a fork or an activation knows of erased credentials (KS-6 part 2, CALLS `KS-6 erase fence…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -60805,7 +60835,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -63270,9 +63300,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/custody/checkpoint.rs",
-     "purpose": "A custody carrier in a checkpoint (KS7-3a): a custody transition and a protected input are secret custody's…",
+     "purpose": "A custody carrier in a checkpoint (KS7-3a): a custody transition, a protected input and a witness part (FIX…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/custody/witness.rs",
+     "purpose": "A custody input's witness parts on the window plane (FIX 8088): a witness past one row rides beside its…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -76221,7 +76261,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76375,7 +76415,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 146,
+     "files": 148,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76403,7 +76443,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 257,
+     "files": 258,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76608,7 +76648,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5002,
+   "source_files": 5006,
    "test_files": 902
   },
   "oneiron-android": {
