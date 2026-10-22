@@ -1154,6 +1154,8 @@ pub enum AgentVerb {
     SelfBrowserBatch,
     SelfBrowserLibraryFind,
     SelfBrowserLibraryDraft,
+    SelfBrowserDemonstrationStart,
+    SelfBrowserDemonstrationStop,
     SelfBrowserLibraryPropose,
     SelfBrowserLibraryRetire,
     SelfBrowserLibraryRetired,
@@ -2326,6 +2328,8 @@ impl AgentVerb {
         Self::SelfBrowserBatch,
         Self::SelfBrowserLibraryFind,
         Self::SelfBrowserLibraryDraft,
+        Self::SelfBrowserDemonstrationStart,
+        Self::SelfBrowserDemonstrationStop,
         Self::SelfBrowserLibraryPropose,
         Self::SelfBrowserLibraryRetire,
         Self::SelfBrowserLibraryRetired,
@@ -3529,6 +3533,8 @@ impl AgentVerb {
             Self::SelfBrowserBatch => "self.browser.batch",
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
             Self::SelfBrowserLibraryDraft => "self.browser.library.draft",
+            Self::SelfBrowserDemonstrationStart => "self.browser.demonstration.start",
+            Self::SelfBrowserDemonstrationStop => "self.browser.demonstration.stop",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
             Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
             Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
@@ -4681,6 +4687,8 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryDraft
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -4738,6 +4746,8 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryDraft
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -5880,6 +5890,8 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryDraft
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -7162,6 +7174,8 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryDraft
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -7853,6 +7867,8 @@ impl AgentVerb {
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserDemonstrationStart
+                | Self::SelfBrowserDemonstrationStop
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
@@ -9074,6 +9090,8 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryDraft => &["spec"],
+            Self::SelfBrowserDemonstrationStart => &["spec"],
+            Self::SelfBrowserDemonstrationStop => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
@@ -10247,6 +10265,8 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryDraft => &["spec"],
+            Self::SelfBrowserDemonstrationStart => &["spec"],
+            Self::SelfBrowserDemonstrationStop => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
@@ -13622,6 +13642,12 @@ impl AgentVerb {
             }
             Self::SelfBrowserLibraryDraft => {
                 "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."
+            }
+            Self::SelfBrowserDemonstrationStart => {
+                "Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running."
+            }
+            Self::SelfBrowserDemonstrationStop => {
+                "Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."
             }
             Self::SelfBrowserLibraryPropose => {
                 "Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."

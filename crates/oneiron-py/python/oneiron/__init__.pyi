@@ -3492,6 +3492,8 @@ class Oneiron:
             """Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt."""
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs": ...
+        @property
+        def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs": ...
         def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.BrowserHandoverOutput:
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
         def switch_engine(self, spec: Facade.LiveRunRequest[Facade.SwitchEngineInput]) -> Facade.BrowserSwitchEngineOutput:
@@ -3509,6 +3511,11 @@ class Oneiron:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
         def run(self, spec: Facade.LiveRunRequest[Facade.LibraryRunInput]) -> Facade.BrowserLibraryRunOutput:
             """Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift."""
+    class _SelfBrowserDemonstrationVerbs:
+        def start(self, spec: Facade.LiveRunRequest[Facade.DemonstrationStartInput]) -> Facade.BrowserDemonstrationStartOutput:
+            """Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running."""
+        def stop(self, spec: Facade.LiveRunRequest[Facade.DemonstrationStopInput]) -> Facade.BrowserDemonstrationStopOutput:
+            """Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."""
     class _SelfAgentsVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
             """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
