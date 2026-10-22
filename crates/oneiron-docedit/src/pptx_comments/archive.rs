@@ -22,7 +22,6 @@ impl<'a> Archive<'a> {
                 .ok_or(PptxError::InvalidPackage)?;
             parts.insert(name.to_owned(), data);
         }
-        let names: Vec<String> = package.names().map(str::to_owned).collect();
         let minimum = bytes
             .len()
             .checked_sub(22)
@@ -40,12 +39,27 @@ impl<'a> Archive<'a> {
         {
             return Err(PptxError::InvalidPackage);
         }
+        // Every central record, by the end record's count and each record's
+        // own name (FIX 8597): a directory record stays in the archive and
+        // every export, out of the part map only.
         let mut entries = Vec::new();
         let mut cursor = directory;
         let mut ranges = Vec::new();
-        for name in names {
-            validate_name(&name)?;
+        let mut held = BTreeSet::new();
+        for _ in 0..u16_at(bytes, eocd + 10)? {
             let name_len = usize::from(u16_at(bytes, cursor + 28)?);
+            let name = bytes
+                .get(cursor + 46..cursor + 46 + name_len)
+                .and_then(|name| std::str::from_utf8(name).ok())
+                .ok_or(PptxError::InvalidPackage)?
+                .to_owned();
+            match name.strip_suffix('/') {
+                Some(folder) => validate_name(folder)?,
+                None if parts.contains_key(&name) && held.insert(name.clone()) => {
+                    validate_name(&name)?;
+                }
+                None => return Err(PptxError::InvalidPackage),
+            }
             let length = 46
                 + name_len
                 + usize::from(u16_at(bytes, cursor + 30)?)
@@ -90,6 +104,9 @@ impl<'a> Archive<'a> {
             cursor += length;
         }
         ranges.sort_unstable();
+        if held.len() != parts.len() {
+            return Err(PptxError::InvalidPackage);
+        }
         // Unknown local records are not legitimate pass-through parts. Refuse
         // them rather than preserving an archive PowerPoint may offer to repair.
         if cursor != eocd
@@ -117,7 +134,14 @@ impl<'a> Archive<'a> {
         if parts == &self.parts {
             return Ok(self.bytes.to_vec());
         }
-        if parts.len() >= usize::from(u16::MAX)
+        // The records written: every retained one, directories included,
+        // and each new part.
+        let records = self.entries.len()
+            + parts
+                .keys()
+                .filter(|name| !self.parts.contains_key(*name))
+                .count();
+        if records >= usize::from(u16::MAX)
             || self.parts.keys().any(|name| !parts.contains_key(name))
         {
             return Err(PptxError::InvalidPackage);
@@ -147,7 +171,7 @@ impl<'a> Archive<'a> {
         out.extend_from_slice(&central);
         out.extend_from_slice(&0x06054b50u32.to_le_bytes());
         out.extend_from_slice(&[0; 4]);
-        let count = parts.len() as u16;
+        let count = records as u16;
         out.extend_from_slice(&count.to_le_bytes());
         out.extend_from_slice(&count.to_le_bytes());
         out.extend_from_slice(&size.to_le_bytes());
