@@ -6299,7 +6299,7 @@
       "SecretScanMode"
      ],
      "path": "src/batch/secret_scan.rs",
-     "purpose": "—",
+     "purpose": "Secret detection and custody filtering at batch and release boundaries",
      "surface": {
       "crate-vis": 42,
       "enum": 1,
@@ -51009,39 +51009,26 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
-     "notable": [
-      "CanonicalBaseEdge",
-      "CanonicalContainerManifest",
-      "CanonicalCustodyTransition",
-      "CanonicalDocumentFork",
-      "CanonicalDocumentPin",
-      "CanonicalDocumentPurge",
-      "CanonicalDocumentReceipt",
-      "CanonicalDocumentVersion",
-      "CanonicalEntity",
-      "CanonicalEntityDocument",
-      "CanonicalEntityDocumentHistory",
-      "CanonicalForkStatus",
-      "CanonicalPinCarrier",
-      "CanonicalRoomFact",
-      "CanonicalRoomTurn",
-      "CanonicalSchemaManifest",
-      "CanonicalSettleVerb",
-      "CanonicalShellWorld",
-      "CanonicalSnapshot",
-      "CanonicalTombstone"
-     ],
+     "notable": [],
      "path": "src/recovery/canonical.rs",
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
       "crate-vis": 20,
-      "enum": 2,
-      "fn": 7,
-      "re-export": 4,
-      "struct": 18
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/canonical/capture.rs",
+     "purpose": "One coordinated capture of a quiescent canonical window",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -51079,6 +51066,49 @@
      "surface": {
       "crate-vis": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/canonical/snapshot_ops.rs",
+     "purpose": "Public validation and codec entry points for canonical snapshots",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CanonicalBaseEdge",
+      "CanonicalContainerManifest",
+      "CanonicalCustodyTransition",
+      "CanonicalDocumentFork",
+      "CanonicalDocumentPin",
+      "CanonicalDocumentPurge",
+      "CanonicalDocumentReceipt",
+      "CanonicalDocumentVersion",
+      "CanonicalEntity",
+      "CanonicalEntityDocument",
+      "CanonicalEntityDocumentHistory",
+      "CanonicalForkStatus",
+      "CanonicalPinCarrier",
+      "CanonicalRoomFact",
+      "CanonicalRoomTurn",
+      "CanonicalSchemaManifest",
+      "CanonicalSettleVerb",
+      "CanonicalShellWorld",
+      "CanonicalSnapshot",
+      "CanonicalTombstone"
+     ],
+     "path": "src/recovery/canonical/vocabulary.rs",
+     "purpose": "CRDT-independent canonical snapshot values and document history vocabulary",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 18
      }
     },
     {
@@ -54856,9 +54886,9 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "SecretLiftProposal",
       "SnapshotCustodyReport",
-      "SnapshotExclusionSet"
+      "SnapshotExclusionSet",
+      "SnapshotSecretLiftProposal"
      ],
      "path": "src/secret_snapshot.rs",
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)",
@@ -72153,26 +72183,21 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "src",
      "notable": [
-      "OpenedBundleSection",
       "OpenedKeyPads",
       "OpenedVaultBundle",
-      "SealedBundleGeneration",
       "SealedBundleSection",
       "SealedKeyPads",
-      "SealedVaultBundle",
-      "SealedVaultUpload"
+      "SealedVaultBundle"
      ],
      "path": "src/world_keys/bundle.rs",
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
-      "const": 3,
-      "crate-vis": 11,
-      "fn": 34,
-      "re-export": 1,
-      "struct": 8
+      "crate-vis": 3,
+      "re-export": 4,
+      "struct": 5
      }
     },
     {
@@ -72201,6 +72226,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SealedVaultUpload"
+     ],
+     "path": "src/world_keys/bundle/carrier.rs",
+     "purpose": "Bundle carrier entry points for sealing and opening one generation",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 13,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -72221,6 +72260,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/bundle/pad_objects.rs",
+     "purpose": "Public access and rewrite operations on sealed key-pad objects",
+     "surface": {
+      "fn": 10
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -72229,6 +72278,34 @@
      "surface": {
       "crate-vis": 7,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedBundleGeneration"
+     ],
+     "path": "src/world_keys/bundle/retirement.rs",
+     "purpose": "Bundle generation identity, upload cadence and retirement selection",
+     "surface": {
+      "const": 3,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OpenedBundleSection"
+     ],
+     "path": "src/world_keys/bundle/sections.rs",
+     "purpose": "Opened world-section views and bundle section selection",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 7,
+      "struct": 1
      }
     },
     {
@@ -72711,25 +72788,31 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/vault_key.rs",
+     "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
+     "surface": {
+      "crate-vis": 21,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "EscrowAddWarning",
       "EscrowAdded",
       "EscrowRetirement",
-      "NewVaultKeyWrap",
       "ResealedEscrowCapsule",
-      "VaultKeyEscrowCapsule",
-      "VaultKeyStatus",
-      "VaultKeyUnlock"
+      "VaultKeyEscrowCapsule"
      ],
-     "path": "src/world_keys/vault_key.rs",
-     "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
+     "path": "src/world_keys/vault_key/escrow.rs",
+     "purpose": "Vault-key escrow result shapes and outbound capsule access",
      "surface": {
-      "crate-vis": 23,
-      "enum": 4,
-      "fn": 28,
-      "re-export": 1,
+      "enum": 1,
+      "fn": 3,
       "struct": 4
      }
     },
@@ -72755,6 +72838,32 @@
      "purpose": "A cold managed restore's escrow recipients (LC FIX 5384/5385; the contract is…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/vault_key/storage.rs",
+     "purpose": "Vault-key storage doors for unlocking and changing wraps",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NewVaultKeyWrap",
+      "VaultKeyStatus",
+      "VaultKeyUnlock"
+     ],
+     "path": "src/world_keys/vault_key/vocabulary.rs",
+     "purpose": "Vault-key wrap choices and caller-supplied unlock material",
+     "surface": {
+      "enum": 3,
+      "fn": 2
      }
     },
     {
@@ -74696,7 +74805,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 88,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -75158,9 +75267,9 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 47,
+     "files": 54,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     },
@@ -75172,9 +75281,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 145,
+   "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4882,
+   "source_files": 4892,
    "test_files": 902
   },
   "oneiron-android": {
@@ -107820,7 +107929,6 @@
       "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
-      "SecretLiftProposal",
       "SecretLiftReceipt",
       "SecretLiftRequest",
       "SecretLiftStatus",
@@ -108078,6 +108186,7 @@
       "SlotCandidate",
       "SlotField",
       "SmartArtNode",
+      "SnapshotSecretLiftProposal",
       "SourceConflict",
       "SourceFamily",
       "SourceSpan",
