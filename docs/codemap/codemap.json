@@ -25038,6 +25038,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/feedback_triage/lease.rs",
+     "purpose": "The feedback sweep's lease on a long GitHub walk (FIX 7628)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -30687,7 +30698,7 @@
      "purpose": "Feedback dispatch and export: send context, transport adapter, dispatch request building, send, and…",
      "surface": {
       "const": 4,
-      "fn": 6,
+      "fn": 7,
       "struct": 4,
       "trait": 1
      }
@@ -30825,7 +30836,7 @@
       "crate-vis": 3,
       "enum": 3,
       "fn": 3,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 4
      }
     },
@@ -30910,6 +30921,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ReportDisclosureBasis",
+      "ReportTextSendBinding"
+     ],
+     "path": "src/feedback/report/disclosure.rs",
+     "purpose": "A report's text and its publisher (FIX 8747; DEC-0006)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ReportDisclosureChoice",
       "ReportRoute",
       "ReportRoutedPayload",
@@ -30918,7 +30945,7 @@
      "path": "src/feedback/report/routing.rs",
      "purpose": "Maker routing and disclosure",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 4,
       "struct": 2
@@ -30981,7 +31008,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GithubIssueKind",
@@ -72780,7 +72807,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 133,
+     "files": 134,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72899,7 +72926,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -73804,7 +73831,7 @@
    },
    "over_bar": 154,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4760,
+   "source_files": 4762,
    "test_files": 902
   },
   "oneiron-android": {
@@ -104963,6 +104990,7 @@
       "ReportBlockedInput",
       "ReportBlockedOutput",
       "ReportDisclosure",
+      "ReportDisclosureBasis",
       "ReportDisclosureChoice",
       "ReportDisclosureRequest",
       "ReportIssue",
@@ -106160,7 +106188,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 986,
+      "enum": 987,
       "struct": 3042
      }
     },
