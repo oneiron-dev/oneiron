@@ -289,6 +289,19 @@ impl Vault {
         })
     }
 
+    /// The transform the vault pins for its vectors, `None` while none is.
+    /// A host whose model files are named by a moving hub ref reads it to load
+    /// the commit the stored vectors came from (FIX 9489).
+    pub fn embedding_transform(&self) -> Result<Option<String>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.store
+            .port_index_meta_with_raw(&rtxn, IndexMetaKey::EmbeddingTransform, |raw| {
+                std::str::from_utf8(raw)
+                    .map(str::to_owned)
+                    .map_err(|_| Error::CorruptedIndex("embedding transform"))
+            })
+    }
+
     /// `transform: None` keeps the stored transform under the same model and
     /// drops it under another. `refill` swaps even when nothing differs.
     ///
