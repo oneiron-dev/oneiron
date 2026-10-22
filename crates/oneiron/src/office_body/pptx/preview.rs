@@ -12,10 +12,13 @@
 //! and the draw's view ([`DRAWN`]): a call on an unchanged deck projects and
 //! converts nothing, and draws only the slides no earlier call drew.
 //!
-//! A deck whose text holds a lifted secret draws for the vault owner, and for
-//! an agent that says `why` once a grant covers its keys, judged on every
+//! A deck whose drawing holds a lifted secret draws for the vault owner, and
+//! for an agent that says `why` once a grant covers its keys, judged on every
 //! read, a kept drawing's included (OF-067, FIX 2941). Every other reader is
-//! refused, any ask its read filed kept.
+//! refused, any ask its read filed kept. The keys judged are those of what
+//! is drawn, read in the snapshot the deck is (FIX 9994, 9995): its texts',
+//! and those the marks of the retained package it draws over, of that
+//! package's parts and of each picture it resolves name.
 //!
 //! The memory a preview allocates is admitted to the host's renderer before
 //! it is (FIX 7653, [`SlideRenderer::admit`]): the copy the package keeps,
@@ -173,19 +176,20 @@ impl Memory<'_> {
         // holds one draws for the owner, or for an agent a grant covers that
         // says why (OF-067, FIX 2941).
         let masked = self.reads_lifted_keys_masked()?;
-        let held_back = masked && !self.vault().typed_body_lifted_keys(&artifact)?.is_empty();
-        if held_back && input.why.is_none() {
-            return Err(lifted_refusal());
-        }
         let vault = self.vault();
         let projection = vault.deck_projection(&artifact, fork.as_ref(), renderer)?;
         let key = projection.key.hash();
-        // Judged on this read, over the keys of the snapshot drawn, before a
-        // kept drawing is read or one drawn.
+        // Whether this read needs sight is the snapshot drawn's to say, its
+        // texts, retained package, parts and pictures (FIX 9995, 9994), and
+        // it is judged on this read before a kept drawing is read or one
+        // drawn.
+        let held_back = masked && !projection.lifted.is_empty();
         let view = if !masked {
             DrawView::Raw
         } else if !held_back {
             DrawView::Masked
+        } else if input.why.is_none() {
+            return Err(lifted_refusal());
         } else if self.typed_body_read_sight(
             &artifact,
             &key,
@@ -344,11 +348,19 @@ struct Projection {
     /// The rows `package` was read as: its retained or imported version's
     /// CLAIM and ASSET (FIX 5455).
     rows: Vec<EntityId>,
-    /// The keys the deck's lifted texts hold, read in the snapshot the deck
-    /// was (FIX 2941).
+    /// The keys what is drawn holds, read in the snapshot the deck was: its
+    /// lifted texts' (FIX 2941), and those the marks of the retained package,
+    /// of its parts and of each resolved picture name (FIX 9994).
     lifted: LiftedSources,
     /// The bytes of the package `package` was read from.
     source_bytes: u64,
+    /// The live-born pictures' assets, resolved in that snapshot: the
+    /// export draws exactly the bytes whose marks were judged.
+    assets: HeldAssets,
+    /// The rows each resolved asset is (FIX 5455).
+    asset_rows: Vec<EntityId>,
+    /// The picture bytes resolved.
+    pictures: u64,
 }
 
 impl Vault {
@@ -364,9 +376,9 @@ impl Vault {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let (head, body, candidate, lifted) = {
+        let (head, retained, deck, lifted, (assets, asset_rows, pictures)) = {
             let txn = self.store.env.read_txn()?;
-            let lifted = self.typed_body_lifted_sources_in_txn(&txn, artifact)?;
+            let texts = self.typed_body_lifted_sources_in_txn(&txn, artifact)?;
             let (head, body) = self.deck_head(&txn, artifact)?;
             let candidate = match fork {
                 Some(fork) => {
@@ -377,9 +389,30 @@ impl Vault {
                 }
                 None => None,
             };
-            (head, body, candidate, lifted)
+            let retained = body.retained;
+            let deck = candidate.unwrap_or(body.deck);
+            let listing = ListingAssets {
+                held: VaultAssets {
+                    vault: self,
+                    txn: &txn,
+                },
+                rows: RefCell::new(Vec::new()),
+                renderer,
+                admitted: Cell::new(0),
+                files: RefCell::new(Vec::new()),
+            };
+            let assets = HeldAssets::resolve(&listing, &[&deck]);
+            // What the drawing is made of besides the texts: the retained
+            // package by its pinned hash, each part as the deck pins it, and
+            // each picture's bytes (FIX 9994).
+            let mut files = vec![retained.map_or(source.source_hash, |retained| retained.hash)];
+            files.extend(deck.opaque_parts.values().copied());
+            files.extend(listing.files.take());
+            let lifted = self.lifted_sources_with_files_in_txn(&txn, texts, &files)?;
+            let resolved = (assets, listing.rows.into_inner(), listing.admitted.get());
+            (head, retained, deck, lifted, resolved)
         };
-        let (bytes, rows) = self.deck_source_listing(artifact, &source, body.retained)?;
+        let (bytes, rows) = self.deck_source_listing(artifact, &source, retained)?;
         // The package, its size known only once read whole, is named
         // allocated as read; the copy its retained form keeps is admitted
         // before it is made, and named allocated once it is (FIX 8240).
@@ -389,7 +422,6 @@ impl Vault {
         let package = Package::open(&bytes, self.docedit_package_limits()?)
             .map_err(|_| invalid("the PPTX package could not be read"))?;
         renderer.materialized(source_bytes, source_bytes);
-        let deck = candidate.unwrap_or(body.deck);
         let key = export_key(
             &deck,
             &package,
@@ -405,48 +437,36 @@ impl Vault {
             rows,
             lifted,
             source_bytes,
+            assets,
+            asset_rows,
+            pictures,
         })
     }
 
-    /// The export `projection` keys, its live-born pictures' assets read
-    /// now, beside the rows each asset it resolved is (FIX 5455). Each
-    /// picture's bytes are named allocated to `renderer` as read, and the
-    /// export admitted before it is made (FIX 7653, FIX 8240).
+    /// The export `projection` keys, over the pictures it resolved in its
+    /// snapshot, beside the rows each is (FIX 5455). The export is admitted
+    /// before it is made (FIX 7653, FIX 8240).
     fn project_preview(
         &self,
         artifact: &EntityId,
         projection: &Projection,
         renderer: &dyn SlideRenderer,
     ) -> Result<(ExportOutcome, Vec<EntityId>)> {
-        let (assets, rows, pictures) = {
-            let txn = self.store.env.read_txn()?;
-            let listing = ListingAssets {
-                held: VaultAssets {
-                    vault: self,
-                    txn: &txn,
-                },
-                rows: RefCell::new(Vec::new()),
-                renderer,
-                admitted: Cell::new(0),
-            };
-            let assets = HeldAssets::resolve(&listing, &[&projection.deck]);
-            (assets, listing.rows.into_inner(), listing.admitted.get())
-        };
         // The export writes the package's parts and its pictures again: that
         // much is admitted before it is made, and what it came to named
         // allocated in its place once it is (FIX 8240).
-        let estimate = projection.source_bytes.saturating_add(pictures);
+        let estimate = projection.source_bytes.saturating_add(projection.pictures);
         renderer.admit(estimate)?;
         let export = project(
             &projection.deck,
             &projection.package,
             &artifact.to_hex(),
             &ExportProfile::default(),
-            &assets,
+            &projection.assets,
         )
         .map_err(live)?;
         renderer.materialized(estimate, len(export.bytes.len()));
-        Ok((export, rows))
+        Ok((export, projection.asset_rows.clone()))
     }
 }
 
@@ -460,6 +480,8 @@ struct ListingAssets<'v, 't, 'r> {
     renderer: &'r dyn SlideRenderer,
     /// The picture bytes read so far.
     admitted: Cell<u64>,
+    /// The BLAKE3 of each picture's bytes, whose marks the read judges.
+    files: RefCell<Vec<[u8; 32]>>,
 }
 
 impl Assets for ListingAssets<'_, '_, '_> {
@@ -479,6 +501,9 @@ impl Assets for ListingAssets<'_, '_, '_> {
         self.rows
             .borrow_mut()
             .extend([artifact, version.claim_id, asset_row]);
+        self.files
+            .borrow_mut()
+            .push(*blake3::hash(&resolved.1).as_bytes());
         Some(resolved)
     }
 }

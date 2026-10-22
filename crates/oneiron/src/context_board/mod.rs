@@ -128,8 +128,9 @@ pub use plugin::{
     validate_manifest_for_admission, validate_manifest_for_proposal,
 };
 pub use tasks::{
-    CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow,
-    TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status, render_tasks_section,
+    CancelRejectionPathology, ConsultWidening, JobPresence, TaskBoardStatus, TaskIntentPresence,
+    TaskRow, TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status,
+    render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
 

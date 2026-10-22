@@ -218,15 +218,14 @@ pub(super) fn mcp_board_sections(
 > {
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
-    let rows = crate::api::mcp_credential_memory(
+    let memory = crate::api::mcp_credential_memory(
         &server.vault,
         actor.auth.as_ref(),
         actor.actor_ref,
         actor.actor_class,
     )
-    .at(actor.locality())
-    .describe_rows()
-    .map_err(mcp_facade_error)?;
+    .at(actor.locality());
+    let rows = memory.describe_rows().map_err(mcp_facade_error)?;
     // PEOPLE (ARCH-0067): every person by handle, name inline (a connector
     // holds no cached roster), and the actor's own live children on the task
     // they realize. Children are actor-wide, bound to no world or facet, so a
@@ -238,8 +237,8 @@ pub(super) fn mcp_board_sections(
         oneiron::context_board::child_states_for_actor(&server.vault, actor.actor_ref)
             .map_err(|error| mcp_engine_error("board children failed", error))?
     };
+    let read = mcp_scoped_read(&server.vault, actor)?;
     let people = {
-        let read = mcp_scoped_read(&server.vault, actor)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| {
@@ -255,10 +254,19 @@ pub(super) fn mcp_board_sections(
         people
     };
     let resident = std::collections::BTreeSet::new();
-    rows.attach_people(
+    // A child whose TASK the destination or the read withheld stays off the
+    // board, never a bare row (FIX 9755).
+    rows.attach_people_admitted(
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &children,
-    );
+        |child| match child.task_ref.as_deref().map(oneiron::EntityId::from_hex) {
+            Some(Ok(task)) => {
+                oneiron::context_board::TasksSectionRows::task_admitted(&memory, &read, task)
+            }
+            _ => Ok(true),
+        },
+    )
+    .map_err(|error| mcp_engine_error("board children failed", error))?;
     let (mut tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, pins, served)?;
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),

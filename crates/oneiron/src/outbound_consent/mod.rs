@@ -18,6 +18,7 @@ mod connector_call_output;
 mod connector_call_pending;
 mod connector_call_resume;
 mod connector_elicitation_asks;
+mod connector_elicitation_consent;
 mod connector_elicitation_receipt;
 mod execution;
 mod recovery;

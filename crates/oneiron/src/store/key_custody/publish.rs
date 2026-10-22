@@ -300,8 +300,8 @@ impl Store {
                     EntryState::Live => entries.extend(head_entry(&custody, id)?),
                     // KS-6: a credential key kept off this member keeps its
                     // retirement fact off too; an owner-only compartment
-                    // seals to the root alone. So does a pad no world
-                    // compartment receives (FIX 6706).
+                    // seals to the root alone. A pad's fact always rides
+                    // (FIX 9178: `CustodyRecipients::fact_scope`).
                     EntryState::Retired if recipients.keeps_fact_local(id) => {}
                     EntryState::Retired => retired.push(id.clone()),
                     EntryState::Missing => {}

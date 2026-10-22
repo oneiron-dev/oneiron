@@ -72,6 +72,7 @@ mod demonstration;
 mod draft;
 mod fresh;
 mod guest;
+mod press;
 mod request;
 pub(crate) mod storage;
 pub(crate) mod switch;
@@ -79,8 +80,11 @@ mod trail;
 
 pub use fresh::FreshGuest;
 pub use guest::{BrowserGuestStarter, StartedGuest};
+pub use press::PressGrants;
 
 use self::guest::EngineGuest;
+use self::press::PressBook;
+pub(crate) use self::press::effect_class_on;
 use self::storage::{Collector, OriginSnapshots};
 use self::switch::OriginHistory;
 use self::trail::{Acted, Event, typed_action};
@@ -91,19 +95,20 @@ use crate::retention::HandleRetention;
 use crate::secret::{Secrets, entry};
 use crate::stop::elapsed_ms;
 use crate::{
-    AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserEngine, BrowserError,
-    BrowserPersonInput, BrowserTab, ClickInput, CropInput, DemonstrationOutput,
-    DemonstrationStartInput, DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput,
-    DraftInput, DraftOutput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH,
-    EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput, FieldWriter, FindInput,
-    FindOutput, HandleInfo, HandoverInput, HandoverOutput, ImageOutput, LibraryFindInput,
-    LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput,
-    LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider, NoWriter, Observation,
-    ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput,
-    ReceiptEvidenceSink, ReplayAction, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
-    ScreenshotTrigger, SecretCustody, SecretKind, SelectInput, SendPolicy, StepStop, StoragePhase,
-    SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TextProvenance,
-    TypeInput, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
+    AbandonedTakeover, ActionFact, BatchInput, BatchOutput, BatchStopCause, BrowserDriver,
+    BrowserEngine, BrowserError, BrowserPersonInput, BrowserTab, ClickInput, CropInput,
+    DemonstrationOutput, DemonstrationStartInput, DemonstrationStarted, DemonstrationStopCause,
+    DemonstrationStopInput, DraftInput, DraftOutput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
+    EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput,
+    ExpectOutput, FieldWriter, FindInput, FindOutput, HandleInfo, HandoverInput, HandoverOutput,
+    ImageOutput, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
+    LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
+    NoWriter, Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode,
+    ProposeInput, ProposeOutput, Rebound, ReceiptEvidenceSink, ReplayAction, RoutineDecider, Row,
+    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SecretCustody, SecretKind, SelectInput,
+    SendPolicy, StepStop, StoragePhase, SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover,
+    TakeoverRecord, TextProvenance, TypeInput, TypeOperand, ViewInput, WaitForInput, WaitForOutput,
+    WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -111,9 +116,6 @@ use oneiron_container::{
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-/// The longest reason a `handover` ask may give, in characters.
-const HANDOVER_REASON_CHARS: usize = 500;
 
 /// Words in a control's name that mark its effect class.
 const EFFECT_PHRASES: &[(&str, &[&str])] = &[
@@ -181,6 +183,12 @@ pub struct BrowserSession {
     stop_pending: Option<u64>,
     /// The effect class whose press refused the effect verb running now.
     press_refused: Option<String>,
+    /// The grants' policy as last read, the person's approved batches and
+    /// the sends batch presses paid (FIX 4613, 4615).
+    presses: PressBook,
+    /// The receipt of the input the running verb sent whose page did not
+    /// read after (FIX 8010), for its batch's stop to carry.
+    unread: Option<EffectReceipt>,
     decider: Option<Box<dyn RoutineDecider>>,
     /// The host's writer of a Fill's text (CUA E6), lent with the decider.
     field_writer: Option<Box<dyn FieldWriter>>,
@@ -258,6 +266,9 @@ impl BrowserSession {
             lease,
             manifest,
         } = attached?;
+        if let Some(starter) = &starter {
+            driver.book_inbound(starter.state_charge());
+        }
         Ok(Self {
             driver,
             guest: lease,
@@ -268,6 +279,8 @@ impl BrowserSession {
             acted: None,
             stop_pending: None,
             press_refused: None,
+            presses: PressBook::new(config.policy.clone()),
+            unread: None,
             decider: None,
             field_writer: None,
             typed: None,
@@ -377,22 +390,6 @@ impl BrowserSession {
         &self.policy
     }
 
-    /// Sets the press each effect class runs under, as the vault's grants
-    /// stand now: a browser that outlives one door of its run takes the
-    /// next door's policy.
-    pub fn set_policy(&mut self, policy: SendPolicy) {
-        self.policy = policy;
-    }
-
-    /// Records a person's press over a reviewed batch of `count` sends of
-    /// `class`. Its sends then run without a press each until spent.
-    pub fn approve_batch(&mut self, class: &str, count: u32) {
-        self.policy
-            .modes
-            .insert(class.to_owned(), PressMode::PerBatch);
-        *self.policy.batch.entry(class.to_owned()).or_default() += count;
-    }
-
     #[must_use]
     pub fn abandoned(&self) -> bool {
         self.guest.abandoned()
@@ -486,12 +483,17 @@ impl BrowserSession {
         self.driver.tabs(false)?;
         self.bring_up(tab)?;
         self.driver.checkpoint(StoragePhase::PreInput);
-        self.driver.person_input(input)?;
+        // A destination refusal of the person's own navigation answers
+        // their input, never the agent's next act (FIX 7409).
+        let sent = self.driver.person_input(input);
+        self.crossed(sent)?;
         let Takeover::Held { inputs, .. } = &mut self.takeover else {
             return Err(BrowserError::GuestLost);
         };
         *inputs += 1;
-        Ok(*inputs)
+        let inputs = *inputs;
+        self.undelivered()?;
+        Ok(inputs)
     }
 
     /// `by` hands the browser back, from holding it or from the agent's ask
@@ -499,7 +501,7 @@ impl BrowserSession {
     /// page the person left, and its next answer carries this record once.
     pub fn hand_back(&mut self, by: &str) -> Result<TakeoverRecord, BrowserError> {
         let returned_at_ms = now_ms();
-        let record = match &self.takeover {
+        let mut record = match &self.takeover {
             Takeover::Held {
                 by: holder,
                 asked,
@@ -511,6 +513,7 @@ impl BrowserSession {
                 taken_at_ms: *taken_at_ms,
                 returned_at_ms,
                 inputs: *inputs,
+                refusal: None,
             },
             Takeover::Held { .. } => {
                 return Err(BrowserError::BrowserTakenOver("held".to_owned()));
@@ -521,11 +524,17 @@ impl BrowserSession {
                 taken_at_ms: returned_at_ms,
                 returned_at_ms,
                 inputs: 0,
+                refusal: None,
             },
             Takeover::Agent => {
                 return Err(BrowserError::Input("the agent has the browser".to_owned()));
             }
         };
+        // A refusal of the person's requests still pending is theirs: the
+        // record carries it, and no act of the agent's answers it (FIX 7409).
+        if matches!(self.takeover, Takeover::Held { .. }) {
+            record.refusal = self.custody.take();
+        }
         self.takeover = Takeover::Agent;
         self.driver.forget_observations();
         // The agent reads the tab the person left in front; a front tab that
@@ -624,20 +633,33 @@ impl BrowserSession {
         Ok(&mut self.driver)
     }
 
-    /// Pages a batch's last observation, as an answer pages it.
+    /// Pages a batch's last observation, as an answer pages it, and its
+    /// failed step's, with a cursor of its own (FIX 8044).
     fn page_batch(&mut self, batch: &mut BatchOutput) {
         if let Some(observation) = batch.observation.take() {
             let page = self.driver.paged(observation);
             batch.observation = Some(page.observation);
             batch.next = page.next;
         }
+        if let Some(failed) = batch.failed_receipt.as_mut()
+            && let Some(observation) = failed.observation.take()
+        {
+            let page = self.driver.paged(observation);
+            failed.observation = Some(page.observation);
+            failed.next = page.next;
+        }
     }
 
+    /// The press an effect of `class` on `row` runs under, the grants read
+    /// again where the host reads them live (FIX 4613); a batch press it
+    /// takes is paid on the session (FIX 4615).
     fn press_for(&mut self, class: &str, row: &Row) -> Result<PressMode, BrowserError> {
-        let pressed = press_for(&mut self.policy, class, row);
-        // A refused press ends a draft as the press would (CUA E7).
-        if pressed.is_err() {
-            self.press_refused = Some(class.to_owned());
+        let pressed = press_for(self.press_policy(), class, row);
+        match pressed {
+            Ok(PressMode::PerBatch) => self.press_paid(class),
+            // A refused press ends a draft as the press would (CUA E7).
+            Err(_) => self.press_refused = Some(class.to_owned()),
+            Ok(_) => {}
         }
         pressed
     }
@@ -654,8 +676,6 @@ impl BrowserSession {
         let target = self.live()?.resolve_target(&input.target)?;
         let source = self.source();
         let base = Base::of(input.base);
-        let typed = self.driver.type_target(&target, entry, input.clear, &base);
-        let mut observation = self.crossed(typed)?;
         // The operand as typed, a secret's taken into custody (CUA E7).
         let operand = self.operand(&target.row, entry, source.origin.as_deref());
         let locator = target.row.locator.clone();
@@ -665,40 +685,85 @@ impl BrowserSession {
             source,
         });
         self.typed = Some(provenance);
-        self.receipt(
-            "type",
-            Some(&target.row),
-            None,
-            PressMode::None,
-            &mut observation,
+        let effect = Effect {
+            verb: "type",
+            target: Some(&target.row),
+            class: None,
+            press: PressMode::None,
             started,
-        );
+        };
+        let typed = self.driver.type_target(&target, entry, input.clear, &base);
+        let mut observation = self.sent(&effect, typed)?;
+        self.receipt(&effect, &mut observation);
         self.undelivered()?;
         Ok(observation)
     }
 
-    /// Stamps `observation` with the receipt of the effect that made it,
-    /// which its verb entered at `started`. The receipt's screenshot is
-    /// best-effort: an effect that already happened is receipted even when
-    /// its evidence could not be captured.
-    fn receipt(
+    /// Stamps `observation` with the receipt of `effect`, which made it.
+    /// The receipt's screenshot is best-effort: an effect that already
+    /// happened is receipted even when its evidence could not be captured.
+    fn receipt(&mut self, effect: &Effect<'_>, observation: &mut Observation) {
+        let left = Left {
+            url: observation.url.clone(),
+            title: observation.title.clone(),
+            rebound: observation.rebound.clone(),
+            fact: observation.fact.clone(),
+            unread: None,
+        };
+        observation.receipt = Some(self.land(effect, left));
+    }
+
+    /// An effect verb's driver answer (FIX 8010): an input the driver sent
+    /// stands even when settling or reading the page after it failed. Its
+    /// receipt lands then, before the failure answers, naming the page as
+    /// it reads now (else where the act began) and the failure's code; the
+    /// input is never sent again. A failure before the send lands none.
+    fn sent(
         &mut self,
-        verb: &str,
-        target: Option<&Row>,
-        effect_class: Option<&str>,
-        press: PressMode,
-        observation: &mut Observation,
-        started: Instant,
-    ) {
+        effect: &Effect<'_>,
+        answer: Result<Observation, BrowserError>,
+    ) -> Result<Observation, BrowserError> {
+        let sent = self.driver.take_sent();
+        let error = match self.crossed(answer) {
+            Ok(observation) => return Ok(observation),
+            Err(error) => error,
+        };
+        if sent {
+            let began = self
+                .acted
+                .as_ref()
+                .and_then(|acted| acted.source.shown.clone());
+            let shown = self.driver.page_shown().ok().map(|(_, shown)| shown);
+            let (url, title) = shown.or(began).unwrap_or_default();
+            let left = Left {
+                url,
+                title,
+                rebound: None,
+                fact: None,
+                unread: Some(error.code().to_owned()),
+            };
+            self.unread = Some(self.land(effect, left));
+        } else {
+            self.acted = None;
+            self.typed = None;
+        }
+        Err(error)
+    }
+
+    /// Lands `effect`'s receipt, as the page it `left` names, in the
+    /// session's history and the host's evidence.
+    fn land(&mut self, effect: &Effect<'_>, left: Left) -> EffectReceipt {
         self.receipt_seq += 1;
         // What the verb kept for a replay, and where it began (CUA E7).
         let (action, source) = self
             .acted
             .take()
             .map_or((None, None), |acted| (acted.action, Some(acted.source)));
-        let (source_url, source_origin, tab) = source.map_or((None, None, None), |source| {
-            (source.url, source.origin, Some(source.tab))
-        });
+        let (source_url, source_origin, source_title, tab) =
+            source.map_or((None, None, None, None), |source| {
+                let title = source.shown.map(|(_, title)| title);
+                (source.url, source.origin, title, Some(source.tab))
+            });
         // Never compared: each receipt's screenshot is a capture of its own.
         let (screenshot, capture_id) = self
             .driver
@@ -709,32 +774,35 @@ impl BrowserSession {
             .ok()
             .map(|shot| (shot.image, shot.capture_id))
             .unzip();
+        let target = effect.target;
         let mut receipt = EffectReceipt {
             seq: self.receipt_seq,
-            verb: verb.to_owned(),
-            url: observation.url.clone(),
-            title: observation.title.clone(),
+            verb: effect.verb.to_owned(),
+            url: left.url,
+            title: left.title,
             target: target.map(|row| row.target.clone()),
             target_name: target.map(|row| row.name.clone()),
             target_locator: target.map(|row| row.locator.clone()),
-            rebound: observation.rebound.clone(),
-            effect_class: effect_class.map(str::to_owned),
-            press: press.as_str().to_owned(),
+            rebound: left.rebound,
+            effect_class: effect.class.map(str::to_owned),
+            press: effect.press.as_str().to_owned(),
             screenshot,
             capture_id,
             screenshot_evidence: None,
             engine: Some(self.driver.engine()),
-            fact: observation.fact.clone(),
+            fact: left.fact,
             engine_switch: None,
             text_source: None,
             text_ref: None,
             action,
             source_url,
             source_origin,
+            source_title,
             tab,
             result_tab: Some(self.driver.front_target().to_owned()),
+            result_unread: left.unread,
             // Stamped before the host keeps the screenshot.
-            duration_ms: elapsed_ms(started),
+            duration_ms: elapsed_ms(effect.started),
         };
         // A type's text provenance, before the host keeps the receipt.
         if let Some(typed) = self.typed.take() {
@@ -754,8 +822,28 @@ impl BrowserSession {
         }
         self.keep(receipt.clone());
         self.landed();
-        observation.receipt = Some(receipt);
+        receipt
     }
+}
+
+/// One effect verb's receipt facts, known before its input is sent.
+struct Effect<'a> {
+    verb: &'static str,
+    target: Option<&'a Row>,
+    class: Option<&'a str>,
+    press: PressMode,
+    started: Instant,
+}
+
+/// What a receipt names of the page its act left: its observation's, or,
+/// for an input sent whose page did not read after (FIX 8010), the page as
+/// it reads then, else where the act began, and the failure's code.
+struct Left {
+    url: String,
+    title: String,
+    rebound: Option<Rebound>,
+    fact: Option<ActionFact>,
+    unread: Option<String>,
 }
 
 fn no_library() -> BrowserError {
@@ -851,14 +939,14 @@ impl BrowserSession {
             action: Some(action),
             source,
         });
-        self.receipt(
-            "open",
-            None,
-            None,
-            PressMode::None,
-            &mut observation,
+        let effect = Effect {
+            verb: "open",
+            target: None,
+            class: None,
+            press: PressMode::None,
             started,
-        );
+        };
+        self.receipt(&effect, &mut observation);
         self.undelivered()?;
         // Repeated work on a site tries the library first. A lookup that
         // fails leaves the page open without its programs.
@@ -875,14 +963,12 @@ impl BrowserSession {
         let started = Instant::now();
         let target = self.live()?.resolve_target(&input.target)?;
         let source = self.source();
-        let class = effect_class(&target.row.name);
+        // A send on a payment step is a payment (FIX 8009).
+        let class = effect_class_on(&target.row.name, source.url.as_deref());
         let press = match class {
             Some(class) => self.press_for(class, &target.row)?,
             None => PressMode::None,
         };
-        let clicked = self.driver.click_target(&target, &Base::of(input.base));
-        let mut observation = self.crossed(clicked)?;
-        let class = receipt_class(class, Some(&target.row));
         let action = ReplayAction::Click {
             locator: target.row.locator.clone(),
         };
@@ -890,14 +976,16 @@ impl BrowserSession {
             action: Some(action),
             source,
         });
-        self.receipt(
-            "click",
-            Some(&target.row),
-            class,
+        let effect = Effect {
+            verb: "click",
+            target: Some(&target.row),
+            class: receipt_class(class, Some(&target.row)),
             press,
-            &mut observation,
             started,
-        );
+        };
+        let clicked = self.driver.click_target(&target, &Base::of(input.base));
+        let mut observation = self.sent(&effect, clicked)?;
+        self.receipt(&effect, &mut observation);
         self.undelivered()?;
         Ok(observation)
     }
@@ -909,27 +997,29 @@ impl BrowserSession {
         let (x, y) = self.live()?.point(&input)?;
         let source = self.source();
         let row = self.driver.row_at(x, y)?;
-        let class = row.as_ref().and_then(|row| effect_class(&row.name));
+        let page = source.url.as_deref();
+        let class = row
+            .as_ref()
+            .and_then(|row| effect_class_on(&row.name, page));
         let press = match (class, &row) {
             (Some(class), Some(row)) => self.press_for(class, row)?,
             _ => PressMode::None,
         };
         let base = Base::of(input.base);
-        let clicked = self.driver.click_point(x, y, row.as_ref(), &base);
-        let mut observation = self.crossed(clicked)?;
-        let class = receipt_class(class, row.as_ref());
         self.acted = Some(Acted {
             action: None,
             source,
         });
-        self.receipt(
-            "click_at",
-            row.as_ref(),
-            class,
+        let effect = Effect {
+            verb: "click_at",
+            target: row.as_ref(),
+            class: receipt_class(class, row.as_ref()),
             press,
-            &mut observation,
             started,
-        );
+        };
+        let clicked = self.driver.click_point(x, y, row.as_ref(), &base);
+        let mut observation = self.sent(&effect, clicked)?;
+        self.receipt(&effect, &mut observation);
         self.undelivered()?;
         Ok(observation)
     }
@@ -940,24 +1030,24 @@ impl BrowserSession {
         let target = self.live()?.resolve_target(&input.target)?;
         let source = self.source();
         let base = Base::of(input.base);
-        let selected = self.driver.select_target(&target, &input.option, &base);
-        let mut observation = self.crossed(selected)?;
         let action = ReplayAction::Select {
             locator: target.row.locator.clone(),
-            option: input.option,
+            option: input.option.clone(),
         };
         self.acted = Some(Acted {
             action: Some(action),
             source,
         });
-        self.receipt(
-            "select",
-            Some(&target.row),
-            None,
-            PressMode::None,
-            &mut observation,
+        let effect = Effect {
+            verb: "select",
+            target: Some(&target.row),
+            class: None,
+            press: PressMode::None,
             started,
-        );
+        };
+        let selected = self.driver.select_target(&target, &input.option, &base);
+        let mut observation = self.sent(&effect, selected)?;
+        self.receipt(&effect, &mut observation);
         self.undelivered()?;
         Ok(observation)
     }
@@ -970,6 +1060,10 @@ impl BrowserDriver for BrowserSession {
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
         self.live()?.observe(input)
+    }
+
+    fn observe_hidden(&mut self) -> Result<Observation, BrowserError> {
+        self.live()?.observe_hidden()
     }
 
     fn paged(&mut self, observation: Observation) -> ObservationPage {
@@ -1119,6 +1213,22 @@ impl BrowserDriver for BrowserSession {
         self.noted(stop);
     }
 
+    fn sent_receipt(&mut self) -> Option<EffectReceipt> {
+        self.unread.take()
+    }
+
+    fn typed_operand(&self, target: &str) -> Option<TypeOperand> {
+        self.typed_into(target)
+    }
+
+    fn viewport_offset(&self) -> Option<(f64, f64)> {
+        self.driver.scroll_now().ok()
+    }
+
+    fn withdraw_no_progress(&mut self) {
+        self.withdraw(&BatchStopCause::NoProgress);
+    }
+
     fn demonstration_start(
         &mut self,
         input: DemonstrationStartInput,
@@ -1135,15 +1245,13 @@ impl BrowserDriver for BrowserSession {
 
     fn handover(&mut self, input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
         self.live()?;
-        let reason = input
-            .reason
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        if reason.is_empty() || reason.chars().count() > HANDOVER_REASON_CHARS {
-            return Err(BrowserError::Input(format!(
-                "a handover gives its reason in 1 to {HANDOVER_REASON_CHARS} characters"
-            )));
+        // The reason stands whole, as given (FIX 8012): blankness alone
+        // refuses it, never its length.
+        let reason = input.reason;
+        if reason.trim().is_empty() {
+            return Err(BrowserError::Input(
+                "a handover gives its reason".to_owned(),
+            ));
         }
         let asked_at_ms = now_ms();
         self.recording_close(DemonstrationStopCause::HandedOver);

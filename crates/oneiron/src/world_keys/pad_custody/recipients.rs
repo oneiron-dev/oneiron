@@ -3,22 +3,35 @@
 //! pads its rows hold here, and the keys its authority names whose pad is not
 //! here. What a capsule seals and installs is the store's
 //! (`store::world_pad_custody::current`).
+//!
+//! The recipients read is featureless (FIX 10326): a custody head's world
+//! compartments are wrapped to them in every build. The rest serves sync's
+//! pad hydration alone.
 
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
+#[cfg(feature = "sync")]
 use zeroize::Zeroizing;
 
-use super::super::pads::{pad_in_txn, pad_row_in_txn, world_keys_destroyed_in_txn};
+use super::super::pads::world_keys_destroyed_in_txn;
+#[cfg(feature = "sync")]
+use super::super::pads::{pad_in_txn, pad_row_in_txn};
 use super::super::recipients;
+#[cfg(feature = "sync")]
 use super::{decode_pad_body, key_of_id, pad_item, pad_row_erased_in_txn};
 use crate::Vault;
+#[cfg(feature = "sync")]
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+#[cfg(feature = "sync")]
 use crate::ports::EntityStoreRead;
+#[cfg(feature = "sync")]
 use crate::registry::ENTITY_TYPE_WORLD_KEY_PAD;
-use crate::store::{PadRecipients, Store};
+use crate::store::PadRecipients;
+#[cfg(feature = "sync")]
+use crate::store::Store;
 use crate::world_keys::{RecoveryRootId, WrapRecipient};
 
 /// Who a world's pads go to (CALLS: WORLD_PAD_RECIPIENT_RULE, FIX 6706).
@@ -79,6 +92,7 @@ pub(crate) fn world_pad_recipients_in_txn(
 /// # Errors
 ///
 /// Storage faults.
+#[cfg(feature = "sync")]
 pub(crate) fn world_pad_row_items_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -106,6 +120,7 @@ pub(crate) fn world_pad_row_items_in_txn(
 /// # Errors
 ///
 /// A row of another kind or key; storage faults.
+#[cfg(feature = "sync")]
 pub(crate) fn row_pad_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -125,6 +140,7 @@ pub(crate) fn row_pad_in_txn(
 /// # Errors
 ///
 /// Authority and storage faults.
+#[cfg(feature = "sync")]
 pub(crate) fn missing_world_pads_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
