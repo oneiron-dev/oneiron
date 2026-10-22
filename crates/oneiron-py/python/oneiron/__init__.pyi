@@ -477,6 +477,8 @@ class Oneiron:
         def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
         @property
         def budgets(self) -> "Oneiron._VaultBudgetsVerbs": ...
+        @property
+        def runners(self) -> "Oneiron._VaultRunnersVerbs": ...
         def commit_message(self, spec: Facade.CommitMessageRequest) -> Facade.WitnessReceipt:
             """Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."""
         def begin_message_stream(self, spec: Facade.BeginMessageStreamRequest) -> Facade.MessageStreamHandle:
@@ -886,6 +888,14 @@ class Oneiron:
             """The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."""
         def resume(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
             """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
+    class _VaultRunnersVerbs:
+        @property
+        def seats(self) -> "Oneiron._VaultRunnersSeatsVerbs": ...
+    class _VaultRunnersSeatsVerbs:
+        def quotas(self, spec: Facade.RunnerSeatQuotasRequest) -> Facade.RunnerSeatQuotasView:
+            """The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."""
+        def top_up(self, spec: Facade.RunnerSeatCreditTopUpRequest) -> Facade.RunnerSeatTopUpReceipt:
+            """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
@@ -1460,12 +1470,21 @@ class Oneiron:
         @property
         def proxy(self) -> "Oneiron._VaultConnectorsProxyVerbs": ...
         @property
+        def slates(self) -> "Oneiron._VaultConnectorsSlatesVerbs": ...
+        @property
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs": ...
+        @property
+        def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs": ...
     class _VaultConnectorsProxyVerbs:
         def admit(self, spec: Facade.ProxyConnectorAdmitRequest) -> Facade.ProxyConnectorRegistration:
             """The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key."""
         def revoke_write(self, spec: Facade.ProxyConnectorRevokeWriteRequest) -> Facade.ProxyConnectorRegistration:
             """The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact."""
+    class _VaultConnectorsSlatesVerbs:
+        def redraft(self, spec: Facade.ConnectorSlateRedraftRequest) -> Facade.ConnectorSlateRedraftReply:
+            """The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable."""
+        def narrow(self, spec: Facade.ConnectorSlateNarrowRequest) -> Facade.ConnectorSlateNarrowView:
+            """The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it."""
     class _VaultConnectorsSubscriptionsVerbs:
         def put(self, spec: Facade.ChannelSubscriptionRequest) -> Facade.ChannelMessageSubscription:
             """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
@@ -1473,6 +1492,9 @@ class Oneiron:
             """An agent's connector event subscriptions, standing and revoked, for the owner."""
         def revoke(self, spec: Facade.ChannelSubscriptionRevokeRequest) -> Facade.ChannelSubscriptionRevoked:
             """The owner stops one connector event subscription; the agent's key for the channel stays."""
+    class _VaultConnectorsCallsVerbs:
+        def approve_once(self, spec: Facade.ConnectorCallApproveOnceRequest) -> Facade.ConsentActReceipt:
+            """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
             """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
@@ -3467,6 +3489,8 @@ class Oneiron:
     class _SelfBrowserLibraryVerbs:
         def find(self, spec: Facade.LiveRunRequest[Facade.LibraryFindInput]) -> Facade.BrowserLibraryFindOutput:
             """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
+        def draft(self, spec: Facade.LiveRunRequest[Facade.DraftInput]) -> Facade.BrowserLibraryDraftOutput:
+            """Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."""
         def propose(self, spec: Facade.LiveRunRequest[Facade.ProposeInput]) -> Facade.BrowserLibraryProposeOutput:
             """Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."""
         def retire(self, spec: Facade.LiveRunRequest[Facade.LibraryRetireInput]) -> Facade.BrowserLibraryRetireOutput:

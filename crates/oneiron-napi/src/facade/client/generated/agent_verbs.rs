@@ -550,6 +550,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_runners_seats_quotas(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runners.seats.quotas", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runners_seats_top_up(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runners.seats.top_up", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_fanout_resume(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.fanout.resume", js_json(input))
@@ -2251,6 +2269,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.connectors.proxy.revoke_write", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_slates_redraft(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.slates.redraft", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_slates_narrow(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.slates.narrow", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -4102,6 +4138,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consent.approve_once", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_calls_approve_once(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.calls.approve_once", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -9974,6 +10019,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.browser.library.find", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_browser_library_draft(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.library.draft", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

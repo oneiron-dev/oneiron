@@ -150,6 +150,7 @@ pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
 pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
+pub(crate) use super::runner_seat_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::learning_doors::*;
 pub(crate) use super::seal_doors::*;
@@ -189,6 +190,7 @@ pub(crate) use super::coordination_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
+pub(crate) use super::connector_slate_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -1618,6 +1620,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.policy.owner.configure"
         | "vault.policy.owner.row.change"
         | "vault.consent.approve_once"
+        | "vault.connectors.calls.approve_once"
+        | "vault.connectors.slates.redraft"
         | "vault.consent.deny"
         | "vault.consent.failure_signals_held"
         | "vault.consent.create_standing_grant"
@@ -1713,6 +1717,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.rsi.top_up"
         | "vault.budgets.rsi.hold"
         | "vault.budgets.rsi.hold.resume"
+        | "vault.runners.seats.quotas"
+        | "vault.runners.seats.top_up"
         | "vault.research.evaluate_split"
         | "vault.research.create_child"
         | "vault.evals.inventory"

@@ -79,19 +79,7 @@ impl<'de> Deserialize<'de> for DocActor {
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the entity-document rows.
-pub(super) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+pub(super) use crate::deletion::names_no_actor;
 
 #[cfg(feature = "sync")]
 impl DocActor {

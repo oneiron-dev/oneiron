@@ -13,6 +13,7 @@ mod catalog_fragment;
 mod connector;
 mod connector_call;
 mod connector_pack;
+mod connector_slate;
 mod coreference;
 mod courtesy_delete;
 mod credential;
@@ -566,6 +567,7 @@ pub use self::catalog_fragment::{
 pub use self::connector::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
+pub use self::connector_slate::*;
 pub use self::coreference::*;
 pub use self::courtesy_delete::*;
 pub use self::credential::*;

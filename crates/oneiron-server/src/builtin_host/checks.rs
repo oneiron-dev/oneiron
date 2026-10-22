@@ -67,7 +67,7 @@ impl PackConnectionVerifier for HostConnectionChecks {
                 let guest = self
                     .browser
                     .as_ref()
-                    .ok_or_else(|| "this host has no [browser] guest configured".to_owned())?;
+                    .ok_or_else(|| "this host has no [browser] runtime bound".to_owned())?;
                 browser_session_ready(
                     guest,
                     self.browser_handles.charge(),

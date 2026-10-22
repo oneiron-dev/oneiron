@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1187 code-mode rows (1147 host rows, 40 run rows), 4037 declarations.
-// Replies: 1067 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1193 code-mode rows (1153 host rows, 40 run rows), 4062 declarations.
+// Replies: 1073 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -432,6 +432,16 @@ declare namespace Sdk {
   type RsiLineView = { work_line: RsiWorkLineView; shares: RsiShareView[]; exposure_line: RsiExposureLineView; suspended: boolean };
   type RsiLineRequest = Record<string, never>;
   type RsiTopUp = { line: "tokens"; units: number } | { line: "exploration"; units: number } | { line: "share"; share: string; units: number };
+  type SeatAuth = "vendor_login" | "api_key";
+  type RunnerSeat = { runner: string; auth: SeatAuth; egress_profile_ref: string; credential_handles?: string[] };
+  type RunnerSeatQuotasRequest = { seats: RunnerSeat[] };
+  type SpentKind = "window" | "credit";
+  type SeatSpent = { kind?: SpentKind | null; retry_after?: number | null; resets_at: number[] };
+  type RunnerSeatQuota = { seat: number; runner: string; spent?: SeatSpent | null; observed_at?: number | null; back_at?: number | null; available: boolean; last_capture?: string | null; topped_up_at?: number | null };
+  type RunnerSeatQuotasView = { quotas: RunnerSeatQuota[] };
+  type RunnerSeatCreditTopUpRequest = { seat: RunnerSeat; expected_spent_attempt: string };
+  type RunnerSeatTopUpEffect = "cleared" | "already_clear" | "observation_changed" | "not_credit";
+  type RunnerSeatTopUpReceipt = { effect: RunnerSeatTopUpEffect; quota: RunnerSeatQuota };
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type DetailsOnDevice = { details_on_device: boolean };
@@ -1133,6 +1143,10 @@ declare namespace Sdk {
   type ConnectorSlateView = { id: string; revision: number; stamped: boolean; facet_limit?: string[] | null; manifest: SlateToolManifest[]; rows: SlateRow[]; reach: ShapePlanReach };
   type ProxyConnectorRegistration = { connector: string; key: ConnectorKeyView; slate: ConnectorSlateView };
   type ProxyConnectorRevokeWriteRequest = { actor: string; key: string; revision: number };
+  type ConnectorSlateRedraftRequest = { slate_ref: string; expected_revision: number; instruction: string };
+  type ConnectorSlateRedraftReply = { status: "proposed"; slate_ref: string; expected_revision: number; proposed: Record<string, SlateDisposition>; rationale: Record<string, string> } | { status: "unavailable"; code: string; reason: string };
+  type ConnectorSlateNarrowRequest = { key_ref: string; expected_revision: number; narrows?: Record<string, SlateDisposition>; facets?: string[] | null };
+  type ConnectorSlateNarrowView = { key_ref: string; slate_ref: string; slate_revision: number; settings: Record<string, SlateDisposition>; facets?: string[] | null; narrows: Record<string, SlateHolderNarrow> };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
   type ChannelSubscriptionsRequest = { agent: string };
@@ -1793,6 +1807,7 @@ declare namespace Sdk {
   type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
   type ApproveOnceRequest = { effect_digest: string };
   type ConsentActReceipt = { decision_ref: string; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[] };
+  type ConnectorCallApproveOnceRequest = { call_ref: string; approval_digest: string };
   type DenyConsentRequest = { effect_digest: string };
   type ActionEnvelopeRequest = { project: string; audience: string[]; budget?: number | null };
   type ActionBoundRequest = { actor: string; class: string; envelope: ActionEnvelopeRequest };
@@ -2909,7 +2924,6 @@ declare namespace Sdk {
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
   type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased";
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
-  type SpentKind = "window" | "credit";
   type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "ServerError" | "Timeout" | "StreamCut";
   type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied";
   type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
@@ -3149,7 +3163,12 @@ declare namespace Sdk {
   type SwitchStage = "start" | "attach" | "cookies" | "navigate";
   type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string };
   type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; duration_ms: number };
+  type OperandGap = "no_custody" | "refused" | "unknown_kind" | "unbound";
+  type TypeOperand = { operand: "literal"; text: string } | { operand: "secret"; kind: SecretKind; handle: string } | { operand: "withheld"; kind?: SecretKind | null; cause: OperandGap };
+  type TextReference = { id: string; text: string };
+  type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null };
+  type ReplayAction = { action: "open"; url: string } | { action: "click"; locator: string } | { action: "type"; locator: string; operand: TypeOperand; clear?: boolean } | { action: "select"; locator: string; option: string } | { action: "fill"; locator: string; field: FieldSpec };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; tab?: string | null; result_tab?: string | null; duration_ms: number };
   type SecretParam = { name: string; kind: SecretKind };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
@@ -3180,8 +3199,6 @@ declare namespace Sdk {
   type CropInput = { image: string; x: number; y: number; width: number; height: number };
   type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null };
   type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; secret?: string | null; clear?: boolean; option?: string | null };
-  type TextReference = { id: string; text: string };
-  type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null };
   type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text?: string | null; secret?: string | null; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" }) | { step: "fill"; ref: string; field: FieldSpec };
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
@@ -3947,7 +3964,15 @@ declare namespace Sdk {
   type LibraryFindInput = { site?: string | null; subgoal?: string | null; type_ref?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type BrowserLibraryFindOutput = BrowserAnswer<LibraryFindOutput>;
+  type DraftInput = { subgoal: string; postcondition?: ExpectInput[]; after_seq?: number | null; through_seq?: number | null; past_press?: boolean };
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
+  type SlotField = "text" | "option";
+  type SlotCandidate = { step: number; seq: number; field: SlotField; literal: string; suggested_param: string };
+  type DraftGapKind = { why: "pre_press"; effect_class: string } | { why: "unknown_press" } | { why: "no_action" } | { why: "secret_withheld"; kind?: SecretKind | null; cause: OperandGap } | { why: "failed"; cause: BatchStopCause } | { why: "no_effect" } | { why: "missing_opening" } | { why: "empty_span" } | { why: "no_live_origin" } | { why: "foreign_origin"; origin?: string | null } | { why: "tab_change" } | { why: "missing_context" } | { why: "check_unknown_ref"; check: number } | { why: "check_secret_withheld"; check: number; cause: OperandGap } | { why: "no_postcondition" } | { why: "no_subgoal" };
+  type DraftGap = { seq?: number | null; verb?: string | null; gap: DraftGapKind };
+  type PressedThrough = { seq: number; effect_class: string };
+  type DraftOutput = { site?: string | null; origin?: string | null; after_seq: number; through_seq: number; proposal: ProposeInput; slot_candidates?: SlotCandidate[]; gaps?: DraftGap[]; pressed_through?: PressedThrough[]; complete: boolean };
+  type BrowserLibraryDraftOutput = BrowserAnswer<DraftOutput>;
   type WorkflowCheck = "solved" | "replay" | "secret_replay" | "held_out" | "fresh_guest" | "supersedes";
   type SupersedeRefusal = "malformed" | "not_on_site" | "same_record" | "not_filer";
   type AdmissionRefusal = { cause: "held_out"; used: string[]; missing: string[]; unknown: string[]; same: string[] } | { cause: "fresh_guest"; stage: SwitchStage; code: string; detail: string } | { cause: "supersedes"; workflow: string; why: SupersedeRefusal } | { cause: "secret_replay"; slots: string[] };
@@ -4269,6 +4294,8 @@ declare namespace self {
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.BrowserHandoverOutput | StoredResult>;
     library: {
+      /** Drafts a proposal from this session's receipts and stops on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press. */
+      draft(input: Sdk.DraftInput): Promise<Sdk.BrowserLibraryDraftOutput | StoredResult>;
       /** The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
       /** Offers a solved run's program, fill steps too, to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
@@ -5253,11 +5280,21 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   connectors: {
+    calls: {
+      /** The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent. */
+      approve_once(input: Sdk.ConnectorCallApproveOnceRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    };
     proxy: {
       /** The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key. */
       admit(input: Sdk.ProxyConnectorAdmitRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
       /** The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact. */
       revoke_write(input: Sdk.ProxyConnectorRevokeWriteRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
+    };
+    slates: {
+      /** The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it. */
+      narrow(input: Sdk.ConnectorSlateNarrowRequest): Promise<Sdk.ConnectorSlateNarrowView | StoredResult>;
+      /** The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable. */
+      redraft(input: Sdk.ConnectorSlateRedraftRequest): Promise<Sdk.ConnectorSlateRedraftReply | StoredResult>;
     };
     subscriptions: {
       /** An agent's connector event subscriptions, standing and revoked, for the owner. */
@@ -6484,6 +6521,14 @@ declare const vault: Sdk.VaultHost & {
     requests: {
       /** The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands. */
       cancel(input: Sdk.RootRequestCancelRequest): Promise<Sdk.OwnerWorkReceipt | StoredResult>;
+    };
+  };
+  runners: {
+    seats: {
+      /** The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from. */
+      quotas(input: Sdk.RunnerSeatQuotasRequest): Promise<Sdk.RunnerSeatQuotasView | StoredResult>;
+      /** The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so. */
+      top_up(input: Sdk.RunnerSeatCreditTopUpRequest): Promise<Sdk.RunnerSeatTopUpReceipt | StoredResult>;
     };
   };
   runs: {

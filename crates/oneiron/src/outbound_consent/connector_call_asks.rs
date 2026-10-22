@@ -38,8 +38,9 @@ const CONNECTOR_CALL_ASK_QUEUE_VERSION: &str = "v1";
 const CONNECTOR_CALL_ASK_VERSION: u32 = 1;
 
 /// The version of the question that also names the approve-once digest to
-/// press (FIX 6424 part 3): its wording adds that one sentence. A call's
-/// later approvable asks put it again at the next versions.
+/// press (FIX 6424 part 3): its wording adds that one sentence, and names the
+/// call-ref door that presses it (FIX 990). A call's later approvable asks
+/// put it again at the next versions.
 const CONNECTOR_CALL_ASK_DIGEST_VERSION: u32 = 2;
 
 /// The most characters of a connector or tool name the ask quotes.
@@ -80,7 +81,8 @@ fn connector_call_ask_text(
     let press = approval_digest.map_or_else(String::new, |digest| {
         format!(
             " Or approve once, for exactly this call as it was prepared, by pressing approve-once \
-             digest {digest}."
+             digest {digest} (vault.connectors.calls.approve_once, with this held call's \
+             ref)."
         )
     });
     format!(
