@@ -150,7 +150,7 @@ impl SyncServer {
                     continue;
                 }
                 server.run_scheduled_lifecycle_tick().await;
-                server.finish_dependent_walks_once().await;
+                server.finish_dependent_walks_once(&admit).await;
                 // The pass and the maintenance run on tasks of their own, so
                 // neither holds back the next tick's lease expiry, nor one
                 // the other.
@@ -182,22 +182,42 @@ impl SyncServer {
     /// left past its first batch; reads honour them until then. First the
     /// sealed bundle uploads' disk claims follow their stages, so a stage that
     /// idled out gives its room back without a bundle call (FIX 4273).
-    async fn finish_dependent_walks_once(self: &Arc<Self>) {
+    ///
+    /// Both run under `admit`, the host's write gate, held by the blocking
+    /// work itself, on a task held in the housekeeping passes from before
+    /// this can yield, so the host's stop waits for them (FIX 9538). The tick
+    /// still waits for them to end before it goes on. A tick the gate refuses,
+    /// or one after the host began stopping, starts none.
+    async fn finish_dependent_walks_once(self: &Arc<Self>, admit: &HousekeepingAdmission) {
         #[cfg(test)]
         self.housekeeping_passes.note_tick_step("dependent walks");
+        if self.housekeeping_passes.stopping() {
+            return;
+        }
+        let Some(admission) = admit() else {
+            tracing::debug!("dependent walks skipped: the host's gate refused the tick");
+            return;
+        };
         let server = Arc::clone(self);
-        match tokio::task::spawn_blocking(move || {
+        let walks = tokio::task::spawn_blocking(move || {
+            let _admission = admission;
             server.transfers.reconcile_sealed_stages(server.vault());
             server.vault().finish_dependent_walks()
-        })
-        .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(kind = ?error.kind(), "dependent walk pass failed");
+        });
+        let (ended, done) = tokio::sync::oneshot::channel::<()>();
+        self.housekeeping_passes.hold(tokio::spawn(async move {
+            match walks.await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(kind = ?error.kind(), "dependent walk pass failed");
+                }
+                Err(error) => {
+                    tracing::warn!(panicked = error.is_panic(), "dependent walk task failed");
+                }
             }
-            Err(error) => tracing::warn!(panicked = error.is_panic(), "dependent walk task failed"),
-        }
+            let _ = ended.send(());
+        }));
+        let _ = done.await;
     }
 
     async fn run_scheduled_lifecycle_tick(&self) {

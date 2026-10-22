@@ -389,7 +389,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // quiescent. These and the workers below count as other background
     // passes, unless named (FIX 6902).
     let admitted = || state.background_admission(WriteKind::BackgroundOther);
-    let background = sync_server.spawn_serve_background(admitted());
+    // Held here until stopped: on a start that fails below as on a clean
+    // stop, its admitted passes end before the process does (FIX 9538).
+    let mut background = Some(sync_server.spawn_serve_background(admitted()));
     // Surface events drain under the same admission (OF-218).
     let connector_events = sync_server.spawn_connector_event_worker(admitted());
     // Approved sends leave under the same admission (OF-187).
@@ -614,7 +616,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // Drain observation writes without thawing a previously quiescent process.
         let telemetry_drained = state.freeze();
         // No new durable background work from here on.
-        background.stop().await;
+        if let Some(background) = background.take() {
+            background.stop().await;
+        }
         connector_events.abort();
         let _ = connector_events.await;
         connector_sends.abort();
@@ -675,6 +679,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     }
     .await;
     // Still running only when an error left the scope before its join.
+    if let Some(background) = background {
+        background.stop().await;
+    }
     if let Some(tagging) = tagging {
         shutdown.trigger();
         let _ = tagging.await;
