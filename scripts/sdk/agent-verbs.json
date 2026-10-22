@@ -18207,7 +18207,7 @@
       ],
       "input": "CreateNoteFromEntityRequest",
       "output": "crate::memory::EntityRefReceipt",
-      "call": "memory.create_note_from_entity(&input.source_ref, &input.kind)?",
+      "call": "memory.create_note_from_entity_for(&input.source_ref, &input.kind, input.reason.as_deref())?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true,

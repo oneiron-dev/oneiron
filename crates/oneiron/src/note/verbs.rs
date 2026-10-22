@@ -16,6 +16,10 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
+mod source_read;
+
+use self::source_read::SourceAdmission;
+
 impl Vault {
     /// A NOTE's first authored text is its birth op, not a mutable record field.
     pub fn create_note(
@@ -449,6 +453,34 @@ impl Vault {
         kind: &str,
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
+        self.create_from_entity_reading(source, kind, actor, None)
+    }
+
+    /// [`Self::create_from_entity`] for a caller its host bound to `reader`
+    /// (FIX 9953): the source and the row the copy cites must be rows
+    /// `reader` reads, and another author's diary entry is read as a NOTE
+    /// read reads it, through that author's diary gate stating `reason`,
+    /// whose log lands with the copy. A copy its gate holds is refused; a
+    /// review the gate asks for stands.
+    pub(crate) fn create_from_entity_read_by(
+        &self,
+        source: EntityId,
+        kind: &str,
+        actor: WriteActor,
+        reader: &crate::claim::ScopedRead<'_>,
+        reason: Option<&str>,
+    ) -> MemoryResult<EntityId> {
+        let read = source_read::SourceRead { reader, reason };
+        self.create_from_entity_reading(source, kind, actor, Some(&read))
+    }
+
+    fn create_from_entity_reading(
+        &self,
+        source: EntityId,
+        kind: &str,
+        actor: WriteActor,
+        read: Option<&source_read::SourceRead<'_, '_>>,
+    ) -> MemoryResult<EntityId> {
         let kind = self.note_kind(kind)?;
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
@@ -477,9 +509,29 @@ impl Vault {
                 } else {
                     (source, source)
                 };
-                create_from_text_in_txn(self, content, text_source, citation, kind, actor)
-                    .map_err(Into::into)
-            })
+                // The source read and its diary log land with the copy (FIX 9953).
+                let admitted = source_read::admit_source_in(
+                    self,
+                    content,
+                    read,
+                    actor,
+                    text_source,
+                    citation,
+                )?;
+                let gate = match admitted {
+                    SourceAdmission::Read(gate) => gate,
+                    SourceAdmission::Held(gate, refusal) => {
+                        content.finish_diary_read(gate)?;
+                        return Ok(Err(refusal));
+                    }
+                };
+                let id =
+                    create_from_text_in_txn(self, content, text_source, citation, kind, actor)?;
+                if let Some(gate) = gate {
+                    content.finish_diary_read(gate)?;
+                }
+                Ok(Ok(id))
+            })?
     }
 
     pub fn create_note_from_asset(

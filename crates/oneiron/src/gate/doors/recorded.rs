@@ -24,4 +24,16 @@ impl RecordedClaimGateDecision {
     pub(crate) fn into_record(self) -> GateDecisionRecord {
         self.record
     }
+
+    /// Appends this decision again in `wtxn`, under its own id: the one
+    /// denial a rolled-back savepoint judged, kept by the parent that
+    /// refuses the write (OF-063, FIX 1223). It records no metric; the
+    /// caller records it once the refusal commits.
+    pub(crate) fn append_in_txn(
+        &self,
+        store: &crate::store::Store,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> crate::error::Result<()> {
+        store.append_gate_decision_in_txn(wtxn, &self.record)
+    }
 }

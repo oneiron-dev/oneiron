@@ -199,6 +199,11 @@ impl Memory<'_> {
             saved: String::new(),
             assertions: turn.assertions.clone(),
             quote: message.quote.clone(),
+            // The opener's own proof, so its terminal reads as it does (FIX 1667).
+            read_proof: self
+                .read_proof
+                .as_ref()
+                .map(crate::authority::StoredReadProof::of),
         };
         let handle = MessageStreamHandle {
             message: id,

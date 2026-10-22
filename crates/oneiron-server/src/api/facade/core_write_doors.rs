@@ -151,7 +151,12 @@ pub(crate) async fn vault_batch(
 }
 
 /// One atomic batch, committed at owner grade only when `auth` carries it,
-/// its TURNs platform announcements only at `auth`'s owner authority.
+/// its TURNs platform announcements only at `auth`'s owner authority. It is
+/// held to the read `auth`'s credential reads under on every `/v1` door
+/// (FIX 1223, 6068): a put over a stored row that read does not read refuses
+/// as missing, and a CLAIM's typed record refs must resolve under it. An
+/// owner-grade credential that grants no read writes as before; any other
+/// puts only fresh rows, and no CLAIM.
 pub(crate) async fn write_core_batch(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -164,7 +169,19 @@ pub(crate) async fn write_core_batch(
     };
     let announcement = crate::api::announcement_authority(server, auth);
     let vault = Arc::clone(&server.vault);
-    tokio::task::spawn_blocking(move || vault.write_core_batch(&input, commit, announcement))
-        .await
-        .map_err(|_| internal("vault.batch"))?
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        let reader = crate::api::scoped_read_for_core_auth(&vault, &auth);
+        match reader {
+            Ok(reader) => {
+                vault.write_core_batch_read_by(&input, commit, announcement, Some(&reader))
+            }
+            Err(_) if commit == CoreBatchCommit::Owner => {
+                vault.write_core_batch(&input, commit, announcement)
+            }
+            Err(_) => vault.write_core_batch_read_by(&input, commit, announcement, None),
+        }
+    })
+    .await
+    .map_err(|_| internal("vault.batch"))?
 }

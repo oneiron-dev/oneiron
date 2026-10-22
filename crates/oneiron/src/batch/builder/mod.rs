@@ -7,6 +7,7 @@ mod edges;
 mod ops;
 mod preflight;
 mod puts;
+mod reference_read;
 
 use crate::Vault;
 use crate::entity_id::EntityId;

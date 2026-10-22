@@ -127,10 +127,14 @@ impl Vault {
             })
         };
         listed.push(share_id);
-        let Some(share) = self.get_share(&share_id)? else {
+        // The viewer is resolved before the brief handle is parsed or its
+        // NOTE loaded, so a share this viewer cannot see answers unresolved
+        // whatever its brief holds (FIX 1609).
+        let Some(authorized) = self.resolve_share_for_view(&share_id, &viewer, narrowing, &[])?
+        else {
             return unresolved();
         };
-        let id = EntityId::from_hex(&share.brief_ref)
+        let id = EntityId::from_hex(&authorized.brief_ref)
             .map_err(|_| invalid("brief handle must name a vault NOTE"))?;
         listed.push(id);
         let document = self.note_document(id)?;
@@ -139,6 +143,11 @@ impl Vault {
         else {
             return unresolved();
         };
+        // The pins judged here are this brief's; a resolution naming another
+        // brief does not lend them its visible claims.
+        if resolved.brief_ref != authorized.brief_ref {
+            return unresolved();
+        }
         let mut rendered = self.render_brief_with_claims(
             id,
             frame,

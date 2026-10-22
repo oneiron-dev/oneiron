@@ -31,6 +31,7 @@ use super::{
 };
 
 pub(super) use self::apply::apply_put;
+pub(crate) use self::claim_admission::put_target_admitted_in;
 #[cfg(test)]
 pub(crate) use self::put_staging::wiped_rows;
 pub(crate) use self::put_staging::{delete_entity_index_rows, stage_entity_index_rows};

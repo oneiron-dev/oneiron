@@ -9,6 +9,7 @@ mod lift;
 mod policy;
 #[cfg(feature = "sync")]
 mod presence;
+mod reader;
 mod reply_assertions;
 mod storage;
 #[cfg(test)]

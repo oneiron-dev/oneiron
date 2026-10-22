@@ -147,6 +147,10 @@ pub struct CreateNoteRequest {
 pub struct CreateNoteFromEntityRequest {
     pub source_ref: String,
     pub kind: String,
+    /// The caller's stated reason, for a source its diary gate reads: another
+    /// author's diary entry (FIX 9953). Every other source needs none.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// An opinion's subject or claim, named by short ref or 32-hex id.

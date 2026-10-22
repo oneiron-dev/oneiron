@@ -151,19 +151,26 @@ impl Vault {
     /// its own lane reads, judged in the batch's own writer (FIX 5939); the
     /// owner writes as before. Such a TURN sits in no private thread: its
     /// thread keys are refused here, and its one edge is to the
-    /// conversation, which no thread holds.
+    /// conversation, which no thread holds. Nor does it put over a row its
+    /// lane does not read: an id it names that a stored row holds is judged
+    /// against that row first, in the same writer, before the put or its
+    /// ChildOf lands (FIX 6068).
     /// # Errors
     /// A target that is no conversation, a bad id, interval or body, a
-    /// conversation outside `writer`'s read, or the batch's ChildOf refusal.
+    /// conversation or a named stored row outside `writer`'s read, or the
+    /// batch's ChildOf refusal.
     pub fn write_core_conversation_turn(
         &self,
         input: &ConversationTurnCreateInput,
         writer: &ScopedRead<'_>,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
-        self.write_core_conversation_turn_admitted(input, announcement, |txn, conversation| {
-            Ok(self.turn_doors_owner_in(writer, txn)?
-                || writer.is_entity_readable_in(txn, conversation)?)
+        self.write_core_conversation_turn_admitted(input, announcement, |txn, conversation, turn| {
+            if self.turn_doors_owner_in(writer, txn)? {
+                return Ok(true);
+            }
+            Ok(writer.is_entity_readable_in(txn, conversation)?
+                && crate::batch::put_target_admitted_in(writer, txn, turn)?)
         })?
         .ok_or_else(|| {
             MemoryError::new(
@@ -186,7 +193,7 @@ impl Vault {
         proof: &VerifiedSlip,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<Option<CoreEntityWriteReceipt>> {
-        self.write_core_conversation_turn_admitted(input, announcement, |txn, _| {
+        self.write_core_conversation_turn_admitted(input, announcement, |txn, _, _| {
             self.slip_is_owner_in(txn, proof)
         })
     }
@@ -215,13 +222,13 @@ impl Vault {
     }
 
     /// One TURN under a conversation, written only when `admits` passes the
-    /// conversation in the batch's own writer; `None`, nothing written,
-    /// when it does not.
+    /// conversation and the TURN's id in the batch's own writer; `None`,
+    /// nothing written, when it does not.
     fn write_core_conversation_turn_admitted(
         &self,
         input: &ConversationTurnCreateInput,
         announcement: AnnouncementAuthority,
-        admits: impl FnOnce(&heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>,
+        admits: impl FnOnce(&heed::RoTxn<'_>, &EntityId, &EntityId) -> crate::Result<bool>,
     ) -> MemoryResult<Option<CoreEntityWriteReceipt>> {
         let conversation = entity_id(&input.conversation, "conversation")?;
         match self.get_entity_type(&conversation)? {
@@ -260,7 +267,7 @@ impl Vault {
         )?
         .edge_checked(&id, &conversation, 1.0)
         .commit_with_target_guard(|txn| {
-            if admits(txn, &conversation)? {
+            if admits(txn, &conversation, &id)? {
                 return Ok(());
             }
             outside.set(true);

@@ -10,10 +10,12 @@ use serde_json::Value;
 
 use super::shape::{
     AnnouncementAuthority, CORE_MAX_BATCH_ENTITIES, CoreWriteTextField, core_write_times,
-    stage_core_put, text_pairs, write_id,
+    entity_id, stage_core_put, text_pairs, write_id,
 };
 use crate::Vault;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::batch::BatchBuilder;
+use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 /// One entity put in a batch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -75,6 +77,105 @@ impl Vault {
         commit: CoreBatchCommit,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
+        let (batch, entities) = self.stage_core_batch(input, announcement)?;
+        match commit {
+            CoreBatchCommit::Owner => batch.commit(),
+            CoreBatchCommit::BelowOwner => batch.commit_below_owner(),
+        }?;
+        Ok(CoreBatchWriteReceipt {
+            count: entities.len(),
+            entities,
+        })
+    }
+
+    /// [`Self::write_core_batch`] for a caller its host bound to `reader`
+    /// (OF-063, FIX 1223, 6068): each id a put names that a stored row holds
+    /// must be a row `reader` reads, judged against that row in the batch's
+    /// own writer before any put lands, and each CLAIM's typed record refs
+    /// must resolve under `reader`. `None` is a caller whose credential
+    /// grants no read: it puts only fresh rows, and no CLAIM.
+    /// # Errors
+    /// As [`Self::write_core_batch`]; a named stored row outside `reader` as
+    /// missing; a CLAIM's unresolved ref as the claim gate's denial; a CLAIM
+    /// or a stored row's id from a caller with no read as forbidden.
+    pub fn write_core_batch_read_by(
+        &self,
+        input: &CoreBatchWriteInput,
+        commit: CoreBatchCommit,
+        announcement: AnnouncementAuthority,
+        reader: Option<&ScopedRead<'_>>,
+    ) -> MemoryResult<CoreBatchWriteReceipt> {
+        let (batch, entities) = self.stage_core_batch(input, announcement)?;
+        match (reader, commit) {
+            (Some(reader), CoreBatchCommit::Owner) => batch.commit_read_by(reader),
+            (Some(reader), CoreBatchCommit::BelowOwner) => {
+                batch.commit_below_owner_read_by(reader, |_| Ok(()))
+            }
+            (None, commit) => return self.commit_core_batch_unread(batch, &entities, commit),
+        }?;
+        Ok(CoreBatchWriteReceipt {
+            count: entities.len(),
+            entities,
+        })
+    }
+
+    /// Commits a staged core batch for a caller with no read: refused
+    /// forbidden when it names a CLAIM, whose refs only a read resolves, or
+    /// an id a stored row holds, judged in the batch's own writer (OF-063,
+    /// FIX 1223, 6068).
+    fn commit_core_batch_unread(
+        &self,
+        batch: BatchBuilder<'_>,
+        entities: &[CoreBatchEntityReceipt],
+        commit: CoreBatchCommit,
+    ) -> MemoryResult<CoreBatchWriteReceipt> {
+        let unread = || {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "this credential grants no read, and the batch names a CLAIM or a stored row",
+                &["Write fresh rows that are no CLAIM, or use a credential that reads."],
+            )
+        };
+        if entities
+            .iter()
+            .any(|entity| entity.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        {
+            return Err(unread());
+        }
+        let ids = entities
+            .iter()
+            .map(|entity| entity_id(&entity.id, "id"))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let stored = std::cell::Cell::new(false);
+        let guard = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
+            for id in &ids {
+                if crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, id)? {
+                    stored.set(true);
+                    return Err(crate::Error::EntityNotFound);
+                }
+            }
+            Ok(())
+        };
+        let committed = match commit {
+            CoreBatchCommit::Owner => batch.commit_with_target_guard(guard),
+            CoreBatchCommit::BelowOwner => batch.commit_below_owner_with_guard(guard),
+        };
+        if stored.get() {
+            return Err(unread());
+        }
+        committed?;
+        Ok(CoreBatchWriteReceipt {
+            count: entities.len(),
+            entities: entities.to_vec(),
+        })
+    }
+
+    /// Every put of `input` staged in one batch, and its receipt rows.
+    fn stage_core_batch(
+        &self,
+        input: &CoreBatchWriteInput,
+        announcement: AnnouncementAuthority,
+    ) -> MemoryResult<(BatchBuilder<'_>, Vec<CoreBatchEntityReceipt>)> {
         if input.entities.len() > CORE_MAX_BATCH_ENTITIES {
             return Err(MemoryError::bad_request(format!(
                 "entities must contain at most {CORE_MAX_BATCH_ENTITIES} entries"
@@ -117,14 +218,7 @@ impl Vault {
                 entity_type: entity.entity_type,
             });
         }
-        match commit {
-            CoreBatchCommit::Owner => batch.commit(),
-            CoreBatchCommit::BelowOwner => batch.commit_below_owner(),
-        }?;
-        Ok(CoreBatchWriteReceipt {
-            count: entities.len(),
-            entities,
-        })
+        Ok((batch, entities))
     }
 }
 
@@ -132,14 +226,21 @@ impl Memory<'_> {
     /// `vault.batch` on an embedded handle, which carries no credential
     /// grade: it commits below owner grade, never above it. Its TURNs are
     /// platform announcements only while the bound actor is a live owner.
+    /// It is held to this handle's own read lane (FIX 1223, 6068).
     /// # Errors
-    /// As [`Vault::write_core_batch`].
+    /// As [`Vault::write_core_batch_read_by`].
     pub fn core_batch_write(
         &self,
         input: &CoreBatchWriteInput,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
         let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
-        self.vault()
-            .write_core_batch(input, CoreBatchCommit::BelowOwner, announcement)
+        // A handle whose credential grants no read writes as one with none.
+        let lane = self.read_lane(ClaimReadStatus::Recorded).ok();
+        self.vault().write_core_batch_read_by(
+            input,
+            CoreBatchCommit::BelowOwner,
+            announcement,
+            lane.as_ref(),
+        )
     }
 }

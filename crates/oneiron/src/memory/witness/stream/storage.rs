@@ -58,6 +58,19 @@ pub(super) struct Seed {
     /// whose source stopped being readable mid-stream is refused there.
     /// `None` on a continuation, which keeps its MESSAGE's birth quote.
     pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    /// The verified read proof the stream's opener held, when a host bound
+    /// one (FIX 1667): the terminal reads its links under that same proof,
+    /// after a restart too. `None` is an opener with no bound proof. Every
+    /// seed writes the field, so a stored seed without it does not decode.
+    #[serde(deserialize_with = "required_read_proof")]
+    pub read_proof: Option<crate::authority::StoredReadProof>,
+}
+/// Decodes [`Seed::read_proof`] whether it holds a proof or `None`; a seed
+/// missing the field is refused, never read as an opener with no proof.
+fn required_read_proof<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<crate::authority::StoredReadProof>, D::Error> {
+    Option::deserialize(deserializer)
 }
 impl Seed {
     pub(super) fn class(&self) -> Result<EdgeActorClass> {

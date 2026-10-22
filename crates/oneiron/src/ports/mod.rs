@@ -56,6 +56,7 @@ pub(crate) use mutation::{
 mod regeneration;
 mod safe_read;
 mod time;
+mod vault_read;
 pub(crate) use safe_read::{
     BodyStale, body_readable_in_txn, raw_readable_apart_from_use_in_txn, raw_readable_in_txn,
     withdrawn_in_txn,
