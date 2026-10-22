@@ -21465,8 +21465,19 @@
       "const": 4,
       "crate-vis": 2,
       "enum": 4,
-      "fn": 13,
+      "fn": 12,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/answer.rs",
+     "purpose": "The owner's answer to a filed courtesy ask (OF-273, BIZ-LEGAL-0004 B2)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -21477,6 +21488,23 @@
      "purpose": "A courtesy try across this vault's own host re-root (FIX 5088; Engine 10-19 15:0x)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CooperativeDeleteOperation",
+      "CooperativeDeleteRecord",
+      "CooperativeDeleteRecordState"
+     ],
+     "path": "src/deletion/coop_delivery/types.rs",
+     "purpose": "What a courtesy delete answer keeps beside its choice: the customer holds it placed (FIX 2924), the records…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -21534,7 +21562,7 @@
      "path": "src/deletion/delete/confirmed.rs",
      "purpose": "The pending-confirmed-delete gate of a due owner-confirmed erase (FIX 6337)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -21544,7 +21572,7 @@
      "path": "src/deletion/delete/facade.rs",
      "purpose": "Public and gated delete entry points plus the headerful orchestration state machine",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -21606,6 +21634,16 @@
      "surface": {
       "crate-vis": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/preflight.rs",
+     "purpose": "What the delete rail admits before any legal hold is read, as one check a caller that decides before the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21737,6 +21775,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LiftAndEraseShownState",
+      "ShownCustomerHold"
+     ],
+     "path": "src/deletion/legal_hold/confirmation.rs",
+     "purpose": "The owner's one \"Lift the hold and erase?\" confirm, bound to what it showed (OF-470, FIX 1462), and the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -21754,8 +21807,19 @@
      "purpose": "Legal hold doors (OF-470, design B; owner ruling 2026-10-17: \"B, and that stuff is for cloud only + we…",
      "surface": {
       "crate-vis": 5,
-      "fn": 14,
-      "re-export": 1
+      "fn": 13,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/pending_delete.rs",
+     "purpose": "The owner's plain delete of a record only secret orders keep (OF-470 C2, C4, FIX 1465): \"erase confirmed…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -30486,6 +30550,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/federation/courtesy_scope.rs",
+     "purpose": "Which records a courtesy deletion ask covers here, read in the caller's own transaction (FIX 2927): this…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "DerivationBindError",
       "DerivationKey",
@@ -30720,7 +30794,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "mod": 2,
       "re-export": 19
      }
@@ -39930,6 +40004,7 @@
       "CommitOutcome",
       "CommitReceipt",
       "DeleteReceipt",
+      "DeleteRequestState",
       "MemoryReceipt",
       "PendingWrite",
       "RecordRefusal",
@@ -39941,8 +40016,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "enum": 3,
-      "fn": 4,
+      "enum": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 6
      }
@@ -40572,13 +40647,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/entity_delete.rs",
      "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -40595,7 +40670,7 @@
      "path": "src/memory/entity_erase.rs",
      "purpose": "Owner erase that can also take every record in this vault holding the same bytes",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 2,
       "struct": 2
@@ -60642,7 +60717,7 @@
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 35
      }
     },
     {
@@ -60653,6 +60728,16 @@
      "purpose": "What a hold's refusals tell the owner (WILL-PLAN L01 rows 01 and 03)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/legal_hold/pending.rs",
+     "purpose": "An owner erase that waits (OF-470 C2, C4): the owner's confirmed erase a host order keeps, and the owner's…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -68806,13 +68891,15 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
+      "CourtesyDeleteHold",
       "CourtesyDeleteIncoming",
+      "CourtesyDeleteRecordProgress",
       "CourtesyDeleteSendRequest",
       "CourtesyDeleteSent"
      ],
@@ -68820,7 +68907,7 @@
      "purpose": "The inputs and answers of the owner's courtesy delete rows (OF-273, ARCH-0043 #relationship-lifecycle)…",
      "surface": {
       "fn": 7,
-      "struct": 6
+      "struct": 8
      }
     },
     {
@@ -74666,7 +74753,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 41,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74841,7 +74928,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75527,7 +75614,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 144,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75760,7 +75847,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4933,
+   "source_files": 4940,
    "test_files": 902
   },
   "oneiron-android": {
@@ -94569,6 +94656,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/memory/owner_delete.rs",
+     "purpose": "The owner's own named delete through `/v1/core/memory/verbs` (FIX 1465)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/memory/watch.rs",
      "purpose": "—",
      "surface": {
@@ -104687,7 +104784,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 547,
+     "files": 548,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -105151,7 +105248,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1208,
+   "source_files": 1209,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -105244,6 +105341,7 @@
       "CommitReceipt",
       "ConsolidationJobInput",
       "DeleteReceipt",
+      "DeleteRequestState",
       "DreamerJobRef",
       "DreamerJobView",
       "Effort",
@@ -105300,7 +105398,7 @@
      "path": "src/dto.rs",
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
-      "enum": 10,
+      "enum": 11,
       "struct": 54
      }
     },
@@ -106341,7 +106439,9 @@
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
+      "CourtesyDeleteHold",
       "CourtesyDeleteIncoming",
+      "CourtesyDeleteRecordProgress",
       "CourtesyDeleteSendRequest",
       "CourtesyDeleteSent",
       "CoverageGap",
@@ -107278,6 +107378,7 @@
       "LibraryRunInput",
       "LibraryRunMode",
       "LibraryRunOutput",
+      "LiftAndEraseShownState",
       "LiftCause",
       "LiftCauseCount",
       "LiftCloseReason",
@@ -108778,6 +108879,7 @@
       "SharedVaultRequest",
       "ShedBlocker",
       "ShedCause",
+      "ShownCustomerHold",
       "SieveEvidenceCursor",
       "SieveEvidenceRequest",
       "SieveEvidenceView",
@@ -109368,6 +109470,7 @@
       "WireCommitOutcome",
       "WireCommitReceipt",
       "WireDeleteReceipt",
+      "WireDeleteRequestState",
       "WireEntityRefReceipt",
       "WireEntityView",
       "WireMentionProvenance",
@@ -109443,8 +109546,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1002,
-      "struct": 3089
+      "enum": 1003,
+      "struct": 3093
      }
     },
     {
