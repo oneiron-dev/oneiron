@@ -4515,7 +4515,7 @@ class DreamerAttemptRef(TypedDict):
     job_ref: str
     state: str
     existing: bool
-WeaveReaderKind = Literal["person", "owner", "agent"]
+WeaveReaderKind = Literal["person", "owner", "agent", "admin"]
 class WeaveReaderRef(TypedDict):
     kind: WeaveReaderKind
     reader_ref: str

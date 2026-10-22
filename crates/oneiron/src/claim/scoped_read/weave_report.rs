@@ -19,6 +19,8 @@ pub(super) mod sieve_score;
 mod projection;
 // The moves an agent-health card keeps, served past the reader's floor (FIX 8536).
 mod card_moves;
+// The weave Admin's lane and live report, under its current proof (OF-499 A3).
+pub(super) mod admin;
 
 /// Reader role is a constraint on the projection, never a claim of new read authority.
 #[derive(Clone, Copy)]
@@ -26,6 +28,10 @@ pub enum WeaveReader<'a> {
     Person(EntityId),
     Owner(&'a crate::consent::AuthenticatedOwner),
     Agent(EntityId),
+    /// A weave Admin under its current proof (OF-499 A3): a vault-global
+    /// shape inside its own Scope, on the lane its proof builds. Never
+    /// selected for a Person, an Owner or an Agent.
+    Admin(&'a crate::authority::AuthenticatedWeaveAdmin),
 }
 
 #[derive(
@@ -457,14 +463,17 @@ impl WeaveReader<'_> {
             Self::Person(_) => "person",
             Self::Owner(_) => "owner",
             Self::Agent(_) => "agent",
+            Self::Admin(_) => crate::gate::weave_policy::ADMIN_ROLE,
         }
     }
     /// The reader's id, which selects the policy row that bounds a report
-    /// and a digest schedule: an owner's proof is revalidated in `txn`.
+    /// and a digest schedule: an owner's proof is revalidated in `txn`, and
+    /// an Admin's (its person's id, never its membership grant).
     pub(super) fn id(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<EntityId> {
         match self {
             Self::Person(id) | Self::Agent(id) => Ok(*id),
             Self::Owner(owner) => owner.revalidate_in_txn(vault, txn),
+            Self::Admin(admin) => admin.read_scope_in_txn(vault, txn).map(|_| admin.actor()),
         }
     }
 }

@@ -13495,6 +13495,8 @@ pub enum WeaveReaderKind {
     Owner,
     #[serde(rename = "agent")]
     Agent,
+    #[serde(rename = "admin")]
+    Admin,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveReaderRef`.

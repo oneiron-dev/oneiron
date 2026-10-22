@@ -13,6 +13,7 @@
 //! before the answer leaves (OF-181, [`crate::lens_frames`]).
 use std::sync::Arc;
 
+use oneiron::authority::AuthenticatedWeaveAdmin;
 use oneiron::claim::{
     CallerLocality, WEAVE_LENS_PLAN_REPAIRS, WEAVE_LIVE_LENS_REREADS, WeaveLiveLens,
     WeaveReportRequest,
@@ -21,7 +22,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, live_weave_lens_request,
 };
-use oneiron::lens::{GeneratedUiSurfaceCapabilities, LensFrameCard};
+use oneiron::lens::{GeneratedUiSurfaceCapabilities, HostedLensRender, LensFrameCard};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::memory::{
     MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
@@ -52,13 +53,69 @@ pub(crate) enum WeaveLensCaller {
         owner: AuthenticatedOwner,
         auth: CoreAuth,
     },
+    /// A weave Admin reads the Admin lens under its current Admin proof
+    /// (OF-499 A3), on its own person's handle (`actor`). Only an explicit
+    /// Admin request builds one, never a credential's membership; the
+    /// engine revalidates the proof in each read's own transaction.
+    #[expect(
+        dead_code,
+        reason = "L13's Admin step-up ingress (FIX 9431) is its first constructor"
+    )]
+    Admin {
+        admin: AuthenticatedWeaveAdmin,
+        auth: CoreAuth,
+        actor: EntityId,
+    },
+}
+
+/// Which engine lens a caller's handle reads: the bound actor's own (the
+/// owner lens under an Owner proof), or the Admin lens under an Admin proof.
+#[derive(Clone, Copy)]
+enum LensReader<'a> {
+    Bound(Option<&'a AuthenticatedOwner>),
+    Admin(&'a AuthenticatedWeaveAdmin),
+}
+
+impl LensReader<'_> {
+    /// The live report keyed for the skill, before the generate step.
+    fn prepare(
+        self,
+        memory: &Memory<'_>,
+        request: &WeaveReportRequest,
+    ) -> MemoryResult<Option<WeaveLiveLens>> {
+        match self {
+            Self::Bound(owner) => memory.weave_lens_prepare(owner, request),
+            Self::Admin(admin) => memory.weave_admin_lens_prepare(admin, request),
+        }
+    }
+
+    /// The re-read and the composed lens, after the generate step.
+    fn finish(
+        self,
+        memory: &Memory<'_>,
+        request: &WeaveReportRequest,
+        live: WeaveLiveLens,
+        answer: &str,
+        model: &str,
+    ) -> MemoryResult<Option<HostedLensRender>> {
+        match self {
+            Self::Bound(owner) => {
+                memory.weave_lens_finish_framed(owner, request, live, answer, model)
+            }
+            Self::Admin(admin) => {
+                memory.weave_admin_lens_finish_framed(admin, request, live, answer, model)
+            }
+        }
+    }
 }
 
 impl WeaveLensCaller {
     /// The credential that asked, under which its card's frame is held.
     fn auth(&self) -> &CoreAuth {
         match self {
-            Self::Credential { auth, .. } | Self::Owner { auth, .. } => auth,
+            Self::Credential { auth, .. } | Self::Owner { auth, .. } | Self::Admin { auth, .. } => {
+                auth
+            }
         }
     }
 
@@ -68,20 +125,21 @@ impl WeaveLensCaller {
 
     /// Runs `read` on the caller's own handle, reading at `reads_at` and
     /// listing in `producers` the rows its reads derive the lens from. The
-    /// owner proof is revalidated at each read.
+    /// owner proof is revalidated at each read, as is an Admin's, in each
+    /// engine read's own transaction.
     fn read<T>(
         &self,
         vault: &Vault,
         reads_at: CallerLocality,
         producers: &ProducerRows,
-        read: impl FnOnce(&Memory<'_>, Option<&AuthenticatedOwner>) -> MemoryResult<T>,
+        read: impl FnOnce(&Memory<'_>, LensReader<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
         match self {
             Self::Credential { auth, actor, class } => read(
                 &crate::api::credential_memory(vault, Some(auth), *actor, *class)
                     .at(reads_at)
                     .listing_producers(producers),
-                None,
+                LensReader::Bound(None),
             ),
             Self::Owner { owner, .. } => {
                 let actor = owner.revalidate(vault)?;
@@ -90,9 +148,15 @@ impl WeaveLensCaller {
                         .memory(actor, EdgeActorClass::Human)
                         .at(reads_at)
                         .listing_producers(producers),
-                    Some(owner),
+                    LensReader::Bound(Some(owner)),
                 )
             }
+            Self::Admin { admin, auth, actor } => read(
+                &crate::api::credential_memory(vault, Some(auth), *actor, EdgeActorClass::Human)
+                    .at(reads_at)
+                    .listing_producers(producers),
+                LensReader::Admin(admin),
+            ),
         }
     }
 }
@@ -311,8 +375,8 @@ async fn render_listing(
                 Arc::clone(producers),
             );
             tokio::task::spawn_blocking(move || {
-                caller.read(&vault, reads_at, &producers, |memory, owner| {
-                    memory.weave_lens_finish_framed(owner, &request, live, &answer, model.as_str())
+                caller.read(&vault, reads_at, &producers, |memory, reader| {
+                    reader.finish(memory, &request, live, &answer, model.as_str())
                 })
             })
             .await
@@ -359,8 +423,8 @@ async fn prepare_live(
         let vault = Arc::clone(vault);
         let (caller, request, producers) = (caller.clone(), request.clone(), Arc::clone(producers));
         tokio::task::spawn_blocking(move || {
-            caller.read(&vault, reads_at, &producers, |memory, owner| {
-                let live = memory.weave_lens_prepare(owner, &request)?;
+            caller.read(&vault, reads_at, &producers, |memory, reader| {
+                let live = reader.prepare(memory, &request)?;
                 Ok((live, WriteActor::new(memory.actor(), memory.actor_class())))
             })
         })

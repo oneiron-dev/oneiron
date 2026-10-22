@@ -171,6 +171,13 @@ impl AuthenticatedWeaveAdmin {
         self.membership_grant
     }
 
+    /// The verified request instrument this proof stands on, which the
+    /// Admin read key is built from (L02 seam, OF-499 A3). Never a proof by
+    /// itself: the key's door revalidates first, in its own transaction.
+    pub(crate) fn request(&self) -> &VerifiedSlip {
+        &self.request
+    }
+
     /// Whether this proof still holds in `txn`: the same vault open, the
     /// step-up witness this holder's over this request, the request still a
     /// live capability of this vault held by its own holder, the person a

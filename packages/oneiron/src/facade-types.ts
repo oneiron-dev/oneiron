@@ -1763,7 +1763,7 @@ export type WeaveEnqueueRequest = { skill_ref: string; subject_ref: string; evid
 /** `oneiron::memory::dreamer::DreamerAttemptRef` */
 export type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveReaderKind` */
-export type WeaveReaderKind = "person" | "owner" | "agent"
+export type WeaveReaderKind = "person" | "owner" | "agent" | "admin"
 /** `oneiron::claim::scoped_read::weave_serve::WeaveReaderRef` */
 export type WeaveReaderRef = { kind: WeaveReaderKind; reader_ref: string }
 /** `oneiron::claim::scoped_read::weave_digest::WeaveDigestCadence` */

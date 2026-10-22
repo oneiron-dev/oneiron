@@ -1,4 +1,5 @@
 //! Authenticated identity carried by a scoped read.
+mod weave_admin;
 use crate::EntityId;
 use crate::federation::{Scope, ScopeAxis, ScopeId};
 

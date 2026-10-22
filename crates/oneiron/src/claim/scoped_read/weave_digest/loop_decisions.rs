@@ -193,7 +193,14 @@ impl ScopedRead<'_> {
             (None, WeaveDigestReader::Owner(owner)) => {
                 self.recorded_owner_loop_decisions_in_txn(txn, owner)
             }
-            (None, WeaveDigestReader::Person(_) | WeaveDigestReader::Agent(_)) => Vec::new(),
+            // An Admin period never reads without its present proof (OF-499
+            // A3): its loop rows are withheld, never the recorded owner's.
+            (
+                None,
+                WeaveDigestReader::Person(_)
+                | WeaveDigestReader::Agent(_)
+                | WeaveDigestReader::Admin(_),
+            ) => Vec::new(),
         };
         recheck_loop_rows(report, current);
     }
