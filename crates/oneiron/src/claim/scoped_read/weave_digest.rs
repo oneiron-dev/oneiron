@@ -1,10 +1,11 @@
 //! Per-reader report schedules (OF-499). The host's deadline timer serves
 //! them: each due person or agent digest renders under its own reader's
-//! read and lands in that reader's inbox in the same write. An owner's
-//! digest needs the owner's live proof, so the timer sends the owner a due
-//! notice and the digest renders when the owner opens it. No composition
-//! policy lives here. Each published period with anything in it queues the
-//! lens's generate step (`weave_lens.rs`), whose render lands on the row.
+//! read and lands in that reader's inbox in the same write. An owner's due
+//! digest renders as its schedule's recorded live Owner, with his due notice
+//! (`scheduled_owner.rs`, FIX 1259); else he gets today's notice and it
+//! renders when he opens it. No composition policy lives here. Each
+//! published period with anything in it queues the lens's generate step
+//! (`weave_lens.rs`), whose render lands on the row.
 use super::weave_lens::{
     KeptLiveLens, WeaveLensRefusal, WeaveLensRender, settle_live_weave_lens, settle_weave_lens_axes,
 };
@@ -32,6 +33,8 @@ mod dependencies;
 mod loop_decisions;
 // A hard delete inside a saved period: rows rewritten, not the period (FIX 7693).
 mod rewrite;
+// A due Owner schedule renders as its recorded live Owner (FIX 1259).
+pub(super) mod scheduled_owner;
 mod settings;
 pub use changes::WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER;
 pub use coach::WeaveDigestSettingsDrafter;
@@ -811,7 +814,8 @@ impl Vault {
     /// The deadline timer's pass over due schedules, on the elected home
     /// node only. A person's or agent's digest renders under that reader's
     /// own read (its grants, never the host's) and lands in its inbox. An
-    /// owner's gets a due notice instead. A row that fails to render is held
+    /// owner's renders as its recorded live Owner, else gets today's due
+    /// notice (FIX 1259). A row that fails to render is held
     /// to its next boundary, so a broken row cannot spin the timer. Returns
     /// how many rows were served.
     pub fn serve_due_weave_digests(&self, now: u64, local_node_id: u64) -> Result<usize> {
@@ -844,7 +848,7 @@ impl Vault {
         for (reader, key, saved) in due {
             let outcome = match reader {
                 WeaveDigestReader::Owner(owner) => {
-                    self.notify_owner_weave_digest_due(owner, &key, &saved, now)
+                    self.serve_due_owner_weave_digest(owner, &key, &saved, now)
                 }
                 WeaveDigestReader::Person(id) => self
                     .render_scheduled_weave_digest(id, EdgeActorClass::Human, now)
@@ -890,43 +894,6 @@ impl Vault {
             Some(stored) => Ok(Some(stored)),
             None => read.render_due_weave_digest(reader, now),
         }
-    }
-
-    /// An owner's digest renders only under its live proof, so a due row
-    /// gets a notice naming its period, then waits for the owner to open it.
-    fn notify_owner_weave_digest_due(
-        &self,
-        owner: EntityId,
-        key: &[u8],
-        saved: &[u8],
-        now: u64,
-    ) -> Result<bool> {
-        let wire: WireSchedule = serde_json::from_slice(saved).map_err(|_| invalid())?;
-        let scheduled_for = wire.next_due_at;
-        let cadence = wire.cadence;
-        let held = serde_json::to_vec(&WireSchedule {
-            held_until: Some(wire.next_boundary_after(now)?),
-            held_because: None,
-            ..wire
-        })
-        .map_err(|_| invalid())?;
-        let notice = self.with_write_txn_grouped(|txn| {
-            if self.store.vault_meta.get(&*txn, key)?.as_deref() != Some(saved) {
-                return Ok(None);
-            }
-            let notice = self.record_notification_in_txn(
-                txn,
-                &WeaveDigestReader::Owner(owner).notification(scheduled_for, now),
-            )?;
-            self.store.vault_meta.put(txn, key, &held)?;
-            Ok(Some(notice))
-        })?;
-        // The owner's own exposure to the period, for the Coach (FIX 5495),
-        // in its own write after the notice's.
-        if let Some(notice) = notice {
-            self.note_owner_weave_digest_notice(owner, scheduled_for, cadence, notice, now);
-        }
-        Ok(notice.is_some())
     }
 
     /// Leave a row the timer could not serve until its next boundary, with
