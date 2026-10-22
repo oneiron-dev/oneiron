@@ -1,12 +1,14 @@
 //! Plugin Context Board sections (DOOR-112, e2e BOARD-07): the typed
 //! `vault.packs.sections.*` doors over the engine's section-manifest seam.
-//! A caller proposes one typed [`SectionManifestEnvelope`] for an existing
-//! skill or a pinned hub package; the proposal lands as the existing
-//! Generated/Proposed `plugin.section_install` claim and renders nothing.
-//! The owner grants exactly the reviewed claim (the `vault.claims.review`
-//! handle binds its content) and the post-consent executor admits the
-//! section; the owner revokes by retracting that claim, after which no
-//! rebuild renders the section or reaches its verbs. A caller-triggered
+//! A caller offers one typed [`SectionManifestEnvelope`] for an existing
+//! skill or a pinned hub package. A deterministic fit decides (FIX 9752): a
+//! code-free section whose requests the caller already holds installs at
+//! once; anything else lands as the existing Generated/Proposed
+//! `plugin.section_install` claim and renders nothing. The owner grants
+//! exactly the reviewed claim (the `vault.claims.review` handle binds its
+//! content) and the post-consent executor admits the section; the owner
+//! revokes either kind by retracting its claim, after which no rebuild
+//! renders the section or reaches its verbs. A caller-triggered
 //! suggestion pass runs the Dreamer analyze-to-propose job over one pinned
 //! hub: repetition nominates a pack, it never installs or consents, and the
 //! owner's suggestion knob silences the pass before any catalog access.
@@ -20,10 +22,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::{
     EngineSectionBindings, PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload,
-    PluginInstallOrigin, PluginInstallTarget, PluginSectionAdmission, PluginSectionError,
+    PluginInstallTarget, PluginSectionAdmission, PluginSectionError,
     PluginSectionRegistry, SectionManifestEnvelope, VaultPluginInstallExecutor,
-    VaultPluginInstallSource, digest_to_hex, execute_approved_plugin_section_install,
-    propose_plugin_section_install,
+    VaultPluginInstallSource, execute_approved_plugin_section_install,
 };
 use crate::dreamer_plugin_suggest::{
     LocalSkillHubPackCatalog, PluginSuggestJob, PluginSuggestionDisposition, WorkflowPatternNotice,
@@ -33,9 +34,12 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::skill_hub::pack_catalog::PackSection;
 use crate::skill_hub::{HubRef, RefFetch, pinned_tracking};
-use crate::write_envelope::{WriteActor, WriteProvenance};
+use crate::write_envelope::WriteActor;
 
+mod install;
 mod pages;
+
+pub use install::PluginSectionInstallOutcome;
 
 /// The plugin seam's refusals as this surface's errors: a missing claim is
 /// not found, an unapproved one is invalid state, a stored vault error keeps
@@ -112,20 +116,6 @@ pub struct PluginSectionProposeRequest {
     pub target: PluginSectionTargetInput,
     /// The initiating turn, as an opaque ref string.
     pub turn_ref: String,
-}
-
-/// One offered plugin section: the proposed install claim awaiting the owner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PluginSectionProposal {
-    /// The install claim (32 hex).
-    pub claim_ref: String,
-    /// Its pending-consent tray row (`gate:<hex>`).
-    pub pending_ref: String,
-    /// SHA-256 of the canonical manifest bytes, lowercase hex.
-    pub manifest_digest: String,
-    pub section_id: String,
-    /// The validated manifest the owner is asked to grant.
-    pub manifest: SectionManifestEnvelope,
 }
 
 /// `vault.packs.sections.list`'s input.
@@ -333,43 +323,6 @@ impl Memory<'_> {
         Ok(person)
     }
 
-    /// Offers one typed section manifest on the caller's own credential:
-    /// validates the exact candidate bytes and lands one Proposed install
-    /// claim. Imports nothing, registers nothing, renders nothing.
-    pub fn plugin_section_propose(
-        &self,
-        input: &PluginSectionProposeRequest,
-    ) -> MemoryResult<PluginSectionProposal> {
-        let vault = self.vault();
-        let provenance = WriteProvenance::new(rmpv::Value::Map(vec![(
-            rmpv::Value::from("surface"),
-            rmpv::Value::from("vault.packs.sections.propose"),
-        )]))
-        .map_err(MemoryError::from)?;
-        let proposal = propose_plugin_section_install(
-            vault,
-            WriteActor::new(self.actor(), self.actor_class()),
-            provenance,
-            PluginInstallTarget::from(&input.target),
-            &input.manifest,
-            PluginInstallOrigin::Conversation {
-                turn_ref: input.turn_ref.clone(),
-            },
-            &VaultPluginInstallSource { vault },
-            &EngineSectionBindings,
-            vault.now_recorded_at(),
-        )
-        .map_err(plugin_error)?;
-        self.produced_from([proposal.claim_id]);
-        Ok(PluginSectionProposal {
-            claim_ref: proposal.claim_id.to_hex(),
-            pending_ref: format!("gate:{}", proposal.decision_id.to_hex()),
-            manifest_digest: digest_to_hex(&proposal.manifest_digest),
-            section_id: input.manifest.manifest.section_id.0.clone(),
-            manifest: input.manifest.clone(),
-        })
-    }
-
     /// The owner's grant: settles exactly the reviewed install claim when it
     /// still waits, then runs the post-consent executor under that approved
     /// claim. One consent covers install plus section admission.
@@ -515,7 +468,9 @@ impl Memory<'_> {
                     || body.lifecycle != ClaimLifecycleStatus::Active
                     || !matches!(
                         body.approval,
-                        ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Approved
+                        ClaimApprovalStatus::Proposed
+                            | ClaimApprovalStatus::Approved
+                            | ClaimApprovalStatus::Auto
                     )
                 {
                     return Err(MemoryError::new(
