@@ -1,4 +1,5 @@
 //! Fail-closed structural JSON Schema subset for resolved outbound descriptors.
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::sync::{Mutex, OnceLock};
 
@@ -134,23 +135,10 @@ fn matches(schema: &Value, value: &Value, tool: &str) -> Result<bool> {
         return Ok(false);
     }
     // `format` stays an annotation, as JSON Schema 2020-12 defaults it.
-    if let Some(number) = value.as_f64() {
-        if bound(fields, "minimum")?.is_some_and(|min| number < min)
-            || bound(fields, "maximum")?.is_some_and(|max| number > max)
-            || bound(fields, "exclusiveMinimum")?.is_some_and(|min| number <= min)
-            || bound(fields, "exclusiveMaximum")?.is_some_and(|max| number >= max)
-        {
-            return Ok(false);
-        }
-        if let Some(step) = bound(fields, "multipleOf")? {
-            if step <= 0.0 {
-                return Err(invalid_schema());
-            }
-            let ratio = number / step;
-            if (ratio - ratio.round()).abs() > MULTIPLE_OF_TOLERANCE {
-                return Ok(false);
-            }
-        }
+    if let Some(number) = Number::of(value)
+        && !number_matches(fields, number)?
+    {
+        return Ok(false);
     }
     if let Some(text) = value.as_str() {
         let chars = u64::try_from(text.chars().count()).unwrap_or(u64::MAX);
@@ -391,6 +379,108 @@ fn compiled(pattern: &str) -> Result<regex::Regex> {
         .map_err(|_| invalid_schema())
 }
 
+/// The `properties` maps that apply to `value` under `schema`: the root's,
+/// then those of every `anyOf`/`oneOf` variant, taken `if`/`then`/`else`
+/// branch and `dependentSchemas` entry the value meets, nested ones too, as
+/// [`validate`] reads them (FIX 8810). With no value, every branch counts:
+/// the properties a call can meet at all.
+pub(super) fn applicable_properties<'a>(
+    schema: &'a Value,
+    value: Option<(&Value, &str)>,
+) -> Result<Vec<&'a serde_json::Map<String, Value>>> {
+    let mut found = Vec::new();
+    collect_properties(schema, value, &mut found)?;
+    Ok(found)
+}
+
+fn collect_properties<'a>(
+    schema: &'a Value,
+    value: Option<(&Value, &str)>,
+    found: &mut Vec<&'a serde_json::Map<String, Value>>,
+) -> Result<()> {
+    let Some(fields) = schema.as_object() else {
+        return Ok(());
+    };
+    found.extend(fields.get("properties").and_then(Value::as_object));
+    let meets =
+        |branch: &Value| value.map_or(Ok(true), |(value, tool)| matches(branch, value, tool));
+    let mut branches = Vec::new();
+    for variants in ["anyOf", "oneOf"].map(|name| fields.get(name).and_then(Value::as_array)) {
+        for variant in variants.into_iter().flatten() {
+            if meets(variant)? {
+                branches.push(variant);
+            }
+        }
+    }
+    if let Some(condition) = fields.get("if") {
+        let (then, otherwise) = (fields.get("then"), fields.get("else"));
+        if value.is_none() {
+            branches.extend(then.into_iter().chain(otherwise));
+        } else if meets(condition)? {
+            branches.extend(then);
+        } else {
+            branches.extend(otherwise);
+        }
+    }
+    if let Some(dependent) = fields.get("dependentSchemas").and_then(Value::as_object) {
+        branches.extend(
+            dependent
+                .iter()
+                .filter(|(key, _)| value.is_none_or(|(value, _)| value.get(key.as_str()).is_some()))
+                .map(|(_, rule)| rule),
+        );
+    }
+    for branch in branches {
+        collect_properties(branch, value, found)?;
+    }
+    Ok(())
+}
+
+/// Refuses a `$ref` or `allOf` left in any schema position of `schema`. A
+/// parameter-name map is read for its schemas, never as one, and a literal
+/// (`enum`, `const`, `default`, `examples`) is never read (FIX 8812).
+pub(super) fn reject_unresolved(schema: &Value) -> Result<()> {
+    let Some(fields) = schema.as_object() else {
+        return Ok(());
+    };
+    if fields.contains_key("$ref") || fields.contains_key("allOf") {
+        return Err(invalid_schema());
+    }
+    for (key, child) in fields {
+        match key.as_str() {
+            "properties" | "patternProperties" | "dependentSchemas" | "$defs" | "definitions" => {
+                for rule in child
+                    .as_object()
+                    .into_iter()
+                    .flat_map(serde_json::Map::values)
+                {
+                    reject_unresolved(rule)?;
+                }
+            }
+            "anyOf" | "oneOf" | "prefixItems" => {
+                for rule in child.as_array().into_iter().flatten() {
+                    reject_unresolved(rule)?;
+                }
+            }
+            "items" if child.is_array() => {
+                for rule in child.as_array().into_iter().flatten() {
+                    reject_unresolved(rule)?;
+                }
+            }
+            "items"
+            | "additionalProperties"
+            | "not"
+            | "if"
+            | "then"
+            | "else"
+            | "propertyNames"
+            | "contains" => reject_unresolved(child)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// A keyword whose value maps names to schemas.
 fn schema_map<'a>(
     fields: &'a serde_json::Map<String, Value>,
@@ -402,11 +492,85 @@ fn schema_map<'a>(
         .transpose()
 }
 
+/// Whether `number` meets the numeric keywords in `fields`.
+fn number_matches(fields: &serde_json::Map<String, Value>, number: Number) -> Result<bool> {
+    let beyond = |name: &str, outside: &[Ordering]| -> Result<bool> {
+        Ok(bound(fields, name)?
+            .and_then(|bound| number.compare(bound))
+            .is_some_and(|order| outside.contains(&order)))
+    };
+    if beyond("minimum", &[Ordering::Less])?
+        || beyond("maximum", &[Ordering::Greater])?
+        || beyond("exclusiveMinimum", &[Ordering::Less, Ordering::Equal])?
+        || beyond("exclusiveMaximum", &[Ordering::Greater, Ordering::Equal])?
+    {
+        return Ok(false);
+    }
+    let Some(step) = bound(fields, "multipleOf")? else {
+        return Ok(true);
+    };
+    if !step.is_positive() {
+        return Err(invalid_schema());
+    }
+    Ok(match (number, step) {
+        (Number::Int(number), Number::Int(step)) => number % step == 0,
+        _ => {
+            let ratio = number.float() / step.float();
+            (ratio - ratio.round()).abs() <= MULTIPLE_OF_TOLERANCE
+        }
+    })
+}
+
+/// A JSON number. An integer stays exact (every `i64` and `u64` fits an
+/// `i128`), so an integer payload meets an integer bound without rounding
+/// either through `f64` (FIX 8809); a real float compares as `f64`.
+#[derive(Clone, Copy)]
+enum Number {
+    Int(i128),
+    Float(f64),
+}
+
+impl Number {
+    fn of(value: &Value) -> Option<Self> {
+        let number = value.as_number()?;
+        if let Some(int) = number.as_i64() {
+            Some(Self::Int(i128::from(int)))
+        } else if let Some(int) = number.as_u64() {
+            Some(Self::Int(i128::from(int)))
+        } else {
+            number.as_f64().map(Self::Float)
+        }
+    }
+
+    fn float(self) -> f64 {
+        match self {
+            Self::Int(int) => int as f64,
+            Self::Float(float) => float,
+        }
+    }
+
+    /// `self` against `other`: exact when both are integers, as `f64` when
+    /// either is a real float.
+    fn compare(self, other: Self) -> Option<Ordering> {
+        match (self, other) {
+            (Self::Int(this), Self::Int(other)) => Some(this.cmp(&other)),
+            _ => self.float().partial_cmp(&other.float()),
+        }
+    }
+
+    fn is_positive(self) -> bool {
+        match self {
+            Self::Int(int) => int > 0,
+            Self::Float(float) => float > 0.0,
+        }
+    }
+}
+
 /// A numeric keyword's bound; a non-number refuses.
-fn bound(fields: &serde_json::Map<String, Value>, name: &str) -> Result<Option<f64>> {
+fn bound(fields: &serde_json::Map<String, Value>, name: &str) -> Result<Option<Number>> {
     fields
         .get(name)
-        .map(|value| value.as_f64().ok_or_else(invalid_schema))
+        .map(|value| Number::of(value).ok_or_else(invalid_schema))
         .transpose()
 }
 

@@ -7,6 +7,7 @@ use super::dataset::{self, Refs, workbook_dataset};
 use super::families::{self, bit};
 use super::layout::{self, Layout, Resolved, Wanted, first_category, wanted};
 use super::retained::{Slots, retained};
+use super::special::{self, Context};
 use super::{
     Points, READ_BACK, SHEET, Writer, close, format_code, fresh_plot, int, is_axis, kept_plot,
     own_workbook, piece, remap, retyped_axis, same_data, series, workbook,
@@ -17,7 +18,8 @@ use crate::live::conversion::{Conversion, RebuildReason};
 use crate::live::convert;
 use crate::live::held::{self, C};
 use crate::live::pptx::{
-    ChartKind, ChartSource, NodeId, NodePayload, SeriesBinding, WRITTEN_FRAME,
+    ChartKind, ChartSeries, ChartSource, NodeId, NodePayload, SeriesBinding, WRITTEN_FRAME,
+    draws_categories, effective_categories,
 };
 use crate::native_patch::{chart_data, chart_workbook};
 use crate::retained_opc::Package;
@@ -289,6 +291,12 @@ fn rewrite(
     for (at_target, target) in targets.iter().enumerate() {
         let kind = target.kind;
         let kept = target.held.filter(|&at| plots[at].0 == kind);
+        // A stock plot's close is drawn as a dot.
+        let close = settings
+            .iter()
+            .find(|plot| plot.is(kind, nths[at_target]))
+            .and_then(|plot| plot.stock)
+            .and_then(|roles| roles.close);
         let mut sers = Vec::new();
         for &index in &assigned[at_target] {
             emitted.push(index);
@@ -398,6 +406,9 @@ fn rewrite(
             let from = own_plot
                 .and_then(|plot| held::plot_family(&tree.nodes[plot].name))
                 .unwrap_or(kind);
+            let is_close = close.is_some() && close == series[index].id;
+            let stock = (kind == ChartKind::Stock && from != ChartKind::Stock)
+                .then(|| special::stock_style(&tree, &writer, is_close));
             sers.extend(match seat.held {
                 Some(ser) => retained(
                     &bytes,
@@ -412,9 +423,17 @@ fn rewrite(
                         val: &val_xml,
                         size: &size_xml,
                         bubble_3d,
+                        stock,
                     },
                     &points,
                 )?,
+                None if kind == ChartKind::Stock => special::stock_series(
+                    &tree,
+                    &writer,
+                    (idx, order),
+                    is_close,
+                    [&tx, &cat_xml, &val_xml],
+                ),
                 None => {
                     let tail = match bubble_3d {
                         Some(on) => format!(
@@ -438,6 +457,13 @@ fn rewrite(
         }
         let place = (kind, nths[at_target]);
         let ids = &ids_of[at_target];
+        // The category points the plot's first series draws, for an of-pie
+        // plot's custom split.
+        let split_points = assigned[at_target]
+            .first()
+            .and_then(|&index| data[index].set)
+            .and_then(|set| sets.get(set))
+            .map_or(&[][..], |set| set.ids.as_slice());
         plot_xml.push(match kept {
             Some(at) => kept_plot(
                 &bytes,
@@ -448,8 +474,21 @@ fn rewrite(
                 settings,
                 (held_ids[at_target] != *ids).then_some(ids.as_slice()),
                 &writer,
+                split_points,
             )?,
-            None => fresh_plot(place, &writer, &sers, ids, settings),
+            None => fresh_plot(
+                place,
+                &writer,
+                &sers,
+                ids,
+                settings,
+                &Context {
+                    bytes: &bytes,
+                    tree: &tree,
+                    from: target.held.map(|at| plots[at].1),
+                    points: split_points,
+                },
+            )?,
         });
     }
     // The axes: each held axis a plot still plots on (turned where its plot
@@ -561,6 +600,35 @@ fn rewrite(
     let read = held::chart(package, chart)?.ok_or(LiveError::Invalid(READ_BACK))?;
     if !same_data(&read, &written) {
         return Err(LiveError::Invalid(READ_BACK));
+    }
+    // Its stock prices and custom splits read back by identity, through the
+    // binding this rewrite gives the part.
+    if settings
+        .iter()
+        .any(|plot| plot.stock.is_some() || plot.custom_split.is_some())
+    {
+        let named: Vec<&ChartSeries> = emitted
+            .iter()
+            .map(|&index| &series[index])
+            .filter(|line| line.id.is_some())
+            .collect();
+        let rebound = SeriesBinding {
+            series: named.iter().filter_map(|line| line.id).collect(),
+            categories: named
+                .iter()
+                .map(|line| {
+                    if draws_categories(*family, line) {
+                        effective_categories(categories, line).ids()
+                    } else {
+                        Vec::new()
+                    }
+                })
+                .collect(),
+        };
+        let (_, tree) = xml::read(package, chart)?;
+        if !held::same_named(&tree, &rebound, settings) {
+            return Err(LiveError::Invalid(READ_BACK));
+        }
     }
     if let Some((part, reason)) = note {
         done.push(Conversion::WorkbookRebuilt {

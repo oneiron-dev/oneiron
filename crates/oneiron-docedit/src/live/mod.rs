@@ -35,10 +35,11 @@ pub use pptx::{
     ChartCategories, ChartCategory, ChartEdit, ChartKind, ChartPlot, ChartSeries, ChartSource,
     ChartView, Conflict, ConnectorEnd, DeckDiff, DeckFork, DeckNode, DeckOp, GeometryProps,
     HeldMedia, Landing, LandingReceipt, LiveDeck, MergeFault, NodeBinding, NodeId, NodeKind,
-    NodePayload, Paragraph, PlotGrouping, PreflightReport, RelationshipChange, RenderPair,
-    RenderSide, Run, SeriesBinding, SeriesField, SizeRepresents, SlideRender, SmartArtNode,
-    StampedOp, TableBinding, TableBody, TableEdit, TableMerge, TextBody, diff,
-    effective_categories, land, preflight, preflight_merged,
+    NodePayload, OfPieType, Paragraph, PlotGrouping, PreflightReport, RelationshipChange,
+    RenderPair, RenderSide, Run, SeriesBinding, SeriesField, SizeRepresents, SlideRender,
+    SmartArtNode, SplitType, StampedOp, StockOrder, StockRoles, SurfaceBand, TableBinding,
+    TableBody, TableEdit, TableMerge, TextBody, diff, effective_categories, land, preflight,
+    preflight_merged,
 };
 
 use crate::deck::DeckError;

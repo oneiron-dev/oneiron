@@ -28,7 +28,20 @@ use oneiron::task_verb::sdk::{
 use super::host_doors::{Listed, MaybeListed};
 use super::legal_hold_doors::{as_owner, as_owner_naming};
 use crate::auth::CoreAuth;
-use crate::server::SyncServer;
+use crate::server::{MediaEmbedRefusal, SyncServer};
+
+/// A move check's refusal, a bad request; an owner's proof the check's write
+/// no longer admits answers as every owner door does (FIX 8982).
+fn move_check_refused(refusal: MediaEmbedRefusal) -> MemoryError {
+    match refusal {
+        MediaEmbedRefusal::Vault(error)
+            if error.kind() == oneiron::ErrorKind::ConsentOwnerNotAuthenticated =>
+        {
+            MemoryError::from(error)
+        }
+        refusal => MemoryError::bad_request(refusal.to_string()),
+    }
+}
 
 /// The documents a probe names: its source family and every target.
 fn probe_rows(probe: &SpaceProbe) -> impl Iterator<Item = EntityId> + '_ {
@@ -151,9 +164,9 @@ pub(crate) async fn vault_embedding_spaces_move_check(
         move |server, owner| {
             let moving = sdk::find_embedding_space_move(server.vault(), owner, &input.candidate)?;
             server
-                .check_space_move_listing(&runtime, &moving)
+                .check_space_move_listing(&runtime, &moving, Some(owner))
                 .map(|(outcome, rows)| (EmbeddingSpaceMoveChecked::from(outcome), rows))
-                .map_err(|refusal| MemoryError::bad_request(refusal.to_string()))
+                .map_err(move_check_refused)
         },
     )
     .await;

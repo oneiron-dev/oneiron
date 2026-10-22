@@ -113,7 +113,7 @@ fn queue_key(target: &PadAdmissionTarget) -> String {
     format!("q:{}", target_key(target))
 }
 
-fn generation_prefix(generation: &SealedBundleGeneration) -> String {
+pub(super) fn generation_prefix(generation: &SealedBundleGeneration) -> String {
     format!("g:{}:", sealed_generation_hex(generation))
 }
 
@@ -140,6 +140,25 @@ fn parse_grant_key(key: &[u8]) -> Option<(SealedBundleGeneration, PadAdmissionTa
         sealed_generation_from_hex(generation)?,
         parse_target(target)?,
     ))
+}
+
+/// A grant row's state, from its stored bytes; `None` for one that does not
+/// decode.
+fn access_state(raw: &[u8]) -> Option<PadAccessState> {
+    match raw.split_first() {
+        Some((&PENDING, [])) => Some(PadAccessState::Pending),
+        Some((&OFFERED, grant)) => SealedPadAdmissionGrant::from_bytes(grant)
+            .ok()
+            .map(PadAccessState::Offered),
+        _ => None,
+    }
+}
+
+/// One `g:` row, its key after the table prefix and its stored bytes, as its
+/// target and state: what a capture of the current pad objects names
+/// (FIX 7106). `None` for a row that does not decode.
+pub(super) fn grant_row(key: &[u8], raw: &[u8]) -> Option<(PadAdmissionTarget, PadAccessState)> {
+    Some((parse_grant_key(key)?.1, access_state(raw)?))
 }
 
 /// Whether `fold` stands `target` as a machine of the owner's under the key
@@ -325,18 +344,9 @@ pub fn sealed_pad_access(
     let mut out = Vec::new();
     for row in ACCESS.iter_raw_from(&vault.store, &txn, prefix.as_bytes())? {
         let (key, raw) = row?;
-        let Some((_, target)) = parse_grant_key(&key) else {
-            continue;
-        };
-        let state = match raw.split_first() {
-            Some((&PENDING, [])) => PadAccessState::Pending,
-            Some((&OFFERED, grant)) => match SealedPadAdmissionGrant::from_bytes(grant) {
-                Ok(grant) => PadAccessState::Offered(grant),
-                Err(_) => continue,
-            },
-            _ => continue,
-        };
-        out.push((target, state));
+        if let Some(row) = grant_row(&key, &raw) {
+            out.push(row);
+        }
     }
     Ok(out)
 }
