@@ -110,8 +110,9 @@ pub(super) struct KitPadObjectUnavailableResponse {
     offset: u64,
 }
 
-/// The kit's signed read of the home's current index: the vault, the kit's
-/// root, `timestamp` and a fresh `nonce`; each in lower-case hex.
+/// The kit's signed read of a page of the home's current index: the vault,
+/// the kit's root, the cursor a page before named (none for the first),
+/// `timestamp` and a fresh `nonce`; each in lower-case hex.
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct KitPadIndexRequest {
@@ -119,6 +120,14 @@ pub(super) struct KitPadIndexRequest {
     vault_id: String,
     /// The kit's recovery root, 64 hex.
     root: String,
+    /// The cursor's revision, 64 hex, as a page's `nextCursor` named it;
+    /// absent for the first page.
+    #[serde(default)]
+    retained_revision: Option<String>,
+    /// The cursor's commit order: the page holds the generations committed
+    /// before it. Absent for the first page.
+    #[serde(default)]
+    before_commit_order: Option<u64>,
     /// When the kit signed the request, in Unix seconds. The home takes it
     /// within 300 seconds of its own clock.
     timestamp: u64,
@@ -146,8 +155,9 @@ pub(super) struct KitPadIndexEntry {
     pads_digest: String,
 }
 
-/// The generations the home keeps named for the kit's root, newest committed
-/// first, and the revision of the one read that named them.
+/// One page of the generations the home keeps named for the kit's root,
+/// newest committed first, the revision of the one read that named them, and
+/// where the next page starts when more follow (FIX 9364).
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct KitPadIndexResponse {
@@ -155,6 +165,21 @@ pub(super) struct KitPadIndexResponse {
     /// Opaque: it names a read, never an order.
     retained_revision: String,
     generations: Vec<KitPadIndexEntry>,
+    /// The cursor to sign for the next page; absent on the last. A request
+    /// whose cursor names a revision the home no longer reads gets the first
+    /// page of the revision it reads now.
+    #[schema(inline)]
+    next_cursor: Option<KitPadIndexCursor>,
+}
+
+/// Where the next page of the kit's index starts.
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct KitPadIndexCursor {
+    /// The revision the page was read at, 64 hex.
+    retained_revision: String,
+    /// The commit order the page's last generation holds.
+    before_commit_order: u64,
 }
 
 /// The address a request names: the URI's authority (HTTP/2), else the Host
@@ -310,21 +335,22 @@ fn pad_object_unavailable(
     (StatusCode::CONFLICT, Json(body)).into_response()
 }
 
-/// `POST /v1/recovery/sealed-bundle/index`: the generations the home keeps
-/// named for the kit's root, newest committed first, with the revision of the
-/// one read that named them (FIX 7106). A request that does not verify and a
-/// root no kept generation names look missing.
+/// `POST /v1/recovery/sealed-bundle/index`: one page of the generations the
+/// home keeps named for the kit's root, newest committed first, with the
+/// revision of the one read that named them (FIX 7106) and the cursor of the
+/// next page (FIX 9364). A request that does not verify and a root no kept
+/// generation names look missing.
 #[utoipa::path(
     post,
     path = "/v1/recovery/sealed-bundle/index",
     operation_id = "recovery_sealed_bundle_index",
     request_body(
         content = KitPadIndexRequest,
-        description = "One signed index request. No bearer: the signature is the authentication. It is the owner anchor's, of the recovery root a publisher named for the newest generation kept for it, over the vault, the root, the home's address (as a part request signs it), the method, this path, the time and the nonce.",
+        description = "One signed index request. No bearer: the signature is the authentication. It is the owner anchor's, of the recovery root a publisher named for the newest generation kept for it, over the vault, the root, the home's address (as a part request signs it), the method, this path, the cursor (none for the first page), the time and the nonce.",
         content_type = "application/json"
     ),
     responses(
-        (status = 200, description = "The generations named for the root.", body = KitPadIndexResponse, content_type = "application/json"),
+        (status = 200, description = "One page of the generations named for the root, and the next page's cursor when more follow.", body = KitPadIndexResponse, content_type = "application/json"),
         (status = 400, description = "The body does not parse, a field is malformed, or neither the request nor any of the home's configured public URLs names a host.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "The request does not verify, or no kept generation names the root. Both look the same.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "The sealed bundle read stopped.", body = ApiErrorEnvelope, content_type = "application/json")
@@ -346,6 +372,12 @@ pub(super) async fn index(
         origin: origins
             .next()
             .ok_or_else(|| ApiError::bad_request("the request names no host", None))?,
+        retained_revision: input
+            .retained_revision
+            .as_deref()
+            .map(|revision| parse_slip_id(revision).map_err(|_| bad("retainedRevision")))
+            .transpose()?,
+        before_commit_order: input.before_commit_order,
         timestamp: input.timestamp,
         nonce: parse_slip_id(&input.nonce).map_err(|_| bad("nonce"))?,
     };
@@ -369,11 +401,18 @@ pub(super) async fn index(
     })
     .await
     .map_err(|_| ApiError::internal_server_error("the sealed bundle read stopped"))?;
-    let Ok(index) = read else {
+    let Ok(page) = read else {
         return Err(ApiError::not_found("sealed bundle", None).into());
     };
+    let index = &page.index;
     Ok(Json(KitPadIndexResponse {
         retained_revision: sealed_digest_hex(&index.retained_revision),
+        next_cursor: page
+            .next_before_commit_order
+            .map(|before_commit_order| KitPadIndexCursor {
+                retained_revision: sealed_digest_hex(&index.retained_revision),
+                before_commit_order,
+            }),
         generations: index
             .entries
             .iter()

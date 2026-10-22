@@ -433,6 +433,8 @@ impl SyncClient {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .remove(&key);
             frames.push(frame);
+            // The keys whose pad is not here, asked off this loop (FIX 6706).
+            self.schedule_world_pad_repair(&key);
         }
         self.root_bootstrapped = true;
         Ok(frames)

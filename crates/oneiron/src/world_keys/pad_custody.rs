@@ -29,8 +29,15 @@
 //! reference, and a restore takes the pad from current custody
 //! (`pad_image`).
 
+#[cfg(feature = "sync")]
+mod recipients;
 mod reference;
 
+#[cfg(feature = "sync")]
+pub(crate) use self::recipients::{
+    missing_world_pads_in_txn, row_pad_in_txn, world_pad_recipients_in_txn,
+    world_pad_row_items_in_txn,
+};
 #[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
 pub(crate) use self::reference::{
     PAD_CAPTURE_FAULT, PadCaptureFault, PadReferenceProjection, WorldPadRef,

@@ -28,6 +28,7 @@ mod commit_receipt;
 mod order;
 mod pad_objects;
 mod publication;
+mod refill;
 
 pub use self::commit_receipt::{SealedBundleCommitReceipt, sealed_bundle_commit_receipt};
 pub use self::pad_objects::{
@@ -41,6 +42,8 @@ pub(crate) use self::pad_objects::{
 };
 pub(super) use self::pad_objects::{index_in, served_index};
 pub(super) use self::publication::{Asked, asked_of};
+pub(crate) use self::refill::held_pad_object;
+pub use self::refill::{PadObjectRefill, sealed_bundle_refill};
 
 use super::bundle_turn::hold_turn_in;
 use crate::Vault;
@@ -235,7 +238,7 @@ pub(super) fn hex(bytes: &[u8]) -> String {
 }
 
 /// `N` bytes spelled in lower-case hex, and nothing else.
-fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
+pub(super) fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
     if text.len() != N * 2 || !text.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f')) {
         return None;
     }

@@ -8,7 +8,9 @@
 //! pad as window ingest would; nothing the home asserts is trusted beyond the
 //! row. A window promoted here before asks again, on a reopen or a retain,
 //! while a key of its world this vault's authority names has no pad here; its
-//! promoted copy stays as it is.
+//! promoted copy stays as it is. That ask takes the world's pads as capsules
+//! first (`pad_custody`, FIX 6706), and the promotion's pad rows only while a
+//! key still has no pad here.
 
 use base64::Engine;
 use serde::Deserialize;
@@ -177,6 +179,11 @@ impl SyncClient {
             return Err(TransportError::Storage(
                 "home may not read this world".into(),
             ));
+        }
+        self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
+            .await;
+        if !self.vault.world_pads_missing(world).map_err(storage)? {
+            return Ok(());
         }
         let reply: PromotionReply = serde_json::from_value(
             rpc.request(

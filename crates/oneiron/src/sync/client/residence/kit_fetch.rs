@@ -4,8 +4,12 @@
 //! ([`KitBundleFetch`]), and the home's kit door serves the generations a
 //! publisher named the kit's root for. The bytes are checked as a machine's
 //! read checks them (`bundle::fetch_generation`). The kit reads the home's
-//! current index of those generations the same way (FIX 7106).
+//! current index of those generations the same way (FIX 7106), every page of
+//! it (FIX 9364): one revision, strictly newer to older, each generation
+//! once, started over when the revision changes, and nothing named until the
+//! last page came.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
@@ -14,10 +18,11 @@ use serde_json::{Value, json};
 
 use super::bundle::{PartSource, fetch_generation};
 use crate::sync::residence::{
-    KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH, KIT_PAD_INDEX_FETCH_PATH, KitBundleFetch,
-    KitPadIndexFetch, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry, SealedBundleIndex,
-    SealedBundleKitRoot, SealedBundleObject, kit_bundle_fetch_origin, sealed_digest_from_hex,
-    sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH, KIT_PAD_INDEX_FETCH_PATH,
+    KIT_PAD_INDEX_REPLY_MAX, KitBundleFetch, KitPadIndexFetch, SEALED_BUNDLE_READ_PART_MAX,
+    SealedBundleEntry, SealedBundleIndex, SealedBundleKitRoot, SealedBundleObject,
+    kit_bundle_fetch_origin, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
+    sealed_generation_hex,
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
@@ -36,18 +41,22 @@ const KIT_BUNDLE_PART_TIMEOUT_SECS: u64 = 300;
 /// generation, `bundle`, two 20-digit `u64`s, 64-hex digest, `false`, keys
 /// and punctuation).
 const KIT_BUNDLE_PART_REPLY_MAX: usize = 4 * SEALED_BUNDLE_READ_PART_MAX.div_ceil(3) + 241;
-/// The most bytes one index answer may hold (CALLS: KIT_PAD_INDEX_REPLY_MAX,
-/// 1 MiB): a memory floor far past the largest index a home keeps, the 104
-/// bytes around its list and `SEALED_BUNDLE_KEEP` entries of at most 333
-/// bytes each (48-hex generation, two 64-hex digests, three 20-digit `u64`s,
-/// keys and punctuation).
-const KIT_PAD_INDEX_REPLY_MAX: usize = 1024 * 1024;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct KitPadIndexReply {
     retained_revision: String,
     generations: Vec<KitPadIndexEntry>,
+    #[serde(default)]
+    next_cursor: Option<KitPadIndexCursor>,
+}
+
+/// Where the next page of the index starts (FIX 9364).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KitPadIndexCursor {
+    retained_revision: String,
+    before_commit_order: u64,
 }
 
 #[derive(Deserialize)]
@@ -128,10 +137,12 @@ impl KitHome {
         answer(response, KIT_BUNDLE_PART_REPLY_MAX).await
     }
 
-    /// The home's current index of the generations named for the kit's root
-    /// (FIX 7106). A refused fetch is `InvalidPayload`; a body past
-    /// [`KIT_PAD_INDEX_REPLY_MAX`] is `FrameTooLarge`.
-    async fn index(&self) -> Result<Value, TransportError> {
+    /// One page of the home's current index of the generations named for
+    /// the kit's root (FIX 7106): from the newest, or from `cursor`, the
+    /// revision and commit order a page before named (FIX 9364). A refused
+    /// fetch is `InvalidPayload`; a body past [`KIT_PAD_INDEX_REPLY_MAX`] is
+    /// `FrameTooLarge`.
+    async fn index(&self, cursor: Option<([u8; 32], u64)>) -> Result<Value, TransportError> {
         let mut nonce = [0u8; KIT_BUNDLE_FETCH_NONCE_BYTES];
         crate::world_keys::os_fill(&mut nonce)
             .map_err(|error| TransportError::Storage(error.to_string()))?;
@@ -139,6 +150,8 @@ impl KitHome {
             vault_id: self.vault_id,
             root: self.root,
             origin: self.origin.clone(),
+            retained_revision: cursor.map(|(revision, _)| revision),
+            before_commit_order: cursor.map(|(_, before)| before),
             timestamp: crate::unix_seconds_now(),
             nonce,
         };
@@ -155,6 +168,8 @@ impl KitHome {
             .json(&json!({
                 "vaultId": sealed_digest_hex(&fetch.vault_id),
                 "root": sealed_digest_hex(&fetch.root.0),
+                "retainedRevision": fetch.retained_revision.as_ref().map(sealed_digest_hex),
+                "beforeCommitOrder": fetch.before_commit_order,
                 "timestamp": fetch.timestamp,
                 "nonce": sealed_digest_hex(&fetch.nonce),
                 "signature": signature,
@@ -266,31 +281,44 @@ pub async fn fetch_sealed_bundle_with_kit(
 /// The generations the home at `home` keeps named for the kit's root, newest
 /// committed first, with the revision of the home's one read that named them,
 /// read with the kit alone (FIX 7106): `seed` is the kit's, rebuilt for the
-/// vault `vault_id`. `None` when the home keeps none for the root, or refused
-/// the kit. Each entry names the kit's root and anchor, the ones its
-/// signature was checked against.
+/// vault `vault_id`. Every page is read (FIX 9364), each under the revision
+/// the first named, strictly older than the last and each generation once;
+/// a revision that changed under the scan starts it over, and nothing is
+/// named until the last page came. `None` when the home keeps none for the
+/// root, or refused the kit. Each entry names the kit's root and anchor, the
+/// ones its signature was checked against.
 pub async fn fetch_sealed_bundle_index_with_kit(
     home: &str,
     vault_id: &[u8; 32],
     seed: &RecoveryRootSeed,
 ) -> Result<Option<SealedBundleIndex>, TransportError> {
     let home = kit_home(home, vault_id, seed)?;
-    let reply = match home.index().await {
-        Ok(reply) => reply,
-        Err(TransportError::InvalidPayload(_)) => return Ok(None),
-        Err(error) => return Err(error),
-    };
     let refused = || TransportError::InvalidPayload("the kit index answer does not decode");
-    let reply: KitPadIndexReply = serde_json::from_value(reply).map_err(|_| refused())?;
     let kit = SealedBundleKitRoot {
         root: home.root,
         anchor_key: home.anchor.verifying_key().to_bytes(),
     };
-    let entries = reply
-        .generations
-        .iter()
-        .map(|entry| {
-            Ok(SealedBundleEntry {
+    let mut revision: Option<[u8; 32]> = None;
+    let mut entries: Vec<SealedBundleEntry> = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut cursor = None;
+    loop {
+        let reply = match home.index(cursor).await {
+            Ok(reply) => reply,
+            Err(TransportError::InvalidPayload(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let reply: KitPadIndexReply = serde_json::from_value(reply).map_err(|_| refused())?;
+        let read = sealed_digest_from_hex(&reply.retained_revision).ok_or_else(refused)?;
+        // The home answers a cursor of a read it no longer holds with the
+        // first page of the one it holds now: the scan starts over on it.
+        if revision.is_some_and(|held| held != read) {
+            entries.clear();
+            seen.clear();
+        }
+        revision = Some(read);
+        for entry in &reply.generations {
+            let entry = SealedBundleEntry {
                 generation: sealed_generation_from_hex(&entry.generation).ok_or_else(refused)?,
                 commit_order: entry.commit_order,
                 bundle_len: entry.bundle_length,
@@ -298,17 +326,31 @@ pub async fn fetch_sealed_bundle_index_with_kit(
                 pads_len: entry.pads_length,
                 pads_digest: sealed_digest_from_hex(&entry.pads_digest).ok_or_else(refused)?,
                 kit: Some(kit),
-            })
-        })
-        .collect::<Result<Vec<_>, TransportError>>()?;
-    if !entries
-        .windows(2)
-        .all(|pair| pair[0].commit_order > pair[1].commit_order)
-    {
-        return Err(refused());
+            };
+            if entries
+                .last()
+                .is_some_and(|last| last.commit_order <= entry.commit_order)
+                || !seen.insert(entry.generation)
+            {
+                return Err(refused());
+            }
+            entries.push(entry);
+        }
+        let Some(next) = reply.next_cursor else {
+            break;
+        };
+        // A cursor binds the page's read and its last entry.
+        let next_revision = sealed_digest_from_hex(&next.retained_revision).ok_or_else(refused)?;
+        if next_revision != read
+            || reply.generations.is_empty()
+            || entries.last().map(|last| last.commit_order) != Some(next.before_commit_order)
+        {
+            return Err(refused());
+        }
+        cursor = Some((read, next.before_commit_order));
     }
     Ok(Some(SealedBundleIndex {
-        retained_revision: sealed_digest_from_hex(&reply.retained_revision).ok_or_else(refused)?,
+        retained_revision: revision.ok_or_else(refused)?,
         entries,
     }))
 }
