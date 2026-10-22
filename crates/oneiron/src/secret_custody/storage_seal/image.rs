@@ -11,6 +11,8 @@
 //! here opens a value or mints a key: a value a restore's custody does not
 //! hold is named, never brought back from the image.
 
+use std::borrow::Borrow;
+
 use zeroize::Zeroize;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -284,9 +286,13 @@ impl PlannedCredentials {
 }
 
 /// Each of `refs` by its handle in `store`, else its name, and generation.
-fn named<'a>(store: &Store, refs: impl Iterator<Item = &'a CredentialRef>) -> Vec<(String, u32)> {
+fn named<R: Borrow<CredentialRef>>(
+    store: &Store,
+    refs: impl Iterator<Item = R>,
+) -> Vec<(String, u32)> {
     let txn = store.env.read_txn().ok();
     refs.map(|credential| {
+        let credential = credential.borrow();
         let handle = match &txn {
             Some(txn) => credential_handle(store, txn, &credential.id, &credential.name),
             None => credential.name.clone(),
