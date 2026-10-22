@@ -123,7 +123,8 @@ class CitedMessage(TypedDict):
 class RecordRef(TypedDict):
     kind: str
     id: str
-    short_id: NotRequired[str]
+    # Always present; null when the record has no short id (FIX 4802).
+    short_id: str | None
     label: str
 
 class ScopeHonesty(TypedDict):

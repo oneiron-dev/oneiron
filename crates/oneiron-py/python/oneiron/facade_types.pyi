@@ -17203,7 +17203,10 @@ class VerbHookStopCompletedWithError(TypedDict):
     message: str
     receipt_ref: NotRequired[str | None]
 VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
-class MemoryError(MemoryWrongRoot):
+class FacadeMemoryError(TypedDict):
+    attempted: NotRequired[str]
+    replacement: NotRequired[str]
+    schemaRef: NotRequired[str]
     code: str
     message: str
     suggestions: list[str]
@@ -17225,7 +17228,7 @@ class EsignDocumentTrailReadable(TypedDict):
     audit: list[EsignEventRow]
 class EsignDocumentTrailUnreadable(TypedDict):
     trail: Literal["unreadable"]
-    error: MemoryError
+    error: FacadeMemoryError
 EsignDocumentTrail = EsignDocumentTrailReadable | EsignDocumentTrailUnreadable
 EsignDocumentView = dict[str, Any]
 class EsignLinksIssueRequest(TypedDict):
@@ -17384,7 +17387,7 @@ class EsignSealTrailReadable(TypedDict):
     status: DocumentStatus
 class EsignSealTrailUnreadable(TypedDict):
     trail: Literal["unreadable"]
-    error: MemoryError
+    error: FacadeMemoryError
 EsignSealTrail = EsignSealTrailReadable | EsignSealTrailUnreadable
 EsignSealView = dict[str, Any]
 class CoreWriteTextField(TypedDict):
