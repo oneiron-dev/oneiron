@@ -553,6 +553,8 @@ fn task_page_slot_in(
             .or_else(|| settled_ladder.and_then(|ladder| ladder.counter_task_ref))
             .map(|counter_ref| counter_ref.to_hex());
         presence.interrupted = matches!(task.state, Some(TaskExecutionState::Interrupted { .. }));
+        presence.widening =
+            super::comm_widen::consult_widening_in(vault, rtxn, task.consult.as_ref());
         return Ok(Some(TaskPageSlot::Projected(presence)));
     }
     // P2 F6 (role fold): only the `Task` role folds into the TASKS section.

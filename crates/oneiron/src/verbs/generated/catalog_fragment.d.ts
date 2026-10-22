@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1206 code-mode rows (1166 host rows, 40 run rows), 4161 declarations.
-// Replies: 1086 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1206 code-mode rows (1166 host rows, 40 run rows), 4163 declarations.
+// Replies: 1084 fully typed, 118 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -104,7 +104,8 @@ declare namespace Sdk {
   type InboxListRequest = { after?: string | null; limit?: number | null };
   type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed" | "thread_walk_in" | "thread_history_opened" | "thread_join_requested";
   type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null };
-  type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean };
+  type NotificationAction = { verb: string; args: unknown };
+  type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean; actions?: NotificationAction[] };
   type NotificationPage = { rows: NotificationRow[]; next_after?: string | null };
   type NotificationMark = "seen" | "acked";
   type InboxMarkRequest = { notification_ref: string; mark: NotificationMark };
@@ -120,7 +121,7 @@ declare namespace Sdk {
   type AgentHealthCoachRoute = "skill_edit" | "prompt_inject" | "neither";
   type AgentHealthSkillTarget = { skill: string; version: string };
   type AgentHealthCoachDraft = { route: AgentHealthCoachRoute; diagnosis: string; proposal: string; target?: AgentHealthSkillTarget | null };
-  type AgentHealthCoachAnswer = { at: number; pads: AgentHealthPadRead; draft?: AgentHealthCoachDraft | null };
+  type AgentHealthCoachAnswer = { at: number; pads: AgentHealthPadRead; draft?: AgentHealthCoachDraft | null; source_rows?: EntityId[] | null; source_rows_complete?: boolean | null; draft_erased?: boolean | null };
   type AgentHealthApplicationState = "pending" | "admitted" | "rejected";
   type AgentHealthCoachApplication = { by: EntityId; at: number; skill: EntityId; version: string; instructions: string; candidate: EntityId; state: AgentHealthApplicationState; verdict?: EntityId | null; disposition?: string | null; updated_at: number };
   type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; observed_brief?: HealthBriefPin | null; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null };
@@ -271,7 +272,9 @@ declare namespace Sdk {
   type ConnectorSendTaskOutcome = "delivered" | "failed" | "ambiguous";
   type LadderTerminalDisposition = "approved" | "overridden" | "rejected" | "failed" | "escalated" | "countered" | "abandoned";
   type CancelRejectionPathology = { attempt_id: string; rejections: number; threshold: number; last_status?: string | null };
-  type TaskRow = { id: string; line: string; status: TaskBoardStatus; is_intent: boolean; folded_job_count: number; kind?: TaskKind | null; assignee?: string | null; terminal_disposition?: TaskTerminalDisposition | null; connector_outcome?: ConnectorSendTaskOutcome | null; result_ref?: string | null; ladder_disposition?: LadderTerminalDisposition | null; counter_task_ref?: string | null; cancel_pathology?: CancelRejectionPathology | null };
+  type CommReach = "parent" | "subtree" | "project" | "vault";
+  type ConsultWidening = { child: string; from?: CommReach | null; to: CommReach };
+  type TaskRow = { id: string; line: string; status: TaskBoardStatus; is_intent: boolean; folded_job_count: number; kind?: TaskKind | null; assignee?: string | null; terminal_disposition?: TaskTerminalDisposition | null; connector_outcome?: ConnectorSendTaskOutcome | null; result_ref?: string | null; ladder_disposition?: LadderTerminalDisposition | null; counter_task_ref?: string | null; cancel_pathology?: CancelRejectionPathology | null; widening?: ConsultWidening | null; fits?: string[] };
   type TasksOverflow = { known_omitted_rows: number; source_exhausted: boolean };
   type TasksSection = { rows: TaskRow[]; overflow?: TasksOverflow | null };
   type ShapeCard = { seed_id?: string | null; counts: Record<string, number>; open_applies: number; reach: ShapeReach; line: string };
@@ -674,7 +677,6 @@ declare namespace Sdk {
   type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: TypeByteFamily };
   type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> };
   type CredentialPactCeiling = { grant_ref: ScopeId; ceiling: FederationDirectionScope };
-  type CommReach = "parent" | "subtree" | "project" | "vault";
   type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null; comm?: CommReach | null };
   type CredentialAttenuationRequest = { holder_seed: number[]; caveat: CredentialCaveat; next_binding_key?: number[] | null };
   type CredentialAttenuated = { token: string; binding_key: number[] };
@@ -911,12 +913,12 @@ declare namespace Sdk {
   type WeaveDigestFeedback = { preferred_cadence?: WeaveDigestCadence | null; lead_section?: WeaveSectionKind | null; keep_current?: boolean };
   type WeaveDigestRendered = { scheduled_for: number; rendered_at: number; narrowing: ScopedReadReceipt };
   type InboxLensRequest = { identity?: string | null; agent?: string | null; limit?: number | null; before_impact?: number | null; before_at?: number | null; before_id?: string | null };
-  type InboxLensKind = "conversation" | "waiting_on_you" | "coordination_update" | "concern";
+  type InboxLensKind = "conversation" | "waiting_on_you" | "coordination_update" | "concern" | "digest";
   type InboxLensPile = "conversations" | "waiting_on_you" | "updates";
-  type InboxLensParticipant = { identity: string; actor: string };
+  type InboxLensParticipant = { identity?: string | null; actor: string };
   type InboxLensConcern = { agent: string; signal: string; tone: string };
   type InboxLensDiaryReview = { request: string; reader: string; reader_class: string; reason: string };
-  type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity: string; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null };
+  type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null };
   type InboxConcernGroup = { agent: string; items: string[] };
   type InboxLensPage = { items: InboxLensRow[]; concern_groups: InboxConcernGroup[] };
   type InboxRunGroupsRequest = { limit?: number | null };
@@ -3656,9 +3658,9 @@ declare namespace Sdk {
   type RenderSide = { version: number; state_hash: number[]; export_key: number[]; slides: SlideRender[] };
   type RenderPair = { head: RenderSide; candidate: RenderSide; changed: NodeId[] };
   type DeckDiff = { base_version: number; head_version: number; proposal_version: number; added: NodeId[]; removed: NodeId[]; moved: NodeMove[]; text_changed: NodeId[]; formatting_changed: NodeId[]; geometry_changed: NodeId[]; payload_changed: NodeId[]; opaque_changed: OpaqueChange[]; affected_slides: NodeId[]; head_only: NodeId[]; conflicts: Conflict[]; relationships: RelationshipChange[]; renders?: RenderPair | null };
-  type DeckReviewView = { head: number[]; head_version: number; ok: boolean; diff: DeckDiff; replay_refusals: string[]; stale_units: NodeId[]; evidence_refusal?: string | null };
+  type DeckReviewView = { head: number[]; fork_head: number[]; head_version: number; ok: boolean; diff: DeckDiff; replay_refusals: string[]; stale_units: NodeId[]; evidence_refusal?: string | null };
   type Landing = "merge" | "switch";
-  type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null };
+  type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null };
   type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] };
   type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null };
   type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; effects: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null; reconciliation?: VersionReconciliation | null };
@@ -4771,13 +4773,13 @@ declare const vault: Sdk.VaultHost & {
         export(input: Sdk.DeckExportRequest): Promise<Sdk.DeckExportView | StoredResult>;
         /** The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector. */
         gate(input: Sdk.DeckGateRequest): Promise<Sdk.DeckGateView | StoredResult>;
-        /** A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses. */
+        /** A person lands a reviewed deck fork up to the fork frontier its review read, merged or switched in; later fork work waits for its own review. A moved head, a conflict or the opener as merger refuses. */
         merge(input: Sdk.DeckForkMergeRequest): Promise<Sdk.LandingReceipt | StoredResult>;
         /** Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened. */
         oracle(input: Sdk.DeckOracleRequest): Promise<Sdk.DeckGateView | StoredResult>;
         /** The asked slides of a deck's head or open fork's merge candidate, as this host's review renderer draws its export now: provisional images; nothing lands. A lifted deck draws for an agent that gives why once a grant covers its keys. */
         preview(input: Sdk.DeckPreviewRequest): Promise<Sdk.DeckPreview | StoredResult>;
-        /** A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names. */
+        /** A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head and fork frontier a merge names. */
         review(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.DeckReviewView | StoredResult>;
       };
       /** A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head. */

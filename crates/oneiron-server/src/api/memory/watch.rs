@@ -17,7 +17,10 @@ pub(in crate::api) async fn core_memory_watch_read(
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
 ) -> Result<Json<CoreMemoryWatchResponse>, super::facade::FacadeApiError> {
-    let (owner, anchor) = watch_identity(&auth, &server, &id_hex, CoreScope::Read, false)?;
+    // FIX 8185: a GET reads the anchor through the caller's own lane at its
+    // verified destination first, so a withheld anchor answers the same
+    // not-found an absent one does, before any watch metadata is read.
+    let (owner, anchor) = watch_identity(&auth, &server, &id_hex, CoreScope::Read, true)?;
     let watch = oneiron::saved_query::memory_watch(&server.vault, owner, anchor)
         .map_err(|error| core_engine_error("memory watch read failed", error))?;
     Ok(Json(CoreMemoryWatchResponse {

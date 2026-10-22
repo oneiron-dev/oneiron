@@ -16617,7 +16617,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.review",
-      "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names.",
+      "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head and fork frontier a merge names.",
       "refs": [
         "/artifact_ref",
         "/fork_ref"
@@ -16650,7 +16650,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.merge",
-      "description": "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses.",
+      "description": "A person lands a reviewed deck fork up to the fork frontier its review read, merged or switched in; later fork work waits for its own review. A moved head, a conflict or the opener as merger refuses.",
       "refs": [
         "/artifact_ref",
         "/fork_ref"
