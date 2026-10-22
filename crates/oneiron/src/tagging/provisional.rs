@@ -365,6 +365,17 @@ pub(crate) fn confirm_in_txn(
         .batch_in()
         .put(id, entity.kind, at, now, &body)
         .apply(txn)?;
+    // Born under the facet of the turn its name was read from, in this same
+    // write, never the generic put's own substrate facet (FIX 10168).
+    if let Some(facet) = entity.facet {
+        crate::federation::record_scope::settle_source_birth(
+            &vault.store,
+            txn,
+            *id,
+            entity.kind,
+            facet,
+        )?;
+    }
     Ok(true)
 }
 

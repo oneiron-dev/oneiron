@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use oneiron::memory::extraction::{
-    EncoderAttempt, EncoderInput, ExtractionEncoder, ExtractionWork,
+    EncoderAttempt, EncoderInput, ExtractionCaller, ExtractionEncoder, ExtractionWork,
 };
 use oneiron::tagging::{TaggingOutcome, TaggingTrace};
 use oneiron::{ModelId, embed::EmbedderLocality};
@@ -33,7 +33,7 @@ use oneiron::{ModelId, embed::EmbedderLocality};
 use crate::config::{OneironerConfig, OneironerProvider};
 use dispatcher::{Completion, Dispatcher, WorkerSpec};
 use engines::Admission;
-use local::WindowCounter;
+use local::{InferenceWindows, WindowCounter};
 
 pub(crate) use dispatcher::DispatchClaim;
 
@@ -120,32 +120,34 @@ impl ProviderTagger {
     }
 
     /// Room for one call in `work`'s class on the slot's dispatcher, awaited
-    /// with nothing held: the tagging coordinator's claim (FIX 6755). It
-    /// shares the pending caps every other call takes room in, and never
-    /// refuses; dropped unused, the claim gives its room back.
+    /// with nothing held at `caller`'s turn: the tagging coordinator's claim
+    /// (FIX 6755, 9519). It shares the pending caps every other call takes
+    /// room in, and never refuses; dropped unused, the claim gives its room
+    /// back, and dropped while it waits, it leaves the queue.
     pub(crate) fn claim_room(
         &self,
         work: ExtractionWork,
+        caller: ExtractionCaller,
     ) -> impl std::future::Future<Output = DispatchClaim> + Send + 'static {
-        self.dispatcher.claim_async(work)
+        self.dispatcher.claim_async(work, caller)
     }
 
-    /// The window `input` builds: a tokenizer encode, so a caller runs it on
-    /// a blocking unit and hands it to [`Self::submit`] (FIX 7331).
-    pub(crate) fn count_window(&self, input: &EncoderInput) -> oneiron::Result<usize> {
-        self.dispatcher.count(input)
+    /// The windows `input` runs as: a tokenizer encode, so a caller runs it
+    /// on a blocking unit and hands them to [`Self::submit`] (FIX 7331).
+    /// A turn longer than one window runs as parts (FIX 9518).
+    pub(crate) fn plan_windows(&self, input: &EncoderInput) -> oneiron::Result<InferenceWindows> {
+        self.dispatcher.plan(input)
     }
 
-    /// Queues `input` under `claim` with its `window` from
-    /// [`Self::count_window`], never waiting; the answer comes back through
-    /// the returned completion.
+    /// Queues the call `planned` by [`Self::plan_windows`] under `claim`,
+    /// never waiting; the answer comes back through the returned
+    /// completion.
     pub(crate) fn submit(
         &self,
         claim: DispatchClaim,
-        input: EncoderInput,
-        window: oneiron::Result<usize>,
+        planned: oneiron::Result<InferenceWindows>,
     ) -> Completion {
-        claim.submit_counted(input, window)
+        claim.submit_planned(planned)
     }
 
     /// The dispatcher's pending cap of `work`'s class, from its policy: the
@@ -196,8 +198,18 @@ impl ExtractionEncoder for ProviderTagger {
         self.locality
     }
 
+    /// A call that names no caller shares its room as this server's own.
     fn infer(&self, input: &EncoderInput, work: ExtractionWork) -> EncoderAttempt {
-        self.dispatcher.call(input, work)
+        self.dispatcher.call(input, work, &ExtractionCaller::new("host"))
+    }
+
+    fn infer_for(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+    ) -> EncoderAttempt {
+        self.dispatcher.call(input, work, caller)
     }
 }
 

@@ -19,7 +19,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, EncoderOutput, EncoderTurn, SpeakerRole,
+    EncoderInput, EncoderMessage, EncoderOutput, EncoderRegister, EncoderTurn, SpeakerRole,
 };
 use serde::Deserialize;
 
@@ -134,6 +134,8 @@ impl From<WireInput> for EncoderInput {
                     speaker: turn.speaker,
                 })
                 .collect(),
+            following: Vec::new(),
+            register: EncoderRegister::Live,
             language: wire.language,
             speaker: wire.speaker,
         }

@@ -14,7 +14,9 @@ use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
 use crate::limits::MAX_ANCESTOR_DEPTH;
-use crate::memory::extraction::{EncoderInput, EncoderMessage, EncoderTurn, SpeakerRole};
+use crate::memory::extraction::{
+    EncoderInput, EncoderMessage, EncoderRegister, EncoderTurn, SpeakerRole,
+};
 use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, MAX_EDGE_QUERY_RESULTS, live_entity_row_in_txn};
@@ -126,6 +128,8 @@ fn read_in_txn(
         turn: turn.to_hex(),
         messages,
         context: Vec::new(),
+        following: Vec::new(),
+        register: EncoderRegister::Live,
         // No stored or configured fact names a turn's language yet, so the
         // tagger detects it.
         language: None,
@@ -661,7 +665,7 @@ pub(super) fn earlier_turns_in_txn(
 /// A TURN's place in time, read from its row header: its occurred second,
 /// then its id, which only makes the order of one second's turns stable.
 /// `None` for a row that is absent or not a TURN.
-fn header_key(
+pub(super) fn header_key(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

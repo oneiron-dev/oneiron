@@ -505,7 +505,7 @@ impl Vault {
 
         let key = vad_annotation_meta_key(ENTITY_TYPE_TURN, turn_id);
         let Some(annotation) = VAD_ANNOTATION_META.get(&self.store, txn, &key)? else {
-            return saved_turn_mood_in_txn(&self.store, txn, turn_id);
+            return saved_turn_mood_in_txn(self, txn, turn_id);
         };
         annotation.vad.validate()?;
         Ok(Some(annotation))
@@ -783,7 +783,7 @@ impl Vault {
         let key = vad_annotation_meta_key(expected_type, id);
         let Some(annotation) = VAD_ANNOTATION_META.get(&self.store, &rtxn, &key)? else {
             if expected_type == ENTITY_TYPE_TURN {
-                return saved_turn_mood_in_txn(&self.store, &rtxn, id);
+                return saved_turn_mood_in_txn(self, &rtxn, id);
             }
             return Ok(None);
         };
@@ -794,19 +794,19 @@ impl Vault {
 
 /// The mood the tagger saved on a turn (ARCH-0036: affect lands on the
 /// turn), read when no annotation was written on it: an explicit annotation,
-/// a self-report above all, stands over the tagger's read.
+/// a self-report above all, stands over the tagger's read. It carries how
+/// current it is: one read from text the turn no longer shows is stale, and
+/// stays readable as such (FIX 10169).
 fn saved_turn_mood_in_txn(
-    store: &crate::store::Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<VadAnnotation>> {
-    Ok(
-        crate::tagging::saved_turn_mood_in_txn(store, txn, turn)?.map(|(vad, saved_at)| {
-            VadAnnotation {
-                vad,
-                source: VadAnnotationSource::ModelInference,
-                annotated_at: saved_at,
-            }
-        }),
-    )
+    let saved = crate::tagging::saved_turn_mood_in_txn(vault, txn, turn)?;
+    Ok(saved.map(|(vad, saved_at, freshness)| VadAnnotation {
+        vad,
+        source: VadAnnotationSource::ModelInference,
+        annotated_at: saved_at,
+        freshness: Some(freshness.derivation()),
+    }))
 }

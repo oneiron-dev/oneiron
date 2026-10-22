@@ -5,17 +5,20 @@
 //! One scheduler lock holds every decision. A live call takes a free ready
 //! worker on arrival, the calibrated rank choosing when several are free;
 //! when every worker is busy it joins the shorter waiting live queue, ties
-//! taken in turn. Live goes before bulk at every unit a worker takes: a
+//! taken in turn. Live goes before bulk at the units a worker takes: a
 //! worker that frees up takes its own live queue, then the oldest live call
 //! waiting anywhere, and only then the next batch from the one shared bulk
-//! queue. A running unit is never pre-empted, and while live calls keep
-//! coming bulk waits: strict priority, with no starvation timer.
+//! queue; but after a bounded streak of live units, a waiting bulk call the
+//! worker holds takes the next unit ([`fair`], FIX 9519), so bulk work keeps
+//! a share under unbroken live load. A running unit is never pre-empted, and
+//! no clock decides anything.
 //!
 //! Each worker runs one unit at a time on its own thread. No call builds a
 //! model, and no worker keeps a queue the scheduler cannot see.
 //!
 //! A caller claims room in its class before its call queues ([`policy`]'s
-//! pending caps); past the cap the claim waits on the caller's own thread,
+//! pending caps); past the cap the claim waits its caller's turn, callers in
+//! turn and oldest first within each ([`fair`]), on the caller's own thread,
 //! or, for the tagging coordinator, as an awaited future on its class's own
 //! signal ([`capacity`]), holding no scheduler lock and no store transaction.
 //! Nothing is refused for a backlog: a call fails without a worker only when
@@ -42,13 +45,16 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, ExecutionPick, ExtractionWork};
+use oneiron::memory::extraction::{
+    EncoderAttempt, EncoderInput, ExecutionPick, ExtractionCaller, ExtractionWork,
+};
 use tokio::sync::{Notify, oneshot};
 
-use super::local::WindowCounter;
+use super::local::{InferenceWindows, WindowCounter};
 
 mod capacity;
 mod eligibility;
+mod fair;
 mod lifecycle;
 mod policy;
 mod worker;
@@ -70,9 +76,11 @@ const UNRANKED: usize = usize::MAX;
 
 /// One call, from its claim to its answer.
 pub(super) struct Job {
-    pub(super) input: EncoderInput,
+    /// Its windows: one, or the parts of a turn longer than a window
+    /// (FIX 9518), each run whole and merged into the call's one answer.
+    pub(super) windows: InferenceWindows,
     work: ExtractionWork,
-    /// Its live window in tokens with specials, counted once as it was
+    /// Its longest window in tokens with specials, counted once as it was
     /// submitted: which workers may run it. 0 in a slot that counts none,
     /// whose one worker runs every call.
     window: usize,
@@ -117,6 +125,10 @@ struct Scheduler {
     bulk_pending: usize,
     /// The one cursor busy ties rotate on.
     cursor: usize,
+    /// Claims waiting for room, in their callers' turns (FIX 9519).
+    fair: fair::FairClaims,
+    /// Live units taken in a row since the last bulk one.
+    live_streak: usize,
     /// Whether the slot serves one configured worker: a named device or an
     /// endpoint.
     pinned: bool,
@@ -148,15 +160,22 @@ impl Scheduler {
     }
 
     /// The next unit worker `index` runs: live calls first, else up to its
-    /// batch of the shared bulk queue, each a call its window holds.
+    /// batch of the shared bulk queue, each a call its window holds. After a
+    /// streak of live units, a bulk call it holds goes first once
+    /// ([`fair::next_class`]).
     fn take(&mut self, index: usize) -> Option<Unit> {
         let mut unit = Vec::new();
-        while unit.len() < LIVE_BATCH_CAP
+        let max = self.workers[index].descriptor.max_window_tokens();
+        let bulk_held = self.bulk.iter().any(|job| job.window <= max);
+        let class = fair::next_class(self.live_streak, bulk_held);
+        while class == ExtractionWork::Live
+            && unit.len() < LIVE_BATCH_CAP
             && let Some((job, rule)) = self.next_live(index)
         {
             let pick = self.reason(index, rule, job.window);
             unit.push((job, pick));
         }
+        let live = !unit.is_empty();
         if unit.is_empty() {
             let count = BULK_BATCH_CAP.min(self.workers[index].batch);
             for job in self.take_bulk(index, count) {
@@ -167,6 +186,11 @@ impl Scheduler {
         if unit.is_empty() {
             return None;
         }
+        self.live_streak = if live {
+            self.live_streak.saturating_add(1)
+        } else {
+            0
+        };
         self.workers[index].busy = true;
         Some(unit)
     }
@@ -210,13 +234,15 @@ impl Shared {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// `input`'s window in tokens, counted with no lock held; 0 in a slot
-    /// that counts none. A window that cannot be built fails its call as
-    /// that call's infer would.
-    pub(super) fn count(&self, input: &EncoderInput) -> oneiron::Result<usize> {
-        self.windows
-            .as_ref()
-            .map_or(Ok(0), |windows| windows.count(input))
+    /// `input`'s windows, counted with no lock held: one, or the parts of
+    /// a turn longer than a window (FIX 9518); one counted 0 in a slot that
+    /// counts none. A window that cannot be built fails its call as that
+    /// call's infer would; a turn's length never does.
+    pub(super) fn plan(&self, input: EncoderInput) -> oneiron::Result<InferenceWindows> {
+        match &self.windows {
+            Some(windows) => InferenceWindows::plan(windows, input),
+            None => Ok(InferenceWindows::whole(input, 0)),
+        }
     }
 
     /// Blocks worker `index`'s thread until it has a unit; `None` once the
@@ -360,6 +386,8 @@ impl Dispatcher {
                     live_pending: 0,
                     bulk_pending: 0,
                     cursor: 0,
+                    fair: fair::FairClaims::default(),
+                    live_streak: 0,
                     pinned,
                     closed: false,
                 }),
@@ -389,16 +417,22 @@ impl Dispatcher {
         self.shared.publish_rank(worker.0, rank);
     }
 
-    /// The window `input` builds, counted with the slot's tokenizer, `0`
-    /// for a slot that counts none: a blocking encode (FIX 7331).
-    pub(crate) fn count(&self, input: &EncoderInput) -> oneiron::Result<usize> {
-        self.shared.count(input)
+    /// The windows `input` runs as, counted with the slot's tokenizer, one
+    /// counted `0` for a slot that counts none: a blocking encode
+    /// (FIX 7331, 9518).
+    pub(crate) fn plan(&self, input: &EncoderInput) -> oneiron::Result<InferenceWindows> {
+        self.shared.plan(input.clone())
     }
 
-    /// One call in `work`'s class: claims room, queues the call, and waits
-    /// for the answer of the worker that ran it.
-    pub(crate) fn call(&self, input: &EncoderInput, work: ExtractionWork) -> EncoderAttempt {
-        let claim = capacity::claim_blocking(&self.shared, work);
+    /// One call in `work`'s class for `caller`: claims room at its turn,
+    /// queues the call, and waits for the answer of the worker that ran it.
+    pub(crate) fn call(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+    ) -> EncoderAttempt {
+        let claim = capacity::claim_blocking(&self.shared, work, caller);
         claim.submit(input.clone()).wait()
     }
 
@@ -409,8 +443,9 @@ impl Dispatcher {
     pub(crate) fn claim_async(
         &self,
         work: ExtractionWork,
+        caller: ExtractionCaller,
     ) -> impl std::future::Future<Output = DispatchClaim> + Send + 'static {
-        capacity::claim(Arc::clone(&self.shared), work)
+        capacity::claim(Arc::clone(&self.shared), work, caller)
     }
 }
 

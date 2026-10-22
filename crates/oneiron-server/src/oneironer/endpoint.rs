@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use oneiron::ModelId;
 use oneiron::embed::EmbedderLocality;
-use oneiron::memory::extraction::{EncoderInput, EncoderOutput};
+use oneiron::memory::extraction::{EncoderInput, EncoderOutput, EncoderRegister};
 use serde::Deserialize;
 
 use crate::config::OneironerConfig;
@@ -292,8 +292,18 @@ impl HttpTagger {
 
     fn post_extract(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
         let url = format!("{}/v1/extract", self.base);
-        let plain = serde_json::to_vec(input)
-            .map_err(|_| failure("tagger extract request did not encode".to_owned()))?;
+        // Contract version 2 reads earlier context only: a conversation
+        // register goes as its turn and every earlier turn, whole, which the
+        // tagger's own window cuts (FIX 9520); its later turns stay here.
+        let plain = if input.register.is_live() {
+            serde_json::to_vec(input)
+        } else {
+            let mut earlier = input.clone();
+            earlier.following.clear();
+            earlier.register = EncoderRegister::Live;
+            serde_json::to_vec(&earlier)
+        }
+        .map_err(|_| failure("tagger extract request did not encode".to_owned()))?;
         let response = self
             .send_extract(&url, plain)
             .map_err(|error| transport_error("extract", &error))?;

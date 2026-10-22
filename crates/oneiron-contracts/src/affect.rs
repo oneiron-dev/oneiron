@@ -2,4 +2,4 @@
 
 mod vad;
 
-pub use self::vad::{Vad, VadAnnotation, VadAnnotationSource, VadComponent};
+pub use self::vad::{DerivationFreshness, Vad, VadAnnotation, VadAnnotationSource, VadComponent};

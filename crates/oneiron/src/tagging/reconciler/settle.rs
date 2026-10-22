@@ -83,16 +83,23 @@ impl TaggingReconciler {
                 trace.outcome = match self.config.mode {
                     TaggingMode::Shadow => self.shadowed(output),
                     TaggingMode::Save => {
+                        let mut envelope = save::envelope(
+                            &call.hash,
+                            &made_by,
+                            &self.config,
+                            output.stack_sha16.as_deref(),
+                        );
+                        // A conversation register's digest moves with the
+                        // conversation; the turn's own text says whether the
+                        // set still indexes its words (FIX 10167).
+                        if !call.input.register.is_live() {
+                            envelope.text_hash = Some(call.text_hash.clone());
+                        }
                         let answer = Answer {
                             turn,
                             input: &call.input,
                             output,
-                            envelope: save::envelope(
-                                &call.hash,
-                                &made_by,
-                                &self.config,
-                                output.stack_sha16.as_deref(),
-                            ),
+                            envelope,
                         };
                         let now = self.stamp_in_txn(txn)?;
                         let saved = save::save_in_txn(&self.vault, txn, answer, &self.config, now)?;

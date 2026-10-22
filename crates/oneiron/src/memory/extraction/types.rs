@@ -27,14 +27,40 @@ pub struct EncoderTurn {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker: Option<SpeakerRole>,
 }
+/// Which register of its conversation a call reads (FIX 9520, 10167).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EncoderRegister {
+    /// The live register: the turn and a bounded window of earlier text,
+    /// never a later turn. A live call reads it.
+    #[default]
+    Live,
+    /// The whole conversation as it is authorized and stored now: every
+    /// earlier turn whole, the turn, then every later turn, in conversation
+    /// order. An import, backfill or other bulk marker reads it. Spans still
+    /// index the turn's own messages alone.
+    Conversation,
+}
+impl EncoderRegister {
+    pub const fn is_live(&self) -> bool {
+        matches!(self, Self::Live)
+    }
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct EncoderInput {
     pub turn: String,
     pub messages: Vec<EncoderMessage>,
     /// Earlier turns of the same conversation, oldest first: the live
-    /// register's window. Never a later turn; empty for a turn read alone.
-    /// Spans index `messages` only.
+    /// register's window, or every earlier turn of the conversation
+    /// register. Empty for a turn read alone. Spans index `messages` only.
     pub context: Vec<EncoderTurn>,
+    /// Later turns of the same conversation, oldest first: only the
+    /// conversation register carries them ([`EncoderRegister`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub following: Vec<EncoderTurn>,
+    /// The register this input reads.
+    #[serde(skip_serializing_if = "EncoderRegister::is_live")]
+    pub register: EncoderRegister,
     /// The input's language as a lowercase ISO 639 code, only when a stored
     /// or configured fact names it; without it the tagger detects it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,6 +119,21 @@ pub struct SpeakerLink {
     pub target: SpeakerTarget,
     pub confidence: f32,
 }
+/// The mood a model measured over one window of a turn it read in several
+/// (FIX 9518): from `message`/`start` to `end_message`/`end`, UTF-8 byte
+/// offsets into those messages of the input. The model gives no mood of the
+/// whole turn then, and none is made up from the parts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoodPart {
+    pub message: usize,
+    pub start: usize,
+    pub end_message: usize,
+    pub end: usize,
+    /// Read strictly, as an answer's whole mood is.
+    #[serde(deserialize_with = "strict_part_vad")]
+    pub vad: Vad,
+}
 /// What a tagger returns for one input. A model returns what it has heads
 /// for: a spans-only model sends no links and no mood. A span carries at
 /// most one of a link, a context link and a speaker link.
@@ -113,6 +154,10 @@ pub struct EncoderOutput {
     pub context_links: Vec<ContextLink>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub speaker_links: Vec<SpeakerLink>,
+    /// The moods of a turn read in several windows, one per window that
+    /// measured one, when `vad` is none for that reason (FIX 9518).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mood_parts: Vec<MoodPart>,
     /// The served stack that made the answer, as its model card names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack_sha16: Option<String>,
@@ -135,6 +180,14 @@ fn strict_vad<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Optio
         }),
     )
 }
+fn strict_part_vad<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vad, D::Error> {
+    let vad = WireVad::deserialize(deserializer)?;
+    Ok(Vad {
+        valence: vad.valence,
+        arousal: vad.arousal,
+        dominance: vad.dominance,
+    })
+}
 /// The scheduling class of one extraction call. It orders calls in a host's
 /// dispatcher and is never part of the input, its digest or a marker's dedupe
 /// key: the tagger never sees it. A tagging marker carries one, and the
@@ -149,6 +202,35 @@ pub enum ExtractionWork {
     /// Everything else: a marker an import, a host executor, a promotion, a
     /// publication or a recovery owes, and feedback redaction.
     Bulk,
+}
+/// Who one extraction call is made for: the key a host's dispatcher shares
+/// its room by (FIX 9519), so one caller's backlog never holds another's
+/// calls back. Opaque and stable: an actor, or a vault's own background
+/// tagging, never a process-wide stand-in. Like the class, it is never part
+/// of the input, its digest or a marker's dedupe key: the tagger never sees
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExtractionCaller(String);
+impl ExtractionCaller {
+    /// A caller named by `key`.
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+    /// An actor's own calls.
+    pub fn actor(actor: &crate::EntityId) -> Self {
+        Self(format!("actor:{}", actor.to_hex()))
+    }
+    /// A vault's own background tagging: its markers, under the vault's
+    /// root project, the one id every replica of it gives the same answer.
+    pub fn vault(vault: &crate::Vault) -> Self {
+        match vault.root_project() {
+            Ok(root) => Self(format!("vault:{}", root.to_hex())),
+            Err(_) => Self("vault".to_owned()),
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 /// The runtime that ran one call. A call names the runtime that actually ran
 /// it, never one it fell back from.
@@ -278,6 +360,18 @@ pub trait ExtractionEncoder: Send + Sync {
     /// worker that ran it. The class orders the call and never changes what
     /// the tagger reads.
     fn infer(&self, input: &EncoderInput, work: ExtractionWork) -> EncoderAttempt;
+    /// [`Self::infer`] for `caller`, whose calls a host's dispatcher shares
+    /// its room by (FIX 9519). A host that keeps no per-caller order runs it
+    /// as `infer`.
+    fn infer_for(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+    ) -> EncoderAttempt {
+        let _ = caller;
+        self.infer(input, work)
+    }
 }
 /// Not deserializable: persistence requires a locally validated shadow receipt.
 #[derive(Debug, Clone, Serialize)]

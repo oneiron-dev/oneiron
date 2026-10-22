@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1157 facade rows, 4139 declarations.
+Census: 1157 facade rows, 4142 declarations.
 Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -2838,6 +2838,9 @@ class TaggingMarkerView(TypedDict):
     created_at: int
     updated_at: int
 TaggingFailureView = TypedDict("TaggingFailureView", {"class": str, "code": NotRequired[str | None], "refusal": NotRequired[str | None]})
+class TaggingFreshness(TypedDict):
+    stale: bool
+    pending_retag: bool
 ExecutionRuntime = Literal["candle", "endpoint", "mlx", "coreml"]
 ExecutionCompute = Literal["cpu", "metal", "cuda", "cpu_and_ne", "opaque"]
 ExecutionPick = Literal["calibrated", "free", "shorter_queue", "fallback", "pinned"]
@@ -2920,6 +2923,7 @@ class TaggingStatusView(TypedDict):
     retry_at: NotRequired[int | None]
     try_number: NotRequired[int | None]
     has_tags: bool
+    freshness: NotRequired[TaggingFreshness | None]
     saved_at: NotRequired[int | None]
     last_trace: NotRequired[TaggingTraceView | None]
 class MergeEvidenceView(TypedDict):
@@ -2930,6 +2934,14 @@ class TaggingVadView(TypedDict):
     valence: float
     arousal: float
     dominance: float
+class TaggingMoodPartView(TypedDict):
+    message_ref: str
+    start: int
+    end_message_ref: str
+    end: int
+    valence: float
+    arousal: float
+    dominance: float
 class TurnTagsView(TypedDict):
     turn_ref: str
     envelope: DerivationEnvelopeView
@@ -2937,8 +2949,11 @@ class TurnTagsView(TypedDict):
     mentions: list[TaggedMentionView]
     merge_evidence: list[MergeEvidenceView]
     mood: NotRequired[TaggingVadView | None]
+    mood_freshness: NotRequired[TaggingFreshness | None]
+    mood_parts: list[TaggingMoodPartView]
     saved_at: int
     surprise: NotRequired[float | None]
+    freshness: TaggingFreshness
 class TaggingTagsView(TypedDict):
     turn_ref: str
     tags: NotRequired[TurnTagsView | None]
@@ -2952,6 +2967,7 @@ class TaggingMentionHitView(TypedDict):
     turn_ref: str
     index: int
     mention: TaggedMentionView
+    freshness: TaggingFreshness
 class TaggingMentionsView(TypedDict):
     entity_ref: str
     mentions: list[TaggingMentionHitView]
@@ -14905,12 +14921,19 @@ class SpeakerLink(TypedDict):
     span: int
     target: SpeakerTarget
     confidence: float
+class MoodPart(TypedDict):
+    message: int
+    start: int
+    end_message: int
+    end: int
+    vad: Vad
 class EncoderOutput(TypedDict):
     spans: list[NerSpan]
     links: NotRequired[list[CorefLink]]
     vad: NotRequired[Vad | None]
     context_links: NotRequired[list[ContextLink]]
     speaker_links: NotRequired[list[SpeakerLink]]
+    mood_parts: NotRequired[list[MoodPart]]
     stack_sha16: NotRequired[str | None]
 class ModelRoleOutputGenerated(TypedDict):
     kind: Literal["generated"]

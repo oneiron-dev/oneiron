@@ -4,11 +4,19 @@
 //! [`Vault::tagged_mentions`]. Every door acts through the caller's own
 //! credential: the named turn must read on the bound actor's recorded lane,
 //! exactly as the sibling scoped reads admit theirs, and a mention is
-//! served only while its turn reads. Nothing here authors a claim: the
-//! tagger's saved spans, coreference, mood and labels stay derived tags.
+//! served only while its turn reads. Every answer, and a point read's
+//! NOT_FOUND, carries the lane's scope receipt, which names no hidden world
+//! and counts no hidden row (FIX 10170). Saved tags read from text the turn
+//! no longer shows stay readable, said to be stale and pending their retag
+//! (FIX 10169). Nothing here authors a claim: the tagger's saved spans,
+//! coreference, mood and labels stay derived tags.
 
 use serde::{Deserialize, Serialize};
 
+use super::freshness::{
+    TaggingFreshness, TaggingMoodPartView, mood_freshness, mood_part_views,
+    tagging_freshness_in_txn,
+};
 use super::history::TaggingTraceRecord;
 use super::marker::MarkerPayload;
 use super::tags::{
@@ -17,10 +25,12 @@ use super::tags::{
 use super::trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
 use super::{OutputRefusal, TaggingMode};
 use crate::attempt_queue::{AttemptRecord, AttemptState};
-use crate::claim::ClaimReadStatus;
+use crate::claim::{ClaimReadStatus, ScopedReadReceipt, ScopedReadResult};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::extraction::{EncoderExecution, SpeakerTarget};
-use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
+use crate::memory::{
+    MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, resolve_entity_ref,
+};
 use crate::{EntityId, Error};
 
 /// One TURN ref: the turn whose marker, tags or trace history is read.
@@ -195,6 +205,8 @@ pub struct TaggingStatusView {
     pub try_number: Option<u32>,
     /// Whether a saved tag set reads for this turn.
     pub has_tags: bool,
+    /// How current the saved set is, when one reads.
+    pub freshness: Option<TaggingFreshness>,
     /// Store-clock second the saved set was saved, when one reads.
     pub saved_at: Option<u64>,
     /// The newest recorded trace, when one is kept.
@@ -299,10 +311,18 @@ pub struct TurnTagsView {
     pub merge_evidence: Vec<MergeEvidenceView>,
     /// The turn's mood, when the tagger returned one.
     pub mood: Option<TaggingVadView>,
+    /// How current the mood is, when there is one: stale too when it is an
+    /// earlier set's, kept beside a turn last read in windows.
+    pub mood_freshness: Option<TaggingFreshness>,
+    /// The mood of each window of a turn read in several, never averaged.
+    pub mood_parts: Vec<TaggingMoodPartView>,
     /// Store-clock second of the save.
     pub saved_at: u64,
     /// Surprise beside the set this one replaced, absent for the first set.
     pub surprise: Option<f32>,
+    /// How current the set, its mentions and the provisional names it
+    /// holds are beside the turn's text now.
+    pub freshness: TaggingFreshness,
 }
 
 /// The tags saved for a turn, or none while its marker still owes a pass.
@@ -318,6 +338,8 @@ pub struct TaggingMentionHitView {
     pub turn_ref: String,
     pub index: usize,
     pub mention: TaggedMentionView,
+    /// How current its turn's saved set is.
+    pub freshness: TaggingFreshness,
 }
 
 /// Every saved mention naming one entity, by turn then span place.
@@ -329,7 +351,6 @@ pub struct TaggingMentionsView {
 
 fn refusal_str(refusal: OutputRefusal) -> &'static str {
     match refusal {
-        OutputRefusal::TooManyRows => "too_many_rows",
         OutputRefusal::MoodOutOfRange => "mood_out_of_range",
         OutputRefusal::UnknownMessage => "unknown_message",
         OutputRefusal::BadOffsets => "bad_offsets",
@@ -514,7 +535,7 @@ pub(crate) fn envelope_view(envelope: &DerivationEnvelope) -> DerivationEnvelope
     }
 }
 
-fn tags_view(tags: &TurnTags) -> TurnTagsView {
+fn tags_view(tags: &TurnTags, freshness: TaggingFreshness) -> TurnTagsView {
     TurnTagsView {
         turn_ref: tags.turn.to_hex(),
         envelope: envelope_view(&tags.envelope),
@@ -539,16 +560,20 @@ fn tags_view(tags: &TurnTags) -> TurnTagsView {
             arousal: mood.arousal,
             dominance: mood.dominance,
         }),
+        mood_freshness: tags.mood.map(|_| mood_freshness(freshness, tags)),
+        mood_parts: mood_part_views(tags),
         saved_at: tags.saved_at,
         surprise: tags.surprise,
+        freshness,
     }
 }
 
-fn hit_view(hit: &MentionHit) -> TaggingMentionHitView {
+fn hit_view(hit: &MentionHit, freshness: TaggingFreshness) -> TaggingMentionHitView {
     TaggingMentionHitView {
         turn_ref: hit.turn.to_hex(),
         index: hit.index,
         mention: mention_view(hit.index, &hit.mention),
+        freshness,
     }
 }
 
@@ -565,27 +590,42 @@ fn outcome_retry_at(outcome: &TaggingOutcome) -> Option<u64> {
 
 impl Memory<'_> {
     /// Resolves a turn ref and admits it on the bound actor's recorded
-    /// lane, with the NOT_FOUND an absent turn gets, listing it as the
-    /// answer's producer.
-    fn tagging_turn(&self, reference: &str) -> MemoryResult<EntityId> {
-        let turn = resolve_entity_ref(self.vault(), reference)?;
-        self.produced_from([turn]);
+    /// lane, listing it as the answer's producer, with the lane's receipt
+    /// for the answer. An absent turn, and one the lane does not read, get
+    /// one NOT_FOUND that carries the receipt (FIX 10170).
+    fn tagging_turn(&self, reference: &str) -> MemoryResult<(EntityId, ScopedReadReceipt)> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let receipt = lane.read_receipt(None, 0)?;
+        let turn = match resolve_entity_ref(self.vault(), reference) {
+            Ok(turn) => turn,
+            Err(error) if error.code == MEMORY_CODE_NOT_FOUND => {
+                return Err(error.with_read_receipt(receipt));
+            }
+            Err(error) => return Err(error),
+        };
+        self.produced_from([turn]);
         if !lane.is_entity_readable(&turn)? {
-            return Err(Error::EntityNotFound.into());
+            return Err(MemoryError::from(Error::EntityNotFound).with_read_receipt(receipt));
         }
-        Ok(turn)
+        Ok((turn, receipt))
     }
 
     /// `vault.tagging.status`: pending, retrying or settled, with the
     /// configured checkpoint, the serving model and the failure reason.
-    pub fn tagging_status(&self, input: &TaggingTurnRequest) -> MemoryResult<TaggingStatusView> {
-        let turn = self.tagging_turn(&input.turn_ref)?;
+    pub fn tagging_status(
+        &self,
+        input: &TaggingTurnRequest,
+    ) -> MemoryResult<ScopedReadResult<TaggingStatusView>> {
+        let (turn, receipt) = self.tagging_turn(&input.turn_ref)?;
         let vault = self.vault();
         let config = vault.config.tagging.as_ref();
         let marker = vault.tagging_marker(&turn)?;
         let traces = vault.tagging_trace_history(Some(&turn))?;
         let tags = vault.turn_tags(&turn)?;
+        let freshness = match &tags {
+            Some(_) => vault.tagging_freshness(&turn)?,
+            None => None,
+        };
         let last = traces.last();
         let state = if config.is_none() {
             TaggingMarkerState::Unconfigured
@@ -622,7 +662,7 @@ impl Memory<'_> {
         let model = last
             .and_then(|record| record.trace.model.clone())
             .or_else(|| tags.as_ref().map(|tags| tags.envelope.model_id.clone()));
-        Ok(TaggingStatusView {
+        let value = TaggingStatusView {
             turn_ref: turn.to_hex(),
             state,
             configured: config.is_some(),
@@ -641,50 +681,78 @@ impl Memory<'_> {
             retry_at,
             try_number: last.map(|record| record.trace.try_number),
             has_tags: tags.is_some(),
+            freshness,
             saved_at: tags.as_ref().map(|tags| tags.saved_at),
             last_trace: last.map(trace_view),
-        })
+        };
+        Ok(ScopedReadResult { value, receipt })
     }
 
     /// `vault.tagging.tags`: the settled tag set — mention spans, targets,
     /// coreference, affect, PII and other labels, and their derivation.
-    pub fn tagging_tags(&self, input: &TaggingTurnRequest) -> MemoryResult<TaggingTagsView> {
-        let turn = self.tagging_turn(&input.turn_ref)?;
-        let tags = self.vault().turn_tags(&turn)?;
-        if let Some(tags) = &tags {
-            self.produced_from(tags.messages.iter().copied());
-        }
-        Ok(TaggingTagsView {
+    pub fn tagging_tags(
+        &self,
+        input: &TaggingTurnRequest,
+    ) -> MemoryResult<ScopedReadResult<TaggingTagsView>> {
+        let (turn, receipt) = self.tagging_turn(&input.turn_ref)?;
+        let vault = self.vault();
+        // The set and how current it is, read in one snapshot.
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        let view = match super::tags::readable_view_in_txn(&vault.store, &txn, &turn)? {
+            Some(tags) => {
+                let freshness = tagging_freshness_in_txn(vault, &txn, &turn, &tags)?;
+                self.produced_from(tags.messages.iter().copied());
+                Some(tags_view(&tags, freshness))
+            }
+            None => None,
+        };
+        drop(txn);
+        let value = TaggingTagsView {
             turn_ref: turn.to_hex(),
-            tags: tags.as_ref().map(tags_view),
-        })
+            tags: view,
+        };
+        Ok(ScopedReadResult { value, receipt })
     }
 
     /// `vault.tagging.history`: the traces that stay once settled markers
     /// leave the job ledger, oldest first.
-    pub fn tagging_history(&self, input: &TaggingTurnRequest) -> MemoryResult<TaggingHistoryView> {
-        let turn = self.tagging_turn(&input.turn_ref)?;
+    pub fn tagging_history(
+        &self,
+        input: &TaggingTurnRequest,
+    ) -> MemoryResult<ScopedReadResult<TaggingHistoryView>> {
+        let (turn, receipt) = self.tagging_turn(&input.turn_ref)?;
         let traces = self.vault().tagging_trace_history(Some(&turn))?;
-        Ok(TaggingHistoryView {
+        let value = TaggingHistoryView {
             turn_ref: turn.to_hex(),
             traces: traces.iter().map(trace_view).collect(),
-        })
+        };
+        Ok(ScopedReadResult { value, receipt })
     }
 
     /// `vault.tagging.mentions`: the saved mentions naming one entity,
-    /// each served only while its turn reads on the caller's lane.
+    /// each served only while its turn reads on the caller's lane; a hidden
+    /// turn's mention is left out before the limit counts, and the receipt
+    /// neither names nor counts it (FIX 10170).
     pub fn tagging_mentions(
         &self,
         input: &TaggingMentionsRequest,
-    ) -> MemoryResult<TaggingMentionsView> {
+    ) -> MemoryResult<ScopedReadResult<TaggingMentionsView>> {
         if input.limit == 0 {
             return Err(MemoryError::bad_request(
                 "tagging mentions limit must be at least 1",
             ));
         }
-        let entity = resolve_entity_ref(self.vault(), &input.entity_ref)?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let receipt = lane.read_receipt(None, 0)?;
+        let entity = match resolve_entity_ref(self.vault(), &input.entity_ref) {
+            Ok(entity) => entity,
+            Err(error) if error.code == MEMORY_CODE_NOT_FOUND => {
+                return Err(error.with_read_receipt(receipt));
+            }
+            Err(error) => return Err(error),
+        };
         let mut mentions = Vec::new();
+        let mut current = std::collections::BTreeMap::new();
         for hit in self.vault().tagged_mentions(&entity)? {
             if mentions.len() == input.limit {
                 break;
@@ -692,12 +760,22 @@ impl Memory<'_> {
             if !lane.is_entity_readable(&hit.turn)? {
                 continue;
             }
+            let freshness = match current.get(&hit.turn) {
+                Some(freshness) => *freshness,
+                None => {
+                    let freshness = self.vault().tagging_freshness(&hit.turn)?;
+                    let freshness = freshness.unwrap_or_default();
+                    current.insert(hit.turn, freshness);
+                    freshness
+                }
+            };
             self.produced_from([hit.turn, hit.mention.message]);
-            mentions.push(hit_view(&hit));
+            mentions.push(hit_view(&hit, freshness));
         }
-        Ok(TaggingMentionsView {
+        let value = TaggingMentionsView {
             entity_ref: entity.to_hex(),
             mentions,
-        })
+        };
+        Ok(ScopedReadResult { value, receipt })
     }
 }

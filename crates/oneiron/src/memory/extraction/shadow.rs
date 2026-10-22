@@ -30,6 +30,8 @@ impl Memory<'_> {
                 turn: turn_id.to_hex(),
                 messages,
                 context: Vec::new(),
+                following: Vec::new(),
+                register: EncoderRegister::Live,
                 language: None,
                 // The side the witnessed messages' authors name, as the
                 // witness stores them.
@@ -45,6 +47,8 @@ impl Memory<'_> {
                     turn: witness.turn_short_id.clone(),
                     messages: Vec::new(),
                     context: Vec::new(),
+                    following: Vec::new(),
+                    register: EncoderRegister::Live,
                     language: None,
                     speaker: None,
                 };
@@ -65,7 +69,8 @@ impl Memory<'_> {
         // The caller waits on the witnessed turn's answer: a live call.
         let served = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let model = encoder.model_id().as_str().to_owned();
-            let attempt = infer_encoder(&input, ExtractionWork::Live, encoder);
+            let caller = ExtractionCaller::actor(&self.actor);
+            let attempt = infer_encoder_for(&input, ExtractionWork::Live, encoder, &caller);
             (model, attempt)
         }));
         let (model, attempt) = served.unwrap_or_else(|_| {
@@ -101,13 +106,24 @@ pub fn infer_encoder(
     work: ExtractionWork,
     encoder: &dyn ExtractionEncoder,
 ) -> EncoderAttempt<String> {
+    infer_encoder_for(input, work, encoder, &ExtractionCaller::new("host"))
+}
+
+/// [`infer_encoder`] for `caller`, whose calls the host's dispatcher shares
+/// its room by (FIX 9519).
+pub fn infer_encoder_for(
+    input: &EncoderInput,
+    work: ExtractionWork,
+    encoder: &dyn ExtractionEncoder,
+    caller: &ExtractionCaller,
+) -> EncoderAttempt<String> {
     if encoder.locality() != EmbedderLocality::OnDevice {
         return EncoderAttempt {
             execution: None,
             result: Err("off_device_shadow_denied".into()),
         };
     }
-    let attempt = encoder.infer(input, work);
+    let attempt = encoder.infer_for(input, work, caller);
     let result = attempt
         .result
         .map_err(|error| format!("{:?}", error.kind()))
@@ -125,8 +141,9 @@ pub fn infer_encoder(
 /// window folds in after them only when it holds a turn, so a turn read
 /// alone digests as it always has; a NUL cannot begin a message id, so the
 /// window never reads as one more message. A language, then the turns'
-/// speaker roles, fold in last and only when the input carries them, so an
-/// input without them digests as it did before they existed.
+/// speaker roles, fold in next and only when the input carries them, so an
+/// input without them digests as it did before they existed; a conversation
+/// register's later turns fold in last (`register::fold_register`).
 pub(crate) fn hash_input(input: &EncoderInput) -> String {
     let mut hash = Sha256::new();
     hash.update(input.turn.as_bytes());
@@ -166,15 +183,16 @@ pub(crate) fn hash_input(input: &EncoderInput) -> String {
             });
         }
     }
+    super::register::fold_register(&mut hash, input, message);
     format!("{:x}", hash.finalize())
 }
+/// The answer's structure, never its size: any number of spans and links
+/// that hold every rule passes (FIX 9944).
 fn validate(input: &EncoderInput, output: &EncoderOutput) -> Result<(), &'static str> {
-    if output.spans.len() > 4096
-        || output.links.len() > 4096
-        || output.vad.is_some_and(|vad| vad.validate().is_err())
-    {
+    if output.vad.is_some_and(|vad| vad.validate().is_err()) {
         return Err("invalid_encoder_output");
     }
+    crate::tagging::check_mood_parts(input, output).map_err(|_| "invalid_encoder_output")?;
     for span in &output.spans {
         let Some(message) = input.messages.get(span.message) else {
             return Err("invalid_span_message");

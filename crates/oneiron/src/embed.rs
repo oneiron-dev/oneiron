@@ -5,6 +5,8 @@ mod eligibility;
 mod evidence;
 mod locality;
 mod media;
+#[cfg(feature = "sync")]
+mod release;
 mod repo_projection;
 mod session_media;
 mod space;

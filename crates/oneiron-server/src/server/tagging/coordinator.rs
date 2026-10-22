@@ -8,8 +8,9 @@
 //! once, and its admission rides with it through the call to the end of its
 //! settlement's write. A ready live marker is never passed over for bulk: a
 //! wake that shows one drops a bulk wait, and while live is held or full no
-//! bulk is claimed. A running call is never pre-empted, so under unbroken
-//! live load bulk waits, with no timer. The markers resident in a class,
+//! bulk is claimed. A running call is never pre-empted; under unbroken live
+//! load the dispatcher still gives bulk a unit after each live streak
+//! (FIX 9519), with no timer. The markers resident in a class,
 //! claimed through settled, stay within the dispatcher's pending cap for it;
 //! the rest wait in the store. A failed call holds new claims in its class
 //! for its backoff (a live failure or a store error holds both classes),
@@ -279,7 +280,10 @@ impl Coordinator {
         if self.held(work) || self.resident[lane(work)] >= self.tagger.pending_cap(work) {
             return;
         }
-        self.want = Some((work, Box::pin(self.tagger.claim_room(work))));
+        // The vault's background tagging waits its own turn beside every
+        // other caller's claims (FIX 9519).
+        let caller = self.reconciler.caller().clone();
+        self.want = Some((work, Box::pin(self.tagger.claim_room(work, caller))));
     }
 
     /// Room came in the wanted class: the pause, an admission and the pause
@@ -306,11 +310,11 @@ impl Coordinator {
         let control = self.control.clone();
         let unit = tokio::task::spawn_blocking(move || {
             let prepared = (!control.paused()).then(|| reconciler.prepare_next(work));
-            // A ready call's window is counted here, on the blocking unit, so
-            // its tokenizer encode never runs on this task (FIX 7331).
+            // A ready call's windows are planned here, on the blocking unit,
+            // so its tokenizer encode never runs on this task (FIX 7331).
             let window = match &prepared {
                 Some(Ok(TaggingPreparation::Ready(ready))) => {
-                    Some(tagger.count_window(ready.input()))
+                    Some(tagger.plan_windows(ready.input()))
                 }
                 _ => None,
             };
@@ -346,7 +350,7 @@ impl Coordinator {
         // Refilled at once, without waiting for older calls.
         self.dirty = true;
         let started = Instant::now();
-        let completion = self.tagger.submit(claim, prepared.input().clone(), window);
+        let completion = self.tagger.submit(claim, window);
         self.calls.push(Box::pin(async move {
             let attempt = completion.answer().await;
             Box::new(Called {

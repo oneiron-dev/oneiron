@@ -11,7 +11,9 @@ use super::claim::{ClaimHold, HeldSet, PreparedCall};
 use crate::Vault;
 use crate::embed::EmbedderLocality;
 use crate::error::{Error, Result};
-use crate::memory::extraction::{EncoderAttempt, EncoderInput, ExtractionEncoder, ExtractionWork};
+use crate::memory::extraction::{
+    EncoderAttempt, EncoderInput, ExtractionCaller, ExtractionEncoder, ExtractionWork,
+};
 use crate::tagging::marker::TaggingMarkerConfig;
 use crate::tagging::trace::{TaggingOutcome, TaggingTrace};
 
@@ -147,6 +149,9 @@ impl std::fmt::Debug for PreparedTagging {
 pub struct TaggingReconciler {
     pub(super) vault: Arc<Vault>,
     pub(super) encoder: Arc<dyn ExtractionEncoder>,
+    /// Who its calls are made for: the vault's own background tagging,
+    /// whose calls a host's dispatcher shares its room by (FIX 9519).
+    pub(super) caller: ExtractionCaller,
     pub(super) lease_owner: String,
     pub(super) batch_size: usize,
     pub(super) backoff: TaggingBackoff,
@@ -185,6 +190,7 @@ impl TaggingReconciler {
             ));
         }
         Ok(Self {
+            caller: ExtractionCaller::vault(&vault),
             vault,
             encoder,
             lease_owner: DEFAULT_LEASE_OWNER.to_owned(),
@@ -233,6 +239,13 @@ impl TaggingReconciler {
     pub fn with_lease_owner(mut self, lease_owner: impl Into<String>) -> Self {
         self.lease_owner = lease_owner.into();
         self
+    }
+
+    /// Who its calls are made for, for a host that claims its dispatcher's
+    /// room itself ([`Self::prepare_next`], FIX 9519).
+    #[must_use]
+    pub fn caller(&self) -> &ExtractionCaller {
+        &self.caller
     }
 
     /// Claims and settles up to the batch size of ready markers, after

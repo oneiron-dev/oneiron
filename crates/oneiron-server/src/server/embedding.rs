@@ -43,11 +43,13 @@ impl SyncServer {
         &self,
     ) -> oneiron::Result<crate::owner::embedder::EmbedderReport> {
         let doctor = self.vault.doctor()?;
-        Ok(crate::owner::embedder::EmbedderReport::served(
+        let mut report = crate::owner::embedder::EmbedderReport::served(
             self.embedder.as_deref().map(EmbedderSlot::config),
             &doctor,
             self.embedder.as_deref().map(EmbedderSlot::dense_state),
-        ))
+        );
+        report.warning = self.embedder.as_deref().and_then(EmbedderSlot::ref_warning);
+        Ok(report)
     }
 
     /// The active provider's identity, or `None` at rung 0.
@@ -184,7 +186,7 @@ impl SyncServer {
                     "embedding worker started without an embedder",
                 ))?;
             let embedder: Arc<dyn QueryEmbedder> =
-                slot.ensure_ready(|admission| admission.into_vault(server.vault()))?;
+                slot.ensure_ready_for(server.vault())?;
             let config = slot.config();
             server.vault.cold_attach_embedder()?;
             server
@@ -313,7 +315,7 @@ impl SyncServer {
             let _admission = admission;
             let slot = server.embedder.as_ref()?;
             Some(
-                slot.ensure_ready(|admission| admission.into_vault(server.vault()))
+                slot.ensure_ready_for(server.vault())
                     .map(drop),
             )
         })
@@ -399,7 +401,7 @@ impl SyncServer {
             .as_ref()
             .ok_or(oneiron::Error::InvariantViolation("missing idle embedder"))?;
         let provider = IndexedProvider {
-            provider: slot.ensure_ready(|admission| admission.into_vault(self.vault()))?,
+            provider: slot.ensure_ready_for(self.vault())?,
         };
         if provider.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
             return Err(oneiron::Error::InvalidConfig(

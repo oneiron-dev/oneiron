@@ -90,6 +90,7 @@ pub(super) fn envelope(
         content_hash: content_hash.to_owned(),
         model_id: format!("{made_by}@{}", config.checkpoint),
         stack: stack.map(str::to_owned),
+        text_hash: None,
         version: SAVE_VERSION.to_owned(),
         params_hash: format!("{:x}", hash.finalize()),
     }
@@ -261,13 +262,25 @@ pub(super) fn save_in_txn(
             link_confidence,
         });
     }
+    // A turn read in windows has no measured mood of the whole of it: the
+    // mood it held stays, marked carried, beside the windows' own (FIX 9518).
+    let (mood, mood_carried) = match output.vad {
+        Some(vad) => (Some(vad), false),
+        None if !output.mood_parts.is_empty() => {
+            let prior = held.as_ref().and_then(|held| held.mood);
+            (prior, prior.is_some())
+        }
+        None => (None, false),
+    };
     let mut tags = TurnTags {
         turn,
         envelope,
         messages,
         mentions,
         merge_evidence,
-        mood: output.vad,
+        mood,
+        mood_carried,
+        mood_parts: output.mood_parts.clone(),
         saved_at: now,
         surprise: None,
     };

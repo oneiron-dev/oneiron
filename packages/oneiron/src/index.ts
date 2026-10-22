@@ -718,14 +718,14 @@ export class Oneiron {
       },
     },
     tagging: {
-      /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
-      status: (input: Facade.TaggingTurnRequest): Facade.TaggingStatusView => this.#call(() => this.#client.vaultTaggingStatus(input) as Facade.TaggingStatusView),
-      /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them. */
-      tags: (input: Facade.TaggingTurnRequest): Facade.TaggingTagsView => this.#call(() => this.#client.vaultTaggingTags(input) as Facade.TaggingTagsView),
-      /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome. */
-      history: (input: Facade.TaggingTurnRequest): Facade.TaggingHistoryView => this.#call(() => this.#client.vaultTaggingHistory(input) as Facade.TaggingHistoryView),
-      /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
-      mentions: (input: Facade.TaggingMentionsRequest): Facade.TaggingMentionsView => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.TaggingMentionsView),
+      /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt. */
+      status: (input: Facade.TaggingTurnRequest): Facade.ScopedReadResult<Facade.TaggingStatusView> => this.#call(() => this.#client.vaultTaggingStatus(input) as Facade.ScopedReadResult<Facade.TaggingStatusView>),
+      /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt. */
+      tags: (input: Facade.TaggingTurnRequest): Facade.ScopedReadResult<Facade.TaggingTagsView> => this.#call(() => this.#client.vaultTaggingTags(input) as Facade.ScopedReadResult<Facade.TaggingTagsView>),
+      /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt. */
+      history: (input: Facade.TaggingTurnRequest): Facade.ScopedReadResult<Facade.TaggingHistoryView> => this.#call(() => this.#client.vaultTaggingHistory(input) as Facade.ScopedReadResult<Facade.TaggingHistoryView>),
+      /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt. */
+      mentions: (input: Facade.TaggingMentionsRequest): Facade.ScopedReadResult<Facade.TaggingMentionsView> => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.ScopedReadResult<Facade.TaggingMentionsView>),
     },
     /** Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth. */
     cluster: Object.assign((input: Facade.ClusterRequest): Facade.ScopedReadResult<Facade.ClusterProposal> => this.#call(() => this.#client.vaultCluster(input) as Facade.ScopedReadResult<Facade.ClusterProposal>), {

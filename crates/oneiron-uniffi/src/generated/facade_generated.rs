@@ -512,22 +512,22 @@ export_facade! {
     let output = client.vault_affect_annotations_put(&input)?;
     Lift::lift(output)
 };
-"vault.tagging.status" => fn vault_tagging_status(&self, input: TaggingTurnRequest) -> TaggingStatusView = |client| {
+"vault.tagging.status" => fn vault_tagging_status(&self, input: TaggingTurnRequest) -> ScopedReadResultTaggingStatusView = |client| {
     let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.status", input)?;
     let output = client.vault_tagging_status(&input)?;
     crate::codec::lift_record("vault.tagging.status", &output)
 };
-"vault.tagging.tags" => fn vault_tagging_tags(&self, input: TaggingTurnRequest) -> TaggingTagsView = |client| {
+"vault.tagging.tags" => fn vault_tagging_tags(&self, input: TaggingTurnRequest) -> ScopedReadResultTaggingTagsView = |client| {
     let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.tags", input)?;
     let output = client.vault_tagging_tags(&input)?;
     crate::codec::lift_record("vault.tagging.tags", &output)
 };
-"vault.tagging.history" => fn vault_tagging_history(&self, input: TaggingTurnRequest) -> TaggingHistoryView = |client| {
+"vault.tagging.history" => fn vault_tagging_history(&self, input: TaggingTurnRequest) -> ScopedReadResultTaggingHistoryView = |client| {
     let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.history", input)?;
     let output = client.vault_tagging_history(&input)?;
     crate::codec::lift_record("vault.tagging.history", &output)
 };
-"vault.tagging.mentions" => fn vault_tagging_mentions(&self, input: TaggingMentionsRequest) -> TaggingMentionsView = |client| {
+"vault.tagging.mentions" => fn vault_tagging_mentions(&self, input: TaggingMentionsRequest) -> ScopedReadResultTaggingMentionsView = |client| {
     let input: oneiron::tagging::TaggingMentionsRequest = crate::codec::lower_record("vault.tagging.mentions", input)?;
     let output = client.vault_tagging_mentions(&input)?;
     crate::codec::lift_record("vault.tagging.mentions", &output)

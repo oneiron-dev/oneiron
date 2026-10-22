@@ -350,18 +350,16 @@ impl OneironClient {
                     remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
                 }
                 "vault.tagging.status" => remote_agent_verb_output::<
-                    oneiron::tagging::TaggingStatusView,
+                    oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingStatusView>,
                 >(client, verb, &input),
-                "vault.tagging.tags" => {
-                    remote_agent_verb_output::<oneiron::tagging::TaggingTagsView>(
-                        client, verb, &input,
-                    )
-                }
+                "vault.tagging.tags" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingTagsView>,
+                >(client, verb, &input),
                 "vault.tagging.history" => remote_agent_verb_output::<
-                    oneiron::tagging::TaggingHistoryView,
+                    oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingHistoryView>,
                 >(client, verb, &input),
                 "vault.tagging.mentions" => remote_agent_verb_output::<
-                    oneiron::tagging::TaggingMentionsView,
+                    oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingMentionsView>,
                 >(client, verb, &input),
                 "vault.affect.claims.consolidate" => remote_agent_verb_output::<
                     oneiron::memory::affect::AffectClaimConsolidation,
@@ -4938,7 +4936,8 @@ impl OneironClient {
     pub fn vault_tagging_status(
         &self,
         input: &oneiron::tagging::TaggingTurnRequest,
-    ) -> Result<oneiron::tagging::TaggingStatusView, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingStatusView>, MemoryError>
+    {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4950,7 +4949,8 @@ impl OneironClient {
     pub fn vault_tagging_tags(
         &self,
         input: &oneiron::tagging::TaggingTurnRequest,
-    ) -> Result<oneiron::tagging::TaggingTagsView, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingTagsView>, MemoryError>
+    {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4962,7 +4962,8 @@ impl OneironClient {
     pub fn vault_tagging_history(
         &self,
         input: &oneiron::tagging::TaggingTurnRequest,
-    ) -> Result<oneiron::tagging::TaggingHistoryView, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingHistoryView>, MemoryError>
+    {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4974,7 +4975,8 @@ impl OneironClient {
     pub fn vault_tagging_mentions(
         &self,
         input: &oneiron::tagging::TaggingMentionsRequest,
-    ) -> Result<oneiron::tagging::TaggingMentionsView, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingMentionsView>, MemoryError>
+    {
         oneiron::memory::caps::check_limit_nonzero(input.limit)?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
