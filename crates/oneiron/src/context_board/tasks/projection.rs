@@ -427,11 +427,16 @@ impl TasksSectionRows {
     /// (FIX 9755): toward `memory`'s destination off this device, a TASK a
     /// world keeps off that machine is withheld, as the board's TASK scan
     /// passes it over; then `read` judges it as the host's row cut does.
+    /// A TASK that no longer exists withholds nothing, so its child keeps the
+    /// bare row it had before.
     pub fn task_admitted(
         memory: &crate::memory::Memory<'_>,
         read: &crate::claim::ScopedRead<'_>,
         task: EntityId,
     ) -> Result<bool> {
+        if !memory.vault().entity_exists(&task)? {
+            return Ok(true);
+        }
         let destination = memory.destination();
         if destination.is_off_device()
             && memory
