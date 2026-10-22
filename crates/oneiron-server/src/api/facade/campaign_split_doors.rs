@@ -15,7 +15,7 @@ use oneiron::autoreason_campaign::CampaignSplitReport;
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{CampaignSplitWire, evaluate_campaign_split};
 
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

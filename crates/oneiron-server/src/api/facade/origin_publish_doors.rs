@@ -14,7 +14,7 @@ use oneiron::origin::publish::{
     OriginPublishRequestView, OriginPublishReviewRequest, OriginPublishReviewView,
 };
 
-use super::host_doors::{Listed, credential_listing};
+use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

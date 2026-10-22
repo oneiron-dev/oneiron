@@ -1,3 +1,6 @@
+//! The `/v1/core/conversations` and `/v1/core/turns` routes: conversations and their turns.
+//! `CoreCreateTurnRequest` and the `*_core_conversation*` handlers are its call surface.
+//! `crate::api::conversations` defines these DTOs; the engine owns the turn rows.
 use super::CORE_MAX_LIST_LIMIT;
 use super::CoreCreateEntityRequest;
 use super::CoreEntityWriteResponse;

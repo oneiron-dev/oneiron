@@ -4,12 +4,12 @@ use std::sync::Arc;
 use oneiron::memory::{
     CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
     CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
-    CriticalWriteConfirmSettlement, MemoryResult,
+    CriticalWriteConfirmSettlement,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing, internal, owner_proof, refused};
+use super::host_doors::support::{Listed, credential_listing, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

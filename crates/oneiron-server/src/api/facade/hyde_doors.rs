@@ -6,7 +6,7 @@ use oneiron::query_expansion::host::*;
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing, refused};
+use super::host_doors::support::{Listed, credential_listing, refused};
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

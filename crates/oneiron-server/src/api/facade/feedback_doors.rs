@@ -30,7 +30,7 @@ use oneiron::task_verb::sdk::{
     ReportRouteReceipt, ReportRouteRequest,
 };
 
-use super::host_doors::{Listed, hex_rows};
+use super::host_doors::support::{Listed, hex_rows};
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::feedback_delivery::FeedbackHost;

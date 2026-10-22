@@ -4,7 +4,7 @@
 //! (`surface`, the host's own reading of it): audit only (FIX 4650).
 
 use super::FacadeApiError;
-use super::host_doors::{Listed, credential_listing, owner_proof};
+use super::host_doors::support::{Listed, credential_listing, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::authority::ActSurface;

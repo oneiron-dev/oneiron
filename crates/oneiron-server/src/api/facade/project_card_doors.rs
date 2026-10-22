@@ -19,7 +19,7 @@ use oneiron::genui::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::workspace_roster::{ProjectCardConfirmRequest, ProjectMintReceipt};
 
-use super::host_doors::internal;
+use super::host_doors::support::internal;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

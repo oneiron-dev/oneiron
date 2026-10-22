@@ -8,7 +8,7 @@ use oneiron::dreamer_wake::sieve_doors::{self, *};
 use oneiron::dreamer_wake::{SievePolicy, WakeRecipePolicy};
 use oneiron::memory::MemoryError;
 
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

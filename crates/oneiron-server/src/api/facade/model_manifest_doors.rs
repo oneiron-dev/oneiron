@@ -16,7 +16,7 @@ use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EntityId, ModelId, ModelLocality, ModelTierRef};
 
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use super::legal_hold_doors::{as_owner, as_owner_naming};
 use crate::auth::CoreAuth;
 use crate::config::{OneironerConfig, OneironerProvider};

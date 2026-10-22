@@ -17,7 +17,7 @@ use oneiron::agent_dispatch::widen_doors::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MemoryError, MemoryResult};
 
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

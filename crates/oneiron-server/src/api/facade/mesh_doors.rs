@@ -9,7 +9,7 @@ use oneiron::task_verb::sdk::{
     MeshMachineBound, MeshMachineRevokeRequest, MeshMachineRevoked,
 };
 
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -156,6 +156,6 @@ async fn dial(
     auth: &CoreAuth,
     _input: MeshDialRequest,
 ) -> MemoryResult<MeshPathReceipt> {
-    super::host_doors::owner_proof(auth, server, "vault.mesh.dial")?;
+    super::host_doors::support::owner_proof(auth, server, "vault.mesh.dial")?;
     Err(unavailable())
 }

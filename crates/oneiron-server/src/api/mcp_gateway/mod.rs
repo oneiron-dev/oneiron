@@ -1,3 +1,6 @@
+//! The MCP gateway: its module registrations and the names its children share.
+//! `mcp_gateway`, `execute_mcp_tool` and `execute_mcp_setup` are its re-exported call surface.
+//! Each child module defines its own records; `crate::mcp` owns the MCP wire types.
 mod actions;
 mod actor_dispatch;
 mod admission;

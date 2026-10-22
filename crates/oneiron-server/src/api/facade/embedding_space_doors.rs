@@ -25,7 +25,7 @@ use oneiron::task_verb::sdk::{
     EmbeddingSpaceProbes, EmbeddingSpaceRequest, EmbeddingSpacesView, EmptyRequest,
 };
 
-use super::host_doors::{Listed, MaybeListed};
+use super::host_doors::support::{Listed, MaybeListed};
 use super::legal_hold_doors::{as_owner, as_owner_naming};
 use crate::auth::CoreAuth;
 use crate::server::{MediaEmbedRefusal, SyncServer};

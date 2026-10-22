@@ -12,7 +12,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing};
+use super::host_doors::support::{Listed, credential_listing};
 use super::merge_queue_doors::as_owner;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

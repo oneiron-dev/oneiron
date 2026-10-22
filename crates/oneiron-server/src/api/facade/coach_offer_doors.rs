@@ -1,5 +1,5 @@
 //! Typed owner doors for Coach offers and counted pilot evidence.
-use super::host_doors::{Listed, MaybeListed, internal, owner_proof};
+use super::host_doors::support::{Listed, MaybeListed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::consent::AuthenticatedOwner;

@@ -23,7 +23,7 @@ use oneiron::task_verb::sdk::{
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde_json::Value;
 
-use super::host_doors::internal;
+use super::host_doors::support::internal;
 use super::live_run_doors::hold_live_run;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

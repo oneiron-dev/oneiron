@@ -5,35 +5,14 @@ use std::sync::Arc;
 use oneiron::artifact_hosting::ArtifactPointer;
 use oneiron::artifact_hosting::door_types::*;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::{Memory, MemoryError, MemoryResult};
+use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
 
 use super::FacadeApiError;
-use super::host_doors::{Listed, credential_listing, owner_proof, refused};
+use super::host_doors::support::owner_listing::as_owner;
+use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
-
-async fn as_owner<T: Send + 'static>(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    verb: &'static str,
-    act: impl FnOnce(&Memory<'_>, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
-) -> Listed<T> {
-    let admitted = || {
-        let owner = owner_proof(auth, server, verb)?;
-        let caller =
-            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-        Ok::<_, MemoryError>((owner, caller))
-    };
-    let (owner, caller) = match admitted() {
-        Ok(admitted) => admitted,
-        Err(error) => return refused(error),
-    };
-    credential_listing(server, auth, caller, verb, move |_, _, memory| {
-        act(&memory, &owner)
-    })
-    .await
-}
 
 /// Who publishes or repoints an artifact (FIX 8161): the owner under its
 /// proof, as before (`Some`), or any other caller on a verified slip of its

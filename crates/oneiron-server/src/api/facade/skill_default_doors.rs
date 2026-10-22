@@ -5,7 +5,7 @@ use oneiron::EntityId;
 use oneiron::skill_hub::{DefaultSkillHub, HubImportReceipt};
 use oneiron::task_verb::sdk::{self, BootstrapSkillView, EmptyRequest};
 
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 use super::hub_doors::owner_call;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

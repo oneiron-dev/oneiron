@@ -5,7 +5,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::web_fetch::{CrawlResult, FetchResult, WebCrawlRequest, WebFetchRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing};
+use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

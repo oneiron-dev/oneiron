@@ -81,5 +81,5 @@ fn read_page(
 }
 
 fn undecoded() -> oneiron::memory::MemoryError {
-    super::host_doors::internal(VERB)
+    super::host_doors::support::internal(VERB)
 }

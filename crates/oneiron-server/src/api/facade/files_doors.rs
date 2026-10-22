@@ -24,7 +24,7 @@ use oneiron::task_verb::sdk::{
     FilesSourceList, FilesSourceListRequest, FilesSourceRescanRequest,
 };
 
-use super::host_doors::{Listed, internal, owner_proof};
+use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::files_intake::{canonical_folder, files_attached, files_rescan};
 use crate::server::SyncServer;

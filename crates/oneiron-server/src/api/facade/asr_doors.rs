@@ -13,7 +13,7 @@ use oneiron::task_verb::sdk::*;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::FacadeApiError;
-use super::host_doors::{Listed, credential_listing, hex_rows, internal, owner_proof};
+use super::host_doors::support::{Listed, credential_listing, hex_rows, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

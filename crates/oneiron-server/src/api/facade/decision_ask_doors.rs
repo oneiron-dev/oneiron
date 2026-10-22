@@ -26,7 +26,7 @@ use oneiron::receipt::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
-use super::host_doors::{Listed, internal, naming};
+use super::host_doors::support::{Listed, internal, naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

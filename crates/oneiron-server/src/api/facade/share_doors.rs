@@ -16,7 +16,7 @@ use oneiron::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView}
 use oneiron::task_verb::sdk::{BriefCitationFollowRequest, ShareRevokeRequest, ShareViewRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing, refused};
+use super::host_doors::support::{Listed, credential_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

@@ -69,7 +69,7 @@ use serde::Deserialize;
 use super::action_routes::{
     ActionBound, action_bound, bind_card_run, execute_validated_ui, require_action_scope,
 };
-use super::host_doors::internal;
+use super::host_doors::support::internal;
 use super::{FacadeApiError, facade_actor, facade_input, facade_json};
 use crate::ai_host::LensCallback;
 use crate::api::call_receipt::CallStamp;

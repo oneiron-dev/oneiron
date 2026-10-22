@@ -11,7 +11,7 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::vault_shape::{ShapeApplier, ShapeApplyReceipt, ShapeApplyRequest};
 
-use super::host_doors::{MaybeListed, internal};
+use super::host_doors::support::{MaybeListed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

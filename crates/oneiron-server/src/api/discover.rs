@@ -1,3 +1,6 @@
+//! The discovery route: what this server offers a client, its capabilities and runtime health.
+//! `discover` and `DiscoverResponse` are its call surface.
+//! `crate::api::discover` defines these DTOs; the MCP surfaces and runtime config feed them.
 use super::API_LEVEL;
 use super::MCP_TOOL_CAPABILITY_PREFIX;
 use super::SKILL_PACK_ENDPOINT;

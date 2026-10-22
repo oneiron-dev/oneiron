@@ -7,7 +7,7 @@ use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::vault_cleanup::CleanupKind;
 use oneiron::vault_cleanup::surface::{CleanupRunRequest, CleanupRunView};
 
-use super::host_doors::{Listed, internal, owner_proof, refused};
+use super::host_doors::support::{Listed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

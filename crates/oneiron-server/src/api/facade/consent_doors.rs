@@ -16,7 +16,7 @@ use oneiron::failure_signals::HeldFailureSignalBatchView;
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{self, ConnectorCallApproveOnceRequest, EmptyRequest};
 
-use super::host_doors::{Listed, internal, owner_proof};
+use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

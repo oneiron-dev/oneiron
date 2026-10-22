@@ -7,7 +7,7 @@ use oneiron::memory::result_doors::*;
 use oneiron::memory::{Memory, MemoryResult};
 
 use super::FacadeApiError;
-use super::host_doors::{Listed, credential_listing, owner_proof};
+use super::host_doors::support::{Listed, credential_listing, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

@@ -14,7 +14,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::action_routes::execute_result_set_action;
-use super::host_doors::{Listed, credential_listing, internal};
+use super::host_doors::support::{Listed, credential_listing, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

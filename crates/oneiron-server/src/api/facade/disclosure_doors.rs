@@ -1,5 +1,5 @@
 //! Owner registry and reveal-settlement doors, shared by HTTP and MCP.
-use super::host_doors::{Listed, internal, owner_proof};
+use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::disclosure::{DisclosureCeilingRequest, DisclosureCeilingSet, DisclosureCeilingView};

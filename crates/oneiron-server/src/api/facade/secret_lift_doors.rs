@@ -10,7 +10,7 @@ use oneiron::EntityId;
 use oneiron::memory::MemoryError;
 use oneiron::policy_model::{SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner};
 
-use super::host_doors::{Listed, internal, refused};
+use super::host_doors::support::{Listed, internal, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

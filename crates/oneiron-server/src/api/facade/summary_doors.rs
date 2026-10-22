@@ -12,7 +12,7 @@ use oneiron::scope_summary::{
 };
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing, owner_proof};
+use super::host_doors::support::{Listed, credential_listing, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

@@ -33,7 +33,7 @@ use oneiron::policy_setting_doors::{
 use oneiron::task_verb::sdk::EmptyRequest;
 
 use super::FacadeApiError;
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use crate::actions::SharedActionExecutor;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

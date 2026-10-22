@@ -20,7 +20,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, WriteActor};
 
-use super::host_doors::{Listed, credential_listing, owner_proof, refused};
+use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -78,7 +78,7 @@ async fn owner_call<T: Send + 'static>(
 ) -> Listed<T> {
     let worker = Arc::clone(server);
     let (answer, mut rows) =
-        super::host_doors::off_runtime_listing(verb, move |_| call(&worker)).await;
+        super::host_doors::support::off_runtime_listing(verb, move |_| call(&worker)).await;
     match doors::policy_manifest_sources(server.vault()) {
         Ok(sources) => {
             rows.extend(sources);

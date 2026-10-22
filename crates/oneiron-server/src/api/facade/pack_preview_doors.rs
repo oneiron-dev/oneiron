@@ -8,7 +8,7 @@ use oneiron::memory::MemoryResult;
 use oneiron::skill_hub::pack_catalog::PackImportPreview;
 use oneiron::task_verb::sdk::PackPreviewRequest;
 
-use super::host_doors::{internal, owner_proof};
+use super::host_doors::support::{internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

@@ -10,7 +10,7 @@ use oneiron::llm::decision::questions::question_answers;
 use oneiron::memory::MemoryResult;
 use oneiron::receipt::{QuestionAnswersReply, QuestionAnswersRequest};
 
-use super::super::host_doors::{Listed, internal, naming};
+use super::super::host_doors::support::{Listed, internal, naming};
 use super::{asker, question_answer_rows};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

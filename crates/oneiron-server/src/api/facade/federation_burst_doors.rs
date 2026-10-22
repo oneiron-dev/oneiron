@@ -1,5 +1,5 @@
 //! Signed Connect ingress and owner lifecycle doors over the shared burst engine.
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

@@ -21,7 +21,7 @@ use oneiron::memory::MemoryResult;
 use oneiron::receipt::GuestRevokeResponse;
 use oneiron::task_verb::sdk::{self, GuestRevokeRequest};
 
-use super::host_doors::{Listed, internal, refused};
+use super::host_doors::support::{Listed, internal, refused};
 use crate::auth::CoreAuth;
 use crate::owner::guest_revoke;
 use crate::server::SyncServer;

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use oneiron::skill_optimize::{EvalAuthoringInventory, EvalAuthoringReport, EvalCohortSetup};
 use oneiron::task_verb::sdk::{EvalInventoryWire, ResearchChildReceipt, ResearchChildWire};
 
-use super::host_doors::{Listed, internal, owner_proof};
+use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

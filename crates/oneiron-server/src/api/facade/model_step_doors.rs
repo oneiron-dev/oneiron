@@ -15,7 +15,7 @@ use oneiron::{
     LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId,
 };
 
-use super::host_doors::{Listed, internal, owner_proof};
+use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::models::OfferLadder;
 use crate::server::SyncServer;

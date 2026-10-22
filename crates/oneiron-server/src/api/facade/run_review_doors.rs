@@ -3,7 +3,7 @@
 //! A settlement or a revert records where his request reached this install
 //! (`surface`, the host's own reading of it): audit only (FIX 4650).
 
-use super::host_doors::{Listed, credential_listing, refused};
+use super::host_doors::support::{Listed, credential_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::authority::ActSurface;

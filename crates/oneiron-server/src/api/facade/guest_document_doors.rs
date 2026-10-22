@@ -5,7 +5,7 @@ use oneiron::authority::VerifiedSlip;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{GuestDocumentEnvelope, GuestDocumentShareRequest};
 
-use super::host_doors::{Listed, internal, owner_proof, refused};
+use super::host_doors::support::{Listed, internal, owner_proof, refused};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 

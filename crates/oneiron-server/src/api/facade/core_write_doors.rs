@@ -16,7 +16,7 @@ use oneiron::core_write::{
 use oneiron::dreamer_wake::WakeTurnSubject;
 use oneiron::memory::{MemoryResult, ProducerRows};
 
-use super::host_doors::{Listed, hex_rows, internal, naming, refused};
+use super::host_doors::support::{Listed, hex_rows, internal, naming, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

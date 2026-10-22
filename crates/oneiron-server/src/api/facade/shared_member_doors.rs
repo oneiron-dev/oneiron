@@ -30,7 +30,7 @@ use oneiron::task_verb::sdk::{
     SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
-use super::host_doors::{
+use super::host_doors::support::{
     Listed, MaybeListed, credential_listing, internal, off_runtime_listing, owner_proof, refused,
 };
 use super::shared_act_doors::{as_person_naming, person, receipt_rows};

@@ -17,7 +17,7 @@ use oneiron::registry::ENTITY_TYPE_TASK;
 use oneiron::{EdgeActorClass, EntityId, Error, WriteActor};
 use serde_json::{Value, json};
 
-use super::host_doors::{Listed, internal, owner_proof, refused};
+use super::host_doors::support::{Listed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

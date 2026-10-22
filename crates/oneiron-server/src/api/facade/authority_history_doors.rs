@@ -6,7 +6,7 @@ use oneiron::task_verb::sdk::{
     self, AuthorityHistoryImported, EmptyRequest, SignedAuthorityHistory,
 };
 
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;

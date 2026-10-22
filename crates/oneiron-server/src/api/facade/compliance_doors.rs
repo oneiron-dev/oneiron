@@ -1,7 +1,7 @@
 //! Compliance owner decisions use the request's owner proof and its own Memory.
 //! Pack data and receipts are side-table state, so these doors list no record.
 
-use super::host_doors::{Listed, credential_listing, owner_proof};
+use super::host_doors::support::{Listed, credential_listing, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::campaign::compliance::{

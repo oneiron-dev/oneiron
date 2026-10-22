@@ -1,5 +1,5 @@
 //! Owner-only OpenAI proxy admission and selective remember-grant withdrawal.
-use super::host_doors::{Listed, internal, naming, owner_proof, refused};
+use super::host_doors::support::{Listed, internal, naming, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::EntityId;

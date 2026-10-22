@@ -15,7 +15,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::saved_query::SWEEP_CANDIDATE_TYPE;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::internal;
+use super::host_doors::support::internal;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
