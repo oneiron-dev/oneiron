@@ -272,9 +272,12 @@ side_tables! {
     EMERGENCY_REQUEST_PLAN_INDEX: VaultMeta b"booking:emergency_request_plan:v1:" Raw;
     /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw;
+    /// CUA E8b: a browser program admission job's receipt, and the program a filing in its run
+    /// filed, written in that filing's write: references and a typed outcome only. Key: id16.
+    BROWSER_PROGRAM_ADMISSION: VaultMeta b"browser.program.admission.v1\0" Named Engine;
     /// CUA E8a: the source authority a solved browser run was captured under, by its evidence
-    /// claim: scope, group digest, credential reference and witness digest; no credential bytes.
-    /// Key: id16.
+    /// claim: scope, group digest, credential reference and witness digest, and the signed
+    /// binding itself until an admission job that used it ends (CUA E8b). Key: id16.
     BROWSER_PROGRAM_AUTHORITY: VaultMeta b"browser.program.authority.v1\0" Named Engine
         => crate::browser_library::erase_authority_actor_in_txn;
     /// CUA E8a: a replay library program whose library runs failed, live or retired, with its

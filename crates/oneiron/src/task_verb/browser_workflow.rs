@@ -293,6 +293,32 @@ pub fn task_workflow_binding(
     task_workflow_binding_in_txn(vault, &txn, binding)
 }
 
+/// The TASK the try `binding` leases realizes, with its brief's done-means
+/// (CUA E8b): what the run's browser span is checked against when the run
+/// ends, for the Coach's solved-run evidence. `None` when the try realizes
+/// no TASK, or its TASK carries no brief.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] once the lease no longer holds, and storage
+/// errors.
+pub fn task_run_done_means(
+    vault: &Vault,
+    binding: &HostBinding,
+) -> Result<Option<(EntityId, DoneMeans)>> {
+    let txn = vault.store.env.read_txn()?;
+    let record = binding
+        .leased_record_in_txn(vault, &txn)?
+        .ok_or(Error::InvalidClaimBody("the run's lease no longer holds"))?;
+    let Some(task_ref) = runner_task_in(vault, &txn, &record).map_err(runner_refusal)? else {
+        return Ok(None);
+    };
+    let Some(body) = task_verb_body_in(vault, &txn, task_ref)? else {
+        return Ok(None);
+    };
+    Ok(body.brief.map(|stored| (task_ref, stored.brief.success)))
+}
+
 /// `record`'s pin, checked against the TASK the try realizes.
 fn pinned_row_in(
     vault: &Vault,

@@ -4,6 +4,7 @@ use rmpv::Value;
 use crate::claim::{ClaimBody, ScopedReadActorKey};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::federation::record_scope::note_world::{NoteWorlds, position_at};
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::store::Store;
 
@@ -16,6 +17,9 @@ use super::constants::{
 };
 use super::input::{ExternalEffectGateContext, ExternalEffectPolicyRisk, GateActor};
 use super::resolution::PolicyManifestResolution;
+
+/// One Scope's world axis, a NOTE's world witness is judged under.
+type WorldAxis = crate::federation::ScopeAxis<crate::federation::ScopeId>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PolicyScopedGrant {
@@ -140,6 +144,35 @@ pub(crate) fn scoped_read_record_allowed_with_scope(
     record: &crate::federation::Scope,
     explicit_scope: Option<&crate::federation::Scope>,
 ) -> bool {
+    record_allowed_held(policy, actor, record, explicit_scope, None)
+}
+
+/// [`scoped_read_record_allowed_with_scope`] for a NOTE whose live worlds
+/// and read-side world ceilings are `note`: judged under the proof, and under
+/// each Grant alone, at one world it is in that every ceiling there holds,
+/// base reality first (FIX-LIST 9433).
+pub(crate) fn scoped_read_note_allowed(
+    policy: &PolicyManifestResolution,
+    actor: &ScopedReadActorKey,
+    record: &crate::federation::Scope,
+    explicit_scope: Option<&crate::federation::Scope>,
+    note: (&NoteWorlds, &[&WorldAxis]),
+) -> bool {
+    record_allowed_held(policy, actor, record, explicit_scope, Some(note))
+}
+
+fn record_allowed_held(
+    policy: &PolicyManifestResolution,
+    actor: &ScopedReadActorKey,
+    record: &crate::federation::Scope,
+    explicit_scope: Option<&crate::federation::Scope>,
+    note: Option<(&NoteWorlds, &[&WorldAxis])>,
+) -> bool {
+    // `record` where the ceilings of one check hold it, a NOTE at its witness.
+    let held = |ceilings: &[&WorldAxis]| match note {
+        Some((worlds, read)) => position_at(record, Some(worlds), &[read, ceilings].concat()),
+        None => record.clone(),
+    };
     if actor.vault_owner_ref().is_some() {
         return true;
     }
@@ -147,7 +180,13 @@ pub(crate) fn scoped_read_record_allowed_with_scope(
         return false;
     }
     let proof = explicit_scope;
-    if proof.is_some_and(|scope| !scope.admits("read", record, &crate::federation::Scope::top())) {
+    if proof.is_some_and(|scope| {
+        !scope.admits(
+            "read",
+            &held(&[&scope.worlds]),
+            &crate::federation::Scope::top(),
+        )
+    }) {
         return false;
     }
     let mut matched = false;
@@ -177,11 +216,18 @@ pub(crate) fn scoped_read_record_allowed_with_scope(
         };
         if position_only
             && crate::federation::scope_codec::legacy_read_scope(grant.scope.as_ref()).is_some_and(
-                |selectors| selectors.admits("read", record, &crate::federation::Scope::top()),
+                |selectors| {
+                    let mut ceilings = vec![&selectors.worlds, &grant.authority_scope.worlds];
+                    ceilings.extend(proof.map(|scope| &scope.worlds));
+                    let record = held(&ceilings);
+                    selectors.admits("read", &record, &crate::federation::Scope::top())
+                        && grant.authority_scope.admits(
+                            "read",
+                            &record,
+                            &crate::federation::Scope::top(),
+                        )
+                },
             )
-            && grant
-                .authority_scope
-                .admits("read", record, &crate::federation::Scope::top())
         {
             return true;
         }

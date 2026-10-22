@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlideReviewLimits {
     pub batch_size: usize,
+    /// A batching hint, never a ceiling on a review's units: a run takes
+    /// every unit it is given, in batches under its deadline (FIX 9819).
     pub max_units: usize,
     pub max_text_bytes: usize,
     pub max_image_bytes: usize,
@@ -34,7 +36,6 @@ impl SlideReviewLimits {
         self.batch_size > 0
             && self.batch_size <= hard.batch_size
             && self.max_units > 0
-            && self.max_units <= hard.max_units
             && self.max_text_bytes > 0
             && self.max_text_bytes <= hard.max_text_bytes
             && self.max_image_bytes > 0

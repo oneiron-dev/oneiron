@@ -33,7 +33,7 @@ pub(crate) fn record_checkpoint_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     park: &DreamerParkedAttemptRecord,
 ) {
-    if park.cause.later_pass_resume_delay().is_none() {
+    if !park.cause.resumes_on_later_pass() {
         return;
     }
     let planned = match plan_checkpoint_in_txn(vault, wtxn, park) {
@@ -129,7 +129,7 @@ pub(crate) fn checkpoint_resumable_in_txn(
     park: &DreamerParkedAttemptRecord,
     record: &AttemptRecord,
 ) -> Result<Option<CheckpointCut>> {
-    if park.cause.later_pass_resume_delay().is_none() || record.id != park.attempt_id {
+    if !park.cause.resumes_on_later_pass() || record.id != park.attempt_id {
         return Ok(None);
     }
     let Some(latest) = LATEST.get(&vault.store, txn, &latest_key(park.attempt_id))? else {
@@ -234,8 +234,13 @@ fn resume_checkpoint_in_txn(
         return Ok(false);
     };
     // A Retry park resumes only once its delay passed, on the clock it
-    // parked by.
-    if park.later_pass_due_at().is_none_or(|due| due > later.now) {
+    // parked by, under the vault's pause as this writer reads it: the one
+    // the projection read (FIX 8716).
+    let retry_secs = vault.dreamer_retry_park_secs_in_txn(wtxn)?;
+    if park
+        .later_pass_due_at(retry_secs)
+        .is_none_or(|due| due > later.now)
+    {
         return Ok(false);
     }
     let record = &status.attempt;

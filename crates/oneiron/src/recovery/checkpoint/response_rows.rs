@@ -149,10 +149,15 @@ pub(super) fn carry(
     (carriage, instance, digest, opaque): (ResponseCarriage, [u8; 16], [u8; 32], bool),
 ) -> Result<(CarriedInline, Vec<u8>, Vec<u8>)> {
     let body = value[carriage.keep..].to_vec();
-    // A queue row lands unleased (FIX 7115): the length it lands at.
-    let landed_len = (database == ResponseDb::Attempts.name())
-        .then(|| rebuild::unlease_attempt(key, value).map(|row| row.len() as u64))
-        .transpose()?;
+    // A queue row lands unleased (FIX 7115): the length it lands at. An
+    // opaque one the strict reader refuses lands as it rested (FIX 9390).
+    let landed_len = if database != ResponseDb::Attempts.name() {
+        None
+    } else if opaque {
+        rebuild::unlease_opaque_attempt(key, value)?.map(|row| row.len() as u64)
+    } else {
+        Some(rebuild::unlease_attempt(key, value)?.len() as u64)
+    };
     let carried = CarriedInline {
         database: database.to_owned(),
         key: key.to_vec(),
@@ -356,7 +361,8 @@ pub(super) fn retire_carried(
 /// they land and before any row does, as a snapshot unleases every other
 /// (FIX 7115): the instance seals the row as it stood, so its image row is
 /// normalized only here. Its archive mark follows it when it bound the bytes
-/// carried. A Landing attempt refuses, as at the snapshot.
+/// carried. A Landing attempt refuses, as at the snapshot. An opaque one the
+/// strict reader refuses keeps its exact bytes (FIX 9390).
 ///
 /// # Errors
 ///
@@ -366,7 +372,7 @@ pub(super) fn unlease_carried_attempts(
     image: &mut CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
 ) -> Result<()> {
-    let landed: Vec<(Vec<u8>, [u8; 32])> = image
+    let landed: Vec<(Vec<u8>, [u8; 32], bool)> = image
         .inline_bodies
         .iter()
         .filter(|carried| {
@@ -374,15 +380,22 @@ pub(super) fn unlease_carried_attempts(
                 && !carried.superseded
                 && !retired.contains(&carried.instance)
         })
-        .map(|carried| (carried.key.clone(), carried.digest))
+        .map(|carried| (carried.key.clone(), carried.digest, carried.opaque))
         .collect();
-    for (key, digest) in landed {
+    for (key, digest, opaque) in landed {
         let rows = image
             .databases
             .get_mut(ResponseDb::Attempts.name())
             .ok_or_else(codec_error)?;
         let value = row_mut(rows, &key)?;
-        *value = rebuild::unlease_attempt(&key, value)?;
+        if opaque {
+            match rebuild::unlease_opaque_attempt(&key, value)? {
+                Some(unleased) => *value = unleased,
+                None => continue,
+            }
+        } else {
+            *value = rebuild::unlease_attempt(&key, value)?;
+        }
         let after = *blake3::hash(value).as_bytes();
         if let (Ok(id), Some(rows)) = (
             AttemptId::from_bytes(&key),

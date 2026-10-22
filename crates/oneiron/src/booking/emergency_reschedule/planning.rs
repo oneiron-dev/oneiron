@@ -1,3 +1,7 @@
+//! Emergency reschedule proposal planning and its admitted content.
+//! Entry: `plan_emergency_reschedule`.
+//! Defines its own items.
+
 use super::*;
 use crate::side_table::{self, LegacyJson, SideCodec, SideTable};
 

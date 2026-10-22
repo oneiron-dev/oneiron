@@ -678,6 +678,7 @@
       "call": "memory.shape_apply(&input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

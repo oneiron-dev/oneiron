@@ -1,3 +1,7 @@
+//! Connector key lifecycle facade.
+//! Entry: `Vault::stage_connector_manifest`.
+//! Definitions live in `manifest_ops` and the sibling lifecycle leaves.
+
 mod budgets;
 mod catalog_views;
 mod charter_ops;
