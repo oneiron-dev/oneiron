@@ -219,6 +219,7 @@ impl BrowserSession {
     ) -> Result<T, BrowserError> {
         let from = self.receipt_seq;
         self.press_refused = None;
+        self.recording_act(from);
         let acted = act(self);
         if let Err(error) = &acted {
             let receipt = Some(self.landed_seq()).filter(|seq| *seq > from);
@@ -231,6 +232,7 @@ impl BrowserSession {
             };
             self.stop_pending = Some(self.mark(stop));
         }
+        self.recording_acted();
         acted
     }
 

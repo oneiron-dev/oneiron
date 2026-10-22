@@ -301,7 +301,12 @@ fn drive_run_guest<S: RunGuestSession>(
         vault
             .append_sandbox_abandon_receipt(run_id, driver.manifest())
             .map_err(|e| BrowserError::Unavailable(e.to_string()))?;
-        return Err(BrowserError::Abandoned);
+        // A demonstration's stop gives what it kept of the abandoned
+        // browser without acting on it (CUA E9a).
+        let kept = matches!(verb, AgentVerb::SelfBrowserDemonstrationStop) && result.is_ok();
+        if !kept {
+            return Err(BrowserError::Abandoned);
+        }
     }
     let mut output = result?;
     if let Some(output) = output.as_object_mut() {
@@ -842,6 +847,15 @@ impl RunBrowser {
                 object.insert(
                     "switched".into(),
                     serde_json::to_value(switch)
+                        .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+                );
+            }
+            // A demonstration that ended without its stop (a handover, an
+            // engine switch, a lost guest), once (CUA E9a).
+            if let Some(ended) = driver.take_demonstration() {
+                object.insert(
+                    "demonstration".into(),
+                    serde_json::to_value(ended)
                         .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
                 );
             }

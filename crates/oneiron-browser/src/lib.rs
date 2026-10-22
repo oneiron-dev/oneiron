@@ -25,6 +25,7 @@ mod answer;
 mod capture;
 #[cfg(feature = "driver")]
 mod cdp;
+mod demonstration;
 #[cfg(feature = "driver")]
 mod desktop;
 #[cfg(feature = "driver")]
@@ -52,6 +53,11 @@ mod stop;
 mod switch;
 
 pub use answer::{BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch, WindowSwitchCause};
+pub use demonstration::{
+    DemonstrationId, DemonstrationOutput, DemonstrationSource, DemonstrationStartInput,
+    DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput, LocatorGap, RecordedStep,
+    RecordingGap, RecordingGapKind,
+};
 #[cfg(feature = "driver")]
 pub use desktop::{AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover};
 pub use engine::BrowserEngine;
@@ -1391,6 +1397,25 @@ pub trait BrowserDriver: Send {
     /// receipt of an effect it made first, so a draft never takes it for a
     /// step that worked. A driver that keeps no history notes nothing.
     fn note_stop(&mut self, _stop: StepStop) {}
+
+    /// Starts recording a demonstration of the attached browser (CUA E9a):
+    /// only a browser session on a Chromium guest records one; any other
+    /// driver records none, and never answers an empty recording.
+    fn demonstration_start(
+        &mut self,
+        _input: DemonstrationStartInput,
+    ) -> Result<DemonstrationStarted, BrowserError> {
+        Err(BrowserError::Unsupported("demonstration.start".to_owned()))
+    }
+
+    /// Stops a demonstration, or takes one that ended, with its steps,
+    /// gaps and draft, once (CUA E9a).
+    fn demonstration_stop(
+        &mut self,
+        _input: DemonstrationStopInput,
+    ) -> Result<DemonstrationOutput, BrowserError> {
+        Err(BrowserError::Unsupported("demonstration.stop".to_owned()))
+    }
 
     /// A desktop key press.
     fn press_key(&mut self, _input: KeyInput) -> Result<Observation, BrowserError> {

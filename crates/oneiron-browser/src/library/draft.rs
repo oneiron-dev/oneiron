@@ -27,8 +27,9 @@
 //! row); the caller marks the slots. A secret is a typed slot at once, as
 //! admission slots it (`secret_slot_policy`): its name among `params`, the
 //! step or check naming `secret: "{{name}}"`, and `args` holding only this
-//! run's handle. No held-out value is made up: `replay_args` is empty, and
-//! the draft is never filed.
+//! run's handle. A secret a demonstration's page withheld (CUA E9a) is a
+//! slot with no arg, named withheld, for the caller to bind. No held-out
+//! value is made up: `replay_args` is empty, and the draft is never filed.
 
 use super::secret_slots::SlotBook;
 use super::{ProposeInput, SecretParam, site_of};
@@ -442,6 +443,19 @@ impl Draft {
         format!("{{{{{name}}}}}")
     }
 
+    /// The typed slot a secret of `kind` no value binds takes: `{{name}}`,
+    /// with no arg; the draft names it withheld, so it is not complete.
+    fn unbound(&mut self, kind: SecretKind) -> String {
+        let mut book = SlotBook {
+            params: &mut self.params,
+            secret: &mut self.secret,
+            args: &mut self.args,
+            replay_args: &mut self.replay_args,
+        };
+        let name = book.unbound(kind);
+        format!("{{{{{name}}}}}")
+    }
+
     /// One step of the span: false once the draft ends before it.
     fn step(&mut self, step: &DraftStep, past_press: bool) -> bool {
         if let Some(class) = step.effect_class.as_deref()
@@ -557,7 +571,12 @@ impl Draft {
                     TypeOperand::Withheld { kind, cause } => {
                         let (kind, cause) = (*kind, *cause);
                         self.gap(step, DraftGapKind::SecretWithheld { kind, cause });
-                        return;
+                        // A secret a page withheld (CUA E9a) keeps its step,
+                        // its slot bound to no value; any other is left out.
+                        match (kind, cause) {
+                            (Some(kind), OperandGap::Unbound) => (None, Some(self.unbound(kind))),
+                            _ => return,
+                        }
                     }
                 };
                 BatchStep::Type {

@@ -22,7 +22,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 /// Roles a program acts on.
-const CONTROLS: &[&str] = &[
+pub(crate) const CONTROLS: &[&str] = &[
     "button",
     "link",
     "textbox",
@@ -368,7 +368,7 @@ fn state(node: &Value, name: &str) -> Option<String> {
     }
 }
 
-fn clip(text: &str) -> String {
+pub(crate) fn clip(text: &str) -> String {
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     match text.char_indices().nth(NAME_CHARS) {
         Some((end, _)) => format!("{}…", &text[..end]),

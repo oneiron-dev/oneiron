@@ -78,8 +78,21 @@ fn stop_step(marker: &Marker) -> DraftStep {
 
 impl BrowserSession {
     /// `library.draft`: the session's history drafted for its open page.
-    pub(super) fn draft(&mut self, mut input: DraftInput) -> Result<DraftOutput, BrowserError> {
+    pub(super) fn draft(&mut self, input: DraftInput) -> Result<DraftOutput, BrowserError> {
         let url = self.live()?.url()?;
+        let steps = self.draft_steps();
+        self.draft_over(input, &steps, url)
+    }
+
+    /// `steps` drafted for the page at `url`, the caller's checks put in
+    /// the form a program keeps first: the session's history, or a
+    /// demonstration's recorded steps (CUA E9), through the one helper.
+    pub(super) fn draft_over(
+        &mut self,
+        mut input: DraftInput,
+        steps: &[DraftStep],
+        url: String,
+    ) -> Result<DraftOutput, BrowserError> {
         let origin = origin_of(&url);
         let mut secrets = BTreeMap::new();
         let mut gaps = Vec::new();
@@ -103,13 +116,12 @@ impl BrowserSession {
                 }
             }
         }
-        let steps = self.draft_steps();
         let page = DraftPage {
             url,
             origin,
             secrets,
         };
-        let mut output = draft_from_steps(&input, &steps, &page)?;
+        let mut output = draft_from_steps(&input, steps, &page)?;
         output.complete &= gaps.is_empty();
         output.gaps.extend(gaps);
         Ok(output)

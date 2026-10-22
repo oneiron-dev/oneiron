@@ -85,6 +85,7 @@ pub(crate) struct Read {
 struct Snapshot {
     seq: u64,
     scope: String,
+    url: String,
     rows: Vec<Row>,
     partial: bool,
 }
@@ -165,6 +166,7 @@ impl Observations {
         self.history.push_back(Snapshot {
             seq: read.seq,
             scope: read.scope,
+            url: whole.url.clone(),
             rows: read.rows,
             partial,
         });
@@ -212,6 +214,18 @@ impl Observations {
                 .filter(|held| held.scope == named.scope),
         }?;
         (!partial && !held.partial && held.scope == scope).then_some(held)
+    }
+
+    /// The rows of the newest whole observation read at `url`, as the
+    /// session holds them (CUA E9): what a recorder matches an act's target
+    /// against before it reads the page again.
+    pub(crate) fn held_rows_at(&self, url: &str) -> Option<&[Row]> {
+        self.history
+            .iter()
+            .rev()
+            .chain(&self.delivered)
+            .find(|held| !held.partial && held.url == url)
+            .map(|held| held.rows.as_slice())
     }
 
     fn held(&self, seq: u64) -> Option<&Snapshot> {

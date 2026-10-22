@@ -279,3 +279,85 @@ pub(crate) fn secret_compare_policy(kind: Option<SecretKind>, held: &str, shown:
     let digits = |text: &str| -> String { text.chars().filter(char::is_ascii_digit).collect() };
     kind == Some(SecretKind::Card) && !digits(held).is_empty() && digits(held) == digits(shown)
 }
+
+/// The page's own twin of [`classify`] (CUA E9; FIX 8028, owner-asked
+/// defensive hardening): a recorder's script runs it before any field's
+/// text leaves its page, so a secret is withheld where it is typed. Its
+/// rules are this module's own tables, read into the script here, with the
+/// same order and matching (`secret_field_policy`): an exact autocomplete
+/// token; an input of type password; a text role's label or description
+/// naming a phrase as whole words; a text role's label or text that is mask
+/// glyphs only; last, a value that is a card number alone. A page shows no
+/// `protected` property: its input type stands for it. `text` reads a name
+/// or description with each card number in it, and any of mask glyphs
+/// only, as [`SECRET_MARK`].
+pub(crate) fn page_predicate() -> String {
+    let autocomplete: Vec<serde_json::Value> = AUTOCOMPLETE
+        .iter()
+        .map(|(token, kind)| serde_json::json!([token, kind]))
+        .collect();
+    let phrases: Vec<serde_json::Value> = SECRET_PHRASES
+        .iter()
+        .map(|(words, kind)| serde_json::json!([words, kind]))
+        .collect();
+    let glyphs: Vec<String> = MASK_GLYPHS.iter().map(char::to_string).collect();
+    let rules = serde_json::json!({
+        "auto": autocomplete,
+        "roles": TEXT_ROLES,
+        "phrases": phrases,
+        "glyphs": glyphs,
+        "card": [CARD_DIGITS.start(), CARD_DIGITS.end()],
+        "mark": SECRET_MARK,
+        "password": SecretKind::Password,
+        "cardKind": SecretKind::Card,
+    });
+    PAGE_PREDICATE.replace("__RULES__", &rules.to_string())
+}
+
+/// The page twin's code; `__RULES__` is the tables `page_predicate` reads.
+const PAGE_PREDICATE: &str = r##"((R) => {
+  const words = (t) => (t || "").split(/[^\p{L}\p{N}]+/u).filter(Boolean).map((w) => w.toLowerCase());
+  const hasPhrase = (t, phrase) => {
+    const w = words(t);
+    for (let at = 0; at + phrase.length <= w.length; at += 1) {
+      if (phrase.every((word, i) => w[at + i] === word)) return true;
+    }
+    return false;
+  };
+  const masked = (t) => {
+    const glyphs = Array.from(t || "").filter((c) => !/\s/.test(c));
+    return glyphs.length > 0 && glyphs.every((c) => R.glyphs.includes(c));
+  };
+  const cardAlone = (v) => {
+    const t = (v || "").trim();
+    if (!/^[0-9]/.test(t) || !/[0-9]$/.test(t) || /[^0-9 -]/.test(t)) return false;
+    if (t.includes("  ") || t.includes("--")) return false;
+    const d = t.replace(/[^0-9]/g, "");
+    if (d.length < R.card[0] || d.length > R.card[1] || /^0+$/.test(d)) return false;
+    let sum = 0;
+    for (let at = 0; at < d.length; at += 1) {
+      let x = Number(d[d.length - 1 - at]);
+      if (at % 2 === 1) { x *= 2; if (x > 9) x -= 9; }
+      sum += x;
+    }
+    return sum % 10 === 0;
+  };
+  const kind = (f) => {
+    const tokens = (f.autocomplete || "").split(/[\t\n\f\r ]+/).filter(Boolean)
+      .map((t) => t.toLowerCase());
+    const named = R.auto.find(([token]) => tokens.includes(token));
+    if (named) return named[1];
+    if ((f.type || "").trim().toLowerCase() === "password") return R.password;
+    if (R.roles.includes(f.role)) {
+      const phrase = R.phrases.find(([p]) => hasPhrase(f.label, p) || hasPhrase(f.description, p));
+      if (phrase) return phrase[1];
+      if (masked(f.label) || masked(f.value)) return R.password;
+    }
+    return cardAlone(f.value) ? R.cardKind : null;
+  };
+  const text = (t) => {
+    if (masked(t) || cardAlone(t)) return R.mark;
+    return (t || "").replace(/[0-9][0-9 -]*[0-9]/g, (run) => (cardAlone(run) ? R.mark : run));
+  };
+  return {kind: kind, text: text};
+})(__RULES__)"##;

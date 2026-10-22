@@ -14245,6 +14245,40 @@
       }
     },
     {
+      "name": "self.browser.demonstration.start",
+      "description": "Starts recording a demonstration in the session's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running.",
+      "input": "crate::task_verb::sdk::BrowserDemonstrationStartInput",
+      "output": "crate::task_verb::sdk::BrowserDemonstrationStartOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.demonstration_start(input)?)",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserDemonstrationStartInput>",
+        "description": "Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.browser.demonstration.stop",
+      "description": "Stops a demonstration, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given; it ends before a send, pay, publish, destructive or unknown press.",
+      "input": "crate::task_verb::sdk::BrowserDemonstrationStopInput",
+      "output": "crate::task_verb::sdk::BrowserDemonstrationStopOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.demonstration_stop(input)?)",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserDemonstrationStopInput>",
+        "description": "Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
       "name": "self.browser.library.propose",
       "description": "Offers a solved run's program, fill steps too, to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires.",
       "input": "crate::task_verb::sdk::BrowserLibraryProposeInput",

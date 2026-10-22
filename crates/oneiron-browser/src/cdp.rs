@@ -16,6 +16,7 @@
 //! (`requests`, FIX 7122).
 
 mod overrun;
+pub(crate) mod recorder;
 mod requests;
 mod state;
 mod storage;
@@ -92,6 +93,8 @@ pub(crate) struct Pipe {
     custody: Custody,
     /// Each page session's main-document answers, by frame (`requests`).
     documents: requests::Documents,
+    /// The running demonstration's capture, if one records (`recorder`).
+    recorder: Arc<Mutex<Option<recorder::Live>>>,
 }
 
 impl Pipe {
@@ -141,6 +144,7 @@ impl Pipe {
             sink: Arc::default(),
             custody,
             documents: Arc::default(),
+            recorder: Arc::default(),
         }
     }
 
@@ -289,6 +293,7 @@ fn route(
         count_navigation(&pipe.navigations, &message);
         pipe.note_page(&message);
         pipe.note_storage(&message);
+        pipe.note_recording(&message);
         answer_dialog(pipe, &message);
         if let Some(relay) = relay {
             network_event(pipe.clone(), Arc::clone(relay), message);
@@ -371,9 +376,11 @@ fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, eve
             .pointer("/params/targetInfo/targetId")
             .and_then(Value::as_str)
             .is_some_and(|target| !pipe.claim_network(target));
+        let attached = recorder::Attached::of(&event);
         std::thread::spawn(move || {
             let deadline = Instant::now() + std::time::Duration::from_secs(30);
             if routed || enable_network(&pipe, &session, deadline).is_ok() {
+                pipe.record_attached(&session, &attached, deadline);
                 let _ = pipe.call(
                     Some(&session),
                     "Runtime.runIfWaitingForDebugger",

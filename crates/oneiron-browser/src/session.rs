@@ -68,6 +68,7 @@
 //! them, and the fresh guest a proposal's replay runs on hand the secrets
 //! their reads find to it, and type and expect a handle through it.
 
+mod demonstration;
 mod draft;
 mod fresh;
 mod guest;
@@ -91,17 +92,18 @@ use crate::secret::{Secrets, entry};
 use crate::stop::elapsed_ms;
 use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserEngine, BrowserError,
-    BrowserPersonInput, BrowserTab, ClickInput, CropInput, DraftInput, DraftOutput, EFFECT_ACCOUNT,
-    EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt,
-    ExpectInput, ExpectOutput, FieldWriter, FindInput, FindOutput, HandleInfo, HandoverInput,
-    HandoverOutput, ImageOutput, LibraryFindInput, LibraryFindOutput, LibraryRetireInput,
-    LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput,
-    LibraryRunOutput, NoDecider, NoWriter, Observation, ObservationPage, ObserveInput, OpenInput,
-    PointInput, PressMode, ProposeInput, ProposeOutput, ReceiptEvidenceSink, ReplayAction,
-    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SecretCustody,
-    SecretKind, SelectInput, SendPolicy, StepStop, StoragePhase, SwitchEngineInput,
-    SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TextProvenance, TypeInput, ViewInput,
-    WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
+    BrowserPersonInput, BrowserTab, ClickInput, CropInput, DemonstrationOutput,
+    DemonstrationStartInput, DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput,
+    DraftInput, DraftOutput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH,
+    EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput, FieldWriter, FindInput,
+    FindOutput, HandleInfo, HandoverInput, HandoverOutput, ImageOutput, LibraryFindInput,
+    LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput,
+    LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider, NoWriter, Observation,
+    ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput,
+    ReceiptEvidenceSink, ReplayAction, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
+    ScreenshotTrigger, SecretCustody, SecretKind, SelectInput, SendPolicy, StepStop, StoragePhase,
+    SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TextProvenance,
+    TypeInput, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -209,6 +211,9 @@ pub struct BrowserSession {
     /// The host's secret custody, shared with each engine's driver; empty
     /// until the host gives it.
     secrets: Secrets,
+    /// The demonstration that records, and those that ended and wait to be
+    /// given (CUA E9a), across engine switches.
+    demos: demonstration::Demonstrations,
 }
 
 impl BrowserSession {
@@ -276,6 +281,7 @@ impl BrowserSession {
             custody,
             fresh: None,
             secrets,
+            demos: demonstration::Demonstrations::default(),
         })
     }
 
@@ -411,6 +417,8 @@ impl BrowserSession {
                 return Err(BrowserError::BrowserTakenOver("held".to_owned()));
             }
         };
+        // The agent's demonstration ends before a person's input begins.
+        self.recording_close(DemonstrationStopCause::HandedOver);
         self.takeover = Takeover::Held {
             by: by.to_owned(),
             asked,
@@ -584,13 +592,17 @@ impl BrowserSession {
         }
     }
 
+    /// The guest still answers; a demonstration recording ends with the
+    /// cause of one that does not, with what it kept.
     fn guest_up(&mut self) -> Result<(), BrowserError> {
         if self.guest.abandoned() {
+            self.recording_close(DemonstrationStopCause::Abandoned);
             return Err(BrowserError::Abandoned);
         }
         if self.guest.is_running() {
             Ok(())
         } else {
+            self.recording_close(DemonstrationStopCause::GuestLost);
             Err(BrowserError::GuestLost)
         }
     }
@@ -608,6 +620,7 @@ impl BrowserSession {
         if let (_, Some(refused)) = self.driver.follow_or_refusal() {
             return Err(refused);
         }
+        self.recording_drain();
         Ok(&mut self.driver)
     }
 
@@ -1106,6 +1119,20 @@ impl BrowserDriver for BrowserSession {
         self.noted(stop);
     }
 
+    fn demonstration_start(
+        &mut self,
+        input: DemonstrationStartInput,
+    ) -> Result<DemonstrationStarted, BrowserError> {
+        self.demonstration_begin(input)
+    }
+
+    fn demonstration_stop(
+        &mut self,
+        input: DemonstrationStopInput,
+    ) -> Result<DemonstrationOutput, BrowserError> {
+        self.demonstration_end(input)
+    }
+
     fn handover(&mut self, input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
         self.live()?;
         let reason = input
@@ -1119,6 +1146,7 @@ impl BrowserDriver for BrowserSession {
             )));
         }
         let asked_at_ms = now_ms();
+        self.recording_close(DemonstrationStopCause::HandedOver);
         self.takeover = Takeover::Waiting {
             reason: reason.clone(),
             asked_at_ms,

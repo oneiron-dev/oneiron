@@ -3112,6 +3112,12 @@ export class Oneiron {
         /** Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift. */
         run: (input: Facade.LiveRunRequest<Facade.LibraryRunInput>): Facade.BrowserLibraryRunOutput => this.#call(() => this.#client.selfBrowserLibraryRun(input) as Facade.BrowserLibraryRunOutput),
       },
+      demonstration: {
+        /** Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running. */
+        start: (input: Facade.LiveRunRequest<Facade.DemonstrationStartInput>): Facade.BrowserDemonstrationStartOutput => this.#call(() => this.#client.selfBrowserDemonstrationStart(input) as Facade.BrowserDemonstrationStartOutput),
+        /** Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given. */
+        stop: (input: Facade.LiveRunRequest<Facade.DemonstrationStopInput>): Facade.BrowserDemonstrationStopOutput => this.#call(() => this.#client.selfBrowserDemonstrationStop(input) as Facade.BrowserDemonstrationStopOutput),
+      },
       /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
       handover: (input: Facade.LiveRunRequest<Facade.HandoverInput>): Facade.BrowserHandoverOutput => this.#call(() => this.#client.selfBrowserHandover(input) as Facade.BrowserHandoverOutput),
       /** Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself. */

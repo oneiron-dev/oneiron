@@ -5,7 +5,7 @@
 //! none of them; the door writes them beside the answer's own fields, and
 //! these types declare them, so a program reads them typed.
 
-use crate::{BrowserEngine, TabSwitch};
+use crate::{BrowserEngine, DemonstrationOutput, TabSwitch};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -68,6 +68,11 @@ pub struct BrowserAnswer<T> {
     /// The engine the browser ran this verb on, read verbs included.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<BrowserEngine>,
+    /// A demonstration that ended since the agent's last answer without
+    /// its stop (a handover, an engine switch, a lost guest), once, its
+    /// draft naming no subgoal and no checks (CUA E9a).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demonstration: Option<DemonstrationOutput>,
 }
 
 impl<T> BrowserAnswer<T> {
@@ -80,6 +85,7 @@ impl<T> BrowserAnswer<T> {
             takeover: None,
             switched: None,
             engine: None,
+            demonstration: None,
         }
     }
 }
