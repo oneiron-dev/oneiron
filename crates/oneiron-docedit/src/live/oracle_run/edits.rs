@@ -37,7 +37,8 @@ pub(super) struct Deck {
 
 impl Deck {
     pub(super) fn load(id: &str, bytes: Vec<u8>, limits: Limits) -> Res<Self> {
-        let package = Package::open(&bytes, limits).map_err(text)?;
+        let package = Package::open(&bytes, limits, &crate::resource::Resources::measuring())
+            .map_err(text)?;
         let deck = LiveDeck::import(&package).map_err(text)?;
         let defects = checks::defects(&bytes, limits);
         Ok(Self {
@@ -559,7 +560,11 @@ fn edit_body(
             return Ok(());
         }
     };
-    let output = match Package::open(&exported.outcome.bytes, run.limits) {
+    let output = match Package::open(
+        &exported.outcome.bytes,
+        run.limits,
+        &crate::resource::Resources::measuring(),
+    ) {
         Ok(output) => output,
         Err(error) => {
             run.record(

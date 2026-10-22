@@ -1,42 +1,33 @@
 //! Dispatcher organ with dispatch, execute, authorize, and capture doors.
 
+mod terminal;
+
 use std::sync::Arc;
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, AttemptRecord, CompleteAttempt,
-    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
-    FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
-};
-use crate::blob_artifact::{
-    BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
-    read_blob_artifact_head_in_txn,
+    AttemptId, AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome,
 };
 use crate::checkout::{CheckoutFactSink, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLiveness};
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::code_sandbox::microvm::ExecutionBudget;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::Error;
 use crate::limit_ask::EngineLimit;
 use crate::llm::{BudgetLease, LlmBackend, LlmError, LlmRequest};
-use crate::temporal::TimeRange;
 
 use super::connector::{
-    BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_MEDIA_TYPE, ByoEndpointSpec,
-    ByoaAttemptPayload, ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec,
-    DispatchByoa, MAX_ALLOWED_HOSTS, ProtocolAttachSpec, encode_byoa_attempt_payload,
+    BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, ByoEndpointSpec, ByoaAttemptPayload,
+    ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec, DispatchByoa,
+    ProtocolAttachSpec, encode_byoa_attempt_payload,
 };
 use super::error::{
-    ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT,
-    ERR_EXECUTION_SHAPE, ERR_LEASE_EXPIRED, ERR_LEASE_HOST_DENIED, ERR_LEASE_ID_ZERO,
-    ERR_LEASE_PROFILE_MISMATCH, ERR_LEASE_TAINT, ERR_LEASE_UNBOUNDED, invalid,
+    ByoaError, ByoaResult, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT, ERR_EXECUTION_SHAPE,
+    ERR_LEASE_EXPIRED, ERR_LEASE_HOST_DENIED, ERR_LEASE_ID_ZERO, ERR_LEASE_PROFILE_MISMATCH,
+    ERR_LEASE_TAINT, ERR_LEASE_UNBOUNDED, invalid,
 };
 use super::exhaust::{
-    ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaExhaustEnvelope, ByoaTerminalDisposition,
-    ByoaTerminalReceipt, CaptureByoaExhaust, append_exhaust_envelope, byoa_exhaust_artifact_id,
-    byoa_exhaust_artifact_name, byoa_result_ref, canonical_result_version, decode_byoa_record,
-    disposition_matches_state, ensure_byoa_runtime_actor, normalize_capture_reason,
-    union_taint_refs, validate_canonical_capture,
+    ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaTerminalDisposition, CaptureByoaExhaust,
+    decode_byoa_record, union_taint_refs,
 };
 use super::official_seats::{
     DispatchOfficialSeat, DrySeatDecision, OfficialSeatDispatchOutcome, OfficialSeatStamp,
@@ -44,7 +35,7 @@ use super::official_seats::{
 };
 use super::provider::ProviderAdapterRegistry;
 use super::repo_binding::{
-    mark_stale_capture_in_txn, pin_checkout_in_txn, reserve_in_txn, start_execution,
+    StartedCliExecution, pin_checkout_in_txn, reserve_in_txn, start_execution,
 };
 use super::seat::{
     HostedSeatBound, OnSeatSpent, RunnerSeatPolicy, RunnerWork, SeatIdentity, SeatRoute, SeatSpent,
@@ -57,7 +48,6 @@ use super::validate::{
 };
 use super::work_binding::{RunnerWorkBinding, SpentCapture, note_spent_hop_in_txn};
 use super::work_resume::moved_on_in_txn;
-use crate::error::ArtifactError;
 /// Resolves an endpoint config into a concrete host-owned backend.
 ///
 /// The factory is the host's, not this module's: provider transports, custody
@@ -385,7 +375,9 @@ where
     /// write transaction (OF-137). A failed capture is read whole for a
     /// spent seat unless the host already knows one (`spent`, from
     /// [`ByoaError::SeatSpent`]), and what it read is kept as the seat's
-    /// quota ([`super::runner_seat_quotas`]). Stop parks the work until the
+    /// quota ([`super::runner_seat_quotas`]). A failed run that its seat's
+    /// spend interrupted settles Abandoned, keeping its reason, exhaust,
+    /// frontier, taint and result (FIX 9793). Stop parks the work until the
     /// seat is back; NextSeat hands it to the next seat this runtime may
     /// run, as a child of the spent attempt, from the durable row alone: a
     /// bound work of any connector shape ([`super::RunnerWorkBinding`]), or
@@ -420,6 +412,12 @@ where
             spent => spent,
         };
         if let Some(spent) = &spent {
+            // FIX 9793: the spend interrupted a failed run, so it settles
+            // Abandoned before its reason is normalized and its capture and
+            // route are written. A Completed or Cancelled landing keeps its own.
+            if capture.disposition == ByoaTerminalDisposition::Failed {
+                capture.disposition = ByoaTerminalDisposition::Abandoned;
+            }
             capture
                 .reason
                 .get_or_insert_with(|| spent.reason().to_owned());
@@ -634,8 +632,11 @@ where
     }
 
     /// Invokes a host sandbox against a live checkout through the foreign
-    /// boundary, once the run's pinned job is staged there. Lease validation
-    /// occurs again at terminal capture; no LMDB write lock is held meanwhile.
+    /// boundary, once the run's pinned job is staged there. The checkout's
+    /// custody is judged at the vault's time in one short writer before
+    /// staging, and again at terminal capture; no LMDB write lock is held
+    /// meanwhile. `_checkouts` is kept for the host's call; custody is read
+    /// from the vault in that writer.
     ///
     /// # Errors
     /// Refuses stale leases, missing/expired checkouts, invalid budgets and a
@@ -645,20 +646,17 @@ where
         &mut self,
         fence: &ByoaExecutionFence,
         budget: ExecutionBudget,
-        checkouts: &CheckoutLeaseService<'_, F, L>,
+        _checkouts: &CheckoutLeaseService<'_, F, L>,
         executor: &mut C,
         now: u64,
     ) -> ByoaResult<ByoaExhaust> {
         validate_execution_budget(budget)?;
-        let record = self.execution_record(fence)?;
-        let payload = decode_byoa_record(&record)?;
-        let ByoaConnectorSpec::CliSandbox(spec) = &payload.connector else {
-            return Err(invalid(ERR_EXECUTION_SHAPE));
-        };
-        // FIX 6867: the bound checkout, judged and its generation saved in
-        // a short writer before staging; no writer spans the child.
-        let checkout = start_execution(self.vault, fence, &record, &payload, spec, checkouts, now)?;
-        self.stage_pinned_input(spec, &checkout)?;
+        self.execution_record(fence)?;
+        // FIX 6867, 9792: the checkout's custody, bound at dispatch or now,
+        // and its generation saved in a short writer before staging, which
+        // returns the spec the row carries now; no writer spans the child.
+        let StartedCliExecution { spec, checkout } = start_execution(self.vault, fence)?;
+        self.stage_pinned_input(&spec, &checkout)?;
         let intent = bytes_to_hex_lower(fence.attempt_id.as_bytes());
         // Every secret a granted lease injected taints this run's output.
         let mut injected = Vec::new();
@@ -717,7 +715,9 @@ where
         if lease.lease_id == [0_u8; 16] {
             return Err(denied(ERR_LEASE_ID_ZERO));
         }
-        if lease.allowed_hosts.is_empty() || lease.allowed_hosts.len() > MAX_ALLOWED_HOSTS {
+        // The requested host is judged against the whole granted list;
+        // how many hosts a grant names is never refused.
+        if lease.allowed_hosts.is_empty() {
             return Err(denied(ERR_LEASE_UNBOUNDED));
         }
         if now >= lease.expires_at {
@@ -730,242 +730,5 @@ where
             return Err(denied(ERR_LEASE_TAINT));
         }
         Ok(lease)
-    }
-
-    /// Folds a terminated executor's exhaust into one canonical artifact:
-    /// streams past the inline budget as chunk versions, then the envelope as
-    /// its head, whose version the result reference names.
-    ///
-    /// Artifact, actor, result reference, and terminal settlement commit in one
-    /// write transaction. Completed and failed captures require a leased row;
-    /// cancelled captures finish an accepted landing without force authority or
-    /// handoff. Retries never append another version. An abandoned retry returns
-    /// the first result, even if the new exhaust differs.
-    ///
-    /// # Errors
-    ///
-    /// Refuses invalid BYOA rows, stale leases, conflicting results, artifact
-    /// collisions, and invalid exhaust without durable writes. No exhaust is
-    /// refused for its size.
-    pub fn capture_terminal_exhaust(
-        &mut self,
-        request: CaptureByoaExhaust,
-    ) -> ByoaResult<ByoaTerminalReceipt> {
-        self.vault
-            .try_with_write_txn_grouped(|wtxn| self.capture_terminal_exhaust_in_txn(wtxn, request))
-    }
-
-    pub(super) fn capture_terminal_exhaust_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        request: CaptureByoaExhaust,
-    ) -> ByoaResult<ByoaTerminalReceipt> {
-        validate_exhaust(&request.exhaust)?;
-        let mut reason = normalize_capture_reason(request.disposition, request.reason)?;
-        if request.lease_owner.is_empty() || request.lease_owner.len() > 128 {
-            return Err(invalid(ERR_CAPTURE_CONFLICT));
-        }
-        let artifact_id = byoa_exhaust_artifact_id(request.attempt_id)?;
-        let mut envelope = ByoaExhaustEnvelope {
-            schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
-            attempt_id: *request.attempt_id.as_bytes(),
-            lease_owner: request.lease_owner,
-            attempt_count: request.attempt_count,
-            disposition: request.disposition,
-            exhaust: request.exhaust,
-        };
-        let body = BlobArtifactBody::new(
-            byoa_exhaust_artifact_name(request.attempt_id),
-            BYOA_EXHAUST_MEDIA_TYPE,
-        )
-        .with_secret_taint_refs(envelope.exhaust.secret_taint_refs.clone());
-        let occurred = TimeRange {
-            start: request.now,
-            end: request.now,
-        };
-        let action = match request.disposition {
-            ByoaTerminalDisposition::Completed => "complete",
-            ByoaTerminalDisposition::Failed => "fail",
-            ByoaTerminalDisposition::Cancelled => "finish_landing",
-            ByoaTerminalDisposition::Abandoned => "abandon",
-        };
-        let queue = AttemptQueue::new(self.vault);
-        let record = queue
-            .get_in_write_txn(wtxn, request.attempt_id)?
-            .ok_or(ByoaError::Store(Error::Artifact(
-                ArtifactError::InvalidAttemptQueueTransition {
-                    action: "capture_byoa_exhaust",
-                    state: ERR_ATTEMPT_MISSING,
-                },
-            )))?;
-        // CALL "FIX 6867 stale capture": exhaust kept, Abandoned + repo_stale_lease.
-        mark_stale_capture_in_txn(self.vault, wtxn, &record, &mut envelope, &mut reason)?;
-        if record.state.is_running() {
-            AttemptQueue::check_result_lease(
-                &record,
-                &envelope.lease_owner,
-                envelope.attempt_count,
-                action,
-            )?;
-        } else if record.result_ref.is_none()
-            || record.attempt_count != envelope.attempt_count
-            || !disposition_matches_state(envelope.disposition, record.state)
-        {
-            return Err(ByoaError::Store(Error::Artifact(
-                ArtifactError::InvalidAttemptQueueTransition {
-                    action,
-                    state: record.state.as_str(),
-                },
-            )));
-        }
-        let provenance = BlobVersionProvenance::AgentRun {
-            run_ref: record
-                .run_id
-                .clone()
-                .unwrap_or_else(|| bytes_to_hex_lower(request.attempt_id.as_bytes())),
-        };
-        if let Some(result_ref) = record.result_ref.clone() {
-            // This build never commits a canonical capture on a running row.
-            // A generic result attachment cannot stand in for terminal custody.
-            let Some(version) = canonical_result_version(&result_ref, &artifact_id)
-                .filter(|_| record.state.is_terminal())
-            else {
-                return Err(invalid(ERR_CAPTURE_CONFLICT));
-            };
-            if matches!(
-                envelope.disposition,
-                ByoaTerminalDisposition::Failed | ByoaTerminalDisposition::Abandoned
-            ) && record.last_error.as_deref() != Some(reason.as_str())
-            {
-                return Err(invalid(ERR_CAPTURE_CONFLICT));
-            }
-            validate_canonical_capture(
-                self.vault,
-                wtxn,
-                &artifact_id,
-                version,
-                &body,
-                &provenance,
-                &envelope,
-            )?;
-            return Ok(ByoaTerminalReceipt {
-                attempt: record,
-                artifact_id,
-                artifact_version: version,
-                result_ref,
-                skipped_seats: Vec::new(),
-            });
-        }
-        // An unattached artifact can never be a partial successful capture:
-        // all custody writes now share this transaction. Refuse collisions,
-        // including empty chains with perfectly matching caller-made metadata.
-        if self
-            .vault
-            .get_entity_type_in_txn(wtxn, &artifact_id)?
-            .is_some()
-            || read_blob_artifact_head_in_txn(&self.vault.store, wtxn, &artifact_id)?.is_some()
-        {
-            return Err(invalid(ERR_ARTIFACT_COLLISION));
-        }
-        let actor = ensure_byoa_runtime_actor(self.vault, wtxn, occurred, request.now)?;
-        self.vault
-            .batch_in()
-            .put(
-                &artifact_id,
-                crate::registry::ENTITY_TYPE_BLOB_ARTIFACT,
-                occurred,
-                request.now,
-                &encode_blob_artifact_body(&body)?,
-            )
-            .apply(wtxn)?;
-        let version = append_exhaust_envelope(
-            self.vault,
-            wtxn,
-            &artifact_id,
-            &envelope,
-            &provenance,
-            actor,
-            request.now,
-        )?;
-        let result_ref = byoa_result_ref(&artifact_id, version.version)?;
-        // Attach and settle through the queue's existing fenced doors. No
-        // writer can interleave a different disposition, and any later failure
-        // rolls back the row, dedupe release, receipts, and artifact together.
-        queue.set_result_in_txn(
-            wtxn,
-            SetAttemptResult {
-                id: request.attempt_id,
-                lease_owner: envelope.lease_owner.clone(),
-                attempt_count: envelope.attempt_count,
-                result_ref: result_ref.clone(),
-                now: request.now,
-            },
-        )?;
-        let attempt = match envelope.disposition {
-            ByoaTerminalDisposition::Completed => match crate::ports::JobQueue::port_job_complete(
-                self.vault,
-                wtxn,
-                CompleteAttempt {
-                    id: request.attempt_id,
-                    lease_owner: envelope.lease_owner.clone(),
-                    attempt_count: envelope.attempt_count,
-                    now: request.now,
-                },
-            )? {
-                CompleteOutcome::Completed(attempt)
-                | CompleteOutcome::AlreadyCompleted(attempt) => attempt,
-            },
-            ByoaTerminalDisposition::Failed => match crate::ports::JobQueue::port_job_fail(
-                self.vault,
-                wtxn,
-                FailAttempt {
-                    id: request.attempt_id,
-                    lease_owner: envelope.lease_owner.clone(),
-                    attempt_count: envelope.attempt_count,
-                    reason,
-                    now: request.now,
-                },
-            )? {
-                FailOutcome::Failed(attempt) | FailOutcome::AlreadyFailed(attempt) => attempt,
-            },
-            ByoaTerminalDisposition::Cancelled => match queue.finish_landing_in_txn(
-                wtxn,
-                FinishAttemptLanding {
-                    id: request.attempt_id,
-                    lease_owner: envelope.lease_owner.clone(),
-                    attempt_count: envelope.attempt_count,
-                    hand_off: false,
-                    scheduled_at: None,
-                    now: request.now,
-                },
-            )? {
-                FinishLandingOutcome::Landed(attempt) => attempt,
-                FinishLandingOutcome::HandedOff { .. } => {
-                    return Err(invalid(ERR_CAPTURE_CONFLICT));
-                }
-            },
-            ByoaTerminalDisposition::Abandoned => match queue.abandon_in_txn(
-                wtxn,
-                AbandonAttempt {
-                    id: request.attempt_id,
-                    lease_owner: envelope.lease_owner.clone(),
-                    attempt_count: envelope.attempt_count,
-                    result_ref: result_ref.clone(),
-                    reason,
-                    now: request.now,
-                },
-            )? {
-                AbandonOutcome::Abandoned(attempt) | AbandonOutcome::AlreadyAbandoned(attempt) => {
-                    attempt
-                }
-            },
-        };
-        Ok(ByoaTerminalReceipt {
-            attempt,
-            artifact_id,
-            artifact_version: version.version,
-            result_ref,
-            skipped_seats: Vec::new(),
-        })
     }
 }

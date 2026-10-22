@@ -39,6 +39,7 @@ mod fork;
 mod holder_ask;
 mod pptx;
 mod records;
+mod resources;
 mod support;
 mod verbs;
 mod xlsx;
@@ -105,11 +106,16 @@ use oneiron_xlsx_formula::RecalcClock;
 use oneiron_xlsx_formula::engine::FormualizerEngine;
 use serde::{Deserialize, Serialize};
 
+pub use oneiron_docedit::resource::{ResourcePort, ResourceRefusal, Resources};
 use records::{EXPORTS, FORKS, OfficeBodyRead, OfficeBodySource, SOURCES};
 pub use records::{
     ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportRecord, OfficeBodyExportRequest,
     OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeRecalcZone, XlsxPreview,
 };
+pub use resources::{
+    DocumentMemory, document_resources, document_resources_until, register_document_memory,
+};
+pub(crate) use resources::{document_error, document_refused};
 use support::{
     apply_all, apply_xlsx, bounded_ops, check_made_by, claim_source, fork_view, loro_kind,
     open_fork, recalc_label, recalc_xlsx, source, three_way, timestamp, validate, version_key,

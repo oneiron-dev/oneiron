@@ -173,6 +173,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::SealFetchAsks),
         Self::Engine(EngineLimit::SealAsks),
         Self::Engine(EngineLimit::SealAnswerBytes),
+        Self::Engine(EngineLimit::SealMemoryAsks),
         Self::Engine(EngineLimit::SealCrlBytes),
         Self::Engine(EngineLimit::SealTsaBytes),
         Self::Engine(EngineLimit::SealReportJsonBytes),
