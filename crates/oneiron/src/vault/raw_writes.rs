@@ -22,7 +22,7 @@
 //!
 //! A handle bound inside an off-record session writes into its room while
 //! the room is off record, and reads the room over base (FIX 8119, 8603;
-//! [`session`]); a raw CLAIM put carries its verified caller's envelope
+//! `session`); a raw CLAIM put carries its verified caller's envelope
 //! through its gate and apply (FIX 8118).
 //!
 //! A raw body is opaque bytes here. NOTE and keyed-value prose admission
