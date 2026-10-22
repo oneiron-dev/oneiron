@@ -198,18 +198,14 @@ pub(crate) fn refresh_repo_revision_projection_in_txn(
         },
     )?;
     crate::batch::delete_from_phonetic_postings(&vault.store, txn, entity)?;
-    let codes =
-        crate::batch::phonetic_codes::codes_for_body(input.entity_type, &input.body);
+    let codes = crate::batch::phonetic_codes::codes_for_body(input.entity_type, &input.body);
     apply_ops(
         &vault.store,
         &vault.config,
         &vault.analyzer,
         txn,
         vec![
-            BatchOp::Phonetic {
-                id: *entity,
-                codes,
-            },
+            BatchOp::Phonetic { id: *entity, codes },
             BatchOp::Text {
                 id: *entity,
                 fields: input.fields,

@@ -294,7 +294,9 @@ impl RepoIndexMarks {
         if self.is_empty() {
             return Ok(text);
         }
-        Ok(self.input_in_txn(vault, txn, text.into_bytes())?.into_text())
+        Ok(self
+            .input_in_txn(vault, txn, text.into_bytes())?
+            .into_text())
     }
 
     /// The body record `entity` indexes from: a marked blob's snapshot ASSET

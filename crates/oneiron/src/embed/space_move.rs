@@ -852,12 +852,13 @@ impl Vault {
                 // A media query runs on its document as stored now; one gone does not run.
                 let query = match probe.query_media {
                     None => None,
-                    Some(media) => match super::repo_projection::media_query_projected_in(
-                        self, &rtxn, media,
-                    )? {
-                        Some(document) => Some(document),
-                        None => continue,
-                    },
+                    Some(media) => {
+                        match super::repo_projection::media_query_projected_in(self, &rtxn, media)?
+                        {
+                            Some(document) => Some(document),
+                            None => continue,
+                        }
+                    }
                 };
                 probes.push((*id, probe.clone(), query));
             }

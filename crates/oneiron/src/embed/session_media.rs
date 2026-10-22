@@ -20,7 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::device::media_device_row_key;
 use super::media::{
-    MediaEgressGate, MediaEmbedReport, MediaEmbedder, PendingMedia, is_text_document_type, media_egress_for, media_held_in, text_document_of,
+    MediaEgressGate, MediaEmbedReport, MediaEmbedder, PendingMedia, is_text_document_type,
+    media_egress_for, media_held_in, text_document_of,
 };
 use super::space::{
     EmbeddingSpace, InputKind, embedding_space_in_txn, media_text_hash_of, media_vector_row_key,

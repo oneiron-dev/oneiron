@@ -31,8 +31,8 @@ pub(crate) use eligibility::{
 };
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
-pub(crate) use repo_projection::{repo_envelope_copies_in_txn, requeue_repo_embedding_in_txn};
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
+pub(crate) use repo_projection::{repo_envelope_copies_in_txn, requeue_repo_embedding_in_txn};
 pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 pub use space::{
