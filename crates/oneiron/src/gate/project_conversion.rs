@@ -65,8 +65,9 @@ pub(crate) struct ProjectConversionPolicy {
     pub(crate) roster_selection: RosterSelection,
     /// The thread task count past which binding and conversion raise the
     /// owner's "is everything okay" question (rule 5, OF-522). Never a
-    /// refusal: both count past it and go on.
-    pub(crate) max_tasks: usize,
+    /// refusal: both count past it and go on. 4096 is the shipped fallback;
+    /// a holder-authored vault row replaces it (Engine 10-22 C1).
+    pub(crate) max_tasks: u64,
     pub(crate) allow_holder_override: bool,
 }
 
@@ -84,7 +85,8 @@ impl Default for ProjectConversionPolicy {
 
 impl ProjectConversionPolicy {
     /// Every trusted manifest narrows the policy; no later row can widen it.
-    /// The lowest task threshold stands, so its question is raised earliest.
+    /// The lowest task threshold stands, so its question is raised earliest;
+    /// the vault fold then sets the threshold from its authored rows (C1).
     pub(crate) fn restrict(self, other: Self) -> Self {
         Self {
             leader_fallback: if self.leader_fallback == LeaderFallback::SourceLeaderOnly
@@ -202,13 +204,9 @@ pub(super) fn parse_project_conversion(value: &Value) -> Option<ProjectConversio
                 if max_tasks.is_some() {
                     return None;
                 }
-                // A row may lower the shipped question threshold, never
-                // raise it.
-                let threshold = value.as_u64()?;
-                if threshold > 4096 {
-                    return None;
-                }
-                max_tasks = Some(usize::try_from(threshold).ok()?);
+                // Any threshold parses: whether a row replaces the shipped
+                // fallback or only narrows is the fold's call (C1).
+                max_tasks = Some(value.as_u64()?);
             }
             "precedence" => {
                 if precedence.is_some()

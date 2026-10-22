@@ -824,7 +824,7 @@ struct SpawnArgs {
     intent_key: String,
     context_spec: Option<ContextSpecArgs>,
     context_from: Vec<String>,
-    depth_remaining: Option<u8>,
+    depth_remaining: Option<u64>,
     project_ref: Option<String>,
     type_ref: Option<String>,
     ask: Option<SelfSpawnAsk>,
