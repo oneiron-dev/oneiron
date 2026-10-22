@@ -248,6 +248,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/compliance_doors.rs` | src | s | 4 crate-vis | — | Compliance owner decisions use the request's owner proof and its own Memory |
 | `src/api/facade/connector_call_doors.rs` | src | s | 6 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
 | `src/api/facade/connector_pack_doors.rs` | src | m | 7 crate-vis | — | Source-bound connector packs over the existing owner, probe and slate doors |
+| `src/api/facade/connector_revision_doors.rs` | src | s | 5 crate-vis | — | FIX 988: the owner's doors onto proposed connector slate revisions, shared by HTTP, SDK and MCP: his ruling… |
 | `src/api/facade/connector_slate_doors.rs` | src | s | 2 crate-vis | — | FIX 987: the owner's slate re-draft and a key holder's own narrow, shared by HTTP, SDK and MCP |
 | `src/api/facade/consent_doors.rs` | src | s | 11 crate-vis | — | Consent lifecycle host doors, on the same owner proof as Gate policy |
 | `src/api/facade/consolidation_doors.rs` | src | s | 7 crate-vis | — | Owner-bound generated-claim promotion, vetting and evidence reads |
@@ -287,7 +288,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
-| `src/api/facade/host_doors.rs` | src | XL | 188 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 189 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hub_doors.rs` | src | m | 19 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
