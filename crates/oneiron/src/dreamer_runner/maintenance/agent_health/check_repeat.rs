@@ -59,10 +59,7 @@ fn check_report(
     let diagnostics: serde_json::Value = match diagnostics {
         DiagnosticCollection::Inline { diagnostics } => serde_json::to_value(diagnostics).ok()?,
         DiagnosticCollection::Stored { .. } => {
-            let body = vault
-                .get_code_run_raw_output(row.body.as_ref()?)
-                .ok()
-                .flatten()?;
+            let body = vault.get_code_run_raw_output(&row.body()?).ok().flatten()?;
             serde_json::from_slice(&body).ok()?
         }
     };

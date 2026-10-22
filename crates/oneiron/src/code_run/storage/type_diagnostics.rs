@@ -11,7 +11,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
+use super::super::replay::{
+    CODE_RUN_REPLAY_HASH_LEN, CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput,
+    ResultOccurrence,
+};
 use super::super::type_diagnostics::{
     DiagnosticCollection, DiagnosticMeasures, ProgramPreparationNote, ProgramStepFeedback,
     ProgramStepIdentity, TYPE_CHECK_INTERRUPTED, TypeCheckFacts, TypeDiagnostic, TypeDiagnostics,
@@ -58,7 +61,61 @@ pub(crate) struct StoredStepFeedback {
     pub(crate) inline: Option<Vec<TypeDiagnostic>>,
     /// The run's body holding every diagnostic, for a collection past one
     /// reply.
-    pub(crate) body: Option<CodeRunRawOutput>,
+    body: Option<StoredBody>,
+}
+
+/// The descriptor of a run's body a row names, as the row keeps it: every
+/// field the run's own descriptor holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredBody {
+    handle: String,
+    path: String,
+    raw_blake3: [u8; CODE_RUN_REPLAY_HASH_LEN],
+    raw_len: u64,
+    text: bool,
+    lines: u64,
+    complete: bool,
+    preview_codec: String,
+    preview_text: String,
+    preview_truncated: bool,
+}
+
+impl StoredBody {
+    fn of(output: &CodeRunRawOutput) -> Self {
+        Self {
+            handle: output.handle.clone(),
+            path: output.path.clone(),
+            raw_blake3: output.raw_blake3,
+            raw_len: output.raw_len,
+            text: output.kind == CodeRunOutputKind::Text,
+            lines: output.lines,
+            complete: output.complete,
+            preview_codec: output.preview.codec.clone(),
+            preview_text: output.preview.text.clone(),
+            preview_truncated: output.preview.truncated,
+        }
+    }
+
+    fn output(&self) -> CodeRunRawOutput {
+        CodeRunRawOutput {
+            handle: self.handle.clone(),
+            path: self.path.clone(),
+            raw_blake3: self.raw_blake3,
+            raw_len: self.raw_len,
+            kind: if self.text {
+                CodeRunOutputKind::Text
+            } else {
+                CodeRunOutputKind::Binary
+            },
+            lines: self.lines,
+            complete: self.complete,
+            preview: CodeRunOutputPreview {
+                codec: self.preview_codec.clone(),
+                text: self.preview_text.clone(),
+                truncated: self.preview_truncated,
+            },
+        }
+    }
 }
 
 impl StoredStepFeedback {
@@ -119,10 +176,17 @@ impl StoredStepFeedback {
             Some(DiagnosticCollection::Inline { diagnostics }) => {
                 row.inline = Some(diagnostics.clone());
             }
-            Some(DiagnosticCollection::Stored { .. }) => row.body = body,
+            Some(DiagnosticCollection::Stored { .. }) => {
+                row.body = body.as_ref().map(StoredBody::of);
+            }
             None => {}
         }
         row
+    }
+
+    /// The run's body that holds a stored collection whole.
+    pub(crate) fn body(&self) -> Option<CodeRunRawOutput> {
+        self.body.as_ref().map(StoredBody::output)
     }
 
     /// Whether the row's check may still land.
@@ -139,10 +203,10 @@ impl StoredStepFeedback {
     }
 
     fn type_diagnostics(&self, run: EntityId) -> TypeDiagnostics {
-        let collection = || match (&self.inline, &self.body) {
+        let collection = || match (&self.inline, self.body()) {
             (_, Some(body)) => DiagnosticCollection::Stored {
                 handle: body.handle.clone(),
-                occurrence: ResultOccurrence::of(Some(run), body)
+                occurrence: ResultOccurrence::of(Some(run), &body)
                     .map(|occurrence| occurrence.id().to_hex())
                     .unwrap_or_default(),
                 byte_len: body.raw_len,
@@ -212,7 +276,7 @@ impl Vault {
         self.type_diagnostics_rows(run)
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|(_, row)| row.body)
+            .filter_map(|(_, row)| row.body())
             .collect()
     }
 
@@ -290,8 +354,8 @@ pub(crate) fn erase_type_diagnostics_actor_in_txn(
         .filter(|(_, row)| row.actor.as_ref() == Some(actor))
         .collect();
     for ((run, program_seq, invocation), row) in owned {
-        if let Some(body) = &row.body {
-            let occurrence = ResultOccurrence::of(Some(run), body)?;
+        if let Some(body) = row.body() {
+            let occurrence = ResultOccurrence::of(Some(run), &body)?;
             let marks = occurrence.mark_key(&body.handle);
             RAW_OUTPUT_TAINTS.delete(&vault.store, wtxn, &marks)?;
             RAW_OUTPUT_SECRETS.delete(&vault.store, wtxn, &marks)?;
