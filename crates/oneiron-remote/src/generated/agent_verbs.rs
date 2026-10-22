@@ -262,6 +262,12 @@ impl OneironClient {
                 "vault.budgets.rsi.hold.resume" => remote_agent_verb_output::<
                     oneiron::llm::rsi_doors::RsiLineView,
                 >(client, verb, &input),
+                "vault.runners.seats.quotas" => remote_agent_verb_output::<
+                    oneiron::dispatch_byoa::RunnerSeatQuotasView,
+                >(client, verb, &input),
+                "vault.runners.seats.top_up" => remote_agent_verb_output::<
+                    oneiron::dispatch_byoa::RunnerSeatTopUpReceipt,
+                >(client, verb, &input),
                 "vault.fanout.resume" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
                 >(client, verb, &input),
@@ -2697,7 +2703,7 @@ impl OneironClient {
                     Option<oneiron::llm::decision::questions::QuestionRecord>,
                 >(client, verb, &input),
                 "vault.questions.answers" => remote_agent_verb_output::<
-                    Vec<oneiron::receipt::QuestionAnswer>,
+                    oneiron::receipt::QuestionAnswersReply,
                 >(client, verb, &input),
                 "vault.questions.refresh" => remote_agent_verb_output::<
                     Vec<oneiron::receipt::QuestionAnswer>,
@@ -4462,6 +4468,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.budgets.rsi.hold.resume", value)
+    }
+    pub fn vault_runners_seats_quotas(
+        &self,
+        input: &oneiron::dispatch_byoa::RunnerSeatQuotasRequest,
+    ) -> Result<oneiron::dispatch_byoa::RunnerSeatQuotasView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runners.seats.quotas", value)
+    }
+    pub fn vault_runners_seats_top_up(
+        &self,
+        input: &oneiron::dispatch_byoa::RunnerSeatCreditTopUpRequest,
+    ) -> Result<oneiron::dispatch_byoa::RunnerSeatTopUpReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runners.seats.top_up", value)
     }
     pub fn vault_fanout_resume(
         &self,
@@ -14183,7 +14213,7 @@ impl OneironClient {
     pub fn vault_questions_answers(
         &self,
         input: &oneiron::receipt::QuestionAnswersRequest,
-    ) -> Result<Vec<oneiron::receipt::QuestionAnswer>, MemoryError> {
+    ) -> Result<oneiron::receipt::QuestionAnswersReply, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
