@@ -4,6 +4,7 @@ use crate::claim::{
     PointRead, ReadRow, ScopedRead, ScopedReadActorKey, ScopedReadReceipt, ScopedReadResult,
     claim_evidence_admissible, decode_claim_body, session_claim_producer,
 };
+use crate::settings::{ReadDestination, ReleaseHold};
 use crate::{ClaimSource, EntityId, Result, Vault};
 use std::collections::BTreeSet;
 
@@ -29,6 +30,17 @@ pub struct RepresentationContext {
     pub voice: Vec<RepresentationSource>,
     /// The Dreamer actor's read of every evidence and voice source, folded.
     pub receipt: ScopedReadReceipt,
+}
+/// What one model destination may receive of a request's sources (FIX 8714).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DestinationContext {
+    /// The sources `destination` may receive, the request narrowed to them,
+    /// with the receipt of the read bound to that destination.
+    pub context: RepresentationContext,
+    /// Where they go: the actual destination of the model call.
+    pub destination: ReadDestination,
+    /// Why the first source left out was, when one was.
+    pub held: Option<ReleaseHold>,
 }
 impl Vault {
     /// The model host receives only these admitted source texts. Claim bytes
@@ -83,6 +95,95 @@ impl Vault {
             receipt,
         })
     }
+
+    /// What `destination`, where a model call actually goes, may receive of
+    /// `request`'s sources (FIX 8714). Each evidence and voice source is read
+    /// first as [`Self::representation_context`] reads it, which refuses as
+    /// it does; then again by the Dreamer's reader bound to `destination`,
+    /// and only while the world settings let its world go there as a model
+    /// call. A source either withholds is left out, the request narrowed to
+    /// the rest; one whose bytes moved between the reads is left out too.
+    pub fn representation_context_for(
+        &self,
+        request: &RepresentationRequest,
+        destination: &ReadDestination,
+    ) -> Result<DestinationContext> {
+        let local = self.representation_context(request)?;
+        let actor = self.dreamer_authority()?.entity_ref();
+        let reader = self.scoped_read(
+            ScopedReadActorKey::with_actor_class(actor.to_hex(), "system")
+                .ok_or_else(invalid)?
+                .require_relationship_grants(Some(actor))
+                .for_destination(destination),
+        );
+        let mut receipt = reader.read_receipt(None, 0)?;
+        let mut held = None;
+        let mut admit = |sources: Vec<RepresentationSource>| {
+            let mut kept = Vec::with_capacity(sources.len());
+            for source in sources {
+                match destination_read(self, &reader, &source, destination)? {
+                    Ok(read) => {
+                        receipt.restrict_with(&read);
+                        kept.push(source);
+                    }
+                    Err(hold) => {
+                        held.get_or_insert(hold);
+                    }
+                }
+            }
+            Ok::<_, crate::Error>(kept)
+        };
+        let evidence = admit(local.evidence)?;
+        let voice = admit(local.voice)?;
+        let mut request = local.request;
+        request
+            .evidence
+            .retain(|r| evidence.iter().any(|source| source.claim == r.claim));
+        request
+            .voice
+            .retain(|r| voice.iter().any(|source| source.claim == r.claim));
+        Ok(DestinationContext {
+            context: RepresentationContext {
+                request,
+                evidence,
+                voice,
+                receipt,
+            },
+            destination: destination.clone(),
+            held,
+        })
+    }
+}
+
+/// `source`, read again by `reader`, bound to `destination`: its receipt
+/// while the same bytes read there and the world settings let its world go
+/// to `destination` as a model call (`Vault::model_call_hold_for`, the judge
+/// a model offer's own world hold reads); else why not.
+fn destination_read(
+    vault: &Vault,
+    reader: &ScopedRead<'_>,
+    source: &RepresentationSource,
+    destination: &ReadDestination,
+) -> Result<std::result::Result<ScopedReadReceipt, ReleaseHold>> {
+    let ScopedReadResult { value, receipt } =
+        reader.read(&[PointRead::id(source.claim)], None)?.single();
+    let Some(ReadRow {
+        body: Some(bytes), ..
+    }) = value
+    else {
+        let hold = vault.release_hold_for(&[source.claim], destination)?;
+        return Ok(Err(hold.unwrap_or(ReleaseHold::Placement)));
+    };
+    if *blake3::hash(&bytes).as_bytes() != source.revision {
+        return Ok(Err(ReleaseHold::Placement));
+    }
+    let world = decode_claim_body(&bytes, true)?
+        .world
+        .unwrap_or_else(crate::claim::base_world_id);
+    Ok(match vault.model_call_hold_for(Some(world), destination)? {
+        Some(hold) => Err(hold),
+        None => Ok(receipt),
+    })
 }
 fn read_source(
     reader: &ScopedRead<'_>,

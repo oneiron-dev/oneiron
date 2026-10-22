@@ -4,7 +4,10 @@
 //! transaction that records the answer, and keeps the whole binding it
 //! replaced. Undo restores that binding only while the seat still holds the
 //! one the switch bound: anything else moved it since, and undo would
-//! overwrite that.
+//! overwrite that. An embedder seat's switch stages its binding through a
+//! space move instead (O3b PR B; ARCH-0053 R13: search uses the old index
+//! meanwhile): the binding applies at that move's swap, and undo goes through
+//! the same staged binding.
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -12,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::{EvalSeat, OfferModelPin};
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::names_no_actor;
+use crate::embed::{BindingMoveState, BindingNotApplied, BindingSource};
 use crate::llm::LlmCapability;
 use crate::llm::manifest::{MODEL_ROLES, ModelBinding, ModelRole, read_manifest};
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -35,7 +39,40 @@ pub struct OfferSwitchReceipt {
     pub to: OfferModelPin,
     pub owner: SwitchOwner,
     pub at: u64,
+    pub application: SwitchApplication,
     pub undone: Option<OfferSwitchUndo>,
+}
+
+/// Where a switch's binding stands: bound with the approval, or, for the
+/// embedder seat, staged through a space move and applied at its swap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SwitchApplication {
+    /// Bound in the approval's own write.
+    Bound,
+    /// Staged: the old binding and index serve while its candidate space
+    /// fills, or until a declared space pins the model.
+    Staged,
+    /// The staged binding applied as its move swapped in.
+    Applied { at: u64 },
+    /// The staged binding never applied.
+    NotApplied { at: u64, why: BindingNotApplied },
+}
+
+impl SwitchApplication {
+    /// What a staged binding's `state` reads as here; `None` for an undo,
+    /// which the receipt's own `undone` records.
+    fn staged(state: &BindingMoveState) -> Option<Self> {
+        match state {
+            BindingMoveState::Waiting | BindingMoveState::Filling => Some(Self::Staged),
+            BindingMoveState::Applied { at, .. } => Some(Self::Applied { at: *at }),
+            BindingMoveState::NotApplied { at, why } => Some(Self::NotApplied {
+                at: *at,
+                why: why.clone(),
+            }),
+            BindingMoveState::Undone { .. } => None,
+        }
+    }
 }
 
 /// The owner's undo of a switch.
@@ -63,7 +100,7 @@ impl SwitchOwner {
     }
 
     /// Makes this no one when it is `actor`; whether it was.
-    fn forget(&mut self, actor: EntityId) -> bool {
+    pub(crate) fn forget(&mut self, actor: EntityId) -> bool {
         let named = self.is(actor);
         if named {
             *self = Self::Erased;
@@ -184,8 +221,24 @@ pub(super) fn apply_switch_in_txn(
         disposition: previous.disposition.clone(),
         reads_audio: previous.reads_audio && row.catalog.supports(&LlmCapability::AudioInput),
     };
-    manifest.roles.insert(role, binding.clone());
-    vault.write_model_manifest_in_txn(txn, &manifest, None, None)?;
+    let application = if role == ModelRole::RetrievalEmbedder {
+        let source = BindingSource::Offer {
+            offer: *offer,
+            owner: SwitchOwner::Actor(owner),
+        };
+        let pending = crate::embed::stage_embedder_binding_in_txn(
+            vault,
+            txn,
+            source,
+            Some(previous.clone()),
+            binding.clone(),
+        )?;
+        SwitchApplication::staged(&pending.state).unwrap_or(SwitchApplication::Staged)
+    } else {
+        manifest.roles.insert(role, binding.clone());
+        vault.write_model_manifest_in_txn(txn, &manifest, None, None)?;
+        SwitchApplication::Bound
+    };
     let receipt = OfferSwitchReceipt {
         offer: *offer,
         role,
@@ -194,6 +247,7 @@ pub(super) fn apply_switch_in_txn(
         to: to.clone(),
         owner: SwitchOwner::Actor(owner),
         at,
+        application,
         undone: None,
     };
     SWITCH.put(&vault.store, txn, offer, &receipt)?;
@@ -201,19 +255,21 @@ pub(super) fn apply_switch_in_txn(
 }
 
 /// The vault owner's undo of an approved switch: the seat's role takes back
-/// the binding the switch replaced.
+/// the binding the switch replaced. A staged embedder switch undoes through
+/// its binding move: a pending binding is cancelled with its move, and an
+/// applied one goes back with the slots its move swapped in.
 /// # Errors
 /// A caller who is not the vault owner, an offer whose approval bound no
-/// switch, a switch already undone, a seat whose binding moved since the
-/// switch, a manifest the old binding no longer validates in, or storage
-/// errors. An error writes nothing.
+/// switch, a switch already undone, a staged one that never applied, a seat
+/// whose binding moved since the switch, a manifest the old binding no longer
+/// validates in, or storage errors. An error writes nothing.
 pub fn undo_training_offer_switch(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     offer: &EntityId,
     at: u64,
 ) -> Result<OfferSwitchReceipt> {
-    vault.with_write_txn_grouped(|txn| {
+    let (receipt, setup) = vault.with_write_txn_grouped(|txn| {
         let actor = owner.revalidate_in_txn(vault, txn)?;
         let mut receipt = SWITCH
             .get(&vault.store, txn, offer)?
@@ -221,24 +277,84 @@ pub fn undo_training_offer_switch(
         if receipt.undone.is_some() {
             return Err(invalid("the switch is already undone"));
         }
-        let mut manifest = read_manifest(&vault.store, txn)?
-            .ok_or(invalid("the model manifest is gone; nothing to undo"))?;
-        if manifest.roles.get(&receipt.role) != Some(&receipt.binding) {
-            return Err(invalid(
-                "the seat's binding changed since the switch; undo would overwrite it",
-            ));
-        }
-        manifest
-            .roles
-            .insert(receipt.role, receipt.previous.clone());
-        vault.write_model_manifest_in_txn(txn, &manifest, None, None)?;
+        let setup = if receipt.application == SwitchApplication::Bound {
+            let mut manifest = read_manifest(&vault.store, txn)?
+                .ok_or(invalid("the model manifest is gone; nothing to undo"))?;
+            if manifest.roles.get(&receipt.role) != Some(&receipt.binding) {
+                return Err(invalid(
+                    "the seat's binding changed since the switch; undo would overwrite it",
+                ));
+            }
+            manifest
+                .roles
+                .insert(receipt.role, receipt.previous.clone());
+            vault.write_model_manifest_in_txn(txn, &manifest, None, None)?;
+            None
+        } else {
+            let (state, rows) = crate::embed::undo_staged_binding_in_txn(vault, txn, offer, actor)?;
+            if let Some(application) = SwitchApplication::staged(&state) {
+                receipt.application = application;
+            }
+            Some(rows)
+        };
         receipt.undone = Some(OfferSwitchUndo {
             owner: SwitchOwner::Actor(actor),
             at,
         });
         SWITCH.put(&vault.store, txn, offer, &receipt)?;
-        Ok(receipt)
-    })
+        Ok((receipt, setup))
+    })?;
+    // A move the undo ended hands its setup rows on once committed.
+    if let Some(setup) = setup {
+        vault.embedding_setup_committed(setup);
+        vault.embedding_move_ended();
+    }
+    Ok(receipt)
+}
+
+/// Records a staged switch's binding `state` on its receipt, in the write
+/// that moved it (O3b PR B).
+/// # Errors
+/// Storage errors.
+pub(crate) fn settle_staged_switch_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    offer: &EntityId,
+    state: &BindingMoveState,
+) -> Result<()> {
+    let Some(application) = SwitchApplication::staged(state) else {
+        return Ok(());
+    };
+    if let Some(mut receipt) = SWITCH.get(&vault.store, txn, offer)?
+        && receipt.application != application
+    {
+        receipt.application = application;
+        SWITCH.put(&vault.store, txn, offer, &receipt)?;
+    }
+    Ok(())
+}
+
+/// Records the owner's undo of a staged switch's move on its receipt, in the
+/// undo's write: the move's undo took the binding back with its slots.
+/// # Errors
+/// Storage errors.
+pub(crate) fn undo_staged_switch_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    offer: &EntityId,
+    actor: EntityId,
+    at: u64,
+) -> Result<()> {
+    if let Some(mut receipt) = SWITCH.get(&vault.store, txn, offer)?
+        && receipt.undone.is_none()
+    {
+        receipt.undone = Some(OfferSwitchUndo {
+            owner: SwitchOwner::Actor(actor),
+            at,
+        });
+        SWITCH.put(&vault.store, txn, offer, &receipt)?;
+    }
+    Ok(())
 }
 
 /// The switch an offer's approval applied, if any.

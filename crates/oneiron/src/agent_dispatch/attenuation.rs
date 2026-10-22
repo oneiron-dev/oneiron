@@ -248,10 +248,10 @@ pub(super) fn source_content_fingerprint(source: &AgentDefinition) -> Result<bla
 /// (or non-dispatch) lineage, and the CONFIGURED compatibility cap answers for
 /// it — bounded, not unbounded, and not a refusal. Only a STORED `Some(0)` is
 /// the exhausted lineage.
-pub(super) fn child_depth_from(parent: Option<AgentDispatchInput>) -> Result<u8> {
+pub(super) fn child_depth_from(parent: Option<AgentDispatchInput>) -> Result<u64> {
     parent
         .and_then(|input| input.depth_remaining)
-        .unwrap_or(AGENT_DISPATCH_COMPAT_DEPTH_CAP)
+        .unwrap_or(u64::from(AGENT_DISPATCH_COMPAT_DEPTH_CAP))
         .checked_sub(1)
         .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "agent dispatch recursion depth is exhausted",
