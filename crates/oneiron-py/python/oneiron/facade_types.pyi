@@ -18795,6 +18795,7 @@ class WakeRecipePolicy(TypedDict):
     thing_child_code_mode: bool
     thing_child_instruction: str
     thing_child_input_window_divisor: int
+    thing_child_fallback_window_tokens: int
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):
