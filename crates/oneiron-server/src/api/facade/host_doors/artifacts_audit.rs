@@ -9,8 +9,8 @@ use oneiron::task_verb::sdk::ActAnswer;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::support::{
-    Listed, artifact_asker, credential_listing, internal, naming, owner_proof, read_beside, refused,
-    slide_reviewer,
+    Listed, artifact_asker, credential_listing, internal, naming, owner_proof, read_beside,
+    refused, slide_reviewer,
 };
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
