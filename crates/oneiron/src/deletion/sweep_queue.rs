@@ -7,7 +7,7 @@ use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
-use super::receipt::RedactionScope;
+use super::receipt::{CaptureFailure, RedactionScope};
 
 pub(crate) const HARD_ERASE_SWEEP_PREFIX: &[u8] = b"h:";
 pub(crate) const LAST_HARD_ERASE_SWEEP_SEQ_KEY: &[u8] = b"m:last_hard_erase_sweep_seq";
@@ -69,6 +69,12 @@ pub(crate) struct HardEraseSweepScope {
     /// compaction is global, so the refs ride the job as audit context).
     pub(crate) body_snapshot_refs: Vec<String>,
     pub(crate) carrier_classes: Vec<String>,
+    /// Each erased record whose capture took the audited corrupt-CLAIM
+    /// exception (FIX 7800): its subject and world were unknown, so its due job
+    /// asks the sweep for every carrier, queued sends among them. Kept as the
+    /// job is retried, whatever `last_error_code` a retry writes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) capture_failures: Vec<CaptureFailure>,
 }
 
 /// Delete-interplay refs captured from an `edge.provenance` Claim BEFORE its
@@ -83,6 +89,9 @@ pub(crate) struct HardEraseSweepExtras {
     /// Captured `body_snapshot_ref`s — pointers to the exact body bytes the
     /// actor saw, the sweep's residual-carrier locator.
     pub body_snapshot_refs: Vec<String>,
+    /// Records whose capture took the audited corrupt-CLAIM exception (FIX
+    /// 7800), carried to the job scope and the receipt.
+    pub(crate) capture_failures: Vec<CaptureFailure>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +157,7 @@ pub(crate) fn encode_hard_erase_sweep_job(
             revision_ids,
             body_snapshot_refs: extras.body_snapshot_refs,
             carrier_classes: arch0038_carrier_classes(),
+            capture_failures: extras.capture_failures,
         },
         retry_state: HardEraseRetryState::fresh(queued_at, requested_at),
     };

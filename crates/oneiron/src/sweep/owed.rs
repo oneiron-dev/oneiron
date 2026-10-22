@@ -135,8 +135,8 @@ fn compact_owed_window(
     {
         tracing::debug!(error = %error, "sweep: owed window not unloaded");
     }
-    let compacted =
-        vault.while_window_closed(key, || compact_window_with(vault, key, erased, withdrawn));
+    let compact = || compact_window_with(vault, key, erased, withdrawn, false);
+    let compacted = vault.while_window_closed(key, compact);
     match compacted {
         Some(Ok(CompactOutcome::Compacted)) => {
             run.windows_compacted += 1;

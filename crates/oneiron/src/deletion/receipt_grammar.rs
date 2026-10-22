@@ -3,7 +3,9 @@
 //! device wrote it or a sync replay door admits it. An erase's initial
 //! receipt, its sweep row and its overall final row share it.
 
-use super::receipt::{ATT_KEY_CLIENT, ATT_KEY_PK, ATT_KEY_SIG, ATT_KEY_V, ATT_VERSION};
+use super::receipt::{
+    ATT_KEY_CLIENT, ATT_KEY_PK, ATT_KEY_SIG, ATT_KEY_V, ATT_VERSION, CAPTURE_FAILED,
+};
 use crate::error::{Error, Result, SyncError};
 
 /// Pinned contracts.ts `redactionAuditReceipt.fields` key set — the wire
@@ -13,7 +15,7 @@ use crate::error::{Error, Result, SyncError};
 ///
 /// Un-cfg'd since ONE-1087: the sweep executor validates every receipt body
 /// it reads, and the completion row it appends, on EVERY build.
-const RECEIPT_BODY_KEYS: [&str; 16] = [
+const RECEIPT_BODY_KEYS: [&str; 17] = [
     "request_id",
     "scope",
     "reason",
@@ -29,6 +31,7 @@ const RECEIPT_BODY_KEYS: [&str; 16] = [
     "room_role",
     "erase_complete_at",
     "custody_retirements",
+    "capture_failures",
     "verification",
 ];
 
@@ -57,6 +60,9 @@ const RECEIPT_BODY_KEYS: [&str; 16] = [
 ///   custody retirements the erase owes (`<kind tag>.<item hex>.<through
 ///   hex>`, ids and a generation only), strictly ascending; an empty array is
 ///   the explicit `not required`;
+/// * `capture_failures`, present only when the erase took the audited
+///   corrupt-CLAIM exception (FIX 7800), must be a non-empty array of
+///   ids-only records, strictly ascending by id;
 /// * `verification` carries EXACTLY the four attestation entries pinned by
 ///   ONE-1140 (OD-6): `att_client` (16 lowercase hex), `att_pk` (64
 ///   lowercase hex), `att_sig` (128 lowercase hex), `att_v` (`"1"`) —
@@ -154,6 +160,7 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
                 }
             }
             "custody_retirements" => validate_custody_retirements(&value)?,
+            "capture_failures" => validate_capture_failures(&value)?,
             "affected_revision_ids" => {
                 validate_opaque_uuid_array(
                     &value,
@@ -200,6 +207,7 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
                 | "actor_ref"
                 | "room_ref"
                 | "room_role"
+                | "capture_failures"
         );
         if !optional && !seen[index] {
             return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
@@ -236,11 +244,57 @@ fn validate_custody_retirements(value: &rmpv::Value) -> Result<()> {
     Ok(())
 }
 
+/// Validates `capture_failures` (FIX 7800): each record whose capture took the
+/// audited corrupt-CLAIM exception, as a map of exactly its opaque `entity_id`,
+/// the closed `capture_failed` `error_code` and its repair event's opaque
+/// `repair_receipt`, strictly ascending by id. A receipt with none omits the
+/// field, so an empty array is refused: one binding has one encoding.
+fn validate_capture_failures(value: &rmpv::Value) -> Result<()> {
+    const INVALID: Error = Error::Sync(SyncError::InvalidRedactionReceiptBody(
+        "capture_failures must be ascending ids-only capture failure records",
+    ));
+    let Some(items) = value.as_array().filter(|items| !items.is_empty()) else {
+        return Err(INVALID);
+    };
+    let mut last: Option<&str> = None;
+    for item in items {
+        let Some(fields) = item.as_map().filter(|fields| fields.len() == 3) else {
+            return Err(INVALID);
+        };
+        let mut id = None;
+        let mut code = false;
+        let mut repair = false;
+        for (key, field) in fields {
+            let Some(text) = field.as_str() else {
+                return Err(INVALID);
+            };
+            match key.as_str() {
+                Some("entity_id") if id.is_none() && uuid::Uuid::parse_str(text).is_ok() => {
+                    id = Some(text);
+                }
+                Some("error_code") if !code && text == CAPTURE_FAILED => code = true,
+                Some("repair_receipt") if !repair && uuid::Uuid::parse_str(text).is_ok() => {
+                    repair = true;
+                }
+                _ => return Err(INVALID),
+            }
+        }
+        let Some(id) = id.filter(|_| code && repair) else {
+            return Err(INVALID);
+        };
+        if last.is_some_and(|last| last >= id) {
+            return Err(INVALID);
+        }
+        last = Some(id);
+    }
+    Ok(())
+}
+
 /// Validates the receipt `scope` field: a map carrying exactly
 /// `entity_ids` + `revision_ids`, both arrays of opaque UUID strings
 /// (contracts.ts: "entity UUIDs / revision UUIDs … Opaque IDs only; no
 /// names or content").
-fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
+pub(super) fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
     let rmpv::Value::Map(entries) = value else {
         return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "scope must be a map",
@@ -293,7 +347,7 @@ fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
 /// attestation grammar: EXACTLY four string entries — `att_client` str(16),
 /// `att_pk` str(64), `att_sig` str(128), all lowercase hex, plus
 /// `att_v == "1"`. No duplicates, no unknown keys, no other shapes.
-fn validate_receipt_verification(value: rmpv::Value) -> Result<()> {
+pub(super) fn validate_receipt_verification(value: rmpv::Value) -> Result<()> {
     let rmpv::Value::Map(fields) = value else {
         return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "verification must be a map",
@@ -354,7 +408,7 @@ pub(super) fn is_lower_hex(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn validate_opaque_uuid(value: &rmpv::Value, reason: &'static str) -> Result<()> {
+pub(super) fn validate_opaque_uuid(value: &rmpv::Value, reason: &'static str) -> Result<()> {
     let valid = value
         .as_str()
         .is_some_and(|s| uuid::Uuid::parse_str(s).is_ok());

@@ -368,11 +368,7 @@ impl Vault {
                     let world = if pad {
                         crate::world_keys::pad_body_world(&raw).and_then(Result::ok)
                     } else {
-                        crate::claim::decode_claim_body(
-                            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                            true,
-                        )?
-                        .world
+                        self.erase_claim_world(id, &raw, reason)?
                     };
                     if let Some(world) = world {
                         window_label.push('@');
@@ -396,9 +392,10 @@ impl Vault {
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-purge (SoftErase
         // truncates the payload to the 25 B header) — capture them now.
-        // `None` for every non-Claim / non-provenance entity: zero new
-        // behavior on those paths.
-        let captured = self.capture_provenance_delete(id)?;
+        // `NotApplicable` for every non-Claim / non-provenance entity: zero
+        // new behavior on those paths. A hard erase of a classified corrupt
+        // CLAIM takes the audited exception (FIX 7800).
+        let captured = self.capture_provenance_delete(id, reason.active_store_hard_purge_v1())?;
 
         if !reason.active_store_hard_purge_v1() {
             // `user_delete` keeps the local 25 B shell (ARCH-0038 "Tombstone
@@ -447,7 +444,7 @@ impl Vault {
             let mut changed = vec![*id];
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
-            if existed && let Some(captured) = &captured {
+            if existed && let Some(captured) = captured.refs() {
                 changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                     &mut wtxn,
                     id,
@@ -631,13 +628,17 @@ impl Vault {
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }
-            if existed && let Some(captured) = &captured {
+            if existed && let Some(captured) = captured.refs() {
                 changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                     &mut wtxn,
                     id,
                     &captured.subject,
                 )?);
                 stage_sweep_refs_in_txn(self, &mut wtxn, id, captured)?;
+            }
+            // The audited exception keeps its debt across this scrub (FIX 7800).
+            if existed && let Some(corrupt) = captured.corrupt() {
+                changed.extend(self.scrub_corrupt_capture_in_txn(&mut wtxn, corrupt, true)?);
             }
             // fix-leg 9 P1: on the NON-PUBLISHING path this txn's re-fold made
             // it the linearization point, so the deletion's propagation intent
@@ -843,7 +844,15 @@ impl Vault {
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
         // The erased world's pad tombstones publish once this commits
         // (FIX 343); their windows are read before the purge erases the pads.
-        let pad_windows = self.world_pad_windows_in_txn(&wtxn, id)?;
+        let mut pad_windows = self.world_pad_windows_in_txn(&wtxn, id)?;
+        // A classified corrupt CLAIM's world does not read: its tombstone goes
+        // to its month's world windows too, published with these (FIX 7800).
+        pad_windows.extend(self.stage_corrupt_world_tombstones_in_txn(
+            &mut wtxn,
+            id,
+            &window_label,
+            &tombstone,
+        )?);
         let (existed, citing) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
@@ -857,12 +866,15 @@ impl Vault {
         // Gated on `existed` (the entity record was erased by THIS txn): a
         // captured Claim whose record was raced away was already refreshed
         // by the racer's own delete txn.
-        if existed && let Some(captured) = &captured {
+        if existed && let Some(captured) = captured.refs() {
             affected.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                 &mut wtxn,
                 id,
                 &captured.subject,
             )?);
+        }
+        if existed && let Some(corrupt) = captured.corrupt() {
+            affected.extend(self.scrub_corrupt_capture_in_txn(&mut wtxn, corrupt, false)?);
         }
 
         // OWNER-DECISION (cfg-off durability): the pending-tombstone marker
@@ -911,7 +923,7 @@ impl Vault {
                     .queues_historical_sweep()
                     .then_some(hard_purge_complete_at),
             },
-            sweep_extras(captured.as_ref()),
+            sweep_extras(&captured),
         )?;
         claim_in_txn(gate.as_ref(), &mut wtxn, &tombstone, Some(&receipt_id))?;
         self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;

@@ -122,8 +122,9 @@ impl Vault {
         // loses its PartOf edges, even when the host never held the child.
         crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
-        // EdgeRef and sweep refs are only readable PRE-scrub.
-        let captured = self.capture_provenance_delete_in_txn(wtxn, id)?;
+        // EdgeRef and sweep refs are only readable PRE-scrub. A hard replay of
+        // a classified corrupt CLAIM takes the audited exception (FIX 7800).
+        let captured = self.capture_provenance_delete_in_txn(wtxn, id, decoded.is_hard())?;
 
         if !decoded.is_hard() {
             let had_refinement =
@@ -149,7 +150,7 @@ impl Vault {
             }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
-            let changed_documents = match &captured {
+            let changed_documents = match captured.refs() {
                 Some(captured) if existed => self.refresh_subject_edge_after_claim_delete_in_txn(
                     wtxn,
                     id,
@@ -277,12 +278,15 @@ impl Vault {
         HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
-        if let Some(captured) = &captured {
+        if let Some(captured) = captured.refs() {
             changed_documents.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                 wtxn,
                 id,
                 &captured.subject,
             )?);
+        }
+        if let Some(corrupt) = captured.corrupt() {
+            changed_documents.extend(self.scrub_corrupt_capture_in_txn(wtxn, corrupt, false)?);
         }
         if let Some((request_id, tombstone_reason)) =
             decoded.request_id.zip(raw_value.first().copied())
@@ -324,7 +328,7 @@ impl Vault {
                 hard_purge_complete_at: applied_at,
                 sweep_queued_at: Some(applied_at),
             },
-            sweep_extras(captured.as_ref()),
+            sweep_extras(&captured),
         )?;
         if let Some(request) = decoded.request_id.as_ref() {
             // A local shared act claimed this request before its purge was

@@ -1,9 +1,7 @@
 //! LMDB audit, dependency, content-addressed blob and queue adapters.
 use super::*;
 use crate::attempt_queue::*;
-use crate::blob_artifact::{
-    blob_artifact_asset_entity_id, blob_artifact_asset_ref_key, blob_artifact_asset_ref_prefix,
-};
+use crate::blob_artifact::{blob_artifact_asset_entity_id, blob_artifact_asset_ref_key};
 use crate::deletion::DeleteReason;
 use crate::error::{Error, Result};
 use crate::side_table::{Named, SideTable};
@@ -232,58 +230,28 @@ impl BlobStore for Vault {
             .with_asset_body_reader_in_txn(txn, &id, checked_read)?
             .is_some())
     }
+    /// ERASE-SHARED=B (FIX 7762): every reason, a hard erase's among them, releases the named
+    /// reference alone. Sibling references, their records and every other holder stay; erasing
+    /// another record that holds the same bytes is the explicit same-bytes door's. The bytes go
+    /// with their last holder: while an `asset_ref` row or a live version claim still names them
+    /// they stay, and the release returns `false`.
     fn port_blob_delete(
         &self,
         txn: &mut RwTxn<'_>,
         reference: &EntityId,
         hash: &[u8; 32],
-        reason: DeleteReason,
+        _reason: DeleteReason,
     ) -> Result<bool> {
-        let prefix = blob_artifact_asset_ref_prefix(hash);
-        let hard = matches!(
-            reason,
-            DeleteReason::UserHardDelete | DeleteReason::GdprDelete | DeleteReason::PolicyDelete
-        );
-        if hard {
-            let keys = self
-                .store
-                .vault_meta
-                .prefix_iter(txn, &prefix)?
-                .map(|row| row.map(|(key, _)| key.to_vec()))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            let mut references = Vec::new();
-            for key in keys {
-                if key.len() != prefix.len() + 16 {
-                    return Err(Error::CorruptedIndex("blob reference key"));
-                }
-                references.push(EntityId::from_bytes(
-                    key[prefix.len()..]
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("blob reference"))?,
-                )?);
-                self.store.vault_meta.delete(txn, &key)?;
-            }
-            for reference in references {
-                self.port_entity_delete(txn, &reference)?;
-            }
-        } else {
-            if !self
-                .store
-                .vault_meta
-                .delete(txn, &blob_artifact_asset_ref_key(hash, reference))?
-            {
-                return Ok(false);
-            }
-            if self
-                .store
-                .vault_meta
-                .prefix_iter(txn, &prefix)?
-                .next()
-                .transpose()?
-                .is_some()
-            {
-                return Ok(false);
-            }
+        if !self
+            .store
+            .vault_meta
+            .delete(txn, &blob_artifact_asset_ref_key(hash, reference))?
+        {
+            return Ok(false);
+        }
+        let holders = crate::blob_artifact::content_holders_in_txn(&self.store, txn, hash)?;
+        if !holders.is_empty() {
+            return Ok(false);
         }
         self.port_entity_delete(txn, &blob_artifact_asset_entity_id(hash)?)
     }

@@ -6,6 +6,8 @@ mod text_ops;
 pub use self::builder::{MaintenanceBuilder, MaintenanceReport};
 use self::hnsw_rebuild::rebuild_hnsw_if_dropped;
 pub(crate) use self::hnsw_rebuild::validate_rebuild_vector;
+// The outcome a maintenance run reports per selected corrupt CLAIM (FIX 7800).
+pub use crate::deletion::CorruptClaimRepair;
 
 #[cfg(test)]
 mod tests;

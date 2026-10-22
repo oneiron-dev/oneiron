@@ -114,6 +114,8 @@
 //! already preserves `h:` rows byte-identically (ONE-1091 residual).
 
 mod compact;
+// A corrupt CLAIM's erase asks for every carrier (FIX 7800).
+mod corrupt;
 mod finalize;
 #[cfg(feature = "sync")]
 pub(crate) mod owed;

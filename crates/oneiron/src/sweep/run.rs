@@ -313,10 +313,13 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
     // asked for spends it only for a due obligation (ARCH-0038 carrier-1,
     // ARCH-0073); the owner's run compacts every window. A late re-put of an
     // erased id never materializes; its bytes go with the next compaction.
+    // A due job whose erase took the audited corrupt-CLAIM exception asks
+    // for every carrier, queued sends among them (FIX 7800).
+    let full_carriers = super::corrupt::full_carrier_pass(&due);
     let window_state = if !owner_asked && due.is_empty() && withdrawn_due.is_empty() {
         WindowSweepState::NoObligation
     } else {
-        compact_all_windows(vault, &erased, &mut withdrawn, &mut run, now)?
+        compact_all_windows(vault, &erased, &mut withdrawn, full_carriers, &mut run, now)?
     };
     // A window an erase owes a compaction gets it on this pass (FIX 6387).
     #[cfg(feature = "sync")]

@@ -55,6 +55,8 @@ pub use coop_succession::{
 pub use delete::{
     DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview, HeldBytes, LfsChunkImpact,
 };
+// A maintenance pass's audited corrupt-CLAIM classification (FIX 7800).
+pub use erase::CorruptClaimRepair;
 pub use legal_hold::{
     ERASE_COMPLETION_PENDING, ErasePendingReason, HostOrderHold, LEGAL_HOLD_DEFERRAL,
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LEGAL_HOLD_SELF_HOSTED_NOTE,
@@ -96,6 +98,8 @@ pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use erase::TombstoneScopeProbes;
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority};
 pub(crate) use receipt::decode_redaction_audit_receipt;
+// A corrupt CLAIM's repair event is no erase receipt (FIX 7800).
+pub(crate) use receipt::is_corrupt_claim_repair_event;
 pub(crate) use receipt_completion::{
     append_redaction_sweep_completion_in_txn, redaction_sweep_completion_id,
     redaction_sweep_completion_in_txn,
