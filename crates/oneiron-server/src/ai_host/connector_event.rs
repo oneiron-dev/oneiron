@@ -123,6 +123,7 @@ impl ServedConnectorResponder {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         let RoleCall { request, ladder } = self
             .runtime

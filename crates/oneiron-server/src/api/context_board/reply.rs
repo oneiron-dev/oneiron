@@ -9,7 +9,6 @@ use oneiron::memory::{
 };
 use oneiron::prompt::{
     PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptLayout, PromptRecompileStamp, place_turn_context,
-    session_prompt_layout,
 };
 use oneiron::receipt::ContextReceiptFields;
 use oneiron::task_verb::sdk::{AiReply, AiReplyL2Base, AiReplyRequest};
@@ -85,6 +84,7 @@ async fn reply(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     // The same inference policy and metered run as the existing text door.
     let (ladder, run) = super::super::llm::admit(server, auth, &mut request)
@@ -158,8 +158,9 @@ async fn reply(
     // a stable prefix whatever its tier's name. The board, read again for
     // every message, rides the request-only turn context right before the
     // caller's message, which is sent as the caller wrote it and retrieval
-    // read it.
-    request.messages = match session_prompt_layout() {
+    // read it. The vault's `[models] prompt_layout` picks the layout, else
+    // the host's.
+    request.messages = match server.ai.prompt_layout() {
         PromptLayout::EarlySystem => vec![
             text_message(LlmMessageRole::System, outgoing.clone()),
             text_message(LlmMessageRole::User, input.message),

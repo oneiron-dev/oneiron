@@ -128,8 +128,9 @@ pub fn record_training_offer(
 
 /// `rows` sorted and deduplicated, less every row already hard-erased in
 /// `txn` (FIX 5482): a source an erase reached between the gather and this
-/// write does not come back. Unknown stays unknown.
-fn live_source_rows_in(
+/// write does not come back. Unknown stays unknown. Every engine writer of a
+/// kept source set filters through it (FIX 6933).
+pub(crate) fn live_source_rows_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     rows: Option<Vec<EntityId>>,

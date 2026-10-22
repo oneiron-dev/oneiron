@@ -203,6 +203,10 @@ families! {
     // CALLS CODE_RUN_READ_WORLD: ids, positions and enums only, but no ruling
     // makes it structure yet.
     Class::Unclassified => CODE_RUN_READ_WORLD;
+    // CALLS CODE_RUN_TYPE_DIAGNOSTICS (FIX 8277): a step's check state and
+    // measures, its diagnostics inline or in the run's own body; no ruling
+    // classes it yet.
+    Class::Unclassified => CODE_RUN_TYPE_DIAGNOSTICS;
     Class::Other(Client::Dispatch(OtherClient::Body)) => CODE_RUN_RAW_OUTPUT;
     // A blocked report's captured requests (FIX 6708) and a wait's
     // deliveries (FIX 6588); the wait index stays unclassified, as only its
@@ -353,7 +357,8 @@ families! {
     // side_table/decls/vault_meta_f_l.rs
     Class::Owner(Getter::PhoneticSource) => BATCH_PHONETIC_INDEX_SOURCE;
     Class::Owner(Getter::TextSource) => INDEX_SOURCE_TEXT;
-    Class::Structure => HOME_HANDOFF_RECEIPT KEY_CUSTODY_BINDING KEY_CUSTODY_RETIRE_PENDING;
+    Class::Structure => GATE_DECISION_PENDING_SCRUB HOME_HANDOFF_RECEIPT KEY_CUSTODY_BINDING
+        KEY_CUSTODY_RETIRE_PENDING;
     // CALLS HOME_HANDOFF_ENDPOINT (FIX 6460): a handoff's head and transfer
     // carry the target's endpoint URL, which no owner is proven to hold.
     Class::Unclassified => HOME_HANDOFF_HEAD HOME_HANDOFF_TRANSFER;

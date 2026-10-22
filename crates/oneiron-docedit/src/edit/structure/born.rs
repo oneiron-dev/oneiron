@@ -11,7 +11,7 @@ use super::{
 };
 use crate::deck::{ShapeKind, SlideView};
 use crate::design_plan::Rect;
-use crate::edit::{EditRefusal, Effect, Xfrm};
+use crate::edit::{AnchorCandidate, EditRefusal, Effect, Xfrm};
 use crate::retained_opc::Package;
 
 /// PowerPoint's default connector style: theme references, no literal colour.
@@ -97,18 +97,37 @@ pub(super) fn add_connector(
             "a connector frame has no negative extent",
         ));
     }
-    let ends: String = [("stCxn", new.start), ("endCxn", new.end)]
+    // Each end names one shape: every shape holding the id is a candidate,
+    // a group too, and more than one goes back to the caller to pick, before
+    // anything is written (FIX 8583).
+    let ends: String = [("stCxn", "start", new.start), ("endCxn", "end", new.end)]
         .into_iter()
-        .filter_map(|(local, end)| end.map(|end| (local, end)))
-        .map(|(local, (shape, site))| {
-            let glued = slide
+        .filter_map(|(local, end, at)| at.map(|at| (local, end, at)))
+        .map(|(local, end, (shape, site))| {
+            let held: Vec<(usize, &crate::deck::ShapeView)> = slide
                 .shapes
                 .iter()
-                .any(|held| held.id == Some(shape) && held.kind != ShapeKind::Group);
-            if glued {
-                Ok(format!(r#"<a:{local} id="{shape}" idx="{site}"/>"#))
-            } else {
-                Err(EditRefusal::Missing("connector end shape"))
+                .enumerate()
+                .filter(|(_, held)| held.id == Some(shape))
+                .collect();
+            match held.as_slice() {
+                [(_, one)] if one.kind != ShapeKind::Group => {
+                    Ok(format!(r#"<a:{local} id="{shape}" idx="{site}"/>"#))
+                }
+                [] | [_] => Err(EditRefusal::Missing("connector end shape")),
+                _ => Err(EditRefusal::AmbiguousEndpoint {
+                    end,
+                    shape,
+                    candidates: held
+                        .iter()
+                        .map(|(index, view)| AnchorCandidate {
+                            shape: *index,
+                            kind: view.kind,
+                            name: view.name.clone(),
+                            creation_id: view.creation_id.clone(),
+                        })
+                        .collect(),
+                }),
             }
         })
         .collect::<Result<_, _>>()?;

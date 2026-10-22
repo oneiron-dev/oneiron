@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "An optional type check of code-mode programs before they run"
+description = "A type check of code-mode programs, run beside them as non-blocking feedback"
 publish = false
 
 [dependencies]

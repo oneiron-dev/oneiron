@@ -11,7 +11,10 @@
 `fetch` is the only online phase: it fills the mirror (M) with every pinned
 input and, with --learn on a fresh mirror, writes packages.lock.toml. `build`
 re-enters itself in a user namespace with no network at all and builds from
-the mirror. See README.md and docs/ops/guest-image-family.md.
+the mirror. A variant the builder cannot install yet is refused before either
+enters its namespace or downloads anything. Every tool's output goes to
+stderr; `build` prints its record JSON on stdout, whole and last. See
+README.md and docs/ops/guest-image-family.md.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from imagebuild import model as model_mod  # noqa: E402
-from imagebuild import pipeline, receipt, release_manifest  # noqa: E402
+from imagebuild import mkosi_run, pipeline, receipt, release_manifest  # noqa: E402
 from imagebuild.fetch import Mirror  # noqa: E402
 from imagebuild.util import BuildError, HostRefusal, log, userns_root  # noqa: E402
 
@@ -119,8 +122,11 @@ def main() -> int:
             log(f"manifest {path} sha256 {sha}")
             print(path)
             return 0
-        _host()
         model_mod.validate(model)
+        requested = (args.variant or ["base"]) if args.command == "fetch" else [args.variant]
+        for variant in requested:
+            mkosi_run.check_supported(model, model.plan(variant))
+        _host()
         if args.command == "fetch":
             _enter_userns(network=True)
             repo, mirror, work = _paths(args)
@@ -130,7 +136,9 @@ def main() -> int:
         _enter_userns(network=False)
         repo, mirror, work = _paths(args)
         record = pipeline.build(model, repo=repo, mirror=mirror, work=work, variant=args.variant)
-        print(json.dumps({k: v for k, v in record.items() if k not in ("packages", "ownership")}, indent=2))
+        # Every child wrote to stderr (util.run): stdout is this one document.
+        print(json.dumps({k: v for k, v in record.items() if k not in ("packages", "ownership")}, indent=2),
+              flush=True)
         return 0
     except BuildError as error:
         print(f"error[{error.kind}]: {error.message}", file=sys.stderr)

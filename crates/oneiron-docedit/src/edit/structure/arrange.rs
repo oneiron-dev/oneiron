@@ -273,20 +273,20 @@ pub(super) fn copy_to_slide(
         .into_iter()
         .map(|(range, value)| ((range.start - span.start)..(range.end - span.start), value))
         .collect();
-    // The source root's namespace bindings the element does not carry itself.
-    let declared: String = tree.nodes[0]
-        .attrs
-        .iter()
-        .filter(|(name, _)| {
-            (name.as_str() == "xmlns" || name.starts_with("xmlns:"))
-                && !tree.nodes[root].attrs.contains_key(name.as_str())
-        })
-        .map(|(name, value)| format!(" {name}=\"{}\"", xml::escape_attribute(value)))
-        .collect();
+    // Every binding in scope at the source element that it does not carry
+    // itself, the nearest group's first (FIX 8582); with no default
+    // namespace there, an `xmlns=""` keeps the destination's from applying.
+    let mut declared = xml::inherited_bindings(&bytes, &tree, root);
+    let sp_tree = shape_tree(&target_tree)?;
+    if xml::default_namespace(&tree, root).is_none()
+        && xml::default_namespace(&target_tree, sp_tree).is_some_and(|ns| !ns.is_empty())
+    {
+        declared.push_str(r#" xmlns="""#);
+    }
     let open = tree.nodes[root].qualified.len() + 1;
     local.push((open..open, declared.into_bytes()));
     let element = xml::splice(&bytes[span], local)?;
-    let at = end_of(&target_tree, shape_tree(&target_tree)?);
+    let at = end_of(&target_tree, sp_tree);
     next.replace_xml_part(to, xml::splice(&target_bytes, vec![(at..at, element)])?)?;
     Ok((Plan::Arranged, effects))
 }
