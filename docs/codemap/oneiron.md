@@ -4751,8 +4751,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_reliability/tests/resident.rs` | test | s | — | — | — |
 | `src/skill_scan.rs` | src | m | 1 enum · 5 fn · 2 const · 4 crate-vis | ActivationPosture | Deterministic static skill scanning and the activation risk consult |
 | `src/skill_scan/tests.rs` | test | s | — | — | — |
-| `src/slim.rs` | src | m | 2 struct · 6 enum · 3 fn · 2 mod · 1 re-export · 2 crate-vis | HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome, SlimResidue, VaultResidency | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
+| `src/slim.rs` | src | m | 2 struct · 6 enum · 3 fn · 2 mod · 2 re-export · 2 crate-vis | HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome, SlimResidue, VaultResidency | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
 | `src/slim/outbound_wait.rs` | src | s | 1 trait · 1 fn · 2 crate-vis | OutboundWaitHost | Scoped live outbound waits over the durable journals: a journaled model call and an admitted effect send |
+| `src/slim/owner_admission.rs` | src | s | 1 struct · 1 enum · 2 fn · 2 crate-vis | OwnerShedAttempt, OwnerShedStep | The owner's own shed request, `vault.slim.drop_heavy` (FIX 10157): where the automatic shed is refused… |
 | `src/slim/public.rs` | src | s | 6 struct · 7 enum · 2 fn | SavedIntentState, SavedResumeStep, SlimDropOutcome, SlimDropReceipt, SlimDropRequest, SlimIdlePolicy, SlimResidueView, SlimResumeOutcome +5 | Typed lifecycle observations and completion receipts over the SLIM controller |
 | `src/slim/supervisor.rs` | src | s | 2 struct · 1 enum · 2 fn | EligibleWait, SupervisorShedOutcome, SupervisorSlimStatus | The supervisor's view of SLIM (FIX 5186): a content-free observation of the live outbound wait a shed would… |
 | `src/slim/tests.rs` | test | m | — | — | — |

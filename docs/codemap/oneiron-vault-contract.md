@@ -25,7 +25,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/esign_delivery.rs` | src | s | 1 struct · 3 fn · 6 const | EsignDeliveryCompleted | The e-sign delivery outbox's completion receipt (FIX 5306) |
 | `src/lib/host.rs` | src | s | 1 struct · 2 trait · 2 fn · 4 type | Host, HostLimits, PreviewPortHost | One vault-hosting contract |
 | `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 fn · 4 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |
-| `src/lib/host_adapters/desktop.rs` | src | m | 4 struct · 4 enum · 13 fn | ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost, SecretSource, SystemdHost | The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started… |
+| `src/lib/host_adapters/desktop.rs` | src | m | 4 struct · 4 enum · 14 fn | ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost, SecretSource, SystemdHost | The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started… |
+| `src/lib/host_adapters/desktop/power.rs` | src | s | 5 crate-vis | — | The power source a PluggedIn wake assertion follows (FIX 9547) |
 | `src/lib/host_adapters/embedded.rs` | src | s | 1 struct · 1 trait · 4 fn | AppHost, EmbeddedHost | The in-process adapter for an engine embedded in a mobile app (NAPI or FFI) |
 | `src/lib/host_adapters/native.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | InProcessHost | Native socket ownership, secret lookup, and cooperative idle wakeup |
 | `src/lib/host_adapters/vsock.rs` | src | m | 4 struct · 11 fn | FirecrackerGuest, GuestLink, VsockListener, VsockStream | The microVM adapter's guest half: AF_VSOCK sockets and the Firecracker backend an engine uses when it runs… |
