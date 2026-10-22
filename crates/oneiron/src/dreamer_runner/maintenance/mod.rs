@@ -23,6 +23,7 @@ pub mod compaction_check;
 pub use compaction_check::COMPACTION_CHECK_FACET;
 pub(crate) use compaction_check::declare_compaction_check_in_txn;
 mod contribution;
+pub(crate) use contribution::erase_contribution_cursor_in_txn;
 pub use contribution::{ContributionForks, ContributionReplayHost};
 mod curator;
 pub mod detectors;

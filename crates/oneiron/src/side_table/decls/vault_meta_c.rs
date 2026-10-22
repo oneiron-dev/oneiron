@@ -149,8 +149,9 @@ side_tables! {
         => crate::self_heal::blocked_reports::erase_blocked_source_actor_in_txn;
     /// Where the Coach's contribution checks resume: the credit key and target (a loaded skill or
     /// a used edge's two ends) of the last candidate a pass put to its replay host, cleared once a
-    /// pass reaches the end of the credit table. Key: ().
-    COACH_CONTRIBUTION_CURSOR: VaultMeta b"coach:contribution_cursor:v1" Named;
+    /// pass reaches the end of the credit table, or by an erase of an entity it names. Key: ().
+    COACH_CONTRIBUTION_CURSOR: VaultMeta b"coach:contribution_cursor:v1" Named
+        => crate::dreamer_runner::maintenance::erase_contribution_cursor_in_txn;
     /// The Coach's issue for one positive model finding (OF-418 L3): its DIAGNOSTIC, tier,
     /// family, class and recipe revision, its exact ordered runs with their replay hashes, the
     /// decision receipts that raised it, the gate decisions its results link, the producer its

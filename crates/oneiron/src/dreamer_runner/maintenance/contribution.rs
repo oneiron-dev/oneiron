@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
+use crate::entity_id::EntityId;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_attribution::{
@@ -175,4 +176,30 @@ fn measure(
         }
     }
     (tried > 0, examined)
+}
+
+/// Clears the Coach's contribution cursor when it names erased `entity`, as
+/// the checked skill or either end of the checked edge (FIX 8988): the next
+/// pass starts its sweep at the head. A cursor that names another entity, or
+/// that no longer decodes, is left for the pass to read.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_contribution_cursor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    let Some((_, target)) = CURSOR.get_lenient(&vault.store, wtxn, &())? else {
+        return Ok(());
+    };
+    let named = match target {
+        ContributionTarget::LoadedSkill(skill) => skill == *entity,
+        ContributionTarget::UsedEdge { derived, source } => derived == *entity || source == *entity,
+    };
+    if named {
+        CURSOR.delete(&vault.store, wtxn, &())?;
+    }
+    Ok(())
 }
