@@ -271,6 +271,11 @@ both bindings and their export-census tests in one change.
 - `vault.connectors.proxy.revoke_write`
 - `vault.connectors.slates.redraft`
 - `vault.connectors.slates.narrow`
+- `vault.connectors.slates.scope_outcome`
+- `vault.connectors.slates.revision_offers`
+- `vault.connectors.slates.defer_revision`
+- `vault.connectors.slates.accept_revision`
+- `vault.connectors.slates.reask_issuer`
 - `vault.connectors.subscriptions.put`
 - `vault.connectors.subscriptions.list`
 - `vault.connectors.subscriptions.revoke`

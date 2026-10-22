@@ -297,6 +297,11 @@ vaultConnectorsProxyAdmit(input: unknown): unknown
 vaultConnectorsProxyRevokeWrite(input: unknown): unknown
 vaultConnectorsSlatesRedraft(input: unknown): unknown
 vaultConnectorsSlatesNarrow(input: unknown): unknown
+vaultConnectorsSlatesScopeOutcome(input: unknown): unknown
+vaultConnectorsSlatesRevisionOffers(input: unknown): unknown
+vaultConnectorsSlatesDeferRevision(input: unknown): unknown
+vaultConnectorsSlatesAcceptRevision(input: unknown): unknown
+vaultConnectorsSlatesReaskIssuer(input: unknown): unknown
 vaultConnectorsSubscriptionsPut(input: unknown): unknown
 vaultConnectorsSubscriptionsList(input: unknown): unknown
 vaultConnectorsSubscriptionsRevoke(input: unknown): unknown
@@ -1160,6 +1165,8 @@ selfBrowserZoom(input: unknown): unknown
 selfBrowserBatch(input: unknown): unknown
 selfBrowserLibraryFind(input: unknown): unknown
 selfBrowserLibraryDraft(input: unknown): unknown
+selfBrowserDemonstrationStart(input: unknown): unknown
+selfBrowserDemonstrationStop(input: unknown): unknown
 selfBrowserLibraryPropose(input: unknown): unknown
 selfBrowserLibraryRetire(input: unknown): unknown
 selfBrowserLibraryRetired(input: unknown): unknown

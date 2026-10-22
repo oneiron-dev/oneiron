@@ -8032,6 +8032,7 @@ dependencies = [
  "oneiron",
  "oneiron-llm-openai",
  "oneiron-llm-own-server",
+ "oneiron-organ-protocol",
  "oneiron-remote",
  "oneiron-server",
  "parking_lot",
@@ -8039,6 +8040,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
+ "rustix",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -8288,6 +8290,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
+ "serde",
  "serde_json",
  "tempfile",
 ]

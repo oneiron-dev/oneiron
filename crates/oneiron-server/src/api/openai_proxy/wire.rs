@@ -66,6 +66,9 @@ fn finish_reason(reason: &FinishReason) -> &str {
         FinishReason::ContentFiltered => "content_filter",
         FinishReason::Cancelled => "cancelled",
         FinishReason::Other { name } => name,
+        // An answer cut short of its terminal (FIX 8617) is never a `stop`;
+        // OpenAI's wire names an answer that did not finish `length`.
+        FinishReason::Incomplete { .. } => "length",
     }
 }
 

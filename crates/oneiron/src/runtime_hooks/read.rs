@@ -23,8 +23,6 @@ const MAX_READ_BYTES: usize = 256 * 1024;
 /// Claims about a subject one read considers.
 const MAX_ABOUT_SCAN: usize = 512;
 const MAX_REQUEST_BYTES: usize = 4 * 1024;
-/// Reads one run may make.
-pub(super) const MAX_READS: usize = 64;
 
 /// The fact's entity as the hook's grant shows it.
 pub(super) struct SeenFact {
@@ -90,7 +88,7 @@ enum ReadRequest {
 }
 
 /// Answers one `oneiron.read` and pins what it served. An error reaches the
-/// body as a throw.
+/// body as a throw. No count of a run's reads refuses one (FIX 9232).
 pub(super) fn answer(
     lane: &ScopedRead<'_>,
     grant: &HookGrant,
@@ -111,9 +109,6 @@ pub(super) fn answer_within(
 ) -> std::result::Result<String, String> {
     if request.len() > MAX_REQUEST_BYTES {
         return Err("read request is too large".to_owned());
-    }
-    if pins.len() >= MAX_READS {
-        return Err("read budget is spent".to_owned());
     }
     let parsed: ReadRequest =
         serde_json::from_str(request).map_err(|_| "read request does not parse".to_owned())?;

@@ -64,7 +64,8 @@ struct ArchivePrune {
     /// Each retired body file, queued for the collector.
     files: Vec<[u8; 32]>,
     assets: BTreeSet<EntityId>,
-    responses: BTreeSet<Vec<u8>>,
+    /// Each retired response's carrier, with the instance it was bound to.
+    responses: BTreeMap<Vec<u8>, [u8; 16]>,
     /// The body rows that stay, read back under the forked custody.
     kept: Rows,
 }
@@ -132,13 +133,21 @@ impl Store {
     /// reopens the vault, whose handles then shred only its own keys.
     /// Its world key pads go through the same plan (KS-5, FIX 5686 part 2):
     /// a pad `source` retired takes its row out, never back from the row's
-    /// own pad, and a live one forks with the rest. Returns the claim-bound
+    /// own pad, and a live one forks with the rest. So do its credential
+    /// values (KS-6 part 2), each by exact id: one `source` lacks, or one
+    /// that does not plan or read back from the forked custody, rests
+    /// sealed, pending, never a refusal. Returns the claim-bound
     /// decisions dropped because their keys stayed on another host, by id
-    /// (hex), as a restore's report names them, and the pads erased.
+    /// (hex), as a restore's report names them, the pads erased, and the
+    /// credentials planned.
     pub(crate) fn activate_archived(
         &self,
         source: &LiveCustody,
-    ) -> Result<(Vec<String>, Vec<crate::world_keys::WorldKeyId>)> {
+    ) -> Result<(
+        Vec<String>,
+        Vec<crate::world_keys::WorldKeyId>,
+        crate::secret_custody::PlannedCredentials,
+    )> {
         let rows = {
             let txn = self.env.read_txn()?;
             let mark = ARCHIVED.get(self, &txn, &())?;
@@ -162,17 +171,12 @@ impl Store {
         require_known_history(&mut kept, custody.plan_mut())?;
         let prune = ArchivePrune::of(&rows, kept, &retired)?;
         let erased_pads = crate::world_keys::plan_archived_pads(self, custody.plan_mut())?;
-        // Its credential values' keys (KS-6 part 1) fork with the rest; a
-        // fault planning them is warned and leaves the activation as before.
-        if let Err(error) =
-            crate::secret_custody::plan_archived_credentials(self, custody.plan_mut())
-        {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "an archived vault's credential keys were not planned; its credential rows stay \
-                 sealed"
-            );
-        }
+        // Its credential values' keys fork with the rest, each by exact id
+        // from its source's custody (KS-6 part 2, CALLS `KS-6 required
+        // restore set`): one the source lacks, or a custody fault, leaves
+        // that row sealed, pending, warned.
+        let mut credentials =
+            crate::secret_custody::plan_archived_credentials(self, custody.plan_mut());
         // The environment's path is the canonical root it was opened at.
         let root = self.env.path().to_path_buf();
         refuse_custody_beside(&root)?;
@@ -183,12 +187,16 @@ impl Store {
         let mut wtxn = self.env.past_seal_write_txn()?;
         let forked = self.fork_gate_custody_to_in_txn(&mut wtxn, &custody, &root)?;
         let committed = self
-            .prune_bodies_in_txn(&mut wtxn, &prune)
+            .prune_bodies_in_txn(&mut wtxn, &prune, source)
             .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
             .and_then(|()| crate::world_keys::drop_pad_rows_in_txn(self, &mut wtxn, &erased_pads))
             .and_then(|()| self.read_back_in_txn(&wtxn))
             .and_then(|()| self.read_back_bodies_in_txn(&wtxn, &prune.kept))
             .and_then(|()| self.read_back_known_in_txn(&wtxn, &prune.kept))
+            .and_then(|()| {
+                read_back_credentials_in_txn(self, &wtxn, &mut credentials);
+                Ok(())
+            })
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             // The orders standing on its source now, not the ones it had.
             .and_then(|()| replace_host_holds_in_txn(self, &mut wtxn, source.host_holds()))
@@ -201,13 +209,25 @@ impl Store {
             return Err(err);
         }
         let lost = custody.lost().iter().map(|(id, _)| id.to_hex()).collect();
-        Ok((lost, erased_pads.into_iter().map(|(_, key)| key).collect()))
+        Ok((
+            lost,
+            erased_pads.into_iter().map(|(_, key)| key).collect(),
+            credentials,
+        ))
     }
 
     /// Applies `prune` in `wtxn`: its row deletions and rewrites, each
     /// pruned inline ASSET's shell, and each pruned response's erased
-    /// disposition, then the step response pins it leaves (FIX 6225).
-    fn prune_bodies_in_txn(&self, wtxn: &mut heed::RwTxn<'_>, prune: &ArchivePrune) -> Result<()> {
+    /// disposition, then the step response pins it leaves (FIX 6225). A
+    /// keyed entry its own caller's erase retired goes, as that erase dropped
+    /// it live and a cold restore drops it; `source`'s erase receipts say
+    /// whose erase retired it (FIX 7470, 9066).
+    fn prune_bodies_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        prune: &ArchivePrune,
+        source: &LiveCustody,
+    ) -> Result<()> {
         destination::delete_vault_meta_in_txn(&self.env, wtxn, &prune.deleted)?;
         for (key, value) in &prune.rewritten {
             self.side_vault_meta().put(wtxn, key, value)?;
@@ -221,7 +241,7 @@ impl Store {
                 self.port_entity_scrub(wtxn, entity, ScrubbedRecord::Shell, at)?;
             }
         }
-        for carrier in &prune.responses {
+        for (carrier, instance) in &prune.responses {
             let Some((db, key)) = carrier_row(carrier) else {
                 continue;
             };
@@ -237,9 +257,20 @@ impl Store {
             let Some(family) = ResponseFamily::of_row(db, key, &value) else {
                 continue;
             };
-            if let Some(carriage) = family.carriage(key, &value) {
-                family.retire_in_txn(self, wtxn, key, &carriage)?;
+            let Some((carriage, _)) = family.scan(key, &value).carriage() else {
+                continue;
+            };
+            let caller = (family == ResponseFamily::Http)
+                .then(|| carriage.stub.get(..carriage.retired))
+                .flatten()
+                .and_then(crate::store::http_erase_drop_caller);
+            if caller.is_some_and(|caller| source.erased_by(&caller, instance)) {
+                let row = std::str::from_utf8(key)
+                    .map_err(|_| Error::CorruptedIndex("sync_state row key"))?;
+                self.side_sync_state()?.delete(wtxn, row)?;
+                continue;
             }
+            family.retire_in_txn(self, wtxn, key, &carriage)?;
         }
         // A step claim whose response's artifact version rests in a body its
         // source retired takes its erased disposition too, and every pin
@@ -315,4 +346,30 @@ impl Store {
         }
         Ok(())
     }
+}
+
+/// Reads back each credential value `credentials` planned live: its row in
+/// `txn` opened under its exact leaf from the custody `txn` binds (the
+/// forked one), the bytes wiped at once. One that does not open, or a
+/// binding that does not read, leaves it sealed, pending (CALLS `KS-6
+/// credential fork fault`), never a refusal.
+fn read_back_credentials_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    credentials: &mut crate::secret_custody::PlannedCredentials,
+) {
+    let binding: Option<CustodyBinding> = key_custody::binding_in_txn(store, txn).ok().flatten();
+    credentials.read_back(|credential, generation| {
+        binding.as_ref().is_some_and(|binding| {
+            crate::secret_custody::stored_value_opens_in_txn(
+                store,
+                txn,
+                credential,
+                generation,
+                |credential, generation| {
+                    crate::store::credential_value_leaf_in(binding, credential, generation)
+                },
+            )
+        })
+    });
 }

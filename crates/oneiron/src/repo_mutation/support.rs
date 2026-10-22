@@ -1,3 +1,7 @@
+//! Path, digest, time and actor-name helpers for repository mutations.
+//! The digest entry is `sha256_bytes`.
+//! `deletion` owns the forwarded actor predicate; the other helpers are local.
+
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 

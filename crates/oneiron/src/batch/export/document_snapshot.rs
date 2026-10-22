@@ -235,6 +235,13 @@ impl Vault {
         )?;
         let storage = ExportManifest::from_json_for_import(artifact.bytes())?;
         let _bodies = self.pin_all_result_bodies();
+        // An archive that opens credential values holds the custody read
+        // guard from before its snapshot through its last open (KS-6); one
+        // that does not take goes on, each value whose key goes mid-read as
+        // its handle.
+        let _custody = (include_secrets && only.is_none() && cut == ExportCut::Archive)
+            .then(|| crate::secret_custody::archive_custody_guard(&self.store))
+            .flatten();
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         admit(&rtxn)?;
         let scope = match (only, cut) {

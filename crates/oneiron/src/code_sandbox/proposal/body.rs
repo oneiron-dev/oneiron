@@ -119,7 +119,10 @@ impl SandboxProposalBody {
             && self.spooled.digest == *blake3::hash(bytes).as_bytes()
     }
 
-    /// The `len` bytes at `offset`. A range past the end is refused.
+    /// The `len` bytes at `offset`. A range past the end is refused. Host
+    /// memory that cannot hold the range refuses as an I/O error of kind
+    /// `OutOfMemory` before anything is read, and the body stays spooled
+    /// (FIX 8674).
     pub fn read_range(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
         if offset
             .checked_add(len as u64)
@@ -127,7 +130,7 @@ impl SandboxProposalBody {
         {
             return Err(Error::InvalidClaimBody("proposal body range out of bounds"));
         }
-        let mut bytes = vec![0; len];
+        let mut bytes = super::zeroed(len)?;
         let mut file = self
             .spooled
             .file

@@ -1,3 +1,7 @@
+//! Checkout leases and optional repository environment plans.
+//! The consult entry is `resolve_checkout_environment`.
+//! `lease` and `env_blueprint` own the definitions re-exported here.
+
 pub mod lease;
 pub use lease::*;
 #[cfg(test)]

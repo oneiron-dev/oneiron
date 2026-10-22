@@ -2290,6 +2290,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_connectors_slates_scope_outcome(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.slates.scope_outcome", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_slates_revision_offers(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.slates.revision_offers", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_slates_defer_revision(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.slates.defer_revision", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_slates_accept_revision(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.slates.accept_revision", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_slates_reask_issuer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.slates.reask_issuer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_connectors_subscriptions_put(
         &self,
         input: serde_json::Value,
@@ -10073,6 +10118,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.browser.library.draft", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_browser_demonstration_start(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.demonstration.start", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_browser_demonstration_stop(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.demonstration.stop", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

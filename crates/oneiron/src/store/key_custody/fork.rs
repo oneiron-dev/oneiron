@@ -144,6 +144,36 @@ impl CustodyPlan {
         })
     }
 
+    /// [`Self::require_exact`] for a credential value an image or an
+    /// archive commits to (KS-6, CALLS `KS-6 required restore set`): `id`
+    /// is the only generation of its subject a fork copies, planned before
+    /// its state is read, so a read fault never widens the fork to older
+    /// generations. `None` when no custody is there to hold it, or its entry
+    /// there is missing: the caller decides what that absence means. A
+    /// failed read of its state is an error, never absence.
+    pub(crate) fn require_exact_present(&mut self, id: &CustodyId) -> Result<Option<Requirement>> {
+        self.exact
+            .entry(id.subject().clone())
+            .or_default()
+            .insert(id.generation());
+        let (through, committed) = self
+            .subjects
+            .entry(id.subject().clone())
+            .or_insert((id.generation(), None));
+        *through = (*through).max(id.generation());
+        if committed.is_some_and(|newest| id.generation() <= newest) {
+            return Ok(Some(Requirement::Retired));
+        }
+        let Some(source) = self.source.as_ref() else {
+            return Ok(None);
+        };
+        Ok(match LocalCustody::at(source).state(id)? {
+            EntryState::Retired => Some(Requirement::Retired),
+            EntryState::Live => Some(Requirement::Live),
+            EntryState::Missing => None,
+        })
+    }
+
     /// Whether a fork copies `id` while it is live: every generation of a
     /// subject not required by exact id, else only those required.
     fn copies(&self, id: &CustodyId) -> bool {
@@ -279,7 +309,9 @@ impl LocalCustody<'_> {
         let copied = (|| -> Result<()> {
             target.open_compartment()?;
             // KS-6: a credential's key a fork cannot copy stays behind,
-            // warned, and the fork goes on as it did (fork_step).
+            // warned, and the fork goes on as it did (fork_step). A
+            // connector call's resume key (FIX 9157) stays behind the same
+            // way.
             for id in &retired {
                 let step = self.retired(id).and_then(|retired| {
                     if retired {

@@ -240,10 +240,48 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeViewReadRequest,
     ) -> MemoryResult<CodeViewFileBytes> {
+        if let Some(why) = input.why.clone() {
+            return self.code_view_read_with_why(owner, input, &why);
+        }
         let file = self.code_view_read_as(owner, input)?;
         let projected = project_repo_file(self.vault, file.bytes)?;
         let projection = projected.view();
         let bytes = projected.into_bytes();
+        Ok(CodeViewFileBytes {
+            path: file.path,
+            sha256: bytes_to_hex_lower(&Sha256::digest(&bytes)),
+            bytes,
+            projection,
+        })
+    }
+
+    /// [`Self::code_view_read_projected_as`] for a read that says `why`
+    /// (FIX 8960): the view's file read as the marked blob it holds through
+    /// the file reveal, its stored bytes only under a committed delivery,
+    /// else its masked copy; the view is admitted again before release.
+    fn code_view_read_with_why(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeViewReadRequest,
+        why: &str,
+    ) -> MemoryResult<CodeViewFileBytes> {
+        let view = input.view.clone();
+        let file = self.code_view_read_as(owner, input)?;
+        let readmit = || -> crate::error::Result<()> {
+            self.admitted_view(owner, &view)
+                .map(|_| ())
+                .map_err(|_| crate::Error::ConcurrentWrite("the view read's admission changed"))
+        };
+        let read = self.view_file_read_with_why(
+            view.repo,
+            Some(view.tested),
+            &file.path,
+            file.bytes,
+            Some(why),
+            readmit,
+        )?;
+        let projection = read.projection.view();
+        let bytes = read.projection.into_bytes();
         Ok(CodeViewFileBytes {
             path: file.path,
             sha256: bytes_to_hex_lower(&Sha256::digest(&bytes)),
