@@ -39,6 +39,7 @@ pub use critical_confirm::{
 };
 mod birth_position;
 mod booking;
+mod browser_solved;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
@@ -172,8 +173,8 @@ pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
     ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
-    CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite,
-    RecordRefusal, RefusalReason, SafeDeleteReason,
+    CommitReceipt, DeleteReceipt, DeleteRequestState, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
+    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use diagnostics::{
@@ -297,7 +298,7 @@ pub use search_vector::{
     VectorSearchRequest, VectorSearchResult,
 };
 pub(crate) use session_reads::{
-    SessionAnswer, SessionRead, SessionReadContext, scoped_session_text,
+    SessionAnswer, SessionRead, SessionReadContext, room_short_ref, scoped_session_text,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};

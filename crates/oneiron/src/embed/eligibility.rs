@@ -21,7 +21,8 @@ pub(crate) fn embeddable_payload_in_txn(
     if entity_type == ENTITY_TYPE_TURN {
         return Ok(turn_text_in_txn(vault, txn, id)?.map(PendingEmbeddingPayload::TurnText));
     }
-    Ok(embeddable_payload(entity_type, body))
+    // An ASSET embeds its repo copy (FIX 7608 slice 3).
+    super::repo_projection::pending_payload_in_txn(vault, txn, entity_type, body)
 }
 
 /// [`embeddable_payload_in_txn`] read through `store`: base, or a room's view, whose turns and
@@ -53,7 +54,10 @@ pub(super) fn embeddable_payload_in(
             .collect();
         return Ok(Some((PendingEmbeddingPayload::TurnText(text), rows)));
     }
-    Ok(embeddable_payload(entity_type, body).map(|payload| (payload, vec![*id])))
+    Ok(
+        super::repo_projection::pending_payload_in_txn(vault, txn, entity_type, body)?
+            .map(|payload| (payload, vec![*id])),
+    )
 }
 
 /// A TURN's canonical text: its visible MESSAGE children's text in message

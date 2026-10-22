@@ -215,6 +215,7 @@ fn corpus_edit(run: &mut Run, deck: &Deck, id: &str) -> Res<()> {
                             contains: line,
                         }],
                         baseline: &deck.defects,
+                        origin: &deck.bytes,
                     });
                 }
                 Err(super::edits::Refused::Export(error))

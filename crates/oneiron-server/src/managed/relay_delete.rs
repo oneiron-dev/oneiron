@@ -11,11 +11,17 @@
 //!   and its bytes hashed against the BLAKE3 digest the delete names;
 //! - inside the vault's backup-hold writer exclusion (L04's
 //!   [`VaultRelayHoldGuard`], over this vault's own [`oneiron::Vault`]), a
-//!   standing legal hold defers it; otherwise the delete is admitted, the
-//!   object renamed to a claim name of its own (`.deleting-<object>-<request>`),
-//!   the claimed file checked to be the one hashed, unlinked, and the
-//!   directory synced. A newer upload that took the name in between is put
-//!   back, never deleted.
+//!   standing legal hold defers it, with only whether the owner may see a
+//!   hold that stands (FIX 9500); otherwise the delete is admitted, the
+//!   file renamed to a claim name of its own (`generation`), the claimed
+//!   file checked to be the one hashed, unlinked, and the directory synced.
+//!   A newer upload that took the name in between is put back, never
+//!   deleted.
+//!
+//! A delete names the object's current file or a generation a guarded upload
+//! kept when it replaced the object (`.preimage-<object>-<generation>`, FIX
+//! 1283). A kept generation is opened, hashed, claimed and synced the same
+//! way, and its claim goes back to its own name, never to the object's.
 //!
 //! Admission is the one step into that destructive section, Pending to
 //! Entered, decided in the job under the writer. It must happen within
@@ -26,9 +32,9 @@
 //! each one started.
 //!
 //! When the supervisor binds a directory, a claimed file a stopped job left
-//! behind goes back to its object name, or is unlinked when a newer upload
-//! holds the name; the relay's kept intent then asks again. The relay's
-//! listing and reads never show a dot name.
+//! behind goes back to its name, or, a current one, is unlinked when a newer
+//! upload holds the name; the relay's kept intent then asks again. The
+//! relay's listing and reads never show a dot name.
 
 use std::fs::File;
 use std::io;
@@ -38,11 +44,11 @@ use std::sync::{Arc, Mutex, MutexGuard, Once, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron_vault_contract::relay_delete::{
-    RELAY_DELETE_ADMISSION_MS, RelayDeleteIoKind, RelayDeleteStage, RelayDeleteState,
-    RelayDeleteUnknown, RelayLockerRefusal, valid_locker_object,
+    RELAY_DELETE_ADMISSION_MS, RelayDeleteGeneration, RelayDeleteIoKind, RelayDeleteStage,
+    RelayDeleteState, RelayDeleteUnknown, RelayLockerRefusal,
 };
 use rand_core::{OsRng, RngCore};
-use rustix::fs::{AtFlags, FileType, Mode, OFlags, RenameFlags, Stat};
+use rustix::fs::{AtFlags, FileType, Mode, OFlags, Stat};
 use rustix::io::Errno;
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
@@ -53,11 +59,12 @@ use crate::managed::{
 };
 use crate::owner::backup::VaultRelayHoldGuard;
 
+// The claim and put-back names of a current file and a kept generation.
+mod generation;
+use self::generation::{claim_name, put_back, recover};
+
 /// How long a delete has to be admitted, from dispatch.
 const ADMISSION: Duration = Duration::from_millis(RELAY_DELETE_ADMISSION_MS);
-
-/// The name a claimed object takes, before its object and request ids.
-const CLAIM_PREFIX: &str = ".deleting-";
 
 /// What the unlink step hands the hold guard when it deletes nothing: the
 /// answer it recorded says why.
@@ -325,8 +332,8 @@ impl RelayDeleteExecutor {
             Ok(RelayDeleteHoldOutcome::Deleted) | Err(RelayDeleteHoldError::StorageIo(_)) => {
                 finished.unwrap_or(GUARD_UNAVAILABLE)
             }
-            Ok(RelayDeleteHoldOutcome::Deferred(RelayDeleteDeferral::HeldUntilRelease)) => {
-                RelayDeleteState::Held
+            Ok(RelayDeleteHoldOutcome::Deferred(RelayDeleteDeferral::Held { visibility })) => {
+                RelayDeleteState::Held { visibility }
             }
             Ok(RelayDeleteHoldOutcome::Deferred(RelayDeleteDeferral::HoldStateUnknown)) => {
                 RelayDeleteState::Unknown {
@@ -457,12 +464,13 @@ fn storage(stage: RelayDeleteStage, errno: Errno) -> RelayDeleteState {
     }
 }
 
-/// Opens the target's object in `dir`, never through a link and never
-/// waiting on a pipe, requires a plain file and hashes it against the
-/// target's digest, outside the writer.
+/// Opens the target's file in `dir` (its object, or the generation an
+/// upload kept), never through a link and never waiting on a pipe, requires
+/// a plain file and hashes it against the target's digest, outside the
+/// writer.
 fn inspect(dir: &OwnedFd, target: &RelayDeleteTarget) -> Result<Candidate, RelayDeleteState> {
     let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    let leaf = match rustix::fs::openat(dir, target.object_id.as_str(), flags, Mode::empty()) {
+    let leaf = match rustix::fs::openat(dir, target.leaf().as_str(), flags, Mode::empty()) {
         Ok(leaf) => leaf,
         Err(Errno::NOENT) => return Ok(Candidate::Absent),
         Err(Errno::LOOP) => {
@@ -497,7 +505,12 @@ fn inspect(dir: &OwnedFd, target: &RelayDeleteTarget) -> Result<Candidate, Relay
 /// absent one, or a name found empty at the claim, is confirmed absent with
 /// the directory synced.
 fn destroy(dir: &OwnedFd, job: &RelayDeleteJob, candidate: &Candidate) -> RelayDeleteState {
-    let object = job.target.object_id.as_str();
+    let leaf = job.target.leaf();
+    let object = leaf.as_str();
+    let kept = matches!(
+        job.target.generation,
+        RelayDeleteGeneration::Preimage { .. }
+    );
     let Candidate::Present(hashed) = candidate else {
         return match rustix::fs::statat(dir, object, AtFlags::SYMLINK_NOFOLLOW) {
             Err(Errno::NOENT) => synced(dir, RelayDeleteState::Absent),
@@ -507,7 +520,7 @@ fn destroy(dir: &OwnedFd, job: &RelayDeleteJob, candidate: &Candidate) -> RelayD
             Err(errno) => storage(RelayDeleteStage::Stat, errno),
         };
     };
-    let claim = format!("{CLAIM_PREFIX}{object}-{}", job.request_id);
+    let claim = claim_name(object, &job.request_id);
     match rustix::fs::renameat(dir, object, dir, claim.as_str()) {
         Ok(()) => {}
         Err(Errno::NOENT) => return synced(dir, RelayDeleteState::Absent),
@@ -516,18 +529,18 @@ fn destroy(dir: &OwnedFd, job: &RelayDeleteJob, candidate: &Candidate) -> RelayD
     let claimed = match rustix::fs::statat(dir, claim.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
         Ok(claimed) => claimed,
         Err(errno) => {
-            put_back(dir, &claim, object);
+            put_back(dir, &claim, object, kept);
             return storage(RelayDeleteStage::Stat, errno);
         }
     };
     if claimed.st_dev != hashed.st_dev || claimed.st_ino != hashed.st_ino {
-        put_back(dir, &claim, object);
+        put_back(dir, &claim, object, kept);
         return RelayDeleteState::Unknown {
             reason: RelayDeleteUnknown::TargetChanged,
         };
     }
     if let Err(errno) = rustix::fs::unlinkat(dir, claim.as_str(), AtFlags::empty()) {
-        put_back(dir, &claim, object);
+        put_back(dir, &claim, object, kept);
         return storage(RelayDeleteStage::Unlink, errno);
     }
     synced(dir, RelayDeleteState::Deleted)
@@ -539,68 +552,4 @@ fn synced(dir: &OwnedFd, state: RelayDeleteState) -> RelayDeleteState {
         Ok(()) => state,
         Err(errno) => storage(RelayDeleteStage::Sync, errno),
     }
-}
-
-/// Puts the claimed file `claim` back at `object`, then syncs `dir`. When a
-/// newer upload holds the name, the claimed file is superseded and unlinked.
-/// One that does neither stays claimed, for the next bind to put back.
-fn put_back(dir: &OwnedFd, claim: &str, object: &str) {
-    let restored = match rustix::fs::renameat_with(dir, claim, dir, object, RenameFlags::NOREPLACE)
-    {
-        Err(Errno::EXIST) => rustix::fs::unlinkat(dir, claim, AtFlags::empty()),
-        restored => restored,
-    };
-    if let Err(errno) = restored.and_then(|()| rustix::fs::fsync(dir)) {
-        tracing::warn!(
-            kind = ?io::Error::from(errno).kind(),
-            "a claimed relay locker object did not go back; the next locker bind puts it back"
-        );
-    }
-}
-
-/// Puts back every claimed file a stopped job left in `dir`. A claim name
-/// that does not parse stays as it is, logged, and nothing is guessed.
-fn recover(dir: &OwnedFd) {
-    let entries = match rustix::fs::Dir::read_from(dir) {
-        Ok(entries) => entries,
-        Err(errno) => {
-            tracing::warn!(
-                kind = ?io::Error::from(errno).kind(),
-                "the relay locker directory did not list; its claimed objects stay"
-            );
-            return;
-        }
-    };
-    let claims: Vec<Option<String>> = entries
-        .map_while(Result::ok)
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_bytes()
-                .starts_with(CLAIM_PREFIX.as_bytes())
-        })
-        .map(|entry| entry.file_name().to_str().ok().map(str::to_owned))
-        .collect();
-    for claim in &claims {
-        match claim
-            .as_deref()
-            .and_then(|claim| claimed_object(claim).map(|object| (claim, object)))
-        {
-            Some((claim, object)) => put_back(dir, claim, object),
-            None => tracing::warn!("a relay locker claim name did not parse; it stays as it is"),
-        }
-    }
-}
-
-/// The object a claim name `.deleting-<object>-<request>` names, split at
-/// its last `-`: neither an object (64 lowercase hex or `manifest`) nor a
-/// request id (32 lowercase hex) holds one, so a name parses one way or not
-/// at all.
-fn claimed_object(name: &str) -> Option<&str> {
-    let (object, request) = name.strip_prefix(CLAIM_PREFIX)?.rsplit_once('-')?;
-    let request_id = request.len() == 32
-        && request
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-    (request_id && valid_locker_object(object)).then_some(object)
 }

@@ -29,7 +29,26 @@ pub(super) fn key(id: EntityId) -> String {
 }
 
 pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<NoteDocument> {
-    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+    load_in(
+        vault,
+        &vault.store,
+        txn,
+        id,
+        &vault.store.pending_scan_checks,
+    )
+}
+
+/// [`load`] with the NOTE and its document read through `store`, a room's
+/// view included (FIX 4280); its sizes are measured into `pending`. Erase
+/// stays the vault's to say.
+pub(super) fn load_in(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    pending: &crate::scan_check::PendingScanChecks,
+) -> Result<NoteDocument> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
         .ok_or(crate::Error::EntityNotFound)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or_else(|| invalid("NOTE entity header"))?;
@@ -39,8 +58,8 @@ pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result
     if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
         return Err(invalid("NOTE was erased"));
     }
-    super::verbs::note_core(vault, txn, id)?;
-    let doc = super::storage::load(vault, txn, id)?;
+    super::verbs::note_core_in(vault, store, txn, id)?;
+    let doc = super::storage::load_in(vault, store, txn, id, pending)?;
     NoteDocument::from_loro(id, doc)
 }
 

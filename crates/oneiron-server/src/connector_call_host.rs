@@ -72,9 +72,15 @@ use crate::server::SyncServer;
 mod live_exchange;
 mod presenting;
 mod reply_read;
+mod resume;
+mod sent;
+mod stream_pump;
 use live_exchange::{Continuation, KeptWire, LiveSession, hand_over, post_json};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
 use reply_read::{Reply, StreamEvent, open_reply, read_reply};
+use resume::RoundResume;
+pub(crate) use resume::resume_exchanges;
+use sent::Sent;
 
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -136,6 +142,9 @@ pub struct ServedConnectorCallHost {
     presented: Option<EntityId>,
     /// The last send's custody presentation, until taken (FIX 7646).
     presentation: Option<SentPresentation>,
+    /// The resume state of the last send's first round, until the engine
+    /// binds that round to its call's row (FIX 9157).
+    resume: Option<RoundResume>,
 }
 
 impl ServedConnectorCallHost {
@@ -183,6 +192,7 @@ impl ServedConnectorCallHost {
             awaiting: None,
             presented: None,
             presentation: None,
+            resume: None,
         })
     }
 
@@ -268,6 +278,7 @@ impl ServedConnectorCallHost {
     /// Ends the questions the last send kept that nobody took: no caller
     /// holds their handle, so their worker cancels them now (FIX 3844).
     fn abandon_untaken(&mut self) {
+        self.resume = None;
         if let Some(left) = self.awaiting.take() {
             self.elicitations.finish(Some(&*self.vault), &left.handle);
         }
@@ -290,6 +301,7 @@ impl OutboundResultSender for ServedConnectorCallHost {
         self.presentation = presented;
         self.reply = sent.reply;
         self.awaiting = sent.awaiting;
+        self.resume = sent.resume;
         OutboundTransportResult {
             outcome: sent.outcome,
             raw_result: RawOutboundResult::new(sent.body, sent.error, None, None),
@@ -343,7 +355,11 @@ impl ConnectorCallHost for ServedConnectorCallHost {
     }
 
     fn bind_awaiting_call(&mut self, handle: &str, call_ref: EntityId) {
-        self.elicitations.bind_call(&self.vault, handle, call_ref);
+        let bound = self.elicitations.bind_call(&self.vault, handle, call_ref);
+        // The row kept the round; its resume state goes beside it (FIX 9157).
+        if let Some(resume) = self.resume.take().filter(|_| bound) {
+            resume.keep(&self.vault, handle, &call_ref);
+        }
     }
 }
 
@@ -478,51 +494,6 @@ fn tool_result(message: &Value) -> Option<UntrustedToolResult> {
         is_error: result.get("isError").and_then(Value::as_bool) == Some(true),
         rpc_error: None,
     })
-}
-
-/// What one send came to, before the ledger scrubs its raw fields.
-struct Sent {
-    outcome: OutboundSendOutcome,
-    reply: Option<UntrustedToolResult>,
-    /// The questions the connector answered with, in place of a reply.
-    awaiting: Option<ConnectorAwaitingInput>,
-    body: Option<Vec<u8>>,
-    error: Option<String>,
-}
-
-impl Sent {
-    /// Certain non-delivery: the `tools/call` request never left.
-    fn not_sent(kind: OutboundFailureKind, code: Option<u16>) -> Self {
-        Self {
-            outcome: OutboundSendOutcome::Failed(OutboundSendFailure { kind, code }),
-            reply: None,
-            awaiting: None,
-            body: None,
-            error: None,
-        }
-    }
-
-    /// The request went and no readable answer came back.
-    fn ambiguous(error: &str) -> Self {
-        Self {
-            outcome: OutboundSendOutcome::Ambiguous,
-            reply: None,
-            awaiting: None,
-            body: None,
-            error: Some(error.to_owned()),
-        }
-    }
-
-    /// The connector answered the call.
-    fn acked(reply: Option<UntrustedToolResult>, body: Vec<u8>) -> Self {
-        Self {
-            outcome: OutboundSendOutcome::Acked,
-            reply,
-            awaiting: None,
-            body: Some(body),
-            error: None,
-        }
-    }
 }
 
 /// What a send that declares elicitation keeps a question with.
@@ -746,7 +717,15 @@ impl<'a> Exchange<'a> {
                     let round = declared.keep_questions(vec![question], value);
                     // The request's id waits zeroized (FIX 8054).
                     let request_id = KeptWire::keep(request.get("id").unwrap_or(&Value::Null));
-                    let continuation = Continuation::Stream { stream, request_id };
+                    // The stream reattaches after this event (FIX 9157).
+                    let last_event_id = stream
+                        .last_event_id()
+                        .map(|id| zeroize::Zeroizing::new(id.to_owned()));
+                    let continuation = Continuation::Stream {
+                        stream: Some(stream),
+                        request_id,
+                        last_event_id,
+                    };
                     let body = request.to_string().into_bytes();
                     let kept = value.map(SentValue::keep);
                     return hand_over(declared, round, continuation, live, body, kept);

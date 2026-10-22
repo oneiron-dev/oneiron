@@ -3,6 +3,8 @@
 //! The code_mode_verbs root defines `VaultLibrary`; `oneiron::browser_library` owns the records.
 
 use super::*;
+use oneiron::browser_library::FiledScope;
+use oneiron_browser::program_origin;
 
 pub(super) fn library_failed(error: oneiron::Error) -> BrowserError {
     BrowserError::Library(error.to_string())
@@ -52,6 +54,13 @@ impl WorkflowLibrary for VaultLibrary {
             .server
             .decision_host()
             .placement_decisions(self.by, &deadline);
+        // The program covers its caller's solved group at its origin (CUA
+        // E8a).
+        let filed_scope = self
+            .scope
+            .clone()
+            .zip(program_origin(program))
+            .map(|(scope, origin)| FiledScope { scope, origin });
         let filing = file_workflow(
             &self.server.vault,
             self.by,
@@ -61,6 +70,7 @@ impl WorkflowLibrary for VaultLibrary {
             self.server.vault.now_recorded_at(),
             Some(&decisions),
             supersedes,
+            filed_scope,
         )
         .map_err(library_failed)?;
         Ok(match filing {
@@ -70,6 +80,32 @@ impl WorkflowLibrary for VaultLibrary {
             },
             Filing::Refused(why) => Admitted::Refused(why),
         })
+    }
+
+    /// Whether the vault's record of a retire proves `workflow` retired (FIX
+    /// 8073); a ref that does not parse names none.
+    fn is_retired(&mut self, workflow: &str) -> Result<bool, BrowserError> {
+        let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
+            return Ok(false);
+        };
+        oneiron::browser_library::retired_workflow(&self.server.vault, id)
+            .map(|retired| retired.is_some())
+            .map_err(library_failed)
+    }
+
+    /// The proposal's `supersedes` link, read before its replay (FIX 7876):
+    /// a ref that does not parse, or names no program of `site` the caller
+    /// may succeed. The filing's write checks it again.
+    fn supersedes_refused(
+        &mut self,
+        site: &str,
+        supersedes: &str,
+    ) -> Result<Option<SupersedeRefusal>, BrowserError> {
+        let Ok(old) = oneiron::EntityId::from_hex(supersedes) else {
+            return Ok(Some(SupersedeRefusal::Malformed));
+        };
+        oneiron::browser_library::supersedes_refusal(&self.server.vault, self.by, site, old)
+            .map_err(library_failed)
     }
 
     fn record_run(&mut self, workflow: &str, outcome: &RunOutcome) -> Result<(), BrowserError> {

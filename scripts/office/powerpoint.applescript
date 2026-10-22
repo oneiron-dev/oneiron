@@ -19,12 +19,23 @@ on run argv
         end tell
         return "closed"
     end if
-    set sourceFile to (POSIX file (item 2 of argv)) as alias
+    try
+        set sourceFile to (POSIX file (item 2 of argv)) as alias
+    on error errorMessage number errorNumber
+        error "missing input: " & errorMessage number errorNumber
+    end try
     if (count of argv) > 2 then set destination to (POSIX file (item 3 of argv)) as text
     set sourceName to name of (info for sourceFile)
     tell application "Microsoft PowerPoint"
         if actionName is "open" then
-            open sourceFile
+            -- PowerPoint's own refusal of the file is the candidate's typed row
+            -- (unsupported input); "did not open" is waited past in Python
+            -- until the candidate's deadline, since a slow open still lands.
+            try
+                open sourceFile
+            on error errorMessage number errorNumber
+                error "unsupported input: " & errorMessage number errorNumber
+            end try
             repeat 60 times
                 try
                     set p to presentation sourceName

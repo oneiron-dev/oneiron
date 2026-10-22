@@ -23,8 +23,6 @@ pub(crate) const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
 pub(crate) const IDEMPOTENCY_TTL: Duration = Duration::from_secs(86_400);
 
 const IDEMPOTENCY_SYNC_STATE_PREFIX: &str = "http:idempotency:";
-const IDEMPOTENCY_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
-const IDEMPOTENCY_MAX_RESPONSE_BODY_BYTES: usize = 1024 * 1024;
 const SHARED_SECRET_PRINCIPAL: &str = "shared-secret";
 const ANONYMOUS_PRINCIPAL: &str = "anonymous";
 
@@ -40,6 +38,11 @@ impl IdempotencyLayerState {
             store: IdempotencyStore::new(server.vault().clone()),
             server,
         }
+    }
+
+    /// The server a route's own keyed layer admits its caller against.
+    pub(crate) fn server(&self) -> &SyncServer {
+        &self.server
     }
 }
 
@@ -113,24 +116,13 @@ impl IdempotencyStore {
             return Ok(IdempotencyLookup::Conflict);
         }
 
+        // An intent no outcome settled: the first run never finished (FIX
+        // 9527).
+        if stored.status == intent::INTENT_STATUS {
+            return Ok(IdempotencyLookup::Interrupted);
+        }
         let response = CachedHttpResponse::of_stored(stored)?;
         Ok(IdempotencyLookup::Replay(response))
-    }
-
-    /// Keeps `response` under `store_key`, stamped with its caller when the
-    /// request's credential names one (KS-2B2, FIX 7357).
-    fn insert(
-        &self,
-        store_key: &str,
-        request_target: String,
-        request_body: Vec<u8>,
-        response: CachedHttpResponse,
-        stamp: caller::EntryStamp,
-    ) -> Result<(), IdempotencyStoreError> {
-        let stored = response.into_stored(self.now_secs(), request_target, request_body, stamp);
-        self.vault
-            .http_idempotency_put(store_key, &stored)
-            .map_err(IdempotencyStoreError::storage)
     }
 }
 
@@ -191,6 +183,8 @@ enum IdempotencyLookup {
     Conflict,
     /// An erase of an owner took the cached response (KS-2B2).
     Erased,
+    /// The first request's intent stands with no outcome (FIX 9527).
+    Interrupted,
 }
 
 #[derive(Clone)]
@@ -405,6 +399,7 @@ impl fmt::Display for IdempotencyStoreError {
 }
 
 mod caller;
+mod intent;
 mod reclaim;
 mod request;
 

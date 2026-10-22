@@ -3934,6 +3934,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_cleanup_review(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cleanup.review", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cleanup_decide(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cleanup.decide", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_archive_delete_preview(
         &self,
         input: serde_json::Value,
@@ -5321,6 +5339,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.model_heal_count", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_type_diagnostics(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.type_diagnostics", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

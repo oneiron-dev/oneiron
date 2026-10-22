@@ -2418,6 +2418,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.cleanup.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::vault_cleanup::CleanupReviewRequest,
+                >(),
+            ),
+            (
+                "vault.cleanup.decide",
+                crate::code_run::vault_read::request_schema::<
+                    crate::vault_cleanup::CleanupDecideRequest,
+                >(),
+            ),
+            (
                 "vault.archive.delete.preview",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::ArchiveDeletePreviewRequest,
@@ -3342,6 +3354,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.model_heal_count",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_run_doors::CodeRunModelHealCountRequest,
+                >(),
+            ),
+            (
+                "vault.code.type_diagnostics",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest,
                 >(),
             ),
             (
@@ -6978,6 +6996,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.reserve_exploration",
     "vault.research.budget",
     "vault.cleanup.run",
+    "vault.cleanup.review",
+    "vault.cleanup.decide",
     "vault.archive.delete.preview",
     "vault.archive.delete.confirm",
     "vault.usage.events.undecodable",
@@ -7084,6 +7104,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.proposal_settlement",
     "execute_code",
     "vault.code.model_heal_count",
+    "vault.code.type_diagnostics",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
     "vault.results.status",
@@ -8441,6 +8462,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
         >(),
+        "vault.cleanup.review" => {
+            crate::code_run::vault_read::request_schema::<crate::vault_cleanup::CleanupReviewView>()
+        }
+        "vault.cleanup.decide" => {
+            crate::code_run::vault_read::request_schema::<crate::vault_cleanup::CleanupDecideView>()
+        }
         "vault.archive.delete.preview" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ArchiveDeletePreviewView>()
         }
@@ -8762,6 +8789,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
+        >(),
+        "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
+            Option<crate::code_run::ProgramStepFeedback>,
         >(),
         "vault.code.waits.resolve" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_wait_doors::CodeWaitReceiptView,
@@ -13085,6 +13115,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.cleanup.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cleanup.decide" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.archive.delete.preview" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14164,6 +14208,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.model_heal_count" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.type_diagnostics" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19461,6 +19512,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.cleanup.run" => {
             let _input: crate::vault_cleanup::surface::CleanupRunRequest = decode(value.clone())?;
         }
+        "vault.cleanup.review" => {
+            let _input: crate::vault_cleanup::CleanupReviewRequest = decode(value.clone())?;
+        }
+        "vault.cleanup.decide" => {
+            let _input: crate::vault_cleanup::CleanupDecideRequest = decode(value.clone())?;
+        }
         "vault.archive.delete.preview" => {
             let _input: crate::memory::ArchiveDeletePreviewRequest = decode(value.clone())?;
         }
@@ -20012,6 +20069,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.model_heal_count" => {
             let _input: crate::memory::code_run_doors::CodeRunModelHealCountRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.type_diagnostics" => {
+            let _input: crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest =
                 decode(value.clone())?;
         }
         "vault.code.waits.resolve" => {
@@ -22929,6 +22990,8 @@ pub fn invoke(
             encode(vault_roots_requests_cancel(memory, decode(value)?)?)
         }
         "vault.cleanup.run" => encode(vault_cleanup_run(memory, decode(value)?)?),
+        "vault.cleanup.review" => encode(vault_cleanup_review(memory, decode(value)?)?),
+        "vault.cleanup.decide" => encode(vault_cleanup_decide(memory, decode(value)?)?),
         "vault.archive.delete.preview" => {
             encode(vault_archive_delete_preview(memory, decode(value)?)?)
         }
@@ -23239,6 +23302,9 @@ pub fn invoke(
         "execute_code" => encode(execute_code(memory, decode(value)?)?),
         "vault.code.model_heal_count" => {
             encode(vault_code_model_heal_count(memory, decode(value)?)?)
+        }
+        "vault.code.type_diagnostics" => {
+            encode(vault_code_type_diagnostics(memory, decode(value)?)?)
         }
         "vault.code.waits.resolve" => encode(vault_code_waits_resolve(memory, decode(value)?)?),
         "vault.code.waits.receipt" => encode(vault_code_waits_receipt(memory, decode(value)?)?),
@@ -28232,6 +28298,24 @@ pub fn vault_cleanup_run(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_cleanup_review(
+    memory: &Memory<'_>,
+    input: crate::vault_cleanup::CleanupReviewRequest,
+) -> MemoryResult<crate::vault_cleanup::CleanupReviewView> {
+    crate::vault_cleanup::review_cleanup_proposal_as(
+        memory,
+        &memory.embedded_owner("vault.cleanup.review")?,
+        &input,
+    )
+}
+pub fn vault_cleanup_decide(
+    memory: &Memory<'_>,
+    input: crate::vault_cleanup::CleanupDecideRequest,
+) -> MemoryResult<crate::vault_cleanup::CleanupDecideView> {
+    memory
+        .vault()
+        .decide_cleanup_proposal_as(&memory.embedded_owner("vault.cleanup.decide")?, &input)
+}
 pub fn vault_archive_delete_preview(
     memory: &Memory<'_>,
     input: crate::memory::ArchiveDeletePreviewRequest,
@@ -29569,6 +29653,15 @@ pub fn vault_code_model_heal_count(
 ) -> MemoryResult<crate::memory::code_run_doors::CodeRunModelHealCountView> {
     memory.code_run_model_heal_count_as(
         &memory.embedded_owner("vault.code.model_heal_count")?,
+        input,
+    )
+}
+pub fn vault_code_type_diagnostics(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest,
+) -> MemoryResult<Option<crate::code_run::ProgramStepFeedback>> {
+    memory.code_run_type_diagnostics_as(
+        &memory.embedded_owner("vault.code.type_diagnostics")?,
         input,
     )
 }

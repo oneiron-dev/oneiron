@@ -14325,6 +14325,68 @@ async fn vault_cleanup_run(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_cleanup_review(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cleanup.review")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cleanup.review", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.cleanup.review", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_cleanup_review(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_cleanup_decide(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cleanup.decide")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cleanup.decide", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.cleanup.decide", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_cleanup_decide(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_archive_delete_preview(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -19518,6 +19580,40 @@ async fn vault_code_model_heal_count(
     let mut hooks = facade_hooks_pre(server, call, "vault.code.model_heal_count", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_code_model_heal_count(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_type_diagnostics(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.type_diagnostics")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.type_diagnostics", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.type_diagnostics", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_type_diagnostics(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -36948,6 +37044,8 @@ pub(crate) async fn call_verb(
         }
         "vault.roots.requests.cancel" => vault_roots_requests_cancel(server, call, input).await,
         "vault.cleanup.run" => vault_cleanup_run(server, call, input).await,
+        "vault.cleanup.review" => vault_cleanup_review(server, call, input).await,
+        "vault.cleanup.decide" => vault_cleanup_decide(server, call, input).await,
         "vault.archive.delete.preview" => vault_archive_delete_preview(server, call, input).await,
         "vault.archive.delete.confirm" => vault_archive_delete_confirm(server, call, input).await,
         "vault.usage.events.undecodable" => {
@@ -37205,6 +37303,7 @@ pub(crate) async fn call_verb(
         "vault.code.oplog" => vault_code_oplog(server, call, input).await,
         "execute_code" => execute_code(server, call, input).await,
         "vault.code.model_heal_count" => vault_code_model_heal_count(server, call, input).await,
+        "vault.code.type_diagnostics" => vault_code_type_diagnostics(server, call, input).await,
         "vault.code.waits.resolve" => vault_code_waits_resolve(server, call, input).await,
         "vault.code.waits.receipt" => vault_code_waits_receipt(server, call, input).await,
         "vault.results.status" => vault_results_status(server, call, input).await,

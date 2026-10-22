@@ -7,9 +7,10 @@ use super::super::{
 };
 use super::step_claim::step_index_lookup;
 use super::step_state::step_state_read;
+use super::submission_custody::{SUBMISSIONS, Submission, erased, put_submission_in_txn};
 use super::{
-    DREAMER_STEP_RETRY_BACKOFF_MS, DurableStepContext, DurableStepError, StepOutcome,
-    StepProgression,
+    DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapState, DurableStepContext, DurableStepError,
+    StepOutcome, StepProgression,
 };
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
@@ -22,18 +23,17 @@ use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::InvocationEntry;
-use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, Vault, WriteActor};
 
 pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
 
 pub(crate) const MODEL_STEP_ATTEMPT_KIND: &str = "model-step";
 const WORKER: &str = "model-step-door";
-const SUBMISSIONS: SideTable<AttemptId, Submission, Named> =
-    SideTable::new(&side_table::MODEL_STEP_SUBMISSION);
 
-/// Transport attempts per model request, including the first send. Schema
-/// corrections remain the existing one/native or three/shim paid calls.
+/// Transport attempts per model request, including the first send. Retries
+/// past the engine schedule wait its last interval (FIX 9930); the default is
+/// the schedule's own four. Schema corrections remain the existing
+/// one/native or three/shim paid calls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelStepRetryPolicy {
@@ -106,6 +106,9 @@ pub enum ModelStepResult {
     BudgetDenied {
         trap_ref: String,
     },
+    /// An owner's erase took this step's request and result (FIX 9929). The
+    /// receipt keeps its metadata; the step is over and is never asked again.
+    Erased,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -117,14 +120,6 @@ pub struct ModelStepReceipt {
     pub progression: Option<StepProgression>,
     /// None while an admitted request is running or recovering.
     pub result: Option<ModelStepResult>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Submission {
-    actor: EntityId,
-    input: ModelStepSubmit,
-    step_hash: [u8; 32],
-    result: Option<ModelStepResult>,
 }
 
 /// Submit or resume the caller's own logical step. Successes AND terminal
@@ -168,9 +163,10 @@ pub async fn submit_as_owner(
     let (mut row, attempt) = vault.with_write_txn(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         let queue = AttemptQueue::new(vault);
-        let row = match SUBMISSIONS.get(&vault.store, txn, &id)? {
+        let mut row = match SUBMISSIONS.get(&vault.store, txn, &id)? {
             Some(row) => {
-                if row.actor != actor || row.input != input {
+                // An erased row's request is gone: its key answers erased.
+                if row.actor != actor || (!erased(&row) && row.input != input) {
                     return Err(Error::InvalidConfig(
                         "model-step key already names another request or retry policy".into(),
                     ));
@@ -178,7 +174,7 @@ pub async fn submit_as_owner(
                 row
             }
             None => {
-                let row = Submission {
+                let mut row = Submission {
                     actor,
                     input: input.clone(),
                     step_hash: digest,
@@ -200,12 +196,17 @@ pub async fn submit_as_owner(
                         now: vault.now_recorded_at(),
                     },
                 )?;
-                SUBMISSIONS.put(vault, txn, &id, &row)?;
+                put_submission_in_txn(vault, txn, &id, &mut row)?;
                 row
             }
         };
-        if row.result.is_some() {
+        if terminal_result(vault, txn, &row) {
             return Ok((row, None));
+        }
+        // A consumed budget trap's suspension answers no longer: the SAME
+        // attempt and step hash resume (FIX 9928).
+        if row.result.take().is_some() {
+            put_submission_in_txn(vault, txn, &id, &mut row)?;
         }
         // A dropped or interrupted HTTP call may leave its lease. Only this
         // key's live invocation can re-enter, and it resumes the SAME attempt.
@@ -302,7 +303,6 @@ pub async fn submit_as_owner(
     });
     vault.with_write_txn(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
-        SUBMISSIONS.put(vault, txn, &id, &row)?;
         let queue = AttemptQueue::new(vault);
         let now = vault.now_recorded_at();
         match row.result.as_ref() {
@@ -331,6 +331,9 @@ pub async fn submit_as_owner(
             }
             _ => {}
         }
+        // The attempt settles on the outcome; a terminal claim erased since it
+        // logged keeps this copy erased too (FIX 9929).
+        put_submission_in_txn(vault, txn, &id, &mut row)?;
         Ok(())
     })?;
     view(vault, id, &row).map_err(MemoryError::from)
@@ -339,9 +342,10 @@ pub async fn submit_as_owner(
 /// The saved terminal of the caller's own step `input` names, read before
 /// any fresh provider admission (FIX 8180): a finished or failed step
 /// answers as its replay does, with no model, route or meter needed, so a
-/// model removed since still answers its completed work. `None` when the
-/// step is new, unfinished, or the key froze another request; that call is
-/// admitted and submitted exactly as before. The frozen request is matched
+/// model removed since still answers its completed work. A budget trap
+/// still waiting answers too, with no new lease. `None` when the step is
+/// new, unfinished, its budget trap was consumed (FIX 9928), or the key
+/// froze another request; that call is admitted and submitted as before. The frozen request is matched
 /// apart from what admission writes into it from the host's current
 /// configuration ([`same_frozen_request`]), so a saved hit never keys on it.
 pub fn saved_terminal_as_owner(
@@ -355,15 +359,30 @@ pub fn saved_terminal_as_owner(
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let row = SUBMISSIONS
         .get(&vault.store, &txn, &id)?
-        .filter(|row| row.actor == actor && row.result.is_some());
+        .filter(|row| row.actor == actor && terminal_result(vault, &txn, row));
     drop(txn);
-    let Some(mut row) = row.filter(|row| same_frozen_request(&row.input, input)) else {
+    let Some(mut row) = row.filter(|row| erased(row) || same_frozen_request(&row.input, input))
+    else {
         return Ok(None);
     };
     if let Some(ModelStepResult::Finished { memoized, .. }) = &mut row.result {
         *memoized = true;
     }
     view(vault, id, &row).map(Some).map_err(MemoryError::from)
+}
+
+/// Whether the row's saved result answers a submission. Finished and Failed
+/// are terminal. A budget trap is a suspension (FIX 9928): it answers while
+/// its trap is unanswered, or its trap does not read, and gives way once the
+/// trap is consumed, so the SAME attempt and step hash resume.
+fn terminal_result(vault: &Vault, txn: &heed::RoTxn<'_>, row: &Submission) -> bool {
+    match &row.result {
+        None => false,
+        Some(ModelStepResult::BudgetDenied { trap_ref }) => !EntityId::from_hex(trap_ref)
+            .and_then(|trap| super::trap::trap_head_in_txn(vault, txn, &trap))
+            .is_ok_and(|(_, head)| head.state == DreamerTrapState::Consumed),
+        Some(_) => true,
+    }
 }
 
 /// Whether `submitted` is the step `frozen` froze, apart from the fields a
@@ -448,11 +467,9 @@ fn validate(input: &ModelStepSubmit) -> MemoryResult<()> {
     if input.step_key.trim().is_empty() {
         return Err(MemoryError::bad_request("step_key must not be empty"));
     }
-    if input.retry.max_attempts == 0
-        || usize::from(input.retry.max_attempts) > DREAMER_STEP_RETRY_BACKOFF_MS.len() + 1
-    {
+    if input.retry.max_attempts == 0 {
         return Err(MemoryError::bad_request(
-            "max_attempts must select a nonempty prefix of the engine retry schedule",
+            "max_attempts must be at least one",
         ));
     }
     Ok(())

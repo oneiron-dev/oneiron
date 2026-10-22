@@ -26,9 +26,9 @@ use super::audience_events::{AudienceEvent, erased_here_in, event_body, live_edi
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{ConfirmedEraseOutcome, DeleteEntityOutcome, due_erase_requester_in_txn};
-use crate::memory::{DeleteReceipt, SafeDeleteReason};
+use crate::memory::{DeleteReceipt, DeleteRequestState, SafeDeleteReason};
 use crate::registry::ENTITY_TYPE_TURN;
-use crate::store::legal_hold::HoldActor;
+use crate::store::legal_hold::{HoldActor, PendingErase, PendingEraseKind};
 
 /// Erases the audience edit `id` its live root keeps, for a privacy erase
 /// by `actor` that `reverify` re-proves: in one write, a legal hold naming
@@ -231,7 +231,10 @@ impl Memory<'_> {
     /// its live root keeps is erased as a privacy erase leaves it
     /// ([`erase_audience_edit`]), the owner's proof re-proved in its write
     /// and a hold placed since refusing it, with no receipt; any other
-    /// record goes through the owner delete rail as before.
+    /// record goes through the owner delete rail, the owner's proof
+    /// re-proved in each of its writes before publication (FIX 9781). A
+    /// shared vault with two or more Owners never reaches here: its erase
+    /// waits out the vault's veto window first.
     pub(crate) fn owner_confirmed_erase(
         &self,
         owner: &AuthenticatedOwner,
@@ -247,28 +250,42 @@ impl Memory<'_> {
                 existed: outcome.existed,
                 reason: reason.as_str().to_owned(),
                 receipt_ref: None,
+                state: DeleteRequestState::Applied,
             }),
-            None => self.safe_delete(&record.to_hex(), reason),
+            None => self.safe_delete_as_owner(owner, &record.to_hex(), reason),
         }
     }
 }
 
 impl Vault {
-    /// An owner-confirmed erase of `record` come due, nothing holding it
-    /// now (FIX 5906): an audience edit its live root keeps is erased as
-    /// [`Memory::owner_confirmed_erase`] erases it, a hold placed since
-    /// refusing it; any other record is hard-deleted as before. Either
-    /// arm's writer re-proves that the erase still waits, and a hold's
-    /// refusal there names the owner its row records as confirming it
-    /// (FIX 6099). None waiting cancels it, and a cancelled edit is never
-    /// then deleted (FIX 6337).
-    pub(crate) fn due_confirmed_erase(&self, record: &EntityId) -> Result<ConfirmedEraseOutcome> {
-        let erased = erase_edit_as(self, record, |txn| {
-            due_erase_requester_in_txn(self, txn, record)
-        })?;
-        match erased {
-            Some(outcome) => Ok(outcome),
-            None => self.delete_confirmed_erase(record),
+    /// An owner erase of `record` come due as its waiting request `pending`
+    /// asked, nothing holding it now (FIX 5906, 1465): under an explicit
+    /// lift-and-erase or a privacy erasure, an audience edit its live root
+    /// keeps is erased as [`Memory::owner_confirmed_erase`] erases it, a
+    /// hold placed since refusing it; any other record, and any owner's
+    /// plain delete, is deleted under the request's own reason. Either
+    /// arm's writer re-proves that this request still waits, and a hold's
+    /// refusal there names the owner its row records as confirming it (FIX
+    /// 6099). None waiting, or a newer request, cancels it, and a cancelled
+    /// edit is never then deleted (FIX 6337). An explicit erase in a shared
+    /// vault with two or more Owners comes here only once its own `erase`
+    /// act completed (FIX 9781).
+    pub(crate) fn due_confirmed_erase(
+        &self,
+        record: &EntityId,
+        pending: &PendingErase,
+    ) -> Result<ConfirmedEraseOutcome> {
+        let generation = pending.generation;
+        if pending.kind == PendingEraseKind::LiftAndErase
+            || pending.reason == crate::deletion::DeleteReason::GdprDelete
+        {
+            let erased = erase_edit_as(self, record, |txn| {
+                due_erase_requester_in_txn(self, txn, record, &generation)
+            })?;
+            if let Some(outcome) = erased {
+                return Ok(outcome);
+            }
         }
+        self.delete_confirmed_erase(record, pending.reason, generation)
     }
 }

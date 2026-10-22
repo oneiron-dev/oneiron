@@ -4359,6 +4359,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_cleanup_review(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.cleanup.review")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.cleanup.review", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_cleanup_decide(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.cleanup.decide")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.cleanup.decide", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_archive_delete_preview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.archive.delete.preview")?;
         let output = py
@@ -5805,6 +5819,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.code.model_heal_count")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.model_heal_count", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_type_diagnostics(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.type_diagnostics")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.type_diagnostics", input))
             .map_err(raise)?;
         encode(&output)
     }

@@ -582,24 +582,12 @@ impl Vault {
                         content_hash.as_slice(),
                     ]),
                     withheld: Vec::new(),
+                    room_evidence: None,
                 },
             )?;
         }
 
         fingerprint.persist(&self.store, wtxn, artifact_id)?;
-        Ok(record)
-    }
-
-    /// Writes a synced publication's version record on this replica. The
-    /// caller checks it against its claim and its bytes before it commits.
-    pub(crate) fn put_synced_blob_artifact_version_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        artifact_id: &EntityId,
-        bytes: &[u8],
-    ) -> Result<BlobArtifactVersion> {
-        let record = VERSIONS.decode_value(bytes)?;
-        VERSIONS.put(&self.store, wtxn, &(*artifact_id, record.version), &record)?;
         Ok(record)
     }
 }
