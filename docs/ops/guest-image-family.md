@@ -358,58 +358,81 @@ values, not image sizes. The checker's provisional 2-8 GiB payload can exceed
 the 4 GiB Firecracker cap. Its first build decides between pruning, a split,
 or a reviewed bound change.
 
-## Measured: the current outputs (10-22, runs f1 and f2)
+## Measured: the current outputs (10-22, runs p2 and p3)
 
-`release.toml` records run f1 (kel, builder commit `0684edada9`, verify mode
-from the committed lock, 554 packages, tools tree `8a18ff6616c5…`). Run f2
-(bel) built the same head from a fresh store and measured the same bytes
-for every variant (see Repeatability). The budgets are RESULT.md's proposed
-payload budgets.
+`release.toml` records run p3 (kel, builder commit `867c93a04a`, engine
+commit `88741de137`, verify mode from the committed lock, 641 packages,
+tools tree `8a18ff6616c5…`, a fresh store). Run p2 (mel) built the same
+head from its own fresh store and measured the same bytes for every
+variant (see Repeatability). Run p1 (mel, learn mode) wrote the lock. The
+budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
 
-| Variant | State | Compressed transfer (OCI archive) | Unpacked filesystem (file bytes) | Payload budget | Sparse ext4 capacity | ext4 allocated | Builder peak RSS (kel) |
+| Variant | State | Compressed transfer (OCI archive) | Unpacked filesystem (file bytes) | Payload budget | Sparse ext4 capacity (margin to 4 GiB) | ext4 allocated | Builder peak RSS (kel) |
 |---|---|---|---|---|---|---|---|
-| base | built-candidate | 37.1 MiB (38,901,760) | 105.9 MiB (110,999,048) | <= 256 MiB: within | 224.0 MiB (234,881,024) | 131.3 MiB | 2.14 GiB |
-| browser | boot-proved (OCI, Lightpanda) | 362.6 MiB (380,180,480) | 1,014.8 MiB (1,064,102,555) | <= 2 GiB: within | 1.17 GiB (1,258,291,200) | 1.05 GiB | 2.11 GiB |
-| checker | boot-proved (OCI, offline check) | 994.0 MiB (1,042,298,880) | 2.70 GiB (2,896,004,908) | 2-8 GiB provisional: within | 3.19 GiB (3,422,552,064) | 2.99 GiB | 2.00 GiB |
+| base | built-candidate | 37.1 MiB (38,912,000) | 105.9 MiB (111,010,272) | <= 256 MiB: within | 224.0 MiB (234,881,024; 3.78 GiB) | 131.3 MiB | 2.06 GiB |
+| browser | built-candidate | 362.6 MiB (380,190,720) | 1,014.8 MiB (1,064,113,779) | <= 2 GiB: within | 1.17 GiB (1,258,291,200; 2.83 GiB) | 1.05 GiB | 2.13 GiB |
+| desktop-cua | built-candidate | 252.5 MiB (264,724,480) | 742.9 MiB (778,973,302) | <= 3 GiB: within | 928.0 MiB (973,078,528; 3.09 GiB) | 790.6 MiB | 2.47 GiB |
+| checker | built-candidate | 950.1 MiB (996,280,320) | 2.67 GiB (2,866,101,240) | 2-8 GiB provisional: within | 3.16 GiB (3,388,997,632; 864 MiB, 905,969,664) | 2.96 GiB | 2.11 GiB |
+| generic-agent | built-candidate | 105.5 MiB (110,622,720) | 270.3 MiB (283,427,546) | <= 1 GiB: within | 400.0 MiB (419,430,400; 3.61 GiB) | 302.8 MiB | 2.09 GiB |
 
-- **base and browser** have the same `rootfs.tar`, layer and ext4 bytes as
-  run b6. Their OCI ids are new only because the builder-commit label is
-  gone (FIX 9354).
-- **The browser is `boot-proved` for one leg.** L11-B's OCI accept smoke
-  booted b6's image on nelly (10:16 JST, kind c6, run
-  `smoke-65745c0aebf6-1022-101536`, SMOKE rc=0), and that image's layer is
-  this output's byte for byte. The smoke ran Lightpanda only and sampled a
-  Docker MemUsage peak of 11,303,649 bytes. Chromium, Firecracker and cold
-  boot were not measured. The output's `note` says exactly this.
-- **The checker is new bytes** (store normalization, the capability xattr),
-  proved by their own smoke. L11-A's acceptance smoke ran f1's image on kel
-  (12:5x JST) as an OCI container with `--network none`, uid 10001 and
-  `--memory 18g`. Its five legs: the image id, the contents (cargo and
-  rustc 1.96.1, rustfmt, clippy, no rustup), the helper hash, the source
-  copy, and an offline `cargo check --locked --workspace --all-features`.
-  The check ran from a `cp -a` scratch copy of the normalized store and
-  returned rc=0 in 620 s, so the store normalization leaves a store cargo
-  resolves offline. Peak RAM was not sampled, and Firecracker was not
-  measured.
-- **All three fit the 4 GiB Firecracker rootfs cap**, the checker by about
-  0.81 GiB. On top of the Debian closure, the checker's payload holds:
-  - about 0.60 GiB of Rust toolchain (rustc, cargo, rust-std, rustfmt and
-    clippy: 643,217,165 bytes);
-  - about 0.79 GiB of offline Cargo store (846,002,586 bytes: the crates the
-    lock names for x86_64 Linux, plus the git dependencies). The store is
-    42.6 MB larger than b6's. Each git dependency's db and checkout now hold
-    their own repacked pack, about 50 MB together: the two repacks differ
-    by a few bytes, so they are no longer one hard-linked file.
-
-  The store grows with `Cargo.lock`, so the cap's margin shrinks as
-  dependencies are added. The cap does not move here.
-- Writable and snapshot bytes are unmeasured. The guest's peak RAM is
-  measured only for the browser's Lightpanda leg, above; the checker's
-  smoke stayed under its 18 GiB limit unsampled.
+- **Every output is new bytes, and none is `boot-proved`.** The engine pin
+  moved from `95afa460192b…` to `88741de137…` (FIX 10353): every native
+  binary, the checker's Cargo store and the OCI revision annotation change
+  with it. The browser's Lightpanda smoke (b6's image) and the checker's
+  offline-check smoke (f1's image) proved layers these outputs do not have,
+  so both outputs are `built-candidate` until their smokes run again on
+  these images. Their earlier notes are in "Findings" below.
+- **desktop-cua** carries `/usr/local/bin/cua-driver` (58,739,952 bytes,
+  sha256 `4ff2703f9ff5…`), built offline in the image's build overlay from
+  trycua/cua `6d6c734c127025fb…` (driver 0.36.0) with rustc 1.97.1, default
+  features, and the six X11/Wayland `-dev` packages plus build-essential and
+  pkg-config; no package was added. Its `DT_NEEDED` (readelf, run p1) is
+  `libX11.so.6`, `libXi.so.6`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6`
+  and the loader: all in the variant's runtime packages. Its licence texts
+  are in `/usr/share/doc/cua-driver`. The SBOM lists the driver and 381
+  Cargo packages of its own graph. Not measured: MCP, the display, or any
+  boot.
+- **generic-agent** carries Bun 1.4.3 at `/usr/local/bin/bun` (88,979,072
+  bytes, sha256 `7ce7d6b654ed…`, the zip member byte for byte), the three
+  tsrs packages under `/opt/tsrs/node_modules` (46,145,435 bytes; the native
+  `@tsrs/linux-x64-gnu/tsrs` is 28,708,944 bytes, 0555), the launchers
+  `/usr/local/bin/tsrs` and `/usr/local/bin/tsrs-wasm`, and Debian's
+  python3 3.13. Not measured: any exec, Bun, tsrs or Python run, or a boot.
+- **The checker's store is hard-linked again (FIX 10348).** With the
+  checkout index and reflogs removed before the repacks, each git
+  dependency's checkout pack and its db's pack are the same bytes and the
+  same pack name, and the relink makes them one file: the three `.pack`
+  and three `.idx` db entries are tar hard links (`h`) to the checkouts'.
+  That saves 51,695,311 bytes (formualizer 37,648,065 + 700,092, iroh
+  11,330,194 + 805,820, sudachi.rs 1,070,600 + 140,540). The store is now
+  816,087,694 bytes, 48,358 files and 1,117 crate archives (f1: 846,002,586
+  bytes, 1,080 crates); the new engine lock's 37 extra crates take back
+  about 21.8 MB of the saving. The ext4 capacity fell from 3,422,552,064
+  to 3,388,997,632 bytes, so the margin under the 4 GiB cap grew from
+  0.8125 GiB to 0.84375 GiB. The cap does not move.
+- On top of the Debian closure, the checker's payload holds about 0.60 GiB
+  of Rust toolchain (643,217,165 bytes) and the store above. The store
+  grows with `Cargo.lock`, so the margin shrinks as dependencies are added.
+- **SBOM licence coverage (FIX 10350)**, Debian packages with a declared
+  licence, before (run f1) and after (run p3): base 41 of 59, unchanged;
+  browser 133 of 247, unchanged; checker 285 of 521, unchanged; desktop-cua
+  184 of 342 and generic-agent 51 of 76 (no earlier build). Reading the
+  common-licenses files changes no package's NOASSERTION: those packages
+  have a non-DEP-5 copyright file (3, 71 and 144 for base, browser and
+  checker), an expression the reader refuses (9, 34, 79), a name with no
+  text (6, 8, 12), or another reason (0, 1, 1). What changed is the text of
+  the LicenseRefs that pointed at a common file: 10 of base's 11 now carry
+  that file's text, 20 of browser's 21, 32 of checker's 33 (27 in
+  desktop-cua, 11 in generic-agent). The one left in each is a
+  `GFDL-1.3-no-invariant` text pointing at
+  `/usr/share/common-licenses/GFDL-3`, a file Debian does not ship; a
+  missing file adds nothing, and the reader does not guess the one meant.
+- Writable and snapshot bytes, the guest's peak RAM and cold boot are
+  unmeasured: no candidate here has been booted.
 - The whole build job's cgroup peak, anonymous memory plus page cache, was
-  15.4 GiB on kel (16,586,764,288 bytes, run f1) and 12.3 GiB on bel
-  (13,168,214,016 bytes, run f2), under a 16 GiB booking. kel and bel cap a
-  guest at 16 GiB. The fetch's largest process was 473 MiB.
+  15.8 GiB on kel (16,934,707,200 bytes, run p3) and 16.0 GiB on mel
+  (17,171,349,504 bytes, run p2), at a 16 GiB booking for five variants.
+  kel, bel and mel cap a guest at 16 GiB.
 - The image's non-root and set-id paths match the pinned Debian base layer's
   for every package the variant installs:
   - `/etc/shadow` and `/etc/gshadow` are `root:shadow 0640`;
@@ -472,7 +495,9 @@ chosen by flag, with no fallback between them:
   over every scope the lock covers, then `build`, `receipt` and `manifest`
   for that variant, against the mirror and work dir in
   `ONEIRON_BROWSER_IMAGES_MIRROR`/`_WORK` (`ONEIRON_CHECKER_IMAGES_…` for
-  the checker); then `docker load` of the archive;
+  the checker); then `docker load` of the archive. Since the lock covers
+  desktop-cua and generic-agent, that fetch also takes the CUA source
+  archive, its Rust and its store, Bun and the npm tarballs;
 - **`--archive FILE`:** `docker load` of a built archive whose sha256 is the
   variant's `oci_archive_sha256` in `release.toml`. No rebuild;
 - **`--dockerfile`:** the Dockerfile recipe as it was (host Cargo, the
@@ -514,23 +539,34 @@ Booting the Firecracker rootfs is a separate step. It needs a host
 `ONEIRON_MICROVM_OCI_IMAGES` row and BLAKE3 pins for that rootfs. Nothing in
 this pack installs those.
 
-**The candidates (10-22).** Run b6's browser went to nelly, the L11-B
-acceptance host: archive sha256 `5d900355867e…`, loaded id
-`sha256:90074501db23…` (the manifest digest), config digest
-`sha256:7f65d68d0ec5…`. Its smoke is the browser's boot proof above. Run
-f1's outputs stayed on kel, loaded into its containerd-store docker:
-- the browser: archive sha256 `71dfd70f06ac…`, manifest
-  `sha256:afeac611ec30…`, config `sha256:7e6fee8804c1…`;
-- the checker, smoked there by L11-A: archive sha256 `27446d5730f7…`, manifest
-  `sha256:51fe794a2173…`, config `sha256:3980a4fd96a6…`, from engine
-  commit `95afa460192b…`. Its `gst-ptp-helper` reads
-  `cap_net_bind_service,cap_net_admin,cap_sys_nice=ep` under `getcap` in the
-  loaded image.
+**The candidates (10-22, run p3).** All five stay on kel, loaded into its
+containerd-store docker as `oneiron-image-<variant>:candidate`, each archive
+with its receipt, release manifest, SBOM and provenance beside it under
+the run's artifacts directory. The loaded id is the manifest digest:
 
-The fence inside every image is `oneiron-fence` sha256 `3d6c6ef9942b…`,
-built in the image's own trixie userspace. The browser entrypoint and the
-checker helper are the pinned repo files, byte for byte, so the Chromium
-flags and the helper are unchanged.
+| Variant | Archive sha256 | Manifest (loaded id) | Config |
+|---|---|---|---|
+| browser | `d1527a681b66…` | `sha256:f88e60cd532d…` | `sha256:f45316e30616…` |
+| checker | `0257e7564559…` | `sha256:8c5ba069fe2b…` | `sha256:99f06d78f5d7…` |
+| desktop-cua | `eaa8a29903b6…` | `sha256:65dcf7ff474b…` | `sha256:25f9714ce0fb…` |
+| generic-agent | `bdb74fedd94e…` | `sha256:a1e4c44cba92…` | `sha256:96178db15092…` |
+
+The fence inside every image is `oneiron-fence` sha256 `dcb1b08165f6…` and
+the guest `oneiron-guest` sha256 `fd66c0bb6aa4…`, built in the image's own
+trixie userspace at engine `88741de137`; stage the host fence built from
+that same commit. The browser entrypoint, the desktop entrypoint and the
+checker helper are the pinned repo files, byte for byte. The checker's
+`gst-ptp-helper` keeps its v2 `security.capability`.
+
+What each smoke has to show before its output is `boot-proved` again or
+for the first time: the browser's OCI Lightpanda leg (L11-B); the
+checker's offline workspace check (L11-A); desktop-cua serving MCP on
+stdio with its Xvfb display (L11-B); generic-agent's exec of Python, Bun,
+`tsrs` (native) and `tsrs-wasm` with no registry (L11-B).
+
+Earlier candidates, for the record: run b6's browser (archive
+`5d900355867e…`) was smoked on nelly; run f1's checker (archive
+`27446d5730f7…`, engine `95afa460192b…`) was smoked on kel.
 
 ## Repeatability
 
@@ -548,6 +584,26 @@ A second, independent build compares payload hashes file by file
 not call an image reproducible until that comparison holds.
 
 ### Findings (10-22)
+
+**Runs p2 (mel) and p3 (kel), phase 3 at builder `867c93a04a`, engine
+`88741de137`:** all five variants (base, browser, checker, desktop-cua,
+generic-agent) are bit-for-bit repeatable across the two hosts, each from a
+fresh store. For every variant the lock, `rootfs.tar`, the layer and its
+diff_id, `rootfs.ext4`, the OCI config, manifest, index and archive, every
+native binary (the CUA driver included) and every member's sha256, mode,
+owner, size, mtime and xattrs are identical; no entry exists on only one
+side (desktop-cua 15,708 entries, generic-agent 6,344, checker 87,561).
+The CUA driver's offline build therefore repeats across hosts with the
+path remapping above. The checker's only xattr is still `gst-ptp-helper`'s
+capability; no other variant carries one. Receipts and provenance differ,
+as they name the host and its times.
+
+Before the phase-3 pack, the browser and checker outputs were
+`boot-proved` on earlier layers: L11-B's OCI Lightpanda smoke on nelly
+(10-22 10:16 JST, run `smoke-65745c0aebf6-1022-101536`, b6's image, a
+Docker MemUsage peak of 11,303,649 bytes), and L11-A's offline-check smoke
+on kel (10-22 12:5x JST, f1's image, `cargo check --locked --workspace
+--all-features` rc=0 in 620 s from a scratch copy of the store).
 
 **Runs f1 (kel) and f2 (bel), after the follow-up fixes:** base, browser
 and checker are all bit-for-bit repeatable across the two hosts. For every
@@ -622,6 +678,8 @@ sha256.
   Since the tools tree carries only the snapshot sources (FIX 9355), and
   xattrs enter its digest, f1 and f2 both give
   `8a18ff6616c547e81c08eeba661a8e071cf1e7d74744bfa6be8284b1d49151d4`.
+  p1, p2 and p3 give the same with only `security.capability` exported
+  (FIX 10349): the tools tree carried no other name on mel or kel.
 - **Builder memory.** The job cgroup peaked at 13.0 GiB on kel and 16.0 GiB on
   bel. That is anonymous memory plus page cache; the largest single process
   was 2.0-2.2 GiB.
