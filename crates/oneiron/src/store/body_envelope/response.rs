@@ -213,7 +213,10 @@ impl ResponseFamily {
                 (&side_table::CODE_RUN_REPLAY, Self::Replay),
                 (&side_table::COACH_BLOCKED_SOURCE, Self::BlockedCapture),
                 (&side_table::CODE_RUN_WAIT_DELIVERY, Self::WaitDelivery),
-                (&side_table::MODEL_STEP_SUBMISSION, Self::ModelStepSubmission),
+                (
+                    &side_table::MODEL_STEP_SUBMISSION,
+                    Self::ModelStepSubmission,
+                ),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))

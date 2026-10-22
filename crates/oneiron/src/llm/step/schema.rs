@@ -155,20 +155,24 @@ pub(super) async fn generate(
             _correction_call = calls.admitted(guard, &correction.lease, u32::from(attempt - 1));
             &correction.lease
         };
-        let mut response =
-            match super::retry::generate_with_retry(backend, &wire, active_lease, max_retries)
-                .await
-            {
-                Ok(response) => response,
-                // The first call failed: nothing was answered, nothing spent.
-                Err(source) if attempt == 1 => return Err(DurableStepError::Llm(source)),
-                Err(source) => {
-                    return Err(DurableStepError::SpentLlm {
-                        source,
-                        usage: Box::new(usage.clone()),
-                    });
-                }
-            };
+        let mut response = match super::retry::generate_with_retry(
+            backend,
+            &wire,
+            active_lease,
+            max_retries,
+        )
+        .await
+        {
+            Ok(response) => response,
+            // The first call failed: nothing was answered, nothing spent.
+            Err(source) if attempt == 1 => return Err(DurableStepError::Llm(source)),
+            Err(source) => {
+                return Err(DurableStepError::SpentLlm {
+                    source,
+                    usage: Box::new(usage.clone()),
+                });
+            }
+        };
         // The completed call is paid before another corrective call can reserve.
         guard
             .settle_per_call(active_lease, &response.usage)
