@@ -631,11 +631,10 @@ impl Vault {
             // A committed change is pushed by its recorded write-time
             // authority, checked against its landed receipt; its author
             // need not hold policy power still (FIX 10031).
-            let notice =
-                notification_receipt::committed_policy_notices_in_txn(self, &txn, &[row])?
-                    .pop()
-                    .flatten()
-                    .ok_or_else(invalid)?;
+            let notice = notification_receipt::committed_policy_notices_in_txn(self, &txn, &[row])?
+                .pop()
+                .flatten()
+                .ok_or_else(invalid)?;
             let task = crate::task_verb::enqueue_committed_policy_notice_in_txn(
                 self,
                 &mut txn,

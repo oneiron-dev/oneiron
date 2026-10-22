@@ -92,9 +92,9 @@ pub(crate) fn enqueue_committed_policy_notice_in_txn(
         (true, _) => enqueue_policy_change_digest_followup_in_txn(
             vault, txn, provenance, recipient, receipts, now,
         ),
-        (false, [receipt]) => enqueue_policy_change_followup_in_txn(
-            vault, txn, provenance, recipient, receipt, now,
-        ),
+        (false, [receipt]) => {
+            enqueue_policy_change_followup_in_txn(vault, txn, provenance, recipient, receipt, now)
+        }
         (false, _) => Err(Error::InvalidConfig(
             "a pushed policy notice names one receipt".into(),
         )),

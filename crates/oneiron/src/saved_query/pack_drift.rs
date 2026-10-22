@@ -224,7 +224,15 @@ pub fn repair_pack_drift(
         }
         let removed = BTreeSet::new();
         run_ladder_in_txn(
-            vault, wtxn, record, kind, &drift, &map, &removed, Resume::Yes, now,
+            vault,
+            wtxn,
+            record,
+            kind,
+            &drift,
+            &map,
+            &removed,
+            Resume::Yes,
+            now,
         )
     })
 }
@@ -451,7 +459,15 @@ pub(crate) fn repair_saved_queries_after_pack_move_in_txn(
             continue;
         }
         let resolution = run_ladder_in_txn(
-            vault, wtxn, record, kind, &drift, &map, &removed, Resume::No, now,
+            vault,
+            wtxn,
+            record,
+            kind,
+            &drift,
+            &map,
+            &removed,
+            Resume::No,
+            now,
         )?;
         repaired.push((query_ref, resolution));
     }
