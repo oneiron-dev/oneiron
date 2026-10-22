@@ -2,8 +2,9 @@
 //! [`mesh`] is the transport to a model on another of the owner's nodes (OF-575 MESH).
 pub mod mesh;
 pub use mesh::{
-    COST_DECLARED, CatalogRefresh, LLM_ALPN, LlmMeshHandler, LlmMeshService, LlmNodes, MESH_PEER,
-    MeshLlmTransport, MeshPeerProof, MeshPeerTransport, VaultLlmNodes, advertises,
+    COST_DECLARED, CatalogRefresh, DEFAULT_STAGING_BYTES, LLM_ALPN, LlmMeshHandler, LlmMeshService,
+    LlmNodes, MESH_PEER, MeshLlmTransport, MeshPeerProof, MeshPeerTransport, StagingBudget,
+    VaultLlmNodes, advertises,
 };
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmGenerateFuture,
