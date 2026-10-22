@@ -100,6 +100,7 @@ fn finish_name(reason: &FinishReason) -> String {
         FinishReason::ContentFiltered => "content_filtered".to_owned(),
         FinishReason::Cancelled => "cancelled".to_owned(),
         FinishReason::Other { name } => name.clone(),
+        FinishReason::Incomplete { .. } => "incomplete".to_owned(),
     }
 }
 

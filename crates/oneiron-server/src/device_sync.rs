@@ -560,6 +560,8 @@ impl MeshCatalog {
                 Arc::clone(&self.transport),
                 Arc::new(VaultLlmNodes(Arc::clone(&self.vault))),
                 tokio::runtime::Handle::current(),
+                // What its calls hold at once (FIX 8619).
+                oneiron_llm_own_server::StagingBudget::default(),
             );
             match OwnServerBackend::from_registry(&self.vault, transport) {
                 Ok(backend) => self.backend = Some(backend),

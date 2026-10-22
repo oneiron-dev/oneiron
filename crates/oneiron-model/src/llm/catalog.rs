@@ -195,8 +195,10 @@ impl LlmCatalogEntry {
     }
 
     /// Shared admission for one media call on this row: its model and
-    /// locality, no route selector, an operation and inputs the row serves,
-    /// and no more reference images than it takes.
+    /// locality, no route selector, and an operation and inputs the row
+    /// serves. A call's reference count is no part of it: the row's
+    /// `max_references` is a hint, and whether an offer's wire carries the
+    /// whole set is the offer's own answer (FIX 8627).
     pub fn admit_media(&self, request: &MediaRequest) -> super::LlmResult<()> {
         if self.model != request.model
             || self.locality != request.envelope.locality
@@ -208,9 +210,7 @@ impl LlmCatalogEntry {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let caps = self.media();
-        if !caps.serves(request.operation, &request.inputs())
-            || request.references.len() > caps.max_references
-        {
+        if !caps.serves(request.operation, &request.inputs()) {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         Ok(())

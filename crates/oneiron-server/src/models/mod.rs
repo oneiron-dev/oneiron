@@ -89,7 +89,9 @@ pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::MeshRoutes;
 pub use hosted_speech::HostedCloner;
-pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
+pub(crate) use http::{
+    codec_token, encode_request_body, install_media_reply_line, mark_cloud_node,
+};
 pub use ladder::OfferLadder;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};

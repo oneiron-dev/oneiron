@@ -141,6 +141,22 @@ impl SecretDestinations {
         }
     }
 
+    /// [`Self::retire`] for the registration `own` made (FIX 4552): its
+    /// bytes go, and the run is forgotten only while `own` is still its
+    /// registration, so a host retiring a predecessor never clears its
+    /// successor's.
+    pub fn retire_own(&self, run: AttemptId, own: &RunSecretDestinations) {
+        let mut runs = lock(&self.runs);
+        let current = runs
+            .get(&run)
+            .is_some_and(|held| Arc::ptr_eq(&held.slots, &own.slots));
+        if current {
+            runs.remove(&run);
+        }
+        drop(runs);
+        own.clear();
+    }
+
     /// The delivery the `self.secrets.*` doors hand the engine: the
     /// destinations of the run each grant's holder acts in.
     #[must_use]
@@ -279,7 +295,7 @@ impl SecretHostDelivery for ServedSecretDelivery<'_> {
 }
 
 /// Whether `name` is a portable environment variable name.
-fn is_env_name(name: &str) -> bool {
+pub(super) fn is_env_name(name: &str) -> bool {
     name.bytes()
         .next()
         .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')

@@ -9,15 +9,19 @@
 //!
 //! Every stream carries one message each way, under the transport's 1 MiB
 //! cap. Bodies over that cross in pieces named by blake3. A stream's events
-//! come back as the asking node pulls them, in batches. A message of 16 KiB
-//! or more crosses in the /ws codec frame, zstd, when that is smaller.
+//! come back as the asking node pulls them, in batches, and go on to the
+//! caller as it reads them ([`pump`]). A message of 16 KiB or more crosses
+//! in the /ws codec frame, zstd, when that is smaller. What either side
+//! holds for its calls is booked on its host's [`StagingBudget`]
+//! ([`staging`]).
 
 mod catalog;
 mod client;
+mod pump;
 mod serve;
+mod staging;
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use oneiron::sync::transport::{TAG_CODEC, WireCodecs, decode_codec_frame, encode_codec_frame};
 use oneiron_mesh_transport::{MeshConnection, MeshError};
@@ -27,6 +31,7 @@ use serde::{Deserialize, Serialize};
 pub use catalog::{COST_DECLARED, CatalogRefresh, MESH_PEER, advertises};
 pub use client::{LlmNodes, MeshLlmTransport, MeshPeerProof, MeshPeerTransport, VaultLlmNodes};
 pub use serve::{LlmMeshHandler, LlmMeshService};
+pub use staging::{DEFAULT_STAGING_BYTES, StagingBudget};
 
 /// The mesh ALPN model calls ride.
 pub const LLM_ALPN: &[u8] = b"oneiron/llm/1";
@@ -35,8 +40,6 @@ pub const LLM_ALPN: &[u8] = b"oneiron/llm/1";
 const PIECE: usize = (1 << 20) - 4096;
 /// Bodies at or under this ride inside the message that names them.
 const INLINE: usize = 256 * 1024;
-/// The most bytes one connection may stage, either way.
-const STAGED_MAX: usize = 64 << 20;
 /// The transport's message cap, which a codec frame also decodes to at most.
 const MESSAGE_MAX: usize = 1 << 20;
 
@@ -141,79 +144,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The bodies one connection staged, each way.
-#[derive(Debug, Default)]
-struct Staging {
-    incoming: Mutex<HashMap<[u8; 32], Vec<u8>>>,
-    outgoing: Mutex<HashMap<[u8; 32], Arc<Vec<u8>>>>,
-}
-
-impl Staging {
-    fn staged(&self) -> usize {
-        lock(&self.incoming).values().map(Vec::len).sum::<usize>()
-            + lock(&self.outgoing)
-                .values()
-                .map(|bytes| bytes.len())
-                .sum::<usize>()
-    }
-
-    fn put(&self, hash: [u8; 32], total: u64, offset: u64, bytes: &[u8]) -> Result<(), String> {
-        if total > STAGED_MAX as u64 || self.staged().saturating_add(bytes.len()) > STAGED_MAX {
-            return Err("over what one connection may stage".into());
-        }
-        let mut incoming = lock(&self.incoming);
-        let held = incoming.entry(hash).or_default();
-        if held.len() as u64 != offset || offset.saturating_add(bytes.len() as u64) > total {
-            return Err("a staged piece out of order".into());
-        }
-        held.extend_from_slice(bytes);
-        Ok(())
-    }
-
-    fn take(&self, carried: Carried) -> Result<Vec<u8>, String> {
-        match carried {
-            Carried::Inline(bytes) => Ok(bytes),
-            Carried::Staged { hash: named, len } => {
-                let bytes = lock(&self.incoming)
-                    .remove(&named)
-                    .filter(|bytes| bytes.len() as u64 == len)
-                    .ok_or("staged body missing or incomplete")?;
-                if hash(&bytes) != named {
-                    return Err("staged body does not match its hash".into());
-                }
-                Ok(bytes)
-            }
-        }
-    }
-
-    fn offer(&self, bytes: Vec<u8>) -> Carried {
-        if bytes.len() <= INLINE {
-            return Carried::Inline(bytes);
-        }
-        let named = hash(&bytes);
-        let len = bytes.len() as u64;
-        lock(&self.outgoing).insert(named, Arc::new(bytes));
-        Carried::Staged { hash: named, len }
-    }
-
-    fn piece(&self, named: [u8; 32], offset: u64) -> Result<Vec<u8>, String> {
-        let bytes = lock(&self.outgoing)
-            .get(&named)
-            .cloned()
-            .ok_or("no such staged body")?;
-        let start = usize::try_from(offset)
-            .ok()
-            .filter(|start| *start < bytes.len())
-            .ok_or("a piece past the end")?;
-        let end = start.saturating_add(PIECE).min(bytes.len());
-        if end == bytes.len() {
-            // The last piece: the asking side has it all.
-            lock(&self.outgoing).remove(&named);
-        }
-        Ok(bytes[start..end].to_vec())
-    }
-}
-
 /// Stages a body on the serving node, unless it rides inline.
 async fn put(conn: &dyn MeshConnection, bytes: Vec<u8>) -> Result<Carried, MeshError> {
     if bytes.len() <= INLINE {
@@ -239,17 +169,24 @@ async fn put(conn: &dyn MeshConnection, bytes: Vec<u8>) -> Result<Carried, MeshE
     })
 }
 
-/// A body a reply named, got in pieces when staged, checked against its hash.
-async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, MeshError> {
+/// A body a reply named, got in pieces when staged, checked against its
+/// hash, and booked on `budget` until its holder lets it go (FIX 8619): its
+/// whole room before its first piece, waiting its turn, however long it is.
+async fn take(
+    conn: &dyn MeshConnection,
+    carried: Carried,
+    budget: &StagingBudget,
+) -> Result<staging::BookedBody, MeshError> {
     let (named, len) = match carried {
-        Carried::Inline(bytes) => return Ok(bytes),
+        Carried::Inline(bytes) => return Ok(staging::BookedBody::charged(budget, bytes)),
         Carried::Staged { hash, len } => (hash, len),
     };
     let want = usize::try_from(len)
-        .ok()
-        .filter(|want| *want <= STAGED_MAX)
-        .ok_or_else(|| MeshError::Io("staged body too long".into()))?;
-    let mut bytes = Vec::with_capacity(want);
+        .map_err(|_| MeshError::Io("staged body too long for this node".into()))?;
+    let mut body = staging::BookedBody::room(budget, want, 0)
+        .await
+        .map_err(MeshError::Io)?;
+    let bytes = &mut body.bytes;
     while bytes.len() < want {
         let request = Request::Get {
             hash: named,
@@ -262,10 +199,10 @@ async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, Me
             other => return Err(unexpected(&other)),
         }
     }
-    if hash(&bytes) != named {
+    if hash(&body.bytes) != named {
         return Err(MeshError::Io("staged body does not match its hash".into()));
     }
-    Ok(bytes)
+    Ok(body)
 }
 
 fn unexpected(reply: &Reply) -> MeshError {

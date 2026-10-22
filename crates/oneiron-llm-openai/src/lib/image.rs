@@ -1,7 +1,7 @@
 //! Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned.
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use oneiron::llm::image::{ImageBackend, ImageBytes, ImageFuture, ImageIntent, ImageResponse};
-use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId};
+use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId, RetryableLlmError};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
@@ -72,8 +72,9 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
         lease: &'a BudgetLease,
     ) -> ImageFuture<'a> {
         Box::pin(async move {
-            // Validate here as well as at ImageCatalog: direct users of the trait need the same bound.
-            if !(1..=8).contains(&references.len()) {
+            // An edit edits something. Every reference goes, in order,
+            // however many (FIX 8614): no count is refused here.
+            if references.is_empty() {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
             let images = references
@@ -101,11 +102,8 @@ pub(super) fn reference_part(
     index: usize,
     reference: ImageBytes,
 ) -> LlmResult<OpenAiImagePart> {
-    let extension = match reference.media_type.as_str() {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/webp" => "webp",
-        _ => return Err(FatalLlmError::InvalidRequest.into()),
+    let Some(extension) = reference_extension(&reference.media_type) else {
+        return Err(FatalLlmError::InvalidRequest.into());
     };
     if reference.bytes.is_empty() {
         return Err(FatalLlmError::InvalidRequest.into());
@@ -116,6 +114,17 @@ pub(super) fn reference_part(
         media_type: reference.media_type,
         bytes: reference.bytes,
     })
+}
+
+/// The file extension a reference image of `media_type` is sent under;
+/// `None` for a type the image wire does not take.
+pub(super) fn reference_extension(media_type: &str) -> Option<&'static str> {
+    match media_type {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/webp" => Some("webp"),
+        _ => None,
+    }
 }
 
 pub(super) fn fields(intent: &ImageIntent) -> LlmResult<(ModelId, BTreeMap<String, Value>)> {
@@ -163,19 +172,10 @@ pub(super) fn form_fields(fields: &BTreeMap<String, Value>) -> BTreeMap<String, 
         .collect()
 }
 
-/// The largest image one reply may carry, decoded. A generated image is a few
-/// MiB; anything past this is refused as no usable image.
-const MAX_IMAGE_RESPONSE_BYTES: usize = 64 << 20;
-
-/// What standard base64 `encoded` decodes to, at most, counted from its length.
-fn decoded_len(encoded: &str) -> usize {
-    let padding = encoded
-        .bytes()
-        .rev()
-        .take(2)
-        .filter(|byte| *byte == b'=')
-        .count();
-    (encoded.len() / 4 * 3).saturating_sub(padding)
+/// The room standard base64 `encoded` decodes into: the decoder's own
+/// estimate, so it writes into this room and never grows it.
+fn decoded_room(encoded: &str) -> usize {
+    encoded.len().div_ceil(4) * 3
 }
 
 pub(super) fn decode_response(
@@ -190,8 +190,9 @@ pub(super) fn decode_response(
             &response.body,
         ));
     }
-    // The reply is owned: take its parts rather than copying them, and judge
-    // the image's size from its encoding before decoding it.
+    // The reply is owned: take its parts rather than copying them. An image
+    // is kept whole, however large (FIX 8615): its room is allocated
+    // fallibly, and only memory this machine cannot give ends the call.
     let Value::Object(mut body) = response.body else {
         return Err(FatalLlmError::EmptyResponse.into());
     };
@@ -207,12 +208,14 @@ pub(super) fn decode_response(
     let Some(Value::String(encoded)) = item.remove("b64_json") else {
         return Err(FatalLlmError::EmptyResponse.into());
     };
-    if decoded_len(&encoded) > MAX_IMAGE_RESPONSE_BYTES {
-        return Err(FatalLlmError::EmptyResponse.into());
-    }
-    let bytes = STANDARD
-        .decode(encoded)
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(decoded_room(&encoded))
+        .map_err(|_| RetryableLlmError::ServerError)?;
+    STANDARD
+        .decode_vec(encoded.as_bytes(), &mut bytes)
         .map_err(|_| FatalLlmError::EmptyResponse)?;
+    drop(encoded);
     if bytes.is_empty() {
         return Err(FatalLlmError::EmptyResponse.into());
     }

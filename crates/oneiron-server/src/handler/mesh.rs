@@ -249,9 +249,12 @@ mod host {
             // This machine's models serve the owner's other nodes (OF-575).
             .route(
                 LLM_ALPN,
-                Arc::new(LlmMeshService::new(Arc::new(crate::api::MeshLlm(
-                    Arc::clone(server),
-                )))),
+                Arc::new(LlmMeshService::new(
+                    Arc::new(crate::api::MeshLlm(Arc::clone(server))),
+                    // What this node's model calls for other nodes hold at
+                    // once (FIX 8618).
+                    oneiron_llm_own_server::StagingBudget::default(),
+                )),
             )
             .tick(organ_redrive(router, Arc::clone(vault)))
             .tick(server.pack_organ_tick())

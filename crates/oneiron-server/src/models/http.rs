@@ -14,6 +14,12 @@ use serde_json::Value as JsonValue;
 use super::sse::{EventTooLarge, SseDecoder, SseEvent};
 use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
 
+mod reply_line;
+
+pub(crate) use reply_line::install_media_reply_line;
+use reply_line::read_booked;
+pub(super) use reply_line::{ReplyBytes, charge_read, holding_replies};
+
 /// The smallest request body worth compressing (ARCH-0081 §6).
 const MIN_COMPRESSED_BYTES: usize = 16 * 1024;
 
@@ -53,6 +59,9 @@ pub(super) enum HttpFailure {
     EventTooLarge,
     /// A reply body grew past [`MAX_REPLY_BYTES`] before it ended.
     BodyTooLarge,
+    /// The memory a media reply's body needed could not be allocated
+    /// (FIX 8615): the machine's own floor, never a size bound.
+    OutOfMemory,
 }
 
 /// The most one whole reply body may hold: a JSON reply, or the body of a
@@ -73,15 +82,15 @@ impl From<reqwest::Error> for HttpFailure {
     }
 }
 
-/// The largest reply one media exchange may carry: a generated clip.
-pub(super) const MAX_MEDIA_REPLY_BYTES: usize = 512 << 20;
-
 /// A finished exchange whose body is whatever the protocol sends: JSON, or
-/// media bytes.
+/// media bytes. A media reply's body is held on the media-reply line while
+/// this lives, unless the media call it was read for holds it
+/// ([`holding_replies`]).
 pub(super) struct BytesReply {
     pub(super) status: u16,
     pub(super) headers: BTreeMap<String, String>,
     pub(super) body: Vec<u8>,
+    pub(super) held: ReplyBytes,
 }
 
 /// What one media exchange sends.
@@ -360,9 +369,10 @@ impl ProviderHttp {
         })
     }
 
-    /// One media exchange at `path`, its reply body read whole up to
-    /// [`MAX_MEDIA_REPLY_BYTES`]. One request, as every exchange here; a
-    /// JSON or octet body is compressed as [`Self::send_body`] says.
+    /// One media exchange at `path`, its reply body read whole, however
+    /// large, on the media-reply line (FIX 8615). One request, as every
+    /// exchange here; a JSON or octet body is compressed as
+    /// [`Self::send_body`] says.
     pub(super) async fn send_media(
         &self,
         path: &str,
@@ -399,11 +409,12 @@ impl ProviderHttp {
         };
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
-        let body = bounded_body(response, MAX_MEDIA_REPLY_BYTES).await?;
+        let (body, held) = read_booked(response).await?;
         Ok(BytesReply {
             status,
             headers,
             body,
+            held,
         })
     }
 
@@ -424,11 +435,12 @@ impl ProviderHttp {
             status,
             headers,
             body,
+            held: ReplyBytes::default(),
         })
     }
 
-    /// A file the provider named by its full URI, read whole up to
-    /// [`MAX_MEDIA_REPLY_BYTES`]. The key goes only to the provider's own
+    /// A file the provider named by its full URI, read whole, however
+    /// large, on the media-reply line. The key goes only to the provider's own
     /// origin; one redirect from there is followed, without the key or any
     /// provider header when it leaves that origin (a clip served from
     /// storage).
@@ -458,11 +470,12 @@ impl ProviderHttp {
         }
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
-        let body = bounded_body(response, MAX_MEDIA_REPLY_BYTES).await?;
+        let (body, held) = read_booked(response).await?;
         Ok(BytesReply {
             status,
             headers,
             body,
+            held,
         })
     }
 

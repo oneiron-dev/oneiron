@@ -11,6 +11,7 @@ mod mode;
 mod routes;
 mod usage;
 pub use usage::VaultUsage;
+mod seat_host;
 pub mod seat_login;
 mod secret_destinations;
 pub mod staged_input;

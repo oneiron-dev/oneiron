@@ -200,11 +200,12 @@ fn names_voice(request: &MediaRequest) -> bool {
     request.voice.is_some() || request.params.contains_key("voice")
 }
 
-/// Whether `rung`'s row serves `request` as the rung would send it.
+/// Whether `rung` takes `request` as the rung would send it: its row serves
+/// it and its offer carries every reference (FIX 8627).
 fn serves_media(rung: &LadderRung, request: &MediaRequest) -> bool {
     rung.media
         .as_ref()
-        .is_some_and(|media| media.row.admit_media(&rung_request(rung, request)).is_ok())
+        .is_some_and(|media| media.takes(&rung_request(rung, request)))
 }
 
 /// How a model is reached: a seat's ladder, one rung of it alone, or a
@@ -1363,9 +1364,10 @@ impl OfferLadder {
             };
             bound.voice = Some(voice);
         }
-        // A rung whose row does not serve the call (its inputs, its
-        // references) is passed, unsent; a call no rung serves is refused.
-        if media.row.admit_media(&bound).is_err() {
+        // A rung whose row does not serve the call (its inputs), or whose
+        // offer cannot carry all its references, is passed, unsent; a call
+        // no rung serves is refused (FIX 8627).
+        if !media.takes(&bound) {
             return Ok(None);
         }
         // Held through the answer, or a job's submission (FIX 8315).
@@ -1881,7 +1883,7 @@ impl OfferLadder {
             let mut bound = request.clone();
             bound.model = rung.model.clone();
             bound.envelope.locality = rung.offer.binding.locality;
-            if media.row.admit_media(&bound).is_err() || self.passes_over(call, index, &mut walk) {
+            if !media.takes(&bound) || self.passes_over(call, index, &mut walk) {
                 continue;
             }
             let reserve = oneiron::llm::run_admission::MediaStreamLease::reserve_units(

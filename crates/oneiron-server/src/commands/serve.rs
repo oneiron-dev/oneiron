@@ -488,6 +488,8 @@ pub(crate) async fn start_desktop_workers(
             embedding,
             sync_server.spawn_media_embedding_worker(),
             sync_server.spawn_resident_pump(),
+            // The official CLIs' runs, on the person's own runtime (FIX 4552).
+            sync_server.spawn_seat_host(),
             Some(sync_server.spawn_connector_settler()),
         ];
         let tagging = tagging.map(|handle| (handle, stopping.clone()));

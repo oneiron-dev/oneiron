@@ -212,6 +212,12 @@ pub struct RuntimeConfigOverride {
     pub byo_key_env: Option<String>,
     pub byo_key_secret: Option<String>,
     pub role_defaults: Option<RuntimeRoleDefaultOverrides>,
+    /// `[runtime.host_destinations]`, environment variable to effector; a
+    /// layer that names it replaces the whole table.
+    pub host_destinations: Option<std::collections::BTreeMap<String, String>>,
+    /// `[runtime] seat_host`: whether this host runs queued official CLI
+    /// attempts itself.
+    pub seat_host: Option<bool>,
 }
 
 impl RuntimeConfigOverride {
@@ -250,6 +256,12 @@ impl RuntimeConfigOverride {
             self.role_defaults
                 .get_or_insert_with(RuntimeRoleDefaultOverrides::default)
                 .merge(other_defaults);
+        }
+        if other.host_destinations.is_some() {
+            self.host_destinations = other.host_destinations;
+        }
+        if other.seat_host.is_some() {
+            self.seat_host = other.seat_host;
         }
     }
 }

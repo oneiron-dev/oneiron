@@ -239,7 +239,11 @@ fn indexed_scores(body: &JsonValue, count: usize) -> Option<Vec<f32>> {
 pub(super) fn transport(failure: HttpFailure) -> LlmError {
     match failure {
         HttpFailure::Timeout => RetryableLlmError::Timeout.into(),
-        HttpFailure::Connection | HttpFailure::StreamCut => RetryableLlmError::ServerError.into(),
+        // A media reply this machine could not allocate (FIX 8615) is no
+        // fault of the provider's answer: the call may be tried again.
+        HttpFailure::Connection | HttpFailure::StreamCut | HttpFailure::OutOfMemory => {
+            RetryableLlmError::ServerError.into()
+        }
         HttpFailure::Malformed | HttpFailure::EventTooLarge | HttpFailure::BodyTooLarge => {
             FatalLlmError::EmptyResponse.into()
         }
