@@ -346,12 +346,25 @@ pub fn register_observer_a(
 ) -> Subscription {
     let vault = vault.clone();
     let window_key = window_key.to_string();
+    // The `u:w:` row holds its pads by reference where custody here holds
+    // them, the document holding the update's dependencies (FIX 7107). What
+    // goes outbound stays as made: a queued row may replay where no window
+    // is open to inflate a reference back (KEEP TODAY).
+    let window = crate::sync::types::WindowKey::try_new(window_key.as_str());
+    let context = doc.clone();
 
     doc.subscribe_local_update(Box::new(move |update_bytes| {
         if observer_a_suppressed_for_deletion_tombstone() {
             return true;
         }
-        let result = persist_window_update(&vault, &window_key, update_bytes);
+        let persisted = window.as_ref().map(|window| {
+            crate::sync::window::persisted_window_pads(&vault, window, update_bytes, Some(&context))
+        });
+        let result = persist_window_update(
+            &vault,
+            &window_key,
+            persisted.as_deref().unwrap_or(update_bytes),
+        );
 
         if let Err(e) = result {
             tracing::error!(

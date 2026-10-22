@@ -397,18 +397,24 @@ pub(super) fn pad_equivalent(
     actual
 }
 
-/// Fills each pad row the rebuilt `window` names by bare reference with its
-/// carrier, as the window's live routes and durable state hold it until
-/// windows take references (FIX 7107): from the row just landed and its
-/// current custody, never from the artifact (KS-5). A pad not here stays a
-/// reference.
+/// Fills each pad row the rebuilt `window` names by bare reference, and
+/// whose pad current custody does not hold, with its carrier: from the row
+/// just landed, never from the artifact (KS-5). One custody holds stays a
+/// reference, as the window's durable state keeps it (FIX 7107); a pad not
+/// here stays a reference.
 #[cfg(feature = "sync")]
 fn carry_window_pads(vault: &crate::Vault, window: &LoroDoc) -> Result<()> {
     use super::canonical::{binary_rows, id, insert, parse_id};
     let txn = vault.store.env.read_txn()?;
     let mut carried = false;
     for (key, blob) in binary_rows(window, "entities")? {
-        if crate::world_keys::image_pad_row_of(&blob).is_none_or(|row| row.held) {
+        let Some(row) = crate::world_keys::image_pad_row_of(&blob).filter(|row| !row.held) else {
+            continue;
+        };
+        // A reference whose pad current custody holds stays one: the
+        // window's durable state takes it, and a send that goes as the
+        // carrier inflates it from custody (FIX 7107).
+        if matches!(vault.store.world_pad_in_custody(&row.item), Ok(Some(_))) {
             continue;
         }
         let Some(stored) = crate::ports::EntityStoreRead::port_entity_raw(
