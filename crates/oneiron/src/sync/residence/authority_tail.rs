@@ -302,32 +302,74 @@ pub fn authority_wanted(
     Ok(offered.difference(&held).copied().collect())
 }
 
-/// Imports the signed entries a linked machine appends, at most
-/// [`AUTHORITY_TAIL_PAGE_MAX`], through the signed-history door
-/// ([`import_authority_page`]): every signature, parent and standing is
-/// checked and the log refolds here, so nothing the machine asserts is
-/// trusted beyond the signed bytes. Each entry's parents are held here or
-/// earlier in `entries`; an entry the door refuses holds back only itself and
-/// what stands on it. Returns how many rows the import wrote, or `None` for a
-/// peer that is not a proven linked machine.
+/// The entries an append imports at a time (CALLS:
+/// AUTHORITY_APPEND_WORK_SLICE): the shipped page size, a work slice that
+/// never refuses a longer append (FIX 8887).
+pub const AUTHORITY_APPEND_WORK_SLICE: usize = AUTHORITY_TAIL_PAGE_MAX;
+
+/// What one append did with each entry it was sent (FIX 8887).
+#[derive(Debug, Default)]
+pub struct AuthorityAppendProgress {
+    /// How many rows the imports wrote.
+    pub written: usize,
+    /// The entries that stand here now, by hash: imported, or held already.
+    pub accepted: BTreeSet<AuthorityEntryHash>,
+    /// The entries the signed-history door refused, by hash, with each that
+    /// stands on one of them.
+    pub refused: BTreeSet<AuthorityEntryHash>,
+}
+
+/// Imports the signed entries a linked machine appends through the
+/// signed-history door ([`import_authority_page`]), every one of them,
+/// [`AUTHORITY_APPEND_WORK_SLICE`] at a time in the order sent: every
+/// signature, parent and standing is checked and the log refolds here, so
+/// nothing the machine asserts is trusted beyond the signed bytes. Each
+/// entry's parents are held here or earlier in `entries`; an entry the door
+/// refuses holds back only itself and what stands on it. Returns how many
+/// rows the import wrote, or `None` for a peer that is not a proven linked
+/// machine.
 ///
 /// # Errors
 ///
-/// An oversized page; an entry or history the door refuses; storage errors.
+/// An entry that does not decode; storage errors.
 pub fn authority_append_for(
     vault: &Vault,
     peer: PeerMachine,
     entries: &[Vec<u8>],
 ) -> Result<Option<usize>> {
+    Ok(authority_append_progress_for(vault, peer, entries)?.map(|progress| progress.written))
+}
+
+/// [`authority_append_for`] with each entry's outcome: no entry of an
+/// append is dropped for the append's length (FIX 8887).
+///
+/// # Errors
+///
+/// An entry that does not decode; storage errors.
+pub fn authority_append_progress_for(
+    vault: &Vault,
+    peer: PeerMachine,
+    entries: &[Vec<u8>],
+) -> Result<Option<AuthorityAppendProgress>> {
     if !owner_machine(vault, peer)? {
         return Ok(None);
     }
-    if entries.len() > AUTHORITY_TAIL_PAGE_MAX {
-        return Err(Error::sync_protocol(
-            SyncProtocolValidation::DocumentAdmissionDenied,
-        ));
+    let mut progress = AuthorityAppendProgress::default();
+    // Parents first: a slice's parents were imported, or refused, with an
+    // earlier slice.
+    for slice in entries.chunks(AUTHORITY_APPEND_WORK_SLICE) {
+        let import = import_authority_page(vault, slice)?;
+        progress.written += import.written;
+        for entry in slice {
+            let hash = authority_entry_hash(&decode_authority_log_entry_body(entry)?)?;
+            if import.refused.contains(&hash) {
+                progress.refused.insert(hash);
+            } else {
+                progress.accepted.insert(hash);
+            }
+        }
     }
-    Ok(Some(import_authority_page(vault, entries)?.written))
+    Ok(Some(progress))
 }
 
 /// What one authority page import did ([`import_authority_page`]).
