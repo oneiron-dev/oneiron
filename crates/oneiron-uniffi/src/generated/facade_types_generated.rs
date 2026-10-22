@@ -54050,6 +54050,10 @@ pub struct ChartSeries {
     pub family: Option<ChartKind>,
     #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
     pub x: Option<Vec<Option<f64>>>,
+    #[serde(rename = "x_labels", default, skip_serializing_if = "Option::is_none")]
+    pub x_labels: Option<Vec<Option<String>>>,
+    #[serde(rename = "plot", default, skip_serializing_if = "Option::is_none")]
+    pub plot: Option<u32>,
     #[serde(
         rename = "categories",
         default,
