@@ -12,6 +12,7 @@ mod connector_call;
 mod connector_call_asks;
 mod connector_call_code;
 mod connector_call_consent;
+mod connector_call_erase;
 mod connector_call_input;
 mod connector_call_output;
 mod connector_call_pending;
@@ -45,6 +46,7 @@ pub(crate) use self::connector_call_code::{
 pub(crate) use self::connector_call_consent::{
     SLATE_ALWAYS_ASK_REASON, frozen_scoped_candidate_in_txn,
 };
+pub(crate) use self::connector_call_erase::erase_connector_call_actor_in_txn;
 pub use self::connector_call_input::ConnectorCallInput;
 pub use self::connector_elicitation_asks::{
     ConnectorElicitationAnswer, ConnectorElicitationOwnerAsk,

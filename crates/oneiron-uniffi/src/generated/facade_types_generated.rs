@@ -47244,8 +47244,8 @@ pub enum ConnectorCallReply {
     AwaitingInput {
         #[serde(rename = "handle")]
         handle: String,
-        #[serde(rename = "call_ref", default, skip_serializing_if = "Option::is_none")]
-        call_ref: Option<String>,
+        #[serde(rename = "call_ref")]
+        call_ref: String,
         #[serde(rename = "source")]
         source: String,
         #[serde(rename = "foreign")]

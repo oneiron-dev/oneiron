@@ -1,5 +1,5 @@
 //! The live half of the call host: the worker that owns an exchange once its
-//! send returned, and the reply readers both halves share.
+//! send returned. The reply readers both halves share are in `reply_read`.
 //!
 //! The worker receipts each answer it sends at its POST, and each round it
 //! ends unanswered, on the gate ledger (FIX 3840): receipt-only, ids,
@@ -14,10 +14,12 @@
 
 use oneiron::outbound_consent::{
     ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
+    OutboundBindingAuthority, OutboundBindingValidation,
 };
 use oneiron::outbound_intent_ledger::IntentLedgerError;
 use zeroize::Zeroizing;
 
+use super::reply_read::EventStream;
 use super::*;
 
 /// Hands one live exchange to a worker thread, which owns it from here, and
@@ -40,7 +42,9 @@ pub(super) fn hand_over(
         aliases,
     } = round;
     let Some(session) = live.take() else {
-        declared.registry.finish(&registered.handle);
+        declared
+            .registry
+            .finish(Some(&**declared.vault), &registered.handle);
         return Sent::acked(None, body);
     };
     let awaiting = ConnectorAwaitingInput {
@@ -69,7 +73,9 @@ pub(super) fn hand_over(
         .name("connector-elicitation".to_owned())
         .spawn(move || worker.run());
     if started.is_err() {
-        declared.registry.finish(&awaiting.handle);
+        declared
+            .registry
+            .finish(Some(&**declared.vault), &awaiting.handle);
         return Sent::acked(None, body);
     }
     Sent {
@@ -274,6 +280,23 @@ impl KeptWire {
     }
 }
 
+/// The reason an answer gets when the original call's grant no longer
+/// admits the re-send it would make (FIX 8226): the ledger's own word for a
+/// frozen binding its grant no longer admits.
+const RETRY_NOT_ADMITTED: &str = "binding_invalid";
+
+/// Whether the original call's grant still admits `original`, checked as
+/// the first send and a ledger recovery check it; a vault gone or a check
+/// that fails admits nothing.
+fn still_admitted(vault: &Weak<Vault>, original: &FrozenOutboundCall) -> bool {
+    let Some(vault) = vault.upgrade() else {
+        return false;
+    };
+    OutboundBindingAuthority::for_vault(&vault)
+        .and_then(|authority| authority.validate_frozen_call(&vault, original))
+        .is_ok_and(|validation| matches!(validation, OutboundBindingValidation::Valid))
+}
+
 /// What a live question set's worker continues the exchange with.
 pub(super) enum Continuation {
     /// A request on the reply stream: answered by a JSON-RPC response POSTed
@@ -290,6 +313,9 @@ pub(super) enum Continuation {
         tool_headers: HeaderMap,
         request_state: Option<KeptWire>,
         next_id: u64,
+        /// The authenticated call whose payload each answer re-sends: its
+        /// grant is checked again before every re-send (FIX 8226).
+        original: FrozenOutboundCall,
     },
 }
 
@@ -379,11 +405,20 @@ impl Worker {
                     if let Some(kept) = &self.kept {
                         clear_event(&mut event, &kept.sent());
                     }
+                    let (call_ref, handle) = (self.bound_call(), self.handle.as_str());
                     if matches!(event, WorkerEvent::Result(_)) {
-                        let call_ref = self.bound_call();
-                        let handle = self.handle.as_str();
                         self.keep_row(call_ref, |vault, call_ref| {
                             vault.settle_connector_input(call_ref, handle)
+                        });
+                        delivered = true;
+                    } else if let WorkerEvent::Failed {
+                        sent: false,
+                        reason: reason @ RETRY_NOT_ADMITTED,
+                    } = event
+                    {
+                        // Definitely never re-sent, and never will be.
+                        self.keep_row(call_ref, |vault, call_ref| {
+                            vault.refuse_connector_input(call_ref, handle, reason)
                         });
                         delivered = true;
                     }
@@ -402,7 +437,7 @@ impl Worker {
         }
         self.session.end();
         if let Some(registry) = self.registry.upgrade() {
-            registry.finish(&self.handle);
+            registry.finish(self.receipts.vault.upgrade().as_deref(), &self.handle);
         }
     }
 
@@ -475,7 +510,23 @@ impl Worker {
                 tool_headers,
                 request_state,
                 next_id,
+                original,
             } => {
+                // The original grant must still admit the call this answer
+                // re-sends, a decline or a cancel too; one that no longer
+                // does (or cannot be checked) sends nothing (FIX 8226).
+                if !still_admitted(&self.receipts.vault, original) {
+                    self.receipts.record(
+                        generation,
+                        &answered,
+                        responses,
+                        ElicitationEgress::NotSent,
+                    );
+                    return Next::Over(WorkerEvent::Failed {
+                        sent: false,
+                        reason: RETRY_NOT_ADMITTED,
+                    });
+                }
                 let id = *next_id;
                 *next_id += 1;
                 let mut params = Map::new();
@@ -643,146 +694,4 @@ pub(super) fn read_retry_reply(
             Ok(StreamEvent::End) | Err(()) => return Err(unreadable),
         }
     }
-}
-
-/// One reply body: a JSON body read whole, or an event stream still open.
-pub(super) enum Reply {
-    /// The message that answers the request, if the body holds one, and its
-    /// bytes.
-    Json(Option<(Value, Vec<u8>)>),
-    Stream(EventStream),
-}
-
-/// One event of a reply stream.
-pub(super) enum StreamEvent {
-    /// The response that answers the request, and its own bytes.
-    Answer(Value, Vec<u8>),
-    /// A server request.
-    Request(Value),
-    /// The stream ended without answering.
-    End,
-}
-
-/// A reply stream read event by event. More than
-/// [`CONNECTOR_REPLY_MAX_BYTES`] of it is unreadable; past `deadline`, so is
-/// the rest of a round.
-pub(super) struct EventStream {
-    reader: BufReader<std::io::Take<reqwest::blocking::Response>>,
-    read: usize,
-    data: String,
-    deadline: Option<Instant>,
-}
-
-impl EventStream {
-    /// The next answer to `id` or server request; notifications are
-    /// dropped.
-    pub(super) fn next(&mut self, id: u64) -> Result<StreamEvent, ()> {
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let n = self.reader.read_line(&mut line).map_err(|_| ())?;
-            self.read = self.read.saturating_add(n);
-            if self.read > CONNECTOR_REPLY_MAX_BYTES
-                || self
-                    .deadline
-                    .is_some_and(|deadline| Instant::now() > deadline)
-            {
-                return Err(());
-            }
-            let end = n == 0;
-            let trimmed = line.trim_end_matches(['\r', '\n']);
-            if end || trimmed.is_empty() {
-                if !self.data.is_empty() {
-                    let event = std::mem::take(&mut self.data);
-                    if let Ok(message) = serde_json::from_str::<Value>(&event) {
-                        if answers(&message, id) {
-                            return Ok(StreamEvent::Answer(message, event.into_bytes()));
-                        }
-                        if message.get("method").is_some() && message.get("id").is_some() {
-                            return Ok(StreamEvent::Request(message));
-                        }
-                    }
-                }
-                if end {
-                    return Ok(StreamEvent::End);
-                }
-                continue;
-            }
-            if let Some(field) = trimmed.strip_prefix("data:") {
-                if !self.data.is_empty() {
-                    self.data.push('\n');
-                }
-                self.data.push_str(field.strip_prefix(' ').unwrap_or(field));
-            }
-        }
-    }
-
-    /// Starts a new round of reading, bounded by `timeout`.
-    fn renew(&mut self, timeout: Duration) {
-        self.deadline = Some(Instant::now() + timeout);
-    }
-}
-
-/// Opens one reply body, JSON or an event stream. A JSON body is read whole,
-/// and more than [`CONNECTOR_REPLY_MAX_BYTES`] of it is unreadable.
-pub(super) fn open_reply(
-    response: reqwest::blocking::Response,
-    id: u64,
-    deadline: Option<Instant>,
-) -> Result<Reply, ()> {
-    let stream = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.trim_start().starts_with("text/event-stream"));
-    let limit = u64::try_from(CONNECTOR_REPLY_MAX_BYTES)
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
-    let mut body = response.take(limit);
-    if stream {
-        return Ok(Reply::Stream(EventStream {
-            reader: BufReader::new(body),
-            read: 0,
-            data: String::new(),
-            deadline,
-        }));
-    }
-    let mut bytes = Vec::new();
-    body.read_to_end(&mut bytes).map_err(|_| ())?;
-    if bytes.len() > CONNECTOR_REPLY_MAX_BYTES {
-        return Err(());
-    }
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
-    let found = match value {
-        Value::Array(batch) => batch.into_iter().find(|message| answers(message, id)),
-        message => answers(&message, id).then_some(message),
-    };
-    Ok(Reply::Json(found.map(|message| (message, bytes))))
-}
-
-/// Reads one reply body until the response that answers `id`; server
-/// requests and notifications on a stream are dropped. Returns the message
-/// and its own bytes.
-pub(super) fn read_reply(
-    response: reqwest::blocking::Response,
-    id: u64,
-) -> Result<Option<(Value, Vec<u8>)>, ()> {
-    let mut stream = match open_reply(response, id, None)? {
-        Reply::Json(found) => return Ok(found),
-        Reply::Stream(stream) => stream,
-    };
-    loop {
-        match stream.next(id)? {
-            StreamEvent::Answer(message, bytes) => return Ok(Some((message, bytes))),
-            StreamEvent::Request(_) => {}
-            StreamEvent::End => return Ok(None),
-        }
-    }
-}
-
-/// A response (not a request) carrying exactly this id.
-pub(super) fn answers(message: &Value, id: u64) -> bool {
-    message.get("method").is_none()
-        && message.get("id").and_then(Value::as_u64) == Some(id)
-        && (message.get("result").is_some() || message.get("error").is_some())
 }
