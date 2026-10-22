@@ -217,8 +217,8 @@ pub use channel_identity_receipts::*;
 pub(crate) use commitment_due::*;
 // KS-6: credential values and carriers in typed custody.
 pub(crate) use credential_custody::{
-    CredentialLeaf, PlannedCredential, credential_kind, credential_value_leaf_in,
-    plan_credential_value,
+    CredentialFences, CredentialLeaf, FenceLookup, PlannedCredential, credential_erases_staged,
+    credential_kind, credential_value_leaf_in, plan_credential_value,
 };
 pub(crate) use deadline_jobs::DeadlineJobs;
 pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};

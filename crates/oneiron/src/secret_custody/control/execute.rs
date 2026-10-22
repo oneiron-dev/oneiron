@@ -34,7 +34,8 @@ use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
 use super::super::types::{SecretBinding, SecretCustodyRecord, SecretCustodyStatus};
 use super::input::{
-    Attached, InputBinding, assembled_input_in_txn, drop_input_in_txn, split_attached,
+    Attached, InputBinding, WitnessJoin, assembled_input_in_txn, drop_input_in_txn, split_attached,
+    witness_joined_in_txn,
 };
 use super::manifest::{RegisterVerdict, check_register_in_txn, judgment_text};
 use super::permits::permitted_keys;
@@ -393,6 +394,11 @@ impl Vault {
         let Some(kept) = assembled_input_in_txn(&self.store, txn, &digest)? else {
             return Ok(Opened::Missing);
         };
+        // A witness in parts proves its request whole before any effect;
+        // until then the request stays pending (FIX 8088).
+        if witness_joined_in_txn(&self.store, txn, &digest)? == WitnessJoin::Missing {
+            return Ok(Opened::Missing);
+        }
         let Some((envelope, attached)) = split_attached(&kept) else {
             return Ok(Opened::Invalid);
         };
@@ -426,6 +432,10 @@ impl Vault {
             return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
         }
         if read_secret_custody_admission_in_txn(&self.store, txn, &id)?.is_some() {
+            return Ok(Some(Enacted::refused(OwnerWorkRefusal::CustodyConflict)));
+        }
+        // An erased credential's id is never registered again (KS-6 part 2).
+        if self.store.credential_fence_in_txn(txn, &id) == crate::store::FenceLookup::Fenced {
             return Ok(Some(Enacted::refused(OwnerWorkRefusal::CustodyConflict)));
         }
         if let Some(named) = resolve_secret_ref_in_txn(&self.store, txn, &record.0.name)?
