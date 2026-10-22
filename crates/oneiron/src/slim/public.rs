@@ -116,7 +116,8 @@ impl Vault {
     }
 }
 
-/// Returned only after the engine's fixed-order shed transaction finishes.
+/// Returned only after the engine's fixed-order shed transaction finishes,
+/// or once the owner's request finds it owed nothing (`nothing_pending`).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlimDropReceipt {
     pub process_id: u32,
@@ -137,6 +138,10 @@ pub enum SlimDropOutcome {
     Refused {
         blocker: ShedBlocker,
     },
+    /// The owner's request waited while more than one outbound step was
+    /// pending, then found none pending on a FULL vault: no shed was owed,
+    /// so none ran (FIX 10157). It says nothing of how any send ended.
+    NothingPending,
 }
 
 impl From<ShedOutcome> for SlimDropReceipt {

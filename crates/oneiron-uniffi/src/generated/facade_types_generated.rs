@@ -18533,6 +18533,8 @@ pub enum SlimDropOutcome {
         #[serde(rename = "blocker")]
         blocker: ShedBlocker,
     },
+    #[serde(rename = "nothing_pending")]
+    NothingPending,
 }
 
 /// `oneiron::slim::public::SlimDropReceipt`.
