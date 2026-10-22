@@ -255,6 +255,15 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         self.wait_blocking(None, None)
     }
 
+    /// [`Self::admit_background_blocking`] whose wait ends at `wait`: the
+    /// host's own work with a deadline of its own, still served last.
+    pub fn admit_background_blocking_for(
+        &self,
+        wait: Duration,
+    ) -> Result<LinePermit, WaitTimedOut> {
+        self.wait_blocking(None, Some(wait))
+    }
+
     /// A free permit for the host's own work, or `None` with nothing put in
     /// line: the work waits for a later look rather than for a turn.
     pub fn try_admit_background(&self) -> Option<LinePermit> {

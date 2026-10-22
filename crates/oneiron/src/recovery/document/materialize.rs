@@ -187,7 +187,8 @@ fn plan(
         if bundle_id != bundle.id {
             return Err(invalid("stored proposal key"));
         }
-        if !(1..=256).contains(&(bundle.waiting.len() + bundle.landed.len()))
+        // No count bounds a stored bundle (Rule 5, FIX 8828).
+        if (bundle.waiting.is_empty() && bundle.landed.is_empty())
             || bundle.explainer.trim().is_empty()
         {
             return Err(invalid("stored proposal shape"));

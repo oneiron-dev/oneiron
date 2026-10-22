@@ -31,7 +31,7 @@ struct RematCtx<'a> {
     entities_map: LoroMap,
     edges_map: LoroMap,
     /// The tombstones map indexed once for every pass of this rematerialization (H15).
-    tombstones: TombstoneIndex,
+    tombstones: &'a TombstoneIndex,
 }
 
 /// Cross-pass mutable ledgers: the `marked` snapshot plus the accumulators
@@ -63,6 +63,7 @@ pub fn forward_rematerialize(
     forward_with_recovery(vault, doc, materializer, window_key, None)
 }
 
+#[cfg(test)]
 pub(crate) fn forward_recovery(
     vault: &Vault,
     doc: &LoroDoc,
@@ -70,15 +71,18 @@ pub(crate) fn forward_recovery(
     window_key: &WindowKey,
     snapshot: &crate::recovery::CanonicalSnapshot,
 ) -> Result<u32> {
-    snapshot.validate()?;
-    if snapshot.window != window_key.as_str() {
-        return Err(crate::Error::InvalidConfig(
-            "recovery window key mismatch".into(),
-        ));
+    let mut run = ForwardRun::open_recovery(vault, doc, materializer, window_key, snapshot)?;
+    loop {
+        if let Some(count) =
+            run.recovery_page(vault, doc, materializer, window_key, snapshot, usize::MAX)?
+        {
+            return Ok(count);
+        }
     }
-    forward_with_recovery(vault, doc, materializer, window_key, Some(snapshot))
 }
 
+/// One rematerialization in one go, as every window open runs it: the pass
+/// order and the materializer lock held throughout.
 fn forward_with_recovery(
     vault: &Vault,
     doc: &LoroDoc,
@@ -89,6 +93,84 @@ fn forward_with_recovery(
     // The rows this pass writes came from the doc: the live mirror must not
     // rewrite a carrier with them.
     let _import = crate::sync::manager::import_scope();
+    let (tombstones, native_documents) = open(vault, doc, window_key, trusted)?;
+    let _guard = materializer.lock();
+    let mut run = ForwardRun::begin(
+        vault,
+        doc,
+        materializer,
+        window_key,
+        trusted,
+        tombstones,
+        native_documents,
+    )?;
+    loop {
+        if let Some(count) = run.page(vault, doc, window_key, trusted, usize::MAX)? {
+            return Ok(count);
+        }
+    }
+}
+
+/// One forward rematerialization between its pages (FIX 8821): the passes
+/// in their pinned order (entities, edges, tombstones, then the settle),
+/// each run a page of rows at a time from its plan, with the cross-pass
+/// ledgers, the tombstone index and the tombstone outcomes kept from page to
+/// page. A recovery runs it a page per turn on the vault's task-work line;
+/// a window open runs every page at once.
+pub(crate) struct ForwardRun {
+    lease_vault_id: u64,
+    tombstones: TombstoneIndex,
+    native_documents: Option<crate::sync::note::State>,
+    ledger: RematLedger,
+    outcome: tombstone_pass::TombstonePassOutcome,
+    stage: Stage,
+}
+
+/// Where a forward run stands: the pass and its next row, or its count.
+enum Stage {
+    Entities {
+        plan: entity_pass::EntityPlan,
+        next: usize,
+    },
+    Edges {
+        keys: Vec<String>,
+        next: usize,
+    },
+    Tombstones {
+        entries: Vec<(String, Vec<u8>)>,
+        next: usize,
+    },
+    Done(u32),
+}
+
+fn remat_ctx<'a>(
+    vault: &'a Vault,
+    doc: &'a LoroDoc,
+    window_key: &'a WindowKey,
+    trusted: Option<&'a crate::recovery::CanonicalSnapshot>,
+    lease_vault_id: u64,
+    tombstones: &'a TombstoneIndex,
+) -> RematCtx<'a> {
+    RematCtx {
+        vault,
+        doc,
+        window_key,
+        lease_vault_id,
+        trusted,
+        entities_map: doc.get_map("entities"),
+        edges_map: doc.get_map("edges"),
+        tombstones,
+    }
+}
+
+/// The checks before any write: retained world witnesses, native NOTE
+/// documents, and no NOTE recovery carrier in a peer window.
+fn open(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    trusted: Option<&crate::recovery::CanonicalSnapshot>,
+) -> Result<(TombstoneIndex, Option<crate::sync::note::State>)> {
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     if window_key.world().is_some() {
         let mut witnesses = Vec::new();
@@ -148,51 +230,220 @@ fn forward_with_recovery(
             }
         }
     }
-    let documents = trusted;
-    let _guard = materializer.lock();
-    if let Some(documents) = documents {
-        let txn = vault.store.env.read_txn()?;
-        documents.preflight_note_recovery(vault, &txn)?;
+    Ok((tombstones, native_documents))
+}
+
+impl ForwardRun {
+    /// Opens a recovery's forward run over `doc`, the window rebuilt from
+    /// `snapshot`, to run a page at a time ([`Self::recovery_page`]).
+    pub(crate) fn open_recovery(
+        vault: &Vault,
+        doc: &LoroDoc,
+        materializer: &Materializer,
+        window_key: &WindowKey,
+        snapshot: &crate::recovery::CanonicalSnapshot,
+    ) -> Result<Self> {
+        snapshot.validate()?;
+        if snapshot.window != window_key.as_str() {
+            return Err(crate::Error::InvalidConfig(
+                "recovery window key mismatch".into(),
+            ));
+        }
+        let _import = crate::sync::manager::import_scope();
+        let (tombstones, native_documents) = open(vault, doc, window_key, Some(snapshot))?;
+        let _guard = materializer.lock();
+        Self::begin(
+            vault,
+            doc,
+            materializer,
+            window_key,
+            Some(snapshot),
+            tombstones,
+            native_documents,
+        )
     }
-    let lease_vault_id = materializer.lease_vault_id();
-    let entities_map = doc.get_map("entities");
-    let edges_map = doc.get_map("edges");
 
-    // Entity-scoped retry markers pending for this window, loaded up front:
-    // the entity/edge passes discharge a marker only via an actual healing
-    // write (ONE-1147); the tombstone pass only via that entity's own
-    // replay success (ONE-1124). Malformed marker rows never match a
-    // canonical `to_hex()` and so are never discharged here (fail closed).
-    let marked: HashSet<String> = quarantine::pending_remat_entities(vault, window_key.as_str())?
-        .into_iter()
-        .collect();
-    let ctx = RematCtx {
-        vault,
-        doc,
-        window_key,
-        lease_vault_id,
-        trusted,
-        entities_map,
-        edges_map,
-        tombstones,
-    };
-    let mut ledger = RematLedger {
-        marked,
-        healed: Vec::new(),
-        terminal_quarantines: Vec::new(),
-        pending_entity_dependencies: HashSet::new(),
-        pending_dag_parent_sources: HashSet::new(),
-        protected_admissions: HashSet::new(),
-        count: 0u32,
-    };
+    /// Runs the next page of a recovery's forward run under the
+    /// materializer lock: at most `page` rows of the pass it stands in, and
+    /// the stage between passes when its pass ends. The count once done.
+    pub(crate) fn recovery_page(
+        &mut self,
+        vault: &Vault,
+        doc: &LoroDoc,
+        materializer: &Materializer,
+        window_key: &WindowKey,
+        snapshot: &crate::recovery::CanonicalSnapshot,
+        page: usize,
+    ) -> Result<Option<u32>> {
+        let _import = crate::sync::manager::import_scope();
+        let _guard = materializer.lock();
+        self.page(vault, doc, window_key, Some(snapshot), page)
+    }
 
-    // OF-013: the withdrawn cutoffs the window carries are staged first, so
-    // the entity pass refuses a withdrawn body whichever carrier won its key.
-    crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoff_map(vault, doc, window_key.as_str())?;
-    // Pass order is pinned: entities (with companion cleanup), edges,
-    // tombstones, then the marker settle below. The tombstone call has no
-    // `?`: its error stays deferred past the marker txn (Trap 2).
-    entity_pass::run(&ctx, &mut ledger)?;
+    /// The pass a run stands in, and the key of its next row, for a
+    /// continuation's cursor.
+    pub(crate) fn position(&self) -> (&'static str, Option<String>) {
+        match &self.stage {
+            Stage::Entities { plan, next } => ("entities", plan.key(*next).map(str::to_owned)),
+            Stage::Edges { keys, next } => ("edges", keys.get(*next).cloned()),
+            Stage::Tombstones { entries, next } => {
+                ("tombstones", entries.get(*next).map(|(key, _)| key.clone()))
+            }
+            Stage::Done(_) => ("settled", None),
+        }
+    }
+
+    /// The NOTE preflight, the marker snapshot and the window's cutoffs,
+    /// then the entity plan. The caller holds the materializer lock.
+    fn begin(
+        vault: &Vault,
+        doc: &LoroDoc,
+        materializer: &Materializer,
+        window_key: &WindowKey,
+        trusted: Option<&crate::recovery::CanonicalSnapshot>,
+        tombstones: TombstoneIndex,
+        native_documents: Option<crate::sync::note::State>,
+    ) -> Result<Self> {
+        if let Some(documents) = trusted {
+            let txn = vault.store.env.read_txn()?;
+            documents.preflight_note_recovery(vault, &txn)?;
+        }
+        let lease_vault_id = materializer.lease_vault_id();
+
+        // Entity-scoped retry markers pending for this window, loaded up front:
+        // the entity/edge passes discharge a marker only via an actual healing
+        // write (ONE-1147); the tombstone pass only via that entity's own
+        // replay success (ONE-1124). Malformed marker rows never match a
+        // canonical `to_hex()` and so are never discharged here (fail closed).
+        let marked: HashSet<String> =
+            quarantine::pending_remat_entities(vault, window_key.as_str())?
+                .into_iter()
+                .collect();
+        let ledger = RematLedger {
+            marked,
+            healed: Vec::new(),
+            terminal_quarantines: Vec::new(),
+            pending_entity_dependencies: HashSet::new(),
+            pending_dag_parent_sources: HashSet::new(),
+            protected_admissions: HashSet::new(),
+            count: 0u32,
+        };
+
+        // OF-013: the withdrawn cutoffs the window carries are staged first, so
+        // the entity pass refuses a withdrawn body whichever carrier won its key.
+        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoff_map(
+            vault,
+            doc,
+            window_key.as_str(),
+        )?;
+        let plan = entity_pass::plan(&remat_ctx(
+            vault,
+            doc,
+            window_key,
+            trusted,
+            lease_vault_id,
+            &tombstones,
+        ))?;
+        Ok(Self {
+            lease_vault_id,
+            tombstones,
+            native_documents,
+            ledger,
+            outcome: tombstone_pass::TombstonePassOutcome::default(),
+            stage: Stage::Entities { plan, next: 0 },
+        })
+    }
+
+    /// Runs at most `page` rows of the pass the run stands in, and the stage
+    /// between passes when its pass ends: pass order is pinned. The count
+    /// once the run settled. The caller holds the materializer lock.
+    fn page(
+        &mut self,
+        vault: &Vault,
+        doc: &LoroDoc,
+        window_key: &WindowKey,
+        trusted: Option<&crate::recovery::CanonicalSnapshot>,
+        page: usize,
+    ) -> Result<Option<u32>> {
+        let page = page.max(1);
+        let ctx = remat_ctx(
+            vault,
+            doc,
+            window_key,
+            trusted,
+            self.lease_vault_id,
+            &self.tombstones,
+        );
+        match &mut self.stage {
+            Stage::Entities { plan, next } => {
+                let end = next.saturating_add(page).min(plan.rows());
+                entity_pass::run_page(&ctx, &mut self.ledger, plan, *next..end)?;
+                *next = end;
+                if end == plan.rows() {
+                    after_entities(&ctx, &mut self.ledger, self.native_documents.take())?;
+                    let keys = edge_pass::order(&ctx);
+                    self.stage = Stage::Edges { keys, next: 0 };
+                }
+            }
+            Stage::Edges { keys, next } => {
+                let end = next.saturating_add(page).min(keys.len());
+                edge_pass::run_page(&ctx, &mut self.ledger, &keys[*next..end])?;
+                *next = end;
+                if end == keys.len() {
+                    after_edges(&ctx);
+                    // A SESSION/SpawnedBy or ChildOf in this window can satisfy a bounded
+                    // Parent obligation left by a different window whose doc is not loaded.
+                    vault.with_write_txn_grouped(|txn| super::bridge::retry_in_txn(vault, txn))?;
+                    let entries = tombstone_pass::entries(&ctx);
+                    self.stage = Stage::Tombstones { entries, next: 0 };
+                }
+            }
+            Stage::Tombstones { entries, next } => {
+                let end = next.saturating_add(page).min(entries.len());
+                let outcome =
+                    tombstone_pass::run_page(&ctx, &mut self.ledger, &entries[*next..end]);
+                *next = end;
+                // The first error stops the pass: no later tombstone replays.
+                let stopped = absorb(&mut self.outcome, outcome);
+                if stopped || end == entries.len() {
+                    let outcome = std::mem::take(&mut self.outcome);
+                    let count = settle(&ctx, &mut self.ledger, outcome)?;
+                    self.stage = Stage::Done(count);
+                }
+            }
+            Stage::Done(_) => {}
+        }
+        Ok(match self.stage {
+            Stage::Done(count) => Some(count),
+            _ => None,
+        })
+    }
+}
+
+/// Adds one page's tombstone outcome to the run's. Returns whether the
+/// page stopped the pass on an error.
+fn absorb(
+    run: &mut tombstone_pass::TombstonePassOutcome,
+    page: tombstone_pass::TombstonePassOutcome,
+) -> bool {
+    run.purge_failures.extend(page.purge_failures);
+    run.unapplied.extend(page.unapplied);
+    run.cleared.extend(page.cleared);
+    run.receiver_scrub_candidates
+        .extend(page.receiver_scrub_candidates);
+    if run.deferred_error.is_none() {
+        run.deferred_error = page.deferred_error;
+    }
+    run.deferred_error.is_some()
+}
+
+/// What follows the entity pass, before the edge pass.
+fn after_entities(
+    ctx: &RematCtx<'_>,
+    ledger: &mut RematLedger,
+    native_documents: Option<crate::sync::note::State>,
+) -> Result<()> {
+    let (vault, doc, window_key, trusted) = (ctx.vault, ctx.doc, ctx.window_key, ctx.trusted);
     // A redaction can arrive after its attribution in this same entity pass;
     // clear the now-dominated live carrier and force history-free egress.
     super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
@@ -222,7 +473,7 @@ fn forward_with_recovery(
                     vault,
                     txn,
                     doc,
-                    &ctx.tombstones,
+                    ctx.tombstones,
                     &id,
                     &blob,
                     window_key,
@@ -241,7 +492,7 @@ fn forward_with_recovery(
             Ok(())
         })?;
     }
-    crate::recovery::materialize_retained_shells(vault, doc, &ctx.tombstones)?;
+    crate::recovery::materialize_retained_shells(vault, doc, ctx.tombstones)?;
     if let Some(snapshot) = trusted.filter(|_| window_key.world().is_some()) {
         // The validated canonical artifact binds every retained soft shell
         // to this world. Persist that address before the edge pass and the
@@ -258,7 +509,12 @@ fn forward_with_recovery(
             Ok(())
         })?;
     }
-    edge_pass::run(&ctx, &mut ledger)?;
+    Ok(())
+}
+
+/// What follows the edge pass, before the tombstone pass.
+fn after_edges(ctx: &RematCtx<'_>) {
+    let (vault, doc, window_key) = (ctx.vault, ctx.doc, ctx.window_key);
     // OF-422: the owner-signed custody transitions the window carries.
     crate::sync::custody::apply_custody_map(vault, doc, window_key);
     // OF-522: the room turn rows the window carries, before its tombstones,
@@ -272,11 +528,17 @@ fn forward_with_recovery(
     // takes them. A document lands before the pins that quote it.
     crate::sync::message_docs::apply_message_doc_map(vault, doc, window_key);
     crate::sync::document_pins::apply_document_pin_map(vault, doc, window_key);
-    // A SESSION/SpawnedBy or ChildOf in this window can satisfy a bounded
-    // Parent obligation left by a different window whose doc is not loaded.
-    vault.with_write_txn_grouped(|txn| super::bridge::retry_in_txn(vault, txn))?;
-    let tombstone_outcome = tombstone_pass::run(&ctx, &mut ledger);
+}
 
+/// The settle after the tombstone pass: the marker bookkeeping, the
+/// tombstone pass's deferred error, the documents of a recovery, and the
+/// calendar.
+fn settle(
+    ctx: &RematCtx<'_>,
+    ledger: &mut RematLedger,
+    outcome: tombstone_pass::TombstonePassOutcome,
+) -> Result<u32> {
+    let (vault, window_key) = (ctx.vault, ctx.window_key);
     // An edge outcome is not proof that its source claim's missing actor or
     // subject arrived. Keep that replay pending; a successful tombstone purge may
     // still discharge it through `cleared`, with delete-safety precedence.
@@ -292,11 +554,11 @@ fn forward_with_recovery(
         !ledger.pending_entity_dependencies.contains(id)
             && !ledger.pending_dag_parent_sources.contains(id)
     });
-    if !tombstone_outcome.purge_failures.is_empty()
-        || !tombstone_outcome.cleared.is_empty()
+    if !outcome.purge_failures.is_empty()
+        || !outcome.cleared.is_empty()
         || !ledger.healed.is_empty()
         || !ledger.terminal_quarantines.is_empty()
-        || !tombstone_outcome.receiver_scrub_candidates.is_empty()
+        || !outcome.receiver_scrub_candidates.is_empty()
     {
         let marker_result = vault.with_write_txn_grouped(|wtxn| {
             // Clear BEFORE set so set wins: an id that both succeeded and
@@ -335,8 +597,8 @@ fn forward_with_recovery(
                     "delete-safety invariant: healed ids must be disjoint from unproven rm: markers"
                 );
             }
-            let tombstone_cleared: HashSet<_> = tombstone_outcome.cleared.iter().copied().collect();
-            for id in ledger.healed.iter().chain(tombstone_outcome.cleared.iter()) {
+            let tombstone_cleared: HashSet<_> = outcome.cleared.iter().copied().collect();
+            for id in ledger.healed.iter().chain(outcome.cleared.iter()) {
                 if !success_seen.insert(*id) {
                     continue;
                 }
@@ -385,13 +647,13 @@ fn forward_with_recovery(
             // replay provenance for non-delete markers, but a simultaneous
             // purge failure must restore the unproven `rm:` retry so the
             // delete-safety provenance is not silently removed.
-            for id in &tombstone_outcome.purge_failures {
+            for id in &outcome.purge_failures {
                 quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
             }
-            for (id, value) in &tombstone_outcome.unapplied {
+            for (id, value) in &outcome.unapplied {
                 vault.fence_unapplied_delete_in_txn(wtxn, id, value)?;
             }
-            if !tombstone_outcome.receiver_scrub_candidates.is_empty() {
+            if !outcome.receiver_scrub_candidates.is_empty() {
                 scrub_receiver_outbox_on_remote_hard_delete_in_txn(
                     vault,
                     wtxn,
@@ -401,24 +663,24 @@ fn forward_with_recovery(
             Ok(())
         });
         match marker_result {
-            Err(err) if tombstone_outcome.receiver_scrub_candidates.is_empty() => return Err(err),
+            Err(err) if outcome.receiver_scrub_candidates.is_empty() => return Err(err),
             Err(err) => {
                 tracing::error!(
                     window = %window_key,
-                    purge_failures = tombstone_outcome.purge_failures.len(),
-                    receiver_scrub_candidates = tombstone_outcome.receiver_scrub_candidates.len(),
+                    purge_failures = outcome.purge_failures.len(),
+                    receiver_scrub_candidates = outcome.receiver_scrub_candidates.len(),
                     error = %err,
                     "forward remat: receiver outbox scrub/bookkeeping txn FAILED after hard tombstone replay; flagging entity-scoped rm: markers for durable retry"
                 );
                 vault.with_write_txn_grouped(|wtxn| {
-                    for id in tombstone_outcome
+                    for id in outcome
                         .purge_failures
                         .iter()
-                        .chain(tombstone_outcome.receiver_scrub_candidates.iter())
+                        .chain(outcome.receiver_scrub_candidates.iter())
                     {
                         quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
                     }
-                    for (id, value) in &tombstone_outcome.unapplied {
+                    for (id, value) in &outcome.unapplied {
                         vault.fence_unapplied_delete_in_txn(wtxn, id, value)?;
                     }
                     Ok(())
@@ -427,7 +689,7 @@ fn forward_with_recovery(
             Ok(()) => {}
         }
     }
-    if let Some(err) = tombstone_outcome.deferred_error {
+    if let Some(err) = outcome.deferred_error {
         return Err(err);
     }
     if quarantine::pending_remat_windows(vault)?
@@ -446,9 +708,9 @@ fn forward_with_recovery(
         );
     }
 
-    if let Some(documents) = documents {
-        crate::recovery::materialize_window_documents(vault, doc, documents)?;
+    if let Some(documents) = ctx.trusted {
+        crate::recovery::materialize_window_documents(vault, ctx.doc, documents)?;
     }
-    calendar::reconcile(&ctx)?;
+    calendar::reconcile(ctx)?;
     Ok(ledger.count)
 }
