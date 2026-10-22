@@ -195,6 +195,21 @@ impl Vault {
                 .collect(),
         )
     }
+    /// [`Self::membership_at`] in the caller's snapshot: who sat in
+    /// `conversation` at `at` (FIX 8209).
+    pub(crate) fn membership_at_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+        at: u64,
+    ) -> Result<Vec<EntityId>> {
+        body::body_in(self, txn, conversation)?;
+        Ok(
+            members_at_rows(&rows_in(&self.store, txn, conversation)?, at)
+                .into_iter()
+                .collect(),
+        )
+    }
     /// Everyone `conversation`'s ledger has ever joined, in the caller's
     /// snapshot, whether or not they have left since.
     pub(crate) fn ever_members_in_txn(

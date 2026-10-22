@@ -59,6 +59,52 @@ impl Vault {
     }
 }
 
+impl Vault {
+    /// The roster of `conversation` at `at`, as `read`'s caller may read it
+    /// (FIX 8209): `None` when it may not read the room. The lane must read
+    /// the room's row, as [`Self::dag_records_admitted`] asks. The vault
+    /// owner, and a narrower owner credential while he is still the bound
+    /// owner, read every roster; so does a reader that sees the room in its
+    /// own conversation list, a member now or one on a live grant that opens
+    /// the room's relationship. A reader that sat in the room at `at` reads
+    /// that roster, its own history. The roster and every check but the
+    /// lane's own read are judged in one snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; an id that names no conversation, as the ledger read
+    /// refuses it; the list's owner check that does not resolve.
+    pub fn room_roster_admitted(
+        &self,
+        read: &ScopedRead<'_>,
+        conversation: &EntityId,
+        at: u64,
+    ) -> Result<Option<Vec<EntityId>>> {
+        // The lane's read takes its own snapshot, before this one opens.
+        if !read.is_entity_readable(conversation)? {
+            return Ok(None);
+        }
+        let txn = self.store.env.read_txn()?;
+        let roster = self.membership_at_in_txn(&txn, *conversation, at)?;
+        let key = read.actor_key();
+        if key.reads_as_vault_owner() || key.facets_owner_exempt_in(self, &txn)? {
+            return Ok(Some(roster));
+        }
+        let reader = key
+            .authenticated_person()
+            .zip(reader_class(key.actor_class()));
+        if reader.is_some_and(|(person, _)| roster.contains(&person)) {
+            return Ok(Some(roster));
+        }
+        let sees = self
+            .conversation_list_sees_in(&txn, *conversation, reader)
+            .map_err(|refusal| {
+                Error::Claim(ClaimError::ScopedReadOwnerNotLive(Box::new(refusal)))
+            })?;
+        Ok(sees.then_some(roster))
+    }
+}
+
 /// The class a read key's caller reads as, as the server binds a
 /// credential's: one that declares none is a person's.
 fn reader_class(class: Option<&str>) -> Option<EdgeActorClass> {

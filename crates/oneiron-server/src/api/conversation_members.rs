@@ -169,9 +169,16 @@ pub(super) async fn read_members(
     auth.require_unrestricted_record_scope()?;
     let room = parse_entity_id_param(&room, "conversation_id")?;
     let req = query_params(query)?;
+    // FIX 8209: the room and its roster are admitted through the caller's
+    // own lane at its destination and the room's audience, in one snapshot:
+    // the owner, a member, a reader on a grant that opens the room's
+    // relationship, and a reader that sat in the room at `at` read it. Any
+    // other caller meets the answer a missing room gets.
+    let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
     let members = server
         .vault
-        .membership_at(room, req.at.unwrap_or(u64::MAX))
-        .map_err(|e| core_engine_error("members read failed", e))?;
+        .room_roster_admitted(&read, &room, req.at.unwrap_or(u64::MAX))
+        .map_err(|e| core_engine_error("members read failed", e))?
+        .ok_or_else(|| core_engine_error("members read failed", oneiron::Error::EntityNotFound))?;
     Ok(Json(json!({"member_ids":members})))
 }
