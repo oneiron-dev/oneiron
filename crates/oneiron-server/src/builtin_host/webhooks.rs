@@ -455,8 +455,10 @@ fn line_events(
         .flatten()
     {
         let message = event.get("message");
-        if text(event, "type") != Some("message")
-            || message.and_then(|message| text(message, "type")) != Some("text")
+        let joined = text(event, "type") == Some("join");
+        if !joined
+            && (text(event, "type") != Some("message")
+                || message.and_then(|message| text(message, "type")) != Some("text"))
         {
             continue;
         }
@@ -469,6 +471,14 @@ fn line_events(
             let kind = LineChatKind::parse(text(source, "type")?)?;
             Some(LineChat::new(kind, text(source, kind.id_field())?))
         });
+        // The bot joined a group or room: no message and no turn, only the
+        // chat recorded for the owner's optional bind offer (FIX 3115).
+        if joined {
+            if let Some(chat) = &chat {
+                observe_line_chat(vault, destination, event_id, event, chat, None, now);
+            }
+            continue;
+        }
         // A chat that routes per sender (no identity is bound to it) still
         // names the reply's audience (FIX 2838).
         let (chat, reply_chat) = match chat {
@@ -480,14 +490,22 @@ fn line_events(
         if chat.is_none() && user_id.is_none() {
             continue;
         }
-        // The event as LINE sent it, reply token included, beside the bot
-        // it was for: a later reply path reads the token back from here.
-        let kept = serde_json::to_vec(&serde_json::json!({
-            "destination": destination,
-            "event": event,
-        }))
-        .map_err(|_| oneiron::Error::InvariantViolation("LINE event did not encode"))?;
-        let payload_ref = vault.archive_provider_event(LINE_CHANNEL, event_id, &kept, now)?;
+        let payload_ref = archive_line_event(vault, destination, event_id, event, now)?;
+        // A chat no identity is known to serve (one that routes per sender,
+        // or one LINE named no sender in) is recorded for the owner's
+        // optional bind offer; the message routes as it does either way.
+        let unserved = reply_chat.as_ref().or(chat.as_ref().filter(|_| user_id.is_none()));
+        if let Some(unserved) = unserved {
+            observe_line_chat(
+                vault,
+                destination,
+                event_id,
+                event,
+                unserved,
+                Some(&payload_ref),
+                now,
+            );
+        }
         let inbound = LineOfficialAccountInbound {
             provider_event_id: event_id.to_owned(),
             destination: destination.to_owned(),
@@ -511,6 +529,47 @@ fn line_events(
         )?;
     }
     Ok(Reply::Ack)
+}
+
+/// Keeps a LINE event as LINE sent it, reply token included, beside the
+/// bot it was for: a later reply path reads the token back from here.
+fn archive_line_event(
+    vault: &Vault,
+    destination: &str,
+    event_id: &str,
+    event: &Value,
+    now: u64,
+) -> oneiron::Result<String> {
+    let kept = serde_json::to_vec(&serde_json::json!({
+        "destination": destination,
+        "event": event,
+    }))
+    .map_err(|_| oneiron::Error::InvariantViolation("LINE event did not encode"))?;
+    vault.archive_provider_event(LINE_CHANNEL, event_id, &kept, now)
+}
+
+/// Records a group or room the bot was seen in for the owner's optional
+/// bind offer (FIX 3115), archiving the event first when the caller has
+/// not. The record is a convenience: a failure is logged, the delivery is
+/// still acknowledged and its messages route as before.
+fn observe_line_chat(
+    vault: &Vault,
+    destination: &str,
+    event_id: &str,
+    event: &Value,
+    chat: &LineChat,
+    payload_ref: Option<&str>,
+    now: u64,
+) {
+    let observed = match payload_ref {
+        Some(payload_ref) => vault.observe_line_chat(destination, chat, payload_ref, now),
+        None => archive_line_event(vault, destination, event_id, event, now).and_then(
+            |payload_ref| vault.observe_line_chat(destination, chat, &payload_ref, now),
+        ),
+    };
+    if let Err(err) = observed {
+        tracing::warn!(error = %err, "a LINE chat observation was not recorded");
+    }
 }
 
 /// Whether a group or room message routes to the chat's own identity

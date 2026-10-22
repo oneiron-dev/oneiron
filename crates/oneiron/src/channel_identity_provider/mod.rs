@@ -9,6 +9,7 @@ pub mod gmail;
 mod gmail_header;
 mod inbound_types;
 mod line_adapter;
+mod line_chat_binding;
 pub mod mail_placement;
 pub mod mailbox_cursor;
 pub mod mailbox_skipped;
@@ -32,6 +33,9 @@ pub use self::inbound_types::{
 pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,
     line_audience_key,
+};
+pub use self::line_chat_binding::{
+    LINE_CHAT_OBSERVATION_PREDICATE, LineChatBindingOffer, LineChatObservation,
 };
 pub use self::shared_validate::{
     CHANNEL_IDENTITY_PROVIDER_ADAPTER_VERSION, DEFAULT_EMAIL_LOCAL_PART_PREFIX,
