@@ -166,12 +166,12 @@ pub(super) fn media_copy_hash_in(
         return Ok(None);
     };
     let input = masked_repo_index_input_in_txn(vault, txn, bytes)?;
-    let bytes = if input.opaque() {
-        opaque_index_text().into_bytes()
-    } else {
-        input.into_bytes()
-    };
-    Ok(Some(*blake3::hash(&bytes).as_bytes()))
+    // A copy's stamp names exactly its bytes' hash; the placeholder text is
+    // the placeholder's bytes.
+    Ok(Some(match input.stamp() {
+        Some(stamp) => stamp.copy_blake3,
+        None => *blake3::hash(&input.into_bytes()).as_bytes(),
+    }))
 }
 
 /// Every inline ASSET whose media bytes are, by their own whole BLAKE3, a

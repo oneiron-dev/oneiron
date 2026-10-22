@@ -70,6 +70,10 @@ pub(crate) enum RepoIndexCopyKind {
 /// fingerprint), and equal for two copies only when their source, marks,
 /// returned bytes and rules all are.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "the copy identity a CALL 3-I version change rebuilds by; writers read copy_blake3 and kind"
+)]
 pub(crate) struct RepoIndexProjectionStamp {
     /// The whole BLAKE3 of the stored blob the copy stands in for.
     pub(crate) source_blake3: [u8; 32],
@@ -85,6 +89,10 @@ pub(crate) struct RepoIndexProjectionStamp {
 impl RepoIndexProjectionStamp {
     /// One digest of every field: the identity a derived work item commits
     /// to.
+    #[allow(
+        dead_code,
+        reason = "the copy identity a CALL 3-I version change rebuilds by"
+    )]
     pub(crate) fn fingerprint(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new_derive_key(REPO_INDEX_STAMP_CONTEXT);
         hasher.update(&self.version.get().to_be_bytes());
@@ -113,10 +121,6 @@ pub(crate) struct RepoIndexInput {
 impl RepoIndexInput {
     fn stored(bytes: Vec<u8>) -> Self {
         Self { bytes, stamp: None }
-    }
-
-    pub(crate) fn bytes(&self) -> &[u8] {
-        &self.bytes
     }
 
     pub(crate) fn into_bytes(self) -> Vec<u8> {
