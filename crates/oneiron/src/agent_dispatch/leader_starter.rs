@@ -47,7 +47,7 @@ pub struct LeaderResponsibility {
     pub budget_share: Option<ProjectBudgetShare>,
     pub asks: Vec<String>,
     pub home_room: EntityId,
-    pub depth_remaining: u8,
+    pub depth_remaining: u64,
 }
 
 /// A real attempt reads the promise it already realizes. No task is created

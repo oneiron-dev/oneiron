@@ -388,7 +388,7 @@ impl Vault {
             let mut census = crate::scan_check::ScanCount::start_at(
                 crate::scan_check::EngineScan::ThreadTaskCensus,
                 thread.as_bytes(),
-                u64::try_from(policy.max_tasks).unwrap_or(u64::MAX),
+                policy.max_tasks,
             );
             census.rows(task_ids.len());
             census.finish(self);

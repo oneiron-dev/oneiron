@@ -77,7 +77,7 @@ pub(super) struct WidenIntent {
     pub run_id: Option<String>,
     pub spec: ContextSpec,
     pub context_from: Vec<String>,
-    pub depth: Option<u8>,
+    pub depth: Option<u64>,
     pub project_ref: Option<String>,
     pub scope: Option<crate::llm::Scope>,
     pub healer_case: Option<crate::failure_ladder::HealerCase>,

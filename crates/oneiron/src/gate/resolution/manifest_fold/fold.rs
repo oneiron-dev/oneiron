@@ -29,6 +29,10 @@ pub(crate) fn resolve_policy_manifest(
     let mut authored_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> =
         None;
     let mut seeded_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> = None;
+    // Shipped values are fallbacks; holder-authored rows replace them (C1).
+    let mut conversion_tasks = AuthoredMin::default();
+    let mut depth_default = AuthoredMin::default();
+    let mut depth_max = AuthoredMin::default();
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -148,6 +152,14 @@ pub(crate) fn resolve_policy_manifest(
                 if let Some(goal) = decoded.skill_edit_goal {
                     resolution.skill_edit_goal.push(goal);
                 }
+                // Every row is kept, however many (rule 5); past its
+                // threshold row the fold asks whether everything is okay.
+                if !decoded.room_policy_rows.is_empty() {
+                    let mut rows =
+                        ScanCount::start(store, txn, EngineScan::RoomPolicyRows, id.as_bytes())?;
+                    rows.rows(decoded.room_policy_rows.len());
+                    rows.defer(store);
+                }
                 resolution.room_policy_rows.extend(decoded.room_policy_rows);
                 resolution
                     .weave_report_policy
@@ -215,15 +227,21 @@ pub(crate) fn resolve_policy_manifest(
                     decoded.owner_policy_output_contract,
                     &mut resolution.diagnostics.malformed_manifest_seen,
                 );
-                for (slot, row) in [
-                    (
-                        &mut resolution.project_depth_default,
-                        decoded.project_depth_default,
-                    ),
-                    (&mut resolution.project_depth_max, decoded.project_depth_max),
-                ] {
-                    if let Some(value) = row {
-                        *slot = Some(slot.map_or(value, |current| current.min(value)));
+                if decoded.project_depth_default.is_some()
+                    || decoded.project_depth_max.is_some()
+                    || decoded.project_conversion.is_some()
+                {
+                    let origin = crate::gate::manifest_authenticity::policy_row_origin(
+                        store, txn, &id, body,
+                    )?;
+                    if let Some(value) = decoded.project_depth_default {
+                        depth_default.add(origin, value);
+                    }
+                    if let Some(value) = decoded.project_depth_max {
+                        depth_max.add(origin, value);
+                    }
+                    if let Some(policy) = decoded.project_conversion {
+                        conversion_tasks.add(origin, policy.max_tasks);
                     }
                 }
                 resolution.signatures.extend(decoded.signatures);
@@ -335,6 +353,16 @@ pub(crate) fn resolve_policy_manifest(
                     resolution.retrieval_retention.narrow(rows);
                 }
                 if let Some(settings) = decoded.room_thread {
+                    if settings.holder_rows() > 0 {
+                        let mut holders = ScanCount::start(
+                            store,
+                            txn,
+                            EngineScan::RoomThreadHolderRows,
+                            id.as_bytes(),
+                        )?;
+                        holders.rows(settings.holder_rows());
+                        holders.defer(store);
+                    }
                     resolution.room_thread = match resolution.room_thread.take() {
                         None => Some(settings),
                         Some(current) => match current.restrict(settings) {
@@ -553,6 +581,11 @@ pub(crate) fn resolve_policy_manifest(
     // A trusted owner-authored row wins over the immutable shipped fallback.
     // A conflict among owner rows never silently picks a pruning horizon.
     resolution.gate_decision_retention = owner_retention.or(default_retention);
+    resolution.project_depth_default = depth_default.resolve();
+    resolution.project_depth_max = depth_max.resolve();
+    resolution.project_conversion.max_tasks = conversion_tasks
+        .resolve()
+        .unwrap_or(crate::gate::ProjectConversionPolicy::default().max_tasks);
 
     // `None` only when no trusted manifest names a class row, so the frontier
     // of such manifests keeps its established bytes.

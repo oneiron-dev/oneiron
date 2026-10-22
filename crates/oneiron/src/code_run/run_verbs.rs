@@ -209,7 +209,7 @@ pub struct AgentSpawnInput {
     /// Settled sibling results the child reads, TASK ids, hex.
     pub context_from: Option<Vec<String>>,
     /// Delegation depth left below the child; clamped to the parent's.
-    pub depth: Option<u8>,
+    pub depth: Option<u64>,
     /// The direct child project the child works in, hex; the parent's when
     /// absent.
     pub project: Option<String>,
@@ -608,7 +608,7 @@ pub struct LeaderSplitOutput {
     pub parent: EntityId,
     pub leader: EntityId,
     /// How many more levels the child may spawn.
-    pub depth_remaining: u8,
+    pub depth_remaining: u64,
 }
 
 /// One file of a loaded pattern.

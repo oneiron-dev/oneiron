@@ -24,9 +24,10 @@ pub const CONTEXT_SPEC_MEMORY_SCAN_LIMIT: usize = 512;
 /// The notice a projection names what a member's lane left out of it under.
 const NARROWED_NOTICE_TYPE: &str = "workflow_context_narrowed";
 
-/// Ancestors the dispatcher folds when rebuilding a parent projection. A
-/// structural backstop, not a policy: `depth_remaining` is the real bound.
-pub const CONTEXT_PROJECTION_MAX_ANCESTORS: usize = 16;
+/// Ancestor records a dispatch walk reads past which it asks whether
+/// everything is okay (rule 5): an advisory threshold, never a bound. Every
+/// ancestor is read; `depth_remaining` is the policy.
+pub const CONTEXT_PROJECTION_ANCESTOR_CHECK: u64 = 16;
 
 /// One dispatch-time resolution request.
 #[derive(Debug, Clone, PartialEq)]

@@ -19,6 +19,7 @@ use crate::gate::ceiling::{
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
+use crate::gate::manifest_authenticity::PolicyRowOrigin;
 use crate::gate::policy_values::PolicyValueRow;
 use crate::gate::project_conversion::ProjectConversionPolicy;
 
@@ -367,6 +368,37 @@ impl ProjectCollaborationPolicy {
     }
 }
 
+/// One numeric policy row whose shipped value is a fallback only (Engine
+/// 10-22 C1): verified holder-authored rows replace it and meet by minimum,
+/// and every other trusted row still narrows the result.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct AuthoredMin {
+    seeded: Option<u64>,
+    authored: Option<u64>,
+    narrowing: Option<u64>,
+}
+
+impl AuthoredMin {
+    /// Adds one trusted manifest's row under its origin.
+    pub(super) fn add(&mut self, origin: PolicyRowOrigin, value: u64) {
+        let slot = match origin {
+            PolicyRowOrigin::Seeded => &mut self.seeded,
+            PolicyRowOrigin::Authored => &mut self.authored,
+            PolicyRowOrigin::Narrowing => &mut self.narrowing,
+        };
+        *slot = Some(slot.map_or(value, |current| current.min(value)));
+    }
+
+    /// The authored value, else the seeded fallback, narrowed by every other
+    /// trusted row; `None` when no trusted manifest names the row.
+    pub(super) fn resolve(self) -> Option<u64> {
+        match (self.authored.or(self.seeded), self.narrowing) {
+            (Some(base), Some(narrowing)) => Some(base.min(narrowing)),
+            (base, narrowing) => base.or(narrowing),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
@@ -448,8 +480,8 @@ pub(crate) struct PolicyManifestResolution {
     /// rides the write door's own options, so no host object is ever reachable
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
-    pub(crate) project_depth_default: Option<u8>,
-    pub(crate) project_depth_max: Option<u8>,
+    pub(crate) project_depth_default: Option<u64>,
+    pub(crate) project_depth_max: Option<u64>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) connector_admission: crate::gate::connector_admission::ConnectorAdmissionPolicy,
     pub(super) voice_serving: Vec<crate::gate::voice_serving::VoiceServingRows>,

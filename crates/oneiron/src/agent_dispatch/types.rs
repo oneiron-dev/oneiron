@@ -149,7 +149,7 @@ pub struct AgentDispatchInput {
     /// Additive/defaulted v1 compatibility field; every new root writes `Some`.
     /// LOAD-BEARING: [`AgentDispatcher::dispatch`](crate::agent_dispatch::AgentDispatcher::dispatch) refuses to enqueue a child
     /// under a parent whose stored value is `Some(0)`.
-    pub depth_remaining: Option<u8>,
+    pub depth_remaining: Option<u64>,
     /// The responsibility space whose live depth row bounds this spawn.
     pub project_ref: Option<EntityId>,
     /// Hash of the normalized caller request, separate from the live depth snapshot.
@@ -235,7 +235,7 @@ pub struct AgentSpawnContext {
     pub healer_case: Option<HealerCase>,
     pub context_spec: Option<ContextSpec>,
     pub context_from: Vec<EntityId>,
-    pub depth_remaining: Option<u8>,
+    pub depth_remaining: Option<u64>,
     pub project_ref: Option<EntityId>,
     /// None inherits the stored parent's resource restriction. A root with
     /// None has deny-all resource scope; ordinary non-resource calls still run.
@@ -301,7 +301,7 @@ impl AgentSpawnContext {
         self
     }
 
-    pub const fn with_depth_remaining(mut self, depth_remaining: u8) -> Self {
+    pub const fn with_depth_remaining(mut self, depth_remaining: u64) -> Self {
         self.depth_remaining = Some(depth_remaining);
         self
     }

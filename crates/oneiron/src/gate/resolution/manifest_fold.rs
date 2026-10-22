@@ -7,11 +7,12 @@ use crate::claim::{ClaimBody, claim_sensitivity_band};
 use crate::error::{Error, Result};
 use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
-use super::manifest_types::ConnectorClassPrecedence;
+use super::manifest_types::{AuthoredMin, ConnectorClassPrecedence};
 use super::manifest_types::{
     GateDecisionRetentionPolicy, PolicyManifestResolution, TeacherProbeRow,
 };
@@ -28,15 +29,17 @@ mod fold;
 pub(crate) use self::fold::resolve_policy_manifest;
 
 /// The vault ceiling on any project's depth row: the resolved manifest row,
-/// capped by the shipped ceiling. A loaded malformed manifest fails closed to
-/// the most restrictive ceiling (DEC-0005); it never bricks the vault.
-pub(crate) fn resolve_project_depth_max(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u8> {
+/// a holder-authored value in place of the shipped fallback (C1). A loaded
+/// malformed manifest fails closed to the most restrictive ceiling
+/// (DEC-0005); it never bricks the vault.
+pub(crate) fn resolve_project_depth_max(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u64> {
     let policy = resolve_policy_manifest(store, txn)?;
     if policy.diagnostics.loaded_manifest_forces_fail_closed() {
         return Ok(0);
     }
-    let ceiling = crate::gate::default_manifest::SEEDED_PROJECT_DEPTH_MAX;
-    Ok(policy.project_depth_max.unwrap_or(ceiling).min(ceiling))
+    Ok(policy
+        .project_depth_max
+        .unwrap_or(crate::gate::default_manifest::SEEDED_PROJECT_DEPTH_MAX))
 }
 
 /// Resolve in the caller's mint/issuance transaction so policy and the

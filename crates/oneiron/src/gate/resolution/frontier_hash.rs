@@ -56,9 +56,9 @@ pub(super) fn hash_policy_frontier_v0(
     // A new project's birth and the vault ceiling read these resolved policy
     // rows. A policy edit must move the frontier even if other gate axes agree.
     if resolution.project_depth_default.is_some() || resolution.project_depth_max.is_some() {
-        hash_str(hasher, "project_depth_policy.v1");
-        hash_opt_u8(hasher, resolution.project_depth_default);
-        hash_opt_u8(hasher, resolution.project_depth_max);
+        hash_str(hasher, "project_depth_policy.v2");
+        hash_opt_u64(hasher, resolution.project_depth_default);
+        hash_opt_u64(hasher, resolution.project_depth_max);
     }
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
     // The RESOLVED posture, beside its budget sibling: it decides whether an
@@ -181,7 +181,7 @@ pub(super) fn hash_policy_frontier_v0(
             hasher,
             resolution.project_conversion.task_holder_fallback.as_str(),
         );
-        hash_u64(hasher, resolution.project_conversion.max_tasks as u64);
+        hash_u64(hasher, resolution.project_conversion.max_tasks);
         hash_bool(hasher, resolution.project_conversion.allow_holder_override);
     }
     // Default rows and owner-authored overrides both affect admission and its
@@ -826,6 +826,15 @@ fn hash_opt_u8(hasher: &mut Sha256, value: Option<u8>) {
     };
     hash_bool(hasher, true);
     hasher.update([value]);
+}
+
+fn hash_opt_u64(hasher: &mut Sha256, value: Option<u64>) {
+    let Some(value) = value else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hash_u64(hasher, value);
 }
 
 pub(crate) fn hash_str(hasher: &mut Sha256, value: &str) {

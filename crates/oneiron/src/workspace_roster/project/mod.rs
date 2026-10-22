@@ -171,7 +171,7 @@ pub struct ProjectRecord {
     /// Cache of the live depth row; the policy contributions are authority.
     /// A body written before the row existed decodes with the seeded default.
     #[serde(default = "crate::gate::seeded_project_depth_default")]
-    pub depth: u8,
+    pub depth: u64,
     /// Parent projects. A project may belong to more than one venture.
     pub parents: Vec<String>,
     /// The head each parent a re-parent joined served when it was signed.
@@ -182,10 +182,10 @@ pub struct ProjectRecord {
     #[serde(default)]
     pub slice: Scope,
     #[serde(default = "default_depth_limit")]
-    pub depth_limit: u8,
+    pub depth_limit: u64,
     /// How many more subproject levels this project may spawn.
     #[serde(default)]
-    pub depth_remaining: u8,
+    pub depth_remaining: u64,
     /// Signed leader or board authority for the authority fields. Membership
     /// edits keep it; the project read fold verifies it against the authority log.
     #[serde(default)]
@@ -221,7 +221,7 @@ pub struct ProjectRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrapper_task: Option<String>,
 }
-const fn default_depth_limit() -> u8 {
+const fn default_depth_limit() -> u64 {
     10
 }
 
@@ -230,7 +230,7 @@ const fn default_depth_limit() -> u8 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectSpawnView {
     pub(crate) parents: Vec<String>,
-    pub(crate) depth: u8,
+    pub(crate) depth: u64,
 }
 /// Deepest anchor chain the fold follows before it quarantines the row.
 pub(crate) const MAX_PROJECT_ANCHORS: usize = 64;
@@ -246,8 +246,8 @@ pub struct ProjectAuthority {
     pub parent_heads: Vec<ProjectParentWitness>,
     pub claims_scope_ref: String,
     pub slice: Scope,
-    pub depth_limit: u8,
-    pub depth_remaining: u8,
+    pub depth_limit: u64,
+    pub depth_remaining: u64,
     pub leader: String,
     pub board: Vec<String>,
     /// Who sits in the home room. Only a v3 proof signs it; a state an older
@@ -946,7 +946,7 @@ impl Vault {
     pub fn set_project_depth<S>(
         &self,
         id: EntityId,
-        depth: u8,
+        depth: u64,
         authenticated_owner: &crate::write_envelope::WriteActor,
         now: u64,
         signer_key: crate::authority::AuthorityKey,
@@ -1029,7 +1029,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         project: EntityId,
-    ) -> Result<Option<(ProjectRecord, ProjectFrontier, u8)>> {
+    ) -> Result<Option<(ProjectRecord, ProjectFrontier, u64)>> {
         let Some(reader) = ProjectReader::new(&self.store, txn, self.privacy_posture())? else {
             return Ok(None);
         };
