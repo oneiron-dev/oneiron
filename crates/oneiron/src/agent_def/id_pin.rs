@@ -17,12 +17,22 @@
 
 use super::codec::decode_agent_definition;
 use super::types::{AgentCeiling, AgentDefinition};
+use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, RegistryError, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, StagedRow};
 use crate::store::Store;
+
+mod scan;
+
+/// The pin's first byte: `Auto` ceiling.
+const PIN_AUTO: u8 = 1;
+/// The pin's first byte: lineage unread (a `Proposed` pin only).
+const PIN_UNREAD: u8 = 2;
+/// The pin's first byte: a delegation parent's 16 bytes follow it.
+const PIN_DELEGATED: u8 = 4;
 
 /// What an agent id answers to on every later put.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +42,10 @@ struct AgentIdPin {
     ceiling: AgentCeiling,
     /// The parent the id was born forked from.
     lineage: Lineage,
+    /// The attempt whose spawn delegated this id's agent, when a dispatch
+    /// minted it as an attenuated fork (FIX 9559). The host binds it once;
+    /// every later put, delete, recreate and restore keeps it.
+    delegation_parent: Option<AttemptId>,
 }
 
 /// The parent an agent id was born forked from, as its pin knows it.
@@ -54,41 +68,71 @@ impl Lineage {
     }
 }
 
+/// The first byte holds the ceiling, an unread lineage and whether a
+/// delegation parent follows; then that parent's 16 bytes, then the born
+/// lineage's parent, if any. A pin without a delegation parent encodes as it
+/// always has.
 impl RawValue for AgentIdPin {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let auto = u8::from(self.ceiling == AgentCeiling::Auto);
-        Ok(match self.lineage {
-            Lineage::Born(None) => vec![auto],
-            Lineage::Born(Some(parent)) => [&[auto][..], parent.as_bytes()].concat(),
+        let auto = self.ceiling == AgentCeiling::Auto;
+        let mut flags = match self.lineage {
+            Lineage::Born(_) if auto => PIN_AUTO,
+            Lineage::Born(_) => 0,
             // Only a `Proposed` pin leaves its lineage unread.
-            Lineage::Unread if auto == 0 => vec![2],
+            Lineage::Unread if !auto => PIN_UNREAD,
             Lineage::Unread => return Err(Error::CorruptedIndex("agent id pin").into()),
-        })
+        };
+        if self.delegation_parent.is_some() {
+            flags |= PIN_DELEGATED;
+        }
+        let mut bytes = vec![flags];
+        if let Some(parent) = self.delegation_parent {
+            bytes.extend_from_slice(parent.as_bytes());
+        }
+        if let Lineage::Born(Some(parent)) = self.lineage {
+            bytes.extend_from_slice(parent.as_bytes());
+        }
+        Ok(bytes)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let (ceiling, parent) = match bytes.split_first() {
-            Some((0, parent)) => (AgentCeiling::Proposed, parent),
-            Some((1, parent)) => (AgentCeiling::Auto, parent),
-            Some((2, [])) => {
-                return Ok(Self {
-                    ceiling: AgentCeiling::Proposed,
-                    lineage: Lineage::Unread,
-                });
-            }
-            _ => return Err(Error::CorruptedIndex("agent id pin").into()),
+        let corrupt = || CodecError::from(Error::CorruptedIndex("agent id pin"));
+        let (&flags, rest) = bytes.split_first().ok_or_else(corrupt)?;
+        if flags & !(PIN_AUTO | PIN_UNREAD | PIN_DELEGATED) != 0
+            || flags & (PIN_AUTO | PIN_UNREAD) == PIN_AUTO | PIN_UNREAD
+        {
+            return Err(corrupt());
+        }
+        let (delegation_parent, parent) = if flags & PIN_DELEGATED == 0 {
+            (None, rest)
+        } else {
+            let (attempt, parent) = rest.split_at_checked(16).ok_or_else(corrupt)?;
+            (Some(AttemptId::from_bytes(attempt)?), parent)
         };
-        let forked_from = match parent.len() {
-            0 => None,
-            16 => Some(crate::entity_id::parse_entity_id(
-                parent,
-                "agent id pin parent",
-            )?),
-            _ => return Err(Error::CorruptedIndex("agent id pin").into()),
+        let ceiling = if flags & PIN_AUTO == 0 {
+            AgentCeiling::Proposed
+        } else {
+            AgentCeiling::Auto
+        };
+        let lineage = if flags & PIN_UNREAD != 0 {
+            if !parent.is_empty() {
+                return Err(corrupt());
+            }
+            Lineage::Unread
+        } else {
+            Lineage::Born(match parent.len() {
+                0 => None,
+                16 => Some(crate::entity_id::parse_entity_id(
+                    parent,
+                    "agent id pin parent",
+                )?),
+                _ => return Err(corrupt()),
+            })
         };
         Ok(Self {
             ceiling,
-            lineage: Lineage::Born(forked_from),
+            lineage,
+            delegation_parent,
         })
     }
 }
@@ -102,6 +146,7 @@ fn seeded_pin(id: &EntityId) -> Result<Option<AgentIdPin>> {
         super::manifest::seeded_lineage(id)?.map(|(ceiling, forked_from)| AgentIdPin {
             ceiling,
             lineage: Lineage::Born(forked_from),
+            delegation_parent: None,
         }),
     )
 }
@@ -116,6 +161,7 @@ fn bound_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<O
         (Some(seed), Some(row)) if seed.ceiling.widens_beyond(row.ceiling) => Some(AgentIdPin {
             ceiling: row.ceiling,
             lineage: seed.lineage,
+            delegation_parent: None,
         }),
         (seed, row) => seed.or(row),
     })
@@ -136,6 +182,7 @@ fn stored_row_pin(
         .map(|def| AgentIdPin {
             ceiling: def.ceiling,
             lineage: Lineage::Born(def.forked_from),
+            delegation_parent: None,
         }))
 }
 
@@ -155,16 +202,19 @@ pub(crate) fn agent_id_pin_for_put_in_txn(
     id: &EntityId,
     def: &AgentDefinition,
 ) -> Result<Option<StagedRow>> {
+    scan::observe_list_entries(store, txn, id, def);
     let next = match bound_in_txn(store, txn, id)? {
         None => AgentIdPin {
             ceiling: def.ceiling,
             lineage: Lineage::Born(def.forked_from),
+            delegation_parent: None,
         },
         Some(pin) => {
             answer_to_pin(pin, def)?;
             AgentIdPin {
                 ceiling: def.ceiling,
                 lineage: pin.lineage.named_by(def),
+                delegation_parent: pin.delegation_parent,
             }
         }
     };
@@ -188,11 +238,13 @@ pub(super) fn move_pin_for_owner_in_txn(
     id: &EntityId,
     def: &AgentDefinition,
 ) -> Result<()> {
+    let bound = bound_in_txn(store, wtxn, id)?;
     let pin = AgentIdPin {
         ceiling: def.ceiling,
-        lineage: bound_in_txn(store, wtxn, id)?.map_or(Lineage::Born(def.forked_from), |pin| {
+        lineage: bound.map_or(Lineage::Born(def.forked_from), |pin| {
             pin.lineage.named_by(def)
         }),
+        delegation_parent: bound.and_then(|pin| pin.delegation_parent),
     };
     // The ceiling is the owner's to move; the lineage is not.
     answer_to_pin(pin, def)?;
@@ -247,11 +299,12 @@ pub(crate) fn validate_put_at_seeded_id(
     }
 }
 
-/// Whether `theirs` holds an agent id looser than `ours`: wider, or off a
-/// lineage `ours` has read.
+/// Whether `theirs` holds an agent id looser than `ours`: wider, off a
+/// lineage `ours` has read, or without the delegation parent `ours` binds.
 fn loosens(ours: AgentIdPin, theirs: AgentIdPin) -> bool {
     theirs.ceiling.widens_beyond(ours.ceiling)
         || (matches!(ours.lineage, Lineage::Born(_)) && theirs.lineage != ours.lineage)
+        || (ours.delegation_parent.is_some() && theirs.delegation_parent != ours.delegation_parent)
 }
 
 /// What a restore's decision reads at an agent id: the id's pin, and whether
@@ -324,6 +377,54 @@ pub(crate) fn refuse_loosened_agent_id_pins(
         }
     }
     Ok(())
+}
+
+/// Binds `parent`, the attempt whose spawn minted the attenuated fork at
+/// `id`, into the id's pin (FIX 9559). Only the dispatcher calls it, in the
+/// transaction that writes the fork, after the fork's put pinned the id. An
+/// id already bound keeps the parent it was minted under; an unpinned id is
+/// left as it is. It never fails the fork's write but on a store fault.
+///
+/// # Errors
+///
+/// When the pin does not read or write.
+pub(crate) fn bind_delegation_parent_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    parent: AttemptId,
+) -> Result<()> {
+    let Some(pin) = PIN.get(store, wtxn, id)? else {
+        return Ok(());
+    };
+    if pin.delegation_parent.is_some() {
+        return Ok(());
+    }
+    PIN.put(
+        store,
+        wtxn,
+        id,
+        &AgentIdPin {
+            delegation_parent: Some(parent),
+            ..pin
+        },
+    )
+}
+
+/// The attempt whose spawn delegated the agent at `id`, when its pin binds
+/// one: the durable link a live ceiling walk follows up the delegation chain.
+///
+/// # Errors
+///
+/// When the pin does not read.
+pub(crate) fn delegation_parent_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<AttemptId>> {
+    Ok(PIN
+        .get(store, txn, id)?
+        .and_then(|pin| pin.delegation_parent))
 }
 
 /// The ceiling a row at `id` may hold at most, when the id is pinned: what
@@ -444,6 +545,7 @@ pub(crate) fn pin_stored_row_in_txn(
                     Lineage::Unread if within => row.lineage,
                     lineage => lineage,
                 },
+                delegation_parent: pin.delegation_parent,
             };
             if next == pin {
                 return Ok(());
@@ -455,6 +557,7 @@ pub(crate) fn pin_stored_row_in_txn(
         (None, None) => AgentIdPin {
             ceiling: AgentCeiling::Proposed,
             lineage: seeded_pin(id)?.map_or(Lineage::Unread, |seed| seed.lineage),
+            delegation_parent: None,
         },
     };
     PIN.put(store, wtxn, id, &pin)

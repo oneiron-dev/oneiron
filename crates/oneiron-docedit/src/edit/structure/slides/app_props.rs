@@ -183,7 +183,7 @@ pub(in super::super) fn slide_count(package: &Package) -> Result<Option<u64>, Ed
     let Some(bytes) = package.part(&part)? else {
         return Ok(None);
     };
-    let Ok(tree) = XmlTree::parse(&bytes, package.limits().xml) else {
+    let Ok(tree) = XmlTree::parse(&bytes, package.resources()) else {
         return Ok(None);
     };
     Ok(tree
@@ -205,7 +205,7 @@ fn rewrite(
     let Some(bytes) = next.part(&part)? else {
         return Ok(None);
     };
-    let Ok(tree) = XmlTree::parse(&bytes, next.limits().xml) else {
+    let Ok(tree) = XmlTree::parse(&bytes, next.resources()) else {
         return Ok(None);
     };
     if tree.root(EP, "Properties").is_err() {

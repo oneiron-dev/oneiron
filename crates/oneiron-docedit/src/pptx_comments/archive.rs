@@ -1,7 +1,7 @@
 //! Retained ZIP records: unchanged entries keep compression, metadata and local bytes.
 
-use super::model::{PatchResult, PptxCommentLimits, PptxError};
-use crate::retained_opc::Package;
+use super::model::{Codec, PatchResult, PptxError};
+use crate::retained_opc::{self, Package};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct Archive<'a> {
@@ -10,15 +10,23 @@ pub(super) struct Archive<'a> {
     entries: Vec<(String, Vec<u8>, std::ops::Range<usize>)>,
     comment: Vec<u8>,
 }
+/// A package failure as the comment reader names it: a resource refusal as
+/// itself, every other one an invalid package.
+fn package_error(error: retained_opc::Error) -> PptxError {
+    error
+        .resource()
+        .map_or(PptxError::InvalidPackage, PptxError::Resource)
+}
+
 impl<'a> Archive<'a> {
-    pub(super) fn read(bytes: &'a [u8], limits: &PptxCommentLimits) -> PatchResult<Self> {
+    pub(super) fn read(bytes: &'a [u8], limits: &Codec<'_>) -> PatchResult<Self> {
         let package =
-            Package::open(bytes, limits.package()).map_err(|_| PptxError::InvalidPackage)?;
+            Package::open(bytes, limits.package(), limits.resources).map_err(package_error)?;
         let mut parts = BTreeMap::new();
         for name in package.names() {
             let data = package
                 .part(name)
-                .map_err(|_| PptxError::InvalidPackage)?
+                .map_err(package_error)?
                 .ok_or(PptxError::InvalidPackage)?;
             parts.insert(name.to_owned(), data);
         }
