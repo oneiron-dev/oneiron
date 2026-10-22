@@ -390,7 +390,7 @@ pub(super) fn seal_head(
             });
     }
     for id in retired {
-        let scope = CompartmentScope::of(id.subject())?;
+        let scope = recipients.fact_scope(&id)?;
         let at = chunk_of(&mut scopes, scope);
         scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
             .retired
@@ -640,7 +640,14 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         // retired, never both (FIX 6706).
         let world = scope.world().is_some();
         for mut entry in std::mem::take(&mut body.live) {
-            let id = typed(&position, entry.kind, &entry.item, entry.generation, scope)?;
+            let id = typed(
+                &position,
+                entry.kind,
+                &entry.item,
+                entry.generation,
+                scope,
+                false,
+            )?;
             let secret = std::mem::take(&mut entry.secret);
             if secret.len() != id.kind().secret_len() {
                 return Err(head_corrupt());
@@ -651,7 +658,14 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
             }
         }
         for fact in &body.retired {
-            let id = typed(&position, fact.kind, &fact.item, fact.generation, scope)?;
+            let id = typed(
+                &position,
+                fact.kind,
+                &fact.item,
+                fact.generation,
+                scope,
+                true,
+            )?;
             if world && (opened.live.contains_key(&id) || opened.retired.contains(&id)) {
                 return Err(head_corrupt());
             }
@@ -662,19 +676,22 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
 }
 
 /// The typed id a compartment names, refused in a compartment not of its
-/// subject's scope; a world's pad is custody generation 0.
+/// subject's scope; a world's pad is custody generation 0. A world pad's
+/// retirement `fact` may ride the host-readable compartment as well
+/// ([`CustodyRecipients::fact_scope`], FIX 9178); its live pad never does.
 fn typed(
     position: &CustodyPosition,
     tag: u8,
     item: &[u8],
     generation: u64,
     scope: CompartmentScope,
+    fact: bool,
 ) -> Result<CustodyId> {
     let kind = CustodyKind::from_tag(tag).ok_or_else(head_corrupt)?;
     let subject = CustodySubject::new(position.vault, kind, item).map_err(|_| head_corrupt())?;
-    if CompartmentScope::of(&subject).map_err(|_| head_corrupt())? != scope
-        || (scope.world().is_some() && generation != 0)
-    {
+    let own = CompartmentScope::of(&subject).map_err(|_| head_corrupt())?;
+    let host_fact = fact && own.world().is_some() && scope == CompartmentScope::HostReadable;
+    if (own != scope && !host_fact) || (own.world().is_some() && generation != 0) {
         return Err(head_corrupt());
     }
     Ok(subject.at(generation))

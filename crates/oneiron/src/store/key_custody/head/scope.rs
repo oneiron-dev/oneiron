@@ -47,11 +47,9 @@ impl CompartmentScope {
             // index's master and its history entries (KS-3), which no kit
             // need open.
             //
-            // A world pad too while world compartments are off (KS-5, CALLS
-            // WORLD_PAD_HEAD_SCOPE): a backup the data key unlocks restores
-            // its worlds' pads, as it did when the pads rode its rows. A pad
-            // alone opens nothing; its world's key wraps open only to a
-            // machine or root secret.
+            // A world pad too were world compartments off (KS-5, CALLS
+            // WORLD_PAD_HEAD_SCOPE); they are on (FIX 9178), so a pad's
+            // scope is its world's.
             CustodyKind::ClaimDecision
             | CustodyKind::BodyInstance
             | CustodyKind::KnownValueIndex
@@ -155,14 +153,35 @@ impl CustodyRecipients {
 
     /// Whether the head leaves the retirement fact of `id` out: a
     /// credential's kept off this member (KS-6), or (world compartments on)
-    /// a pad of a world no admitted machine or root receives, which has no
-    /// compartment to ride in. A connector call's resume fact (FIX 9157) is
-    /// always left out.
+    /// a pad's whose item names no world, which has no compartment to ride
+    /// in. A connector call's resume fact (FIX 9157) is always left out.
+    /// Every other world pad's fact rides ([`Self::fact_scope`]).
     pub(crate) fn keeps_fact_local(&self, id: &CustodyId) -> bool {
         if crate::store::credential_kind(id.kind()) {
             return self.keeps_local(id);
         }
-        WORLD_PAD_COMPARTMENTS && id.kind() == CustodyKind::WorldPad && !self.admits_world_of(id)
+        WORLD_PAD_COMPARTMENTS
+            && id.kind() == CustodyKind::WorldPad
+            && world_of(id.subject().item()).is_err()
+    }
+
+    /// The compartment the retirement fact of `id` rides: its subject's
+    /// scope, but (world compartments on, FIX 9178) a pad's of a world no
+    /// admitted machine or root receives, an erased world's among them,
+    /// rides the host-readable compartment. A fact names an id and holds no
+    /// pad or key, and every restore still sees the erase, as it did before
+    /// world compartments: the pad stays erased, never missing.
+    ///
+    /// # Errors
+    ///
+    /// As [`CompartmentScope::of`].
+    pub(crate) fn fact_scope(&self, id: &CustodyId) -> Result<CompartmentScope> {
+        Ok(match CompartmentScope::of(id.subject())? {
+            CompartmentScope::WorldPad(_) if !self.admits_world_of(id) => {
+                CompartmentScope::HostReadable
+            }
+            scope => scope,
+        })
     }
 
     /// Whether the world of the pad `id` has an admitted machine or root.

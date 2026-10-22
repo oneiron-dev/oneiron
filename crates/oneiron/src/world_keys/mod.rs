@@ -75,6 +75,7 @@ pub use self::owner_work::{
     PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics, ReassertKey,
     ReassertKeyState, ReassertUnread, RelayObservation,
 };
+pub(crate) use self::pad_custody::world_pad_recipients_in_txn;
 #[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
 pub(crate) use self::pad_custody::{
     PAD_CAPTURE_FAULT, PadCaptureFault, PadReferenceProjection, WorldPadRef,
@@ -89,8 +90,7 @@ pub(crate) use self::pad_custody::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::pad_custody::{
-    missing_world_pads_in_txn, row_pad_in_txn, world_pad_recipients_in_txn,
-    world_pad_row_items_in_txn,
+    missing_world_pads_in_txn, row_pad_in_txn, world_pad_row_items_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::pad_custody::{
