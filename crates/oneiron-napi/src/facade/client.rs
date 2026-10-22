@@ -105,6 +105,20 @@ pub struct NapiHostRootProfile {
 #[napi]
 pub struct NativeClient {
     inner: oneiron_remote::OneironClient,
+    /// What keeps this handle's engine serving while the handle lives: the
+    /// in-process engine a local attach came from (FIX 4895), handed on to
+    /// every handle rebound from it; `None` on every other handle.
+    keep: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl NativeClient {
+    /// A handle rebound from this one, keeping what this one keeps.
+    fn rebound(&self, inner: oneiron_remote::OneironClient) -> Self {
+        Self {
+            inner,
+            keep: self.keep.clone(),
+        }
+    }
 }
 
 #[napi]
@@ -123,7 +137,7 @@ impl NativeClient {
         let path = path.map(std::path::PathBuf::from);
         let inner =
             oneiron_remote::OneironClient::open(path.as_deref(), &options).map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(Self { inner, keep: None })
     }
 
     /// `open`, then this install's own machine profile from the vault's
@@ -148,7 +162,7 @@ impl NativeClient {
             host_root_secret.as_ref(),
         )
         .map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(Self { inner, keep: None })
     }
 
     /// What `openWithHostRoot` did with its root, on the handle it returned;
@@ -169,7 +183,7 @@ impl NativeClient {
     #[napi(factory)]
     pub fn connect(url: String, key: String) -> napi::Result<Self> {
         let inner = oneiron_remote::OneironClient::connect(&url, &key).map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(Self { inner, keep: None })
     }
 
     /// Redeems a pairing link once; returns the origin, the credential, the
@@ -190,14 +204,14 @@ impl NativeClient {
     #[napi]
     pub fn as_actor(&self, actor_key: String) -> napi::Result<Self> {
         let inner = self.inner.as_actor(&actor_key).map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(self.rebound(inner))
     }
 
     /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
     #[napi]
     pub fn in_room_turn(&self, room_ref: String) -> napi::Result<Self> {
         let inner = self.inner.in_room_turn(&room_ref).map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(self.rebound(inner))
     }
 
     /// Returns a NEW handle whose every verb runs inside the off-record
@@ -209,7 +223,7 @@ impl NativeClient {
             .inner
             .in_off_record_session(&session_ref)
             .map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(self.rebound(inner))
     }
 
     /// The lasting call receipt the last verb's reply stated, as

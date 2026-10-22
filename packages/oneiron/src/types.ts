@@ -57,6 +57,26 @@ export type EngineOptions = {
   cpuMillisPerSecond?: number
 }
 
+/** One header of a request to the embedded engine or of its reply (FIX 4895). */
+export type EngineHeader = { name: string; value: Uint8Array }
+
+/** One request the app sends its embedded engine: the request a socket's client sends, bringing its own auth. */
+export type EngineRequest = {
+  method: string
+  /** The path and query, e.g. `/v1/core/health`. */
+  path: string
+  headers?: EngineHeader[]
+  body?: Uint8Array
+}
+
+/** The engine's whole reply to one request. A 4xx or 5xx status is a reply, not an error. */
+export type EngineReply = {
+  status: number
+  /** Every header the reply carried, repeats included. */
+  headers: EngineHeader[]
+  body: Uint8Array
+}
+
 /** An authority key's signature suite. */
 export type CheckpointPinSuite = "ed25519" | "p256"
 
