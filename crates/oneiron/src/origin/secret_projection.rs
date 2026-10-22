@@ -23,8 +23,10 @@ use std::collections::BTreeMap;
 
 use heed::RoTxn;
 
+pub(crate) mod checkout;
 pub(crate) mod claims;
 pub(crate) mod clearance;
+pub(crate) mod disposal;
 pub(crate) mod edit;
 pub(crate) mod git;
 pub(crate) mod graph_objects;

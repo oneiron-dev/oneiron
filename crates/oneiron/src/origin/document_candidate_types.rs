@@ -142,4 +142,8 @@ pub struct CodePushCandidateView {
     pub batch_refs: Vec<String>,
     pub check_work_refs: Vec<String>,
     pub revision_refs: Vec<EntityId>,
+    /// The ruled status text of a masked copy's typed hold (FIX 7608,
+    /// FIX 9237); none for every other candidate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }

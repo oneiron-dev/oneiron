@@ -66,6 +66,7 @@ pub fn serve_bounded_as(
         wait_for_repository: false,
         push_wait: Some(bounds.repository_wait),
         caller: ServeCaller::Host(caller),
+        read: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }

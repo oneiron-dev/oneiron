@@ -13,7 +13,7 @@
 
 #![allow(
     dead_code,
-    reason = "FIX 7608 slice 2b-i: preparation only; slice 2b-ii is the first caller"
+    reason = "FIX 7608: the initial-head check is kept for a later caller"
 )]
 
 use std::fs;
@@ -28,6 +28,10 @@ use crate::checkout::lease::{
     GitOid as LeaseGitOid, PushedHeadReceipt, TeardownReceiptMatch,
 };
 use crate::codebase::RepoRef;
+use crate::origin::lfs::lfs_repo_id;
+use crate::origin::secret_projection::checkout::{
+    bind_projected_checkout, retained_projected_checkout,
+};
 
 /// One masked copy a lease checks out: the copy store pinned at the copy
 /// commit (proved present), and the canonical original it stands in for.
@@ -76,6 +80,86 @@ impl RepoProjectedCheckoutBinding {
 }
 
 impl GitWire<'_> {
+    /// The binding of `lease`'s retained masked copy (FIX 7608 2b-ii-B2),
+    /// `None` for a lease that checks out the canonical store. No mark is
+    /// read: an owned copy's checkout is found again to inspect and collect
+    /// it after its sources moved.
+    ///
+    /// # Errors
+    /// A store failure, a binding naming another holder or pin, or a copy
+    /// store that does not hold the bound commit.
+    pub(crate) fn projected_checkout_binding(
+        &self,
+        lease: &CheckoutLeaseAct,
+    ) -> CheckoutResult<Option<RepoProjectedCheckoutBinding>> {
+        let canonical = self.checkout_repo(lease)?;
+        let store = lfs_repo_id(&canonical.identity().as_hex())?;
+        let Some(bound) = retained_projected_checkout(self.vault, store, lease)? else {
+            return Ok(None);
+        };
+        Ok(Some(RepoProjectedCheckoutBinding::bind(
+            self,
+            &bound.copy_root,
+            bound.original,
+            bound.copy,
+        )?))
+    }
+
+    /// The masked copy `lease` checks out, selected once (FIX 7608
+    /// 2b-ii-B2): its retained binding when it has one, else, for a masked
+    /// recipient (`masked`) on a store holding readable marks, the copy
+    /// bound now. `None` checks out the canonical store as before.
+    ///
+    /// # Errors
+    /// A store or git failure.
+    pub(crate) fn select_projected_checkout(
+        &self,
+        lease: &CheckoutLeaseAct,
+        masked: bool,
+    ) -> CheckoutResult<Option<RepoProjectedCheckoutBinding>> {
+        if let Some(binding) = self.projected_checkout_binding(lease)? {
+            return Ok(Some(binding));
+        }
+        if !masked {
+            return Ok(None);
+        }
+        let canonical = self.checkout_repo(lease)?;
+        let Some(bound) = bind_projected_checkout(self.vault, self, &canonical, lease)? else {
+            return Ok(None);
+        };
+        Ok(Some(RepoProjectedCheckoutBinding::bind(
+            self,
+            &bound.copy_root,
+            bound.original,
+            bound.copy,
+        )?))
+    }
+
+    /// Whether `lease`'s holder reads masked (ASK 1): anyone but a live
+    /// owner of the vault.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn checkout_holder_reads_masked(
+        &self,
+        lease: &CheckoutLeaseAct,
+    ) -> CheckoutResult<bool> {
+        let Ok(holder) = crate::EntityId::from_hex(&lease.holder_ref) else {
+            return Ok(true);
+        };
+        Ok(!self.vault.is_live_owner_person(&holder)?)
+    }
+
+    /// The owned handle directory of a masked copy's checkout: the
+    /// ordinary name, under the copy store's scope.
+    pub(crate) fn projected_checkout_handle_dir(
+        &self,
+        lease: &CheckoutLeaseAct,
+        binding: &RepoProjectedCheckoutBinding,
+    ) -> std::path::PathBuf {
+        checkout_handle_dir_for(&self.process_env, &binding.copy_store, lease)
+    }
+
     /// The lease's canonical store, proved live and pinned at the binding's
     /// original: a lease that pins another commit checks out no copy.
     fn projected_canonical(

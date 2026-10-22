@@ -14,7 +14,7 @@
 
 #![allow(
     dead_code,
-    reason = "FIX 7608 slice 2b-i: constructor only; slice 2b-ii selects the copy for fetch"
+    reason = "FIX 7608: the witness accessor is kept for its later readers"
 )]
 
 use std::path::{Path, PathBuf};
@@ -132,10 +132,6 @@ pub(crate) fn prepare_projected_read_backend(
 ///
 /// # Errors
 /// As [`prepare_projected_read_backend`].
-#[allow(
-    dead_code,
-    reason = "FIX 7608 2b-ii-A: the Git read selection calls it in 2b-ii-B"
-)]
 pub(crate) fn prepare_recipient_read_backend(
     vault: &Vault,
     wire: &GitWire<'_>,

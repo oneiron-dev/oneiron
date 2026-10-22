@@ -10,9 +10,9 @@
 //! `GitPushCaller`, not a grant: it holds no credential and is never read
 //! from a request.
 //!
-//! In this slice every context still serves today's exchange: the exact
-//! path delegates first, and the masked selection over the copy's frozen
-//! read backend is wired with fetch, checkout and copy receive together.
+//! The exact path delegates first, byte for byte; a masked context reaches
+//! the selection that serves a marked store's masked copy and receives its
+//! pushes into a private ingress (FIX 7608 slice 2b-ii-B2).
 
 use std::io::Read;
 use std::sync::Arc;
@@ -21,8 +21,8 @@ use heed::RoTxn;
 
 use super::bounds::ExchangeBounds;
 use super::door::DoorSeam;
-use super::push_admission::serve_bounded_as;
-use super::serve::{ServeReport, ServeSink};
+use super::push_admission::{ServeCaller, serve_bounded_as};
+use super::serve::{ServeReport, ServeSink, ServeTerms, serve_request};
 use super::serve_cmd::ServeRequest;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -79,10 +79,6 @@ impl RepoGitReadContext {
 ///
 /// # Errors
 /// A store failure, or a mark that does not decode.
-#[allow(
-    dead_code,
-    reason = "FIX 7608 2b-ii-A: the masked read selection calls it in 2b-ii-B"
-)]
 pub(crate) fn store_holds_readable_marks_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -101,9 +97,10 @@ pub(crate) fn store_holds_readable_marks_in_txn(
     Ok(found)
 }
 
-/// [`serve_bounded_as`] for a read whose recipient `read` names. This slice
-/// serves every recipient today's exchange: the exact path first, the
-/// masked selection with its activation.
+/// [`serve_bounded_as`] for a read whose recipient `read` names: an exact
+/// recipient is [`serve_bounded_as`] itself; a masked one is served under
+/// the same terms with its context, which selects the masked copy only
+/// after the same push decision and only for a marked store.
 ///
 /// # Errors
 /// As [`serve_bounded_as`].
@@ -120,8 +117,21 @@ pub fn serve_bounded_for_recipient(
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
-    let _ = read;
-    serve_bounded_as(
-        vault, repo_name, request, seam, bounds, authority, caller, body, sink,
-    )
+    if !read.reads_masked() {
+        return serve_bounded_as(
+            vault, repo_name, request, seam, bounds, authority, caller, body, sink,
+        );
+    }
+    let terms = ServeTerms {
+        seam,
+        authority,
+        idle: bounds.idle,
+        scan: bounds.scan,
+        spill_floor: bounds.spill_floor,
+        wait_for_repository: false,
+        push_wait: Some(bounds.repository_wait),
+        caller: ServeCaller::Host(caller),
+        read: Some(read),
+    };
+    serve_request(vault, repo_name, request, terms, body, sink)
 }

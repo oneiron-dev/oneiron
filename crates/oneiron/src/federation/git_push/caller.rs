@@ -219,6 +219,13 @@ impl GitPushStamp {
         self
     }
 
+    /// The served repository's name this push was admitted on (FIX 7608
+    /// 2b-ii-B2: a projection-bound push's G1 recheck reads the canonical
+    /// repository by it).
+    pub(crate) fn served_name(&self) -> &str {
+        &self.served
+    }
+
     /// Whether this push was admitted on a checkout's run Grant: its ref
     /// moves and changed paths are judged again in the final writer.
     pub(crate) const fn is_checkout(&self) -> bool {

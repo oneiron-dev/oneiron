@@ -30,6 +30,15 @@ pub(super) fn admitted_push<'a>(
             "intent's push authority differs from its admission",
         ));
     }
+    // A projection-bound push's intent names the very proof its admission
+    // was recorded under, and an ordinary one names none (FIX 7608).
+    if super::projection::admission_ingress_proof(admission)
+        != stamp.ingress_proof.map(|id| id.to_hex())
+    {
+        return Err(receive_pack_provenance_refused(
+            "intent's ingress proof differs from its admission",
+        ));
+    }
     Ok(push)
 }
 

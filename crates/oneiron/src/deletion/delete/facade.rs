@@ -108,6 +108,9 @@ impl Vault {
         // The dependents past the first batch go before the delete returns.
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        // A masked Git copy whose sources this delete moved is retired once
+        // nothing owns it (FIX 7608, FIX 9107); a failure is logged.
+        crate::origin::secret_projection::disposal::collect_after_delete(self);
         #[cfg(unix)]
         self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();

@@ -3,6 +3,7 @@
 //! reviewed state change. No rename is inferred.
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::super::ReceivedFileOperation;
 use super::super::document_candidate_types::{
     CodePushCandidateHold, CodePushCandidateState, ReceivedRefIngress, ResolvedCandidateFile,
 };
@@ -88,17 +89,7 @@ pub(super) fn prepare_push_candidate_documents(
         let path = operation.path.as_str();
         let before = tree_blob(&old_entries, &old_files, path);
         let after = tree_blob(&new_entries, &new_files, path);
-        if before.as_ref().map(|blob| blob.mode) != operation.old_mode
-            || after.as_ref().map(|blob| blob.mode) != operation.new_mode
-            || before
-                .as_ref()
-                .map_or(*blake3::hash(b"").as_bytes(), |blob| blob.content_hash)
-                != operation.before_hash
-            || after
-                .as_ref()
-                .map_or(*blake3::hash(b"").as_bytes(), |blob| blob.content_hash)
-                != operation.after_hash
-        {
+        if !validate_received_operation(operation, before.as_ref(), after.as_ref()) {
             return held("source_operation_mismatch");
         }
         if before
@@ -152,4 +143,19 @@ pub(super) fn prepare_push_candidate_documents(
         ));
     }
     Ok(Ok(files))
+}
+
+/// Whether `operation` is exactly the change from `before` to `after`: its
+/// modes and its before and after content hashes. Shared by the ordinary
+/// candidate and a masked copy's, whose COPY trees it judges (FIX 7608).
+pub(super) fn validate_received_operation(
+    operation: &ReceivedFileOperation,
+    before: Option<&CodeTreeBlob>,
+    after: Option<&CodeTreeBlob>,
+) -> bool {
+    let empty = *blake3::hash(b"").as_bytes();
+    before.map(|blob| blob.mode) == operation.old_mode
+        && after.map(|blob| blob.mode) == operation.new_mode
+        && before.map_or(empty, |blob| blob.content_hash) == operation.before_hash
+        && after.map_or(empty, |blob| blob.content_hash) == operation.after_hash
 }

@@ -61,8 +61,12 @@ impl Vault {
         }
         let push = push_admission::admitted_push(&admission, stamp)?;
         // The serving thread holds the coordinator while this hook runs.
-        // Do not acquire that thread's lock here; only verify its epoch.
-        self.require_receive_pack_host_at(&root, stamp.origin_authority.as_ref())?;
+        // Do not acquire that thread's lock here; only verify its epoch: the
+        // canonical host's, for a validated projection ingress (FIX 7608).
+        self.require_receive_pack_host_for(&root, stamp)?;
+        // G1 is rechecked on the canonical repository for a projection-bound
+        // push, never on its private ingress.
+        let g1_repo = self.receive_pack_g1_repo(stamp, repo)?;
         let mut intent = ReceivePackIntent {
             operation_id: stamp.operation_id.to_hex(),
             actor_id: stamp.principal_ref().to_owned(),
@@ -103,7 +107,7 @@ impl Vault {
             push: stamp.push.clone(),
             // Set in the writer, from the marks it writes.
             scan: ReceivePackScanSummary::Clean,
-            ingress_proof: None,
+            ingress_proof: stamp.ingress_proof.map(|id| id.to_hex()),
         };
         let key = ReceivePackIntentKey {
             repo_identity_hex: receive_pack_repo_identity_hex(self, &root)?,
@@ -117,7 +121,7 @@ impl Vault {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
-            self.recheck_git_push_in_txn(wtxn, push, repo, changes)?;
+            self.recheck_git_push_in_txn(wtxn, push, &g1_repo, changes)?;
             let mark_count = record_receive_secret_marks_in_txn(
                 self,
                 wtxn,

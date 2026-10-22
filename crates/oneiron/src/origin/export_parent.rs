@@ -110,11 +110,15 @@ impl Vault {
 /// The incoming tip of the last push `revision`'s seal consumed
 /// completely, if any: its checked tree is that tip's own.
 fn push_boundary(revision: &CodeRevision) -> Result<Option<GitOid>> {
-    match revision
-        .tested_queue
-        .as_ref()
-        .and_then(|tested| tested.received_pushes.last())
-    {
+    // A masked copy's submitted tip is a COPY commit, never a canonical
+    // parent: only the last ordinary push names the boundary (FIX 7608).
+    match revision.tested_queue.as_ref().and_then(|tested| {
+        tested
+            .received_pushes
+            .iter()
+            .rev()
+            .find(|link| link.projection.is_none())
+    }) {
         Some(link) => Ok(Some(GitOid::parse_hex(link.new_commit.clone())?)),
         None => Ok(None),
     }

@@ -197,8 +197,10 @@ impl Vault {
         self.validate_receive_pack_attribution(repo_id, outcome, attribution)?;
         // Restored only from producer-backed admission/outcome evidence. This
         // same check gates deletions and document landing before either effect.
+        // A validated projection ingress publishes under no host lease, on
+        // itself only; every other landing under its proven one (FIX 7608).
         let authority =
-            self.receive_pack_landing_authority(repo_id, &outcome.repo_root, attribution)?;
+            self.receive_pack_publication_authority(repo_id, &outcome.repo_root, attribution)?;
         // Decided BEFORE the refs move: a RepositoryLarge pointer whose bytes
         // this vault does not hold refuses the landing, so no head is ever
         // advertised that a stock client could not check out.

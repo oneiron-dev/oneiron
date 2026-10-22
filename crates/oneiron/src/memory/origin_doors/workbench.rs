@@ -329,10 +329,27 @@ impl Memory<'_> {
                 .read_txn()
                 .map_err(crate::Error::from)?;
             self.origin_owner_in_txn(owner, &txn)?;
-            self.vault
-                .received_code_ingress_in_txn(&txn, input.provenance, &input.ref_name)?
+            let row =
+                self.vault
+                    .received_code_ingress_in_txn(&txn, input.provenance, &input.ref_name)?;
+            // A push received into a masked copy's private ingress for this
+            // store is this store's too, by its projection join (FIX 7608).
+            match row {
+                Some(row) if row.source.object_store == served.store => Some(row),
+                Some(row)
+                    if self.vault.received_ingress_targets_canonical_in_txn(
+                        &txn,
+                        &row,
+                        input.provenance,
+                        &served.store,
+                    )? =>
+                {
+                    Some(row)
+                }
+                _ => None,
+            }
         };
-        let Some(row) = row.filter(|row| row.source.object_store == served.store) else {
+        let Some(row) = row else {
             return Ok(None);
         };
         let publication = self
@@ -341,7 +358,8 @@ impl Memory<'_> {
         let mut candidate = self.vault.received_candidate_view(&row)?;
         if let Some(view) = &mut candidate {
             let sealed = self.workbench_sealed_with(&served, view.candidate)?;
-            if !sealed.is_empty() {
+            // An active masked-copy hold wins over a seal (FIX 7608).
+            if !sealed.is_empty() && view.detail.is_none() {
                 view.state = crate::origin::CodePushCandidateState::Sealed;
             }
             view.revision_refs = sealed;

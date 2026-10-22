@@ -148,6 +148,10 @@ impl Memory<'_> {
             Some(endpoint) => GitWire::new(self.vault)?.with_checkout_door(endpoint)?,
             None => GitWire::new(self.vault)?,
         };
+        // A run reads masked (ASK 1): on a marked store its lease is bound
+        // to the masked copy once, and the port materializes that copy.
+        wire.select_projected_checkout(&own.lease, true)
+            .map_err(checkout_refusal)?;
         wire.materialize(&own.lease).map_err(checkout_refusal)?;
         let checkout = own.lease.checkout_id.to_string();
         let remote_url = input.endpoint.as_deref().map(|endpoint| {
@@ -295,7 +299,21 @@ impl Memory<'_> {
                 &["Bind it first with self.code.checkout.bind."],
             ));
         }
-        let repo = wire.open_repo(own.lease.repo_ref.clone(), &tree)?;
+        // A masked copy's checkout exports from the canonical ORIGINAL
+        // store, never the copy's (FIX 7608 2b-ii-B2).
+        let source = if wire
+            .projected_checkout_binding(&own.lease)
+            .map_err(checkout_refusal)?
+            .is_some()
+        {
+            let RepoRef::LocalFolder { path, .. } = &own.lease.repo_ref else {
+                return Err(refusal_error(RepoAccessRefusal::WrongRepo));
+            };
+            PathBuf::from(path)
+        } else {
+            tree
+        };
+        let repo = wire.open_repo(own.lease.repo_ref.clone(), &source)?;
         if repo.common_dir() != push_queue_key(self.vault, &own.served)?.as_path() {
             return Err(refusal_error(RepoAccessRefusal::WrongRepo));
         }

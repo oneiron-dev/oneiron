@@ -94,6 +94,18 @@ impl Vault {
             },
             now,
         )?;
+        // The owner's Approve of a masked copy's held bundle settles exactly
+        // this replacement, in this same writer; a Reject settles nothing
+        // (FIX 7608 2b-ii-B2, CALL H).
+        if decision == RepoProposalDecision::Approve
+            && let Some(candidate) = row.received_candidate()
+            && let Some(held) =
+                self.held_projected_proposal_in_txn(&txn, row.provenance_claim, candidate)?
+        {
+            crate::origin::secret_projection::clearance::record_projection_owner_clearance_in_txn(
+                self, &mut txn, &held, actor, now,
+            )?;
+        }
         row.status = match decision {
             RepoProposalDecision::Approve => RepoProposalStatus::Approved,
             RepoProposalDecision::Reject => RepoProposalStatus::Rejected,
