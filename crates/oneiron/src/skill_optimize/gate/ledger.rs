@@ -233,11 +233,11 @@ pub(super) fn record_verdict_in_txn(
         .map_err(|_| invalid("skill edit verdict MessagePack encode failed"))?;
     VERDICTS.put(&vault.store, wtxn, &verdict.id, &encoded)?;
     // A ruling ends the proposal's live trial; admission stays this gate's.
-    crate::skill::close_exploration_trial_in_txn(
+    crate::skill_optimize::exploration_trial::close_exploration_trial_in_txn(
         vault,
         wtxn,
         &verdict.proposal,
-        crate::skill::ExplorationTrialClose::VerdictRecorded,
+        crate::skill_optimize::exploration_trial::ExplorationTrialClose::VerdictRecorded,
     )
 }
 

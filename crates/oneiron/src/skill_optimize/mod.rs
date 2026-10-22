@@ -136,6 +136,7 @@ mod brief;
 mod decisions;
 mod dials;
 mod eval_set;
+pub(crate) mod exploration_trial;
 mod gate;
 mod goal_axes;
 mod goal_binding;
