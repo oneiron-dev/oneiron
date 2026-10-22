@@ -681,6 +681,8 @@ impl BrowserSession {
         (target, observation): (EngineGuest, Observation),
         started: Instant,
     ) -> SwitchEngineOutput {
+        // A demonstration never runs on into the new guest (CUA E9a).
+        self.recording_close(crate::DemonstrationStopCause::EngineSwitched);
         let EngineGuest {
             driver,
             lease,

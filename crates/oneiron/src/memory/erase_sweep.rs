@@ -9,8 +9,8 @@ use crate::EntityId;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
-    decode_redaction_audit_receipt, redaction_erase_final_id, redaction_erase_final_in_txn,
-    redaction_sweep_completion_id, redaction_sweep_completion_in_txn,
+    decode_redaction_audit_receipt, is_corrupt_claim_repair_event, redaction_erase_final_id,
+    redaction_erase_final_in_txn, redaction_sweep_completion_id, redaction_sweep_completion_in_txn,
     validate_redaction_receipt_body,
 };
 use crate::ports::EntityStoreRead;
@@ -104,6 +104,11 @@ impl Memory<'_> {
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
             .ok_or(crate::Error::CorruptedIndex("redaction audit receipt body"))?;
+        // A corrupt CLAIM's repair event records a classification, not an
+        // erase: it has no sweep to read (FIX 7800).
+        if is_corrupt_claim_repair_event(body) {
+            return Ok(None);
+        }
         validate_redaction_receipt_body(body)?;
         let receipt = decode_redaction_audit_receipt(body)?;
         // A ref to an appended row reads that row's own times.

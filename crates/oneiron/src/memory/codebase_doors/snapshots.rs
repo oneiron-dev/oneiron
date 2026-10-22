@@ -1,3 +1,7 @@
+//! Codebase snapshot doors: ingest a pinned folder and read or project its snapshot.
+//! `Memory::code_snapshot_ingest_as` is its call surface.
+//! `memory::codebase_doors::types` defines the records these take and return.
+
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
