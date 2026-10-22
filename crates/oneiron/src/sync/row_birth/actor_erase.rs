@@ -190,6 +190,23 @@ fn doomed_carriers_in_txn(
     Ok(doomed)
 }
 
+/// Whether a canonical recovery keeps `bytes`, the birth of row `id` (FIX
+/// 3069): a birth whose maker this vault erased goes, as its window carrier
+/// does, but for a born row a legal hold keeps. Bytes that name no maker
+/// stay, unknown.
+pub(crate) fn canonical_birth_kept_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    bytes: &[u8],
+) -> Result<bool> {
+    let Some(actor) = maker(bytes) else {
+        return Ok(true);
+    };
+    Ok(!vault.carrier_actor_erased_in_txn(txn, &actor)?
+        || birth_held_in_txn(&vault.store, txn, id)?)
+}
+
 /// The actor a carried birth names as its maker, whatever its encoding.
 fn maker(bytes: &[u8]) -> Option<EntityId> {
     rmp_serde::from_slice::<RowBirth>(bytes)

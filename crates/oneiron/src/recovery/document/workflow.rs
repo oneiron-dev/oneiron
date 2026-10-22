@@ -47,11 +47,20 @@ fn frontier_decodes(fork: &NoteFork) -> bool {
 /// Resolve the old history while it still exists. The artifact merges by
 /// values: the fork's opening frontier rides along byte for byte, never as a
 /// basis, since it may name peers a reconstruction no longer has.
-pub(super) fn normalize(vault: &Vault, txn: &heed::RoTxn<'_>, fork: &NoteFork) -> Result<NoteFork> {
-    // A pending fork's basis is the live head; a decided one's may be a head a
-    // later switch replaced.
+pub(super) fn normalize(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fork: &NoteFork,
+    retained: &BTreeSet<super::retained::Place>,
+) -> Result<NoteFork> {
+    // A pending fork's basis is the live head, or a head a later switch
+    // replaced that the artifact retains for it (FIX 8829); a decided one's
+    // may be any head a later switch replaced.
     let head = crate::note::documents::head_in(&vault.store, txn, fork.note)?.0;
-    if (fork.parent != fork.note && (!fork.decided && fork.parent != head))
+    if (fork.parent != fork.note
+        && !fork.decided
+        && fork.parent != head
+        && !retained.contains(&(fork.note, fork.parent)))
         || !frontier_decodes(fork)
         || ((!fork.decided && !fork.rewrite) != fork.recovery_merge.is_some())
     {
@@ -66,6 +75,7 @@ pub(super) fn capture(
     txn: &heed::RoTxn<'_>,
     snapshot: &mut CanonicalSnapshot,
     ids: &BTreeSet<[u8; 16]>,
+    retained: &BTreeSet<super::retained::Place>,
     budget: &mut ByteBudget,
 ) -> Result<()> {
     let mut originals = BTreeMap::new();
@@ -79,7 +89,9 @@ pub(super) fn capture(
         }
         // The captured fork and the original kept to check bundles against.
         budget.take(2 * fork_bytes(&fork))?;
-        snapshot.note_forks.push(normalize(vault, txn, &fork)?);
+        snapshot
+            .note_forks
+            .push(normalize(vault, txn, &fork, retained)?);
         originals.insert(fork.fork, fork);
     }
     for row in super::NOTE_PROPOSAL_BUNDLE.iter_from(&vault.store, txn, &[])? {
@@ -108,7 +120,7 @@ pub(super) fn capture(
             if originals.get(&fork.fork) != Some(fork) {
                 return Err(invalid("proposal fork divergence"));
             }
-            *fork = normalize(vault, txn, fork)?;
+            *fork = normalize(vault, txn, fork, retained)?;
         }
         for receipt in &mut bundle.landed {
             receipt.actor = receipt.actor.erased_here(vault, txn)?;
@@ -137,6 +149,7 @@ pub(super) fn erase_actors_here(
     snapshot: &mut CanonicalSnapshot,
 ) -> Result<()> {
     let mut gone = BTreeSet::new();
+    let needed = super::retained::carried(snapshot)?;
     for fork in std::mem::take(&mut snapshot.note_forks) {
         let place = (*fork.note.as_bytes(), *fork.fork.as_bytes());
         match fork.carried_here(vault, txn)? {
@@ -147,9 +160,17 @@ pub(super) fn erase_actors_here(
         }
     }
     if !gone.is_empty() {
-        snapshot
-            .doc_snapshots
-            .retain(|row| !gone.contains(&(row.entity_id, row.head)));
+        // A retained parent goes with the last pending fork that needed it
+        // (FIX 8829).
+        let still = super::retained::carried(snapshot)?;
+        let unneeded: BTreeSet<_> = needed
+            .difference(&still)
+            .map(|(note, head)| (*note.as_bytes(), *head.as_bytes()))
+            .collect();
+        snapshot.doc_snapshots.retain(|row| {
+            !gone.contains(&(row.entity_id, row.head))
+                && !unneeded.contains(&(row.entity_id, row.head))
+        });
         snapshot.refresh_containers();
     }
     for bundle in std::mem::take(&mut snapshot.note_proposals) {
@@ -210,9 +231,12 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         }
     }
     let mut membership = BTreeMap::new();
+    // No count bounds a bundle (Rule 5, FIX 8828): it holds a fork and an
+    // explainer.
     for bundle in &snapshot.note_proposals {
-        let count = bundle.waiting.len() + bundle.landed.len();
-        if !(1..=256).contains(&count) || bundle.explainer.trim().is_empty() {
+        if (bundle.waiting.is_empty() && bundle.landed.is_empty())
+            || bundle.explainer.trim().is_empty()
+        {
             return Err(invalid("proposal shape"));
         }
         for fork in &bundle.waiting {
@@ -265,9 +289,16 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             return Err(invalid("fork proposal binding"));
         }
     }
+    // A value that is neither a head nor a pending fork's own is a retained
+    // parent a pending fork needs (FIX 8829), or it has no place here.
+    let retained = super::retained::carried(snapshot)?;
     for row in &snapshot.doc_snapshots {
         if row.head != row.entity_id
             && heads.get(&row.entity_id) != Some(&row.head)
+            && !retained.contains(&(
+                crate::EntityId::from_bytes(row.entity_id)?,
+                crate::EntityId::from_bytes(row.head)?,
+            ))
             && forks
                 .get(&crate::EntityId::from_bytes(row.head)?)
                 .is_none_or(|fork| fork.note.as_bytes() != &row.entity_id || fork.decided)

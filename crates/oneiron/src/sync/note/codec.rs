@@ -114,7 +114,8 @@ impl State {
         }
         let mut membership = BTreeMap::new();
         for bundle in self.bundles.values() {
-            if !(1..=256).contains(&(bundle.waiting.len() + bundle.landed.len()))
+            // No count bounds a bundle (Rule 5, FIX 8828).
+            if (bundle.waiting.is_empty() && bundle.landed.is_empty())
                 || bundle.explainer.trim().is_empty()
             {
                 return Err(invalid("NOTE proposal shape"));

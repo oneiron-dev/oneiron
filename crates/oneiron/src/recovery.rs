@@ -25,6 +25,8 @@ mod snapshot_writer;
 mod soft_shell;
 mod validation;
 #[cfg(feature = "sync")]
+mod work;
+#[cfg(feature = "sync")]
 pub(crate) use soft_shell::{materialize_retained_shells, retained_soft_shell};
 pub(crate) use validation::trusted_soft_addressing_edge;
 

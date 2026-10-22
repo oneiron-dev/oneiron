@@ -1,7 +1,7 @@
 //! Entity pass of forward rematerialization: every window entity blob through the shared
 //! ingest entry, one write transaction per entity or TASK component.
 
-use super::super::loro_support::map_for_each_value_bytes_deferring;
+use super::super::loro_support::{map_for_each_value_bytes_deferring, map_get_bytes};
 #[cfg(any(test, feature = "test-hooks"))]
 use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
@@ -16,25 +16,35 @@ use crate::sync::ingest::{
 };
 use loro::{LoroValue, ValueOrContainer};
 
-/// Run the entity pass: iterate the window `entities` map and ingest each value through the
-/// shared ingest entry in its own write transaction, which a TASK component's rows share.
-///
-/// Every LOCAL ingest failure aborts the pass and never reaches the ledger (Trap 1).
-pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
+/// The entity pass's rows in the order it lands them, and the TASK
+/// components among them, planned once so a recovery can run the pass a
+/// page at a time (FIX 8821) in the very order one run takes.
+pub(super) struct EntityPlan {
+    order: Vec<String>,
+    components: TaskComponents,
+}
+
+impl EntityPlan {
+    pub(super) fn rows(&self) -> usize {
+        self.order.len()
+    }
+
+    /// The key of the row at `at`, for a continuation's cursor.
+    pub(super) fn key(&self, at: usize) -> Option<&str> {
+        self.order.get(at).map(String::as_str)
+    }
+}
+
+/// Plans the entity pass: AUTHORITY_LOG rows first, parents before
+/// children: a signer's enrollment lands before the rows it signs, which its
+/// door would otherwise hold until the next pass, and every later row judges
+/// against the newest roster. Ask facts and project home rooms verify
+/// against a sibling row: they go last.
+pub(super) fn plan(ctx: &RematCtx<'_>) -> Result<EntityPlan> {
     let vault = ctx.vault;
-    let ingest = IngestCtx::new(
-        vault,
-        ctx.window_key.as_str(),
-        ctx.lease_vault_id,
-        &ctx.tombstones,
-    )
-    .with_residence(Residence::Forward {
-        doc: ctx.doc,
-        trusted: ctx.trusted.is_some(),
-    });
     // FIX 5998: TASK rows whose roles change together land in one transaction
     // and one batch.
-    let mut components = {
+    let components = {
         let mut rows = Vec::new();
         ctx.entities_map.for_each(|key, value| {
             if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
@@ -45,6 +55,52 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         let rows = rows.iter().map(|(key, bytes)| (key.as_str(), &bytes[..]));
         TaskComponents::find(vault, &rtxn, rows)?
     };
+    let mut authority = Vec::new();
+    ctx.entities_map.for_each(|key, value| {
+        if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
+            && is_authority_row(&bytes)
+        {
+            authority.push((key.to_owned(), bytes));
+        }
+    });
+    let rows: Vec<(&str, &[u8])> = authority
+        .iter()
+        .map(|(key, bytes)| (key.as_str(), &bytes[..]))
+        .collect();
+    let mut order: Vec<String> = authority_parent_order(&rows)
+        .into_iter()
+        .map(|at| rows[at].0.to_owned())
+        .collect();
+    map_for_each_value_bytes_deferring(&ctx.entities_map, waits_for_sibling_row, |key, value| {
+        if !value.is_some_and(is_authority_row) {
+            order.push(key.to_owned());
+        }
+    });
+    Ok(EntityPlan { order, components })
+}
+
+/// Run the planned rows `rows` of the entity pass, in plan order: ingest each value through
+/// the shared ingest entry in its own write transaction, which a TASK component's rows share.
+///
+/// Every LOCAL ingest failure aborts the pass and never reaches the ledger (Trap 1).
+pub(super) fn run_page(
+    ctx: &RematCtx<'_>,
+    ledger: &mut RematLedger,
+    plan: &mut EntityPlan,
+    rows: std::ops::Range<usize>,
+) -> Result<()> {
+    let vault = ctx.vault;
+    let ingest = IngestCtx::new(
+        vault,
+        ctx.window_key.as_str(),
+        ctx.lease_vault_id,
+        ctx.tombstones,
+    )
+    .with_residence(Residence::Forward {
+        doc: ctx.doc,
+        trusted: ctx.trusted.is_some(),
+    });
+    let components = &mut plan.components;
     let mut entity_error = None;
     let mut visit = |key: &str, value: Option<&[u8]>| {
         if entity_error.is_some() {
@@ -105,32 +161,10 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             ledger_step(ledger, step);
         }
     };
-    // AUTHORITY_LOG rows land first, parents before children: a signer's
-    // enrollment lands before the rows it signs, which its door would
-    // otherwise hold until the next pass, and every later row judges
-    // against the newest roster.
-    let mut authority = Vec::new();
-    ctx.entities_map.for_each(|key, value| {
-        if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
-            && is_authority_row(&bytes)
-        {
-            authority.push((key.to_owned(), bytes));
-        }
-    });
-    let rows: Vec<(&str, &[u8])> = authority
-        .iter()
-        .map(|(key, bytes)| (key.as_str(), &bytes[..]))
-        .collect();
-    for at in authority_parent_order(&rows) {
-        visit(rows[at].0, Some(rows[at].1));
+    for key in &plan.order[rows] {
+        let value = map_get_bytes(&ctx.entities_map, key);
+        visit(key, value.as_deref());
     }
-    // Ask facts and project home rooms verify against a sibling row: visit them last.
-    let later = waits_for_sibling_row;
-    map_for_each_value_bytes_deferring(&ctx.entities_map, later, |key, value| {
-        if !value.is_some_and(is_authority_row) {
-            visit(key, value);
-        }
-    });
     if let Some(err) = entity_error {
         return Err(err);
     }
