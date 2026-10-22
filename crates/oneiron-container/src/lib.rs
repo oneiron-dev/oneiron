@@ -13,8 +13,8 @@ pub use egress::{
     LoopbackRefusalReason,
 };
 pub use host_net_floor::{
-    HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit, UnmeteredFloor,
-    floor_saturated, known_floor, saturated_floor,
+    HOST_NET_BYTE_FLOOR, HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit,
+    UnmeteredFloor, floor_saturated, known_floor, saturated_floor,
 };
 pub use relay_protocol::{RelayReply, RelayRequest, read_relay, write_relay};
 pub use transport::{SessionLease, SessionTransport};
