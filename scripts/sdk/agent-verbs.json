@@ -4102,7 +4102,7 @@
     },
     {
       "name": "vault.packs.sections.list",
-      "description": "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project.",
+      "description": "Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project.",
       "input": "crate::memory::PluginSectionListRequest",
       "output": "crate::memory::PluginSectionsView",
       "call": "memory.plugin_sections_list(&input)?",
@@ -4112,6 +4112,10 @@
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
+      },
+      "page": {
+        "rows": "pending",
+        "cursor": "next_cursor"
       },
       "section": false,
       "openapi": true
