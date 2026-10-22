@@ -17,6 +17,7 @@ use super::consent::{
     feedback_logical_send_ref, validate_feedback_approval,
 };
 use super::error::FeedbackError;
+use super::report::ReportTextSendBinding;
 
 /// Receipt field naming the typed feedback verb behind an outbound effect.
 pub const FEEDBACK_RECEIPT_FIELD_VERB: &str = "feedback_verb";
@@ -46,6 +47,10 @@ pub struct FeedbackSendContext {
     /// The owner who approved this send, when an owner did: admission
     /// rechecks that proof under the writer that admits the send.
     pub approved_by: Option<crate::consent::AuthenticatedOwner>,
+    /// The report whose quoted text this bundle carries, when it carries
+    /// one: the owner's disclosure of that text is checked live once more
+    /// just before the bytes reach the transport (FIX 8747).
+    pub report_text: Option<ReportTextSendBinding>,
 }
 
 impl FeedbackSendContext {
@@ -64,6 +69,7 @@ impl FeedbackSendContext {
             occurred_at,
             window_decision,
             approved_by: None,
+            report_text: None,
         }
     }
 
@@ -79,6 +85,15 @@ impl FeedbackSendContext {
     #[must_use]
     pub fn approved_by(mut self, owner: crate::consent::AuthenticatedOwner) -> Self {
         self.approved_by = Some(owner);
+        self
+    }
+
+    /// Binds the send to the report whose quoted text it carries: the text
+    /// leaves only while the owner's disclosure of it stands, checked in the
+    /// writer just before the transport runs.
+    #[must_use]
+    pub fn disclosing_report_text(mut self, binding: ReportTextSendBinding) -> Self {
+        self.report_text = Some(binding);
         self
     }
 }
@@ -116,7 +131,14 @@ pub trait FeedbackTransport {
 /// it only runs when the pipeline actually executes. A replay that
 /// short-circuits before execution never reaches here, so it never reinserts
 /// transport fields onto a receipt that did not transport anything.
+///
+/// A bundle quoting a report's text is held against the owner's live
+/// disclosure here, in a writer of its own just before the transport runs
+/// (FIX 8747): a revoke that landed first wins, and the send fails without
+/// reaching the transport, recorded as never started.
 struct FeedbackOutboundAdapter<'a, T> {
+    vault: &'a crate::Vault,
+    report_text: Option<&'a ReportTextSendBinding>,
     transport: &'a mut T,
     bundle_bytes: &'a [u8],
     bundle_digest: &'a str,
@@ -127,6 +149,25 @@ struct FeedbackOutboundAdapter<'a, T> {
 
 impl<T: FeedbackTransport> OutboundExecutionSink for FeedbackOutboundAdapter<'_, T> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        if let Some(binding) = self.report_text {
+            match self.vault.admit_report_text_exposure(binding) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return OutboundExecutionOutcome::failed(
+                        "the owner's disclosure of this report's text no longer stands",
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "a report text send was not checked against its disclosure"
+                    );
+                    return OutboundExecutionOutcome::failed(
+                        "the report text's disclosure could not be checked",
+                    );
+                }
+            }
+        }
         self.calls += 1;
         let feedback_request = FeedbackTransportRequest {
             execution: request,
@@ -305,6 +346,8 @@ where
     let logical_send_ref = request.receipt_id.clone();
     let approval_receipt_ref = request.intent.trigger_ref.clone();
     let mut adapter = FeedbackOutboundAdapter {
+        vault,
+        report_text: context.report_text.as_ref(),
         transport,
         bundle_bytes: &preview.bytes,
         bundle_digest: &preview.digest,

@@ -1,6 +1,7 @@
 //! OF-537: free, actor-bound reports about a durable subject, never a task kind.
 
 mod delivery;
+mod disclosure;
 mod routing;
 mod store;
 
@@ -13,9 +14,10 @@ pub use delivery::{
     ReportPublisherBinding, ReportPublisherBindingRequest, ReportPublisherEndpoint,
     ReportPublisherMetadata, ReportSignatureTransport, ReportSignatureTransportRequest,
 };
+pub use disclosure::{ReportDisclosureBasis, ReportTextSendBinding};
 pub use routing::{ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature};
 
-use super::{FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_REF_MAX_BYTES, FeedbackProposal};
+use super::{FEEDBACK_REF_MAX_BYTES, FeedbackProposal};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -53,9 +55,8 @@ pub struct ReportRequest {
 impl ReportRequest {
     pub fn validate(&self) -> Result<()> {
         validate_ref(&self.subject_ref)?;
-        if self.evidence_refs.len() > FEEDBACK_MAX_SUBJECT_REFS {
-            return Err(invalid("too many report evidence references"));
-        }
+        // Every evidence reference is kept, in order; how many is measured
+        // where the report is recorded, never refused (FIX 8746).
         for reference in &self.evidence_refs {
             validate_ref(reference)?;
         }
@@ -159,7 +160,12 @@ pub struct ReportIssue {
     pub received_at: u64,
     pub route: ReportRoute,
     pub review: ReportReview,
+    /// The effective view: what `disclosure_basis` and the live consent
+    /// registry give when the issue is read (FIX 8747).
     pub disclosure: ReportDisclosure,
+    /// Why the text may reach its publisher, when it may: the owner's
+    /// issue-once approval, or a standing grant live now.
+    pub disclosure_basis: Option<ReportDisclosureBasis>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -172,6 +178,8 @@ pub struct ReportReceipt {
     pub duplicate_of: Option<String>,
     pub route: ReportRoute,
     pub disclosure: ReportDisclosure,
+    /// Why the text may reach its publisher, when it may (FIX 8747).
+    pub disclosure_basis: Option<ReportDisclosureBasis>,
 }
 
 impl ReportReceipt {
@@ -184,6 +192,7 @@ impl ReportReceipt {
             duplicate_of: issue.review.duplicate_of.clone(),
             route: issue.route.clone(),
             disclosure: issue.disclosure,
+            disclosure_basis: issue.disclosure_basis.clone(),
         }
     }
 }

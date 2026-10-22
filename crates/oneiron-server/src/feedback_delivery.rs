@@ -263,7 +263,13 @@ pub enum SendFeedbackError {
 /// approval. The send is `owner`'s and is admitted only while `owner`'s proof
 /// still holds where it is admitted. Transport errors are typed after the
 /// ordinary failure receipt is persisted. This blocking door belongs on the
-/// host's blocking worker.
+/// host's blocking worker. A bundle quoting a report's text carries
+/// `report_text`: the engine checks the owner's disclosure of that text live
+/// once more just before the transport runs (FIX 8747).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one approved send: its destination, bytes, approval, owner and report binding"
+)]
 pub fn send_approved_feedback(
     vault: &oneiron::Vault,
     config: FeedbackDeliveryConfig,
@@ -271,6 +277,7 @@ pub fn send_approved_feedback(
     preview: &oneiron::feedback::FeedbackPreview,
     evaluation: &oneiron::genui::ConsentActionEvaluation,
     owner: &oneiron::consent::AuthenticatedOwner,
+    report_text: Option<&oneiron::feedback::ReportTextSendBinding>,
     now: u64,
 ) -> Result<oneiron::feedback::FeedbackSendOutcome, SendFeedbackError> {
     let owner_actor = owner.revalidate(vault).map_err(|_| {
@@ -283,13 +290,16 @@ pub fn send_approved_feedback(
         actor_ref: Some(owner_actor.to_hex()),
         actor_entity_ref: Some(owner_actor),
     };
-    let context = oneiron::feedback::FeedbackSendContext::new(
+    let mut context = oneiron::feedback::FeedbackSendContext::new(
         config.route(),
         actor,
         now,
         oneiron::outbound::OutboundDeliveryWindowDecision::DeliverNow,
     )
     .approved_by(owner.clone());
+    if let Some(binding) = report_text {
+        context = context.disclosing_report_text(binding.clone());
+    }
     // Validate before building a client or reading transport credentials.
     oneiron::feedback::feedback_dispatch_request(preview, &context, evaluation)?;
     let mut transport = HttpFeedbackTransport::new(config, bearer)?;

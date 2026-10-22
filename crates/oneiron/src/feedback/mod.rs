@@ -162,11 +162,11 @@ pub use self::report::{
     REPORT_SIGNATURE_VERB, REPORT_VERB, ReportDeliveryHold, ReportDeliveryKey,
     ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRun,
     ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest, ReportDisclosure,
-    ReportDisclosureChoice, ReportFrozenSend, ReportFrozenSignature, ReportIssue, ReportKind,
-    ReportPublisherBinding, ReportPublisherBindingRequest, ReportPublisherEndpoint,
-    ReportPublisherMetadata, ReportReceipt, ReportRequest, ReportReview, ReportRoute,
-    ReportRoutedPayload, ReportSignature, ReportSignatureTransport,
-    ReportSignatureTransportRequest, ReportStatus,
+    ReportDisclosureBasis, ReportDisclosureChoice, ReportFrozenSend, ReportFrozenSignature,
+    ReportIssue, ReportKind, ReportPublisherBinding, ReportPublisherBindingRequest,
+    ReportPublisherEndpoint, ReportPublisherMetadata, ReportReceipt, ReportRequest, ReportReview,
+    ReportRoute, ReportRoutedPayload, ReportSignature, ReportSignatureTransport,
+    ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
 };
 pub use self::triage::{
     COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, FEEDBACK_TRIAGE_FINDING_PREDICATE,
