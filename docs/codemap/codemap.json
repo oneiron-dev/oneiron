@@ -388,7 +388,7 @@
       "CopingStrategy"
      ],
      "path": "src/affect/coping.rs",
-     "purpose": "—",
+     "purpose": "Coping outcomes: which strategy a person used and how their affect moved",
      "surface": {
       "const": 1,
       "crate-vis": 3,
@@ -402,7 +402,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/affect/mod.rs",
-     "purpose": "—",
+     "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes",
      "surface": {
       "crate-vis": 4,
       "mod": 3,
@@ -12998,7 +12998,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "StoredWeaveDigest",
@@ -13144,6 +13144,16 @@
      "path": "src/claim/scoped_read/weave_digest/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/wire.rs",
+     "purpose": "A saved schedule's and period's stored JSON rows, their conversions to and from the live types, and the…",
+     "surface": {
+      "crate-vis": 13
+     }
     },
     {
      "bucket": "L",
@@ -23043,7 +23053,7 @@
      "path": "src/dreamer_consolidation/call_labels.rs",
      "purpose": "Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -23064,6 +23074,16 @@
      "purpose": "The relationships an extraction call lists (FIX 7575)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/call_labels/subject.rs",
+     "purpose": "A claim subject as a call names it, by that call's labels",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -23091,7 +23111,7 @@
       "VerifiedSwarmEvidence"
      ],
      "path": "src/dreamer_consolidation/conflict.rs",
-     "purpose": "—",
+     "purpose": "Conflict and bucket identities for consolidation candidates and swarm returns",
      "surface": {
       "crate-vis": 10,
       "fn": 9,
@@ -23109,17 +23129,27 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConsolidationExecutor"
      ],
      "path": "src/dreamer_consolidation/executor.rs",
-     "purpose": "—",
+     "purpose": "Partition executor: runs one prepared consolidation partition end to end",
      "surface": {
       "crate-vis": 6,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/executor/conflicts.rs",
+     "purpose": "The conflict loop of `resolve_conflicts`: each conflicting set decided through the host's ladder, merged…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -23230,6 +23260,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/executor/partition_run.rs",
+     "purpose": "The prepared partition run `execute` ends in: the branch's resources at the wake's pin, the partition's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/extracted_people.rs",
      "purpose": "Explicit PERSON outputs from the production extraction response",
      "surface": {
@@ -23297,7 +23337,7 @@
       "ReflectionGapScan"
      ],
      "path": "src/dreamer_consolidation/gap.rs",
-     "purpose": "—",
+     "purpose": "Reflection gaps: missed follow-ups, open threads, unacted intents, contradictions",
      "surface": {
       "crate-vis": 7,
       "enum": 2,
@@ -23533,7 +23573,7 @@
       "ConsolidationPartitionPlan"
      ],
      "path": "src/dreamer_consolidation/partition.rs",
-     "purpose": "—",
+     "purpose": "Partition planning: cuts dirty turns into consolidation partitions",
      "surface": {
       "crate-vis": 10,
       "fn": 6,
@@ -23596,7 +23636,7 @@
       "PromotionCandidate"
      ],
      "path": "src/dreamer_consolidation/provenance.rs",
-     "purpose": "—",
+     "purpose": "Consolidation lineage: provenance hops, kept decisions and evidence envelopes",
      "surface": {
       "crate-vis": 9,
       "enum": 1,
@@ -23637,7 +23677,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ResidentDreamModel",
@@ -23654,6 +23694,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resident_dream/cut.rs",
+     "purpose": "The four reads one resident dreaming cuts, in the order it reads them: its own and its forks' sealed pads…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resident_dream/landing.rs",
+     "purpose": "Where a resident dreaming lands: its diary entry, every part of it, its proposed craft notes, its landing…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -23661,6 +23721,16 @@
      "purpose": "What a resident's dreaming reply must hold to land: a diary entry",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resident_dream/request.rs",
+     "purpose": "The one model request a resident dreaming sends: the host's instruction, its craft and its cut, admitted on…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -24163,7 +24233,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/support.rs",
-     "purpose": "—",
+     "purpose": "Consolidation constants, hash domains and shared codec helpers",
      "surface": {
       "const": 12,
       "crate-vis": 30
@@ -24465,6 +24535,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/wake_plan/preparation.rs",
+     "purpose": "The two phases of one frozen wake read that touch every queued attempt: collecting each queued attempt's…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -24492,7 +24572,7 @@
       "WorkingSetTurn"
      ],
      "path": "src/dreamer_consolidation/watermark.rs",
-     "purpose": "—",
+     "purpose": "Dirty-TURN progress: the consolidation watermark and its working set",
      "surface": {
       "crate-vis": 14,
       "fn": 5,
@@ -24809,7 +24889,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/admission/validation.rs",
-     "purpose": "—",
+     "purpose": "Admission validation: shape checks on a Dreamer admission request",
      "surface": {
       "crate-vis": 1
      }
@@ -26903,7 +26983,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerWakeDriver"
@@ -26916,6 +26996,16 @@
       "fn": 9,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/admission.rs",
+     "purpose": "The priority admission of one wake-pass iteration: cleanup, note review, free time, resident dreaming, skill…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -26992,6 +27082,26 @@
      "purpose": "What a non-deadline executor error parks as (FIX 7272)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/settle.rs",
+     "purpose": "Where one executed attempt settles: its budget, its completion, its deferral, landing or park, with the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/stop.rs",
+     "purpose": "Where a wake pass stops between attempts: at the attempt boundary (a cancellation, the hard deadline, or the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -75117,7 +75227,7 @@
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
-     "purpose": "—"
+     "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
      "files": 23,
@@ -75309,9 +75419,9 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 103,
+     "files": 104,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)"
     },
@@ -75589,7 +75699,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 135,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75631,9 +75741,9 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 58,
+     "files": 61,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
     },
@@ -76646,9 +76756,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 142,
+   "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5006,
+   "source_files": 5017,
    "test_files": 902
   },
   "oneiron-android": {
@@ -91573,6 +91683,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/handle.rs",
+     "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
+     "surface": {
+      "crate-vis": 15,
+      "fn": 17
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -91626,6 +91747,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/lifecycle.rs",
+     "purpose": "The running host's lifecycle (`AiHost`): attach and start, the binds a server makes once it exists, shutdown…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/local_vision.rs",
      "purpose": "The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound…",
      "surface": {
@@ -91633,7 +91765,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AiHandle",
@@ -91642,8 +91774,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 37,
-      "fn": 22,
+      "crate-vis": 21,
       "mod": 3,
       "re-export": 1,
       "struct": 2
@@ -91922,6 +92053,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/training_offer/choices.rs",
+     "purpose": "The two option lists a seat's brief is gathered from: each stock model the seat may switch to, priced on its…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/training_offer/cost.rs",
      "purpose": "Fixed-code projection on the same dated workload, with each tokenizer",
      "surface": {
@@ -92012,6 +92153,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/turn_actions/phases.rs",
+     "purpose": "Two phases of one turn action's run (`act`): admitting its call, with its context board where the board may…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/turn_program.rs",
      "purpose": "The host's half of DOOR-141: the wakes a landed turn's own commit owed its actor's armed programs, typed…",
      "surface": {
@@ -92056,6 +92207,16 @@
      "purpose": "The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/workers.rs",
+     "purpose": "The workers a started host runs on its seats: the Dreamer and the workflow pump, and the MACRO declaration…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -106043,7 +106204,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 90,
+     "files": 95,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106519,9 +106680,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 36,
+   "over_bar": 35,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1235,
+   "source_files": 1240,
    "test_files": 182
   },
   "oneiron-spawn": {
