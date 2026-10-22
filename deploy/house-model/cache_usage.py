@@ -229,6 +229,16 @@ def end_reason(eos_reason):
     return END_REASONS.get(eos_reason, "other")
 
 
+def mark_tool_calls(usage):
+    """Gives each receipt in `usage` the end `tool_calls`: its reply's
+    parsed tool calls are present (FIX 9300). The scheduler wrote the
+    receipt before the reply was read for tool calls."""
+    receipts = usage.get(INFERENCE_CALLS_KEY) if isinstance(usage, dict) else None
+    for receipt in receipts if isinstance(receipts, list) else []:
+        if isinstance(receipt, dict):
+            receipt["end_reason"] = "tool_calls"
+
+
 def drafts(totals):
     """`(proposed, accepted)` over the request's passes: accepted plus
     rejected, and accepted, only when every pass reported both; else
