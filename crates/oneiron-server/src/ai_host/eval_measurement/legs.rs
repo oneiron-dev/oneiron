@@ -173,6 +173,7 @@ fn request(arm: &ServedArm, task: &str) -> LlmRequest {
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     // The arms are compared with each other: each runs alone on an own
     // server that batches (INF 1).
