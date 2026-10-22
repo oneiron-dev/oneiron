@@ -180,6 +180,12 @@ pub struct LineOfficialAccountInbound {
     /// sender, as a 1:1 message does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat: Option<LineChat>,
+    /// The group or room a message was written in when it still routes per
+    /// sender (no identity is bound to that chat). It never routes: it is
+    /// the audience the reply answers, so a reply is admitted on the chat,
+    /// not on whoever wrote (FIX 2838).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_chat: Option<LineChat>,
     #[serde(default, skip_serializing)]
     pub reply_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,6 +200,7 @@ impl fmt::Debug for LineOfficialAccountInbound {
             .field("destination", &self.destination)
             .field("source_user_id", &self.source_user_id)
             .field("chat", &self.chat)
+            .field("reply_chat", &self.reply_chat)
             .field(
                 "reply_token",
                 &self.reply_token.as_ref().map(|_| "[redacted]"),
@@ -218,6 +225,7 @@ impl LineOfficialAccountInbound {
             destination: destination.into(),
             source_user_id: Some(source_user_id.into()),
             chat: None,
+            reply_chat: None,
             reply_token: None,
             payload_ref: None,
             received_at,
@@ -242,6 +250,14 @@ impl LineOfficialAccountInbound {
     #[must_use]
     pub fn with_chat(mut self, chat: LineChat) -> Self {
         self.chat = Some(chat);
+        self
+    }
+
+    /// Names the group or room a per-sender message was written in: the
+    /// reply's audience, never its route.
+    #[must_use]
+    pub fn with_reply_chat(mut self, chat: LineChat) -> Self {
+        self.reply_chat = Some(chat);
         self
     }
 }

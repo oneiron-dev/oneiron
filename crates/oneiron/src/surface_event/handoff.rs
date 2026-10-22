@@ -762,24 +762,16 @@ pub fn decode_surface_event_attempt_payload(bytes: &[u8]) -> Result<SurfaceEvent
     Ok(payload)
 }
 
-/// Longest provider correlation id carried into the queue verbatim.
-///
-/// The attempt queue caps `run_id` at 128 bytes (and `dedupe_key` at 512). A
-/// provider id at or under this cap is its own key; anything longer folds to a
-/// `sha256:` digest so admission never rejects an event merely for a long
-/// provider id.
-const MAX_VERBATIM_CORRELATION_RUN_ID_BYTES: usize = 128;
-
 /// Derives the bounded run id for a public correlation id.
 ///
-/// This keeps status lookup and run-index behavior correlation-based. Dedupe
-/// uses `surface_event_dedupe_key` instead, scoped by the receiving identity.
-/// The public correlation id is never rewritten.
+/// Every correlation id folds to a `sha256:` digest, whatever its length, so
+/// the attempt queue's run index never holds a provider id as it arrived. This
+/// keeps status lookup and run-index behavior correlation-based: admission and
+/// both status readers derive the same key. Dedupe uses
+/// `surface_event_dedupe_key` instead, scoped by the receiving identity. The
+/// public correlation id is never rewritten.
 #[must_use]
 pub fn surface_event_run_id(correlation_id: &str) -> String {
-    if correlation_id.len() <= MAX_VERBATIM_CORRELATION_RUN_ID_BYTES {
-        return correlation_id.to_owned();
-    }
     let digest = Sha256::digest(correlation_id.as_bytes());
     let mut run_id = String::with_capacity("sha256:".len() + digest.len() * 2);
     run_id.push_str("sha256:");

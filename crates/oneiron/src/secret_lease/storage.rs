@@ -467,7 +467,7 @@ pub(crate) fn erase_receipt_actor_in_txn(
 /// a record already admitted at `requested` tier.
 pub(super) fn read_value_for_ref_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     id: &EntityId,
     effector: &str,
 ) -> Result<Zeroizing<Vec<u8>>> {

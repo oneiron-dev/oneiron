@@ -28,7 +28,8 @@ use super::dispatch_types::{
 use super::intent::OutboundIntentSource;
 use super::reply_content::CONNECTOR_REPLY_BODY_PREFIX;
 use crate::channel_identity_provider::{
-    DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, SLACK_CHANNEL,
+    DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, LineChat, LineChatKind, SLACK_CHANNEL,
+    line_audience_key,
 };
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
@@ -315,8 +316,15 @@ impl<'a> ServedChannelSink<'a> {
             Ok(secret) => secret,
             Err(_) => return OutboundExecutionOutcome::failed("line_connection_unchecked"),
         };
-        // Read before the door opens: the door holds the vault's writer.
-        let answered = self.answered_provider_event(request, LINE_CHANNEL);
+        // Read before the door opens: the door holds the vault's writer. The
+        // archived event answers only the audience the reply was admitted
+        // on: its token and chat never carry a reply into another group,
+        // room or user (FIX 2838).
+        let answered = self
+            .answered_provider_event(request, LINE_CHANNEL)
+            .filter(|body| {
+                line_archived_audience(body).as_deref() == Some(request.intent.target.as_str())
+            });
         let reply_token = match mode {
             LineMode::Push => None,
             LineMode::Reply | LineMode::ReplyOrPush => answered
@@ -614,6 +622,19 @@ fn line_destination(answered: Option<&serde_json::Value>, target: &str) -> Optio
         .unwrap_or(target),
     };
     (!to.is_empty() && !to.contains(':')).then(|| to.to_owned())
+}
+
+/// The audience of an archived LINE event in [`line_audience_key`]'s
+/// spelling: the group or room it was written in, else its sender.
+fn line_archived_audience(answered: &serde_json::Value) -> Option<String> {
+    let source = answered.pointer("/event/source")?;
+    let chat = source
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .and_then(LineChatKind::parse)
+        .and_then(|kind| Some(LineChat::new(kind, source.get(kind.id_field())?.as_str()?)));
+    let user = source.get("userId").and_then(serde_json::Value::as_str);
+    line_audience_key(chat.as_ref(), user)
 }
 
 fn fresh_line_reply_token(value: &serde_json::Value, now: u64) -> Option<String> {

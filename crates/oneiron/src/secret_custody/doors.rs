@@ -542,7 +542,7 @@ impl Vault {
     }
 
     /// Door/lease paths only (SECRET-02). Reads the raw value bytes for a
-    /// record within a write txn, requiring a binding that covers `effector`
+    /// record within a read or write txn, requiring a binding that covers `effector`
     /// AND declares the [`SECRET_SCOPE_READ`] grant: anything else ⇒
     /// [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied). Naming the effector is not by itself a
     /// read grant — the binding's declared scope is what admits plaintext, and
@@ -553,7 +553,7 @@ impl Vault {
     /// [`crate::secret_lease`] (ONE-1920).
     pub(crate) fn get_secret_value_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         id: &EntityId,
         effector: &str,
     ) -> Result<Option<Vec<u8>>> {

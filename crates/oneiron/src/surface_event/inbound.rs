@@ -207,6 +207,14 @@ impl SurfaceCounterpartyStamp {
         }
     }
 
+    /// The stable counterparty key of every stamp state: the known entity
+    /// hex, the provider-native sender key, or `unparsed:<channel>:<64hex>`.
+    /// It names who the reply answers, never a transport address.
+    #[must_use]
+    pub fn reference_key(&self) -> String {
+        self.default_user_ref()
+    }
+
     /// Provider-native user ref this stamp contributes when an adapter does
     /// not supply a richer one.
     fn default_user_ref(&self) -> String {

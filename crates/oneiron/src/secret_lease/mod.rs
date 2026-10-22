@@ -110,6 +110,7 @@ mod grant_doors;
 mod grant_redeem;
 mod storage;
 mod types;
+mod verification;
 
 pub(crate) use self::admission::reveal_tier_admission;
 pub use self::admission::tier_admission;
