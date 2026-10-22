@@ -22403,7 +22403,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/dispatch_byoa/tests.rs",
@@ -38151,7 +38151,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 11,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -49751,15 +49751,16 @@
       "ResolvedPrompt",
       "SessionPromptAssembly",
       "SessionPromptParts",
-      "StampedLlmRequest"
+      "StampedLlmRequest",
+      "SystemPromptPiece"
      ],
      "path": "src/prompt.rs",
      "purpose": "—",
      "surface": {
       "const": 6,
       "enum": 1,
-      "fn": 8,
-      "struct": 5
+      "fn": 10,
+      "struct": 6
      }
     },
     {
@@ -86200,7 +86201,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 27
+      "re-export": 29
      }
     },
     {
@@ -86299,6 +86300,68 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ByteSpan",
+      "DisclosureLabel",
+      "MessageStamp",
+      "Segment",
+      "SegmentClass",
+      "SegmentClock",
+      "SegmentKind",
+      "SegmentLocator",
+      "SegmentManifest",
+      "TrustFence"
+     ],
+     "path": "src/llm/segments.rs",
+     "purpose": "The typed segment manifest of one model call (DESIGN-V2 §3.1, R2): which bytes of which `LlmRequest` message…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 6,
+      "fn": 16,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CanonicalCheckpointRef",
+      "ConversationAnchor",
+      "SessionAppend",
+      "SessionAppended",
+      "SessionCapability",
+      "SessionCheckpoint",
+      "SessionCheckpointed",
+      "SessionCreate",
+      "SessionCreated",
+      "SessionDrop",
+      "SessionFork",
+      "SessionForked",
+      "SessionGenerate",
+      "SessionInvalidation",
+      "SessionKey",
+      "SessionOp",
+      "SessionOpStamp",
+      "SessionReleased",
+      "SessionResidency",
+      "SessionRestore",
+      "SessionRestored",
+      "SessionSuffixCommit",
+      "SessionSuffixStaged",
+      "SessionTarget"
+     ],
+     "path": "src/llm/session.rs",
+     "purpose": "Exact conversation sessions on a model worker (DESIGN-V2 §3.2, R2): what a session is keyed by, the…",
+     "surface": {
+      "const": 4,
+      "enum": 2,
+      "fn": 4,
+      "struct": 22
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -86340,7 +86403,7 @@
      "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 45,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -86349,7 +86412,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 44,
+   "source_files": 46,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -90079,7 +90142,7 @@
      "path": "src/api/ai/chat/compaction.rs",
      "purpose": "A self agent's chat turn on its own live fork (FIX 4465 D)",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -90100,6 +90163,16 @@
      "purpose": "The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/segments.rs",
+     "purpose": "A live chat turn's typed segments (DESIGN-V2 R2): the manifest of the call's messages in the order the turn…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -90661,7 +90734,7 @@
      "path": "src/api/context_board/board.rs",
      "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -100551,7 +100624,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 20,
       "re-export": 14,
       "struct": 2
@@ -100574,7 +100647,17 @@
      "path": "src/models/native_exl3/mod.rs",
      "purpose": "The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/native_exl3/session_ops.rs",
+     "purpose": "The session ops of codec v1.1 on the house EXL3 worker's socket (DESIGN-V2 R2), host side: one connection…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -100584,7 +100667,7 @@
      "path": "src/models/native_exl3/transport.rs",
      "purpose": "One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -100594,7 +100677,7 @@
      "path": "src/models/native_exl3/wire.rs",
      "purpose": "Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -100864,7 +100947,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -100925,6 +101008,56 @@
      "purpose": "One running worker process in its supervisor's custody: started in a process group of its own, reaped by one…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/session.rs",
+     "purpose": "Exact conversation sessions on this process's managed EXL3 workers (DESIGN-V2 §3.2, R2), host side: the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/session/commit.rs",
+     "purpose": "A committed reply's canonical successor (DESIGN-V2 §3.2 steps 4-5): the turn's canonical path with its…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/session/policy.rs",
+     "purpose": "The coordinator's calls, one fn or constant each: which workers get sessions, which calls may use one, what…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/session/registry.rs",
+     "purpose": "The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/session/turn.rs",
+     "purpose": "A turn on a session: the session for its key reused or created, a working branch forked at the frontier the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -103550,7 +103683,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 543,
+     "files": 544,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -103872,7 +104005,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 68,
+     "files": 74,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104014,7 +104147,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1181,
+   "source_files": 1188,
    "test_files": 182
   },
   "oneiron-spawn": {
