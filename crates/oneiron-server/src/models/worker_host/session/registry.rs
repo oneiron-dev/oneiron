@@ -171,7 +171,7 @@ impl Worker {
 /// answer keeps it charged until its incarnation ends.
 pub(super) async fn release(target: SessionTarget, place: Place, reason: SessionInvalidation) {
     let handle = target.handle;
-    let drop = SessionDrop {
+    let body = SessionDrop {
         target,
         op_id: policy::next_op_id(),
         reason,
@@ -180,7 +180,7 @@ pub(super) async fn release(target: SessionTarget, place: Place, reason: Session
         &place.socket,
         &place.epoch,
         SessionOp::Drop,
-        &drop,
+        &body,
         None,
         &place.worker,
     )
