@@ -43,11 +43,25 @@ pub(crate) async fn session_read_set<'a>(
     })))
 }
 
-/// Closes the board session kept under `key` as its lifecycle ends it (FIX
-/// 8143): a pumped run's, when its board connection's door goes. A session a
-/// caller names by a free label has no close of its own, so it stays, as the
-/// shared scope's does, with the process; nothing closes one by count, age or
-/// memory pressure.
-pub(crate) async fn close_board_session(server: &SyncServer, key: &str) {
-    server.memories_cursors.lock().await.close(key);
+/// The close a pumped run's board sessions take when the run ends (FIX
+/// 8143): the host's live runs call it once for each run that leaves them,
+/// never for one parked on a durable wait, so a resumed run keeps its
+/// cursor and read set. A session a caller names by a free label has no
+/// close of its own, so it stays, as the shared scope's does, with the
+/// process; nothing closes one by count, age or memory pressure.
+pub(crate) fn run_session_closer(
+    cursors: std::sync::Arc<tokio::sync::Mutex<super::MemoriesCursorStore>>,
+) -> Box<dyn Fn(oneiron::EntityId) + Send + Sync> {
+    Box::new(move |run| {
+        let connection = format!("run:{}", run.to_hex());
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                let cursors = std::sync::Arc::clone(&cursors);
+                runtime.spawn(async move {
+                    cursors.lock().await.close_run_connection(&connection);
+                });
+            }
+            Err(_) => cursors.blocking_lock().close_run_connection(&connection),
+        }
+    })
 }

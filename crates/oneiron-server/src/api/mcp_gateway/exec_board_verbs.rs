@@ -816,16 +816,16 @@ pub(crate) async fn deliver_run_board_hooks(
     Ok(())
 }
 
-/// Drops a pumped run's board connection, snapshot, stream reader and its
-/// session: cursor and read set (FIX 8143, 4888).
+/// Drops a pumped run's board connection, snapshot and stream reader (FIX
+/// 4888). Its session, cursor and read set, stays until the run ends, when
+/// the host's live runs close it (FIX 8143): a run parked on a durable wait
+/// keeps it.
 pub(crate) async fn drop_run_board(
     server: &SyncServer,
-    actor: oneiron::WriteActor,
+    _actor: oneiron::WriteActor,
     connection: &oneiron::context_board::StreamConnectionId,
 ) {
     server.mcp_registry.lock().await.drop_run_board(connection);
-    let key = super::board_observations::run_read_set_key(actor, connection);
-    crate::api::close_board_session(server, &key).await;
 }
 
 /// [`mcp_live_board`]'s view of one rendered board.

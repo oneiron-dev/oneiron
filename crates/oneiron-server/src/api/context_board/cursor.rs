@@ -115,6 +115,26 @@ impl MemoriesCursorStore {
         self.active_sessions
             .retain(|_, active_key| active_key != key);
     }
+
+    /// Closes every pumped run session kept on board connection
+    /// `connection` (`run:<run id>`), as the run ends: each key a run's read
+    /// set is kept under (`run_read_set_key`: the "run" tag, the agent's
+    /// class and id, the connection) that names it.
+    pub(crate) fn close_run_connection(&mut self, connection: &str) {
+        let runs: Vec<String> = self
+            .entries
+            .keys()
+            .chain(self.read_sets.keys())
+            .filter(|key| {
+                serde_json::from_str::<(String, String, String, String)>(key)
+                    .is_ok_and(|(tag, _, _, on)| tag == "run" && on == connection)
+            })
+            .cloned()
+            .collect();
+        for key in runs {
+            self.close(&key);
+        }
+    }
 }
 
 pub(crate) fn memories_cursor_key(
