@@ -249,33 +249,6 @@ impl Store {
         copy_leaf(CustodyKind::ConnectorResume, custody.read(&id)?.expose())
     }
 
-    /// The key a restored row still in its image's carrier form is sealed
-    /// under at `generation`, taken again from this store's custody before
-    /// its value opens (KS-6, `CUSTODY_RESEAL_PENDING`): read, or minted,
-    /// published and journaled, under the binding the store holds, with no
-    /// LMDB write and no guard, so any reader may take it. Its row seals
-    /// under it on the next pass or write.
-    ///
-    /// # Errors
-    /// An archived vault; no custody here yet; a retired key, never minted
-    /// again; custody faults.
-    pub(crate) fn retake_credential_value_leaf(
-        &self,
-        credential: &EntityId,
-        generation: u32,
-    ) -> Result<()> {
-        if self.core.gate_custody_archived() {
-            return Err(Error::Store(StoreError::ArchivedVault));
-        }
-        let custody = self
-            .core
-            .key_custody
-            .local()
-            .ok_or_else(|| CustodyKind::CredentialValue.corrupt())?;
-        let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
-        custody.get_or_create(&id).map(drop)
-    }
-
     /// Mints the key of one new carrier instance of credential `credential`
     /// (`kind`: a transition or a request's whole input) in `wtxn`: a fresh
     /// random instance id, then the key, published, synced and its Mint
