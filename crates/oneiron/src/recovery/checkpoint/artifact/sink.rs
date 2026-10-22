@@ -1,21 +1,25 @@
 //! Writing a sealed artifact: the envelopes one artifact's chunks seal into,
-//! and the sink that streams the image and each body into them.
+//! and the sink that streams the image, each body and the manifest's pieces
+//! into them.
 
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use getrandom::SysRng;
-use oneiron_crypto::backup::{ArtifactPrelude, BackupEvidence, registry_binding};
+use oneiron_crypto::backup::{
+    ArtifactPrelude, BackupEvidence, MANIFEST_PIECE_STREAM, registry_binding,
+};
 use oneiron_crypto::{
     Argon2Cost, Envelope, MAX_PLAINTEXT_LEN, OpenKey, OpenPolicy, Purpose, SealKey, SealParams,
     WrapType, seal,
 };
 
 use super::commitment::{self, ChainHead, Link, SignedRefs};
+use super::manifest::{self, Manifest, StreamEntry};
 use super::{
-    AEAD, ArtifactKind, CHUNK_LEN, CheckpointKey, EPOCH, IMAGE_STREAM, MANIFEST_STREAM, MAX_FRAME,
-    MAX_KEY_HEADER, Manifest, PRELUDE_LEN, StreamEntry, VERSION, ZSTD_LEVEL, codec, custody_ref,
+    AEAD, ArtifactKind, CHUNK_LEN, CheckpointKey, EPOCH, IMAGE_STREAM, MAX_FRAME, MAX_KEY_HEADER,
+    PRELUDE_LEN, VERSION, ZSTD_LEVEL, codec, custody_ref,
 };
 use crate::recovery::checkpoint::payload::PayloadStreams;
 use crate::recovery::checkpoint::write_budget::{self, RecoveryWriteBudget};
@@ -40,7 +44,7 @@ impl Sealer<'_> {
         out
     }
 
-    fn seal(&self, stream: u32, index: u32, plaintext: &[u8]) -> Result<Vec<u8>> {
+    pub(super) fn seal(&self, stream: u32, index: u32, plaintext: &[u8]) -> Result<Vec<u8>> {
         let compressed = zstd::bulk::compress(plaintext, ZSTD_LEVEL)?;
         let recipient = self.recipient(stream, index);
         let params = SealParams {
@@ -93,8 +97,9 @@ pub(in crate::recovery::checkpoint) struct ArtifactBody {
 
 /// Writes the artifact at `path`, create-new and owner-only: the image, then
 /// each body `open_body` hands back by its place in `bodies`, then each of
-/// `payload`'s streams (KS-7; `None` writes none), then the manifest, then
-/// the commitment `link` signs. Its prelude and commitment
+/// `payload`'s streams (KS-7; `None` writes none), then the manifest's
+/// pieces and root (`manifest`, FIX 8823), then the commitment `link`
+/// signs. Its prelude and commitment
 /// carry the binding of the vault id to `registry`, the registry's id for
 /// the vault, or say none was known (FIX 5826). Returns the image's BLAKE3,
 /// the chain head the signed commitment makes, and the artifact's evidence
@@ -160,7 +165,20 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
             commitment: *carried.commitment(),
             snapshot,
         },
-        room: artifact_room(key_header.len(), image.len(), bodies, payload),
+        room: artifact_room(key_header.len(), image.len(), bodies, payload).saturating_add(
+            manifest::manifest_room(
+                kind.code(),
+                custody,
+                payload.map(|payload| &payload.section),
+                image.len() as u64,
+                &bodies.iter().map(|body| body.len).collect::<Vec<_>>(),
+                &payload
+                    .iter()
+                    .flat_map(|payload| payload.streams.iter())
+                    .map(|bytes| bytes.len() as u64)
+                    .collect::<Vec<_>>(),
+            )?,
+        ),
         budget,
     };
     sink.claim_rest()?;
@@ -169,10 +187,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     let image = sink.stream(IMAGE_STREAM, &mut &image[..])?;
     let mut sealed_bodies = Vec::with_capacity(bodies.len());
     for (index, body) in bodies.iter().enumerate() {
-        let stream = u32::try_from(index + 1)
-            .ok()
-            .filter(|stream| *stream != MANIFEST_STREAM)
-            .ok_or_else(codec)?;
+        let stream = data_stream(index + 1)?;
         let entry = sink.stream(stream, &mut open_body(index)?)?;
         // A body file is named by its digest; one that reads otherwise is
         // refused here, not found out at a restore.
@@ -189,10 +204,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
         .flat_map(|payload| payload.streams.iter())
         .enumerate()
     {
-        let stream = u32::try_from(bodies.len() + 1 + index)
-            .ok()
-            .filter(|stream| *stream != MANIFEST_STREAM)
-            .ok_or_else(codec)?;
+        let stream = data_stream(bodies.len() + 1 + index)?;
         payload_streams.push(sink.stream(stream, &mut bytes.as_slice())?);
     }
     let manifest = Manifest {
@@ -209,11 +221,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
         payload: payload.map(|payload| payload.section.clone()),
         payload_streams,
     };
-    let manifest_at = sink.offset;
-    let bytes = rmp_serde::to_vec_named(&manifest).map_err(|_| codec())?;
-    let envelope = sink.sealer.seal(MANIFEST_STREAM, 0, &bytes)?;
-    sink.frame(&envelope)?;
-    let manifest_blake3 = *blake3::hash(&envelope).as_bytes();
+    let (manifest_at, manifest_blake3, pieces) = manifest::write_manifest(&mut sink, &manifest)?;
     let commitment = commitment::new_commitment(
         link,
         key.vault_id,
@@ -237,6 +245,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
         .chain(&manifest.payload_streams)
         .map(|stream| stream.chunks.len() as u64)
         .sum::<u64>()
+        + u64::from(pieces)
         + 1;
     let evidence = BackupEvidence {
         format_version: VERSION,
@@ -274,33 +283,51 @@ impl Drop for Partial {
     }
 }
 
-/// The most an artifact of these streams takes on the disk (FIX 5479): its
-/// prelude and key header; each stream's chunks framed at their zstd bound
-/// plus the slack [`MAX_FRAME`] leaves an envelope over its plaintext; and
-/// the manifest, commitment and signature at the most a reader takes of
-/// each, with the closing offset. A bound read off the streams' lengths,
-/// never a guess at what they compress to; a payload's streams count as a
-/// body's (KS-7).
+/// The stream number of the `index`th data stream (the image's is 0): one
+/// below the manifest's reserved pieces and root (FIX 8823).
+fn data_stream(index: usize) -> Result<u32> {
+    u32::try_from(index)
+        .ok()
+        .filter(|stream| *stream < MANIFEST_PIECE_STREAM)
+        .ok_or_else(codec)
+}
+
+/// The most one frame of `plain` bytes takes: its zstd bound plus the slack
+/// [`MAX_FRAME`] leaves an envelope over its plaintext, and its length.
+pub(super) fn frame_room(plain: usize) -> u64 {
+    let slack = MAX_FRAME.saturating_sub(MAX_PLAINTEXT_LEN as u64);
+    (zstd::zstd_safe::compress_bound(plain) as u64).saturating_add(slack.saturating_add(4))
+}
+
+/// The most a stream of `len` bytes takes, chunked and framed.
+pub(super) fn stream_room(len: u64) -> u64 {
+    let chunk = CHUNK_LEN as u64;
+    let rest = len % chunk;
+    (len / chunk)
+        .saturating_mul(frame_room(CHUNK_LEN))
+        .saturating_add(if rest == 0 {
+            0
+        } else {
+            frame_room(rest as usize)
+        })
+}
+
+/// The most an artifact of these streams takes on the disk (FIX 5479), its
+/// manifest aside ([`manifest::manifest_room`]): its prelude and key header;
+/// each stream's chunks framed at their zstd bound plus the slack
+/// [`MAX_FRAME`] leaves an envelope over its plaintext; and the commitment
+/// and signature at the most a reader takes of each, with the closing
+/// offset. A bound read off the streams' lengths, never a guess at what they
+/// compress to; a payload's streams count as a body's (KS-7).
 fn artifact_room(
     key_header: usize,
     image: usize,
     bodies: &[ArtifactBody],
     payload: Option<&PayloadStreams>,
 ) -> u64 {
-    let slack = MAX_FRAME.saturating_sub(MAX_PLAINTEXT_LEN as u64);
-    let frame = |plain: usize| {
-        (zstd::zstd_safe::compress_bound(plain) as u64).saturating_add(slack.saturating_add(4))
-    };
-    let stream = |len: u64| {
-        let chunk = CHUNK_LEN as u64;
-        let rest = len % chunk;
-        (len / chunk)
-            .saturating_mul(frame(CHUNK_LEN))
-            .saturating_add(if rest == 0 { 0 } else { frame(rest as usize) })
-    };
-    let tail = MAX_FRAME
-        .saturating_add(commitment::MAX_SIGNED_FRAME.saturating_mul(2))
-        .saturating_add(4 * 3 + 8);
+    let tail = commitment::MAX_SIGNED_FRAME
+        .saturating_mul(2)
+        .saturating_add(4 * 2 + 8);
     let payload = payload.iter().flat_map(|payload| payload.streams.iter());
     bodies
         .iter()
@@ -308,18 +335,18 @@ fn artifact_room(
         .chain(payload.map(|bytes| bytes.len() as u64))
         .fold(
             ((PRELUDE_LEN + key_header) as u64)
-                .saturating_add(stream(image as u64))
+                .saturating_add(stream_room(image as u64))
                 .saturating_add(tail),
-            |room, len| room.saturating_add(stream(len)),
+            |room, len| room.saturating_add(stream_room(len)),
         )
 }
 
-struct Sink<'k> {
+pub(super) struct Sink<'k> {
     out: BufWriter<File>,
-    offset: u64,
+    pub(super) offset: u64,
     /// BLAKE3 of every byte written: the evidence's outer digest.
     outer: blake3::Hasher,
-    sealer: Sealer<'k>,
+    pub(super) sealer: Sealer<'k>,
     /// The most the artifact takes ([`artifact_room`]).
     room: u64,
     /// The floor the artifact's writes claim their room on.
@@ -339,7 +366,7 @@ impl Sink<'_> {
         write_budget::hold(self.budget, self.room.saturating_sub(self.offset))
     }
 
-    fn frame(&mut self, envelope: &[u8]) -> Result<()> {
+    pub(super) fn frame(&mut self, envelope: &[u8]) -> Result<()> {
         self.claim_rest()?;
         let len = u32::try_from(envelope.len()).map_err(|_| codec())?;
         self.put(&len.to_be_bytes())?;

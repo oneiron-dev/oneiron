@@ -8,41 +8,94 @@
 //! instance lands the exact row; a retired one leaves the text-free row,
 //! which every strict reader reads. Only the dispatch target owns the text,
 //! never its requester or a definition guessed from elsewhere.
+//!
+//! A dispatch's row is recognized by a routing probe that asks no strict
+//! validator: its version, its kind and its payload's attempt type. One that
+//! the strict reader then refuses, or whose text-free form does not encode,
+//! is carried whole as an opaque response, and its retired form is the
+//! erased marker, which the strict reader answers `ResponseErased` (FIX
+//! 9390). No other row of the queue is taken for a dispatch's.
 
 use std::borrow::Cow;
 
+use serde::Deserialize;
+
 use super::super::encoding::{decode_record, encode_record};
-use super::super::types::{AttemptId, AttemptRecord};
+use super::super::types::{ATTEMPT_RECORD_VERSION, AttemptId, AttemptRecord};
 use super::{dispatch_payload_actor, erase_dispatch_payload_text};
 use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
+use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::Store;
+use crate::store::{ResponseCarriage, ResponseScan, Store, is_opaque_erased};
+
+/// The Dreamer attempt payload's pinned key naming its attempt type.
+const PAYLOAD_ATTEMPT_TYPE_KEY: &str = "job_type";
+
+/// What the routing probe reads of a queue row: its kind and payload, past
+/// every validator the strict reader runs.
+#[derive(Deserialize)]
+struct Routing {
+    kind: String,
+    payload: Vec<u8>,
+}
 
 /// The queue row `key` holding `raw`, decoded; `None` for one that does not.
 fn record_of(key: &[u8], raw: &[u8]) -> Option<AttemptRecord> {
     decode_record(raw, AttemptId::from_bytes(key).ok()?).ok()
 }
 
-/// Whether the queue row `key` holding `raw` is a Dreamer agent dispatch's:
-/// its family, even once an erase took its text.
-pub(crate) fn attempt_payload_family(key: &[u8], raw: &[u8]) -> bool {
-    record_of(key, raw).is_some_and(|record| {
-        record.kind == DREAMER_RUNNER_ATTEMPT_KIND
-            && decode_dreamer_attempt_payload(&record.payload)
-                .is_ok_and(|payload| payload.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
-    })
+/// Whether `raw` reads, by the routing probe alone, as a Dreamer agent
+/// dispatch's row: its record version, the Dreamer kind, and a payload map
+/// naming the agent dispatch attempt type.
+fn routed_dispatch(raw: &[u8]) -> bool {
+    let Some((&version, body)) = raw.split_first() else {
+        return false;
+    };
+    let Ok(routing) = rmp_serde::from_slice::<Routing>(body) else {
+        return false;
+    };
+    version == ATTEMPT_RECORD_VERSION
+        && routing.kind == DREAMER_RUNNER_ATTEMPT_KIND
+        && matches!(
+            rmpv::decode::read_value(&mut routing.payload.as_slice()),
+            Ok(rmpv::Value::Map(entries)) if entries.iter().any(|(name, value)| {
+                name.as_str() == Some(PAYLOAD_ATTEMPT_TYPE_KEY)
+                    && value.as_str() == Some(AGENT_DISPATCH_ATTEMPT_TYPE)
+            })
+        )
 }
 
-/// The row as an erase of its target leaves it, the stub an image carries
-/// in its place: `None` when it holds no text to carry, or does not decode
-/// or rewrite, and so travels as it is.
-pub(crate) fn attempt_payload_stub(key: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
-    let mut record = record_of(key, raw)?;
+/// Whether the queue row `key` holding `raw` is a Dreamer agent dispatch's:
+/// its family, even once an erase took its text, and the erased marker an
+/// opaque one's retirement leaves (FIX 9390).
+pub(crate) fn attempt_payload_family(key: &[u8], raw: &[u8]) -> bool {
+    AttemptId::from_bytes(key).is_ok() && (is_opaque_erased(raw) || routed_dispatch(raw))
+}
+
+/// Whether the queue row `key` holding `raw` is an opaque dispatch row: the
+/// erased marker, or a row the routing probe takes for a dispatch's that
+/// the strict reader refuses. It lands, and is carried, exactly as it rests.
+pub(crate) fn attempt_row_opaque(key: &[u8], raw: &[u8]) -> bool {
+    attempt_payload_family(key, raw) && record_of(key, raw).is_none()
+}
+
+/// What a checkpoint carries of a dispatch's row: the whole row, the row as
+/// an erase of its target leaves it the stub an image carries in its place.
+/// No response when it holds no text; a row the strict reader refuses, or
+/// whose text-free form does not rewrite or encode, is carried whole as an
+/// opaque response.
+pub(crate) fn attempt_payload_scan(key: &[u8], raw: &[u8]) -> ResponseScan {
+    let Some(mut record) = record_of(key, raw) else {
+        return ResponseScan::opaque_row();
+    };
     match erase_dispatch_payload_text(&mut record) {
-        Ok(true) => encode_record(&record).ok(),
-        Ok(false) | Err(_) => None,
+        Ok(true) => encode_record(&record).map_or_else(
+            |_| ResponseScan::opaque_row(),
+            |stub| ResponseScan::Decoded(ResponseCarriage::whole(stub)),
+        ),
+        Ok(false) => ResponseScan::NotResponse,
+        Err(_) => ResponseScan::opaque_row(),
     }
 }
 

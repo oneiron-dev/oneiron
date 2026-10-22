@@ -1,14 +1,18 @@
 //! Row-held responses that do not decode (FIX 6227).
 //!
-//! A row its family recognizes before any decode (a STEP, step-state or
-//! replay row by its key; a claim by its header and the `dreamer.step`
-//! predicate its body names) whose bytes do not decode, or whose stub does
-//! not encode, still holds a response: it is carried sealed under its
-//! instance as any other is ([`ResponseScan::Opaque`]), never in the clear,
-//! never cleared, dropped or refused. A restore under a live instance lands
-//! its exact bytes. Under a retired one a `vault_meta` row keeps the explicit
-//! erased marker [`OPAQUE_ERASED`], which no row's encoding begins with, and
-//! a claim the erase's shell, as a decoded one does.
+//! A row its family recognizes before any decode (a STEP, step-state,
+//! replay, wait or captured-request row by its key; an HTTP idempotency
+//! entry or a media job by its `sync_state` key; a claim by its header and
+//! the `dreamer.step` predicate its body names; an agent dispatch's attempt
+//! row by a routing probe that asks no strict validator; a voice bank row by
+//! its key) whose bytes do not decode, or whose stub does not encode, still
+//! holds a response: it is carried sealed under its instance as any other is
+//! ([`ResponseScan::Opaque`]), never in the clear, never cleared, dropped or
+//! refused (FIX 6227, 9390). A restore under a live instance lands its exact
+//! bytes. Under a retired one its row keeps the explicit erased marker
+//! [`OPAQUE_ERASED`], which no row's encoding begins with, a claim the
+//! erase's shell, as a decoded one does, and a family whose erase deletes
+//! its row (a captured request, a voice bank row) loses it.
 //!
 //! Each reader of those rows checks for the marker before it decodes
 //! ([`ResponseRead`]) and answers it as the typed unavailable
@@ -42,8 +46,9 @@ pub(crate) enum ResponseScan {
 }
 
 impl ResponseScan {
-    /// An opaque `vault_meta` row: carried whole; its stub, and what a
-    /// retired instance keeps, the erased marker.
+    /// An opaque row (`vault_meta`, `sync_state` or `job_records`): carried
+    /// whole; its stub, and what a retired instance keeps, the erased
+    /// marker.
     pub(crate) fn opaque_row() -> Self {
         Self::Opaque(ResponseCarriage {
             keep: 0,
@@ -76,6 +81,12 @@ impl ResponseScan {
             Self::Opaque(carriage) => Some((carriage, true)),
         }
     }
+}
+
+/// Whether `value` is the erased marker a retired opaque response's row
+/// keeps (FIX 9390): its readers answer it erased before any decode.
+pub(crate) fn is_opaque_erased(value: &[u8]) -> bool {
+    value == OPAQUE_ERASED
 }
 
 /// Who owns a response, as far as its row proves it.
@@ -136,6 +147,11 @@ impl ErasedResponseDisposition {
             ResponseFamily::ProgramStep => "a program step's kept body",
             ResponseFamily::StepState => "an LLM step's state",
             ResponseFamily::Replay => "a code run's replay record",
+            ResponseFamily::Http => "an HTTP idempotency entry",
+            ResponseFamily::MediaJob => "a media job",
+            ResponseFamily::WaitDelivery => "a wait's delivered reply",
+            ResponseFamily::WaitSettled => "a wait's settled reply",
+            ResponseFamily::AttemptPayload => "an agent dispatch's attempt",
             _ => "a row-held response",
         })
     }

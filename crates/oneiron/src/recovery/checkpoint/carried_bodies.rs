@@ -517,9 +517,21 @@ pub(super) fn require(
     Ok(retired)
 }
 
+/// What a restore lands of the responses that never decoded where they
+/// were taken (FIX 6227, 9390).
+pub(super) struct OpaqueLanding {
+    /// How many land, their `retired` instances' aside.
+    pub(super) landed: usize,
+    /// The claims among them, which a restore never decodes, indexes or
+    /// embeds again.
+    pub(super) claims: BTreeSet<EntityId>,
+    /// Every opaque queue row's key, live or retired: each lands as it
+    /// rested, or as the erased marker, and is indexed nowhere.
+    pub(super) attempts: BTreeSet<Vec<u8>>,
+}
+
 /// The responses `image` lands that never decoded where they were taken
-/// (FIX 6227), its `retired` instances' aside: how many, and the claims
-/// among them, which a restore never decodes, indexes or embeds again.
+/// (FIX 6227, 9390), as [`OpaqueLanding`] names them.
 ///
 /// # Errors
 ///
@@ -527,9 +539,17 @@ pub(super) fn require(
 pub(super) fn opaque_landing(
     image: &CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
-) -> Result<(usize, BTreeSet<EntityId>)> {
+) -> Result<OpaqueLanding> {
     let mut landed = 0;
     let mut claims = BTreeSet::new();
+    let attempts = image
+        .inline_bodies
+        .iter()
+        .filter(|carried| {
+            carried.opaque && !carried.superseded && carried.database == "job_records"
+        })
+        .map(|carried| carried.key.clone())
+        .collect();
     for carried in image.inline_bodies.iter().filter(|carried| {
         carried.opaque && !carried.superseded && !retired.contains(&carried.instance)
     }) {
@@ -543,7 +563,11 @@ pub(super) fn opaque_landing(
             claims.insert(EntityId::from_bytes(key)?);
         }
     }
-    Ok((landed, claims))
+    Ok(OpaqueLanding {
+        landed,
+        claims,
+        attempts,
+    })
 }
 
 /// Reads past the `index`th stream without opening it: its outer frames

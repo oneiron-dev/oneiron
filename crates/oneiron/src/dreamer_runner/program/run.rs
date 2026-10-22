@@ -18,8 +18,9 @@
 //! step's evidence whole. A body the wall refuses, or one that settles after
 //! its actor's erase, is not kept; the step settles all the same.
 
+mod page;
+
 use std::collections::BTreeSet;
-use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
@@ -30,11 +31,12 @@ use crate::attempt_queue::{
 use crate::batch::secret_scan::{SidePart, admit_side_parts};
 use crate::code_run::{CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{Error, Result};
 use crate::outbound_intent_ledger::IntentLedgerRecord;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideKey, SideTable};
 
+pub(super) use self::page::program_steps_page_in_txn;
 use super::ATTEMPT;
 use super::types::code_run_bytes;
 
@@ -189,60 +191,6 @@ pub(super) fn program_step_in_txn(
     let family = crate::store::ResponseFamily::ProgramStep;
     let raw = crate::store::ResponseRead::of(family, &STEP.key_bytes(key), &raw).present()?;
     Ok(STEP.decode_value(raw).ok())
-}
-
-/// One page of a program run's STEP rows, for its reads.
-pub(super) struct ProgramStepPage {
-    /// Each step by its ref, in key order.
-    pub(super) steps: Vec<(EntityId, TurnProgramStep)>,
-    /// Rows of the page that do not decode (FIX 5736): skipped, never a
-    /// refusal of the page.
-    pub(super) undecodable: u64,
-    /// Whether a row follows the page.
-    pub(super) more: bool,
-}
-
-/// Up to `limit` of `code_run`'s steps in key order, after the step `after`
-/// when one is named. Every step id lies between the least and the greatest
-/// id that is not reserved, so the range holds this run's rows alone.
-pub(super) fn program_steps_page_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    code_run: EntityId,
-    after: Option<EntityId>,
-    limit: usize,
-) -> Result<ProgramStepPage> {
-    let mut least = [0_u8; 16];
-    least[15] = 1;
-    let mut greatest = [u8::MAX; 16];
-    greatest[15] = u8::MAX - 1;
-    let from = match after {
-        Some(step) => (code_run, step),
-        None => (code_run, EntityId::from_bytes(least)?),
-    };
-    let to = (code_run, EntityId::from_bytes(greatest)?);
-    let start = if after.is_some() {
-        Bound::Excluded(&from)
-    } else {
-        Bound::Included(&from)
-    };
-    let mut page = ProgramStepPage {
-        steps: Vec::new(),
-        undecodable: 0,
-        more: false,
-    };
-    for row in STEP.iter_range(vault, txn, start, Bound::Included(&to))? {
-        if page.steps.len() >= limit {
-            page.more = true;
-            break;
-        }
-        match row {
-            Ok(((_, step), held)) => page.steps.push((step, held)),
-            Err(error) if error.kind() == ErrorKind::SideTableRow => page.undecodable += 1,
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(page)
 }
 
 /// Whether `attempt` still holds the lease `owner` took at `generation`.

@@ -51,8 +51,8 @@ use crate::store::{ResponseDb, Store, response_carrier, settle_shared_response_i
 use crate::{EntityId, Result, Vault};
 
 pub(crate) use self::response::{
-    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_stub,
-    wait_settled_owners,
+    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_erased,
+    wait_reply_scan, wait_settled_owners,
 };
 
 /// The rows. Key: id16(wait) + id16(run) + be64(generation).
@@ -176,7 +176,8 @@ pub(super) fn join_wait_in_txn(
 /// Where `key`'s wait stands for its run at `txn`'s revision (FIX 5718): a
 /// wait settled for every waiter or delivered to this one is never pending,
 /// and it reads as erased once an erase of the run's actor took its replies
-/// or its delivered copy holds the erased form.
+/// or its delivered copy holds the erased form, or the erased marker of a
+/// retired reply that never decoded (FIX 9390).
 ///
 /// # Errors
 ///
@@ -189,16 +190,13 @@ pub(crate) fn wait_reply_in_txn(
     let store = &vault.store;
     let row = (key.run, key.wait_id, key.generation);
     let copy = match DELIVERIES.get_bytes(store, txn, &row)? {
-        Some(bytes) => Some(DELIVERIES.decode_value(&bytes).ok()),
-        None => SETTLED
-            .get_bytes(store, txn, &(SETTLED_TAG, key.wait_id))?
-            .map(|bytes| SETTLED.decode_value(&bytes).ok()),
+        Some(bytes) => Some(bytes),
+        None => SETTLED.get_bytes(store, txn, &(SETTLED_TAG, key.wait_id))?,
     };
     let Some(copy) = copy else {
         return Ok(WaitReply::Pending);
     };
-    let erased_copy = copy.is_some_and(|copy| copy.erased);
-    if erased_copy || holder_erased_in_txn(vault, txn, key)? {
+    if wait_reply_erased(&copy) || holder_erased_in_txn(vault, txn, key)? {
         return Ok(WaitReply::Erased);
     }
     Ok(WaitReply::Delivered)
@@ -286,12 +284,15 @@ pub(super) fn erase_actor_wait_holds_in_txn(
         for row in DELIVERIES.iter_raw_from(store, wtxn, run.as_bytes())? {
             let (key, bytes) = row?;
             if let Some(key) = <(EntityId, EntityId, u64) as SideKey>::decode_key(&key) {
-                delivered.push((key, DELIVERIES.decode_value(&bytes).ok()));
+                let erased = wait_reply_erased(&bytes);
+                delivered.push((key, erased, DELIVERIES.decode_value(&bytes).ok()));
             }
         }
-        for ((_, wait, generation), delivery) in delivered {
+        for ((_, wait, generation), erased, delivery) in delivered {
             HOLDERS.put(store, wtxn, &(wait, *run, generation), &WaitHolder::Erased)?;
-            if delivery.as_ref().is_some_and(|delivery| delivery.erased) {
+            // An erased reply, the marker of an opaque one among them,
+            // stays erased as it is (FIX 9390).
+            if erased {
                 continue;
             }
             let erased = Erased::of(delivery.unwrap_or_else(unreadable_delivery))?;
@@ -383,7 +384,8 @@ pub(crate) fn erase_settled_reply_of_erased_run_in_txn(
 
 /// Leaves `wait_id`'s settled row its erased form in `wtxn`, when it has
 /// one: when it settled and the rows its reply was derived from stay, its
-/// reply goes. One that does not decode takes the bare erased form.
+/// reply goes. One that does not decode takes the bare erased form; the
+/// erased marker of an opaque one is erased already, and stays (FIX 9390).
 fn erase_settled_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -393,10 +395,10 @@ fn erase_settled_in_txn(
     let Some(bytes) = SETTLED.get_bytes(store, wtxn, &key)? else {
         return Ok(());
     };
-    let settled = SETTLED.decode_value(&bytes).ok();
-    if settled.as_ref().is_some_and(|settled| settled.erased) {
+    if wait_reply_erased(&bytes) {
         return Ok(());
     }
+    let settled = SETTLED.decode_value(&bytes).ok();
     let erased = Erased::of(settled.unwrap_or_else(unreadable_delivery))?;
     SETTLED.put_erased(store, wtxn, &key, erased)?;
     // Its reply's final holder released it: a retirement an earlier

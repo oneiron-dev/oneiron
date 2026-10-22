@@ -36,7 +36,7 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, LlmRequest, Result, Vault};
 
 // FIX 6708: both row kinds in checkpoint images, as row-held responses.
-pub(crate) use self::response::{blocked_capture_owners, blocked_capture_stub};
+pub(crate) use self::response::{blocked_capture_owners, blocked_capture_scan};
 
 /// Receipt rows. Key: the receipt.
 const SOURCE: SideTable<EntityId, BlockedReplaySource, Named> =
@@ -344,13 +344,21 @@ fn put_kept_in_txn(
     SOURCE.put(vault, txn, receipt, &source)
 }
 
-/// The replay source the report `receipt` was filed with, if any.
+/// The replay source the report `receipt` was filed with, if any. A row
+/// its owner's erase retired from an image is gone, and reads as none; an
+/// erased marker reads as `ResponseErased`, never a replay source (FIX
+/// 9390).
 pub(crate) fn blocked_source_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     receipt: &EntityId,
 ) -> Result<Option<BlockedReplaySource>> {
-    SOURCE.get(&vault.store, txn, receipt)
+    let Some(raw) = SOURCE.get_bytes(&vault.store, txn, receipt)? else {
+        return Ok(None);
+    };
+    let family = crate::store::ResponseFamily::BlockedCapture;
+    let raw = crate::store::ResponseRead::of(family, &SOURCE.key_bytes(receipt), &raw).present()?;
+    SOURCE.decode_value(raw).map(Some)
 }
 
 /// Keeps the request a durable step is about to send (FIX 1662), before the

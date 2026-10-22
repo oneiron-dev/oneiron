@@ -26,7 +26,7 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_REGISTRY;
 use crate::side_table::{self, SideDb, SideTableDecl};
 use crate::store::checkpoint_payload::rows::OtherClient;
-use crate::store::{CustodyKind, DB_MANIFEST};
+use crate::store::{CustodyKind, DB_MANIFEST, ResponseDb, ResponseFamily};
 
 /// Where a family's rows go: its one class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,9 +211,15 @@ families! {
     Class::Other(Client::Dispatch(OtherClient::Body)) => CODE_RUN_RAW_OUTPUT;
     // A blocked report's captured requests (FIX 6708) and a wait's
     // deliveries (FIX 6588); the wait index stays unclassified, as only its
-    // settled rows hold a reply.
+    // settled rows hold a reply, which [`class_for_row`] places row by row
+    // (FIX 9179).
     Class::Other(Client::Dispatch(OtherClient::Response)) => CODE_RUN_REPLAY
         COACH_BLOCKED_SOURCE CODE_RUN_WAIT_DELIVERY;
+    // The voice reference bank, every table of it, erased with its subject
+    // or creator in every kept copy (FIX 8972).
+    Class::Other(Client::Dispatch(OtherClient::Response)) => VOICE_OWNER_REF
+        VOICE_OWNER_REF_OWNER_INDEX VOICE_REF_IDENTITY VOICE_REF_INCARNATION
+        VOICE_REF_RENDER_CONSENT VOICE_REF_RENDER_EVENT VOICE_REF_TARGET;
     Class::NotImaged => AUTHORITY_CHECKPOINT_COUNTERSIGN AUTHORITY_CHECKPOINT_PROGRESS
         AUTHORITY_CHECKPOINT_ROOT_DELIVERY AUTHORITY_CHECKPOINT_TOTALS AUTHORITY_CHECKPOINT_UNHELD
         AUTHORITY_HISTORY_STAGE BACKUP_CHANGE BACKUP_INCARNATION CODE_RUN_WAIT_TRAP
@@ -590,11 +596,9 @@ families! {
         VAULT_CLEANUP_RUN VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE VAULT_CLEANUP_TASK_RETENTION_DAYS
         VAULT_CLEANUP_TEST_BLOCKERS_CLOSED VAULT_IDENTITY_LOCAL VAULT_KEY_ESCROW_RECIPIENT
         VAULT_KEY_ESCROW_RETIRED
-        VAULT_KEY_ESCROW_SPOOLED VAULT_KEY_STATE VAULT_KEY_WRAP VAULT_SHAPE_APPLY VOICE_OWNER_REF
-        VOICE_OWNER_REF_OWNER_INDEX VOICE_REF_IDENTITY VOICE_REF_INCARNATION
-        VOICE_REF_RENDER_CONSENT VOICE_REF_RENDER_EVENT VOICE_REF_TARGET VOICE_IDENTITY_CONSENT
-        VOICE_IDENTITY_PRINT VOICE_IDENTITY_ROSTER VOICE_IDENTITY_SAMPLE TASK_WAVE_PLAN_INDEX
-        WEAVE_DIGEST
+        VAULT_KEY_ESCROW_SPOOLED VAULT_KEY_STATE VAULT_KEY_WRAP VAULT_SHAPE_APPLY
+        VOICE_IDENTITY_CONSENT VOICE_IDENTITY_PRINT VOICE_IDENTITY_ROSTER VOICE_IDENTITY_SAMPLE
+        TASK_WAVE_PLAN_INDEX WEAVE_DIGEST
         WEAVE_DIGEST_BEHAVIOUR WEAVE_DIGEST_SETTING_CHANGE WEAVE_DIGEST_SETTINGS
         WEAVE_DIGEST_SOURCE WEAVE_DIGEST_SCHEDULE WEAVE_WRONG_ITEM_LABEL WEAVE_WRONG_LINK_LABEL
         WORKSPACE_ROSTER_COMPANION_PRINCIPAL WORKSPACE_ROSTER_MEMBER WORKSPACE_ROSTER_MEMBER_INTENT
@@ -679,6 +683,29 @@ pub(super) fn check() -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// The class of one image row of `database`: `declared`, its family's or
+/// its database's, save in the two mixed families whose rows hold responses
+/// one by one (FIX 9179): a queue row and a wait index row the response
+/// client takes, by the same family and scan the census reads (a response,
+/// the erased marker, a wait's erased reply), go to it; every other row of
+/// theirs stays as declared, unclassified and named on the receipt.
+pub(super) fn class_for_row(database: &str, key: &[u8], value: &[u8], declared: Class) -> Class {
+    let mixed = match database {
+        "job_records" => true,
+        "vault_meta" => key.starts_with(side_table::CODE_RUN_WAIT_INDEX.prefix),
+        _ => false,
+    };
+    let response = mixed
+        && ResponseDb::of_name(database)
+            .and_then(|db| ResponseFamily::of_row(db, key, value))
+            .is_some_and(|family| family.placed_as_response(key, value));
+    if response {
+        Class::Other(Client::Dispatch(OtherClient::Response))
+    } else {
+        declared
+    }
 }
 
 /// The registry's families by database and prefix, to find a row's.

@@ -24,6 +24,7 @@ use super::ResponseStamps;
 use crate::entity_id::EntityId;
 use crate::llm::media::{MediaJobState, MediaPart, MediaRequest};
 use crate::llm::{FatalLlmError, LlmError};
+use crate::store::{ResponseCarriage, ResponseScan};
 
 const REQUEST: &str = "request";
 const ENDED: &str = "ended";
@@ -131,10 +132,27 @@ fn erased_end(ended: Option<MediaJobState>) -> MediaJobState {
     }
 }
 
-/// What a checkpoint carries of the job row `value`: the whole row, with
-/// its erased form as the stub a retired instance keeps. `None` for an
-/// erased row, which holds no content, and for one that does not decode.
-pub(crate) fn media_job_carriage(value: &[u8]) -> Option<Vec<u8>> {
+/// What a checkpoint carries of the job row `value` (FIX 9390): the whole
+/// row, with its erased form as the stub a retired instance keeps. No
+/// response for an erased row; a row that does not decode as a job, or
+/// whose erased form does not encode, is carried whole as an opaque
+/// response, whose retired form is the erased marker.
+pub(crate) fn media_job_scan(value: &[u8]) -> ResponseScan {
+    let Some(entries) = job_map(value) else {
+        return ResponseScan::opaque_row();
+    };
+    if erased(&entries) {
+        return ResponseScan::NotResponse;
+    }
+    media_job_carriage(value).map_or_else(ResponseScan::opaque_row, |stub| {
+        ResponseScan::Decoded(ResponseCarriage::whole(stub))
+    })
+}
+
+/// The job row `value`'s erased form, the stub an image holds in its place.
+/// `None` for an erased row, which holds no content, and for one that does
+/// not decode.
+pub(super) fn media_job_carriage(value: &[u8]) -> Option<Vec<u8>> {
     let mut entries = job_map(value)?;
     if erased(&entries) {
         return None;
@@ -159,7 +177,8 @@ pub(crate) fn media_job_carriage(value: &[u8]) -> Option<Vec<u8>> {
 /// Keeps the job row `row` at `key` and each of its clips `parts` beside it
 /// in `wtxn`, unless an erase took the row already: then nothing is
 /// written, so a late end or a retried one never puts erased content back,
-/// and `false` is returned.
+/// and `false` is returned. The erased marker of a retired job that never
+/// decoded is that erase too, read before the row is (FIX 9390).
 ///
 /// # Errors
 ///
@@ -184,11 +203,9 @@ pub(crate) fn media_job_put_fenced_in_txn(
             "a media job put outside its rows",
         ));
     }
-    let fenced = dbs
-        .side_sync_state()?
-        .get(wtxn, key)?
-        .and_then(|kept| job_map(&kept))
-        .is_some_and(|entries| erased(&entries));
+    let fenced = dbs.side_sync_state()?.get(wtxn, key)?.is_some_and(|kept| {
+        crate::store::is_opaque_erased(&kept) || job_map(&kept).is_some_and(|e| erased(&e))
+    });
     if fenced {
         return Ok(false);
     }

@@ -17,10 +17,13 @@
 //! it is delivered the reply's erased form, parks on nothing and reads a
 //! typed unavailable, while every other holder reads the reply as before.
 
+mod erased_read;
+
 use std::cell::Cell;
 
 use serde::{Deserialize, Serialize};
 
+use self::erased_read::{delivery_in_txn, settled_in_txn};
 use super::replay_bodies::response_erased_error;
 use super::routing::SessionBinding;
 use super::wait_holders::{hold_settled_for_caller_in_txn, holder_erased_in_txn, join_wait_in_txn};
@@ -176,7 +179,7 @@ pub(crate) fn deliver_wait_listing_in_txn(
     rows: Option<&[EntityId]>,
     now_ms: u64,
 ) -> Result<usize> {
-    let settled = match SETTLED.get(&vault.store, txn, &(SETTLED_TAG, wait_id))? {
+    let settled = match settled_in_txn(&vault.store, txn, wait_id)? {
         Some(settled) => settled,
         None => {
             let mut settled = WaitDelivery {
@@ -214,7 +217,7 @@ pub(crate) fn settled_wait_reply_in_txn(
     txn: &heed::RoTxn<'_>,
     wait_id: EntityId,
 ) -> Result<Option<String>> {
-    match SETTLED.get(&vault.store, txn, &(SETTLED_TAG, wait_id))? {
+    match settled_in_txn(&vault.store, txn, wait_id)? {
         Some(settled) if settled.erased => Err(response_erased_error("a wait's settled reply")),
         settled => Ok(settled.map(|settled| settled.reply)),
     }
@@ -395,9 +398,7 @@ impl ExecutorStorage<'_> {
                 crate::task_verb::deliver_task_result_in_txn(vault, txn, key.wait_id)?;
                 crate::task_verb::deliver_ask_change_in_txn(vault, txn, key.wait_id)?;
                 crate::task_verb::deliver_world_privacy_wait_for_in_txn(vault, txn, key.wait_id)?;
-                if let Some(settled) =
-                    SETTLED.get(&vault.store, txn, &(SETTLED_TAG, key.wait_id))?
-                {
+                if let Some(settled) = settled_in_txn(&vault.store, txn, key.wait_id)? {
                     deliver_in_txn(vault, txn, key, &settled)?;
                 }
                 DELIVERIES.contains(&vault.store, txn, &key.row())
@@ -434,7 +435,7 @@ impl ExecutorStorage<'_> {
                 if holder_erased_in_txn(vault, &txn, key)? {
                     return Err(response_erased_error("a wait's delivered reply"));
                 }
-                match DELIVERIES.get(&vault.store, &txn, &key.row())? {
+                match delivery_in_txn(&vault.store, &txn, &key.row())? {
                     Some(delivery) if delivery.erased => {
                         Err(response_erased_error("a wait's delivered reply"))
                     }
@@ -553,7 +554,7 @@ impl WaitDeliveries<'_> {
         match &self.storage {
             ExecutorStorage::Canonical(vault) => {
                 let txn = vault.store.env.read_txn()?;
-                match SETTLED.get(&vault.store, &txn, &(SETTLED_TAG, wait_id))? {
+                match settled_in_txn(&vault.store, &txn, wait_id)? {
                     Some(settled) if settled.erased => {
                         Err(response_erased_error("a wait's settled reply"))
                     }
@@ -733,7 +734,7 @@ impl ExecutorStorage<'_> {
                     if holder_erased_in_txn(vault, txn, key)? {
                         return Err(response_erased_error("a resumed wait's reply"));
                     }
-                    let delivery = DELIVERIES.get(&vault.store, txn, &key.row())?;
+                    let delivery = delivery_in_txn(&vault.store, txn, &key.row())?;
                     if delivery.as_ref().is_some_and(|delivery| delivery.erased) {
                         return Err(response_erased_error("a resumed wait's reply"));
                     }

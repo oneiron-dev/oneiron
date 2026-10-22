@@ -51,7 +51,7 @@ use super::types::{AttemptId, AttemptRecord};
 
 // FIX 7115: the payload text in checkpoint images, a row-held response.
 pub(crate) use self::response::{
-    attempt_payload_family, attempt_payload_owners, attempt_payload_stub,
+    attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
     retire_attempt_payload_in_txn,
 };
 

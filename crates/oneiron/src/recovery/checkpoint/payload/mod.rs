@@ -570,6 +570,9 @@ pub(super) fn project(
                     }
                 },
             };
+            // A mixed family's response rows go to the response client
+            // (FIX 9179).
+            let class = rows::class_for_row(name, key, value, class);
             match (class, claims.of(name, key)) {
                 (Class::Owner(getter), Some((BundleRole::Content(by), claim))) if by == getter => {
                     if claim == Claim::Unclassified {

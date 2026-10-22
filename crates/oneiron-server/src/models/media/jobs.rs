@@ -63,6 +63,33 @@ pub(super) struct JobRow {
     pub(super) erased: bool,
 }
 
+/// A kept job as its row reads (FIX 9390): the row, or the erased marker of
+/// a retired job whose row never decoded, which answers as an erased job.
+pub(super) enum KeptJob {
+    Row(JobRow),
+    Erased,
+}
+
+impl KeptJob {
+    /// The row, unless an erase took the job: its erased form, or the
+    /// marker. An erased job is never written again, taken up, resumed or
+    /// resubmitted (KS-2B2).
+    pub(super) fn live(self) -> Option<JobRow> {
+        match self {
+            Self::Row(row) if !row.erased => Some(row),
+            Self::Row(_) | Self::Erased => None,
+        }
+    }
+
+    /// Whether an erase took the job.
+    pub(super) fn erased(&self) -> bool {
+        match self {
+            Self::Row(row) => row.erased,
+            Self::Erased => true,
+        }
+    }
+}
+
 /// The vault's job rows.
 pub(super) struct JobStore {
     vault: Arc<Vault>,
@@ -92,16 +119,22 @@ impl JobStore {
             .map_err(|error| error.to_string())
     }
 
-    /// Job `ticket`'s row, its clips' bytes back in place.
-    pub(super) fn get(&self, ticket: &str) -> Option<JobRow> {
-        let bytes = match self.vault.sync_state_get(&row_key(ticket)) {
+    /// Job `ticket`'s row, its clips' bytes back in place; the erased
+    /// marker of a retired job whose row never decoded reads as erased,
+    /// before any decode (FIX 9390).
+    pub(super) fn get(&self, ticket: &str) -> Option<KeptJob> {
+        let key = row_key(ticket);
+        let bytes = match self.vault.sync_state_get(&key) {
             Ok(bytes) => bytes?,
             Err(error) => {
                 tracing::error!(%error, ticket, "a media job could not be read");
                 return None;
             }
         };
-        let mut row: JobRow = match rmp_serde::from_slice(&bytes) {
+        let Ok(bytes) = oneiron::store::media_response_read(key.as_bytes(), &bytes) else {
+            return Some(KeptJob::Erased);
+        };
+        let mut row: JobRow = match rmp_serde::from_slice(bytes) {
             Ok(row) => row,
             Err(error) => {
                 tracing::error!(%error, ticket, "a media job's row does not decode");
@@ -121,7 +154,7 @@ impl JobStore {
                 }
             }
         }
-        Some(row)
+        Some(KeptJob::Row(row))
     }
 
     /// The ticket of every kept job, ended or not.
