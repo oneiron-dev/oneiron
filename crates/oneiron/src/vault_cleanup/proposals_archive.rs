@@ -1,5 +1,6 @@
 //! Proposal accept/reject lane plus the archived query and restore door.
 
+use super::attempt_retention::{AttemptRestore, restore_task_attempts_as};
 use super::codec_receipts::PROPOSAL;
 use super::person_provenance;
 use super::run_snapshot::{self, CleanupRunSnapshot};
@@ -98,6 +99,7 @@ pub(super) fn accept_cleanup_proposal_in_txn(
         at: mutation_recorded_at,
         archived: live_slots(applied.archived.clone()),
         skipped: live_slots(applied.skipped.clone()),
+        rejected: Vec::new(),
     };
     put_digest_in_txn(vault, wtxn, &digest)?;
     // What the accept archived joins the RUN row of the run that opened the
@@ -281,8 +283,28 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         entity: &EntityId,
     ) -> Result<()> {
+        self.restore_archived_with_in_txn(wtxn, entity, AttemptRestore::Ordinary)
+    }
+
+    /// [`Self::restore_archived_in_txn`] for the owner: a TASK's archived
+    /// attempts come back kept at their current queue rows, so retention does
+    /// not archive those bytes again (FIX 7518).
+    pub(super) fn restore_archived_kept_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+    ) -> Result<()> {
+        self.restore_archived_with_in_txn(wtxn, entity, AttemptRestore::OwnerKeeps)
+    }
+
+    fn restore_archived_with_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        attempts: AttemptRestore,
+    ) -> Result<()> {
         self.restore_archived_record_in_txn(wtxn, entity)?;
-        super::restore_task_attempts(self, wtxn, *entity)?;
+        restore_task_attempts_as(self, wtxn, *entity, attempts)?;
         // FIX 6058: a restored grant or actor may stand a held program's
         // authority again. Rechecked in this commit, best-effort: a recheck
         // that fails is logged and never fails the restore.

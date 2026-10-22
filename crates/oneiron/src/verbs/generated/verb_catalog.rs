@@ -456,6 +456,8 @@ pub enum AgentVerb {
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultRootsRequestsCancel,
     VaultCleanupRun,
+    VaultCleanupReview,
+    VaultCleanupDecide,
     VaultArchiveDeletePreview,
     VaultArchiveDeleteConfirm,
     VaultUsageEventsUndecodable,
@@ -1636,6 +1638,8 @@ impl AgentVerb {
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultRootsRequestsCancel,
         Self::VaultCleanupRun,
+        Self::VaultCleanupReview,
+        Self::VaultCleanupDecide,
         Self::VaultArchiveDeletePreview,
         Self::VaultArchiveDeleteConfirm,
         Self::VaultUsageEventsUndecodable,
@@ -2831,6 +2835,8 @@ impl AgentVerb {
             }
             Self::VaultRootsRequestsCancel => "vault.roots.requests.cancel",
             Self::VaultCleanupRun => "vault.cleanup.run",
+            Self::VaultCleanupReview => "vault.cleanup.review",
+            Self::VaultCleanupDecide => "vault.cleanup.decide",
             Self::VaultArchiveDeletePreview => "vault.archive.delete.preview",
             Self::VaultArchiveDeleteConfirm => "vault.archive.delete.confirm",
             Self::VaultUsageEventsUndecodable => "vault.usage.events.undecodable",
@@ -4029,6 +4035,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultCleanupReview
+                | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeletePreview
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
@@ -5238,6 +5246,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultCleanupReview
+                | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeletePreview
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
@@ -5984,6 +5994,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
+                | Self::VaultPacksSectionsList
                 | Self::VaultMeshPathReceipts
                 | Self::VaultSharedOutcomes
                 | Self::VaultMembersInvitations
@@ -6571,6 +6582,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultCleanupReview
+                | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeletePreview
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
@@ -7513,6 +7526,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
+                | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
@@ -8431,6 +8445,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
+            Self::VaultCleanupReview => &["spec"],
+            Self::VaultCleanupDecide => &["spec"],
             Self::VaultArchiveDeletePreview => &["spec"],
             Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
@@ -9612,6 +9628,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
+            Self::VaultCleanupReview => &["spec"],
+            Self::VaultCleanupDecide => &["spec"],
             Self::VaultArchiveDeletePreview => &["spec"],
             Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
@@ -11097,7 +11115,7 @@ impl AgentVerb {
                 "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."
             }
             Self::VaultPacksSectionsList => {
-                "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."
+                "Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project."
             }
             Self::VaultPacksSectionsGrant => {
                 "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."
@@ -11675,6 +11693,12 @@ impl AgentVerb {
             }
             Self::VaultCleanupRun => {
                 "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."
+            }
+            Self::VaultCleanupReview => {
+                "The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts."
+            }
+            Self::VaultCleanupDecide => {
+                "The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected."
             }
             Self::VaultArchiveDeletePreview => {
                 "Previews explicit archived records under the caller's delete authority."
@@ -12768,10 +12792,10 @@ impl AgentVerb {
                 "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."
             }
             Self::AiStepsSubmit => {
-                "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."
+                "Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result."
             }
             Self::AiStepsReceipt => {
-                "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."
+                "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain."
             }
             Self::AiStreamsOpen => {
                 "Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one."
@@ -12849,19 +12873,19 @@ impl AgentVerb {
                 "Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."
             }
             Self::VaultModelsTrialsGet => {
-                "Reads a retained held-out trial, its catalog revision, independent labels and measured cost."
+                "Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown."
             }
             Self::VaultModelsTrialsApprove => {
                 "Approves exploration for a held-out model trial only; leaves its role binding unchanged."
             }
             Self::VaultModelsTrialsRun => {
-                "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."
+                "Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."
             }
             Self::VaultModelsTrialsComplete => {
                 "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."
             }
             Self::VaultModelsBindingsPropose => {
-                "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."
+                "Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it."
             }
             Self::VaultModelsBindingsGet => {
                 "Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."

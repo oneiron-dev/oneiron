@@ -87,9 +87,13 @@ side_tables! {
     ARTIFACT_POINTER: VaultMeta b"artifact:pointer:v1:" Raw;
     /// Immutable publish admission receipt keyed by publish entity id16.
     ARTIFACT_PUBLISH_ADMISSION: VaultMeta b"artifact:publish:admission:v1:" LegacyJson;
-    /// Empty marker: this channel pointer changed and its publication has not reached the sync
-    /// server yet. Key: channel byte + u16be length + string (artifact id).
-    ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Raw;
+    /// A replica's serving descriptor of one published blob version: content hash, export name
+    /// and media type, nothing else (FIX 1195). Key: id16 (artifact) + u64be (version).
+    ARTIFACT_SERVING_BLOB: VaultMeta b"artifact:serving:blob:v1:" Named;
+    /// The change id (16 bytes) of this channel pointer's change whose publication has not
+    /// reached the sync server yet (FIX 9575). Key: channel byte + u16be length + string
+    /// (artifact id).
+    ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Named;
     /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
     ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.

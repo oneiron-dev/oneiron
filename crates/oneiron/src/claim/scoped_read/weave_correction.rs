@@ -11,6 +11,9 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use serde::{Deserialize, Serialize};
 
+// A weave Admin's wrong labels, filed under its proof (OF-499 A3).
+mod admin;
+
 /// Wrong-link labels, keyed by the link's edge ref, then the label's receipt id.
 const LABELS: SideTable<([u8; EDGE_REF_LEN], EntityId), StoredCorrection, Named> =
     SideTable::new(&side_table::WEAVE_WRONG_LINK_LABEL);
@@ -43,6 +46,9 @@ pub struct WeaveLinkCorrection {
     pub link: EdgeRef,
     pub actor: EntityId,
     pub recorded_at: u64,
+    /// The Admin membership grant it was filed under (OF-499 A3); `None`
+    /// for a person's or an owner's label.
+    pub admin_grant: Option<EntityId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -51,6 +57,8 @@ struct StoredCorrection {
     link: Vec<u8>,
     actor: EntityId,
     recorded_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    admin_grant: Option<EntityId>,
 }
 
 /// A claim, project, budget or sieve audit row of a reader's weave report:
@@ -118,6 +126,9 @@ pub struct WeaveItemCorrection {
     pub item: WeaveItemTarget,
     pub actor: EntityId,
     pub recorded_at: u64,
+    /// The Admin membership grant it was filed under (OF-499 A3); `None`
+    /// for a person's or an owner's label.
+    pub admin_grant: Option<EntityId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -126,10 +137,13 @@ struct StoredItemCorrection {
     item: WeaveItemTarget,
     actor: EntityId,
     recorded_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    admin_grant: Option<EntityId>,
 }
 
 /// A hard delete leaves no wrong label that names `gone`: the labels it
-/// filed as a reader, those on it as a claim, project or budget (and on a
+/// filed as a reader or an Admin grant filed under (OF-499 A3), those on it
+/// as a claim, project or budget (and on a
 /// budget shown under it as a project), those on a sieve audit that stands
 /// on it, and those on a link it is an end of. A row that no longer decodes
 /// goes too, since it may name it, and so does an audit's label whose audit
@@ -145,7 +159,7 @@ pub(super) fn erase_weave_labels_in_txn(
         if on_link
             || LABELS
                 .get_lenient(store, txn, &key)?
-                .is_none_or(|label| label.actor == *gone)
+                .is_none_or(|label| label.actor == *gone || label.admin_grant == Some(*gone))
         {
             LABELS.delete(store, txn, &key)?;
         }
@@ -159,7 +173,10 @@ pub(super) fn erase_weave_labels_in_txn(
                         label.item,
                         WeaveItemTarget::Budget { project, .. } if project == *gone
                     );
-                    label.actor == *gone || under || audit_label_goes(store, txn, label.item, gone)
+                    label.actor == *gone
+                        || label.admin_grant == Some(*gone)
+                        || under
+                        || audit_label_goes(store, txn, label.item, gone)
                 }
             };
         if goes {
@@ -211,7 +228,7 @@ impl ScopedRead<'_> {
                     .vault
                     .weave_link_correction_labels_in_txn(txn, link)?
                     .iter()
-                    .filter(|label| label.actor == actor)
+                    .filter(|label| label.actor == actor && label.admin_grant.is_none())
                     .count())
             },
             |txn, actor, now| {
@@ -220,6 +237,7 @@ impl ScopedRead<'_> {
                     link,
                     actor,
                     recorded_at: now,
+                    admin_grant: None,
                 };
                 LABELS.put(
                     &self.vault.store,
@@ -230,6 +248,7 @@ impl ScopedRead<'_> {
                         link: link.encode().to_vec(),
                         actor: correction.actor,
                         recorded_at: correction.recorded_at,
+                        admin_grant: correction.admin_grant,
                     },
                 )?;
                 Ok(correction)
@@ -256,7 +275,7 @@ impl ScopedRead<'_> {
                     .vault
                     .weave_item_correction_labels_in_txn(txn, item.id())?
                     .iter()
-                    .filter(|label| label.actor == actor)
+                    .filter(|label| label.actor == actor && label.admin_grant.is_none())
                     .count())
             },
             |txn, actor, now| {
@@ -265,6 +284,7 @@ impl ScopedRead<'_> {
                     item,
                     actor,
                     recorded_at: now,
+                    admin_grant: None,
                 };
                 ITEM_LABELS.put(
                     &self.vault.store,
@@ -275,6 +295,7 @@ impl ScopedRead<'_> {
                         item,
                         actor: correction.actor,
                         recorded_at: correction.recorded_at,
+                        admin_grant: correction.admin_grant,
                     },
                 )?;
                 Ok(correction)
@@ -309,6 +330,8 @@ impl ScopedRead<'_> {
             WeaveReader::Person(id) => *id == auth_actor,
             WeaveReader::Owner(owner) => *owner == auth,
             WeaveReader::Agent(_) => false,
+            // An Admin files through its own proof's door (OF-499 A3).
+            WeaveReader::Admin(_) => false,
         };
         if !bound {
             return Err(Error::InvalidConfig(
@@ -472,6 +495,7 @@ impl crate::Vault {
                 link,
                 actor: stored.actor,
                 recorded_at: stored.recorded_at,
+                admin_grant: stored.admin_grant,
             });
         }
         Ok(labels)
@@ -494,6 +518,7 @@ impl crate::Vault {
                 item: stored.item,
                 actor: stored.actor,
                 recorded_at: stored.recorded_at,
+                admin_grant: stored.admin_grant,
             });
         }
         Ok(labels)

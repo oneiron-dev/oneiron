@@ -4747,7 +4747,7 @@
      "purpose": "OF-499 A3: a real, current Admin proof for the weave, behind an MFA step-up witness",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 2
      }
@@ -12417,6 +12417,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/actor_key/weave_admin.rs",
+     "purpose": "The weave Admin's read key (OF-499 A3, L02 seam): the Admin's verified request instrument as every slip key…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -12800,6 +12810,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_correction/admin.rs",
+     "purpose": "A weave Admin's wrong labels (OF-499 A3): the one-tap wrong on a link, claim, project, budget or sieve audit…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -12816,7 +12836,7 @@
       "crate-vis": 11,
       "enum": 2,
       "fn": 10,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -12828,6 +12848,20 @@
      "purpose": "FIX 5778: an agent acting for the owner inside its Grant acknowledges his weave digest's due notice, and…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveAdminKey"
+     ],
+     "path": "src/claim/scoped_read/weave_digest/admin.rs",
+     "purpose": "The weave Admin's digest namespace (OF-499 A3): its key, its saved and newest period read, its kept live…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -12987,10 +13021,20 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 3,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/admin.rs",
+     "purpose": "The weave Admin's lane and live report (OF-499 A3)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -13072,6 +13116,16 @@
       "enum": 2,
       "fn": 13,
       "struct": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_serve/admin.rs",
+     "purpose": "The served weave Admin lens (OF-499 A3): an Admin's live report, its live lens's two reads, its saved digest…",
+     "surface": {
+      "fn": 7
      }
     },
     {
@@ -25166,10 +25220,21 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 31,
-      "crate-vis": 9,
+      "const": 32,
+      "crate-vis": 10,
       "fn": 11,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/coach/eval_measurement.rs",
+     "purpose": "The Coach's eval measurement job (FIX 574, OF-578): one per request digest, queued when the measurement is…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -38522,7 +38587,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 11,
       "re-export": 21
      }
@@ -38560,19 +38625,33 @@
      "path": "src/llm/model_trials.rs",
      "purpose": "Per-question held-out trials nominated by external benchmark scores",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 9,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/model_trials/evidence.rs",
      "purpose": "Freeze the question's own labels, check backend reads and bind the sufficiency card",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TrialProgressCounts"
+     ],
+     "path": "src/llm/model_trials/progress.rs",
+     "purpose": "A trial's paid arms, kept one by one inside its own row (FIX 9920)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -38584,11 +38663,16 @@
       "HeldOutSelection",
       "ModelTrial",
       "ModelTrialAction",
+      "ModelTrialExecutionState",
       "ModelTrialPolicy",
       "ModelTrialReceipt",
       "ModelTrialRequest",
       "PairedQualityInterval",
       "TrialAdmission",
+      "TrialArm",
+      "TrialArmFailure",
+      "TrialArmOutcome",
+      "TrialArmProgress",
       "TrialAssessment",
       "TrialCaseInput",
       "TrialEvidence",
@@ -38601,8 +38685,8 @@
      "path": "src/llm/model_trials/types.rs",
      "purpose": "The held-out selection and sufficiency card are supplied by eval authoring",
      "surface": {
-      "enum": 3,
-      "struct": 15
+      "enum": 7,
+      "struct": 16
      }
     },
     {
@@ -38701,7 +38785,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DescriptionPolicy",
@@ -38723,7 +38807,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 13,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 10
      }
     },
@@ -38740,6 +38824,21 @@
       "crate-vis": 2,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DescriptionFitnessReadings",
+      "DescriptionGrading"
+     ],
+     "path": "src/llm/routing/readings.rs",
+     "purpose": "The route's complete typed grading, carried with each routed outcome (FIX 9922): every candidate's decision…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -39050,13 +39149,14 @@
      "kind": "src",
      "notable": [
       "SeatDecisions",
-      "SeatNotes"
+      "SeatNotes",
+      "SeatPickReadings"
      ],
      "path": "src/llm/seat/decisions.rs",
      "purpose": "The seat pick as typed decisions through the host's ladder, and the note seam beside it",
      "surface": {
       "fn": 1,
-      "struct": 1,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -39135,7 +39235,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -39146,7 +39246,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 5
      }
@@ -39212,6 +39312,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/step/retry.rs",
+     "purpose": "Transport retries for one durable model call: the ONE retry authority",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/step/schema.rs",
      "purpose": "One-shot structured-output policy",
      "surface": {
@@ -39224,7 +39334,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/schema_guard.rs",
-     "purpose": "Structural input bounds before serialization into the validator compartment",
+     "purpose": "The nesting bound before serialization into the validator compartment",
      "surface": {
       "crate-vis": 1
      }
@@ -39290,6 +39400,16 @@
      "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side…",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/submission_custody.rs",
+     "purpose": "A public model-step submission's kept copies under body custody (FIX 9929)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -58617,7 +58737,7 @@
       "enum": 4,
       "fn": 8,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 6,
       "struct": 4
      }
     },
@@ -58697,7 +58817,7 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 8,
       "struct": 5
@@ -58769,6 +58889,83 @@
      "purpose": "An erased row out of the eval cases' source sets (FIX 6933): each case's own set and every label's on it",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EvalArmPin",
+      "EvalAxisPin",
+      "EvalCaseMeasurement",
+      "EvalLegRecord",
+      "EvalMeasurement",
+      "EvalMeasurementRequest",
+      "FloorSlicePolicy",
+      "MeasurementState",
+      "MeasurementUnavailable",
+      "ScoreDirection"
+     ],
+     "path": "src/skill_optimize/eval_set/measurement.rs",
+     "purpose": "Paired, family-grouped eval measurements (FIX 574, OF-578; ARCH-0053)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 3,
+      "re-export": 3,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/measurement/doors.rs",
+     "purpose": "The measurement doors: ask, read, claim, record a case and fail",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/measurement/finish.rs",
+     "purpose": "Finishing a measurement: the complete matched set, the estimator once, and the card read from its numbers",
+     "surface": {
+      "const": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EstimateGap",
+      "EvalFamilySummary",
+      "MeasurementMethodPin"
+     ],
+     "path": "src/skill_optimize/eval_set/measurement/statistics.rs",
+     "purpose": "The paired, family-grouped estimator behind an eval measurement (FIX 574, OF-578)",
+     "surface": {
+      "crate-vis": 14,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EvalTaskInput"
+     ],
+     "path": "src/skill_optimize/eval_set/replay_input.rs",
+     "purpose": "The task a released eval case was given, for the trusted measuring host only (FIX 574, OF-578)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -59233,7 +59430,7 @@
      "surface": {
       "crate-vis": 18,
       "mod": 2,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -68092,7 +68289,7 @@
      "path": "src/vault_cleanup/attempt_retention.rs",
      "purpose": "Reversible retention for private queue records; the serialized attempt is never changed",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -68114,8 +68311,8 @@
      "path": "src/vault_cleanup/cleanup_types.rs",
      "purpose": "Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs",
      "surface": {
-      "const": 13,
-      "crate-vis": 17,
+      "const": 15,
+      "crate-vis": 18,
       "enum": 3,
       "fn": 7,
       "struct": 7
@@ -68161,7 +68358,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 1,
-      "re-export": 6
+      "re-export": 8
      }
     },
     {
@@ -68171,7 +68368,7 @@
      "path": "src/vault_cleanup/owner_doors.rs",
      "purpose": "The owner's cleanup doors for a transport",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -68186,13 +68383,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_cleanup/proposal_review.rs",
+     "purpose": "The owner's per-item cleanup decision (FIX 1758): one complete verdict, an Accept or a Reject for every slot…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault_cleanup/proposals_archive.rs",
      "purpose": "Proposal accept/reject lane plus the archived query and restore door",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -68219,7 +68426,7 @@
      "path": "src/vault_cleanup/retention.rs",
      "purpose": "Owner-adjustable completed-TASK retention",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -68230,6 +68437,43 @@
      "path": "src/vault_cleanup/retention_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CleanupAcceptEffect",
+      "CleanupDecideRequest",
+      "CleanupDecideView",
+      "CleanupItemChoice",
+      "CleanupItemDecision",
+      "CleanupItemOutcome",
+      "CleanupItemResult",
+      "CleanupItemState",
+      "CleanupReviewContent",
+      "CleanupReviewCounts",
+      "CleanupReviewEvidence",
+      "CleanupReviewItem",
+      "CleanupReviewRequest",
+      "CleanupReviewView"
+     ],
+     "path": "src/vault_cleanup/review_types.rs",
+     "purpose": "The per-item cleanup review and decision vocabulary (FIX 1758): what the owner reads about each slot of one…",
+     "surface": {
+      "enum": 4,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_cleanup/review_view.rs",
+     "purpose": "The per-item cleanup review (FIX 1758; ARCH-0073: a proposal is \"reviewed per item with full disclosure\")…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
     },
     {
      "bucket": "s",
@@ -68327,7 +68571,7 @@
      "purpose": "Closed-form cleanup checks, the posture door, and the job body",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 6
      }
     },
@@ -69179,7 +69423,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1186
+      "fn": 1188
      }
     },
     {
@@ -74508,7 +74752,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 98,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74816,7 +75060,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 143,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75138,7 +75382,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 129,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75579,7 +75823,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 62,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75761,7 +76005,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
     "vault_cleanup": {
-     "files": 22,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -75845,9 +76089,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 144,
+   "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4940,
+   "source_files": 4958,
    "test_files": 902
   },
   "oneiron-android": {
@@ -87390,7 +87634,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1155
+      "fn": 1157
      }
     },
     {
@@ -88678,7 +88922,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1156
+      "fn": 1158
      }
     },
     {
@@ -90474,6 +90718,46 @@
      "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_measurement.rs",
+     "purpose": "The Coach's paired eval measurement (FIX 574, OF-578)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_measurement/legs.rs",
+     "purpose": "The legs' exact-model calls: each arm on its own one-model ladder, as a call of the seat's role, under one…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_measurement/offer.rs",
+     "purpose": "A training offer's measured card: the paired measurement of exactly the offer's incumbent and stock…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_measurement/score.rs",
+     "purpose": "A leg's blind score: the replay judge's `response_score` question on the task, the answer, the case's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -92467,7 +92751,7 @@
      "path": "src/api/facade/cleanup_doors.rs",
      "purpose": "Archive cleanup and evidence-backed re-mention, under the owner's own proof",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -94988,6 +95272,16 @@
      "purpose": "`/v1/owner/checkpoint-policy`: the owner selects which roots attest his authority checkpoint images, and how…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/cleanup_decide.rs",
+     "purpose": "`/v1/owner/cleanup/review` and `/v1/owner/cleanup/decide`: one open cleanup proposal reviewed slot by slot…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -102710,7 +103004,7 @@
      "path": "src/owner/cleanup.rs",
      "purpose": "Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 23
      }
     },
     {
@@ -104777,14 +105071,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 86,
+     "files": 90,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 548,
+     "files": 549,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -105248,7 +105542,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1209,
+   "source_files": 1214,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -106023,9 +106317,23 @@
       "ClaimSettlementRevert",
       "ClaimSettlementVerdict",
       "ClaimSource",
+      "CleanupAcceptEffect",
       "CleanupCandidate",
+      "CleanupDecideRequest",
+      "CleanupDecideView",
+      "CleanupItemChoice",
+      "CleanupItemDecision",
+      "CleanupItemOutcome",
+      "CleanupItemResult",
+      "CleanupItemState",
       "CleanupKind",
       "CleanupPosture",
+      "CleanupReviewContent",
+      "CleanupReviewCounts",
+      "CleanupReviewEvidence",
+      "CleanupReviewItem",
+      "CleanupReviewRequest",
+      "CleanupReviewView",
       "CleanupRunView",
       "ClickInput",
       "ClockScope",
@@ -107638,6 +107946,7 @@
       "ModelTrialAction",
       "ModelTrialComplete",
       "ModelTrialEvidence",
+      "ModelTrialExecutionState",
       "ModelTrialNominate",
       "ModelTrialPolicy",
       "ModelTrialReceipt",
@@ -108685,6 +108994,7 @@
       "ScopedReadResultOptionalCalendarPassportRevision",
       "ScopedReadResultOptionalClaimView",
       "ScopedReadResultOptionalDiagnosticEventView",
+      "ScopedReadResultOptionalEntityView",
       "ScopedReadResultOptionalMessageDurability",
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteForkView",
@@ -109546,8 +109856,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1003,
-      "struct": 3093
+      "enum": 1008,
+      "struct": 3104
      }
     },
     {
