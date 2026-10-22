@@ -296,10 +296,10 @@ impl Vault {
 
     /// [`Self::open_office_body_fork`] in `wtxn`, the writer that commits
     /// the fork, from `origin`: the try a host bound the opening surface to,
-    /// proved in this same writer (FIX 3551). A DOCX or XLSX member's
-    /// run-and-children scope matches that try alone; `run_root`, the run
-    /// the caller names, is kept as its label. With no origin the fork
-    /// belongs to no run.
+    /// proved in this same writer (FIX 3551). A run-and-children scope, a
+    /// DOCX or XLSX member's or a deck merge's, matches that try alone;
+    /// `run_root`, the run the caller names, is kept as its label. With no
+    /// origin the fork belongs to no run.
     pub(crate) fn open_office_body_fork_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -313,13 +313,14 @@ impl Vault {
             OfficeBodyKind::Pptx if proposal.is_some() => Err(invalid(
                 "a deck fork joins no proposal; its run's approve scope covers it",
             )),
-            OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor, run_root),
+            OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor, run_root, origin),
             kind => {
                 let record =
                     open_typed_body_fork_in_txn(self, wtxn, artifact, kind.schema(), actor)?;
                 consent::join_in_txn(&self.store, wtxn, &record, run_root, origin, proposal)?;
                 let mut fork = fork_view(record);
                 fork.run_root = run_root.copied();
+                fork.origin = origin;
                 Ok(fork)
             }
         }
@@ -338,7 +339,10 @@ impl Vault {
             return Ok(None);
         };
         let mut view = fork_view(record);
-        view.run_root = consent::member_run_root(&self.store, &txn, artifact, fork)?;
+        if let Some(member) = consent::member_of(&self.store, &txn, artifact, fork)? {
+            view.run_root = member.run_root;
+            view.origin = member.origin;
+        }
         Ok(Some(view))
     }
 

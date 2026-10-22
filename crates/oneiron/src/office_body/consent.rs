@@ -374,13 +374,14 @@ pub(super) fn proposal_of(
         .ok_or(Error::EntityNotFound)
 }
 
-/// The run a DOCX or XLSX fork was opened in.
-pub(super) fn member_run_root(
+/// The member a DOCX or XLSX fork is in its proposal: the run its opener
+/// named and the try it was opened from.
+pub(super) fn member_of(
     store: &Store,
     txn: &RoTxn<'_>,
     artifact: &EntityId,
     fork: &EntityId,
-) -> Result<Option<EntityId>> {
+) -> Result<Option<ProposalMember>> {
     let Some(proposal) = MEMBERSHIP.get(store, txn, &(*artifact, *fork))? else {
         return Ok(None);
     };
@@ -391,8 +392,7 @@ pub(super) fn member_run_root(
                 .members
                 .into_iter()
                 .find(|member| member.fork == *fork)
-        })
-        .and_then(|member| member.run_root))
+        }))
 }
 
 /// A discarded fork lets its member go; the proposal closes once no member
