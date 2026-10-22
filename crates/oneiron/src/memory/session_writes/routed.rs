@@ -10,6 +10,11 @@
 //! A claim's subject resolves in the room's view the run's door opened for
 //! its caller, when it opened one; every other ref resolves as the vault
 //! resolves it. Nothing here asks where a caller or the vault runs.
+//!
+//! Each write stages its birth beside its row, and a NOTE its document's
+//! birth (FIX 4280, 4281): the evidence refs its caller supplied are read
+//! here, before the segment opens, and kept whether or not the room reads
+//! them as TURNs (Engine 10-22: no new refusal).
 
 use super::super::support::{id_from_optional_hex, json_to_rmpv, requested_approval};
 use super::super::{
@@ -24,7 +29,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::ErrorKind;
 use crate::note::{NoteBody, encode_note_body};
-use crate::off_record::OffRecordSession;
+use crate::off_record::{OffRecordSession, RoomRowAttachments};
+use crate::provenance::birth::room::SuppliedEvidence;
 use crate::session_overlay::{JournalEntry, SessionWriteRoute};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
@@ -51,7 +57,8 @@ impl SessionReceipt for CommitReceipt {
 }
 
 /// One room write, prepared to stage: the room's shell read for it, its row,
-/// the rows it needs the room to read, its ops, and the receipt it answers.
+/// the rows it needs the room to read, its ops, what stages beside the row
+/// (its birth, a NOTE's document birth), and the receipt it answers.
 pub(crate) struct PreparedSessionWrite<R> {
     conversation: EntityId,
     row: EntityId,
@@ -59,6 +66,7 @@ pub(crate) struct PreparedSessionWrite<R> {
     learned_at: u64,
     needs: Vec<EntityId>,
     ops: Vec<BatchOp>,
+    attachments: RoomRowAttachments,
     receipt: R,
 }
 
@@ -86,6 +94,7 @@ impl<R: SessionReceipt> PreparedSessionWrite<R> {
             self.learned_at,
             &self.needs,
             self.ops,
+            &self.attachments,
         )?;
         Ok(self.receipt.staged_as(short))
     }
@@ -104,6 +113,7 @@ impl<R: SessionReceipt> PreparedSessionWrite<R> {
             self.learned_at,
             &self.needs,
             self.ops,
+            &self.attachments,
         )?;
         Ok(self.receipt.staged_as(short))
     }
@@ -111,7 +121,8 @@ impl<R: SessionReceipt> PreparedSessionWrite<R> {
 
 impl Memory<'_> {
     /// [`Self::create_note_in_session`] prepared on `route`, a route through
-    /// `session`'s room its writer holds.
+    /// `session`'s room its writer holds, naming `evidence` as its caller
+    /// supplied it.
     ///
     /// # Errors
     ///
@@ -122,6 +133,7 @@ impl Memory<'_> {
         route: &SessionWriteRoute,
         kind: &str,
         markdown: &str,
+        evidence: &[String],
     ) -> MemoryResult<PreparedSessionWrite<EntityRefReceipt>> {
         self.admit_session_route(session, route, "vault.notes.create")?;
         let kind = self.vault.note_kind(kind)?;
@@ -177,6 +189,7 @@ impl Memory<'_> {
             });
             needs.push(facet);
         }
+        let evidence = self.supplied_evidence(session, route, None, evidence)?;
         Ok(PreparedSessionWrite {
             conversation: session.overlay_conversation_shell()?,
             row: id,
@@ -184,6 +197,12 @@ impl Memory<'_> {
             learned_at: at,
             needs,
             ops,
+            attachments: RoomRowAttachments::note(
+                crate::WriteActor::new(self.actor, self.actor_class),
+                "vault.notes.create",
+                evidence,
+                at,
+            ),
             receipt: EntityRefReceipt {
                 entity_ref: String::new(),
                 id_hex: id.to_hex(),
@@ -321,6 +340,8 @@ impl Memory<'_> {
             }
             Err(refused) => return Err(refused.into()),
         };
+        let evidence = self.supplied_evidence(session, route, reader, &input.evidence_turn_refs)?;
+        let envelope = self.claim_envelope(source, "vault.claims.upsert", approval)?;
         Ok(PreparedSessionWrite {
             conversation: session.overlay_conversation_shell()?,
             row: id,
@@ -328,6 +349,7 @@ impl Memory<'_> {
             learned_at,
             needs,
             ops,
+            attachments: RoomRowAttachments::claim(&envelope, "vault.claims.upsert", evidence, now),
             receipt: CommitReceipt {
                 claim_short_id: String::new(),
                 approval: approval.as_str().to_owned(),
@@ -337,6 +359,31 @@ impl Memory<'_> {
                 superseded: None,
             },
         })
+    }
+
+    /// The evidence refs `refs` a room write's caller supplied (FIX 4281),
+    /// read in `reader`, the room's view a run's door opened for its caller,
+    /// or else in a view of `session`'s room on `route` under this handle's
+    /// read key. Each is kept, read as a TURN or not; none refuses.
+    ///
+    /// # Errors
+    ///
+    /// The view's own refusal; storage errors.
+    fn supplied_evidence(
+        &self,
+        session: &OffRecordSession<'_>,
+        route: &SessionWriteRoute,
+        reader: Option<&SessionReadContext<'_>>,
+        refs: &[String],
+    ) -> MemoryResult<Vec<SuppliedEvidence>> {
+        if refs.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(reader) = reader {
+            return reader.supplied_evidence(refs);
+        }
+        SessionReadContext::new(self.vault, session, route, self.read_key()?)?
+            .supplied_evidence(refs)
     }
 
     /// One claim candidate's rows in `session`'s room, after its gate
