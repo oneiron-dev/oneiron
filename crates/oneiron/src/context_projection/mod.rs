@@ -49,7 +49,7 @@ pub use self::panel_spec::{
     plan_lead_panel_tasks, validate_lead_panel_spec,
 };
 pub use self::resolution::{
-    CONTEXT_PROJECTION_MAX_ANCESTORS, CONTEXT_SPEC_MEMORY_SCAN_LIMIT, ContextResolutionRequest,
+    CONTEXT_PROJECTION_ANCESTOR_CHECK, CONTEXT_SPEC_MEMORY_SCAN_LIMIT, ContextResolutionRequest,
     ResolvedContextProjection, WorkflowOutputContextRef, resolve_context_spec,
 };
 pub use self::spec::{
