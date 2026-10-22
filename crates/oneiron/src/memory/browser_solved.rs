@@ -4,10 +4,11 @@
 //! with its group ref, its group's generation and its source authority's
 //! reference, in one write. No raw transaction leaves this door.
 //!
-//! The source authority is kept as references and digests only: the exact
-//! credential instrument and door the call was admitted on, and BLAKE3 of
-//! the signed binding it presented, never the binding's bytes. A later use
-//! resolves the live credential from them and verifies it again then.
+//! The source authority is kept beside the evidence, never in it: the exact
+//! credential instrument and door the call was admitted on, and the signed
+//! binding it presented with its BLAKE3 (CUA E8b), kept as a queued turn
+//! action keeps its slip. A later admission job verifies the binding again
+//! against current authority at use, and drops it once it ends.
 //!
 //! An off-record call captures nothing here: the base vault keeps no
 //! evidence of it.
@@ -62,10 +63,8 @@ impl Memory<'_> {
         let reference = credential
             .as_ref()
             .map(|credential| credential.reference().clone());
-        let witness_digest = match (&reference, self.invocation_slip()) {
-            (Some(_), Some(binding)) => Some(witness_digest(binding)?),
-            _ => None,
-        };
+        let witness = reference.as_ref().and(self.invocation_slip()).cloned();
+        let witness_digest = witness.as_ref().map(witness_digest).transpose()?;
         let scope = SolvedRunScope::new(self.actor, self.actor_class, reference.as_ref())?;
         let evidence = SolvedRunEvidence::new(scope.clone(), capture)?;
         let group = evidence.group().digest();
@@ -76,6 +75,7 @@ impl Memory<'_> {
             call_id: evidence.call_id,
             credential: reference,
             witness_digest,
+            witness,
         };
         let value = serde_json::to_string(&evidence)
             .map_err(|_| Error::InvalidClaimBody("solved run evidence"))?;

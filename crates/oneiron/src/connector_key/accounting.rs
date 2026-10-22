@@ -1,3 +1,7 @@
+//! Connector key budget admission and spend settlement.
+//! Entry: `admit_connector_key_dispatches`.
+//! Defines its own items.
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

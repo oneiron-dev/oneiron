@@ -8,7 +8,9 @@
 //! where before the attestation was dropped and the request served as the
 //! host's root. Each route is one registered method and path pattern, never
 //! a prefix: `{..}` is one non-empty path segment, `{*..}` the non-empty rest
-//! of the path. A route that is not registered still answers 404 or 405.
+//! of the path. A HEAD on a GET route selects it too, as the router answers
+//! that HEAD through the GET; the attestation is still verified over HEAD
+//! (FIX 9496). A route that is not registered still answers 404 or 405.
 //!
 //! The owner routes' bodies are held in memory up to the buffered
 //! verification's `MAX_REMOTE_REQUEST_BYTES` (64 MiB) and staged on the
@@ -364,9 +366,17 @@ pub(super) fn staged_route(method: &Method, path: &str) -> Option<Staged> {
 }
 
 fn listed(routes: &[Route], method: &Method, path: &str) -> bool {
-    routes
-        .iter()
-        .any(|(wanted, pattern)| method.as_str() == *wanted && registers(pattern, path))
+    routes.iter().any(|(wanted, pattern)| {
+        registered_method_matches(method, wanted) && registers(pattern, path)
+    })
+}
+
+/// Whether a request's `method` selects a route registered for `wanted`: the
+/// same method, or HEAD on a GET route, which the router answers through
+/// that GET (FIX 9496). Selection only: the proof is verified over the
+/// request's own method.
+pub(super) fn registered_method_matches(method: &Method, wanted: &str) -> bool {
+    method.as_str() == wanted || (*method == Method::HEAD && wanted == Method::GET.as_str())
 }
 
 /// Whether `path` is one that `pattern` registers.

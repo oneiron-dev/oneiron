@@ -3,11 +3,15 @@
 //!
 //! It wakes on the vault's post-commit attempt signal and once at start
 //! (recovery). A step whose leaf is scheduled or backing off has no signal
-//! of its own, so while any workflow is open but waiting the pump also
-//! re-checks on a slow timer; with nothing open it only waits for a signal.
+//! of its own, so the pump sleeps until the earliest such instant, once
+//! (FIX 9467). A held human budget resumes on its owner's act and an
+//! unattached comment's attempts on its reattach, both of which signal
+//! attempts. Only waiting work no change signals keeps the slow recheck,
+//! while it lasts: a payer park (a funding change has no signal), an owed
+//! hold notice, a TASK that did not settle, a wave plan with no instant, or
+//! a pass that failed. With none of these it only waits for a signal.
 //! Each pass also resumes a TASK's attempts held while its comment was
-//! unattached, once the comment is back (OF-368); a reattach signals no
-//! attempt, so while any is held the timer runs too.
+//! unattached, once the comment is back (OF-368).
 //! A failed step goes to the engine's failure ladder ([`super::step_failure`]).
 //! A metered leaf near its cap sends the run's other running agents the
 //! wrap-up warning; with no spend left it is held before its model call, its
@@ -42,12 +46,12 @@ use oneiron::agent_dispatch::{
     AgentDispatcher, BudgetHoldLease, ProjectDetection, ProjectDetectionRun, SpendSignal,
     WorkflowProgress,
 };
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint, AttemptState};
 use oneiron::failure_ladder::FailureLadderOutcome;
 use oneiron::learning::TypeRef;
-use oneiron::self_heal::audit::AttemptConfession;
+use oneiron::self_heal::audit::{AttemptConfession, ObjectiveConfession};
 use oneiron::task_verb::RunnerDoneAnswer;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{Notify, broadcast, watch};
 
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
 use super::step::{StepFault, StepRunner, deliver_hold_notice};
@@ -58,14 +62,31 @@ const LEASE_OWNER: &str = "oneiron-server-workflows";
 /// Project questions lease apart from workflow steps, so a failed step's
 /// settlement never reads one as its own.
 const DETECTION_LEASE_OWNER: &str = "oneiron-server-project-detection";
-/// How often an open-but-waiting workflow is looked at again.
+/// How often waiting work no change signals is looked at again.
 const WAITING_RECHECK: Duration = Duration::from_secs(30);
+
+/// What the pump waits for after a pass, beside the attempt signal (FIX
+/// 9467): the next real scheduled or backoff instant, and whether some
+/// waiting work has no signal that wakes it, which keeps the slow recheck
+/// while it lasts.
+#[derive(Debug, Clone, Copy, Default)]
+struct PumpWake {
+    /// A payer park, an owed hold notice, an unsettled TASK, a wave plan
+    /// with no instant, or a failed sweep or pass.
+    recheck: bool,
+    /// The earliest future `scheduled_at` or `backoff_until` of a waiting
+    /// attempt, in Unix seconds.
+    due: Option<u64>,
+}
 
 pub(super) struct WorkflowPump {
     stop: watch::Sender<bool>,
     thread: std::thread::JoinHandle<()>,
     /// The host's typed project question, once the host holds a ladder for it.
     detection: Arc<OnceLock<ProjectDetection>>,
+    /// Wakes the pump once the host installs its project question, so
+    /// questions queued before it run then (FIX 9467).
+    ready: Arc<Notify>,
 }
 
 impl WorkflowPump {
@@ -81,6 +102,8 @@ impl WorkflowPump {
         let (stop, stopped) = watch::channel(false);
         let detection = Arc::new(OnceLock::new());
         let questions = Arc::clone(&detection);
+        let ready = Arc::new(Notify::new());
+        let installed = Arc::clone(&ready);
         // Waiting from the moment the pump exists, so a status read right
         // after start never sees the pre-start state.
         status.update(|status| status.workflows = WorkStatus::waiting());
@@ -101,13 +124,15 @@ impl WorkflowPump {
                     }
                 };
                 pump(
-                    &runtime, &vault, &runner, &status, &questions, &decisions, stopped,
+                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed,
+                    stopped,
                 );
             })?;
         Ok(Self {
             stop,
             thread,
             detection,
+            ready,
         })
     }
 
@@ -116,7 +141,11 @@ impl WorkflowPump {
     /// question runs on it. Until then the questions wait queued. `false`
     /// when one is installed already.
     pub(super) fn with_project_detection(&self, detection: ProjectDetection) -> bool {
-        self.detection.set(detection).is_ok()
+        let installed = self.detection.set(detection).is_ok();
+        if installed {
+            self.ready.notify_one();
+        }
+        installed
     }
 
     /// Asks the pump to stop between steps, without waiting.
@@ -138,6 +167,7 @@ fn pump(
     status: &StatusCell,
     detection: &OnceLock<ProjectDetection>,
     decisions: &OnceLock<DecisionHost>,
+    ready: &Notify,
     mut stopped: watch::Receiver<bool>,
 ) {
     let mut signals = AttemptQueue::new(vault).subscribe();
@@ -146,20 +176,29 @@ fn pump(
             return;
         }
         ask_project_questions(vault, detection, &stopped);
-        let open = match pump_once(runtime, vault, runner, status, decisions.get(), &stopped) {
-            Ok(open) => open,
+        let wake = match pump_once(runtime, vault, runner, status, decisions.get(), &stopped) {
+            Ok(wake) => wake,
             Err(error) => {
                 tracing::error!(%error, "workflow pump pass failed");
                 status.update(|status| status.workflows.last_error = Some(error.to_string()));
-                true
+                PumpWake {
+                    recheck: true,
+                    due: None,
+                }
             }
         };
+        // One sleep to the next real instant, armed anew after every pass.
+        let until_due = wake
+            .due
+            .map(|due| Duration::from_secs(due.saturating_sub(now_secs())));
         let woke = runtime.block_on(async {
             tokio::select! {
                 biased;
                 _ = stopped.wait_for(|stop| *stop) => false,
                 signal = signals.recv() => !matches!(signal, Err(broadcast::error::RecvError::Closed)),
-                () = tokio::time::sleep(WAITING_RECHECK), if open => true,
+                () = ready.notified() => true,
+                () = tokio::time::sleep(until_due.unwrap_or_default()), if until_due.is_some() => true,
+                () = tokio::time::sleep(WAITING_RECHECK), if wake.recheck => true,
             }
         });
         if !woke {
@@ -170,9 +209,9 @@ fn pump(
     }
 }
 
-/// Runs every open workflow as far as it will go. Returns whether any
-/// workflow is still open, a wave plan is pending, or any attempt is still
-/// held for an unattached comment (and so may need a timed re-check).
+/// Runs every open workflow as far as it will go. Returns what the pump
+/// waits for next: the earliest scheduled or backoff instant of a waiting
+/// attempt, and whether waiting work no change signals is left (FIX 9467).
 fn pump_once(
     runtime: &tokio::runtime::Runtime,
     vault: &Vault,
@@ -180,9 +219,11 @@ fn pump_once(
     status: &StatusCell,
     decisions: Option<&DecisionHost>,
     stopped: &watch::Receiver<bool>,
-) -> oneiron::Result<bool> {
-    let held = match vault.release_annotation_holds() {
-        Ok(sweep) => sweep.held > 0,
+) -> oneiron::Result<PumpWake> {
+    // A held comment's attempts resume on its reattach, which signals; a
+    // sweep that failed is looked at again on the recheck.
+    let mut recheck = match vault.release_annotation_holds() {
+        Ok(_) => false,
         Err(error) => {
             tracing::warn!(%error, "annotation hold release failed");
             true
@@ -191,16 +232,20 @@ fn pump_once(
     if !*stopped.borrow() {
         super::waves::run_once(runtime, vault, runner, status, decisions)?;
     }
-    // A step parked on its payer goes on once the owners said yes (FIX 805).
-    super::payer_funding::resume_payer_parks(vault, LEASE_OWNER, now_secs());
+    // A step parked on its payer goes on once the owners said yes (FIX 805);
+    // a funding change no commit signals is caught on the recheck.
+    recheck |= super::payer_funding::resume_payer_parks(vault, LEASE_OWNER, now_secs()) > 0;
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
         // A notice a crash or a refusal left owed goes out first.
-        deliver_hold_notice(&dispatcher, *root, now_secs());
+        recheck |= deliver_hold_notice(&dispatcher, *root, now_secs());
         loop {
             if *stopped.borrow() {
-                return Ok(true);
+                return Ok(PumpWake {
+                    recheck: true,
+                    due: None,
+                });
             }
             let mut claimed: Option<(AttemptId, u32)> = None;
             let mut retryable = false;
@@ -263,15 +308,26 @@ fn pump_once(
                     match ran {
                         Ok(output) => {
                             // The seal measures the agent that ran, on the
-                            // type the spawn was placed under.
-                            confession = output.confession.and_then(|objectives| {
-                                Some(AttemptConfession {
+                            // type the spawn was placed under. A step asked
+                            // to confess is sealed whether or not its
+                            // confession parsed (FIX 9466): each objective
+                            // it gave no answer for is recorded as none.
+                            let objectives = match output.confession {
+                                Some(confessed) => confessed,
+                                None => output.objectives.into_iter().map(unanswered).collect(),
+                            };
+                            confession = step
+                                .input
+                                .target
+                                .agent_definition_ref()
+                                .ok()
+                                .filter(|_| !objectives.is_empty())
+                                .map(|subject| AttemptConfession {
                                     attempt: step.attempt.id,
-                                    subject: step.input.target.agent_definition_ref().ok()?,
+                                    subject,
                                     type_ref: TypeRef::from(&step.input.type_ref),
                                     objectives,
-                                })
-                            });
+                                });
                             Ok(output.bytes)
                         }
                         // The meter ran out inside the model call: held as
@@ -333,8 +389,11 @@ fn pump_once(
                     }
                 }
             });
-            if progress.is_ok()
-                && let Some(confession) = confession
+            // A leaf that completed durably is sealed, and so stays in the
+            // random-audit pool, even when advancing its wrapper did not
+            // (FIX 9466).
+            if let Some(confession) = confession
+                && leaf_completed(vault, confession.attempt)
             {
                 seal(vault, &confession);
             }
@@ -343,7 +402,7 @@ fn pump_once(
             // goes to the owners now.
             if held.is_some() {
                 tracing::info!(?root, "a workflow is held at its spend cap");
-                deliver_hold_notice(&dispatcher, *root, now_secs());
+                recheck |= deliver_hold_notice(&dispatcher, *root, now_secs());
                 break;
             }
             // The parked step's workflow waits with it; the owners' ask is
@@ -368,6 +427,7 @@ fn pump_once(
                         }],
                         None => held_leases(vault, LEASE_OWNER).unwrap_or_else(|list| {
                             tracing::error!(%list, "held workflow leases could not be listed");
+                            recheck = true;
                             Vec::new()
                         }),
                     };
@@ -383,6 +443,8 @@ fn pump_once(
                             Err(settlement) => {
                                 tracing::error!(kind = ?settlement.kind(), leaf = ?step.leaf, "failed step was not settled");
                                 released = false;
+                                // An unsettled lease is looked at again.
+                                recheck = true;
                             }
                         }
                     }
@@ -396,8 +458,28 @@ fn pump_once(
             }
         }
     }
-    let unsettled = settle_workflow_tasks(vault, decisions);
-    let wave_pending = AttemptQueue::new(vault).list()?.iter().any(|attempt| {
+    recheck |= settle_workflow_tasks(vault, decisions);
+    let attempts = AttemptQueue::new(vault).list()?;
+    let now = now_secs();
+    // A scheduled or backing-off try wakes the pump at its own instant, the
+    // readiness instant its claim reads.
+    let instant = |attempt: &oneiron::attempt_queue::AttemptRecord| {
+        if !matches!(
+            attempt.state,
+            oneiron::attempt_queue::AttemptState::Queued
+                | oneiron::attempt_queue::AttemptState::Scheduled
+        ) {
+            return None;
+        }
+        attempt
+            .scheduled_at
+            .or(attempt.backoff_until)
+            .filter(|due| *due > now)
+    };
+    let due = attempts.iter().filter_map(instant).min();
+    // A wave plan with no instant of its own (queued or leased) keeps the
+    // recheck, as it did.
+    recheck |= attempts.iter().any(|attempt| {
         attempt.kind == oneiron::wave_orchestration::WAVE_PLAN_ATTEMPT_KIND
             && matches!(
                 attempt.state,
@@ -405,8 +487,9 @@ fn pump_once(
                     | oneiron::attempt_queue::AttemptState::Scheduled
                     | oneiron::attempt_queue::AttemptState::Leased
             )
+            && instant(attempt).is_none()
     });
-    Ok(held || wave_pending || unsettled || !dispatcher.open_workflow_roots()?.is_empty())
+    Ok(PumpWake { recheck, due })
 }
 
 /// Settles the TASK each ended run that realizes one still owes it, one
@@ -488,6 +571,29 @@ fn ask_project_questions(
 fn seal(vault: &Vault, confession: &AttemptConfession) {
     if let Err(error) = vault.record_attempt_confession(confession, now_secs()) {
         tracing::warn!(kind = ?error.kind(), attempt = ?confession.attempt, "a workflow leaf's confession was not sealed");
+    }
+}
+
+/// An objective a step was asked to confess against and gave no answer for:
+/// recorded as none, never filled in (FIX 9466).
+fn unanswered(objective: String) -> ObjectiveConfession {
+    ObjectiveConfession {
+        objective,
+        met: None,
+        flaw: None,
+        uncertainty: None,
+    }
+}
+
+/// Whether the leaf `attempt` settled Completed, read now. One that does not
+/// read is logged and left unsealed; its work stands.
+fn leaf_completed(vault: &Vault, attempt: AttemptId) -> bool {
+    match AttemptQueue::new(vault).get(attempt) {
+        Ok(record) => record.is_some_and(|record| record.state == AttemptState::Completed),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), ?attempt, "a workflow leaf's state did not read; it is not sealed");
+            false
+        }
     }
 }
 

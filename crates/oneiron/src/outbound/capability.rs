@@ -1,3 +1,7 @@
+//! Outbound capability vocabulary and registry reads.
+//! Entry: `outbound_capability_manifests`.
+//! Defines its own items.
+
 use std::sync::OnceLock;
 
 use serde::Serialize;

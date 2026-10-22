@@ -123,5 +123,15 @@ pub(super) fn source_in_txn(
     else {
         return Ok(None);
     };
+    // A NOTE source sits at one world it is in that the lane holds, else at
+    // base reality as before (FIX-LIST 9433).
+    let scope = crate::federation::record_scope::note_world::source_position(
+        &lane.store_read(),
+        txn,
+        shown.id,
+        kind,
+        scope,
+        &[&lane.actor_key().world_ceiling().worlds],
+    );
     Source::fitted(kind, &raw, &scope).map(Some)
 }

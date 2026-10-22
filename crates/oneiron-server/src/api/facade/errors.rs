@@ -136,6 +136,10 @@ impl From<MemoryError> for FacadeApiError {
             crate::slide_render::RENDER_DEADLINE
             | crate::slide_render::RENDER_MEMORY_FLOOR
             | crate::slide_render::RENDER_DISK_FLOOR => StatusCode::SERVICE_UNAVAILABLE,
+            // FIX 5325: a hosted vault paused for its reap answers what its
+            // served writes answer (K18): temporary, and lifted by the reap's
+            // abort or the vault's wake, never this server's failure.
+            crate::managed::WRITES_FROZEN_TAG => StatusCode::SERVICE_UNAVAILABLE,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
