@@ -148,10 +148,12 @@ impl MergeQueue<'_> {
             let Some(candidate) = source.received_candidate() else {
                 continue;
             };
-            if let Some((link, new_tree)) = self
+            // The tree a complete link names: the submitted one, or a masked
+            // copy's canonical translated target (FIX 7608 2b-ii-B2, P8).
+            if let Some((link, target_tree)) = self
                 .vault
                 .received_push_source_link(source.provenance_claim, candidate)?
-                && new_tree == tree
+                && target_tree == tree
             {
                 pushes.push(link);
             }

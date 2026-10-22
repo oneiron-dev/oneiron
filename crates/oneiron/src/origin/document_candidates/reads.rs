@@ -67,7 +67,7 @@ impl Vault {
 
     /// The source row of the candidate `candidate` among the push
     /// `provenance`'s refs, in `txn`.
-    fn received_candidate_row_in_txn(
+    pub(super) fn received_candidate_row_in_txn(
         &self,
         txn: &RoTxn<'_>,
         provenance: EntityId,
@@ -124,6 +124,23 @@ impl Vault {
         else {
             return Ok(None);
         };
+        // A masked copy's candidate links its canonical translation, proved
+        // again here; its seal compares the canonical target tree, never the
+        // submitted one (FIX 7608 2b-ii-B2, P8).
+        let projection = match &attached.projected {
+            None => None,
+            Some(pins) => {
+                let Some(link) = projected_source_link(self, &txn, provenance, candidate, pins)?
+                else {
+                    return Ok(None);
+                };
+                Some(link)
+            }
+        };
+        let target_tree = projection.as_ref().map_or_else(
+            || resolved.new_tree.clone(),
+            |link| link.canonical_target_tree.clone(),
+        );
         Ok(Some((
             CodePushSourceLink {
                 candidate,
@@ -134,9 +151,9 @@ impl Vault {
                 new_commit: new_commit.clone(),
                 base_revision: resolved.base_revision,
                 candidate_digest: candidate_digest(attached)?,
-                projection: None,
+                projection,
             },
-            resolved.new_tree.clone(),
+            target_tree,
         )))
     }
 
@@ -162,11 +179,14 @@ impl Vault {
             batch_refs: Vec::new(),
             check_work_refs: Vec::new(),
             revision_refs: Vec::new(),
+            detail: None,
         };
         if let Some(held) = &candidate.hold {
             view.state = held.state;
             view.reason = Some(held.reason.clone());
         }
+        // A masked copy's typed hold names its ruled status text (FIX 9237).
+        view.detail = super::projected_clearance::projection_hold_detail(candidate);
         let Some(resolved) = &candidate.resolved else {
             return Ok(Some(view));
         };
@@ -205,6 +225,45 @@ impl Vault {
                 RepoProposalStatus::Rejected => CodePushCandidateState::Rejected,
             },
         };
+        // An active projection hold wins over the proposal's progress, its
+        // links kept (FIX 7608 2b-ii-B2).
+        if let (Some(_), Some(held)) = (&view.detail, &candidate.hold) {
+            view.state = held.state;
+        }
         Ok(Some(view))
     }
+}
+
+/// The projection link of a masked copy's candidate: its source proved
+/// again (the ingress proof of its operation and its translation record),
+/// with its canonical base and target. `None` when either no longer stands
+/// or no canonical target resolved: no complete link is earned.
+fn projected_source_link(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    provenance: EntityId,
+    candidate: EntityId,
+    pins: &super::projected::RepoProjectedCandidatePins,
+) -> Result<Option<crate::merge_queue::CodePushProjectionSourceLink>> {
+    let Some(operation) = super::projected_join::receive_operation_in_txn(vault, txn, provenance)?
+    else {
+        return Ok(None);
+    };
+    if !super::projected_source::require_projected_candidate_source_in_txn(
+        vault, txn, pins, candidate, operation,
+    )? {
+        return Ok(None);
+    }
+    let (Some(base), Some(target)) = (&pins.canonical_base, &pins.canonical_target_tree) else {
+        return Ok(None);
+    };
+    Ok(Some(crate::merge_queue::CodePushProjectionSourceLink {
+        graph: pins.graph,
+        ingress: pins.ingress,
+        submitted_old: pins.submitted_old.clone(),
+        submitted_new: pins.submitted_new.clone(),
+        canonical_base: base.clone(),
+        canonical_target_tree: target.clone(),
+        pins_digest: pins.digest(),
+    }))
 }

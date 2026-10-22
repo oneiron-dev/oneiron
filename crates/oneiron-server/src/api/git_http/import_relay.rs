@@ -285,6 +285,14 @@ impl RelayState {
     }
 }
 
+/// The read recipient of a relayed import (FIX 7608 2b-ii-B2): the relay
+/// serves receive-pack only, carrying an external source's history, never
+/// a masked copy's, so it takes today's receive path; no byte is read
+/// through it (upload-pack is refused above).
+fn relay_read_context() -> smart_http::RepoGitReadContext {
+    smart_http::RepoGitReadContext::exact()
+}
+
 /// `GET <relay>/info/refs?service=git-receive-pack`: the advertisement.
 async fn relay_info_refs(
     State(relay): State<Arc<RelayState>>,
@@ -317,6 +325,7 @@ async fn relay_info_refs(
         request,
         Body::empty(),
         push_caller(&auth),
+        relay_read_context(),
     )
     .await;
     relay.observed(response)
@@ -354,6 +363,7 @@ async fn relay_receive_pack(
         request,
         body,
         push_caller(&auth),
+        relay_read_context(),
     )
     .await;
     relay.observed(response)
