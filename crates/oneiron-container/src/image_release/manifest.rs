@@ -255,6 +255,18 @@ pub struct VaultContractRevisions {
     pub vm_anchor_proxy_revision: u32,
     pub vm_network_revision: u32,
     pub vm_managed_profile_revision: u32,
+    /// Whether the image's init hands each line of a config drive's
+    /// `trusted-organ-builds` to the engine: the revision of that capability,
+    /// or 0 for an image without it (FIX 7889). It never says a list was
+    /// staged. Factual metadata: no admission or boot gate reads it (FIX
+    /// 9344).
+    pub vm_trusted_organ_builds_revision: u32,
+    /// The guest runtime the image stages, as measured from the built image:
+    /// its revision when the image holds the whole runtime, its descriptor
+    /// beside it, and 0 when it holds none. Never a source constant, and it
+    /// never says a guest started. Factual metadata: no admission or boot
+    /// gate reads it (FIX 9344).
+    pub vm_guest_runtime_revision: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,7 +296,11 @@ pub struct SourcePin {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseArtifacts {
-    pub oci: OciArtifacts,
+    /// The OCI form. Required: `null` only for a standalone Firecracker vault
+    /// image, which ships its rootfs and its kernel image and no OCI archive
+    /// (FIX 9352); every builder output names its real OCI form.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub oci: Option<OciArtifacts>,
     pub rootfs_ext4: FileArtifact,
     pub kernel: KernelRef,
 }
@@ -405,8 +421,17 @@ impl ImageReleaseManifest {
             return Err(ManifestError::Field("generation"));
         }
         let a = &manifest.artifacts;
+        // No OCI form is the standalone Firecracker vault image's alone,
+        // which binds its kernel image instead.
+        if a.oci.is_none() && (manifest.variant != ImageVariant::Vault || a.kernel.image.is_none())
+        {
+            return Err(ManifestError::Field("artifacts.oci"));
+        }
         let paths = [
-            ("artifacts.oci.archive.path", Some(&a.oci.archive.path)),
+            (
+                "artifacts.oci.archive.path",
+                a.oci.as_ref().map(|oci| &oci.archive.path),
+            ),
             ("artifacts.rootfs_ext4.path", Some(&a.rootfs_ext4.path)),
             ("artifacts.kernel.config.path", Some(&a.kernel.config.path)),
             (

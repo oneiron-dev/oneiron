@@ -60,7 +60,7 @@
 
 mod anchor;
 mod config_drive;
-mod fscrypt;
+pub(in crate::managed) mod fscrypt;
 mod guest_runtime;
 mod layout;
 mod network;

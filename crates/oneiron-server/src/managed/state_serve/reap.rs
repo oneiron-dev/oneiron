@@ -11,7 +11,7 @@ use oneiron_vault_contract::{CtlResponse, validate_wake_entries};
 use super::ManagedState;
 use super::admission::InFlightCounts;
 use crate::managed::ManagedError;
-use crate::managed::ledger::LedgerSnapshot;
+use crate::managed::ledger::FrozenReport;
 
 /// What a reap's freeze, drain and export found
 /// ([`ManagedState::freeze_drain_export`]).
@@ -21,9 +21,9 @@ pub(super) struct Prepared {
     pub(super) at_freeze: InFlightCounts,
     /// Whether the lease table drained.
     pub(super) drained: bool,
-    pub(super) ledger_rev: u64,
-    /// The exported entries and training setting at `ledger_rev`.
-    pub(super) report: LedgerSnapshot,
+    /// The exported entries and training setting, held whole for the
+    /// supervisor's pull until `ledger_pulled` or `reap_abort` (FIX 9549).
+    pub(super) report: FrozenReport,
 }
 
 impl ManagedState {
@@ -85,9 +85,7 @@ impl ManagedState {
         let prepared = self.freeze_drain_export().await?;
         Ok(CtlResponse::PrepareReap {
             quiescent: self.quiescent(prepared.at_freeze.total(), prepared.drained),
-            ledger_rev: prepared.ledger_rev,
-            next_wake: prepared.report.entries,
-            training: prepared.report.training,
+            ledger: prepared.report.head,
         })
     }
 
@@ -119,19 +117,18 @@ impl ManagedState {
         at_freeze: InFlightCounts,
     ) -> Result<Prepared, ManagedError> {
         let drained = self.drain_lease_table().await;
-        let (ledger_rev, report) = self.ledger.export_at_freeze(&self.server).await?;
-        // The reply carries the entries, so they are bounds-checked before
-        // they are serialized rather than after a supervisor has trusted them,
+        let report = self.ledger.export_at_freeze(&self.server).await?;
+        // The pages carry the entries, so they are bounds-checked before
+        // they are served rather than after a supervisor has trusted them,
         // and the training setting is shape-checked with them.
-        validate_wake_entries(&report.entries)
-            .and_then(|()| report.training.validate())
+        validate_wake_entries(&report.snapshot.entries)
+            .and_then(|()| report.snapshot.training.validate())
             .map_err(|error| ManagedError::LedgerRefused {
                 reason: error.to_string(),
             })?;
         Ok(Prepared {
             at_freeze,
             drained,
-            ledger_rev,
             report,
         })
     }

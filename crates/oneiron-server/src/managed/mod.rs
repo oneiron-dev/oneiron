@@ -85,7 +85,8 @@ mod vm_schedule;
 #[cfg(target_os = "linux")]
 pub use self::vm_host::{
     SleepOutcome, VaultVm, VaultVmConfig, VaultVmInspect, VaultVmRun, VmAnchorHostIo, VmExitWatch,
-    VmRestoreFds, VmRestoreHostIo, inspect_vault_vm, run_vault_vm,
+    VmRestoreFds, VmRestoreHostIo, VmSnapshotCustody, VmSnapshotCustodyUnavailable,
+    inspect_vault_vm, run_vault_vm,
 };
 #[cfg(target_os = "linux")]
 pub use self::vm_init::run_vm_init;
@@ -99,7 +100,7 @@ pub use self::key_sync::{
     KeyInvalidation, KeyInvalidationAck, KeyInvalidationKind, account_keys,
     account_keys_from_vault_config, apply_key_invalidation, verdict_lease_from_vault,
 };
-pub use self::ledger::{LEDGER_REV_KEY, LedgerSnapshot, WakeLedger};
+pub use self::ledger::{FrozenReport, LEDGER_REV_KEY, LedgerSnapshot, WakeLedger};
 pub use self::listener::{
     BoundServeListener, HYPNOS_LISTEN_FD, ManagedCtl, ServeListener, adopt_listen_fd, signal_ready,
 };

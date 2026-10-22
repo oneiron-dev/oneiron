@@ -8,8 +8,9 @@ use std::time::Duration;
 use loro::{LoroValue, ValueOrContainer};
 use oneiron::sync::lease::{self, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron_vault_contract::{
-    Credentials, LedgerAck, LedgerUpdate, MAX_CTL_LINE, ManagedTrainingSetting, Schedule, TokenHex,
-    WakeEntry, now_ts, validate_wake_entries,
+    Credentials, LedgerAck, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReportHead,
+    LedgerUpdate, MAX_CTL_LINE, ManagedTrainingSetting, Schedule, TokenHex, WakeEntry, now_ts,
+    validate_wake_entries,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -26,15 +27,17 @@ pub const LEDGER_REV_KEY: &str = "managed:ledger_rev:v1";
 /// left behind. Exit must never block on a dead supervisor.
 const LEDGER_RETRY_DELAY: Duration = Duration::from_millis(200);
 
-/// How long one whole push attempt — connect, write, and the supervisor's ack —
-/// may take before it is abandoned.
+/// How long one step of a push attempt — the connect, or one page's write and
+/// the supervisor's ack of it — may take before the attempt is abandoned.
 ///
 /// "Exactly one retry, then proceed" bounds nothing unless an attempt is itself
-/// bounded, and none of those three steps is bounded on its own. A supervisor
-/// that accepted the connection and then went quiet is indistinguishable from a
+/// bounded, and none of those steps is bounded on its own. A supervisor that
+/// accepted the connection and then went quiet is indistinguishable from a
 /// live one that is about to answer, so this is the width of that doubt: long
 /// enough that a loaded-but-live supervisor still gets its ack in, short enough
-/// that two attempts and one backoff stay well inside a shutdown grace.
+/// that two attempts and one backoff stay well inside a shutdown grace. It
+/// bounds each page, never the whole report (FIX 9549): a supervisor that
+/// keeps answering takes a report of any size.
 const LEDGER_PUSH_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Lease expiry is swept on a cadence rather than at an instant, so the wake
@@ -62,21 +65,42 @@ const WAKE_ID_HOUSEKEEPING: &str = "housekeeping";
 /// The vault's wake ledger: what the engine wants to be woken for, and when,
 /// reported with the vault's live training setting.
 ///
-/// Two delivery paths over the same report ([`LedgerSnapshot`]). The pull
-/// path rides the `prepare_reap` reply; the push path is a `ledger_update` on
-/// the supervisor's socket, sent when the report changes. The revision
-/// persists in the vault so a restart resumes the supervisor's ordering rather
-/// than replaying it from zero.
+/// Two delivery paths over the same report ([`LedgerSnapshot`]), both in
+/// bounded pages (FIX 9549). The pull path is the report a freeze holds,
+/// which the `prepare_reap` reply names and `ledger_page` reads; the push
+/// path is a `ledger_update` page sequence on the supervisor's socket, sent
+/// when the report changes. The revision persists in the vault so a restart
+/// resumes the supervisor's ordering rather than replaying it from zero.
 pub struct WakeLedger {
     vault: Arc<oneiron::Vault>,
     vault_name: String,
     hypnos_socket: PathBuf,
     token: TokenHex,
     rev: AtomicU64,
-    /// The last report the supervisor took, by push ack or by the pull. Its
-    /// lock is held from reading a report to assigning it a revision, so no
-    /// older report ever goes out under a newer revision.
-    last_exported: Mutex<Option<LedgerSnapshot>>,
+    /// What the supervisor took and what a freeze holds for it. Its lock is
+    /// held from reading a report to assigning it a revision, so no older
+    /// report ever goes out under a newer revision.
+    exported: Mutex<Exported>,
+}
+
+/// The reports [`WakeLedger::exported`] keeps.
+#[derive(Default)]
+struct Exported {
+    /// The last report the supervisor took: a push it committed, or a frozen
+    /// report it said it holds (`ledger_pulled`).
+    taken: Option<LedgerSnapshot>,
+    /// The report the last freeze holds for its pull, until `ledger_pulled`
+    /// takes it or `reap_abort` drops it (FIX 9549). A closed reply never
+    /// drops it.
+    frozen: Option<FrozenReport>,
+}
+
+/// A report a freeze holds for its pull: its head, which `prepare_reap`
+/// names, and what it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrozenReport {
+    pub head: LedgerReportHead,
+    pub snapshot: LedgerSnapshot,
 }
 
 /// One ledger report: the wake entries and the vault's live training setting
@@ -118,7 +142,7 @@ impl WakeLedger {
             hypnos_socket,
             token: TokenHex::from_token(&credentials.token),
             rev: AtomicU64::new(rev),
-            last_exported: Mutex::new(None),
+            exported: Mutex::new(Exported::default()),
         })
     }
 
@@ -222,19 +246,87 @@ impl WakeLedger {
     }
 
     /// Export-at-freeze for the pull path: refreshes the report and, when it
-    /// changed, advances and persists the revision so the `ledger_rev` the
-    /// supervisor sees keeps moving forward across restarts.
+    /// changed, advances and persists the revision so the revision the
+    /// supervisor sees keeps moving forward across restarts. The report is
+    /// held whole for its pages until `ledger_pulled` or `reap_abort`; a
+    /// freeze that finds it unchanged holds the same one.
     pub async fn export_at_freeze(
         &self,
         server: &SyncServer,
-    ) -> Result<(u64, LedgerSnapshot), ManagedError> {
-        let mut last = self.last_exported.lock().await;
+    ) -> Result<FrozenReport, ManagedError> {
+        let mut exported = self.exported.lock().await;
         let snapshot = self.snapshot(server)?;
-        if last.as_ref() != Some(&snapshot) {
-            self.advance_rev()?;
-            *last = Some(snapshot.clone());
+        if let Some(frozen) = exported
+            .frozen
+            .as_ref()
+            .filter(|frozen| frozen.snapshot == snapshot)
+        {
+            return Ok(frozen.clone());
         }
-        Ok((self.rev(), snapshot))
+        let rev = if exported.taken.as_ref() == Some(&snapshot) {
+            self.rev()
+        } else {
+            self.advance_rev()?
+        };
+        let frozen = FrozenReport {
+            head: LedgerReportHead::of(
+                &self.vault_name,
+                rev,
+                &snapshot.entries,
+                &snapshot.training,
+            ),
+            snapshot,
+        };
+        exported.frozen = Some(frozen.clone());
+        Ok(frozen)
+    }
+
+    /// One page of the report the freeze holds (`ledger_page`, FIX 9549),
+    /// for a request that carries this vault's name and spawn token and
+    /// names that report.
+    pub(super) async fn frozen_page(
+        &self,
+        request: &LedgerPageRequest,
+    ) -> Result<LedgerPage, ManagedError> {
+        self.authenticate(&request.vault, &request.token)?;
+        let exported = self.exported.lock().await;
+        let frozen = frozen_named(&exported, request.rev, &request.report_digest)?;
+        frozen
+            .head
+            .page(
+                &frozen.snapshot.entries,
+                &frozen.snapshot.training,
+                request.offset,
+            )
+            .map_err(|error| ManagedError::CtlRequestRefused {
+                reason: error.to_string(),
+            })
+    }
+
+    /// The supervisor holds the frozen report durably (`ledger_pulled`): it
+    /// is the report the supervisor took, and the freeze holds it no longer.
+    pub(super) async fn pulled(&self, request: &LedgerPulledRequest) -> Result<(), ManagedError> {
+        self.authenticate(&request.vault, &request.token)?;
+        let mut exported = self.exported.lock().await;
+        frozen_named(&exported, request.rev, &request.report_digest)?;
+        exported.taken = exported.frozen.take().map(|frozen| frozen.snapshot);
+        Ok(())
+    }
+
+    /// Drops the report the freeze holds: the reap was aborted.
+    pub(super) async fn drop_frozen(&self) {
+        self.exported.lock().await.frozen = None;
+    }
+
+    /// Refuses a pull request that does not carry this vault's name and
+    /// spawn token.
+    fn authenticate(&self, vault: &str, token: &TokenHex) -> Result<(), ManagedError> {
+        if vault == self.vault_name && token.ct_eq(&self.token) {
+            return Ok(());
+        }
+        Err(ManagedError::CtlRequestRefused {
+            reason: "foreign ledger pull".to_owned(),
+        })
     }
 
     /// Push-on-change: sends a `ledger_update` only when the report actually
@@ -242,12 +334,12 @@ impl WakeLedger {
     ///
     /// Returns whether a push was both needed and accepted.
     pub async fn push_if_changed(&self, server: &SyncServer) -> Result<bool, ManagedError> {
-        let mut last = self.last_exported.lock().await;
+        let mut exported = self.exported.lock().await;
         let snapshot = self.snapshot(server)?;
-        if last.as_ref() == Some(&snapshot) {
+        if exported.taken.as_ref() == Some(&snapshot) {
             return Ok(false);
         }
-        self.push_report(&mut last, snapshot).await
+        self.push_report(&mut exported.taken, snapshot).await
     }
 
     /// Push-on-change for the training setting while the vault runs: sends
@@ -260,9 +352,10 @@ impl WakeLedger {
         &self,
         server: &SyncServer,
     ) -> Result<bool, ManagedError> {
-        let mut last = self.last_exported.lock().await;
+        let mut exported = self.exported.lock().await;
         let training = self.training()?;
-        if last
+        if exported
+            .taken
             .as_ref()
             .is_some_and(|reported| reported.training == training)
         {
@@ -272,7 +365,7 @@ impl WakeLedger {
             entries: self.export(server)?,
             training,
         };
-        self.push_report(&mut last, snapshot).await
+        self.push_report(&mut exported.taken, snapshot).await
     }
 
     /// Advances the revision and pushes `snapshot` under it, with `last`
@@ -291,77 +384,56 @@ impl WakeLedger {
         Ok(accepted)
     }
 
-    /// One push attempt: validate, frame, send, await the ack — the whole
-    /// attempt under a deadline.
+    /// One push attempt: the report's pages in order on one connection, each
+    /// validated, framed, sent and acked before the next, and the last acked
+    /// committed (FIX 9549). The connect and each page's exchange run under
+    /// [`LEDGER_PUSH_TIMEOUT`].
     ///
-    /// The deadline covers the attempt rather than the ack alone because all
-    /// three of connect, write and read are unbounded against a supervisor that
-    /// is connected and silent, and any one of them parking is the same
-    /// outcome: this process never comes back. Both callers are on paths that
-    /// must not stall — the opening push happens after the ready byte and
-    /// before the HTTP serve, and the final one is the last thing before exit —
-    /// and `push_with_retry`'s "one retry, then proceed" only bounds them if an
-    /// attempt is itself bounded. Timing out is a typed refusal like any other
-    /// push failure, so the retry policy above is unchanged by it.
+    /// Each step is bounded because connect, write and read are all unbounded
+    /// against a supervisor that is connected and silent, and any one of them
+    /// parking is the same outcome: this process never comes back. Both
+    /// callers are on paths that must not stall — the opening push happens
+    /// after the ready byte and before the HTTP serve, and the final one is the
+    /// last thing before exit — and `push_with_retry`'s "one retry, then
+    /// proceed" only bounds them if an attempt's steps are bounded. The bound
+    /// is per page, so a supervisor that keeps answering takes every page.
+    /// Timing out is a typed refusal like any other push failure, so the retry
+    /// policy above is unchanged by it.
     pub async fn push_once(&self, rev: u64, snapshot: &LedgerSnapshot) -> Result<(), ManagedError> {
-        match tokio::time::timeout(LEDGER_PUSH_TIMEOUT, self.push_attempt(rev, snapshot)).await {
-            Ok(result) => result,
-            Err(_elapsed) => Err(ManagedError::LedgerAckTimeout {
-                after: LEDGER_PUSH_TIMEOUT,
-            }),
-        }
-    }
-
-    /// The attempt itself, with no deadline of its own: [`Self::push_once`] is
-    /// the only caller and it is what bounds this.
-    async fn push_attempt(&self, rev: u64, snapshot: &LedgerSnapshot) -> Result<(), ManagedError> {
-        let update = LedgerUpdate {
-            op: "ledger_update".to_owned(),
-            vault: self.vault_name.clone(),
-            token: self.token.clone(),
-            rev,
-            entries: snapshot.entries.clone(),
-            training: snapshot.training.clone(),
-        };
-        // Validate before sending, not after: an update this side would refuse
-        // to receive is one this side must refuse to emit.
-        update
-            .validate()
-            .map_err(|error| ManagedError::LedgerRefused {
-                reason: error.to_string(),
-            })?;
-        let line = serde_json::to_string(&update).map_err(|error| ManagedError::LedgerRefused {
-            reason: error.to_string(),
-        })?;
-        if line.len() > MAX_CTL_LINE {
-            return Err(ManagedError::CtlLineTooLong {
-                len: line.len(),
-                cap: MAX_CTL_LINE,
-            });
-        }
-
-        let stream = UnixStream::connect(&self.hypnos_socket).await?;
+        let head =
+            LedgerReportHead::of(&self.vault_name, rev, &snapshot.entries, &snapshot.training);
+        let stream = bounded(async {
+            Ok::<_, ManagedError>(UnixStream::connect(&self.hypnos_socket).await?)
+        })
+        .await?;
         let (reader, mut writer) = stream.into_split();
-        writer.write_all(line.as_bytes()).await?;
-        writer.write_all(b"\n").await?;
-        writer.flush().await?;
-
-        let mut reader = BufReader::new(reader.take(MAX_CTL_LINE as u64 + 2));
-        let mut ack_line = String::new();
-        reader.read_line(&mut ack_line).await?;
-        let ack: LedgerAck = serde_json::from_str(ack_line.trim_end_matches(['\r', '\n']))
-            .map_err(|error| ManagedError::LedgerRefused {
-                reason: error.to_string(),
-            })?;
-        if ack.ok {
-            Ok(())
-        } else {
-            Err(ManagedError::LedgerRefused {
-                reason: ack
-                    .error
-                    .unwrap_or_else(|| "supervisor rejected the ledger update".to_owned()),
-            })
+        let mut reader = BufReader::new(reader);
+        for offset in head.offsets() {
+            let page = head
+                .page(&snapshot.entries, &snapshot.training, offset)
+                .map_err(|error| ManagedError::LedgerRefused {
+                    reason: error.to_string(),
+                })?;
+            let last = offset + page.entries.len() as u64 >= head.total;
+            let update = LedgerUpdate {
+                op: "ledger_update".to_owned(),
+                vault: self.vault_name.clone(),
+                token: self.token.clone(),
+                page,
+            };
+            let ack = bounded(push_page(&mut reader, &mut writer, &update)).await?;
+            // A page's receipt names its report and offset; only the last
+            // page's ack may, and must, say the report is committed.
+            if ack.report.as_ref() != Some(&head)
+                || ack.offset != Some(offset)
+                || ack.committed != last
+            {
+                return Err(ManagedError::LedgerRefused {
+                    reason: "the supervisor answered another ledger page".to_owned(),
+                });
+            }
         }
+        Ok(())
     }
 
     /// Retry discipline: exactly one retry, after 200 ms, then log and
@@ -413,6 +485,79 @@ fn read_persisted_rev(vault: &oneiron::Vault) -> Result<u64, ManagedError> {
         ManagedError::VaultMeta(format!("`{LEDGER_REV_KEY}` row is {len} bytes, expected 8"))
     })?;
     Ok(u64::from_le_bytes(bytes))
+}
+
+/// The frozen report `exported` holds when it is the one `rev` and
+/// `report_digest` name.
+fn frozen_named<'a>(
+    exported: &'a Exported,
+    rev: u64,
+    report_digest: &str,
+) -> Result<&'a FrozenReport, ManagedError> {
+    exported
+        .frozen
+        .as_ref()
+        .filter(|frozen| frozen.head.rev == rev && frozen.head.report_digest == report_digest)
+        .ok_or_else(|| ManagedError::CtlRequestRefused {
+            reason: "no frozen ledger report has that revision and digest".to_owned(),
+        })
+}
+
+/// `step` under [`LEDGER_PUSH_TIMEOUT`]; running past it is a typed refusal.
+async fn bounded<T>(
+    step: impl std::future::Future<Output = Result<T, ManagedError>>,
+) -> Result<T, ManagedError> {
+    tokio::time::timeout(LEDGER_PUSH_TIMEOUT, step)
+        .await
+        .unwrap_or(Err(ManagedError::LedgerAckTimeout {
+            after: LEDGER_PUSH_TIMEOUT,
+        }))
+}
+
+/// One page: validated, framed and sent, then its ack read and checked ok.
+async fn push_page(
+    reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    update: &LedgerUpdate,
+) -> Result<LedgerAck, ManagedError> {
+    // Validate before sending, not after: an update this side would refuse
+    // to receive is one this side must refuse to emit.
+    update
+        .validate()
+        .map_err(|error| ManagedError::LedgerRefused {
+            reason: error.to_string(),
+        })?;
+    let line = serde_json::to_string(update).map_err(|error| ManagedError::LedgerRefused {
+        reason: error.to_string(),
+    })?;
+    if line.len() > MAX_CTL_LINE {
+        return Err(ManagedError::CtlLineTooLong {
+            len: line.len(),
+            cap: MAX_CTL_LINE,
+        });
+    }
+    writer.write_all(line.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    let mut ack_line = String::new();
+    reader
+        .take(MAX_CTL_LINE as u64 + 2)
+        .read_line(&mut ack_line)
+        .await?;
+    let ack: LedgerAck =
+        serde_json::from_str(ack_line.trim_end_matches(['\r', '\n'])).map_err(|error| {
+            ManagedError::LedgerRefused {
+                reason: error.to_string(),
+            }
+        })?;
+    if !ack.ok {
+        return Err(ManagedError::LedgerRefused {
+            reason: ack
+                .error
+                .unwrap_or_else(|| "supervisor rejected the ledger update".to_owned()),
+        });
+    }
+    Ok(ack)
 }
 
 /// job_ready head probe: any durable row in the vault's sync queue means there

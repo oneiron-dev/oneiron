@@ -5,6 +5,10 @@ use clap::Args;
 use std::fmt;
 use std::path::PathBuf;
 
+/// How long a vault VM goes without traffic before it sleeps, when
+/// `--idle-secs` names no other: the ruled 15-minute baseline (FIX 9473).
+const DEFAULT_VM_IDLE_SECS: u64 = 900;
+
 #[derive(Args, Clone)]
 pub struct HostVmArgs {
     /// JSON VM profile: firecracker, kernel, rootfs, vault_disk, state_dir,
@@ -12,7 +16,8 @@ pub struct HostVmArgs {
     /// vault_disk_uuid, fscrypt_key_identifier), network (the guest NIC's
     /// tap_name and guest_mac, or null for none) and optional boot_args,
     /// allowed_origins, artifact_origin, config_disk, outbox and
-    /// restore_source_disk.
+    /// restore_source_disk, and snapshot_custody (the supervisor's snapshot
+    /// custody socket and protected snapshot directory, or null for none).
     #[arg(long)]
     pub config: PathBuf,
     #[arg(long)]
@@ -83,8 +88,9 @@ pub struct HostVmArgs {
     /// and handed to the guest after each cold boot's credential frame.
     #[arg(long, requires = "custody_anchor_url")]
     pub custody_anchor_credentials_fd: Option<i32>,
-    /// Seconds without traffic before the vault sleeps.
-    #[arg(long, default_value_t = 300)]
+    /// Seconds without traffic before the vault sleeps; 900, the ruled
+    /// 15-minute baseline, unless given.
+    #[arg(long, default_value_t = DEFAULT_VM_IDLE_SECS)]
     pub idle_secs: u64,
 }
 

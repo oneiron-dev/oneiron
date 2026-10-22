@@ -70,6 +70,7 @@ impl ManagedState {
             // answer of it outlives the abort.
             CtlRequest::ReapAbort => {
                 self.idle_backup.drop_attempt();
+                self.ledger.drop_frozen().await;
                 self.unfreeze()?;
                 Ok(CtlResponse::Ok { ok: true })
             }
@@ -175,6 +176,16 @@ impl ManagedState {
             }
             // The supervisor's alone; a vault frozen for reap binds nothing.
             CtlRequest::RelayLockerBind { request } => Ok(self.relay_locker_bind(request).await),
+            // Reads of the report the freeze holds and its release (FIX
+            // 9549): token-authenticated, never through the write gate, so a
+            // vault frozen for reap answers them and stays frozen.
+            CtlRequest::LedgerPage { request } => Ok(CtlResponse::LedgerPage {
+                ledger_page: self.ledger.frozen_page(&request).await?,
+            }),
+            CtlRequest::LedgerPulled { request } => {
+                self.ledger.pulled(&request).await?;
+                Ok(CtlResponse::Ok { ok: true })
+            }
         }
     }
 }
