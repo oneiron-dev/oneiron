@@ -81084,7 +81084,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ImageReleaseFact",
@@ -81097,11 +81097,26 @@
      "path": "src/image_release.rs",
      "purpose": "Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier…",
      "surface": {
-      "const": 15,
+      "const": 16,
       "enum": 4,
-      "fn": 7,
-      "re-export": 3,
+      "fn": 8,
+      "re-export": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SelectedImage"
+     ],
+     "path": "src/image_release/host_binding.rs",
+     "purpose": "The host side of a launch's release observation (FIX 9135, 9137): the release documents the host bound to…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -81368,7 +81383,7 @@
      "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)"
     },
     "image_release": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -81426,7 +81441,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 22,
+   "source_files": 23,
    "test_files": 0
   },
   "oneiron-contracts": {
