@@ -110,7 +110,7 @@ pub(super) fn as_text(program: &WorkflowProgram, text: &[String]) -> WorkflowPro
             .is_some_and(|name| text.iter().any(|given| given == name))
     };
     let moved = |secret: &mut Option<String>, plain: &mut Option<String>| {
-        if plain.is_none() && named(secret) {
+        if plain.is_none() && named(&*secret) {
             *plain = secret.take();
         }
     };
