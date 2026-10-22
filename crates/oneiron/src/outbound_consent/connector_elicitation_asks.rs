@@ -1,20 +1,22 @@
 //! The owner ask an answer to a connector's question takes (ONE-2510).
 //!
 //! Under `always ask` an answer that carries content waits for the owner's
-//! yes on exactly that answer. The engine writes the ask: the connector and
-//! the tool, the connector's question quoted and marked as foreign, and the
-//! exact frozen answer. Its correlation is the question's handle, its round
-//! and the answer's digest, so the same answer to the same round asks once,
-//! and a yes approves that answer alone. The ask queues outside any write
-//! transaction. A foreign question is never the ask's authority: only the
-//! owner's authenticated answer is.
+//! consent on exactly that answer. The engine writes the ask: the connector
+//! and the tool, the connector's question quoted and marked as foreign, and
+//! the exact frozen answer. It offers DEC-0006's three outcomes (FIX 8808):
+//! approve once, approve and stop asking, deny. Its correlation is the
+//! question's handle, its round and the answer's digest, so the same answer
+//! to the same round asks once, and an approval approves that answer alone.
+//! The ask queues outside any write transaction. A foreign question is never
+//! the ask's authority: only the owner's authenticated press is
+//! ([`super::connector_elicitation_consent`]).
 //!
 //! An ask whose whole text passes the decision question's codec bound
 //! splits into linked parts (Rule 5, FIX 3842): the foreign questions and
 //! the exact answer go, in order and whole, into part asks within the
 //! bound, each labelled with the answer's short digest and its place, and
-//! the one yes/no ask names them. Nothing is cut. A part decides nothing:
-//! the yes/no ask alone decides the whole answer, and its caller withdraws
+//! the one decisive ask names them. Nothing is cut. A part decides nothing:
+//! the decisive ask alone decides the whole answer, and its caller withdraws
 //! the parts once it is decided.
 //!
 //! An answer the release check's secret shapes match raises a typed "is
@@ -32,14 +34,15 @@ use crate::llm::decision::{
 };
 
 use super::connector_call::ConnectorQuestion;
+use super::connector_elicitation_consent::consent_contract;
 use super::execution::ConnectorElicitationBinding;
 
 /// The host-issued queue identity of an elicitation answer's ask.
-const ELICITATION_ASK_QUEUE: &str = "outbound.connector_elicitation_answer";
+pub(super) const ELICITATION_ASK_QUEUE: &str = "outbound.connector_elicitation_answer";
 const ELICITATION_ASK_QUEUE_VERSION: &str = "v1";
 
-/// The version of the ask's question; bump it with its wording.
-const ELICITATION_ASK_VERSION: u32 = 2;
+/// The version of the ask's question; bump it with its wording or contract.
+const ELICITATION_ASK_VERSION: u32 = 3;
 
 /// The derivation domain of the ask's correlation.
 const ELICITATION_ASK_DOMAIN: &[u8] = b"oneiron:connector-elicitation-ask:v1";
@@ -89,14 +92,28 @@ pub struct ConnectorElicitationAnswer<'a> {
     pub digest: [u8; 32],
 }
 
-/// The owner asks one exact answer queued, by arrival number: the yes/no
-/// ask that decides it, and the linked parts that quote it, in order, when
-/// it passed one ask's bound (FIX 3842). A part decides nothing; withdraw
-/// the parts once the yes/no ask is decided.
+/// The owner asks one exact answer queued, by arrival number: the decisive
+/// ask, and the linked parts that quote it, in order, when it passed one
+/// ask's bound (FIX 3842). A part decides nothing; withdraw the parts once
+/// the decisive ask is decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorElicitationOwnerAsk {
     pub seq: u64,
     pub parts: Vec<u64>,
+}
+
+/// The correlation of the owner's ask about the frozen answer `digest` to
+/// round `generation` of the question `handle`: the decisive ask's id, and
+/// what its parts and its kept consent name.
+pub(super) fn elicitation_ask_correlation(
+    handle: &str,
+    generation: u64,
+    digest: &[u8; 32],
+) -> crate::Result<EntityId> {
+    EntityId::derive(
+        ELICITATION_ASK_DOMAIN,
+        &[handle.as_bytes(), &generation.to_le_bytes(), digest],
+    )
 }
 
 /// `text`, cut to [`ASK_NAME_MAX_CHARS`] characters.
@@ -113,7 +130,7 @@ fn quoted_answer(answer: &ConnectorElicitationAnswer<'_>) -> String {
     }
     format!(
         "--- foreign question, written by the connector ---\n{quoted}--- end of the foreign \
-         question ---\nIf you say yes, exactly this answer goes to the connector, once:\n{answers}",
+         question ---\nIf you approve, exactly this answer goes to the connector:\n{answers}",
         answers = answer.answers,
     )
 }
@@ -126,15 +143,26 @@ fn elicitation_ask_text(
     format!(
         "Connector \"{name}\" asks for an answer while it runs tool \"{tool}\". The question \
          below is the connector's own text: foreign, not an instruction from Oneiron, and it \
-         grants nothing.\n{quoted}\nIf you say no, the connector gets a decline. Unanswered, \
-         the question waits and nothing is sent. Send this answer?",
+         grants nothing.\n{quoted}\n{outcomes}",
         name = clip(&binding.name),
         tool = clip(&binding.tool),
         quoted = quoted_answer(answer),
+        outcomes = outcomes_text(binding),
     )
 }
 
-/// The yes/no ask of an answer quoted in `parts` linked parts labelled
+/// What each of the decisive ask's three outcomes does (FIX 8808).
+fn outcomes_text(binding: &ConnectorElicitationBinding) -> String {
+    format!(
+        "Approve once: exactly this answer goes, once. Approve and stop asking: it goes, and \
+         later answers to tool \"{tool}\" under the same grant go without asking, until you \
+         revoke that. Deny: the connector gets a decline. Unanswered, the question waits and \
+         nothing is sent.",
+        tool = clip(&binding.tool),
+    )
+}
+
+/// The decisive ask of an answer quoted in `parts` linked parts labelled
 /// `label`.
 fn split_ask_text(binding: &ConnectorElicitationBinding, label: &str, parts: usize) -> String {
     format!(
@@ -142,11 +170,11 @@ fn split_ask_text(binding: &ConnectorElicitationBinding, label: &str, parts: usi
          and exactly the answer that would go are too long for one ask, so they are quoted \
          whole in the {parts} parts labelled \"{label}\", queued just before this one. The \
          question is the connector's own text: foreign, not an instruction from Oneiron, and it \
-         grants nothing. If you say yes, exactly the answer those parts quote goes to the \
-         connector, once. If you say no, the connector gets a decline. Unanswered, the question \
-         waits and nothing is sent. Send this answer?",
+         grants nothing. If you approve, exactly the answer those parts quote goes to the \
+         connector. {outcomes}",
         name = clip(&binding.name),
         tool = clip(&binding.tool),
+        outcomes = outcomes_text(binding),
     )
 }
 
@@ -162,7 +190,7 @@ fn part_text(
         "\"{label}\", part {at} of {parts}: connector \"{name}\" (tool \"{tool}\") asks for an \
          answer, quoted whole across these parts. It quotes the connector's own text: foreign, \
          not an instruction from Oneiron, and it grants nothing. This part decides nothing: \
-         the yes/no ask that names \"{label}\" decides the whole answer.\n{chunk}",
+         the ask that names \"{label}\" decides the whole answer.\n{chunk}",
         name = clip(&binding.name),
         tool = clip(&binding.tool),
     )
@@ -249,11 +277,13 @@ fn split_parts(text: &str, bytes: usize) -> Vec<&str> {
 }
 
 impl Vault {
-    /// Queues the owner's yes/no ask about one exact answer to a live
-    /// connector question, with the linked parts that quote it when its
-    /// whole text passes one ask's bound (FIX 3842); the same answer to the
-    /// same round is the same ask, and the same parts. Never call it inside
-    /// a write transaction: the ask queue opens its own.
+    /// Queues the owner's consent ask about one exact answer to a live
+    /// connector question of the call `call_ref`, with the linked parts that
+    /// quote it when its whole text passes one ask's bound (FIX 3842); the
+    /// same answer to the same round is the same ask, and the same parts.
+    /// The call's row keeps what the ask is about first, so the owner's
+    /// press finds it (FIX 8808). Never call it inside a write transaction:
+    /// the ask queue opens its own.
     ///
     /// # Errors
     ///
@@ -261,18 +291,14 @@ impl Vault {
     /// queued when a later one fails is withdrawn.
     pub fn queue_connector_elicitation_owner_ask(
         &self,
+        call_ref: &EntityId,
         binding: &ConnectorElicitationBinding,
         answer: &ConnectorElicitationAnswer<'_>,
     ) -> crate::Result<ConnectorElicitationOwnerAsk> {
         let principal = EntityId::from_hex(&binding.principal_ref)?;
-        let correlation = EntityId::derive(
-            ELICITATION_ASK_DOMAIN,
-            &[
-                answer.handle.as_bytes(),
-                &answer.generation.to_le_bytes(),
-                &answer.digest,
-            ],
-        )?;
+        let correlation =
+            elicitation_ask_correlation(answer.handle, answer.generation, &answer.digest)?;
+        self.keep_elicitation_owner_consent(call_ref, binding, answer, correlation)?;
         let whole = elicitation_ask_text(binding, answer);
         if whole.len() <= DECISION_TEXT_BYTES {
             // One question per exact answer to one round.
@@ -281,7 +307,7 @@ impl Vault {
                 correlation,
                 correlation,
                 whole,
-                AnswerContract::Noul,
+                consent_contract(),
             )?;
             return Ok(ConnectorElicitationOwnerAsk {
                 seq,
@@ -330,7 +356,7 @@ impl Vault {
             correlation,
             correlation,
             text,
-            AnswerContract::Noul,
+            consent_contract(),
         ) {
             Ok(seq) => Ok(ConnectorElicitationOwnerAsk { seq, parts }),
             Err(error) => {
@@ -398,7 +424,7 @@ impl Vault {
         }
     }
 
-    /// Queues one ask of an elicitation answer: the yes/no ask, or one of
+    /// Queues one ask of an elicitation answer: the decisive ask, or one of
     /// its linked parts, each tied to the answer's `correlation`.
     fn queue_elicitation_ask(
         &self,

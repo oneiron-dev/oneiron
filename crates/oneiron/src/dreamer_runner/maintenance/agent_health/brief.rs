@@ -107,34 +107,50 @@ pub(super) fn pin_findings_in(
 /// What an ask hands the Coach from its frozen `pin`, read in `txn`: the
 /// pin, with the brief's text when today's brief is the pinned revision, or
 /// else when the TASK's settled `tasks.brief` history holds it (FIX 8077).
-/// `None` with no pin.
+/// Beside it, the rows it was read from (FIX 9220): the pin's TASK and, for
+/// text from that history, the CLAIM that landed the revision. `None` and
+/// no rows with no pin.
 pub(super) fn observed_brief_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     pin: Option<&HealthBriefPin>,
-) -> Result<Option<HealthObservedBrief>> {
+) -> Result<(Option<HealthObservedBrief>, Vec<EntityId>)> {
     let Some(pin) = pin else {
-        return Ok(None);
+        return Ok((None, Vec::new()));
     };
+    let mut rows = vec![pin.task];
     let text = match crate::task_verb::task_stored_brief_in(vault, txn, pin.task)? {
         Some(stored) if pin.observes(&stored) => Some(
             serde_json::to_string(&stored.brief)
                 .map_err(|_| Error::InvalidConfig("a typed brief did not encode".into()))?,
         ),
-        _ => settled_text_in(vault, txn, pin),
+        _ => settled_text_in(vault, txn, pin).map(|(text, claim)| {
+            rows.push(claim);
+            text
+        }),
     };
-    Ok(Some(HealthObservedBrief {
-        pin: pin.clone(),
-        text,
-    }))
+    Ok((
+        Some(HealthObservedBrief {
+            pin: pin.clone(),
+            text,
+        }),
+        rows,
+    ))
 }
 
 /// The pinned revision's text from the TASK's settled `tasks.brief`
-/// history, once its brief has moved on. A history that does not read
-/// leaves the text unknown, with a warning: it never fails the ask.
-fn settled_text_in(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &HealthBriefPin) -> Option<String> {
+/// history, once its brief has moved on, with the CLAIM that landed it. A
+/// history that does not read leaves the text unknown, with a warning: it
+/// never fails the ask.
+fn settled_text_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pin: &HealthBriefPin,
+) -> Option<(String, EntityId)> {
     match crate::task_verb::settled_brief_in(vault, txn, pin.task, pin.rev, &pin.digest) {
-        Ok(brief) => brief.and_then(|brief| serde_json::to_string(&brief).ok()),
+        Ok(found) => found.and_then(|(brief, claim)| {
+            serde_json::to_string(&brief).ok().map(|text| (text, claim))
+        }),
         Err(error) => {
             tracing::warn!(
                 task = %pin.task.to_hex(),

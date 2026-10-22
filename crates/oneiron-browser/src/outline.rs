@@ -155,6 +155,43 @@ impl Node<'_> {
 
 /// Reads `Accessibility.getFullAXTree`'s `nodes` into rows, in page order,
 /// each secret in them as `masks` has it.
+/// Whether any node of a tree read has a role a row is read from: a tree
+/// with none reads as no row.
+pub(crate) fn has_rows(nodes: &[Value]) -> bool {
+    nodes.iter().any(|node| {
+        let role = field(node, "role").unwrap_or("");
+        CONTROLS.contains(&role) || READS.contains(&role)
+    })
+}
+
+/// A loaded page's visible text as a tree of its own (FIX 7717): a root,
+/// and each nonblank line of `text` a read-only text node under it, which
+/// no DOM node backs, so no act reaches it. Every line is kept; the rows
+/// read from it go through the same secret classification as any read.
+pub(crate) fn text_nodes(text: &str) -> Vec<Value> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let ids: Vec<String> = (0..lines.len()).map(|at| format!("text:{at}")).collect();
+    let root = serde_json::json!({
+        "nodeId": "text:root",
+        "role": {"value": "RootWebArea"},
+        "childIds": ids,
+    });
+    std::iter::once(root)
+        .chain(lines.iter().zip(&ids).map(|(line, id)| {
+            serde_json::json!({
+                "nodeId": id,
+                "parentId": "text:root",
+                "role": {"value": "StaticText"},
+                "name": {"value": line},
+            })
+        }))
+        .collect()
+}
+
 pub(crate) fn lines(nodes: &[Value], masks: &Masks) -> Vec<Line> {
     let by_id: HashMap<&str, &Value> = nodes
         .iter()

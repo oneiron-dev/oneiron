@@ -22,6 +22,8 @@
 //! advance to that epoch fences the lineage's old writer before the restore
 //! is kept.
 
+mod unopened;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -410,7 +412,7 @@ pub(crate) fn admit_recovery(
                      beside it"
                 ),
             )
-        } else if opened.unopened.is_empty() {
+        } else if !unopened::may_hold_required(&opened.unopened) {
             (
                 R::CustodyKeyMissing,
                 format!("the custody head does not hold {count} key(s) the backup needs"),
@@ -418,10 +420,7 @@ pub(crate) fn admit_recovery(
         } else {
             (
                 R::CustodyOwnerKeyRequired,
-                format!(
-                    "the custody head holds {count} key(s) the backup needs in a compartment only \
-                     the recovery kit opens: restore with --unlock kit"
-                ),
+                unopened::owner_key_required(count, &opened.unopened),
             )
         };
         return Err(Rejected::new(reason, refused(message)));
@@ -564,12 +563,13 @@ pub(crate) enum CustodyRoute {
 
 /// Where a restore on a new host finds its custody head, and what opens it:
 /// the folder beside the backup, the anchor when one is configured (a root
-/// or a door), and the kit's recovery root when the restore was unlocked
-/// with the kit.
+/// or a door), the kit's recovery root when the restore was unlocked with
+/// the kit, and an admitted machine's key when one is given (FIX 9178).
 pub(crate) struct CustodySourceAt<'a> {
     pub(crate) folder: &'a std::path::Path,
     pub(crate) anchor: Option<&'a dyn AnchorStore>,
     pub(crate) root: Option<&'a oneiron_crypto::HybridSecretKey>,
+    pub(crate) machine: Option<(crate::EntityId, &'a oneiron_crypto::HybridSecretKey)>,
 }
 
 /// A head's custody landed beside a restore's destination: removed unless
@@ -750,7 +750,7 @@ pub(crate) fn route_custody(
     let opener = CustodyOpener {
         root: source.root,
         data_key: Some(data_key),
-        machine: None,
+        machine: source.machine,
     };
     let admitted = admit_recovery(required, &target, &opener, source.anchor)?;
     let landing = |error: Error| {

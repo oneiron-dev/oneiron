@@ -226,6 +226,7 @@ pub mod edit_distance;
 pub mod edit_roundtrip;
 pub mod edit_settle;
 pub mod git_wire;
+pub mod inference_snapshot;
 pub mod merge_queue;
 pub mod office_body;
 pub mod origin;
