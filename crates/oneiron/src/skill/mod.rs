@@ -13,6 +13,7 @@ pub mod helper;
 mod identity;
 mod invocation;
 mod lifecycle;
+mod loaded_revision;
 mod pack_load;
 mod record;
 pub(crate) mod resident;
@@ -37,6 +38,9 @@ pub use self::identity::{
 };
 pub(crate) use self::invocation::SkillInvocations;
 pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
+pub(crate) use self::loaded_revision::{
+    pinned_skill_revisions, receipt_skill_record, receipt_skill_record_in_txn,
+};
 pub use self::pack_load::LoadedSkillPack;
 pub(crate) use self::pack_load::skill_loadable;
 pub use self::record::{
