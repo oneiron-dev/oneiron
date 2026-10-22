@@ -130,9 +130,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 .map_err(|_| invalid_consolidation("summary request did not hash"))?;
             let check_labels = view.labels.clone();
             let check_opened = opened.clone();
+            let check_inherited = view.inherited.clone();
             let check_covers = covers.clone();
             let check = move |response: &LlmResponse| {
-                arc_output(response, &check_labels, &check_opened, &check_covers)
+                let shown = (&check_opened, &check_inherited);
+                arc_output(response, &check_labels, shown, &check_covers)
                     .map(drop)
                     .map_err(str::to_owned)
             };
@@ -174,7 +176,8 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     );
                 }
             };
-            let ask = match arc_output(&response, &view.labels, &opened, &covers) {
+            let ask = match arc_output(&response, &view.labels, (&opened, &view.inherited), &covers)
+            {
                 Ok(ArcReply::Lines(lines)) => break lines,
                 Ok(ArcReply::Open(ask)) => ask,
                 Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),

@@ -3,8 +3,8 @@
 //! Run with --microsoft-tsc /srv/typescript/package/lib/tsc --output /srv/evidence/codecheck.
 
 use oneiron_code_check::{
-    BackendId, CheckInput, CodeCheck, Declaration, Diagnostic, MICROSOFT_TS_VERSION,
-    MicrosoftTsc, TscRsBudget, TscRsWasm, TsrsWasm,
+    BackendId, CheckInput, CodeCheck, Declaration, Diagnostic, MICROSOFT_TS_VERSION, MicrosoftTsc,
+    TscRsBudget, TscRsWasm, TsrsWasm,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -32,13 +32,34 @@ const DECLARATIONS: [Declaration<'static>; 3] = [
     },
 ];
 const CONTROLS: [(&str, &str); 7] = [
-    ("01-correct", include_str!("../tests/fixtures/01-correct.js")),
-    ("02-wrong-verb", include_str!("../tests/fixtures/02-wrong-verb.js")),
-    ("03-wrong-argument", include_str!("../tests/fixtures/03-wrong-argument.js")),
-    ("04-missing-await", include_str!("../tests/fixtures/04-missing-await.js")),
-    ("05-undefined-path", include_str!("../tests/fixtures/05-undefined-path.js")),
-    ("06-floating-promise", include_str!("../tests/fixtures/06-floating-promise.js")),
-    ("07-any-null-path", include_str!("../tests/fixtures/07-any-null-path.js")),
+    (
+        "01-correct",
+        include_str!("../tests/fixtures/01-correct.js"),
+    ),
+    (
+        "02-wrong-verb",
+        include_str!("../tests/fixtures/02-wrong-verb.js"),
+    ),
+    (
+        "03-wrong-argument",
+        include_str!("../tests/fixtures/03-wrong-argument.js"),
+    ),
+    (
+        "04-missing-await",
+        include_str!("../tests/fixtures/04-missing-await.js"),
+    ),
+    (
+        "05-undefined-path",
+        include_str!("../tests/fixtures/05-undefined-path.js"),
+    ),
+    (
+        "06-floating-promise",
+        include_str!("../tests/fixtures/06-floating-promise.js"),
+    ),
+    (
+        "07-any-null-path",
+        include_str!("../tests/fixtures/07-any-null-path.js"),
+    ),
 ];
 
 struct Args {
@@ -54,12 +75,17 @@ fn arguments() -> Result<Args> {
         rounds: 50,
         warmup: 3,
         microsoft: PathBuf::new(),
-        programs: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/screen-programs")),
+        programs: PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/screen-programs"
+        )),
         output: PathBuf::from("/srv/evidence/codecheck-8255"),
     };
     let mut input = std::env::args().skip(1);
     while let Some(flag) = input.next() {
-        let value = input.next().ok_or_else(|| format!("missing value for {flag}"))?;
+        let value = input
+            .next()
+            .ok_or_else(|| format!("missing value for {flag}"))?;
         match flag.as_str() {
             "--rounds" => args.rounds = value.parse()?,
             "--warmup" => args.warmup = value.parse()?,
@@ -120,7 +146,8 @@ fn program(entry: Entry, text: String, group: &'static str) -> Result<Program> {
 }
 
 fn programs(directory: &Path) -> Result<Vec<Program>> {
-    let entries: Vec<Entry> = serde_json::from_slice(&std::fs::read(directory.join("manifest.json"))?)?;
+    let entries: Vec<Entry> =
+        serde_json::from_slice(&std::fs::read(directory.join("manifest.json"))?)?;
     if entries.len() != 5 {
         return Err("the primary corpus must contain five programs (15 cells)".into());
     }
@@ -131,9 +158,11 @@ fn programs(directory: &Path) -> Result<Vec<Program>> {
     }
     for (id, text) in CONTROLS {
         let entry = Entry {
-            id: id.into(), file: format!("{id}.js"),
+            id: id.into(),
+            file: format!("{id}.js"),
             source_path: format!("crates/oneiron-code-check/tests/fixtures/{id}.js"),
-            sha256: sha(text.as_bytes()), provenance: BTreeMap::new(),
+            sha256: sha(text.as_bytes()),
+            provenance: BTreeMap::new(),
         };
         all.push(program(entry, text.into(), "control")?);
     }
@@ -181,17 +210,28 @@ struct Sample {
 fn measure(program: &Program, backend: &Loaded, repetition: usize) -> Sample {
     let started = Instant::now();
     let result = backend.checker.check(&CheckInput {
-        declarations: &DECLARATIONS, program: &program.text,
+        declarations: &DECLARATIONS,
+        program: &program.text,
     });
     let ms = started.elapsed().as_secs_f64() * 1000.0;
     let mut sample = Sample {
-        program: program.entry.id.clone(), backend: backend.id.name.into(), repetition, ms,
-        result: "failure", failure: None, diagnostics: None,
-        peak_memory_bytes: None, reported_backend: None,
+        program: program.entry.id.clone(),
+        backend: backend.id.name.into(),
+        repetition,
+        ms,
+        result: "failure",
+        failure: None,
+        diagnostics: None,
+        peak_memory_bytes: None,
+        reported_backend: None,
     };
     match result {
         Ok(report) => {
-            sample.result = if report.diagnostics.is_empty() { "clean" } else { "diagnostics" };
+            sample.result = if report.diagnostics.is_empty() {
+                "clean"
+            } else {
+                "diagnostics"
+            };
             sample.diagnostics = Some(report.diagnostics);
             sample.peak_memory_bytes = report.peak_memory_bytes;
             sample.reported_backend = Some(report.backend);
@@ -202,7 +242,14 @@ fn measure(program: &Program, backend: &Loaded, repetition: usize) -> Sample {
 }
 
 fn key(d: &Diagnostic) -> (Option<&str>, u32, u32, &str, u32, &str) {
-    (d.file.as_deref(), d.line, d.column, &d.category, d.code, &d.message)
+    (
+        d.file.as_deref(),
+        d.line,
+        d.column,
+        &d.category,
+        d.code,
+        &d.message,
+    )
 }
 
 fn sorted(sample: &Sample) -> Option<Vec<Diagnostic>> {
@@ -214,8 +261,10 @@ fn sorted(sample: &Sample) -> Option<Vec<Diagnostic>> {
 }
 
 fn locations(diagnostics: &[Diagnostic]) -> Vec<(Option<&str>, u32, u32, u32)> {
-    let mut all: Vec<_> = diagnostics.iter()
-        .map(|d| (d.file.as_deref(), d.line, d.column, d.code)).collect();
+    let mut all: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.file.as_deref(), d.line, d.column, d.code))
+        .collect();
     all.sort_unstable();
     all
 }
@@ -253,10 +302,14 @@ fn agreements(samples: &[Sample], programs: &[Program], rounds: usize) -> Vec<Ag
     let mut all = Vec::new();
     for program in programs {
         for repetition in 0..rounds {
-            let cell: Vec<_> = samples.iter().filter(|s| {
-                s.program == program.entry.id && s.repetition == repetition
-            }).collect();
-            let oracle = cell.iter().find(|s| s.backend == "microsoft").and_then(|s| sorted(s));
+            let cell: Vec<_> = samples
+                .iter()
+                .filter(|s| s.program == program.entry.id && s.repetition == repetition)
+                .collect();
+            let oracle = cell
+                .iter()
+                .find(|s| s.backend == "microsoft")
+                .and_then(|s| sorted(s));
             let three_way_exact = oracle.as_ref().is_some_and(|ms| {
                 cell.len() == 3 && cell.iter().all(|s| sorted(s).as_ref() == Some(ms))
             });
@@ -264,7 +317,9 @@ fn agreements(samples: &[Sample], programs: &[Program], rounds: usize) -> Vec<Ag
                 let own = sorted(sample);
                 let pair = own.as_ref().zip(oracle.as_ref());
                 all.push(Agreement {
-                    program: sample.program.clone(), backend: sample.backend.clone(), repetition,
+                    program: sample.program.clone(),
+                    backend: sample.backend.clone(),
+                    repetition,
                     exact_vs_ms: pair.map(|(a, b)| a == b),
                     code_location_vs_ms: pair.map(|(a, b)| locations(a) == locations(b)),
                     three_way_exact,
@@ -299,7 +354,13 @@ fn agreement_text(values: impl Iterator<Item = Option<bool>>, reference: bool) -
             None => missing += 1,
         }
     }
-    let status = if no > 0 { "no" } else if missing > 0 { "N/A-failure" } else { "yes" };
+    let status = if no > 0 {
+        "no"
+    } else if missing > 0 {
+        "N/A-failure"
+    } else {
+        "yes"
+    };
     let prefix = if reference { "self-reference: " } else { "" };
     format!("{prefix}{status} ({yes} yes / {no} no / {missing} N/A)")
 }
@@ -313,16 +374,36 @@ fn markdown(
     hash: &str,
 ) -> String {
     let (rounds, warmup) = (args.rounds, args.warmup);
-    let mut md = format!("# Backend direction screen\n\nRaw samples, pins, environment and full diagnostics: [screen.json](screen.json), SHA-256 `{hash}`.\n\nMultiset differences by program/backend/repetition: [diffs.json](diffs.json).\n\nProtocol: {warmup} discarded warmups and {rounds} recorded checks per program/backend; concurrency 1; deterministic rotating order.\n\n");
+    let mut md = format!(
+        "# Backend direction screen\n\nRaw samples, pins, environment and full diagnostics: [screen.json](screen.json), SHA-256 `{hash}`.\n\nMultiset differences by program/backend/repetition: [diffs.json](diffs.json).\n\nProtocol: {warmup} discarded warmups and {rounds} recorded checks per program/backend; concurrency 1; deterministic rotating order.\n\n"
+    );
     md.push_str("Checks are sequential. Warmups are discarded; successful clean **and diagnostic** reports enter nearest-rank p50/p95. Failures do not. Agreement pairs the same recorded repetition with Microsoft; duplicates are retained. Exact uses file/line/column/category/code/message. Code/location omits category/message. A missing report is N/A, never agreement. Three-way is false if any backend fails. Peak is reported linear memory, not RSS; Microsoft is N/A.\n\n");
     for group in ["primary", "control"] {
-        let _ = writeln!(md, "## {}\n", if group == "primary" { "Primary corpus (15 rows)" } else { "Secondary diagnostic controls (not pooled into the summary)" });
+        let _ = writeln!(
+            md,
+            "## {}\n",
+            if group == "primary" {
+                "Primary corpus (15 rows)"
+            } else {
+                "Secondary diagnostic controls (not pooled into the summary)"
+            }
+        );
         md.push_str("| Program | Backend + pin | Input bytes/lines | Answered/attempted | Failures by code | p50 ms | p95 ms | Diagnostics (# / codes) | Exact vs MS | Code/location vs MS | Three-way exact | Peak linear MiB | Load ms |\n|---|---|---:|---:|---|---:|---:|---|---|---|---|---:|---:|\n");
         for program in programs.iter().filter(|p| p.group == group) {
             for backend in backends {
-                let cell: Vec<_> = samples.iter().filter(|s| s.program == program.entry.id && s.backend == backend.id.name).collect();
-                let compared: Vec<_> = comparisons.iter().filter(|a| a.program == program.entry.id && a.backend == backend.id.name).collect();
-                let times: Vec<_> = cell.iter().filter(|s| s.failure.is_none()).map(|s| s.ms).collect();
+                let cell: Vec<_> = samples
+                    .iter()
+                    .filter(|s| s.program == program.entry.id && s.backend == backend.id.name)
+                    .collect();
+                let compared: Vec<_> = comparisons
+                    .iter()
+                    .filter(|a| a.program == program.entry.id && a.backend == backend.id.name)
+                    .collect();
+                let times: Vec<_> = cell
+                    .iter()
+                    .filter(|s| s.failure.is_none())
+                    .map(|s| s.ms)
+                    .collect();
                 let mut failures = BTreeMap::new();
                 let mut diagnostic_sets = BTreeSet::new();
                 for s in &cell {
@@ -334,15 +415,42 @@ fn markdown(
                         diagnostic_sets.insert(format!("{} / {:?}", ds.len(), codes));
                     }
                 }
-                let peak = cell.iter().filter_map(|s| s.peak_memory_bytes).max().map(|n| n as f64 / 1048576.0);
-                let exact = agreement_text(compared.iter().map(|a| a.exact_vs_ms), backend.id.name == "microsoft");
-                let location = agreement_text(compared.iter().map(|a| a.code_location_vs_ms), backend.id.name == "microsoft");
+                let peak = cell
+                    .iter()
+                    .filter_map(|s| s.peak_memory_bytes)
+                    .max()
+                    .map(|n| n as f64 / 1048576.0);
+                let exact = agreement_text(
+                    compared.iter().map(|a| a.exact_vs_ms),
+                    backend.id.name == "microsoft",
+                );
+                let location = agreement_text(
+                    compared.iter().map(|a| a.code_location_vs_ms),
+                    backend.id.name == "microsoft",
+                );
                 let three = compared.iter().filter(|a| a.three_way_exact).count();
-                let _ = writeln!(md, "| {} | {} `{}` | {}/{} | {}/{} | {:?} | {} | {} | [{}](screen.json) | [{}](diffs.json) | {} | {} ({}/{}) | {} | {:.3} |",
-                    program.entry.id, backend.id.name, backend.id.pin, program.bytes, program.lines,
-                    times.len(), cell.len(), failures, number(percentile(&times, 50)), number(percentile(&times, 95)),
-                    diagnostic_sets.into_iter().collect::<Vec<_>>().join("; "), exact, location,
-                    if three == compared.len() { "yes" } else { "no" }, three, compared.len(), number(peak), backend.load_ms);
+                let _ = writeln!(
+                    md,
+                    "| {} | {} `{}` | {}/{} | {}/{} | {:?} | {} | {} | [{}](screen.json) | [{}](diffs.json) | {} | {} ({}/{}) | {} | {:.3} |",
+                    program.entry.id,
+                    backend.id.name,
+                    backend.id.pin,
+                    program.bytes,
+                    program.lines,
+                    times.len(),
+                    cell.len(),
+                    failures,
+                    number(percentile(&times, 50)),
+                    number(percentile(&times, 95)),
+                    diagnostic_sets.into_iter().collect::<Vec<_>>().join("; "),
+                    exact,
+                    location,
+                    if three == compared.len() { "yes" } else { "no" },
+                    three,
+                    compared.len(),
+                    number(peak),
+                    backend.load_ms
+                );
             }
         }
         md.push('\n');
@@ -354,8 +462,15 @@ fn markdown(
         let (mut answered, mut attempted) = (0, 0);
         let mut compared = Vec::new();
         for program in programs.iter().filter(|p| p.group == "primary") {
-            let cell: Vec<_> = samples.iter().filter(|s| s.program == program.entry.id && s.backend == backend.id.name).collect();
-            let times: Vec<_> = cell.iter().filter(|s| s.failure.is_none()).map(|s| s.ms).collect();
+            let cell: Vec<_> = samples
+                .iter()
+                .filter(|s| s.program == program.entry.id && s.backend == backend.id.name)
+                .collect();
+            let times: Vec<_> = cell
+                .iter()
+                .filter(|s| s.failure.is_none())
+                .map(|s| s.ms)
+                .collect();
             attempted += cell.len();
             answered += times.len();
             if let Some(v) = percentile(&times, 50) {
@@ -364,13 +479,31 @@ fn markdown(
             if let Some(v) = percentile(&times, 95) {
                 p95s.push(v);
             }
-            compared.extend(comparisons.iter().filter(|a| a.program == program.entry.id && a.backend == backend.id.name));
+            compared.extend(
+                comparisons
+                    .iter()
+                    .filter(|a| a.program == program.entry.id && a.backend == backend.id.name),
+            );
         }
         let mean = |v: &[f64]| (v.len() == 5).then(|| v.iter().sum::<f64>() / 5.0);
-        let _ = writeln!(md, "| {} | {}/5 | {}/{} | {} | {} | {} | {} |", backend.id.name,
-            p50s.len(), answered, attempted, number(mean(&p50s)), number(mean(&p95s)),
-            agreement_text(compared.iter().map(|a| a.exact_vs_ms), backend.id.name == "microsoft"),
-            agreement_text(compared.iter().map(|a| a.code_location_vs_ms), backend.id.name == "microsoft"));
+        let _ = writeln!(
+            md,
+            "| {} | {}/5 | {}/{} | {} | {} | {} | {} |",
+            backend.id.name,
+            p50s.len(),
+            answered,
+            attempted,
+            number(mean(&p50s)),
+            number(mean(&p95s)),
+            agreement_text(
+                compared.iter().map(|a| a.exact_vs_ms),
+                backend.id.name == "microsoft"
+            ),
+            agreement_text(
+                compared.iter().map(|a| a.code_location_vs_ms),
+                backend.id.name == "microsoft"
+            )
+        );
     }
     md.push_str("\n## Unsupported-token preflight\n\nThe same programs are still attempted; none is silently excluded. These are reporting-only matches of the native backend's token filter.\n\n");
     for p in programs {
@@ -382,7 +515,10 @@ fn markdown(
 
 fn command(name: &str, args: &[&str]) -> Option<String> {
     let output = Command::new(name).args(args).output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn machine_state() -> Value {
@@ -415,7 +551,9 @@ fn run() -> Result<()> {
     });
     let backends = vec![
         load("tsc-rs", || Ok(Box::new(TscRsWasm::load(budget)?)))?,
-        load("microsoft", || Ok(Box::new(MicrosoftTsc::new(&args.microsoft)?)))?,
+        load("microsoft", || {
+            Ok(Box::new(MicrosoftTsc::new(&args.microsoft)?))
+        })?,
         load("tsrs", || Ok(Box::new(TsrsWasm::load(budget)?)))?,
     ];
     let before = machine_state();
@@ -431,17 +569,29 @@ fn run() -> Result<()> {
         }
         for repetition in 0..args.rounds {
             for offset in 0..3 {
-                samples.push(measure(program, &backends[(rotation + offset) % 3], repetition));
+                samples.push(measure(
+                    program,
+                    &backends[(rotation + offset) % 3],
+                    repetition,
+                ));
             }
             rotation = (rotation + 1) % 3;
         }
     }
     let after = machine_state();
     let comparisons = agreements(&samples, &programs, args.rounds);
-    let declarations: Vec<_> = DECLARATIONS.iter().map(|d| json!({
-        "name": d.name, "bytes": d.text.len(), "sha256": sha(d.text.as_bytes()),
-    })).collect();
-    let pins: Vec<_> = backends.iter().map(|b| json!({"backend": b.id, "load_ms": b.load_ms})).collect();
+    let declarations: Vec<_> = DECLARATIONS
+        .iter()
+        .map(|d| {
+            json!({
+                "name": d.name, "bytes": d.text.len(), "sha256": sha(d.text.as_bytes()),
+            })
+        })
+        .collect();
+    let pins: Vec<_> = backends
+        .iter()
+        .map(|b| json!({"backend": b.id, "load_ms": b.load_ms}))
+        .collect();
     let payload = json!({
         "schema_version": 1, "engine_decision": "pending", "environment": environment,
         "measurement_start": before, "measurement_end": after,
@@ -469,8 +619,18 @@ fn run() -> Result<()> {
     let mut raw = serde_json::to_vec_pretty(&payload)?;
     raw.push(b'\n');
     std::fs::write(args.output.join("screen.json"), &raw)?;
-    std::fs::write(args.output.join("diffs.json"), serde_json::to_vec_pretty(&comparisons)?)?;
-    let md = markdown(&programs, &backends, &samples, &comparisons, &args, &sha(&raw));
+    std::fs::write(
+        args.output.join("diffs.json"),
+        serde_json::to_vec_pretty(&comparisons)?,
+    )?;
+    let md = markdown(
+        &programs,
+        &backends,
+        &samples,
+        &comparisons,
+        &args,
+        &sha(&raw),
+    );
     std::fs::write(args.output.join("screen.md"), md)?;
     println!("screen complete: {}", args.output.display());
     Ok(())
