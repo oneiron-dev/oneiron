@@ -7267,7 +7267,7 @@ export type ProgramStepState = "issued" | "settled" | "uncertain"
 /** `oneiron::dreamer_runner::program::read::views::ProgramStepView` */
 export type ProgramStepView = { step_ref: string; attempt: string; issue: ProgramStepIssueView; state: ProgramStepState; result_digest?: string | null; uncertain?: string | null; at: number }
 /** `oneiron::dreamer_runner::program::read::views::ProgramRunView` */
-export type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; held_by_try: ProgramHeldView[]; run?: ProgramRunStateView | null; steps: ProgramStepView[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] }
+export type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; held_by_try: ProgramHeldView[]; run?: ProgramRunStateView | null; steps: ProgramStepView[]; erased_steps: string[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] }
 /** `oneiron::dreamer_runner::program::read::views::SettledProgramStepRequest` */
 export type SettledProgramStepRequest = { root: string; step_ref: string }
 /** `oneiron::dreamer_runner::program::read::views::ProgramResultAvailability` */
