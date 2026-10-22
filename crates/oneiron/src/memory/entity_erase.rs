@@ -9,8 +9,9 @@ use std::collections::BTreeMap;
 
 use super::support::verify_deletion_authority_in_txn;
 use super::{
-    DeleteReceipt, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
-    MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, SafeDeleteReason,
+    DeleteReceipt, DeleteRequestState, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
+    SafeDeleteReason,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{DeleteEntityPreview, LegalHoldActorKind, LegalHoldTarget};
@@ -213,6 +214,7 @@ impl Memory<'_> {
                 existed: true,
                 reason: hold.code().to_owned(),
                 receipt_ref: None,
+                state: DeleteRequestState::CompletionPending,
             }
         } else if let (true, Some((starter, vault_id))) =
             (veto, options.veto_starter.zip(shared_vault_id))
@@ -230,6 +232,7 @@ impl Memory<'_> {
                 existed: true,
                 reason: SameBytesHold::VetoWindow.code().to_owned(),
                 receipt_ref: None,
+                state: DeleteRequestState::CompletionPending,
             }
         } else {
             let actor = WriteActor::new(self.actor, self.actor_class);
@@ -408,6 +411,7 @@ impl Memory<'_> {
                 existed: true,
                 reason: SafeDeleteReason::UserHardDelete.as_str().to_owned(),
                 receipt_ref: receipt.map(|receipt| format!("redaction:{receipt}")),
+                state: DeleteRequestState::Applied,
             });
         }
         Err(MemoryError::new(
@@ -679,6 +683,45 @@ impl crate::Vault {
             .flatten()
             .filter(|held| held.v == 1)
             .and_then(|held| EntityId::from_bytes(held.record).ok())
+    }
+
+    /// The shared vault whose `erase` veto window an owner's erase other
+    /// than a GDPR request waits out, read in `txn` as
+    /// [`Memory::confirm_entity_erase`] reads it: one not on the Personal
+    /// preset, with two or more live Owners (FIX 9781). `None` elsewhere.
+    pub(crate) fn owner_erase_veto_vault_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::Result<Option<u64>> {
+        let Some(creation) = self
+            .shared_vault_creation_in_txn(txn)?
+            .filter(|creation| creation.preset != Some(SharedVaultPreset::Personal))
+        else {
+            return Ok(None);
+        };
+        let owners = self.live_shared_owner_count_in_txn(txn, creation.vault_id)?;
+        Ok((owners >= 2).then_some(creation.vault_id))
+    }
+
+    /// Starts `record`'s own `erase` act in shared vault `vault_id` under
+    /// `starter`'s proof, naming no bytes, as a confirmed record's own act
+    /// is started (FIX 9781). Returns its id; its starter executes it once
+    /// it completes, as any `erase` act.
+    pub(crate) fn start_record_erase_act(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        record: EntityId,
+    ) -> crate::Result<String> {
+        let payload = serde_json::to_vec(&HeldErase {
+            v: 1,
+            record: *record.as_bytes(),
+            hashes: Vec::new(),
+        })
+        .map_err(|_| Error::InvariantViolation("erase act payload"))?;
+        Ok(self
+            .start_authority_act(starter, vault_id, ERASE_ACT, payload)?
+            .id)
     }
 }
 

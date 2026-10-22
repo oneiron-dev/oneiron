@@ -6986,6 +6986,36 @@
       "openapi": true
     },
     {
+      "name": "vault.cleanup.review",
+      "description": "The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts.",
+      "input": "crate::vault_cleanup::CleanupReviewRequest",
+      "output": "crate::vault_cleanup::CleanupReviewView",
+      "call": "crate::vault_cleanup::review_cleanup_proposal_as(memory, &memory.embedded_owner(\"vault.cleanup.review\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.cleanup.decide",
+      "description": "The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected.",
+      "input": "crate::vault_cleanup::CleanupDecideRequest",
+      "output": "crate::vault_cleanup::CleanupDecideView",
+      "call": "memory.vault().decide_cleanup_proposal_as(&memory.embedded_owner(\"vault.cleanup.decide\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.archive.delete.preview",
       "description": "Previews explicit archived records under the caller's delete authority.",
       "input": "crate::memory::ArchiveDeletePreviewRequest",
@@ -7124,7 +7154,7 @@
     },
     {
       "name": "vault.legal_holds.lift_and_erase",
-      "description": "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them.",
+      "description": "The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records.",
       "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",

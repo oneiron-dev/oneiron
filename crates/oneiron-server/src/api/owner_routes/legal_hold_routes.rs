@@ -145,9 +145,12 @@ async fn confirm_copy(
 }
 
 /// `POST /v1/owner/legal-holds/lift-and-erase`: the owner's one confirm. It
-/// lifts every customer hold on `records` and erases them; a record a legal
-/// order keeps, or one whose erase waits on its receipt, says so and is not
-/// reported erased.
+/// lifts every customer hold on `records` (and on the claim-free partition
+/// with `claim_free_partition`) and erases them; a record a legal order
+/// keeps, or one whose erase waits on its receipt, says so and is not
+/// reported erased. The engine checks the `shown_state` the request carries,
+/// as received: a stale one changes nothing and answers with the current
+/// one, which this route never prepares itself (FIX 1462).
 async fn lift_and_erase(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -164,7 +167,12 @@ async fn lift_and_erase(
             request,
             |request: LegalHoldLiftAndEraseRequest| {
                 Ok(LegalHoldLiftAndErased::from(
-                    vault.confirm_lift_legal_hold_and_erase(&owner, &request.records)?,
+                    vault.confirm_lift_legal_hold_and_erase(
+                        &owner,
+                        &request.records,
+                        request.claim_free_partition,
+                        &request.shown_state,
+                    )?,
                 ))
             },
         )

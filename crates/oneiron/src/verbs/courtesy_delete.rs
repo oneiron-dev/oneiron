@@ -15,7 +15,7 @@ use crate::authority::AuthorityFold;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
     CooperativeDeletionDispositionKind, CooperativeDeletionNotice, IncomingCooperativeDeletion,
-    parse_hex,
+    LegalHoldTarget, parse_hex,
 };
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
@@ -98,6 +98,30 @@ pub struct CourtesyDeleteAskedWorld {
     pub stale_epoch: Option<u64>,
 }
 
+/// One customer hold a courtesy answer placed, as its row reads now (FIX
+/// 2924).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CourtesyDeleteHold {
+    /// The hold, as 32 hex.
+    pub hold: String,
+    /// `standing`, `lifted`, or `unknown` once its row is gone.
+    pub status: String,
+    /// The records it names now, or named when lifted, as 32 hex; empty
+    /// when unknown.
+    pub records: Vec<String>,
+    /// RFC 3339, once lifted.
+    pub lifted: Option<String>,
+}
+
+/// One record of a delete choice, with what became of it (FIX 2926).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CourtesyDeleteRecordProgress {
+    /// The record, as 32 hex.
+    pub record: String,
+    /// `pending` (not removed yet), `removed`, or `missing` (nothing here).
+    pub state: String,
+}
+
 /// The owner's recorded choice on an incoming ask.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CourtesyDeleteChoice {
@@ -106,9 +130,18 @@ pub struct CourtesyDeleteChoice {
     pub reason_code: Option<String>,
     /// RFC 3339.
     pub review: Option<String>,
+    /// The records a delete choice removed.
     pub deleted: Vec<String>,
     /// RFC 3339.
     pub recorded: String,
+    /// The customer hold a legal hold choice placed or kept (FIX 2924).
+    pub holds: Vec<CourtesyDeleteHold>,
+    /// The records a legal hold choice named that are no copy this ask
+    /// covers: left out of its hold (FIX 2927).
+    pub excluded: Vec<String>,
+    /// Each record of a delete choice, in order, and what became of it: one
+    /// still pending was not removed (FIX 2926).
+    pub progress: Vec<CourtesyDeleteRecordProgress>,
 }
 
 /// One ask a former peer sent, filed for the owner's review.
@@ -134,6 +167,9 @@ pub struct CourtesyDeleteIncoming {
     pub answer: Option<CourtesyDeleteChoice>,
     /// The answer's delivery status, once one is sent back.
     pub reply_status: Option<String>,
+    /// Every customer hold an answer to this ask placed or kept, an earlier
+    /// choice's included (FIX 2924).
+    pub holds: Vec<CourtesyDeleteHold>,
 }
 
 /// What an embedded handle answers for a courtesy delete row: the asks, the
@@ -198,6 +234,38 @@ pub fn courtesy_delete_incoming(vault: &Vault) -> crate::Result<Vec<CourtesyDele
         .collect()
 }
 
+const fn hold_status(stands: bool) -> &'static str {
+    if stands { "standing" } else { "lifted" }
+}
+
+/// The courtesy holds `ids` name, each as its row reads now; `unknown` once
+/// it is gone (FIX 2924).
+fn courtesy_holds(vault: &Vault, ids: &[EntityId]) -> crate::Result<Vec<CourtesyDeleteHold>> {
+    Ok(vault
+        .courtesy_holds(ids)?
+        .into_iter()
+        .map(|(id, hold)| match hold {
+            Some(hold) => CourtesyDeleteHold {
+                hold: id.to_hex(),
+                status: hold_status(hold.stands()).to_owned(),
+                records: hold
+                    .targets
+                    .iter()
+                    .filter_map(LegalHoldTarget::id)
+                    .map(|record| record.to_hex())
+                    .collect(),
+                lifted: hold.lifted_at.map(rfc3339_secs),
+            },
+            None => CourtesyDeleteHold {
+                hold: id.to_hex(),
+                status: "unknown".to_owned(),
+                records: Vec::new(),
+                lifted: None,
+            },
+        })
+        .collect())
+}
+
 /// One filed ask as the owner reviews it.
 pub fn courtesy_delete_incoming_ask(
     vault: &Vault,
@@ -248,6 +316,29 @@ pub fn courtesy_delete_incoming_ask(
             })
         })
         .collect::<crate::Result<Vec<_>>>()?;
+    let holds = courtesy_holds(vault, &filed.courtesy_hold_ids)?;
+    let answer = match filed.disposition {
+        Some(choice) => Some(CourtesyDeleteChoice {
+            choice: choice.kind,
+            reason_code: choice.reason_code,
+            review: choice.review_at.map(rfc3339_secs),
+            deleted: choice.deleted,
+            recorded: rfc3339_secs(choice.recorded_at),
+            holds: courtesy_holds(vault, &choice.hold_ids)?,
+            excluded: choice.excluded,
+            progress: choice
+                .delete_operation
+                .map(|operation| operation.records)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|saved| CourtesyDeleteRecordProgress {
+                    record: saved.record.to_hex(),
+                    state: saved.state.as_str().to_owned(),
+                })
+                .collect(),
+        }),
+        None => None,
+    };
     Ok(CourtesyDeleteIncoming {
         request: filed.request_id,
         pact: filed.connection_id,
@@ -258,14 +349,9 @@ pub fn courtesy_delete_incoming_ask(
         candidates,
         requested: rfc3339_secs(filed.requested_at),
         received: rfc3339_secs(filed.received_at),
-        answer: filed.disposition.map(|choice| CourtesyDeleteChoice {
-            choice: choice.kind,
-            reason_code: choice.reason_code,
-            review: choice.review_at.map(rfc3339_secs),
-            deleted: choice.deleted,
-            recorded: rfc3339_secs(choice.recorded_at),
-        }),
+        answer,
         reply_status: filed.reply_status.map(|status| status.as_str().to_owned()),
+        holds,
     })
 }
 

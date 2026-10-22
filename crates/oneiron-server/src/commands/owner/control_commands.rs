@@ -289,14 +289,30 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 .iter()
                 .map(|record| hold_id_arg(record))
                 .collect::<anyhow::Result<Vec<_>>>()?;
+            let claim_free_partition = args.claim_free_partition;
+            // The one confirm shows the holds it lifts, read once from this
+            // vault, and acts only on what it showed (FIX 1462).
+            let shown_state =
+                vault.lift_and_erase_shown_state(&owner, &records, claim_free_partition)?;
+            eprintln!("{}", serde_json::to_string_pretty(&shown_state.holds)?);
+            let request = sdk::LegalHoldLiftAndEraseRequest {
+                records,
+                claim_free_partition,
+                shown_state,
+            };
             hooked_row(
                 &vault,
                 actor,
                 "vault.legal_holds.lift_and_erase",
-                sdk::LegalHoldLiftAndEraseRequest { records },
+                request,
                 |request: sdk::LegalHoldLiftAndEraseRequest| {
                     Ok(sdk::LegalHoldLiftAndErased::from(
-                        vault.confirm_lift_legal_hold_and_erase(&owner, &request.records)?,
+                        vault.confirm_lift_legal_hold_and_erase(
+                            &owner,
+                            &request.records,
+                            request.claim_free_partition,
+                            &request.shown_state,
+                        )?,
                     ))
                 },
             )?
