@@ -160,10 +160,15 @@ impl VaultVm {
     /// Refuses a restore or an inspection while a VM runs, or while a RAM
     /// snapshot is published: that generation may resume, and its RAM's
     /// view of the disk would not survive another boot of it.
-    fn cold_only(&self) -> anyhow::Result<()> {
+    async fn cold_only(&mut self) -> anyhow::Result<()> {
         anyhow::ensure!(!self.is_running(), "the vault VM is already running");
+        // A bound custody's snapshot reads only unlocked (FIX 9497); one
+        // that does not unlock refuses the boot and keeps the snapshot.
+        self.unlock_for_start().await?;
+        let published = self.has_snapshot();
+        self.evict_after_reap().await;
         anyhow::ensure!(
-            !self.has_snapshot(),
+            !published,
             "the vault VM has a RAM snapshot published; resume it rather than boot its disk again"
         );
         Ok(())
@@ -207,7 +212,7 @@ impl VaultVm {
         fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<Credentials> {
-        self.cold_only()?;
+        self.cold_only().await?;
         let input = pipe::Receiver::from_owned_fd(io.input)?;
         let result = pipe::Sender::from_owned_fd(io.result)?;
         if let Some(outbox) = &self.outbox {
@@ -294,7 +299,7 @@ impl VaultVm {
         fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<VmRestoreMarkerObservation> {
-        self.cold_only()?;
+        self.cold_only().await?;
         let observed = self.inspect(identity, fscrypt_key, timeout).await;
         let _ = self.stop(STOP_GRACE).await;
         observed

@@ -360,12 +360,12 @@ impl VaultVm {
     }
 
     /// Keeps the running generation's anchor URL, the one its proxy serves,
-    /// beside its RAM snapshot (FIX 7183): written to a temporary file,
-    /// flushed, then renamed to [`SNAPSHOT_ANCHOR`], all before the sleep
-    /// publishes the snapshot. Only the URL is kept, never the credential,
-    /// which the guest's RAM holds a copy of. A generation with no proxy
-    /// keeps none.
-    pub(super) fn keep_snapshot_anchor(&self) -> anyhow::Result<()> {
+    /// beside its RAM snapshot in `dir`, the snapshot's protected backing
+    /// (FIX 7183, FIX 9497): written to a temporary file, flushed, then
+    /// renamed to [`SNAPSHOT_ANCHOR`], all before the sleep publishes the
+    /// snapshot. Only the URL is kept, never the credential, which the
+    /// guest's RAM holds a copy of. A generation with no proxy keeps none.
+    pub(super) fn keep_snapshot_anchor(&self, dir: &Path) -> anyhow::Result<()> {
         let kept = KeptAnchor {
             anchor_url: self
                 .anchor
@@ -374,7 +374,7 @@ impl VaultVm {
                 .and_then(|serving| serving.bound.as_ref())
                 .map(|bound| bound.url.clone()),
         };
-        let temporary = self.path("vm.anchor.tmp");
+        let temporary = dir.join("vm.anchor.tmp");
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -384,7 +384,7 @@ impl VaultVm {
         file.write_all(&serde_json::to_vec(&kept)?)?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&temporary, self.path(SNAPSHOT_ANCHOR))?;
+        std::fs::rename(&temporary, dir.join(SNAPSHOT_ANCHOR))?;
         Ok(())
     }
 
@@ -393,8 +393,8 @@ impl VaultVm {
     /// whatever was attached since (FIX 7183). A snapshot without the file,
     /// or with one that does not read, does not restore; its error never
     /// names what the file holds.
-    pub(super) fn take_snapshot_anchor(&self) -> anyhow::Result<SnapshotAnchor> {
-        let path = self.path(SNAPSHOT_ANCHOR);
+    pub(super) fn take_snapshot_anchor(&self, dir: &Path) -> anyhow::Result<SnapshotAnchor> {
+        let path = dir.join(SNAPSHOT_ANCHOR);
         let read = std::fs::read(&path);
         let _ = std::fs::remove_file(&path);
         let read = read.context("the vault VM's RAM snapshot has no anchor binding beside it")?;
