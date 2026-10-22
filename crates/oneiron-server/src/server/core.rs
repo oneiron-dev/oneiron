@@ -410,6 +410,11 @@ impl SyncServer {
         let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
         vault.set_reader_job_runner(runner);
         crate::models::outbound_wait::install(&vault);
+        // Provider media replies are booked on their own line (FIX 8615).
+        crate::models::install_media_reply_line(
+            config.limits.media_reply_bytes,
+            Arc::clone(wire_telemetry.limit_questions()),
+        );
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
             Arc::clone(wire_telemetry.limit_questions()),

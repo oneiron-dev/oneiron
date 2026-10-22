@@ -180,11 +180,21 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
                 lease,
             )
             .await?;
+        // The reply's raw bytes go once its JSON is read, before the image
+        // is decoded, so the two are never held with the decoded image
+        // (FIX 8615).
+        let json = reply.json();
+        let OpenAiMediaHttpResponse {
+            status,
+            headers,
+            body,
+        } = reply;
+        drop(body);
         let image = decode_response(
             OpenAiImageHttpResponse {
-                status: reply.status,
-                body: reply.json(),
-                headers: reply.headers,
+                status,
+                body: json,
+                headers,
             },
             model,
             &fields,

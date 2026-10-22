@@ -11,7 +11,7 @@ use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
     MediaUsage, ReferenceCompatibility,
 };
-use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
+use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId, RetryableLlmError};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::{future::Future, pin::Pin};
@@ -416,8 +416,15 @@ fn image_response(body: &Value, model: ModelId) -> LlmResult<MediaResponse> {
                 .filter(|kind| kind.starts_with("image/"));
             let data = inline.get("data").and_then(Value::as_str);
             if let (Some(media_type), Some(data)) = (media_type, data) {
-                let bytes = STANDARD
-                    .decode(data)
+                // Kept whole, however large (FIX 8615): its room is allocated
+                // fallibly, and only memory this machine cannot give ends
+                // the call.
+                let mut bytes = Vec::new();
+                bytes
+                    .try_reserve_exact(data.len().div_ceil(4) * 3)
+                    .map_err(|_| RetryableLlmError::ServerError)?;
+                STANDARD
+                    .decode_vec(data, &mut bytes)
                     .map_err(|_| FatalLlmError::EmptyResponse)?;
                 if !bytes.is_empty() {
                     images.push(MediaPart::Image {

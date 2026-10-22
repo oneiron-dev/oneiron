@@ -702,7 +702,9 @@ fn status(code: u16) -> LlmResult<()> {
 fn transport(failure: HttpFailure) -> LlmError {
     match failure {
         HttpFailure::Timeout => RetryableLlmError::Timeout.into(),
-        HttpFailure::Connection | HttpFailure::StreamCut => RetryableLlmError::ServerError.into(),
+        HttpFailure::Connection | HttpFailure::StreamCut | HttpFailure::OutOfMemory => {
+            RetryableLlmError::ServerError.into()
+        }
         HttpFailure::Malformed | HttpFailure::EventTooLarge | HttpFailure::BodyTooLarge => {
             failed(LabelReadFailure::Malformed)
         }

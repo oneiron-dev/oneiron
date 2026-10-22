@@ -136,6 +136,13 @@ pub struct LimitsConfig {
     /// its memory), not a count: past it, such state is the memory floor's
     /// one refusal, and a retained ring falls back to a resync.
     pub retained_memory_bytes: u64,
+    /// Bytes the media replies providers send this server (an image, a clip,
+    /// speech) may hold in memory at once (FIX 8615): a reply takes room as
+    /// it is read, waiting its turn past it, and keeps it until its decoded
+    /// answer leaves the adapter. One larger than the whole line runs alone.
+    /// A memory bound sized from the machine (an eighth of its memory), not
+    /// a size cap: no reply is refused for its size.
+    pub media_reply_bytes: u64,
     /// Bytes one note to the open feedback inbox may carry: a POST body, or
     /// a GET link's query. A memory floor: a longer note is refused with 413
     /// before it is stored. Room for any v1 feedback bundle.
@@ -177,6 +184,7 @@ impl Default for LimitsConfig {
             message_streams: oneiron::live_rows::LiveRows::DEFAULT_MESSAGE_STREAMS,
             live_documents: oneiron::live_rows::LiveRows::DEFAULT_LIVE_DOCUMENTS,
             retained_memory_bytes: memory_floor(),
+            media_reply_bytes: memory_floor(),
             feedback_inbox_bytes: 128 * 1024,
             engine: EngineLimits::default(),
         }
@@ -193,8 +201,8 @@ fn descriptor_floor() -> usize {
 }
 
 /// An eighth of the machine's memory for what LFS transfers hold in memory,
-/// and as much for app-tier state kept between frames, each at least 256
-/// MiB; 2 GiB when the platform does not say.
+/// and as much for app-tier state kept between frames and for media replies,
+/// each at least 256 MiB; 2 GiB when the platform does not say.
 fn memory_floor() -> u64 {
     const MIB: u64 = 1024 * 1024;
     crate::machine::memory_bytes().map_or(2_048 * MIB, |memory| (memory / 8).max(256 * MIB))
@@ -244,6 +252,7 @@ impl LimitsConfig {
             message_streams,
             live_documents,
             retained_memory_bytes,
+            media_reply_bytes,
             feedback_inbox_bytes,
             keyed_filter_json_bytes,
             code_result_inline_bytes,
@@ -395,6 +404,7 @@ impl LimitsConfig {
         set(&mut self.message_streams, message_streams);
         set(&mut self.live_documents, live_documents);
         set(&mut self.retained_memory_bytes, retained_memory_bytes);
+        set(&mut self.media_reply_bytes, media_reply_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
@@ -614,6 +624,7 @@ impl LimitsConfig {
             ("message_streams", self.message_streams as u64),
             ("live_documents", self.live_documents as u64),
             ("retained_memory_bytes", self.retained_memory_bytes),
+            ("media_reply_bytes", self.media_reply_bytes),
             ("feedback_inbox_bytes", self.feedback_inbox_bytes),
         ] {
             if value == 0 {
@@ -685,6 +696,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) message_streams: Option<usize>,
     pub(super) live_documents: Option<usize>,
     pub(super) retained_memory_bytes: Option<u64>,
+    pub(super) media_reply_bytes: Option<u64>,
     pub(super) feedback_inbox_bytes: Option<u64>,
     pub(super) keyed_filter_json_bytes: Option<u64>,
     pub(super) code_result_inline_bytes: Option<u64>,

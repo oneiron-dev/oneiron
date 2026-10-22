@@ -211,6 +211,7 @@ embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until 
 decision_reads = 2048             # owner decision-read probes held at once; past it they queue
 task_work = 2048                  # can, ask, wait and tasks.answer calls the vault runs at once; past it each caller waits a fair turn, then runs
 renderer_work = 2                 # deck and slide renders at once (LibreOffice + pdftoppm); past it each caller waits a fair turn, then render_deadline (default: a quarter of the cores, at least 1)
+media_reply_bytes = 2147483648    # bytes provider media replies (images, clips, speech) hold until decoded; past it a reply waits its turn, never refused for size (default: an eighth of memory)
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
