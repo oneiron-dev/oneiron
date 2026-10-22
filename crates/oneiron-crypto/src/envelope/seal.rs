@@ -4,6 +4,7 @@
 //!   passkey KEK, the recovered Shamir secret, or the hybrid combiner output;
 //! - `K = HKDF-SHA256(salt = header salt, ikm = W, info = KEY_LABEL || H)`;
 //! - `ciphertext = AEAD(K, header nonce, plaintext, aad = H)`,
+//!   with one domain-separated block after `H` when extra AAD was bound;
 //!
 //! where `H` is the exact canonical header (every metadata field, the nonce and the
 //! ciphertext length). The fresh 32-byte salt makes `K` unique per envelope, so even
@@ -28,6 +29,8 @@ use crate::suite::{Suite, SuiteId, SuiteKind, name_of};
 use crate::{MAX_PLAINTEXT_LEN, TAG_LEN};
 
 const KEY_LABEL: &[u8] = b"oneiron-crypto/v1/aead-key";
+/// The label of a non-empty extra AAD's block after the header AAD.
+const EXTRA_AAD_LABEL: &[u8] = b"oneiron-crypto/v1/extra-aad";
 /// Stack bytes wiped after the HKDF key schedule, measured by stack painting
 /// (`seal::tests`, x86_64 Linux, rustc 1.96, 2026-10-09): the schedule reached 1,480 bytes
 /// below its caller in a release build and 3,992 in a dev build (this crate at opt-level
@@ -99,12 +102,29 @@ pub struct OpenPolicy<'a> {
     pub argon2_max: Argon2Cost,
 }
 
-/// Seals `plaintext` under `key`. Salt and nonce come from `rng`; an RNG failure is
-/// an error, never a weaker envelope.
+/// Seals `plaintext` under `key`: [`seal_with_aad`] with empty extra AAD. Salt
+/// and nonce come from `rng`; an RNG failure is an error, never a weaker
+/// envelope.
 pub fn seal<R: TryCryptoRng + ?Sized>(
     params: &SealParams<'_>,
     key: SealKey<'_>,
     plaintext: &[u8],
+    rng: &mut R,
+) -> Result<Envelope> {
+    seal_with_aad(params, key, plaintext, &[], rng)
+}
+
+/// Seals `plaintext` under `key`, binding `extra_aad` after the header in the
+/// payload AEAD's associated data. An empty `extra_aad` seals exactly what
+/// [`seal`] seals; a non-empty one appends one domain-separated block (the
+/// `oneiron-crypto/v1/extra-aad` label, the bytes' `u64be` length, then the
+/// bytes), so a wrong or missing extra AAD fails to open. Salt and nonce come
+/// from `rng`; an RNG failure is an error, never a weaker envelope.
+pub fn seal_with_aad<R: TryCryptoRng + ?Sized>(
+    params: &SealParams<'_>,
+    key: SealKey<'_>,
+    plaintext: &[u8],
+    extra_aad: &[u8],
     rng: &mut R,
 ) -> Result<Envelope> {
     let suite = Suite::require(params.suite, &[SuiteKind::Aead], params.epoch)?;
@@ -196,7 +216,8 @@ pub fn seal<R: TryCryptoRng + ?Sized>(
     let header_bytes = header.encode();
     let mut key = Zeroizing::new([0u8; 32]);
     aead_key(&secret, header.kdf.salt(), &header_bytes, &mut key)?;
-    let ciphertext = aead_seal(header.suite, &key, &header.nonce, &header_bytes, plaintext)?;
+    let aad = aad_with_extra(&header_bytes, extra_aad)?;
+    let ciphertext = aead_seal(header.suite, &key, &header.nonce, &aad, plaintext)?;
     if ciphertext.len() != header.ciphertext_len as usize {
         return Err(Error::Primitive("aead output length"));
     }
@@ -208,9 +229,21 @@ pub fn seal<R: TryCryptoRng + ?Sized>(
 }
 
 impl Envelope {
-    /// Checks the header against the reader's policy, then derives the key and opens.
-    /// Every cryptographic failure is [`Error::OpenFailed`].
+    /// Opens what [`seal`] sealed: [`Envelope::open_with_aad`] with empty extra AAD.
     pub fn open(&self, key: OpenKey<'_>, policy: &OpenPolicy<'_>) -> Result<Zeroizing<Vec<u8>>> {
+        self.open_with_aad(key, policy, &[])
+    }
+
+    /// Checks the header against the reader's policy, then derives the key and opens,
+    /// checking `extra_aad` exactly as [`seal_with_aad`] bound it: empty opens what
+    /// [`seal`] sealed, and any other expectation opens only its own envelopes.
+    /// Every cryptographic failure is [`Error::OpenFailed`].
+    pub fn open_with_aad(
+        &self,
+        key: OpenKey<'_>,
+        policy: &OpenPolicy<'_>,
+        extra_aad: &[u8],
+    ) -> Result<Zeroizing<Vec<u8>>> {
         let h = &self.header;
         if !policy.aead_suites.contains(&h.suite) {
             return Err(Error::SuiteNotAccepted(name_of(h.suite)));
@@ -273,13 +306,8 @@ impl Envelope {
         };
         let mut key = Zeroizing::new([0u8; 32]);
         aead_key(&secret, h.kdf.salt(), &self.header_bytes, &mut key)?;
-        aead_open(
-            h.suite,
-            &key,
-            &h.nonce,
-            &self.header_bytes,
-            &self.ciphertext,
-        )
+        let aad = aad_with_extra(&self.header_bytes, extra_aad)?;
+        aead_open(h.suite, &key, &h.nonce, &aad, &self.ciphertext)
     }
 }
 
@@ -338,6 +366,24 @@ fn aead_key_inner(
     Hkdf::<Sha256>::new(Some(salt), secret)
         .expand_multi_info(&[KEY_LABEL, header_bytes], key)
         .map_err(|_| Error::Primitive("hkdf"))
+}
+
+/// The payload AEAD's associated data: the canonical header bytes, then, only
+/// for a non-empty `extra_aad`, one domain-separated block: the label, the
+/// extra bytes' `u64be` length, then the bytes. Empty extra AAD seals and
+/// opens exactly today's `H`.
+fn aad_with_extra(header_bytes: &[u8], extra_aad: &[u8]) -> Result<Vec<u8>> {
+    if extra_aad.is_empty() {
+        return Ok(header_bytes.to_vec());
+    }
+    let len = u64::try_from(extra_aad.len()).map_err(|_| Error::Primitive("length"))?;
+    let mut aad =
+        Vec::with_capacity(header_bytes.len() + EXTRA_AAD_LABEL.len() + 8 + extra_aad.len());
+    aad.extend_from_slice(header_bytes);
+    aad.extend_from_slice(EXTRA_AAD_LABEL);
+    aad.extend_from_slice(&len.to_be_bytes());
+    aad.extend_from_slice(extra_aad);
+    Ok(aad)
 }
 
 fn aead_seal(
