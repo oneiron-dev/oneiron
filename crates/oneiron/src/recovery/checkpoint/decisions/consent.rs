@@ -599,8 +599,8 @@ impl Decision for CalendarInviteSendConsent {
 }
 
 /// An id none of `named` is, for the actor or EVENT no row names.
-fn unnamed_id<'a>(named: impl IntoIterator<Item = &'a EntityId>) -> EntityId {
-    let named: BTreeSet<&EntityId> = named.into_iter().collect();
+fn unnamed_id<T: std::borrow::Borrow<EntityId>>(named: impl IntoIterator<Item = T>) -> EntityId {
+    let named: BTreeSet<EntityId> = named.into_iter().map(|id| *id.borrow()).collect();
     let mut n = 0_u64;
     loop {
         let mut bytes = [0xff; 16];
