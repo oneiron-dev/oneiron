@@ -148,6 +148,22 @@ pub trait AgentVerbDoor: Send + Sync {
         None
     }
 
+    /// What the row this door last ran stated of its call receipt, as its
+    /// reply spells it (`call:<32hex>`, or `none; no-record` for an
+    /// anonymous off-record session's call): `None` when it stated nothing.
+    /// An action keeps it on its replay record, so a retry under the same
+    /// key states the first dispatch's receipt again (FIX 8159). A door that
+    /// states no receipt keeps none.
+    fn row_receipt(&self) -> Option<String> {
+        None
+    }
+
+    /// The receipt the first dispatch of a replayed action stated
+    /// ([`Self::row_receipt`]), handed back to this door, whose caller
+    /// states it again: the replay runs no row and writes no receipt of its
+    /// own. A door that states no receipt ignores it.
+    fn replay_row_receipt(&self, _receipt: &str) {}
+
     /// Sends the run's answer to the questions one of its connector calls
     /// waits on (`connector.answer`, ONE-2510), for the run's own caller:
     /// the door checks it under the original call's grant and principal, and

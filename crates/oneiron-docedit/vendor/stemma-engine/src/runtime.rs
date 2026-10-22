@@ -309,9 +309,15 @@ pub enum ErrorCode {
     /// A set_format expect anchor matched multiple target spans.
     AmbiguousFormatTarget,
     InvalidDocx,
-    /// The package's XML exceeded one parse's node or expanded-byte budget
-    /// (`DocxError::ParseLimitExceeded`); the message names the bound.
-    ParseLimitExceeded,
+    /// The package passed a ceiling its caller set, or one classic ZIP has
+    /// (`DocxError::Capacity`): a well-formed package. The typed details
+    /// ([`ErrorDetails::capacity`]) name the ceiling, what the package has
+    /// and the limit (FIX 5354).
+    CapacityExceeded,
+    /// The work's memory was refused at the machine's floor, or its wait or
+    /// deadline ran out (`DocxError::Resource`): a well-formed package. The
+    /// typed details ([`ErrorDetails::resource`]) carry the refusal.
+    ResourceRefused,
     InvalidSnapshot,
     InternalError,
     ValidationFailed,
@@ -365,6 +371,22 @@ impl ErrorDetails {
             _ => None,
         }
     }
+
+    /// The ceiling a package passed, for [`ErrorCode::CapacityExceeded`].
+    pub fn capacity(&self) -> Option<CapacityDetails> {
+        match self.typed.as_deref() {
+            Some(TypedErrorDetails::Capacity(details)) => Some(*details),
+            _ => None,
+        }
+    }
+
+    /// The refusal, for [`ErrorCode::ResourceRefused`].
+    pub fn resource(&self) -> Option<crate::admission::Refusal> {
+        match self.typed.as_deref() {
+            Some(TypedErrorDetails::Resource(refusal)) => Some(*refusal),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -374,6 +396,18 @@ pub enum TypedErrorDetails {
     /// this variant lets transports explain the grouping consequence without
     /// parsing prose.
     AuthorLabelCollision(AuthorLabelCollisionDetails),
+    /// The ceiling a well-formed package passed.
+    Capacity(CapacityDetails),
+    /// Why the work's memory was not reserved, or why it stopped.
+    Resource(crate::admission::Refusal),
+}
+
+/// A ceiling a well-formed package passed: `observed` past `limit`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CapacityDetails {
+    pub ceiling: crate::docx::Ceiling,
+    pub observed: u64,
+    pub limit: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -7545,9 +7579,12 @@ impl DocxRuntime for SimpleRuntime {
         base_bytes: &[u8],
         target_bytes: &[u8],
     ) -> Result<(ImportResult, ImportResult), RuntimeError> {
+        // Both imports run in the caller's operation: its port and limits.
+        let operation = crate::admission::Operation::current();
         std::thread::scope(|s| {
-            let base_thread = s.spawn(|| self.import_docx(base_bytes));
-            let target_thread = s.spawn(|| self.import_docx(target_bytes));
+            let base_operation = operation.clone();
+            let base_thread = s.spawn(|| base_operation.run(|| self.import_docx(base_bytes)));
+            let target_thread = s.spawn(|| operation.run(|| self.import_docx(target_bytes)));
             let base = base_thread.join().expect("base import thread panicked")?;
             let target = target_thread
                 .join()
@@ -7881,7 +7918,8 @@ pub fn gate_serialized_bytes(bytes: &[u8], level: ValidatorLevel) -> Result<(), 
     match level {
         ValidatorLevel::Off => Ok(()),
         ValidatorLevel::Blocking | ValidatorLevel::Full => {
-            let validation = crate::docx_validate::validate_docx(bytes);
+            let validation =
+                crate::docx_validate::validate_docx_admitted(bytes).map_err(resource_error)?;
             let findings: Vec<String> = validation
                 .errors()
                 .filter(|f| level == ValidatorLevel::Full || BLOCKING_RULES.contains(&f.rule_id))
@@ -9697,6 +9735,9 @@ pub fn validate_docx_report(docx_bytes: &[u8]) -> Result<ValidationReport, Runti
     let mut issues = Vec::new();
     let archive = match DocxArchive::read(docx_bytes) {
         Ok(a) => a,
+        // A ceiling or the machine's memory stopped the read: no finding
+        // about the package, the work's own refusal.
+        Err(err) if err.is_admission() => return Err(map_docx_error(err)),
         Err(err) => {
             issues.push(ValidationIssue {
                 code: ValidationIssueCode::PackageInvariant,
@@ -9867,7 +9908,8 @@ pub fn validate_docx_report(docx_bytes: &[u8]) -> Result<ValidationReport, Runti
     // serialization deliberately normalizes some of them (for example a
     // missing canonical content-type override) before applying its output
     // gate.
-    let tracked_change_validation = crate::docx_validate::validate_docx(docx_bytes);
+    let tracked_change_validation =
+        crate::docx_validate::validate_docx_admitted(docx_bytes).map_err(resource_error)?;
     for finding in tracked_change_validation
         .findings
         .into_iter()
@@ -11068,13 +11110,42 @@ pub(crate) fn invalid_snapshot(message: &str) -> RuntimeError {
     }
 }
 
+/// A refusal of the work's memory as the runtime's error, typed.
+pub fn resource_error(refusal: crate::admission::Refusal) -> RuntimeError {
+    RuntimeError {
+        code: ErrorCode::ResourceRefused,
+        message: refusal.to_string(),
+        details: ErrorDetails {
+            typed: Some(Box::new(TypedErrorDetails::Resource(refusal))),
+            ..ErrorDetails::default()
+        },
+    }
+}
+
 pub fn map_docx_error(err: DocxError) -> RuntimeError {
-    let code = if matches!(err, DocxError::ParseLimitExceeded { .. }) {
-        ErrorCode::ParseLimitExceeded
-    } else {
-        ErrorCode::InvalidDocx
-    };
     let message = match err {
+        DocxError::Resource(refusal) => return resource_error(refusal),
+        DocxError::Capacity {
+            ceiling,
+            observed,
+            limit,
+        } => {
+            return RuntimeError {
+                code: ErrorCode::CapacityExceeded,
+                message: format!(
+                    "docx refused: {}={limit} exceeded ({observed})",
+                    ceiling.name()
+                ),
+                details: ErrorDetails {
+                    typed: Some(Box::new(TypedErrorDetails::Capacity(CapacityDetails {
+                        ceiling,
+                        observed,
+                        limit,
+                    }))),
+                    ..ErrorDetails::default()
+                },
+            };
+        }
         DocxError::ZipRead(source) => format!("docx read failed: {source}"),
         DocxError::ZipWrite(source) => format!("docx write failed: {source}"),
         DocxError::Io(source) => format!("docx io error: {source}"),
@@ -11087,12 +11158,9 @@ pub fn map_docx_error(err: DocxError) -> RuntimeError {
         DocxError::InvalidWrittenZip(detail) => {
             format!("docx write produced an invalid ZIP central directory: {detail}")
         }
-        DocxError::ParseLimitExceeded { bound, limit } => {
-            crate::parse_budget::refusal(bound, limit)
-        }
     };
     RuntimeError {
-        code,
+        code: ErrorCode::InvalidDocx,
         message,
         details: ErrorDetails::default(),
     }

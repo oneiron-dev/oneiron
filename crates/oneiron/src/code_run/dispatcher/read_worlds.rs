@@ -30,9 +30,9 @@ pub(super) struct ReadWorldLive {
     covered: bool,
 }
 
-/// Each served row's world as the read that served it proves it, base
+/// Each served row's worlds as the read that served it proves them, base
 /// reality by its own id: `None` for a row that read cannot prove.
-pub(super) type ServedWorlds = HashMap<EntityId, Option<EntityId>>;
+pub(super) type ServedWorlds = HashMap<EntityId, Option<BTreeSet<EntityId>>>;
 
 /// One entry's capture epoch, closed as the entry ends when every ledger
 /// write of it landed. An entry that unwinds leaves it open.
@@ -170,11 +170,11 @@ impl HostSelfDispatcher<'_> {
         let mut worlds = BTreeSet::new();
         for hit in hits {
             for proofs in std::iter::once(scored).chain(admitted) {
-                let Some(world) = proofs.get(&hit.id).copied().flatten() else {
+                let Some(served) = proofs.get(&hit.id).and_then(Option::as_ref) else {
                     self.read_worlds_unknown(site.run_id, ReadWorldUnknown::Unproved);
                     return;
                 };
-                worlds.insert(world);
+                worlds.extend(served.iter().copied());
             }
         }
         if self.read_worlds_noted(site.run_id, site.seq, &worlds) {
@@ -202,24 +202,24 @@ impl HostSelfDispatcher<'_> {
     }
 }
 
-/// The world the row `id` sits in as the read `txn` serves it, base reality
-/// by its own id; `None` where that read cannot prove it (FIX 6130).
+/// The worlds the row `id` sits in as the read `txn` serves it, base reality
+/// by its own id; `None` where that read cannot prove them (FIX 6130). A
+/// NOTE in several worlds outside base notes every one (FIX-LIST 9433).
 pub(super) fn served_world_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-) -> Option<EntityId> {
+) -> Option<BTreeSet<EntityId>> {
     use crate::ports::EntityStore;
     let row = vault.port_entity_get(txn, &id).ok()??;
-    let world = crate::federation::record_scope::record_world_in(
+    crate::federation::record_scope::note_world::served_worlds_in(
         &vault.store,
         txn,
         id,
         row.entity_type,
         &row.body,
     )
-    .ok()??;
-    Some(world.unwrap_or_else(crate::claim::base_world_id))
+    .ok()?
 }
 
 /// Whether `outcome` carries no row of the vault (FIX 6130): a speech

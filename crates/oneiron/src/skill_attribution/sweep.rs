@@ -232,9 +232,10 @@ fn capture_receipt(
                 let skill = fact.skill.ok_or(Error::InvalidConfig(
                     "attribution fact must name a loaded skill".to_owned(),
                 ))?;
-                vault.get_skill_record(&skill)?.ok_or(Error::InvalidConfig(
-                    "attribution fact names an unknown skill".to_owned(),
-                ))
+                // Each fact's skill as the pack loaded it (FIX 10110).
+                crate::skill::receipt_skill_record(vault, receipt, &skill)?.ok_or(
+                    Error::InvalidConfig("attribution fact names an unknown skill".to_owned()),
+                )
             })
             .collect::<Result<Vec<_>>>()?;
         let named_revisions: std::collections::BTreeSet<_> = named

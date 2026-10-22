@@ -10,18 +10,27 @@ sbom.spdx.json is an SPDX 2.3 JSON document. Its packages are:
   (`cargo tree -e normal` in the build chroot, so the features are the ones
   this build resolved), plus the crates its build also compiled
   (`-e normal,build`), joined with Cargo.lock for source and checksum;
+- every external source build's binary (packages.toml source_builds) and the
+  Cargo packages it links and compiled, joined with that source's own
+  Cargo.lock, in an SPDX id space of its own (never merged with the engine's);
 - for a variant that ships the offline Cargo store, every crate archive and
   git source in that store;
-- every pinned payload (an upstream binary, the Rust components) and pinned
-  repo file placed in the image.
-Licences are what Cargo declares for a crate. A Debian package's declared
-licence is read from its own /usr/share/doc/<package>/copyright in the built
-image when that file is machine-readable (DEP-5, copyright-format 1.0); its
-short names map to SPDX ids through DEBIAN_TO_SPDX alone, an unmapped name
-with its text becomes a LicenseRef with that text extracted, and anything
-else stays NOASSERTION with the reason in licenseComments. licenseConcluded
-stays NOASSERTION throughout: this is the packager's declaration, not a
-legal conclusion.
+- every pinned payload (an upstream binary, a zip member, an npm package with
+  its sha512 and purl, the Rust components) and pinned repo file placed in
+  the image.
+Licences are what Cargo declares for a crate and what an npm package's own
+package.json declares. A Debian package's declared licence is read from its
+own /usr/share/doc/<package>/copyright in the built image when that file is
+machine-readable (DEP-5, copyright-format 1.0); its short names map to SPDX
+ids through DEBIAN_TO_SPDX alone, an unmapped name with its text becomes a
+LicenseRef with that text extracted, and anything else stays NOASSERTION with
+the reason in licenseComments. A licence text that points at
+/usr/share/common-licenses/<name> is extracted with that file's own text
+appended, read from the same image root (COMMON_LICENSES; never the build
+host's), after the package's grant, which stays: whether a GPL is "only" or
+"or later" is the grant's, never the common file's. licenseConcluded stays
+NOASSERTION throughout: this is the packager's declaration, not a legal
+conclusion.
 
 provenance.json is an in-toto Statement v1 with a SLSA provenance v1
 predicate: the builder identity (the tools tree's content hash, mkosi's pin,
@@ -39,6 +48,7 @@ import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .fetch import sri_hex
 from .model import ARCH, LOCK, PACKAGES, RELEASE, Model, Plan
 from .util import MissingPin, sha256_bytes, sha256_file
 
@@ -51,6 +61,10 @@ CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
 NOASSERTION = "NOASSERTION"
 DISTRO = "debian-13"
 DEP5_FORMAT = "copyright-format/1.0"
+# The image-local licence texts a copyright file may point at (FIX 10350):
+# a literal /usr/share/common-licenses/<name> in a licence text is read from
+# the image root and appended to that text. Nothing else is dereferenced.
+COMMON_LICENSES = re.compile(r"/usr/share/common-licenses/([A-Za-z0-9][A-Za-z0-9.+_-]*[A-Za-z0-9+])")
 # Debian copyright-format short names (and SPDX ids used as names) that are
 # exactly one SPDX licence; matched case-insensitively. Names that are vague
 # in Debian's own list (MIT, BSD, Artistic, Apache, GPL without a version,
@@ -173,6 +187,24 @@ def _field(value: str) -> tuple[str, str]:
     return first.strip(), "\n".join(lines).strip("\n")
 
 
+def _with_common_texts(body: str, rootfs: Path | None) -> str:
+    """body, then the full text of every image-local common licence it names
+    (COMMON_LICENSES), in order of first mention; a missing file adds nothing."""
+    if rootfs is None:
+        return body
+    texts = []
+    for name in dict.fromkeys(COMMON_LICENSES.findall(body)):
+        path = _in_root(rootfs, f"usr/share/common-licenses/{name}")
+        if path is None:
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8").strip("\n")
+        except UnicodeDecodeError:
+            continue
+        texts.append(f"----- /usr/share/common-licenses/{name} -----\n{text}")
+    return "\n\n".join([body, *texts]) if texts else body
+
+
 def _licence_ref(name: str, body: str, extracted: dict[str, dict]) -> str:
     licence_id = (f"LicenseRef-Debian-{re.sub(r'[^A-Za-z0-9.-]', '-', name)}-"
                   f"{hashlib.sha256(body.encode()).hexdigest()[:12]}")
@@ -180,7 +212,8 @@ def _licence_ref(name: str, body: str, extracted: dict[str, dict]) -> str:
     return licence_id
 
 
-def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dict]) -> tuple[str | None, str]:
+def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dict],
+                rootfs: Path | None = None) -> tuple[str | None, str]:
     """One Files paragraph's License field as an SPDX expression, or (None, why).
     Only a plain list joined by one operator (all `or` or all `and`) is read:
     commas, `with ... exception` and mixed operators are not written out."""
@@ -198,7 +231,7 @@ def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dic
             body = text if len(names) == 1 and text else standalone.get(name.lower(), "")
             if not body.strip():
                 return None, f"{name} has no SPDX id and no licence text"
-            spdx = _licence_ref(name, body, extracted)
+            spdx = _licence_ref(name, _with_common_texts(body, rootfs), extracted)
         ids.append(spdx)
     return (" OR " if ops and ops[0] == "or" else " AND ").join(ids), ""
 
@@ -229,7 +262,7 @@ def debian_licence(rootfs: Path, package: str, extracted: dict[str, dict]) -> tu
             continue
         if "license" not in paragraph:
             return NOASSERTION, f"/{rel}: a Files paragraph has no License"
-        expression, why = _expression(paragraph["license"], standalone, scratch)
+        expression, why = _expression(paragraph["license"], standalone, scratch, rootfs)
         if expression is None:
             return NOASSERTION, f"/{rel}: {why}"
         if expression not in found:
@@ -265,19 +298,38 @@ def _cargo_tree(path: Path) -> dict[tuple[str, str], str]:
     return found
 
 
+def _closure(build_dir: Path, stem: str) -> dict:
+    trees = {}
+    for edges, key in (("normal", "normal"), ("normal+build", "build")):
+        hits = sorted(build_dir.rglob(f"{stem}-{edges}.txt"))
+        if not hits:
+            raise MissingPin(f"no cargo tree {stem} ({edges}) under {build_dir}: the build script writes it")
+        trees[key] = _cargo_tree(hits[0])
+    trees["build"] = {k: v for k, v in trees["build"].items() if k not in trees["normal"]}
+    return trees
+
+
 def cargo_closures(build_dir: Path, plan: Plan) -> dict[str, dict]:
     """{package: {"normal": {...}, "build": {...}}} for every package the plan built natively."""
-    out = {}
-    for package in dict.fromkeys(n["package"] for n in plan.native):
-        trees = {}
-        for edges, key in (("normal", "normal"), ("normal+build", "build")):
-            hits = sorted(build_dir.rglob(f"sbom-cargo-{package}-{edges}.txt"))
-            if not hits:
-                raise MissingPin(f"no cargo tree for {package} ({edges}) under {build_dir}: the build script writes it")
-            trees[key] = _cargo_tree(hits[0])
-        trees["build"] = {k: v for k, v in trees["build"].items() if k not in trees["normal"]}
-        out[package] = trees
-    return out
+    return {package: _closure(build_dir, f"sbom-cargo-{package}")
+            for package in dict.fromkeys(n["package"] for n in plan.native)}
+
+
+def source_closures(build_dir: Path, plan: Plan) -> dict[str, dict]:
+    """The same, for each external source build (by pin), from its own cargo tree."""
+    return {sb["pin"]: _closure(build_dir, f"sbom-source-{sb['pin']}") for sb in plan.source_builds}
+
+
+# An npm package.json licence the SBOM takes as declared: one id, or ids joined by one operator.
+NPM_LICENCE = re.compile(r"[A-Za-z0-9.+-]+(?: (?:OR|AND) [A-Za-z0-9.+-]+)*")
+
+
+def _npm_licence(rootfs: Path, dest: str) -> str:
+    path = _in_root(rootfs, f"{dest.lstrip('/')}/package.json")
+    if path is None:
+        return NOASSERTION
+    licence = json.loads(path.read_text()).get("license")
+    return licence if isinstance(licence, str) and NPM_LICENCE.fullmatch(licence) else NOASSERTION
 
 
 def store_crates(cargo_home: Path, lock: dict[tuple[str, str], dict]) -> list[dict]:
@@ -294,10 +346,12 @@ def store_crates(cargo_home: Path, lock: dict[tuple[str, str], dict]) -> list[di
 
 
 def _cargo_package(index: int, name: str, version: str, entry: dict | None, licence: str | None,
-                   commit: str) -> dict:
+                   commit: str, *, kind: str = "cargo", repo: str = REPO) -> dict:
+    """One Cargo package; kind keeps a source build's ids apart from the
+    engine's, repo@commit is where its path packages come from."""
     source = (entry or {}).get("source", "")
     pkg = {
-        "SPDXID": _spdx_id("cargo", index, f"{name}-{version}"),
+        "SPDXID": _spdx_id(kind, index, f"{name}-{version}"),
         "name": name,
         "versionInfo": version,
         "supplier": NOASSERTION,
@@ -317,14 +371,15 @@ def _cargo_package(index: int, name: str, version: str, entry: dict | None, lice
         pkg["downloadLocation"] = f"git+{url.split('?')[0]}@{rev}"
         pkg["sourceInfo"] = f"git source pinned by Cargo.lock at {rev}"
     else:
-        # A path package: a workspace crate or a vendored snapshot in the engine tree.
-        pkg["downloadLocation"] = f"git+{REPO}@{commit}"
-        pkg["sourceInfo"] = f"path package in the engine tree at {commit}"
+        # A path package: a workspace crate or a vendored snapshot in its source tree.
+        pkg["downloadLocation"] = f"git+{repo}@{commit}"
+        pkg["sourceInfo"] = f"path package in {repo} at {commit}"
     return pkg
 
 
 def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[dict],
-         lock: dict[tuple[str, str], dict], rootfs: Path) -> dict:
+         lock: dict[tuple[str, str], dict], rootfs: Path, source_closures: dict | None = None,
+         source_locks: dict | None = None) -> dict:
     variant = record["variant"]
     commit = record["engine_commit"]
     epoch = model.epoch()
@@ -378,12 +433,18 @@ def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[
         packages.append(pkg)
         contains(image_id, pkg["SPDXID"])
 
-    cargo_ids: dict[tuple[str, str], str] = {}
+    cargo_ids: dict[tuple[str, str, str], str] = {}
 
-    def cargo_id(name: str, version: str, licence: str | None) -> str:
-        key = (name, version)
+    def cargo_id(name: str, version: str, licence: str | None, graph: str = "") -> str:
+        """graph "" is the engine's Cargo.lock; a pin is that source build's own."""
+        key = (graph, name, version)
         if key not in cargo_ids:
-            pkg = _cargo_package(len(cargo_ids), name, version, lock.get(key), licence, commit)
+            if graph:
+                payload = model.payload(graph)
+                pkg = _cargo_package(len(cargo_ids), name, version, source_locks[graph].get((name, version)),
+                                     licence, payload["rev"], kind=f"cargo-{graph}", repo=payload["repository"])
+            else:
+                pkg = _cargo_package(len(cargo_ids), name, version, lock.get((name, version)), licence, commit)
             packages.append(pkg)
             cargo_ids[key] = pkg["SPDXID"]
         return cargo_ids[key]
@@ -415,6 +476,39 @@ def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[
             contains(bin_id, cargo_id(name, version, licence))
         for (name, version), licence in sorted(closure["build"].items()):
             relationships.append({"spdxElementId": cargo_id(name, version, licence),
+                                  "relationshipType": "BUILD_DEPENDENCY_OF", "relatedSpdxElement": bin_id})
+
+    for index, entry in enumerate(plan.source_builds):
+        payload = model.payload(entry["pin"])
+        closure = source_closures[entry["pin"]]
+        own = closure["normal"].get((payload["package"], payload["release"]))
+        bin_id = _spdx_id("source", index, payload["bin"])
+        pkg = {
+            "SPDXID": bin_id,
+            "name": payload["bin"],
+            "versionInfo": payload["release"],
+            "supplier": NOASSERTION,
+            "downloadLocation": f"git+{payload['repository']}@{payload['rev']}",
+            "filesAnalyzed": False,
+            "licenseConcluded": NOASSERTION,
+            "licenseDeclared": own or NOASSERTION,
+            "copyrightText": NOASSERTION,
+            "primaryPackagePurpose": "APPLICATION",
+            "sourceInfo": f"{payload['archive_url']} (sha256 {payload['archive_sha256']}), Cargo.lock sha256 "
+                          f"{payload['cargo_lock_sha256']}",
+            "comment": f"{entry['dest']}: cargo package {payload['package']} from {payload['repository']} at "
+                       f"{payload['rev']}, built offline in the image's userspace "
+                       f"({record['native'].get('rustc-' + entry['pin'], '?')}); licence texts in "
+                       f"{payload['licence_dest']}",
+        }
+        if bins.get(entry["dest"]):
+            pkg["checksums"] = [{"algorithm": "SHA256", "checksumValue": bins[entry["dest"]]}]
+        packages.append(pkg)
+        contains(image_id, bin_id)
+        for (name, version), licence in sorted(closure["normal"].items()):
+            contains(bin_id, cargo_id(name, version, licence, entry["pin"]))
+        for (name, version), licence in sorted(closure["build"].items()):
+            relationships.append({"spdxElementId": cargo_id(name, version, licence, entry["pin"]),
                                   "relationshipType": "BUILD_DEPENDENCY_OF", "relatedSpdxElement": bin_id})
 
     if store:
@@ -459,6 +553,21 @@ def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[
         }
         if payload.get("sha256"):
             pkg["checksums"] = [{"algorithm": "SHA256", "checksumValue": payload["sha256"]}]
+        if payload["kind"] == "archive":
+            pkg["comment"] = f"member {payload['member']} of the archive, installed at {entry['dest']}"
+        if payload["kind"] == "npm":
+            name = payload["package"]
+            purl_name = "%40" + name[1:] if name.startswith("@") else name
+            pkg.update({
+                "name": name,
+                "licenseDeclared": _npm_licence(rootfs, entry["dest"]),
+                "checksums": [{"algorithm": "SHA512", "checksumValue": sri_hex(payload["integrity"])}],
+                "externalRefs": [{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl",
+                                  "referenceLocator": f"pkg:npm/{purl_name}@{payload['version']}"}],
+                "sourceInfo": f"upstream commit {payload.get('upstream_commit', NOASSERTION)}",
+                "comment": f"npm tarball unpacked (no npm, no lifecycle scripts) at {entry['dest']}; "
+                           "licenseDeclared is its package.json licence",
+            })
         packages.append(pkg)
         contains(image_id, pkg["SPDXID"])
 
@@ -493,8 +602,9 @@ def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[
                          "Organization: Oneiron"],
             "comment": "Unsigned. A Debian package's licenseDeclared is read from its DEP-5 copyright "
                        "file in the image (NOASSERTION, with the reason, where that file is absent, not "
-                       "DEP-5 or not representable); Cargo licences are as each crate declares; "
-                       "licenseConcluded is NOASSERTION throughout.",
+                       "DEP-5 or not representable); a LicenseRef's text includes any "
+                       "/usr/share/common-licenses file it names, read from the image; Cargo and npm "
+                       "licences are as each package declares; licenseConcluded is NOASSERTION throughout.",
         },
         "documentDescribes": [image_id],
         "packages": packages,
@@ -543,6 +653,19 @@ def provenance(model: Model, record: dict, plan: Plan, *, sbom_sha: str) -> dict
         payload = model.payload(entry["pin"])
         if payload.get("sha256"):
             deps.append({"name": f"payload-{entry['pin']}", "uri": payload["url"], "digest": {"sha256": payload["sha256"]}})
+        elif payload["kind"] == "npm":
+            deps.append({"name": f"payload-{entry['pin']}", "uri": payload["url"],
+                         "digest": {"sha512": sri_hex(payload["integrity"])},
+                         "annotations": {"integrity": payload["integrity"]}})
+    for entry in plan.source_builds:
+        payload = model.payload(entry["pin"])
+        deps.append({"name": f"source-{entry['pin']}", "uri": payload["archive_url"],
+                     "digest": {"sha256": payload["archive_sha256"], "gitCommit": payload["rev"]},
+                     "annotations": {"extract": " ".join(payload["extract"]), "workdir": payload["workdir"],
+                                     "cargo_lock_sha256": payload["cargo_lock_sha256"]}})
+        for name, comp in sorted(payload["rust"]["components"].items()):
+            deps.append({"name": f"source-{entry['pin']}-rust-{name}", "uri": comp["url"],
+                         "digest": {"sha256": comp["sha256"]}})
     for key, pin in sorted(inputs["files"].items()):
         deps.append({"name": f"file-{key}", "uri": f"git+{REPO}@{commit}#{pin['path']}",
                      "digest": {"sha256": pin["sha256"]}})
@@ -600,14 +723,17 @@ def _write(path: Path, value: dict) -> str:
 
 
 def write(model: Model, record: dict, plan: Plan, *, build_dir: Path, engine: Path, cargo_home: Path,
-          rootfs: Path) -> dict:
+          rootfs: Path, sources: dict[str, Path] | None = None) -> dict:
     """Writes sbom.spdx.json and provenance.json beside the artifacts; returns their refs.
-    rootfs is the assembled image tree the licences are read from."""
+    rootfs is the assembled image tree the licences are read from; sources maps
+    each source build's pin to its unpacked tree (its Cargo.lock)."""
     artifacts = Path(record["artifacts"])
     lock = _cargo_lock(engine)
     closures = cargo_closures(build_dir, plan)
+    source_locks = {pin: _cargo_lock(tree / model.payload(pin)["workdir"]) for pin, tree in (sources or {}).items()}
     store = store_crates(cargo_home, lock) if any(t["kind"] == "cargo-store" for t in plan.trees) else []
-    document = sbom(model, record, plan, closures=closures, store=store, lock=lock, rootfs=rootfs)
+    document = sbom(model, record, plan, closures=closures, store=store, lock=lock, rootfs=rootfs,
+                    source_closures=source_closures(build_dir, plan), source_locks=source_locks)
     sbom_sha = _write(artifacts / SBOM, document)
     statement = provenance(model, record, plan, sbom_sha=sbom_sha)
     provenance_sha = _write(artifacts / PROVENANCE, statement)

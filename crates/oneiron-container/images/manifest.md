@@ -14,7 +14,7 @@ and under the current policy nothing new refuses an install or a launch.
 | `release-manifest.schema.json` | The closed wire description: the manifest, plus `$defs.signature_envelope`. |
 | `imagebuild/release_manifest.py` | The emitter (`build.py manifest`). |
 | `deploy/firecracker/release.py` | The standalone Firecracker vault image's emitter: offline, over that image's built kernel and rootfs. |
-| `oneiron_container::image_release` | The reader: the types, `verify_release`, the verifier seam, and the policy. |
+| `oneiron_container::image_release` | The reader: the types, `verify_release`, the verifier seam, and the policy. `verify_release` reads no file; the `host_binding` child (`observe_bound_release`, `probe_host`) is the one host-side reader, for the launch doors (see Launch). |
 
 ## Emit
 
@@ -101,7 +101,7 @@ No path is absolute on the host.
 | `artifacts.oci` | `reference` (a tag, not an identity), `index_digest`, `manifest_digest`, `config_digest` (the image id), `layer_digest`, `layer_diff_id`, and `archive` (a file). These identities are distinct: none stands in for another. Required: `null` only for the standalone Firecracker vault image, which names its kernel image; every builder output names its real OCI form. |
 | `artifacts.rootfs_ext4` | A file: `path`, `bytes`, `sha256`, `blake3`. |
 | `artifacts.kernel` | `config` (source pin) and `image` (a file, or `null`: the family builds no kernel). |
-| `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. |
+| `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. A variant's other binaries are not roles here: desktop-cua's `cua-driver` and generic-agent's Bun, tsrs and launchers are bound by the rootfs hashes, and named with their pins and measured hashes in the receipt (`inputs.payloads`, `installed`, `source_builds`, `native`) and the SBOM. |
 | `sbom` | The build's SPDX 2.3 JSON SBOM: `{media_type: "application/spdx+json", path: "sbom.spdx.json", sha256}`, measured again from the file and checked against the receipt; `null` for a build without one. The in-toto provenance statement (`provenance.json`) is named by the receipt. |
 | `provenance` | The build receipt: `{media_type, path: "receipt.json", sha256}`. |
 | `host` | `kvm` (true when every launch form needs `/dev/kvm`; only the vault), `kernel_floor` (from the fence's Landlock ABI floor: ABI 3 needs Linux 6.2), `landlock_abi_floor`, and `seccomp_user_notify` (fence plumbing). |
@@ -169,12 +169,13 @@ verify_release(manifest_bytes, envelope: Option<&[u8]>, &ObservedArtifacts,
 ```
 
 The function parses the manifest. It compares each digest the **caller**
-measured with the manifest's value; the module itself reads no file and
-hashes nothing. Against a manifest with no OCI form, an observed OCI digest
-is `not_in_manifest`, never a match; the rootfs and kernel digests are what
-bind such a manifest to the bytes in use. It checks the host's observed capabilities against `host`,
-and reads the signature. The result is never a bare success. Its `signature`
-is one of:
+measured with the manifest's value; the function itself reads no file and
+hashes nothing (the launch doors' host-side reader is under Launch). Against
+a manifest with no OCI form, an observed OCI digest is `not_in_manifest`,
+never a match; the rootfs and kernel digests are what bind such a manifest
+to the bytes in use. It checks the host's observed capabilities against
+`host`, and reads the signature. The result is never a bare success. Its
+`signature` is one of:
 
 | Outcome | Meaning |
 |---|---|
@@ -187,7 +188,8 @@ The fact codes are exact wire strings, each with a `const` of the same name:
 
 | Fact | When |
 |---|---|
-| `image_release_manifest_absent` | No manifest is bound to the image. This is today's state at every launch door. |
+| `image_release_manifest_absent` | No manifest is bound to the image: no binding map, or no entry for the selected identity. |
+| `image_release_documents_unavailable` | The host's binding map cannot be read or parsed, or a document it binds to the selected image cannot be read. No manifest bytes were checked. Distinct from no binding, and from readable bytes that are not the schema. |
 | `image_release_manifest_malformed` | The bytes are not the closed schema. |
 | `image_identity_mismatch` | An observed variant or arch differs from the manifest's. |
 | `image_artifact_mismatch` | An observed digest differs from the manifest's. |
@@ -222,26 +224,95 @@ it.
 
 `observe_release(Option<ReleaseDocuments>, &ObservedArtifacts,
 &HostCapabilities, &dyn ReleaseSignatureVerifier) -> ImageReleaseObservation`
-is the one observe path. Each launch door calls it after its existing checks
-and before it starts the guest:
+is the one observe path. The launch doors reach it through one host-side
+wrapper, `observe_bound_release(SelectedImage, &ObservedArtifacts,
+&dyn ReleaseSignatureVerifier)` (`src/image_release/host_binding.rs`). Each
+door calls it after its existing checks and before it starts the guest:
 
 - `ContainerRuntime::start` and `ContainerRuntime::start_fenced`
-  (`crates/oneiron-container/src/lib.rs`), observing the pinned image
-  reference. Its digest matches the manifest's config, manifest or index
-  digest: which one a local image id names depends on the runtime's store;
+  (`crates/oneiron-container/src/lib.rs`), selecting and observing the pinned
+  image reference. Its digest matches the manifest's config, manifest or
+  index digest: which one a local image id names depends on the runtime's
+  store;
 - `FirecrackerBackend::boot`, after `config.pins.verify`, observing the
-  kernel and rootfs BLAKE3 pins;
-- `firecracker/oci_session.rs` `start`, after `config.pins.verify`, observing
-  the pins and the image reference.
+  kernel and rootfs BLAKE3 pins. An OCI boot keeps the reference it was
+  given from before the host's boot registry resolves it to artifacts: it
+  selects and also observes that reference, and records it as
+  `SessionManifest.image`. A raw boot selects by its pins;
+- `firecracker/oci_session.rs` `start`, after `config.pins.verify`,
+  selecting the image reference and observing it with the pins.
+
+### The binding
+
+`ONEIRON_IMAGE_RELEASE_BINDINGS` names a JSON map on the host. The wrapper
+reads the map, and the documents it names, at every launch. Nothing is
+cached, and no guest claim, tag or directory scan selects a document. The
+map is one closed object from a selected immutable identity to that image's
+documents:
+
+```json
+{
+  "sha256:<64 hex>": {
+    "manifest": "/srv/oneiron/images/browser/image-release.json",
+    "envelope": null
+  },
+  "blake3:<kernel 64 hex>,blake3:<rootfs 64 hex>": {
+    "manifest": "code/image-release.json",
+    "envelope": "code/image-release.sig.json"
+  }
+}
+```
+
+- An OCI launch is keyed by the digest its pinned reference names: the
+  local image id as configured, or the digest after `@`. Key it by the id
+  the engine is configured with, which is the id the serving store answers
+  (the manifest digest on a containerd docker store, the config digest on a
+  classic store or a VM vault's podman store).
+- A raw Firecracker boot is keyed by its host-pinned kernel and rootfs
+  BLAKE3, kernel first, joined by a comma.
+- `manifest` names the exact `image-release.json`, and `envelope` the
+  detached `image-release.sig.json`, or `null` (or no key) for an unsigned
+  release. A path is absolute, or relative to the map's directory. An
+  unknown field makes the whole map unreadable.
+
+| Host state | Observation |
+|---|---|
+| The variable is unset or empty, the map file does not exist, or the map has no entry for the selected identity | `image_release_manifest_absent`, `image_signature_unavailable`: no binding. |
+| The map cannot be read or parsed, or the bound manifest or envelope cannot be read | `image_release_documents_unavailable`, `image_signature_unavailable`. `manifest.state` is `unavailable`, with a reason that names the document and the error, never a host path. |
+| The documents are read | `verify_release` over their exact bytes, against the door's observed artifacts and the measured host. |
+
+### Host capabilities
+
+When documents are bound, the wrapper measures the host with
+`probe_host()`, read-only:
+
+- `arch` from the `uname` machine: `x86_64` is `linux/amd64`; any other
+  machine has no `ImageArch` and stays unobserved;
+- `kernel` from the `uname` release's `<major>.<minor>`;
+- `kvm` from opening `/dev/kvm` read-write and asking `KVM_GET_API_VERSION`;
+  no VM is created. A missing or denied device is `false`;
+- `landlock_abi` from the query-only
+  `landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)`;
+  Landlock disabled at boot is ABI 0. The fence's installer never runs in
+  the server;
+- `seccomp_user_notify` from `SECCOMP_GET_ACTION_AVAIL` for
+  `SECCOMP_RET_USER_NOTIF`; no filter is installed;
+- `storage_abi` is never probed: it belongs to the vault data an engine
+  would open, and these launches open none.
+
+Any other probe failure stays unobserved (`None`), never a guess and never a
+value copied from the manifest. The probe describes the host that runs the
+engine and its containers. A Firecracker guest runs its own kernel, and its
+in-image fence depends on that kernel: the host probe is not evidence of
+the guest kernel's Landlock or seccomp floor.
 
 The observation goes into `SessionManifest.image_release`. The session-manifest
 receipt and the call outputs already carry that structure, as evidence,
-separate from the fence evidence. No host-owned binding from an image to its
-release documents exists yet, so every door passes `None`. Each launch records
-`image_release_manifest_absent` and `image_signature_unavailable` with
+separate from the fence evidence. Every observation has
 `policy: observe_only` and `admitted: true`, and the launch proceeds exactly
-as before. A session record that predates the field decodes with that same
-absent observation.
+as before: no binding state, document error, mismatch or missing capability
+refuses, delays or fails a launch. A session record that predates the field
+decodes with the absent observation.
 
 ## Install (LC)
 
@@ -250,7 +321,7 @@ reads the host-owned, root-only staged copies:
 
 ```rust
 use oneiron_container::image_release::{
-    observe_release, HostCapabilities, ImageArch, ImageVariant, NoVerifierConfigured,
+    observe_release, probe_host, ImageArch, ImageVariant, NoVerifierConfigured,
     ObservedArtifacts, ReleaseDocuments, Sha256Digest,
 };
 let observation = observe_release(
@@ -262,7 +333,7 @@ let observation = observe_release(
         oci_archive_sha256: Some(Sha256Digest::from_bytes(rehashed_archive_sha256)),
         ..ObservedArtifacts::default()
     },
-    &HostCapabilities { arch: Some(ImageArch::LinuxAmd64), ..HostCapabilities::default() },
+    &probe_host(),
     &NoVerifierConfigured,
 );
 // Record `observation` per image beside the provisioning fact.
@@ -273,3 +344,12 @@ A CLI wrapper prints the observation's JSON and exits 0 whenever the check
 ran. Exit 0 is never a signature proof. In a pack, each image's
 `image-release.json` (and its envelope, once one exists) travels beside that
 image's archive and is listed by path and sha256.
+
+For the launch doors, the provisioner then stages each imported image's
+exact `image-release.json` (and envelope) in host custody, writes the
+binding map (see Launch) keyed by the id the engine's config pins, and sets
+`ONEIRON_IMAGE_RELEASE_BINDINGS` on the engine unit (FIX 9427). The map holds
+paths only, never copies of release digests. The archive's measured config
+digest and a docker store's id are different measurements: the release
+lists both (`config_digest`, `manifest_digest`), and the launch matches
+whichever one the configured pin names. No signature is enforced.

@@ -18,9 +18,13 @@ from .fetch import (
     deb_files,
     engine_tree,
     fetch_blob,
+    fetch_npm,
     install_rust,
     lock_text,
     mkosi_source,
+    source_fetch,
+    source_rust,
+    source_tree,
     verify_closure,
 )
 from .model import LOCK, Model, Plan
@@ -30,15 +34,34 @@ TOOLS_MARK = ".oneiron-tools-sha256"
 
 
 def _payload_blobs(model: Model, mirror: Mirror, plans: list[Plan]) -> None:
+    """Every installable payload's download, by kind. rust-toolchain
+    components are fetched where they are installed (write_plan)."""
     for plan in plans:
+        mkosi_run.check_supported(model, plan)
         for entry in plan.payloads:
             payload = model.payload(entry["pin"])
+            what = f"payload {entry['pin']}"
             if payload["kind"] in ("file", "archive"):
-                fetch_blob(mirror, payload["url"], payload["sha256"], learn=False, what=f"payload {entry['pin']}")
+                fetch_blob(mirror, payload["url"], payload["sha256"], learn=False, what=what)
+            elif payload["kind"] == "npm":
+                fetch_npm(mirror, payload["url"], payload["integrity"], what=what)
 
 
-def _sources(engine: Path, rust: Path, mirror: Mirror, plan_dir: Path) -> dict[str, Path]:
-    return {"engine": engine, "rust": rust, "cargo-home": mirror.cargo_home, "plan": plan_dir}
+def _source_builds(model: Model, mirror: Mirror, plan: Plan, work: Path) -> dict[str, tuple[Path, Path]]:
+    """{pin: (source tree, its toolchain)} for the plan's external source builds."""
+    return {sb["pin"]: (source_tree(model, mirror, sb["pin"], work), source_rust(model, mirror, sb["pin"], work))
+            for sb in plan.source_builds}
+
+
+def _sources(engine: Path, rust: Path, mirror: Mirror, plan_dir: Path,
+             builds: dict[str, tuple[Path, Path]] | None = None) -> dict[str, Path]:
+    """What build.py mounts under /work/src: the engine, its Rust and store,
+    the plan, and each source build's tree, Rust and own store."""
+    sources = {"engine": engine, "rust": rust, "cargo-home": mirror.cargo_home, "plan": plan_dir}
+    for pin, (tree, toolchain) in (builds or {}).items():
+        sources.update({f"source-{pin}": tree, f"rust-{pin}": toolchain,
+                        f"cargo-home-{pin}": mirror.source_store(pin)})
+    return sources
 
 
 def fetch(model: Model, *, repo: Path, mirror: Mirror, work: Path, variants: list[str], learn: bool) -> None:
@@ -56,6 +79,11 @@ def fetch(model: Model, *, repo: Path, mirror: Mirror, work: Path, variants: lis
     engine = engine_tree(model, repo, work)
     cargo_fetch(mirror, engine, rust, bootstrap=bootstrap, work=work)
     _payload_blobs(model, mirror, plans)
+    builds = {}
+    for plan in plans:
+        builds[plan.name] = _source_builds(model, mirror, plan, work)
+        for pin, (tree, toolchain) in builds[plan.name].items():
+            source_fetch(model, mirror, pin, tree, toolchain, bootstrap=bootstrap, work=work)
     mkosi_run.sandbox_tree(model, work)
     tools = model.plan("tools")
     cfg, out = mkosi_run.write_config(model, tools, work=work, mirror=mirror, tools_tree=bootstrap, phase="fetch")
@@ -63,8 +91,8 @@ def fetch(model: Model, *, repo: Path, mirror: Mirror, work: Path, variants: lis
     fetched_tools = mkosi_run.finish_tools_tree(out, work)
     for plan in plans:
         plan_dir = mkosi_run.write_plan(model, plan, engine=engine, mirror=mirror, work=work)
-        cfg, _ = mkosi_run.write_config(model, plan, work=work, mirror=mirror, tools_tree=fetched_tools,
-                                        phase="fetch", sources=_sources(engine, rust, mirror, plan_dir))
+        cfg, _ = mkosi_run.write_config(model, plan, work=work, mirror=mirror, tools_tree=fetched_tools, phase="fetch",
+                                        sources=_sources(engine, rust, mirror, plan_dir, builds[plan.name]))
         mkosi_run.build(mkosi_src, cfg, work)
     new = set(deb_files(mirror)) - before
     if learn:
@@ -162,8 +190,9 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
         return {"variant": "tools", "tools_tree_sha256": tools_sha, "tools_tree": str(tools)}
     model.check_lock_covers(plan)
     plan_dir = mkosi_run.write_plan(model, plan, engine=engine, mirror=mirror, work=work)
+    builds = _source_builds(model, mirror, plan, work)
     cfg, out = mkosi_run.write_config(model, plan, work=work, mirror=mirror, tools_tree=tools, phase="build",
-                                      sources=_sources(engine, rust, mirror, plan_dir))
+                                      sources=_sources(engine, rust, mirror, plan_dir, builds))
     mkosi_run.build(mkosi_src, cfg, work)
     tree = out / variant
     if not tree.is_dir():
@@ -197,6 +226,7 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
     ext4 = export.ext4(tar, uuid=str(model.rootfs_uuid(variant)), epoch=epoch, out=artifacts,
                        cap=model.release["limits"]["firecracker_rootfs_max_bytes"], run_in_tools=in_tools)
     native = _native_record(work / "cargo-build" / variant)
+    used = [e["pin"] for e in [*plan.payloads, *plan.source_builds]]
     record = {
         "variant": variant, "builder_commit": builder, "engine_commit": commit,
         "host": socket.gethostname(), "started": started, "tools_tree_sha256": tools_sha,
@@ -207,7 +237,9 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
             "non_root": {path: {"uid": u, "gid": g, "mode": None if m is None else f"{m:04o}", "source": s}
                          for path, (u, g, m, s) in sorted(rules.items())},
         },
-        "native": native, "tar": tar, **oci, **ext4,
+        "native": native, "payloads": {pin: model.payload(pin) for pin in used},
+        "installed": installed_payloads(model, plan, tree),
+        "tar": tar, **oci, **ext4,
         "compressed_bytes": oci["oci_archive_bytes"], "unpacked_bytes": tar["file_bytes"],
         "artifacts": str(artifacts),
     }
@@ -216,9 +248,26 @@ def build(model: Model, *, repo: Path, mirror: Mirror, work: Path, variant: str)
     # Written before the SBOM step too, so a refusal there still leaves the build's record.
     write_json(artifacts / "build-record.json", record)
     record.update(attest.write(model, record, plan, build_dir=work / "cargo-build" / variant, engine=engine,
-                               cargo_home=mirror.cargo_home, rootfs=tree))
+                               cargo_home=mirror.cargo_home, rootfs=tree,
+                               sources={pin: src for pin, (src, _) in builds.items()}))
     write_json(artifacts / "build-record.json", record)
     return record
+
+
+def installed_payloads(model: Model, plan: Plan, tree: Path) -> dict[str, dict]:
+    """What each payload and source build put in the image, measured there:
+    a file's sha256, or a tree's content digest (export.tree_digest)."""
+    out = {}
+    for entry in [*plan.payloads, *plan.source_builds]:
+        path = tree / entry["dest"].lstrip("/")
+        kind = model.payload(entry["pin"])["kind"]
+        if path.is_file() and not path.is_symlink():
+            out[entry["dest"]] = {"pin": entry["pin"], "kind": kind, "sha256": sha256_file(path)}
+        elif path.is_dir():
+            out[entry["dest"]] = {"pin": entry["pin"], "kind": kind, "tree_sha256": export.tree_digest(path)}
+        else:
+            raise BuildError(f"payload {entry['pin']} left nothing at {entry['dest']}")
+    return out
 
 
 def plan_owner_rules(model: Model, plan: Plan) -> list[dict]:

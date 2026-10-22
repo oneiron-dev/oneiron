@@ -204,14 +204,19 @@ pub(super) fn record_world_by_id(
         return Ok(None);
     };
     if raw.entity_type != ENTITY_TYPE_CLAIM {
-        return Ok(crate::federation::record_scope::record_world_in(
-            store,
-            rtxn,
-            *id,
-            raw.entity_type,
-            &raw.body,
-        )?
-        .flatten());
+        // A NOTE keeps base reality here; its live worlds bind at the row
+        // doors (FIX-LIST 9433).
+        return Ok(
+            crate::federation::record_scope::note_world::record_world_where(
+                store,
+                rtxn,
+                *id,
+                raw.entity_type,
+                &raw.body,
+                None,
+            )?
+            .flatten(),
+        );
     }
     if raw.body.is_empty() {
         return Ok(None);
