@@ -16,12 +16,18 @@ use crate::{Result, Vault};
 pub(super) const CREDIT_RECEIPT: SideTable<String, LateCreditReceipt, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_LATE_CREDIT);
 
-/// One fractional share, with its complete eligible used chain.
+/// One fractional share, with its complete eligible used chain. An erase
+/// redacts only the ids it names (FIX 8988): the share keeps its decay and
+/// weight.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LateCreditShare {
-    pub subject: EntityId,
+    /// The credited skill; `None` once that skill is erased.
+    pub subject: Option<EntityId>,
+    /// The contributing skill the chain starts from; `None` for the run's
+    /// output root, and once that skill is erased, which clears the chain too.
     pub origin_skill: Option<EntityId>,
-    pub chain: Vec<UsedProvenanceEdge>,
+    /// The used chain; `None` once an erased entity is one of its ends.
+    pub chain: Option<Vec<UsedProvenanceEdge>>,
     pub decay: f64,
     pub weight: f64,
 }
@@ -41,8 +47,11 @@ pub struct LateCreditReceipt {
     /// `None` is unscoped credit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_revision: Option<String>,
-    pub attribution: PackAttributionFields,
-    pub direct_subjects: Vec<EntityId>,
+    /// The run's frozen attribution; `None` once an erased entity is one it
+    /// names (FIX 8988).
+    pub attribution: Option<PackAttributionFields>,
+    /// Each subject credited directly; `None` for one since erased.
+    pub direct_subjects: Vec<Option<EntityId>>,
     pub shares: Vec<LateCreditShare>,
 }
 
@@ -208,9 +217,9 @@ pub(super) fn shares_in_txn(
                     && vault.get_skill_record_in_txn(txn, &subject)?.is_some()
                 {
                     let share = LateCreditShare {
-                        subject,
+                        subject: Some(subject),
                         origin_skill: skill,
-                        chain: path.clone(),
+                        chain: Some(path.clone()),
                         decay,
                         weight,
                     };
@@ -226,4 +235,65 @@ pub(super) fn shares_in_txn(
         }
     }
     Ok(shares.into_values().collect())
+}
+
+/// Redacts erased `entity` from every late-credit receipt that names it
+/// (FIX 8988): a direct subject or share subject it names is kept in erased
+/// form, a chain it ends reads as erased, and a frozen attribution naming it
+/// is cleared. Each receipt keeps its anchor, outcome, time and every share
+/// it does not name. A row that no longer decodes is deleted and counted.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_late_credit_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    for (key, mut credit) in super::skill_erase::erase_scan_in_txn(vault, wtxn, CREDIT_RECEIPT)? {
+        if redact_credit(&mut credit, *entity) {
+            CREDIT_RECEIPT.put(&vault.store, wtxn, &key, &credit)?;
+        }
+    }
+    Ok(())
+}
+
+/// `credit` with `entity` redacted wherever it names it; whether it did.
+fn redact_credit(credit: &mut LateCreditReceipt, entity: EntityId) -> bool {
+    let mut named = false;
+    if credit
+        .attribution
+        .as_ref()
+        .is_some_and(|fields| crate::learning::pack_attribution_names(fields, entity))
+    {
+        credit.attribution = None;
+        named = true;
+    }
+    for subject in &mut credit.direct_subjects {
+        if *subject == Some(entity) {
+            *subject = None;
+            named = true;
+        }
+    }
+    for share in &mut credit.shares {
+        if share.subject == Some(entity) {
+            share.subject = None;
+            named = true;
+        }
+        if share.origin_skill == Some(entity) {
+            share.origin_skill = None;
+            share.chain = None;
+            named = true;
+        }
+        if share.chain.as_ref().is_some_and(|chain| {
+            chain
+                .iter()
+                .any(|edge| edge.derived == entity || edge.source == entity)
+        }) {
+            share.chain = None;
+            named = true;
+        }
+    }
+    named
 }

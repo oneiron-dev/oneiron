@@ -5,13 +5,17 @@ tree's modes, symlinks and extended attributes, and mtimes clamped to
 SOURCE_DATE_EPOCH, in sorted order. The OCI image's single layer is that tar,
 gzipped. The Firecracker rootfs is `mke2fs -d rootfs.tar` from the tools
 tree: a root-only ext4, no partition table, no ESP, no UKI, its kernel kept
-separate. Both forms carry identical owners, modes and bytes.
+separate. Both forms carry identical owners, modes, bytes and exported
+extended attributes.
 
-Extended attributes travel as PAX `SCHILY.xattr.<name>` records holding the
-raw value bytes. A file capability (security.capability) is written as a v2
-value, which names no namespace root (the policy at CAPABILITY). The ext4
-form carries security.capability only: mke2fs's tar import drops every
-other name.
+Only the extended attributes named in XATTR_KEEP are exported (FIX 10349):
+today exactly security.capability, the one name mke2fs's tar import carries
+into ext4, so both forms hold the same set. Anything else the build host's
+filesystem put on a file (an SELinux label, IMA/EVM, an ACL, user.* or
+trusted.*) never reaches the layer, the members listing or the tools-tree
+hash. A kept attribute travels as a PAX `SCHILY.xattr.<name>` record holding
+the raw value bytes; a file capability is written as a v2 value, which names
+no namespace root (the policy at CAPABILITY).
 
 rootfs.members.tsv lists every tar member (path, type, mode, uid, gid, size,
 mtime, the file's sha256 or the link's target, and its xattrs as sorted
@@ -41,12 +45,14 @@ OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 OCI_INDEX = "application/vnd.oci.image.index.v1+json"
 OCI_CONFIG = "application/vnd.oci.image.config.v1+json"
 OCI_LAYER = "application/vnd.oci.image.layer.v1.tar+gzip"
-# The xattr export policy: every name the tree carries is exported raw, and
+# The xattr export policy: only the names in XATTR_KEEP are exported, and
 # security.capability goes out as VFS_CAP_REVISION_2 (magic, permitted and
 # inheritable pairs; no rootid), the form a guest's own root reads. A v3
 # value is translated only when its rootid is the builder's mapped root;
-# any other capability value is refused.
+# any other capability value is refused. A name joins XATTR_KEEP only when a
+# pinned package needs it and both the OCI and the ext4 form carry it.
 CAPABILITY = "security.capability"
+XATTR_KEEP = (CAPABILITY,)
 CAP_REVISION_MASK, CAP_V2, CAP_V3 = 0xFF000000, 0x02000000, 0x03000000
 CAP_V2_BYTES, CAP_V3_BYTES = 20, 24
 
@@ -109,9 +115,12 @@ def _capability(rel: str, value: bytes) -> bytes:
 
 
 def xattrs(path: Path, rel: str) -> list[tuple[str, bytes]]:
-    """The entry's extended attributes, sorted by name, never following a symlink."""
+    """The entry's exported extended attributes (XATTR_KEEP), sorted by name,
+    never following a symlink; any other name is not even read."""
     out = []
     for name in sorted(os.listxattr(path, follow_symlinks=False)):
+        if name not in XATTR_KEEP:
+            continue
         value = os.getxattr(path, name, follow_symlinks=False)
         out.append((name, _capability(rel, value) if name == CAPABILITY else value))
     return out

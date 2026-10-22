@@ -457,9 +457,12 @@ pub fn project_actor_claims_from_judgments(
     let persisted = attribution_judgments(vault)?;
     let mut written = Vec::new();
     for judgment in judgments {
-        if judgment.verdict != AttributionVerdict::ExecutionLapse {
+        // An erased actor's lapse names no one to write a claim on (FIX 8988).
+        let (AttributionVerdict::ExecutionLapse, Some(actor)) =
+            (judgment.verdict, judgment.subject)
+        else {
             continue;
-        }
+        };
         // Grounded is not authorized: this row must also BE the row SK-04
         // routed at this sequence.
         if !persisted
@@ -475,7 +478,7 @@ pub fn project_actor_claims_from_judgments(
             continue;
         };
         let row = ActorClaimRow::FailureMode {
-            actor: judgment.subject,
+            actor,
             text: LAPSE_FAILURE_MODE.to_owned(),
         };
         // …and a citation naming no stamped receipt is a trace only in shape.

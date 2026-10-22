@@ -8,7 +8,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::vault::RevisionRef;
 
 use super::cancel::{
     AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelState, AttemptCancellation,
@@ -18,10 +20,14 @@ use super::validate::validate_result_ref;
 use crate::error::ArtifactError;
 
 mod cleanup;
+mod exhaust;
+mod hold;
 pub use cleanup::{
     AttemptQueueCleanupReport, AttemptQueueRetryReason, AttemptQueueRetryReasonCount,
     CleanupAttemptLeases,
 };
+pub use exhaust::AttemptTerminalExhaust;
+pub(crate) use hold::AttemptPause;
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
@@ -281,6 +287,10 @@ pub struct ManifestEntry {
     pub version: String,
     /// Unix seconds at which the pack loaded it.
     pub at: u64,
+    /// For a skill load, the entity whose body loaded and its exact retained
+    /// revision, so attribution reads what loaded after an in-place update
+    /// (FIX 10110); `None` for every other row.
+    pub revision: Option<(EntityId, RevisionRef)>,
 }
 
 impl ManifestEntry {
@@ -297,7 +307,15 @@ impl ManifestEntry {
             reference: reference.into(),
             version: version.into(),
             at,
+            revision: None,
         }
+    }
+
+    /// This row bound to the exact revision of `entity` the load read.
+    #[must_use]
+    pub fn with_revision(mut self, entity: EntityId, revision: RevisionRef) -> Self {
+        self.revision = Some((entity, revision));
+        self
     }
 
     /// The `reference@version` wire form the terminal receipt projects.
@@ -432,6 +450,18 @@ pub struct AttemptRecord {
     /// FIX 5240: each failure a same-intent requeue kept, oldest first.
     #[serde(default)]
     pub history: Vec<super::RequeuedFailure>,
+    /// FIX 9579: the pause this row is held under while paused, kept here so
+    /// a pruned event history never loses it. `None` while not paused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) active_pause: Option<AttemptPause>,
+    /// FIX 9578: what this try left behind, written with the row that
+    /// settles it. `None` until it settles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) terminal_exhaust: Option<AttemptTerminalExhaust>,
+    /// FIX 10066: the keyed fingerprint of each signal the side-row wall
+    /// masked, by its key, so an identical retry still matches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) signal_intents: Vec<crate::run_tree::SignalIntent>,
 }
 
 impl AttemptRecord {

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::{MAX_LEDGER_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID};
+use super::{MAX_REASON_TAG, MAX_WAKE_ID};
 
 /// Vault name = DNS label.
 pub fn valid_vault_name(name: &str) -> bool {
@@ -46,7 +46,7 @@ pub struct WakeEntry {
 /// Shared id/reason_tag bounds for anything carrying wake fields — ledger
 /// entries and `alarm_due` requests alike. Control bytes (< 0x20) are
 /// rejected: serde_json escapes each as a 6-char `\u00XX`, which would let a
-/// bounds-valid entry list serialize past [`MAX_CTL_LINE`] (the worst
+/// bounds-valid ledger page serialize past [`MAX_CTL_LINE`] (the worst
 /// remaining expansion is the 2-char escapes for `"` and `\`, which the
 /// `max_valid_wake_list_fits_ctl_line` test proves stays under the cap).
 pub(super) fn validate_wake_fields(id: &str, reason_tag: &str) -> anyhow::Result<()> {
@@ -73,13 +73,11 @@ impl WakeEntry {
     }
 }
 
-/// Shared wire-limit enforcement for any wake-entry list — ledger pushes and
-/// `prepare_reap` replies alike: entry count bound + per-entry bounds.
+/// Shared wire-limit enforcement for any wake-entry list: each entry's
+/// bounds. A list has no count bound: a ledger page bounds its own
+/// ([`MAX_LEDGER_PAGE_ENTRIES`](crate::MAX_LEDGER_PAGE_ENTRIES)), and a
+/// report takes every entry in as many pages as it needs (FIX 9549).
 pub fn validate_wake_entries(entries: &[WakeEntry]) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        entries.len() <= MAX_LEDGER_ENTRIES,
-        "too many ledger entries"
-    );
     for e in entries {
         e.validate()?;
     }

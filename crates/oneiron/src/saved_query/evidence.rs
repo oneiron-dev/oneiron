@@ -18,6 +18,7 @@ use super::definition::{QueryScope, SavedQueryDefinition};
 use super::evaluator::SavedQueryEvaluator;
 use super::storage::MEMOS;
 use super::support::{EVIDENCE_HASH_DOMAIN, canonical_json_bytes, hash_bytes, hash_len};
+use super::value_fingerprint::ClaimValueFingerprint;
 
 /// One entity's evidence, narrowed to what a definition declared relevant.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +27,11 @@ pub struct RelevantEvidence {
     pub entity_ref: EntityId,
     /// Live claim values for the declared predicates.
     pub claim_values: Vec<(String, Value)>,
+    /// The same claims' ORIGINAL accepted values as lossless canonical bytes,
+    /// sorted. Hashed beside `claim_values`, so a value their projection
+    /// collapses still moves the evidence hash (FIX 10090); matching and the
+    /// judge never read them.
+    pub claim_value_fingerprints: Vec<(String, Vec<u8>)>,
     /// Outbound edge targets for the declared edge kinds.
     pub edge_targets: Vec<(String, EntityId)>,
     /// Per-exemplar fingerprint of the compared vectors. The string is a hex
@@ -143,6 +149,11 @@ pub struct VerdictMemoRow {
     pub verdict: MatchVerdict,
     /// Memoized justification.
     pub why: String,
+    /// Every row the evidence was read from (FIX 10089): the query, the
+    /// candidate, each claim, edge target, exemplar, world and facet. The
+    /// erase of any one takes this memo, its `why` included. `None` when the
+    /// set is not known whole, and then every erase takes it.
+    pub source_refs: Option<Vec<EntityId>>,
     /// Local derivation envelope.
     pub envelope: SavedQueryDerivationEnvelope,
     /// Evaluation timestamp.
@@ -177,6 +188,7 @@ pub fn compute_evidence_hash(
     hash_scope(&mut hasher, &definition.scope);
     hasher.update(evidence.entity_ref.as_bytes());
     hash_claim_values(&mut hasher, &evidence.claim_values)?;
+    hash_claim_value_fingerprints(&mut hasher, &evidence.claim_value_fingerprints);
     hash_edge_targets(&mut hasher, &evidence.edge_targets);
     hash_semantic_inputs(&mut hasher, &evidence.semantic_inputs);
     hash_scope(&mut hasher, &evidence.scope_membership);
@@ -201,6 +213,14 @@ fn hash_claim_values(hasher: &mut Sha256, values: &[(String, Value)]) -> Result<
         hash_bytes(hasher, &canonical_json_bytes(value)?);
     }
     Ok(())
+}
+
+fn hash_claim_value_fingerprints(hasher: &mut Sha256, values: &[ClaimValueFingerprint]) {
+    hash_len(hasher, values.len());
+    for (predicate, bytes) in values {
+        hash_bytes(hasher, predicate.as_bytes());
+        hash_bytes(hasher, bytes);
+    }
 }
 
 fn hash_edge_targets(hasher: &mut Sha256, targets: &[(String, EntityId)]) {

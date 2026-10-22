@@ -5,16 +5,14 @@ use serde::Serialize;
 use crate::code_sandbox::microvm::ExecutionBudget;
 
 use super::connector::{
-    ByoEndpointSpec, ByoaConnectorSpec, CliSandboxSpec, MAX_ARGV_ENTRIES, MAX_BASE_URL_LEN,
-    MAX_CHECKPOINT_FRONTIER_ENTRIES, MAX_CHECKPOINT_FRONTIER_ENTRY_LEN, MAX_CREDENTIAL_HANDLES,
-    MAX_EGRESS_PROFILE_REF_LEN, MAX_MODEL_SLUG_ENTRIES, MAX_MODEL_SLUG_LEN, MAX_PROGRAM_LEN,
-    MAX_SERVER_REF_LEN, ProtocolAttachSpec, SHELL_METACHARACTERS,
+    ByoEndpointSpec, ByoaConnectorSpec, CliSandboxSpec, MAX_BASE_URL_LEN,
+    MAX_CHECKPOINT_FRONTIER_ENTRY_LEN, MAX_EGRESS_PROFILE_REF_LEN, MAX_MODEL_SLUG_LEN,
+    MAX_PROGRAM_LEN, MAX_SERVER_REF_LEN, ProtocolAttachSpec, SHELL_METACHARACTERS,
 };
 use super::error::{
-    ByoaError, ByoaResult, ERR_ARGV_ENTRY, ERR_ARGV_TOO_LONG, ERR_BASE_URL,
-    ERR_CHECKPOINT_FRONTIER, ERR_CREDENTIAL_HANDLES, ERR_EGRESS_PROFILE_REF, ERR_EXECUTION_BUDGET,
-    ERR_EXHAUST_EMPTY, ERR_EXHAUST_ENCODE, ERR_EXHAUST_TAINT, ERR_MODEL_SLUG, ERR_PROGRAM,
-    ERR_SERVER_REF, ERR_SLUG_MAP_EMPTY, ERR_SLUG_MAP_TOO_LARGE, invalid,
+    ByoaError, ByoaResult, ERR_ARGV_ENTRY, ERR_BASE_URL, ERR_CHECKPOINT_FRONTIER,
+    ERR_EGRESS_PROFILE_REF, ERR_EXECUTION_BUDGET, ERR_EXHAUST_EMPTY, ERR_EXHAUST_ENCODE,
+    ERR_EXHAUST_TAINT, ERR_MODEL_SLUG, ERR_PROGRAM, ERR_SERVER_REF, ERR_SLUG_MAP_EMPTY, invalid,
 };
 use super::exhaust::ByoaExhaust;
 use super::stream::{ByoaStream, ByoaStreamWriter};
@@ -64,11 +62,9 @@ pub(super) fn validate_endpoint(spec: &ByoEndpointSpec) -> ByoaResult<()> {
     {
         return Err(invalid(ERR_BASE_URL));
     }
+    // Every bound slug is checked; how many a connector binds is never refused.
     if spec.model_slug_map.is_empty() {
         return Err(invalid(ERR_SLUG_MAP_EMPTY));
-    }
-    if spec.model_slug_map.len() > MAX_MODEL_SLUG_ENTRIES {
-        return Err(invalid(ERR_SLUG_MAP_TOO_LARGE));
     }
     for slug in spec.model_slug_map.keys() {
         if !is_bounded_printable(slug, MAX_MODEL_SLUG_LEN) {
@@ -93,13 +89,11 @@ pub(super) fn validate_cli_sandbox(spec: &CliSandboxSpec) -> ByoaResult<()> {
     {
         return Err(invalid(ERR_PROGRAM));
     }
-    if spec.argv.len() > MAX_ARGV_ENTRIES {
-        return Err(invalid(ERR_ARGV_TOO_LONG));
-    }
     for arg in &spec.argv {
         // An argument MAY be empty — an empty argv slot is meaningful to many
         // programs — and of any length, but it may not carry control bytes.
-        // Its length is measured where the row is written, never refused.
+        // Its length is measured where the row is written, never refused,
+        // and so is how many arguments and credential handles a run names.
         if arg.chars().any(char::is_control) {
             return Err(invalid(ERR_ARGV_ENTRY));
         }
@@ -107,21 +101,16 @@ pub(super) fn validate_cli_sandbox(spec: &CliSandboxSpec) -> ByoaResult<()> {
     if !is_bounded_printable(&spec.egress_profile_ref, MAX_EGRESS_PROFILE_REF_LEN) {
         return Err(invalid(ERR_EGRESS_PROFILE_REF));
     }
-    if spec.credential_handles.len() > MAX_CREDENTIAL_HANDLES {
-        return Err(invalid(ERR_CREDENTIAL_HANDLES));
-    }
     if let Some(pin) = &spec.staged_input {
         super::staged_input::validate_staged_input(pin)?;
     }
     Ok(())
 }
 
+/// The caller's budget is bounded on all three axes. Its size is the
+/// caller's: the host's executor enforces it as given, never clamped.
 pub(super) fn validate_execution_budget(budget: ExecutionBudget) -> ByoaResult<()> {
-    if !budget.is_bounded()
-        || budget.wall_clock_secs > 3600
-        || budget.mem_mib > 4096
-        || budget.pids > 128
-    {
+    if !budget.is_bounded() {
         return Err(invalid(ERR_EXECUTION_BUDGET));
     }
     Ok(())
@@ -177,13 +166,10 @@ pub(super) fn encoded_json_len(value: &impl Serialize) -> ByoaResult<u64> {
 
 /// Something durable was captured, every checkpoint frontier entry passes
 /// its checks, and the taint refs are well formed. No stream is refused for
-/// its size.
+/// its size, and no frontier or taint set for how many entries it holds.
 pub(super) fn validate_exhaust(exhaust: &ByoaExhaust) -> ByoaResult<()> {
     if exhaust.is_empty() {
         return Err(invalid(ERR_EXHAUST_EMPTY));
-    }
-    if exhaust.checkpoint_frontier.len() > MAX_CHECKPOINT_FRONTIER_ENTRIES {
-        return Err(invalid(ERR_CHECKPOINT_FRONTIER));
     }
     for entry in &exhaust.checkpoint_frontier {
         if !is_bounded_printable(entry, MAX_CHECKPOINT_FRONTIER_ENTRY_LEN) {
