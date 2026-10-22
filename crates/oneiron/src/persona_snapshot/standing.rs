@@ -72,6 +72,9 @@ pub struct StandingBlockSession {
     /// The reader's scoped read of the agent's claims. Claims the reader may
     /// not read never enter the block and are counted here.
     pub read_receipt: ScopedReadReceipt,
+    /// The CLAIMs whose text `compiled` holds, after budget eviction (FIX
+    /// 8148): a response that carries the block keeps them as its sources.
+    pub retained_claims: Vec<EntityId>,
 }
 #[derive(Default)]
 pub struct StandingBlockCache {
@@ -313,14 +316,37 @@ impl Vault {
         block_tokens: usize,
         cache: &mut StandingBlockCache,
     ) -> Result<StandingBlockSession> {
+        let scoped = self.scoped_read(reader);
+        self.begin_standing_block_session_under(
+            handle,
+            &scoped,
+            None,
+            total_tokens,
+            block_tokens,
+            cache,
+        )
+    }
+
+    /// [`Self::begin_standing_block_session`] read through `scoped`, a read
+    /// already narrowed to the audience the block is spoken to, and admitted
+    /// by `disclosure`, that audience's clamp (FIX 8147): a persona CLAIM
+    /// either refuses never enters the block, as an unreadable one does not.
+    pub fn begin_standing_block_session_under(
+        &self,
+        handle: &StandingBlockHandle,
+        scoped: &crate::claim::ScopedRead<'_>,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+        total_tokens: usize,
+        block_tokens: usize,
+        cache: &mut StandingBlockCache,
+    ) -> Result<StandingBlockSession> {
         self.check_standing_handle(handle)?;
-        if reader.actor_ref() != handle.agent.to_hex()
+        if scoped.actor_key().actor_ref() != handle.agent.to_hex()
             || block_tokens < handle.token_floor
             || block_tokens > total_tokens
         {
             return Err(invalid());
         }
-        let scoped = self.scoped_read(reader);
         let reads: Vec<_> = self
             .claims_for_subject(&handle.agent)?
             .into_iter()
@@ -329,6 +355,10 @@ impl Vault {
         let readable = scoped.read(&reads, None)?;
         let read_receipt = readable.receipt;
         let mut claims = Vec::new();
+        let txn = match disclosure {
+            Some(_) => Some(self.store.env.read_txn()?),
+            None => None,
+        };
         // Decode the bytes the receipt admitted; a re-fetch could see a body
         // written after the gated read.
         for row in readable.value.into_iter().flatten() {
@@ -352,6 +382,11 @@ impl Vault {
             {
                 continue;
             }
+            if let (Some(disclosure), Some(txn)) = (disclosure, txn.as_ref())
+                && !disclosure.admits(&self.store, txn, &id, ENTITY_TYPE_CLAIM, Some(&body))?
+            {
+                continue;
+            }
             let Some(text) = body.value.as_str() else {
                 return Err(invalid());
             };
@@ -362,6 +397,7 @@ impl Vault {
                 body,
             ));
         }
+        drop(txn);
         claims.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         crate::context_pack::source_ranking::clamp_order(
             &mut claims,
@@ -389,6 +425,7 @@ impl Vault {
         cache
             .compiled
             .insert(handle.handle.clone(), compiled.clone());
+        let retained_claims = claims.iter().map(|row| row.0).collect();
         Ok(StandingBlockSession {
             block: handle.handle.clone(),
             reserved_tokens: block_tokens,
@@ -396,6 +433,7 @@ impl Vault {
             compiled,
             eviction,
             read_receipt,
+            retained_claims,
         })
     }
 }
