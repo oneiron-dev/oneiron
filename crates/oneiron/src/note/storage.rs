@@ -1,12 +1,33 @@
 //! Canonical entity-document carriers shared by local NOTE edits and sync.
 use super::documents::invalid;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
+use crate::scan_check::PendingScanChecks;
+use crate::store::ManifestDbs;
 use crate::{EntityId, Result, Vault};
 use loro::{ExportMode, LoroDoc};
 
 pub(crate) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<LoroDoc> {
     super::ensure_citations_ready(&vault.store, txn, id)?;
     load_for_erasure(vault, txn, id)
+}
+
+/// [`load`] with the NOTE and its document read through `store`, a room's
+/// view included (FIX 4280); its sizes are measured into `pending`.
+pub(crate) fn load_in(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    pending: &PendingScanChecks,
+) -> Result<LoroDoc> {
+    super::ensure_citations_ready(&vault.store, txn, id)?;
+    load_seeded_to(
+        store,
+        txn,
+        id,
+        || Ok(super::birth::document_birth_in(vault, store, txn, id)?.unwrap_or_default()),
+        pending,
+    )
 }
 
 pub(crate) fn load_for_erasure(
@@ -19,11 +40,24 @@ pub(crate) fn load_for_erasure(
     })
 }
 
-pub(super) fn load_seeded(
-    store: &crate::store::Store,
+pub(super) fn load_seeded<S: ManifestDbs>(
+    store: &S,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     birth: impl FnOnce() -> Result<LoroDoc>,
+) -> Result<LoroDoc> {
+    load_seeded_to(store, txn, id, birth, store.pending_scan_checks())
+}
+
+/// [`load_seeded`], the loaded document's sizes measured into `pending`
+/// (rule 5: `note::scan` raises a check past a threshold row and the load
+/// serves; no size refuses it).
+fn load_seeded_to(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    birth: impl FnOnce() -> Result<LoroDoc>,
+    pending: &PendingScanChecks,
 ) -> Result<LoroDoc> {
     // A NOTE's text plane is its head's document.
     let slot = super::documents::head_in(store, txn, id)?.0;
@@ -42,6 +76,7 @@ pub(super) fn load_seeded(
         }
         import_complete(&doc, &update.bytes)?;
     }
+    super::scan::measure_document(store, txn, id, &doc, pending)?;
     Ok(doc)
 }
 

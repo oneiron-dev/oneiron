@@ -121,8 +121,15 @@ impl RoutineDecider for LadderDecider {
             .map(|(image, png)| HeldImage::new(self.run_id, image, png.to_vec()));
         let output = match self.verdict(input, held)? {
             // Strict: no rung up to the rule ceiling takes the question, as
-            // the ladder finds before it runs any.
-            Err(error) if strict && error.kind == "model_unavailable" => {
+            // the ladder finds before it runs any, by its reason (FIX 8047);
+            // a hook's or a provider's `model_unavailable` is no NoRule.
+            Err(error)
+                if strict
+                    && error.kind == "model_unavailable"
+                    && error
+                        .message
+                        .starts_with(crate::decision_verdict::NO_RUNG_REASON) =>
+            {
                 return Ok(strict_denied(StrictDenial::NoRule, &question, until_ms));
             }
             Err(error) => {
