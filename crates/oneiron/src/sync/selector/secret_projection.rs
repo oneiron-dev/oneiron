@@ -149,7 +149,9 @@ impl SyncSecretProjection {
                 continue;
             };
             let places = match (&stored, stamp.kind) {
-                (Some(_), RepoIndexCopyKind::Masked) => marks.copy_places_in_txn(vault, txn, &hash)?,
+                (Some(_), RepoIndexCopyKind::Masked) => {
+                    marks.copy_places_in_txn(vault, txn, &hash)?
+                }
                 _ => None,
             };
             let copy = input.into_bytes();
@@ -218,7 +220,10 @@ impl SyncSecretProjection {
         let mut hasher = blake3::Hasher::new_derive_key(GENERATION_CONTEXT);
         hasher.update(&Self::SCHEMA.to_be_bytes());
         for source in carried {
-            let Some(blob) = self.sources.get(&source).and_then(|hash| self.blobs.get(hash))
+            let Some(blob) = self
+                .sources
+                .get(&source)
+                .and_then(|hash| self.blobs.get(hash))
             else {
                 continue;
             };
@@ -230,7 +235,9 @@ impl SyncSecretProjection {
 
     /// The blob copy a marked snapshot ASSET stands for.
     fn blob_of_source(&self, source: &EntityId) -> Option<&BlobCopy> {
-        self.sources.get(source).and_then(|hash| self.blobs.get(hash))
+        self.sources
+            .get(source)
+            .and_then(|hash| self.blobs.get(hash))
     }
 }
 

@@ -25,6 +25,8 @@ pub(in crate::sync) use machine_history::machine_history_controls;
 mod note_admission;
 mod peer_confidence;
 mod scope;
+// FIX 7608 slice 4: the masked copy a sync peer gets of a marked repo item.
+pub(crate) mod secret_projection;
 mod text_egress;
 pub(crate) use note_admission::admit_note_in_txn;
 pub(in crate::sync) use text_egress::document_sources_readable_in_txn;
