@@ -235,14 +235,18 @@ pub(crate) fn walk(
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut left = wanted.entries;
-    walk_below(
-        dir,
-        shown,
-        0,
-        (wanted, &nothing_excluded, &mut nothing_unopened),
-        &mut left,
-        visit,
-    )
+    let mut skips = Skips {
+        excluded: &nothing_excluded,
+        unopened: &mut nothing_unopened,
+    };
+    walk_below(dir, shown, 0, wanted, &mut skips, &mut left, visit)
+}
+
+/// What a walk passes over before it opens it, and whom it names a file
+/// that does not open to.
+struct Skips<'a> {
+    excluded: &'a dyn Fn(&Path) -> bool,
+    unopened: &'a mut dyn FnMut(&Path),
 }
 
 /// A walk that excludes nothing beyond its own profile.
@@ -250,7 +254,8 @@ fn nothing_excluded(_: &Path) -> bool {
     false
 }
 
-/// A walk whose every unopened file refuses it never names one.
+/// Any walk but a Files walk refuses at a file that does not open, so it
+/// names none.
 fn nothing_unopened(_: &Path) {}
 
 /// Visits every regular file under `root` a Files source reads (FIX 6942),
@@ -265,11 +270,13 @@ pub(crate) fn walk_files(
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut left = FILES.entries;
+    let mut skips = Skips { excluded, unopened };
     walk_below(
         &open_root(root)?,
         root,
         0,
-        (FILES, excluded, unopened),
+        FILES,
+        &mut skips,
         &mut left,
         visit,
     )
@@ -281,7 +288,8 @@ fn walk_below(
     dir: &OwnedFd,
     shown: &Path,
     depth: usize,
-    (wanted, excluded, unopened): (Wanted, &dyn Fn(&Path) -> bool, &mut dyn FnMut(&Path)),
+    wanted: Wanted,
+    skips: &mut Skips<'_>,
     left: &mut usize,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
@@ -315,7 +323,7 @@ fn walk_below(
     entries.sort_by(|(left, _), (right, _)| left.cmp(right));
     for (name, listed) in entries {
         let path = shown.join(&name);
-        if excluded(&path) {
+        if (skips.excluded)(&path) {
             continue;
         }
         // A symbolic link is neither a folder nor a file here.
@@ -328,21 +336,14 @@ fn walk_below(
                             path.display()
                         )
                     })?;
-                walk_below(
-                    &child,
-                    &path,
-                    depth + 1,
-                    (wanted, excluded, &mut *unopened),
-                    left,
-                    visit,
-                )?;
+                walk_below(&child, &path, depth + 1, wanted, skips, left, visit)?;
             }
             FileType::RegularFile if wanted.visits(&name) => {
                 match open_file(dir, &name, &path) {
                     Ok(file) => visit(&path, file)?,
                     // A Files walk holds such a file by its name; any other
                     // walk refuses.
-                    Err(_) if wanted.every_file => unopened(&path),
+                    Err(_) if wanted.every_file => (skips.unopened)(&path),
                     Err(error) => return Err(error),
                 }
             }
