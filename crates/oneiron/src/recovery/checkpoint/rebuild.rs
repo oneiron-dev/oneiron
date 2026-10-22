@@ -45,6 +45,17 @@ pub(super) fn unlease_attempt(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
     out.extend(rmp_serde::to_vec_named(&record).map_err(|_| codec_error())?);
     Ok(out)
 }
+
+/// [`unlease_attempt`] for an opaque response's queue row (FIX 9390): one
+/// the strict reader refuses lands exactly as it rested (`None`), indexed
+/// nowhere; one it reads is unleased as every other is.
+pub(super) fn unlease_opaque_attempt(key: &[u8], bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+    let id = crate::attempt_queue::AttemptId::from_bytes(key)?;
+    if crate::attempt_queue::decode_record(bytes, id).is_err() {
+        return Ok(None);
+    }
+    unlease_attempt(key, bytes).map(Some)
+}
 /// Whether the row `raw` embeds its own body: a summary's, and a claim's
 /// that is not a lexical query hint. A header-only claim (an erase's shell,
 /// a retired response's) embeds nothing and is never decoded here (FIX
@@ -104,10 +115,12 @@ fn mark_for_reembedding(
 /// Rebuilds every entity's mechanical projections. A claim in `opaque`, a
 /// step claim whose response never decoded and landed as it rested (FIX
 /// 6227), keeps its type and time index rows; nothing is decoded, indexed
-/// or embedded again from its body.
+/// or embedded again from its body. A queue row in `opaque_attempts`, an
+/// agent dispatch's that never decoded, is indexed nowhere (FIX 9390).
 pub(super) fn rebuild(
     vault: &Vault,
     opaque: &std::collections::BTreeSet<EntityId>,
+    opaque_attempts: &std::collections::BTreeSet<Vec<u8>>,
 ) -> Result<(usize, usize, usize)> {
     vault.with_write_txn_grouped(|txn| {
         let rows = crate::ports::EntityStoreRead::port_entity_raw_records(&vault.store, txn)?
@@ -237,7 +250,7 @@ pub(super) fn rebuild(
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &window, &[1u8])?;
         }
         crate::conversation_dag::rebuild_thread_meta_projection_in_txn(vault, txn)?;
-        crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn)?;
+        crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn, opaque_attempts)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
         crate::workspace_roster::rebuild_project_revision_indexes(&vault.store, txn)?;

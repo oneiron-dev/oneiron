@@ -41,10 +41,18 @@ use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable};
 use crate::task_type::TaskTypeRef;
 
+mod admission;
 mod erase;
 mod evidence;
 mod index;
 mod records;
+pub use admission::{
+    AdmissionCaller, AdmissionSources, CallerUnavailable, PROGRAM_ADMISSION_KIND,
+    ProgramAdmissionFiling, ProgramAdmissionJob, ProgramAdmissionOutcome, ProgramAdmissionReceipt,
+    SourceUnavailable, admission_readiness, admission_sources, enqueue_program_admission_in_txn,
+    program_admission_job_id, program_admission_queued, program_admission_receipt,
+    record_program_admission,
+};
 pub(crate) use erase::{erase_retired_actor_in_txn, erase_workflow_actor_in_txn};
 pub use evidence::{
     CANDIDATE_DOMAIN, FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN, SOLVED_RUN_DOMAIN,

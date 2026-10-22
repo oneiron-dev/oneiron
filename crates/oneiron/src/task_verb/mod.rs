@@ -73,10 +73,6 @@ pub(crate) use lifecycle_receipt::{
 mod linear_store;
 mod mirror_edit;
 mod office_origin;
-#[expect(
-    unused_imports,
-    reason = "L12-A's office fork transaction consumes it (FIX 3551)"
-)]
 pub(crate) use office_origin::office_fork_origin_in_txn;
 mod owner_index;
 mod policy_change_followup;
@@ -185,7 +181,7 @@ pub(crate) use browser_workflow::erase_task_workflows_in_txn;
 pub use browser_workflow::{
     TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowPin, TaskWorkflowReport,
     TaskWorkflowUnavailable, mark_task_workflow_started, record_task_workflow_outcome,
-    task_workflow_binding, task_workflow_binding_in_txn,
+    task_run_done_means, task_workflow_binding, task_workflow_binding_in_txn,
 };
 pub use decision_port::TaskDecisions;
 pub(crate) use highway_post::settle_task_proposal_in_txn;
