@@ -33,11 +33,18 @@
 mod admission;
 mod cards;
 mod draft;
+#[cfg(feature = "driver")]
+mod durable;
 mod live_run;
 mod secret_slots;
 mod targets;
 
 pub(crate) use secret_slots::handle_form;
+
+#[cfg(feature = "driver")]
+pub(crate) use draft::draft_with_secrets;
+#[cfg(feature = "driver")]
+pub(crate) use durable::durable_draft;
 
 pub use admission::{
     AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal,
@@ -51,6 +58,8 @@ pub use draft::{
     DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput, DraftPage, DraftStep,
     PressedThrough, SlotCandidate, SlotField, draft_from_steps,
 };
+#[cfg(feature = "driver")]
+pub use live_run::filled_checks;
 #[cfg(feature = "driver")]
 pub(crate) use live_run::run;
 pub use live_run::{
@@ -400,6 +409,19 @@ pub fn site_of(url: &str) -> Option<String> {
         .rsplit_once('@')
         .map_or(authority, |(_, host)| host);
     (!host.is_empty() && !host.contains("{{")).then(|| host.to_ascii_lowercase())
+}
+
+/// The origin (scheme, host and port) of the page `program` opens first,
+/// parsed as a draft parses its span's (CUA E8a): the origin of the solved
+/// group its filing covers. None when its first step opens no such page.
+#[cfg(feature = "driver")]
+#[must_use]
+pub fn program_origin(program: &WorkflowProgram) -> Option<String> {
+    let Some(BatchStep::Open { url }) = program.steps.first() else {
+        return None;
+    };
+    let origin = url::Url::parse(url).ok()?.origin();
+    origin.is_tuple().then(|| origin.ascii_serialization())
 }
 
 fn slot_name(name: &str) -> bool {

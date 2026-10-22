@@ -1413,7 +1413,7 @@ class Oneiron:
         def propose(self, spec: Facade.PluginSectionProposeRequest) -> Facade.PluginSectionProposal:
             """The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."""
         def list(self, spec: Facade.PluginSectionListRequest) -> Facade.PluginSectionsView:
-            """Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."""
+            """Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project."""
         def grant(self, spec: Facade.PluginSectionGrantRequest) -> Facade.PluginSectionGrant:
             """The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."""
         def revoke(self, spec: Facade.PluginSectionRevokeRequest) -> Facade.PluginSectionRevoked:
@@ -1927,6 +1927,10 @@ class Oneiron:
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
+        def review(self, spec: Facade.CleanupReviewRequest) -> Facade.CleanupReviewView:
+            """The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts."""
+        def decide(self, spec: Facade.CleanupDecideRequest) -> Facade.CleanupDecideView:
+            """The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected."""
     class _VaultArchiveVerbs:
         @property
         def delete(self) -> "Oneiron._VaultArchiveDeleteVerbs": ...
@@ -1953,7 +1957,7 @@ class Oneiron:
         def log(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.LegalHoldEvent]:
             """The owner-visible legal hold log, oldest first."""
         def lift_and_erase(self, spec: Facade.LegalHoldLiftAndEraseRequest) -> Facade.LegalHoldLiftAndErased:
-            """The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."""
+            """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
     class _VaultCourtesyDeleteVerbs:
         def send(self, spec: Facade.CourtesyDeleteSendRequest) -> Facade.CourtesyDeleteSent:
             """The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."""
@@ -2869,16 +2873,16 @@ class Oneiron:
         def nominate(self, spec: Facade.ModelTrialNominate) -> Facade.ModelTrialView:
             """Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."""
         def get(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
-            """Reads a retained held-out trial, its catalog revision, independent labels and measured cost."""
+            """Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown."""
         def approve(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
             """Approves exploration for a held-out model trial only; leaves its role binding unchanged."""
         def run(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
-            """Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."""
+            """Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."""
         def complete(self, spec: Facade.ModelTrialComplete) -> Facade.ModelTrialView:
             """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
     class _VaultModelsBindingsVerbs:
         def propose(self, spec: Facade.ModelBindingPropose) -> Facade.ModelBindingProposal:
-            """Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."""
+            """Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it."""
         def get(self, spec: Facade.ModelBindingProposalRef) -> Facade.ModelBindingProposal:
             """Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."""
         def read(self, spec: Facade.ModelBindingRead) -> Facade.ModelBinding:
@@ -3589,9 +3593,9 @@ class Oneiron:
             """Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling."""
     class _AiStepsVerbs:
         def submit(self, spec: Facade.ModelStepSubmit) -> Facade.ModelStepReceipt:
-            """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
+            """Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result."""
         def receipt(self, spec: Facade.ModelStepReceiptRequest) -> Facade.ModelStepReceipt:
-            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain."""
     class _AiStreamsVerbs:
         def open(self, spec: Facade.ModelStreamOpen) -> Facade.ModelStreamOpened:
             """Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one."""

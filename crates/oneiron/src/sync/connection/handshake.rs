@@ -17,7 +17,7 @@ use crate::sync::types::parse_window_key_str;
 use crate::sync::window::UpdateVerdict;
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
-use super::session::{FullResyncMarker, WsSink, WsSource, residence_update_frame};
+use super::session::{FullResyncMarker, WsSink, WsSource};
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 impl SyncConnection {
@@ -262,6 +262,7 @@ impl SyncConnection {
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
         client.home_peer = crate::authority::PeerMachine::Unknown;
+        client.reset_window_pads();
         // Sync pulls the full root snapshot. The upgrade therefore proves an
         // unattenuated logged slip with a fresh holder signature; a device-key
         // lease or an issuer secret never grants this read. Each reconnect has
@@ -605,34 +606,53 @@ impl SyncConnection {
             if !client.residence_granted(&update.window_key) {
                 continue;
             }
-            // Re-encode as WindowSync wire message
-            let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
-                residence_update_frame(update.seq, &update.window_key, &update.encoded)
-            } else {
-                transport::encode_window_sync(
+            // Each row goes in its window pad envelope for the home, its pads
+            // projected and sealed at this send (FIX 7107).
+            let opened = client.config.residence_mode == crate::sync::SyncResidenceMode::Opened;
+            let context = client.window(&update.window_key);
+            let msgs = client
+                .window_pad_frames(
                     &update.window_key,
-                    window_sub_tags::UPDATE,
+                    if opened {
+                        window_sub_tags::RESIDENCE_UPDATE
+                    } else {
+                        window_sub_tags::UPDATE
+                    },
+                    opened.then_some(update.seq),
                     &update.encoded,
+                    context.as_ref().map(|window| &window.doc),
                 )
-                .into_result()
+                .map_err(|e| format!("Queue replay encode failed: {e}"))?;
+            for msg in msgs {
+                // A first frame past a member's room by its envelope header
+                // goes alone; its parts follow it in order.
+                let alone = !super::session::fits_alone(&msg);
+                if (alone
+                    || !super::node_batch::fits(&frames, size, &msg).map_err(|e| e.to_string())?)
+                    && !frames.is_empty()
+                {
+                    tick.tick().await;
+                    let batch = transport::encode_node_batch(&frames)
+                        .into_result()
+                        .map_err(|e| e.to_string())?;
+                    write
+                        .send(Message::Binary(batch.into()))
+                        .await
+                        .map_err(|e| format!("Queue replay failed: {e}"))?;
+                    frames.clear();
+                    size = 1;
+                }
+                if alone {
+                    tick.tick().await;
+                    write
+                        .send(Message::Binary(msg.into()))
+                        .await
+                        .map_err(|e| format!("Queue replay failed: {e}"))?;
+                    continue;
+                }
+                size += 4 + msg.len();
+                frames.push(msg);
             }
-            .map_err(|e| format!("Queue replay encode failed: {e}"))?;
-            if !super::node_batch::fits(&frames, size, &msg).map_err(|e| e.to_string())? {
-                tick.tick().await;
-                let batch = transport::encode_node_batch(&frames)
-                    .into_result()
-                    .map_err(|e| e.to_string())?;
-                write
-                    .send(Message::Binary(batch.into()))
-                    .await
-                    .map_err(|e| format!("Queue replay failed: {e}"))?;
-                frames.clear();
-                size = 1;
-                // A single member still has to fit inside its BATCH envelope.
-                super::node_batch::fits(&frames, size, &msg).map_err(|e| e.to_string())?;
-            }
-            size += 4 + msg.len();
-            frames.push(msg);
             sent.push(update);
         }
         if !frames.is_empty() {

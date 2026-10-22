@@ -74,6 +74,7 @@ mod fresh;
 mod guest;
 mod press;
 mod request;
+mod solved;
 pub(crate) mod storage;
 pub(crate) mod switch;
 mod trail;
@@ -81,6 +82,7 @@ mod trail;
 pub use fresh::FreshGuest;
 pub use guest::{BrowserGuestStarter, StartedGuest};
 pub use press::PressGrants;
+pub use solved::{CapturedSolvedSpan, SOLVED_PAST_PRESS, SolvedSnapshotGap};
 
 use self::guest::EngineGuest;
 use self::press::PressBook;

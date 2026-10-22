@@ -191,7 +191,12 @@ pub(crate) fn answer(
             if let Err(refusal) = vault.recheck_owner(owner) {
                 return OwnerError::from(refusal);
             }
-            OwnerError::Invalid(error.to_string())
+            // A legal order's refusal keeps its typed notice and bound (FIX
+            // 2926); any other refusal reads as before.
+            match error {
+                oneiron::Error::LegalHold(_) => OwnerError::from(error),
+                error => OwnerError::Invalid(error.to_string()),
+            }
         })?;
     if let Some(destination) = destination {
         let reply = with_issuer(server, |issuer| {
