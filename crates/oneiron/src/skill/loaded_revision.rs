@@ -33,6 +33,18 @@ pub(super) fn pin_loaded_in_txn(
         Ok(Some(live)) if live == *record => {}
         _ => return Ok(entry),
     }
+    // A live revision the ledger does not serve (a source, use-limit or
+    // withdrawal exclusion) leaves the row unpinned before any pin write.
+    if crate::vault::entity_revision::read_entity_revision_in_txn(
+        vault,
+        txn,
+        entity,
+        ReadMode::Live,
+    )?
+    .is_none()
+    {
+        return Ok(entry);
+    }
     let (revision, _) = crate::vault::entity_revision::ensure_document(vault, txn, entity)?;
     Ok(entry.with_revision(*entity, revision))
 }
