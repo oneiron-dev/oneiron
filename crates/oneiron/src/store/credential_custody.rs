@@ -15,6 +15,10 @@
 //! directory names (the prefix catalog), abandoned and unenacted ones
 //! included. Custody owns storage and lifecycle; who may open a key, and
 //! which head may carry it, is `secret_custody`'s policy.
+//!
+//! A connector call's resume state (FIX 9157) seals the same way under its
+//! `ConnectorResume` key: item = the call ref, generation = the caller's
+//! round generation, retired with its PENDING_CALLS row.
 
 use heed::RwTxn;
 use rand::RngCore;
@@ -25,6 +29,7 @@ use crate::error::{Error, Result, StoreError};
 use crate::store::Store;
 use crate::store::key_custody::{
     CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, Requirement,
+    RetireCause, RetirementIntent, stage_retirement_in_txn,
 };
 
 /// The width of every KS-6 key: an AES-256-GCM key (CALLS `KS-6 leaf ids`,
@@ -34,20 +39,27 @@ pub(crate) const CUSTODY_LEAF_KEY_BYTES: usize = 32;
 /// One KS-6 key, copied out of its custody entry.
 pub(crate) type CredentialLeaf = Zeroizing<[u8; CUSTODY_LEAF_KEY_BYTES]>;
 
-/// Whether `kind` is one of KS-6's: a credential's value, or one of its
-/// carriers' keys.
+/// Whether `kind` is one of the per-record sealed-value kinds: KS-6's (a
+/// credential's value, or one of its carriers' keys) or a connector call's
+/// resume (FIX 9157).
 pub(crate) const fn credential_kind(kind: CustodyKind) -> bool {
     matches!(
         kind,
         CustodyKind::CredentialValue
             | CustodyKind::CustodyTransition
             | CustodyKind::CustodyRequestInput
+            | CustodyKind::ConnectorResume
     )
 }
 
 /// `credential`'s value subject in `binding`'s custody.
 fn value_subject(binding: &CustodyBinding, credential: &EntityId) -> Result<CustodySubject> {
     binding.subject(CustodyKind::CredentialValue, credential.as_bytes())
+}
+
+/// `call_ref`'s resume subject in `binding`'s custody (FIX 9157).
+fn resume_subject(binding: &CustodyBinding, call_ref: &EntityId) -> Result<CustodySubject> {
+    binding.subject(CustodyKind::ConnectorResume, call_ref.as_bytes())
 }
 
 /// One carrier instance's subject: the credential's id, then the instance's.
@@ -185,6 +197,85 @@ impl Store {
         copy_leaf(CustodyKind::CredentialValue, custody.read(&id)?.expose())
     }
 
+    /// The key connector call `call_ref`'s resume state at `generation` is
+    /// sealed under (FIX 9157), minted in `wtxn` when custody holds none
+    /// there yet, the binding pinned in the same transaction: published,
+    /// synced and its Mint journaled before the row sealed under it commits.
+    /// The writer keeps the finisher from every entry, so no custody guard
+    /// is taken. A retry of an uncommitted writer finds the entry it
+    /// published and keeps its key, its Mint journaled again before this row
+    /// commits, so no sealed row ever stands on an unjournaled key; a
+    /// retired id is never minted again.
+    ///
+    /// # Errors
+    /// An archived vault, whose custody is its replacement's; a retired
+    /// key, which is never minted again; custody faults.
+    pub(crate) fn connector_resume_leaf_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        call_ref: &EntityId,
+        generation: u32,
+    ) -> Result<CredentialLeaf> {
+        if self.core.gate_custody_archived() {
+            return Err(Error::Store(StoreError::ArchivedVault));
+        }
+        self.core.key_custody.pin_in_txn(self, wtxn)?;
+        let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
+        let id = resume_subject(custody.binding(), call_ref)?.at(u64::from(generation));
+        copy_leaf(
+            CustodyKind::ConnectorResume,
+            custody.get_or_create_journaled(&id)?.expose(),
+        )
+    }
+
+    /// The key connector call `call_ref`'s resume state at `generation` is
+    /// sealed under (FIX 9157), read strictly: a retired, damaged or missing
+    /// entry, or no custody at all, is an error, never a new key. The caller
+    /// holds a writer, or took the custody read guard before its snapshot.
+    ///
+    /// # Errors
+    /// The key is not there to read.
+    pub(crate) fn read_connector_resume_leaf(
+        &self,
+        call_ref: &EntityId,
+        generation: u32,
+    ) -> Result<CredentialLeaf> {
+        let custody = self
+            .core
+            .key_custody
+            .local()
+            .ok_or_else(|| CustodyKind::ConnectorResume.corrupt())?;
+        let id = resume_subject(custody.binding(), call_ref)?.at(u64::from(generation));
+        copy_leaf(CustodyKind::ConnectorResume, custody.read(&id)?.expose())
+    }
+
+    /// The key a restored row still in its image's carrier form is sealed
+    /// under at `generation`, taken again from this store's custody before
+    /// its value opens (KS-6, `CUSTODY_RESEAL_PENDING`): read, or minted,
+    /// published and journaled, under the binding the store holds, with no
+    /// LMDB write and no guard, so any reader may take it. Its row seals
+    /// under it on the next pass or write.
+    ///
+    /// # Errors
+    /// An archived vault; no custody here yet; a retired key, never minted
+    /// again; custody faults.
+    pub(crate) fn retake_credential_value_leaf(
+        &self,
+        credential: &EntityId,
+        generation: u32,
+    ) -> Result<()> {
+        if self.core.gate_custody_archived() {
+            return Err(Error::Store(StoreError::ArchivedVault));
+        }
+        let custody = self
+            .core
+            .key_custody
+            .local()
+            .ok_or_else(|| CustodyKind::CredentialValue.corrupt())?;
+        let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
+        custody.get_or_create(&id).map(drop)
+    }
+
     /// Mints the key of one new carrier instance of credential `credential`
     /// (`kind`: a transition or a request's whole input) in `wtxn`: a fresh
     /// random instance id, then the key, published, synced and its Mint
@@ -268,5 +359,40 @@ impl Store {
             subjects.extend(custody.subjects_with_prefix(kind, credential.as_bytes())?);
         }
         Ok(subjects)
+    }
+
+    /// Stages retirement of every ConnectorResume generation of connector
+    /// call `call_ref` (FIX 9157) in `wtxn`, the writer that deletes its
+    /// PENDING_CALLS row: one erase intent through the newest generation
+    /// custody holds, so a restored pre-erase image cannot open them. The
+    /// custody finisher carries it out after commit. No custody, or an
+    /// archived vault whose custody is its replacement's, stages none.
+    ///
+    /// # Errors
+    /// Custody and storage faults.
+    pub(crate) fn stage_connector_resume_retirement_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        call_ref: &EntityId,
+    ) -> Result<()> {
+        if self.core.gate_custody_archived() {
+            return Ok(());
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(());
+        };
+        let subject = resume_subject(custody.binding(), call_ref)?;
+        let Some(through) = custody.newest_generation(&subject)? else {
+            return Ok(());
+        };
+        stage_retirement_in_txn(
+            self,
+            wtxn,
+            &RetirementIntent {
+                subject,
+                through,
+                cause: RetireCause::Erase,
+            },
+        )
     }
 }
