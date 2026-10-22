@@ -225,17 +225,17 @@ impl ScopedRead<'_> {
     }
 
     /// FIX 7597 hook: the loop decisions a saved period's recorded owner may
-    /// see now, for the owner's proofless background lens. L02 builds
-    /// `ScopedRead::authorised_loop_decisions_for_recorded_owner_in_txn(txn,
-    /// owner)` with OF-499 A3, and this then returns its answer for `owner`.
-    /// Until then it returns none, so that lens leaves out only its loop
-    /// rows. It never reads as `Person(owner)` and never makes an owner
+    /// see now, for the owner's proofless background lens: L02's
+    /// [`ScopedRead::authorised_loop_decisions_for_recorded_owner_in_txn`],
+    /// which admits only while `owner` is this lane's live Owner in `txn`.
+    /// One who is not adds no loop row, so the lens leaves out only its
+    /// loop rows. It never reads as `Person(owner)` and never makes an owner
     /// proof.
     fn recorded_owner_loop_decisions_in_txn(
         &self,
-        _txn: &heed::RoTxn<'_>,
-        _owner: EntityId,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
     ) -> Vec<ReadableLoopDecision> {
-        Vec::new()
+        self.authorised_loop_decisions_for_recorded_owner_in_txn(txn, owner)
     }
 }

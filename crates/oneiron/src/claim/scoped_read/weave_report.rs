@@ -2,11 +2,8 @@
 //! The host/resident supplies predicates and ordering; the engine enforces which
 //! sections and subjects a reader may see in one scoped-read snapshot.
 use super::{ScopedRead, ScopedReadResult};
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
-use crate::dreamer_runner::maintenance::agent_health::{
-    AgentHealthCard, AgentHealthOutcome, AgentHealthPadRead, agent_health_cards_in_txn,
-};
+use crate::dreamer_runner::maintenance::agent_health::{AgentHealthCard, AgentHealthPadRead};
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -18,6 +15,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) mod admissions;
 // The SieveScore section's sampled sieve audits (OF-499).
 pub(super) mod sieve_score;
+// The live projection core, a due Owner schedule's binding too (FIX 1259).
+mod projection;
 
 /// Reader role is a constraint on the projection, never a claim of new read authority.
 #[derive(Clone, Copy)]
@@ -232,253 +231,6 @@ impl ScopedRead<'_> {
     ) -> Result<ScopedReadResult<WeaveReport>> {
         let txn = self.grant_read_txn()?;
         self.weave_report_in_txn(&txn, reader, recipe)
-    }
-
-    /// Run the same live report admission against a caller-owned transaction.
-    /// Correction writes and receipt reads need admission and effects in one snapshot.
-    pub(super) fn weave_report_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        reader: WeaveReader<'_>,
-        recipe: &[WeaveSectionSpec],
-    ) -> Result<ScopedReadResult<WeaveReport>> {
-        let subject = match reader {
-            WeaveReader::Person(id) | WeaveReader::Agent(id) => {
-                if self.actor_key.actor_ref() != id.to_hex() {
-                    return Err(Error::InvalidConfig(
-                        "weave reader is not the scoped actor".into(),
-                    ));
-                }
-                Some(id)
-            }
-            WeaveReader::Owner(owner) => {
-                let actor = owner.revalidate_in_txn(self.vault, txn)?;
-                if self.actor_key.actor_ref() != actor.to_hex()
-                    && self.actor_key.actor_ref() != owner.principal_ref_in_txn(self.vault, txn)?
-                {
-                    return Err(Error::InvalidConfig(
-                        "weave owner is not the scoped actor".into(),
-                    ));
-                }
-                None
-            }
-        };
-        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        validate_weave_recipe(self.vault, txn, &policy, &reader, recipe)?;
-        let max_rows = crate::gate::weave_policy::effective_resolved(
-            &policy,
-            reader.role(),
-            reader.id(self.vault, txn)?,
-        )
-        .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?
-        .max_rows;
-        let threshold = u64::try_from(max_rows).unwrap_or(u64::MAX);
-        let mut project_ids = BTreeSet::new();
-        let mut projects = Vec::new();
-        if (recipe.iter().any(|s| {
-            matches!(
-                s.kind,
-                WeaveSectionKind::Projects | WeaveSectionKind::Budgets
-            )
-        }) || subject.is_some())
-            && let Ok(kind) = self.vault.project_type_byte()
-        {
-            let mut count = ScanCount::start_at(EngineScan::TypeIndexRows, &[kind], threshold);
-            let project_fold = crate::workspace_roster::ProjectReader::new(
-                &self.vault.store,
-                txn,
-                self.vault.privacy_posture(),
-            )?;
-            let project_rows = match self.session_view {
-                Some(view) => view.port_entity_ids_by_type(txn, kind, None)?,
-                None => self.vault.port_entity_ids_by_type(txn, kind, None)?,
-            };
-            for row in project_rows {
-                let id = row?;
-                count.row();
-                // A project id must be readable before its body or membership
-                // becomes available to the projection.
-                if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &id)? {
-                    continue;
-                }
-                let raw = self
-                    .entity_record_in(txn, &id)?
-                    .ok_or(Error::CorruptedIndex("weave project index"))?
-                    .encode();
-                let header = EntityMetadataHeader::parse(&raw)
-                    .ok_or(Error::CorruptedIndex("weave project header"))?;
-                if header.entity_type != kind {
-                    return Err(Error::CorruptedIndex("weave project kind"));
-                }
-                // A row the project read fold hides never reaches a report,
-                // and a subject's role is the one its signed history folds to.
-                let Some((record, effective)) = project_fold
-                    .as_ref()
-                    .map(|fold| fold.visible_body(id, &raw[ENTITY_METADATA_HEADER_LEN..]))
-                    .transpose()?
-                    .flatten()
-                else {
-                    continue;
-                };
-                if subject.is_none_or(|id| {
-                    let who = id.to_hex();
-                    effective.leader == who
-                        || effective.seats.contains(&who)
-                        || effective.board.contains(&who)
-                }) {
-                    project_ids.insert(id);
-                    projects.push((id, record));
-                }
-            }
-            count.finish(self.vault);
-        }
-        let mut sections = Vec::with_capacity(recipe.len());
-        for spec in recipe {
-            let mut items = Vec::new();
-            if spec.kind == WeaveSectionKind::Projects {
-                for (id, row) in &projects {
-                    let goal = match &row.goal {
-                        Some(value) => {
-                            let goal_id = EntityId::from_hex(value)?;
-                            self.is_entity_retrievable_with_policy_in(
-                                txn, &policy, &filter, &goal_id,
-                            )?
-                            .then(|| value.clone())
-                        }
-                        None => None,
-                    };
-                    items.push(WeaveItem::Project { id: *id, goal });
-                }
-            } else if spec.kind == WeaveSectionKind::Budgets {
-                for (id, row) in &projects {
-                    if let Some(budget) = &row.budget {
-                        let budget_ref = EntityId::from_hex(budget)?;
-                        if self.is_entity_retrievable_with_policy_in(
-                            txn,
-                            &policy,
-                            &filter,
-                            &budget_ref,
-                        )? {
-                            items.push(WeaveItem::Budget {
-                                project: *id,
-                                budget_ref,
-                            });
-                        }
-                    }
-                }
-            } else {
-                let mut seen = BTreeSet::new();
-                for predicate in &spec.predicates {
-                    for id in self.weave_claim_ids_in(txn, predicate, threshold)? {
-                        if !seen.insert(id) {
-                            continue;
-                        }
-                        if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &id)? {
-                            continue;
-                        }
-                        let raw = self
-                            .entity_record_in(txn, &id)?
-                            .ok_or(Error::CorruptedIndex("weave claim index"))?
-                            .encode();
-                        let header = EntityMetadataHeader::parse(&raw)
-                            .ok_or(Error::CorruptedIndex("weave claim header"))?;
-                        if header.entity_type != ENTITY_TYPE_CLAIM {
-                            return Err(Error::CorruptedIndex("weave claim kind"));
-                        }
-                        let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-                        if body.predicate != *predicate {
-                            return Err(Error::CorruptedIndex("weave predicate index"));
-                        }
-                        let relevant = match (subject, body.subject) {
-                            (None, _) => true,
-                            (Some(person), ClaimSubject::Entity(id)) => {
-                                id == person || project_ids.contains(&id)
-                            }
-                            (Some(person), ClaimSubject::Edge { source, target, .. }) => {
-                                source == person
-                                    || target == person
-                                    || project_ids.contains(&source)
-                                    || project_ids.contains(&target)
-                            }
-                        };
-                        if !relevant {
-                            continue;
-                        }
-                        // An edge claim must not launder an unreadable endpoint
-                        // (or a deleted edge) into a report about the reader.
-                        if !self.weave_claim_edge_admitted_in(txn, &policy, &filter, &body)? {
-                            continue;
-                        }
-                        items.push(WeaveItem::Claim {
-                            id,
-                            body: Box::new(body),
-                        });
-                    }
-                }
-            }
-            // A SieveScore section shows the sampled sieve audits after its
-            // predicate rows (OF-499), each one this reader's floor admits.
-            if spec.kind == WeaveSectionKind::SieveScore {
-                items.extend(self.weave_sieve_audits_in(txn, &policy, &filter));
-            }
-            // An Admissions section shows the loop decisions this reader may
-            // see after its predicate rows (OF-499 A2), in ledger order.
-            if spec.kind == WeaveSectionKind::Admissions {
-                items.extend(self.weave_loop_decisions_in_txn(txn, reader));
-            }
-            // Each resident gets its own digest through its dreaming
-            // (ARCH-0063 §6): its progress leads its own Digest section.
-            if spec.kind == WeaveSectionKind::Digest
-                && let WeaveReader::Agent(resident) = reader
-            {
-                let progress = crate::dreamer_consolidation::resident_dream_progress_in_txn(
-                    self.vault, txn, resident,
-                )?;
-                if progress.entries > 0 {
-                    items.insert(
-                        0,
-                        WeaveItem::DreamProgress {
-                            resident,
-                            dreamed_at: progress.dreamed_at,
-                            entries: progress.entries,
-                        },
-                    );
-                }
-            }
-            // The Coach's open agent-health cards follow, concern first, for
-            // a reader the concern door would answer (OF-568).
-            if spec.kind == WeaveSectionKind::Digest && !filter.deny_all {
-                let id = reader.id(self.vault, txn)?;
-                for card in agent_health_cards_in_txn(self.vault, txn)? {
-                    if card.outcome == AgentHealthOutcome::Open
-                        && weave_card_admitted(self.vault, txn, &card, id)?
-                    {
-                        items.push(WeaveItem::AgentHealth {
-                            card,
-                            draft_erased: false,
-                        });
-                    }
-                }
-            }
-            if spec.kind == WeaveSectionKind::Links && !spec.edge_kinds.is_empty() {
-                items.extend(self.weave_links_in(
-                    txn,
-                    &policy,
-                    &filter,
-                    (subject, &project_ids),
-                    &spec.edge_kinds,
-                    threshold,
-                )?);
-            }
-            sections.push(WeaveSection {
-                kind: spec.kind,
-                items,
-            });
-        }
-        Ok(ScopedReadResult {
-            value: WeaveReport { sections },
-            receipt: self.receipt_for(None, &policy, &filter, 0),
-        })
     }
 }
 
@@ -737,25 +489,7 @@ pub(super) fn validate_weave_recipe(
     reader: &WeaveReader<'_>,
     recipe: &[WeaveSectionSpec],
 ) -> Result<()> {
-    let row = crate::gate::weave_policy::effective_resolved(
-        policy,
-        reader.role(),
-        reader.id(vault, txn)?,
-    )
-    .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?;
-    // A recipe holds however many sections, predicates and edge kinds (rule
-    // 5); the 128-byte bound is the predicate token grammar's own.
-    if recipe.iter().any(|section| {
-        (!section.edge_kinds.is_empty() && section.kind != WeaveSectionKind::Links)
-            || section
-                .predicates
-                .iter()
-                .any(|p| p.is_empty() || p.len() > 128)
-            || !row.sections.contains(section.kind.policy_name())
-    }) {
-        return Err(Error::InvalidConfig("invalid weave report recipe".into()));
-    }
-    Ok(())
+    projection::validate_weave_recipe_for(policy, reader.role(), reader.id(vault, txn)?, recipe)
 }
 
 #[cfg(test)]

@@ -132,6 +132,7 @@ mod support_grant;
 mod support_receipt;
 mod task_actor;
 mod vault_api;
+mod weave_admin;
 mod world_key_fold;
 mod world_key_support;
 mod world_privacy;
@@ -313,6 +314,9 @@ pub use support_grant::{
 pub use task_actor::AdmittedTaskGrant;
 pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
 pub use vault_api::AuthorityEntryStatus;
+pub use weave_admin::{
+    AdminStepUp, AuthenticatedWeaveAdmin, WEAVE_ADMIN_MFA_REQUIRED, WEAVE_ADMIN_NOT_CURRENT,
+};
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.

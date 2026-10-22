@@ -7,6 +7,24 @@ pub(crate) const KEY: &str = "weave_report_policy";
 /// The precedence order is itself a manifest row.
 pub(crate) const PRECEDENCE_KEY: &str = "weave_report_precedence";
 pub(crate) const NESTED_NARROWING: &str = "nested_narrowing";
+/// The weave Admin's role row (OF-499 A3): a reader only an exact, current
+/// Admin proof binds, never an Owner.
+pub(crate) const ADMIN_ROLE: &str = "admin";
+/// The shipped Admin row's sections (CALLS `OF-499 A3 default sections`):
+/// the six Owner-shaped ones, a vault-global shape inside the Admin's own
+/// read Scope.
+const WEAVE_ADMIN_DEFAULT_SECTIONS: &[&str] = &[
+    "links",
+    "conflicts",
+    "exceptions",
+    "admissions",
+    "budgets",
+    "sieve_score",
+];
+/// Whether an Admin reads under the Owner's rows when no Admin row exists
+/// (CALLS `OF-499 A3 no owner inherit`): no. A table with no Admin row opens
+/// no Admin path.
+const WEAVE_ADMIN_POLICY_INHERIT_OWNER: bool = false;
 
 /// Both orders intersect holder ceilings with the vault. `holder_required`
 /// additionally refuses readers without a matching holder row.
@@ -62,7 +80,10 @@ pub(crate) fn effective(
     precedence: Precedence,
 ) -> Option<Row> {
     let mut combined: Option<Row> = None;
-    for row in rows.iter().filter(|r| r.role == role && r.holder.is_none()) {
+    for row in rows
+        .iter()
+        .filter(|r| row_role_matches(&r.role, role) && r.holder.is_none())
+    {
         if let Some(current) = &mut combined {
             current.restrict(row);
         } else {
@@ -73,7 +94,7 @@ pub(crate) fn effective(
     let mut holder_found = false;
     for row in rows
         .iter()
-        .filter(|r| r.role == role && r.holder == Some(holder))
+        .filter(|r| row_role_matches(&r.role, role) && r.holder == Some(holder))
     {
         holder_found = true;
         combined.restrict(row);
@@ -82,6 +103,14 @@ pub(crate) fn effective(
         return None;
     }
     Some(combined)
+}
+
+/// Whether a row of `row_role` bounds a reader of `role`: its own role's
+/// rows only, unless an Admin inherited the Owner's
+/// ([`WEAVE_ADMIN_POLICY_INHERIT_OWNER`], off).
+fn row_role_matches(row_role: &str, role: &str) -> bool {
+    row_role == role
+        || (WEAVE_ADMIN_POLICY_INHERIT_OWNER && role == ADMIN_ROLE && row_role == "owner")
 }
 
 /// Fresh vaults without a persisted policy manifest use the shipped rows.
@@ -130,6 +159,7 @@ pub(crate) fn default_value() -> Value {
                 ],
             ),
             ("agent", &["digest"]),
+            (ADMIN_ROLE, WEAVE_ADMIN_DEFAULT_SECTIONS),
         ]
         .into_iter()
         .map(|(role, sections)| {
@@ -203,7 +233,7 @@ pub(crate) fn parse(value: &Value) -> Option<Vec<Row>> {
             return None;
         }
         let role = field(entries, "role")?.as_str()?;
-        if !matches!(role, "person" | "owner" | "agent") {
+        if !matches!(role, "person" | "owner" | "agent" | ADMIN_ROLE) {
             return None;
         }
         let holder = if entries

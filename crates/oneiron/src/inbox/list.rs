@@ -259,8 +259,22 @@ impl Memory<'_> {
             .into_iter()
             .next()
             .flatten();
-        let Some(current) = admitted.and_then(|(entity_type, learned_at, raw)| {
-            delivered_row(id, entity_type, learned_at, &raw, &caller)
+        let Some((entity_type, learned_at, raw)) = admitted else {
+            return Err(notification_not_found());
+        };
+        // FIX 5778: a row its read admits but that is not delivered to this
+        // actor may still take an Acked mark when it is an owner's weave due
+        // notice and one live Grant the owner gave this agent covers that
+        // ack (`delegated_owner_notice_ack`). Delivery keeps winning first.
+        let delivered = delivered_row(id, entity_type, learned_at, &raw, &caller);
+        let delegated = delivered.is_none()
+            && mark == NotificationMark::Acked
+            && lane.delegated_owner_notice_ack(self.actor(), self.actor_class(), id);
+        let Some(current) = delivered.or_else(|| {
+            delegated
+                .then(|| decode_notification_body(&raw).ok())
+                .flatten()
+                .map(|body| row_for(id, learned_at, body, &caller))
         }) else {
             return Err(notification_not_found());
         };
@@ -268,6 +282,13 @@ impl Memory<'_> {
             return Ok(current);
         }
         self.vault().write_txn_door(Callback::Audited, |wtxn| {
+            // A delegated ack's covering Grant is judged again in the
+            // snapshot that writes; it is that ack's row-position scope.
+            let covered = delegated
+                && lane.delegated_owner_notice_ack_in(wtxn, self.actor(), self.actor_class(), id);
+            if delegated && !covered {
+                return Err(notification_not_found());
+            }
             // The verified actor writer's own check, as before. A caller it
             // refuses may still mark its own row under that row's write lane
             // (FIX 6510); any other meets the refusal it met before.
@@ -276,6 +297,7 @@ impl Memory<'_> {
                     INBOX_MARK_WRITE_SCOPE.admits_in(self, wtxn, &lane, id, &caller),
                     Ok(true)
                 )
+                && !covered
             {
                 return Err(whole_vault);
             }
