@@ -14551,7 +14551,7 @@
      "path": "src/code_run/dispatcher/binding.rs",
      "purpose": "Host construction, binding and captured identity for a dispatcher",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 10
      }
     },
@@ -45503,6 +45503,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/off_record/promote/attribution.rs",
+     "purpose": "FIX 3103 (OF-540): a promotion witnesses the edges it replays for the runs that journaled them, never for…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/off_record/promote/result_holds.rs",
      "purpose": "A saved result MESSAGE's hold on its body (FIX 365): the body comes out of the room it was said in, and the…",
      "surface": {
@@ -57326,7 +57336,7 @@
      "path": "src/session_overlay/journal.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -58254,6 +58264,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/skill_attribution/derivation_witness.rs",
+     "purpose": "FIX 3103 (OF-540, OF-397): the derivation witnesses of leased runs, one event stream that does not wait for…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/skill_attribution/host.rs",
      "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
      "surface": {
@@ -58325,8 +58345,8 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 16,
-      "re-export": 16
+      "crate-vis": 17,
+      "re-export": 17
      }
     },
     {
@@ -58373,11 +58393,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "RunWriteToken"
+     ],
      "path": "src/skill_attribution/run_writes.rs",
      "purpose": "OF-540/OF-397: the write envelope of a leased agent run",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 15,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -76621,7 +76645,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76992,7 +77016,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77281,7 +77305,7 @@
    },
    "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5066,
+   "source_files": 5068,
    "test_files": 902
   },
   "oneiron-android": {
@@ -105795,9 +105819,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/server/resident_pump/attribution.rs",
-     "purpose": "The executor a seatless, unplanned run records (FIX 1876, OF-540)",
+     "purpose": "The executor a seatless, unplanned run records (FIX 1876, OF-540), and the run's attribution bound before…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
