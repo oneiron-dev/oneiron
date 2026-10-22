@@ -7,7 +7,8 @@
 //! a held plot or view keeps its bytes, a new one takes its family's
 //! default.
 
-use super::{ChartKind, ChartSeries};
+use super::special::{self, OfPieType, SplitType, StockRoles, SurfaceBand};
+use super::{ChartKind, ChartSeries, NodeId};
 use serde::{Deserialize, Serialize};
 
 impl ChartKind {
@@ -21,17 +22,18 @@ impl ChartKind {
     pub fn is_3d(self) -> bool {
         matches!(
             self,
-            Self::Bar3D | Self::Line3D | Self::Pie3D | Self::Area3D
+            Self::Bar3D | Self::Line3D | Self::Pie3D | Self::Area3D | Self::Surface3D
         )
     }
 
     /// Whether a plot of this family, laid out as `grouping`, stands its
-    /// series on a depth (series) axis as well: a 3D line plot always, a 3D
-    /// bar or area plot whose series stand one behind another (`standard`,
-    /// an area plot's default), never a 3D pie.
+    /// series on a depth (series) axis as well: a 3D line plot and a
+    /// surface plot (2D or 3D) always, a 3D bar or area plot whose series
+    /// stand one behind another (`standard`, an area plot's default), never
+    /// a 3D pie.
     pub fn depth_axis(self, grouping: Option<PlotGrouping>) -> bool {
         match self {
-            Self::Line3D => true,
+            Self::Line3D | Self::Surface | Self::Surface3D => true,
             Self::Area3D => grouping.is_none_or(|grouping| grouping == PlotGrouping::Standard),
             Self::Bar3D => grouping == Some(PlotGrouping::Standard),
             _ => false,
@@ -159,6 +161,55 @@ pub struct ChartPlot {
     /// Bubble plots: what a size scales.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_represents: Option<SizeRepresents>,
+    /// Stock plots: the series that draws each price, by identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stock: Option<StockRoles>,
+    /// Line and stock plots: a line from each point's highest value to its
+    /// lowest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hi_low_lines: Option<bool>,
+    /// Line and stock plots: a bar from each point's first value to its
+    /// last (up/down bars).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub up_down_bars: Option<bool>,
+    /// The up/down bars' gap, as a percentage of a bar's width.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub up_down_gap_width: Option<u32>,
+    /// An up bar's fill (its last value above its first), six hex digits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub up_fill: Option<String>,
+    /// A down bar's fill, six hex digits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub down_fill: Option<String>,
+    /// Surface plots, 2D and 3D: drawn as a wireframe, unfilled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wireframe: Option<bool>,
+    /// Surface plots: the bands the model formats, by index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bands: Option<Vec<SurfaceBand>>,
+    /// Of-pie plots: a pie or a bar as the second plot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub of_pie_type: Option<OfPieType>,
+    /// Of-pie plots: how the second plot's points are picked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_type: Option<SplitType>,
+    /// Of-pie plots: the position, percentage or value a split by
+    /// position, percent or value cuts at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_pos: Option<serde_json::Number>,
+    /// Of-pie plots: the category points a custom split draws in the second
+    /// plot, by identity in the set the plot's first series draws.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_split: Option<Vec<NodeId>>,
+    /// Of-pie plots: the second plot's size, 5 to 200 percent of the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub second_pie_size: Option<u32>,
+    /// Of-pie plots: the gap between the two plots, 0 to 500 percent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap_width: Option<u32>,
+    /// Of-pie plots: lines joining the split points to the second plot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ser_lines: Option<bool>,
 }
 
 impl ChartPlot {
@@ -175,6 +226,21 @@ impl ChartPlot {
             bubble_scale: None,
             show_neg_bubbles: None,
             size_represents: None,
+            stock: None,
+            hi_low_lines: None,
+            up_down_bars: None,
+            up_down_gap_width: None,
+            up_fill: None,
+            down_fill: None,
+            wireframe: None,
+            bands: None,
+            of_pie_type: None,
+            split_type: None,
+            split_pos: None,
+            custom_split: None,
+            second_pie_size: None,
+            gap_width: None,
+            ser_lines: None,
         }
     }
 
@@ -197,7 +263,7 @@ impl ChartPlot {
         let grouped = bar || matches!(kind, Line | Line3D | Area | Area3D);
         let deep = matches!(kind, Bar3D | Line3D | Area3D);
         let bubble = kind == Bubble;
-        let out = Self {
+        let mut out = Self {
             family: kind,
             nth,
             bar_dir: self.bar_dir.filter(|_| bar),
@@ -210,7 +276,9 @@ impl ChartPlot {
             bubble_scale: self.bubble_scale.filter(|_| bubble),
             show_neg_bubbles: self.show_neg_bubbles.filter(|_| bubble),
             size_represents: self.size_represents.filter(|_| bubble),
+            ..Self::new(kind, nth)
         };
+        let special = special::fit(self, kind, &mut out);
         let dropped = [
             ("barDir", self.bar_dir.is_some(), out.bar_dir.is_some()),
             ("grouping", self.grouping.is_some(), out.grouping.is_some()),
@@ -243,7 +311,9 @@ impl ChartPlot {
         ]
         .into_iter()
         .filter(|&(_, had, kept)| had && !kept)
-        .map(|(name, _, _)| name.to_owned())
+        .map(|(name, _, _)| name)
+        .chain(special)
+        .map(str::to_owned)
         .collect();
         (out, dropped)
     }

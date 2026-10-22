@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1142 facade rows, 3990 generated types.
+// UniFFI census: 1142 facade rows, 3995 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1094.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -53014,6 +53014,14 @@ pub enum ChartKind {
     Area3D,
     #[serde(rename = "bubble")]
     Bubble,
+    #[serde(rename = "stock")]
+    Stock,
+    #[serde(rename = "surface")]
+    Surface,
+    #[serde(rename = "surface_3d")]
+    Surface3D,
+    #[serde(rename = "of_pie")]
+    OfPie,
 }
 
 /// `oneiron_docedit::live::pptx::chart::categories::ChartCategory`.
@@ -53126,6 +53134,63 @@ pub enum SizeRepresents {
     Width,
 }
 
+/// `oneiron_docedit::live::pptx::chart::special::StockOrder`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StockOrder {
+    #[serde(rename = "hlc")]
+    Hlc,
+    #[serde(rename = "ohlc")]
+    Ohlc,
+}
+
+/// `oneiron_docedit::live::pptx::chart::special::StockRoles`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StockRoles {
+    #[serde(rename = "order")]
+    pub order: StockOrder,
+    #[serde(rename = "open", default, skip_serializing_if = "Option::is_none")]
+    pub open: Option<u64>,
+    #[serde(rename = "high", default, skip_serializing_if = "Option::is_none")]
+    pub high: Option<u64>,
+    #[serde(rename = "low", default, skip_serializing_if = "Option::is_none")]
+    pub low: Option<u64>,
+    #[serde(rename = "close", default, skip_serializing_if = "Option::is_none")]
+    pub close: Option<u64>,
+}
+
+/// `oneiron_docedit::live::pptx::chart::special::SurfaceBand`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SurfaceBand {
+    #[serde(rename = "index")]
+    pub index: u32,
+    #[serde(rename = "fill", default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<String>,
+}
+
+/// `oneiron_docedit::live::pptx::chart::special::OfPieType`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OfPieType {
+    #[serde(rename = "pie")]
+    Pie,
+    #[serde(rename = "bar")]
+    Bar,
+}
+
+/// `oneiron_docedit::live::pptx::chart::special::SplitType`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SplitType {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "cust")]
+    Cust,
+    #[serde(rename = "percent")]
+    Percent,
+    #[serde(rename = "pos")]
+    Pos,
+    #[serde(rename = "val")]
+    Val,
+}
+
 /// `oneiron_docedit::live::pptx::chart::families::ChartPlot`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChartPlot {
@@ -53161,6 +53226,64 @@ pub struct ChartPlot {
         skip_serializing_if = "Option::is_none"
     )]
     pub size_represents: Option<SizeRepresents>,
+    #[serde(rename = "stock", default, skip_serializing_if = "Option::is_none")]
+    pub stock: Option<StockRoles>,
+    #[serde(
+        rename = "hi_low_lines",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub hi_low_lines: Option<bool>,
+    #[serde(
+        rename = "up_down_bars",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub up_down_bars: Option<bool>,
+    #[serde(
+        rename = "up_down_gap_width",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub up_down_gap_width: Option<u32>,
+    #[serde(rename = "up_fill", default, skip_serializing_if = "Option::is_none")]
+    pub up_fill: Option<String>,
+    #[serde(rename = "down_fill", default, skip_serializing_if = "Option::is_none")]
+    pub down_fill: Option<String>,
+    #[serde(rename = "wireframe", default, skip_serializing_if = "Option::is_none")]
+    pub wireframe: Option<bool>,
+    #[serde(rename = "bands", default, skip_serializing_if = "Option::is_none")]
+    pub bands: Option<Vec<SurfaceBand>>,
+    #[serde(
+        rename = "of_pie_type",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub of_pie_type: Option<OfPieType>,
+    #[serde(
+        rename = "split_type",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub split_type: Option<SplitType>,
+    #[serde(rename = "split_pos", default, skip_serializing_if = "Option::is_none")]
+    pub split_pos: Option<f64>,
+    #[serde(
+        rename = "custom_split",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub custom_split: Option<Vec<u64>>,
+    #[serde(
+        rename = "second_pie_size",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub second_pie_size: Option<u32>,
+    #[serde(rename = "gap_width", default, skip_serializing_if = "Option::is_none")]
+    pub gap_width: Option<u32>,
+    #[serde(rename = "ser_lines", default, skip_serializing_if = "Option::is_none")]
+    pub ser_lines: Option<bool>,
 }
 
 /// `oneiron_docedit::live::pptx::chart::families::ChartView`.

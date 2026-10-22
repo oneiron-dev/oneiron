@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1142 facade rows, 4007 declarations.
+Census: 1142 facade rows, 4012 declarations.
 Inputs: 1076 of 1142 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1028 of 1142 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
@@ -17058,7 +17058,7 @@ class TableBody(TypedDict):
     columns: list[NodeId]
     cells: NotRequired[dict[str, dict[str, str]]]
     merges: NotRequired[list[TableMerge]]
-ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar", "bar_3d", "line_3d", "pie_3d", "area_3d", "bubble"]
+ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar", "bar_3d", "line_3d", "pie_3d", "area_3d", "bubble", "stock", "surface", "surface_3d", "of_pie"]
 class ChartCategory(TypedDict):
     id: NotRequired[NodeId | None]
     levels: NotRequired[list[str | None]]
@@ -17079,6 +17079,18 @@ BarDirection = Literal["bar", "col"]
 PlotGrouping = Literal["standard", "clustered", "stacked", "percent_stacked"]
 BarShape = Literal["box", "cone", "cone_to_max", "cylinder", "pyramid", "pyramid_to_max"]
 SizeRepresents = Literal["area", "width"]
+StockOrder = Literal["hlc", "ohlc"]
+class StockRoles(TypedDict):
+    order: StockOrder
+    open: NotRequired[NodeId | None]
+    high: NotRequired[NodeId | None]
+    low: NotRequired[NodeId | None]
+    close: NotRequired[NodeId | None]
+class SurfaceBand(TypedDict):
+    index: int
+    fill: NotRequired[str | None]
+OfPieType = Literal["pie", "bar"]
+SplitType = Literal["auto", "cust", "percent", "pos", "val"]
 class ChartPlot(TypedDict):
     family: ChartKind
     nth: NotRequired[int]
@@ -17090,6 +17102,21 @@ class ChartPlot(TypedDict):
     bubble_scale: NotRequired[int | None]
     show_neg_bubbles: NotRequired[bool | None]
     size_represents: NotRequired[SizeRepresents | None]
+    stock: NotRequired[StockRoles | None]
+    hi_low_lines: NotRequired[bool | None]
+    up_down_bars: NotRequired[bool | None]
+    up_down_gap_width: NotRequired[int | None]
+    up_fill: NotRequired[str | None]
+    down_fill: NotRequired[str | None]
+    wireframe: NotRequired[bool | None]
+    bands: NotRequired[list[SurfaceBand] | None]
+    of_pie_type: NotRequired[OfPieType | None]
+    split_type: NotRequired[SplitType | None]
+    split_pos: NotRequired[float | None]
+    custom_split: NotRequired[list[NodeId] | None]
+    second_pie_size: NotRequired[int | None]
+    gap_width: NotRequired[int | None]
+    ser_lines: NotRequired[bool | None]
 class ChartView(TypedDict):
     rot_x: NotRequired[int | None]
     h_percent: NotRequired[int | None]

@@ -1,5 +1,7 @@
 //! A rewritten chart's axes: a held x axis turned between a category and
-//! a value axis, a new pair of axes, and a new depth axis.
+//! a value axis, a new pair of axes, and a new depth axis (a 3D line and a
+//! surface plot's, and a 3D bar or area plot's standing its series one
+//! behind another).
 //! Entry: `plot_axes`, `retyped_axis`, `axes`, `ser_axis`.
 
 use super::families;
@@ -280,14 +282,20 @@ pub(super) fn plot_axes(
             })
             .unwrap_or_default();
         held_ids.push(kept.clone());
-        let shared = ids_of
+        let fits = |ids: &&Vec<u32>| {
+            ids.len() >= 2
+                && value_x.get(&ids[0]).copied().unwrap_or(false) == wants_value
+                && ids.iter().any(|id| depth_axes.contains(id)) == depth
+        };
+        // A line plot beside a stock plot (the series a stock plot has no
+        // price for) plots on the stock plot's axes.
+        let stock = targets[..at_target]
             .iter()
-            .find(|ids| {
-                ids.len() >= 2
-                    && value_x.get(&ids[0]).copied().unwrap_or(false) == wants_value
-                    && ids.iter().any(|id| depth_axes.contains(id)) == depth
-            })
-            .cloned();
+            .zip(&ids_of)
+            .filter(|(other, _)| target.kind == ChartKind::Line && other.kind == ChartKind::Stock)
+            .map(|(_, ids)| ids)
+            .find(&fits);
+        let shared = stock.or_else(|| ids_of.iter().find(&fits)).cloned();
         let ids = if !target.kind.has_axes() {
             Vec::new()
         } else if kept.len() >= 2 {
