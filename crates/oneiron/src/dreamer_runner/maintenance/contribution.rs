@@ -1,10 +1,13 @@
 //! The Coach's contribution checks (ARCH-0037 #lineage-credit, ARCH-0053):
-//! each sampled credited run's skill measured on matched forks. The host's
-//! replay capsule regenerates the run's step from its captured pre-use
-//! context with and without the skill and scores both forks against the
-//! run's anchor; this recipe records each finished pair as the run's check
-//! ([`crate::skill_attribution::record_contribution_pair`]). A run the host
-//! cannot replay stays unchecked. Each pass resumes after the last candidate
+//! each sampled credited run's target measured on matched forks, by one
+//! recipe for both kinds: a loaded skill, and an ancestor, the source of one
+//! used derived-from edge (FIX 2870). The host's replay capsule regenerates
+//! the run's step from its captured pre-use context with and without the
+//! target and scores both forks against the run's anchor; this recipe
+//! records each finished pair as the run's check
+//! ([`crate::skill_attribution::record_contribution_pair`]), which also fits
+//! `credit_decay` from an adjacent edge's. A run the host cannot replay
+//! stays unchecked. Each pass resumes after the last candidate
 //! the pass before it examined, and a pass that reaches the end of the credit
 //! table starts the next sweep at the head, so every unchecked run is read
 //! again. A check is never inferred from a load, a citation or a success.
@@ -12,12 +15,11 @@ use std::time::{Duration, Instant};
 
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
-use crate::entity_id::EntityId;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_attribution::{
     ContributionCandidate, ContributionFork, ContributionPair, ContributionRecord,
-    contribution_check_candidates_after, record_contribution_pair,
+    ContributionTarget, contribution_check_candidates_after, record_contribution_pair,
 };
 use crate::{Result, Vault};
 
@@ -29,10 +31,10 @@ const PAIRS_PER_PASS: usize = 4;
 /// the window reaches past the runs captured before the capsule was.
 const CANDIDATES_PER_PASS: usize = 64;
 
-/// The credit key and skill of the last candidate a pass put to the host.
+/// The credit key and target of the last candidate a pass put to the host.
 /// Absent at the head of a sweep, and cleared when a pass reaches the end of
 /// the credit table.
-const CURSOR: SideTable<(), (String, EntityId), Named> =
+const CURSOR: SideTable<(), (String, ContributionTarget), Named> =
     SideTable::new(&side_table::COACH_CONTRIBUTION_CURSOR);
 
 /// Both forks of one candidate's matched pair, each scored against the
@@ -46,7 +48,7 @@ pub struct ContributionForks {
 /// The host's replay capsule, lent to the Coach for one pass.
 pub trait ContributionReplayHost {
     /// Regenerates the candidate run's step from its captured pre-use
-    /// context, once with the candidate's skill and once without, on the
+    /// context, once with the candidate's target and once without, on the
     /// run's pinned executor, input snapshot, clock, seed and budget, with
     /// side effects replayed, never re-sent. Both forks are scored against
     /// the candidate's anchor on its axis, and model calls stop by `clock`.
@@ -116,8 +118,8 @@ pub(super) fn execute(
         .and_then(|index| candidates.get(index));
     if reached_end {
         vault.with_write_txn_grouped(|txn| CURSOR.delete(&vault.store, txn, &()))?;
-    } else if let Some((key, skill, _)) = last {
-        let at = (key.clone(), *skill);
+    } else if let Some((key, target, _)) = last {
+        let at = (key.clone(), *target);
         vault.with_write_txn_grouped(|txn| CURSOR.put(&vault.store, txn, &(), &at))?;
     }
     Ok(DreamerAttemptExecution::Completed {
@@ -137,7 +139,7 @@ pub(super) fn execute(
 fn measure(
     vault: &Vault,
     host: &(dyn ContributionReplayHost + Send + Sync),
-    candidates: &[(String, EntityId, ContributionCandidate)],
+    candidates: &[(String, ContributionTarget, ContributionCandidate)],
     clock: &RetrievalDeadline,
     now: u64,
 ) -> (bool, usize) {
@@ -158,17 +160,8 @@ fn measure(
             }
         };
         tried += 1;
-        let pair = ContributionPair {
-            attempt_receipt: candidate.attempt_receipt.clone(),
-            outcome_receipt: candidate.outcome_receipt.clone(),
-            skill: Some(candidate.skill),
-            axis: candidate.axis.clone(),
-            goal_revision: candidate.goal_revision.clone(),
-            anchor: candidate.anchor,
-            with_skill: forks.with_skill,
-            without_skill: forks.without_skill,
-            at: now,
-        };
+        let pair =
+            ContributionPair::for_candidate(candidate, forks.with_skill, forks.without_skill, now);
         // A pair its kept forks do not prove is recorded unmatched and
         // measures nothing (FIX 3610).
         match record_contribution_pair(vault, &pair, now) {

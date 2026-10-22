@@ -1,9 +1,9 @@
 //! Contribution checks (ARCH-0037 #lineage-credit, ARCH-0053): whether one
-//! loaded skill contributed to a run's anchored outcome, measured on matched
-//! forks. The run's step is regenerated with and without the skill on the
-//! same pinned executor, input snapshot, clock, seed and budget, and both
-//! forks are scored against the same anchor. Loading, citing or succeeding
-//! proves nothing.
+//! loaded skill, or the source of one used derived-from edge, contributed to
+//! a run's anchored outcome, measured on matched forks. The run's step is
+//! regenerated with and without the target on the same pinned executor,
+//! input snapshot, clock, seed and budget, and both forks are scored against
+//! the same anchor. Loading, citing or succeeding proves nothing.
 //!
 //! A finished pair is measured only when the fork receipts the engine kept
 //! for the run's credited outcome prove it; one they do not is recorded
@@ -16,30 +16,29 @@
 //! immutable check ([`record_contribution_pair`]) and joins it to learning:
 //! an outcome projected later reads the check
 //! ([`super::project_anchored_pack_outcome`]), and an outcome already
-//! credited gains the skill's own win when the check lands. The run's frozen
-//! receipt is never rewritten.
+//! credited is reconciled when the check lands ([`super::credit_join`]). The
+//! run's frozen receipt is never rewritten.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::codec::evidence_after;
+use super::codec::{evidence_after, evidence_after_in_txn};
 use super::contribution_admission::{ContributionAdmission, ContributionRecord, admit_pair_in_txn};
+use super::contribution_targets::{CheckedEdge, ContributionTarget, Experiment, unchecked_edges};
 use super::late_credit::CREDIT_RECEIPT;
 use super::{AttemptOutcome, FollowedState, LateCreditReceipt, OutcomeEvidence};
 use crate::entity_id::EntityId;
-use crate::learning::{
-    Anchor, EvidenceSource, LearningCell, LearningEvidence, LearningPredicate, Observation, TypeRef,
-};
+use crate::learning::{Anchor, EvidenceSource, LearningPredicate, TypeRef};
 use crate::receipt::{
-    ContributionCheck, PackAttributionFields, PackLearningContext, SkillContribution,
-    attempt_pack_receipt,
+    ContributionCheck, PackAttributionFields, SkillContribution, attempt_pack_receipt,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{Error, Result, Vault};
 
-/// Recorded checks, measured and unmatched. Key: attempt receipt NUL skill
-/// (32 hex) NUL axis.
+/// Recorded checks, measured and unmatched. Key: attempt receipt NUL target
+/// (a skill's 32 hex, or an edge's two joined by `>`) NUL a digest of the
+/// experiment ([`Experiment::check_key`]).
 pub(super) const CHECK: SideTable<String, ContributionAdmission, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_CONTRIBUTION_CHECK);
 
@@ -51,15 +50,20 @@ pub struct ContributionFork {
     pub passed: bool,
 }
 
-/// A finished matched-fork pair for one skill on one run's outcome axis.
+/// A finished matched-fork pair for one target on one run's outcome axis.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContributionPair {
     /// The original run's terminal receipt.
     pub attempt_receipt: String,
     /// The credited outcome the pair was checked for: its outcome receipt.
     pub outcome_receipt: String,
-    /// The skill checked; `None` once that skill is erased (FIX 8988).
+    /// The skill checked, or for a used edge's check the run's pattern,
+    /// whose goal axis scored both forks; `None` once that skill is erased
+    /// (FIX 8988).
     pub skill: Option<EntityId>,
+    /// The used edge an ancestor check measured; `None` for a loaded
+    /// skill's check.
+    pub edge: Option<CheckedEdge>,
     pub axis: String,
     /// The goal revision the credited outcome was checked under; a check
     /// joins only an outcome of the same revision.
@@ -67,7 +71,9 @@ pub struct ContributionPair {
     pub goal_revision: Option<String>,
     /// The correctness anchor both forks were scored against.
     pub anchor: Anchor,
+    /// The fork with the target, as captured.
     pub with_skill: ContributionFork,
+    /// The fork without the target's exposure.
     pub without_skill: ContributionFork,
     /// Unix seconds the pair finished.
     pub at: u64,
@@ -80,13 +86,17 @@ pub struct ContributionCheckRecord {
     pub pair: ContributionPair,
 }
 
-/// A credited run whose skill a contribution check should measure: what a
-/// recipe needs to regenerate its step with and without the skill.
+/// A credited run's target a contribution check should measure: what a
+/// recipe needs to regenerate its step with and without the target.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContributionCandidate {
     pub attempt_receipt: String,
     pub outcome_receipt: String,
+    /// The skill whose goal axis scores both forks: the checked skill, or
+    /// for a used edge the run's pattern.
     pub skill: EntityId,
+    /// What the check measures.
+    pub target: ContributionTarget,
     pub axis: String,
     /// The credit's frozen goal revision, for the pair to carry.
     pub goal_revision: Option<String>,
@@ -96,52 +106,11 @@ pub struct ContributionCandidate {
     pub type_ref: TypeRef,
 }
 
-/// The contribution rule: the fork with the skill passed and the fork
+/// The contribution rule: the fork with the target passed and the fork
 /// without it failed. A tie or no improvement is no contribution.
 #[must_use]
 pub const fn contributed(with_skill: bool, without_skill: bool) -> bool {
     with_skill && !without_skill
-}
-
-pub(super) fn check_key(attempt_receipt: &str, skill: EntityId, axis: &str) -> String {
-    format!("{attempt_receipt}\0{}\0{axis}", skill.to_hex())
-}
-
-/// The check's own receipt id: the run, the skill, the axis and both forks.
-pub(super) fn check_receipt(pair: &ContributionPair, skill: EntityId) -> String {
-    let mut hash = blake3::Hasher::new_derive_key("oneiron contribution check v1");
-    let skill = skill.to_hex();
-    for text in [
-        pair.attempt_receipt.as_str(),
-        skill.as_str(),
-        pair.axis.as_str(),
-        pair.with_skill.receipt.as_str(),
-        pair.without_skill.receipt.as_str(),
-    ] {
-        hash.update(&(text.len() as u64).to_be_bytes());
-        hash.update(text.as_bytes());
-    }
-    format!("contribution:{}", hash.finalize().to_hex())
-}
-
-/// Whether `(attempt, skill, axis)` falls in the sample at `rate`: a fixed
-/// draw from the three, so a rerun samples the same runs.
-fn sampled(attempt_receipt: &str, skill: EntityId, axis: &str, rate: f64) -> bool {
-    let mut hash = blake3::Hasher::new_derive_key("oneiron contribution sample v1");
-    for bytes in [
-        attempt_receipt.as_bytes(),
-        skill.as_bytes().as_slice(),
-        axis.as_bytes(),
-    ] {
-        hash.update(&(bytes.len() as u64).to_be_bytes());
-        hash.update(bytes);
-    }
-    let draw = hash.finalize();
-    let mut head = [0_u8; 8];
-    head.copy_from_slice(&draw.as_bytes()[..8]);
-    #[allow(clippy::cast_precision_loss)]
-    let unit = u64::from_be_bytes(head) as f64 / u64::MAX as f64;
-    unit < rate
 }
 
 /// Whether a routed evidence row says the run followed its skill and
@@ -165,10 +134,24 @@ fn followed_skills(vault: &Vault) -> Result<BTreeMap<String, BTreeSet<EntityId>>
     Ok(out)
 }
 
+/// The skills the run `attempt_receipt` followed to success, read only
+/// through `txn`.
+pub(super) fn followed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_receipt: &str,
+) -> Result<BTreeSet<EntityId>> {
+    Ok(evidence_after_in_txn(vault, txn, 0)?
+        .into_iter()
+        .filter(|(_, row)| row.receipt_ref == attempt_receipt && followed_success(row))
+        .filter_map(|(_, row)| row.skill)
+        .collect())
+}
+
 /// Whether `skill` can earn a direct win on `credit`: a followed skill on a
 /// successful outcome, or the team pattern once someone else won. A credit
 /// whose attribution an erase cleared joins nothing (FIX 8988).
-fn joins(credit: &LateCreditReceipt, followed: bool, skill: EntityId) -> bool {
+pub(super) fn joins(credit: &LateCreditReceipt, followed: bool, skill: EntityId) -> bool {
     let Some(attribution) = &credit.attribution else {
         return false;
     };
@@ -181,23 +164,55 @@ fn joins(credit: &LateCreditReceipt, followed: bool, skill: EntityId) -> bool {
         }
 }
 
-/// Up to `limit` credited runs whose skills a check should measure, in
-/// credit order then skill order, strictly after `after` (a credit key and a
-/// skill; `None` is the head): a followed skill or the team pattern that has
-/// no direct win and no check yet, sampled at the `contribution_check_rate`
-/// setting. Each comes with its own credit key and skill, so a pass can resume
-/// after the last one it examined. A position whose credit is gone, or whose
-/// skill that credit no longer names, starts at the head, so no candidate is
-/// skipped.
+/// Every target a check could measure on `credit`, with the skill whose
+/// goal axis scores it: each loaded skill the run followed to success and
+/// the team pattern, then, once someone won directly, each used edge of its
+/// effective attribution no check has measured, scored by the pattern.
+fn targets_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+    followed: Option<&BTreeSet<EntityId>>,
+) -> Result<BTreeMap<ContributionTarget, EntityId>> {
+    let Some(attribution) = &credit.attribution else {
+        return Ok(BTreeMap::new());
+    };
+    let mut out: BTreeMap<_, _> = followed
+        .into_iter()
+        .flatten()
+        .copied()
+        .chain([attribution.pattern])
+        .map(|skill| (ContributionTarget::LoadedSkill(skill), skill))
+        .collect();
+    if credit.succeeded && !credit.direct_subjects.is_empty() {
+        let fields =
+            super::credit_join::effective_fields_in_txn(vault, txn, credit, attribution.clone())?;
+        out.extend(
+            unchecked_edges(&fields)
+                .into_iter()
+                .map(|target| (target, attribution.pattern)),
+        );
+    }
+    Ok(out)
+}
+
+/// Up to `limit` credited runs' targets a check should measure, in credit
+/// order then target order, strictly after `after` (a credit key and a
+/// target; `None` is the head): a followed skill or the team pattern that
+/// has no direct win, or a used edge of a credit someone won, with no check
+/// yet, sampled at the `contribution_check_rate` setting. Each comes with
+/// its own credit key and target, so a pass can resume after the last one it
+/// examined. A position whose credit is gone, or whose target that credit no
+/// longer offers, starts at the head, so no candidate is skipped.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn contribution_check_candidates_after(
     vault: &Vault,
-    after: Option<&(String, EntityId)>,
+    after: Option<&(String, ContributionTarget)>,
     limit: usize,
-) -> Result<Vec<(String, EntityId, ContributionCandidate)>> {
+) -> Result<Vec<(String, ContributionTarget, ContributionCandidate)>> {
     let rate = crate::learning_setting::setting_value(
         vault,
         &crate::learning_setting::CONTRIBUTION_CHECK_RATE,
@@ -206,21 +221,16 @@ pub fn contribution_check_candidates_after(
         return Ok(Vec::new());
     }
     let followed = followed_skills(vault)?;
-    let skills_of = |credit: &LateCreditReceipt| {
-        followed
-            .get(&credit.attempt_receipt)
-            .into_iter()
-            .flatten()
-            .copied()
-            .chain(credit.attribution.as_ref().map(|fields| fields.pattern))
-            .collect::<BTreeSet<_>>()
-    };
     let rtxn = vault.store.env.read_txn()?;
     let after = match after {
-        Some((key, skill)) => CREDIT_RECEIPT
-            .get(&vault.store, &rtxn, key)?
-            .filter(|credit| skills_of(credit).contains(skill))
-            .map(|_| (key, *skill)),
+        Some((key, target)) => match CREDIT_RECEIPT.get(&vault.store, &rtxn, key)? {
+            Some(credit) => {
+                targets_in_txn(vault, &rtxn, &credit, followed.get(&credit.attempt_receipt))?
+                    .contains_key(target)
+                    .then_some((key, *target))
+            }
+            None => None,
+        },
         None => None,
     };
     let start = after.map_or(std::ops::Bound::Unbounded, |(key, _)| {
@@ -234,37 +244,39 @@ pub fn contribution_check_candidates_after(
         let Some(attribution) = &credit.attribution else {
             continue;
         };
-        for skill in skills_of(&credit) {
-            if after.is_some_and(|(at, last)| *at == key && skill <= last) {
+        for (target, skill) in targets_in_txn(vault, &rtxn, &credit, run_followed)? {
+            if after.is_some_and(|(at, last)| *at == key && target <= last) {
                 continue;
             }
-            let followed = run_followed.is_some_and(|skills| skills.contains(&skill));
-            if !joins(&credit, followed, skill)
-                || !sampled(&credit.attempt_receipt, skill, &credit.axis, rate)
+            let candidate = ContributionCandidate {
+                attempt_receipt: credit.attempt_receipt.clone(),
+                outcome_receipt: credit.outcome_receipt.clone(),
+                skill,
+                target,
+                axis: credit.axis.clone(),
+                goal_revision: credit.goal_revision.clone(),
+                anchor: credit.anchor,
+                executor: attribution.executor.clone(),
+                type_ref: attribution.type_ref.clone(),
+            };
+            let eligible = match target {
+                ContributionTarget::LoadedSkill(skill) => joins(
+                    &credit,
+                    run_followed.is_some_and(|skills| skills.contains(&skill)),
+                    skill,
+                ),
+                ContributionTarget::UsedEdge { .. } => true,
+            };
+            let experiment = Experiment::of_candidate(&candidate);
+            if !eligible
+                || !experiment.sampled(rate)
                 || CHECK
-                    .get(
-                        &vault.store,
-                        &rtxn,
-                        &check_key(&credit.attempt_receipt, skill, &credit.axis),
-                    )?
+                    .get(&vault.store, &rtxn, &experiment.check_key())?
                     .is_some()
             {
                 continue;
             }
-            out.push((
-                key.clone(),
-                skill,
-                ContributionCandidate {
-                    attempt_receipt: credit.attempt_receipt.clone(),
-                    outcome_receipt: credit.outcome_receipt.clone(),
-                    skill,
-                    axis: credit.axis.clone(),
-                    goal_revision: credit.goal_revision.clone(),
-                    anchor: credit.anchor,
-                    executor: attribution.executor.clone(),
-                    type_ref: attribution.type_ref.clone(),
-                },
-            ));
+            out.push((key.clone(), target, candidate));
             if out.len() >= limit {
                 return Ok(out);
             }
@@ -275,30 +287,38 @@ pub fn contribution_check_candidates_after(
 
 /// Records one finished matched-fork pair (FIX 3610). It is measured, as an
 /// immutable contribution check, only when the fork receipts the engine kept
-/// for the run's credited outcome prove it, read in this write; a check that
-/// contributed joins learning, so an outcome on the same run and axis that
-/// was already credited without the skill gains the skill's own win now,
-/// once. A pair they do not prove is recorded unmatched, with why, and
-/// teaches nothing; it may be measured later, when its forks are kept. The
-/// same pair again answers its record; a different pair beside a final
-/// measurement is kept as conflicting and changes nothing.
+/// for the run's credited outcome prove it, read in this write; a measured
+/// check, whether it contributed or not, reconciles every outcome of the run
+/// already credited ([`super::credit_join`]), and one on an adjacent used
+/// edge fits `credit_decay` ([`super::decay_fit`]). A pair they do not prove
+/// is recorded unmatched, with why, and teaches nothing; it may be measured
+/// later, when its forks are kept. The same pair again answers its record; a
+/// different pair beside a final measurement is kept as conflicting and
+/// changes nothing.
 ///
 /// # Errors
 ///
 /// [`Error::InvalidClaimBody`] for a malformed reference or axis, forks that
-/// share a receipt or reuse the run's, a pair naming no skill, an anchor that
-/// does not settle correctness, a run that is not a scored stamped attempt,
-/// or a skill the run did not load; storage errors.
+/// share a receipt or reuse the run's, a pair naming no skill or a self
+/// edge, an anchor that does not settle correctness, a run that is not a
+/// scored stamped attempt, or a skill the run did not load; storage errors.
 pub fn record_contribution_pair(
     vault: &Vault,
     pair: &ContributionPair,
     now: u64,
 ) -> Result<ContributionRecord> {
-    let Some(skill) = pair.skill else {
+    let (Some(skill), Some(target)) = (pair.skill, pair.target()) else {
         return Err(Error::InvalidClaimBody(
-            "a contribution check names its skill",
+            "a contribution check names its skill and target",
         ));
     };
+    if let ContributionTarget::UsedEdge { derived, source } = target
+        && derived == source
+    {
+        return Err(Error::InvalidClaimBody(
+            "an ancestor check names an edge between two entities",
+        ));
+    }
     for text in [
         &pair.attempt_receipt,
         &pair.outcome_receipt,
@@ -334,66 +354,10 @@ pub fn record_contribution_pair(
             "cancelled or abandoned work is not checked",
         ));
     }
-    let followed = followed_skills(vault)?
-        .get(&pair.attempt_receipt)
-        .is_some_and(|skills| skills.contains(&skill));
     vault.with_write_txn_grouped(|txn| {
         super::pack_learning::require_loaded_skill(vault, txn, &receipt, skill)?;
-        admit_pair_in_txn(vault, txn, skill, pair, followed, now)
+        admit_pair_in_txn(vault, txn, skill, target, pair, now)
     })
-}
-
-/// `skill`'s own win on every outcome of the check's run, axis and goal
-/// revision that was credited before the check landed, recorded under a
-/// receipt naming both the credit and the check. The credit receipt stays as
-/// sealed.
-pub(super) fn join_credited_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    record: &ContributionCheckRecord,
-    skill: EntityId,
-    followed: bool,
-    now: u64,
-) -> Result<()> {
-    let pair = &record.pair;
-    let credits: Vec<LateCreditReceipt> = CREDIT_RECEIPT
-        .scan_from(&vault.store, txn, &[])?
-        .into_iter()
-        .map(|(_, credit)| credit)
-        .filter(|credit| {
-            credit.attempt_receipt == pair.attempt_receipt
-                && credit.axis == pair.axis
-                && credit.goal_revision == pair.goal_revision
-                && joins(credit, followed, skill)
-        })
-        .collect();
-    for credit in credits {
-        let Some(attribution) = credit.attribution.clone() else {
-            continue;
-        };
-        let attribution = with_check(attribution, skill, &record.check);
-        let cell = LearningCell::new(LearningPredicate::Reliability, skill)
-            .executor(attribution.executor.clone())
-            .type_ref(attribution.type_ref.clone())
-            .axis(credit.axis.clone());
-        let mut learning = LearningEvidence::anchored(
-            format!("{}+{}", credit.receipt_id, record.check.receipt),
-            credit.at,
-            credit.anchor,
-            Observation::Success(true),
-        );
-        learning.judge = attribution.judge.clone();
-        learning.on_judge_model =
-            attribution.judge.as_deref() == Some(attribution.executor.as_str());
-        learning.pack_attribution = Some(PackLearningContext {
-            attempt_receipt: credit.attempt_receipt.clone(),
-            outcome_receipt: credit.outcome_receipt.clone(),
-            attribution,
-        });
-        learning.goal_revision = credit.goal_revision.clone();
-        crate::learning::record_evidence_in_txn(vault, txn, &cell, &learning, now)?;
-    }
-    Ok(())
 }
 
 /// `fields` with `check` as `skill`'s contribution, unless the receipt froze
@@ -412,9 +376,29 @@ fn with_check(
     fields
 }
 
-/// `fields` with every check measured for `attempt_receipt` on `axis` under
-/// `goal_revision` joined as a contribution: the attribution an outcome on
-/// that axis and revision projects.
+/// `fields` with `check` on the used edge `derived -> source`, unless the
+/// receipt froze one on it already: the hop check that `check_every_hop`
+/// credit reads (FIX 3241).
+fn with_edge_check(
+    mut fields: PackAttributionFields,
+    derived: EntityId,
+    source: EntityId,
+    check: &ContributionCheck,
+) -> PackAttributionFields {
+    if let Some(edge) = fields
+        .used_edges
+        .iter_mut()
+        .find(|edge| edge.derived == derived && edge.source == source && edge.check.is_none())
+    {
+        edge.check = Some(check.clone());
+    }
+    fields
+}
+
+/// `fields` with every check measured for `attempt_receipt`'s outcome
+/// `outcome_receipt` on `axis` under `goal_revision` joined: a loaded
+/// skill's as its contribution, a used edge's on that edge. The attribution
+/// an outcome of that axis and revision projects.
 ///
 /// # Errors
 ///
@@ -423,6 +407,7 @@ pub(super) fn with_recorded_checks_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     attempt_receipt: &str,
+    outcome_receipt: &str,
     axis: &str,
     goal_revision: Option<&str>,
     mut fields: PackAttributionFields,
@@ -433,13 +418,23 @@ pub(super) fn with_recorded_checks_in_txn(
         let Some(record) = admission.matched else {
             continue;
         };
-        if let Some(skill) = record.pair.skill
-            && record.pair.attempt_receipt == attempt_receipt
-            && record.pair.axis == axis
-            && record.pair.goal_revision.as_deref() == goal_revision
+        let pair = &record.pair;
+        if pair.attempt_receipt != attempt_receipt
+            || pair.outcome_receipt != outcome_receipt
+            || pair.axis != axis
+            || pair.goal_revision.as_deref() != goal_revision
         {
-            fields = with_check(fields, skill, &record.check);
+            continue;
         }
+        fields = match pair.target() {
+            Some(ContributionTarget::LoadedSkill(skill)) => {
+                with_check(fields, skill, &record.check)
+            }
+            Some(ContributionTarget::UsedEdge { derived, source }) => {
+                with_edge_check(fields, derived, source, &record.check)
+            }
+            None => fields,
+        };
     }
     Ok(fields)
 }
