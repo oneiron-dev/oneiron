@@ -69,6 +69,11 @@ pub struct ManagedRestoreReceipt {
     pub destination_state: ManagedRestoreDestination,
     pub report: RestoreReportWire,
     pub admission: RestoreAdmissionWire,
+    /// The plan's `wake_sequence_floor`, the floor the restore held the
+    /// artifact's signed sequence to; `null` for a historical restore, which
+    /// took none. Required even when `null`.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub wake_sequence_floor: Option<u64>,
     /// The plan's evidence references, as it named them.
     pub evidence: RestoreEvidence,
     /// Where each added recipient's escrow report stands at this start.
@@ -85,6 +90,10 @@ pub struct ManagedRestoreReceipt {
 pub struct RestoreReportWire {
     /// The restored checkpoint's id, as the vault's restore log names it.
     pub checkpoint_id: String,
+    /// The checkpoint sequence the artifact's verified commitment signs
+    /// (FIX 969), what a wake or migrate compares across copies; a
+    /// historical restore's too.
+    pub checkpoint_sequence: u64,
     pub restored_at: u64,
     pub rebuilt_entities: u64,
     pub rebuilt_text_documents: u64,

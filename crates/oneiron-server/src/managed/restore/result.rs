@@ -56,7 +56,7 @@ impl ResultSink {
     ) {
         tracing::warn!(
             reason = "managed_restore_failed",
-            cause = ?reason,
+            cause = reason.as_str(),
             ?phase,
             destination = ?destination_state,
             "the cold managed restore failed"

@@ -311,7 +311,8 @@ impl WireTelemetry {
     }
     /// Keeps each pending question; one whose write fails stays pending for
     /// the next flush. A run of this server before this one may have kept a
-    /// question for the same window, so its first write counts that in.
+    /// question for the same window, so its first write counts that in. Each
+    /// is kept as telemetry, which moves no backup watermark (FIX 6730).
     fn save_limit_questions(&self) -> Result<()> {
         for (row, window, restored) in self.limits.unkept() {
             let key = format!("{LIMIT_QUESTION}{}:{window:020}", row.key());
@@ -325,7 +326,9 @@ impl WireTelemetry {
             let Some(question) = self.limits.restore(row, window, earlier) else {
                 continue;
             };
-            self.vault.sync_state_put(&key, &encode(&question)?)?;
+            let bytes = encode(&question)?;
+            self.vault
+                .sync_state_put_telemetry_batch(&[(key.as_str(), bytes.as_slice())])?;
             self.limits.kept(row, window, &question);
         }
         Ok(())
@@ -487,11 +490,13 @@ impl WireTelemetry {
         }
         Ok(())
     }
+    /// Keeps `window` as telemetry, which moves no backup watermark (FIX
+    /// 6730).
     fn persist(&self, window: &WireWindowReceipt) -> Result<()> {
-        self.vault.sync_state_put(
-            &format!("{RECEIPT}{:020}:{:020}", window.started_at, window.ended_at),
-            &encode(window)?,
-        )
+        let key = format!("{RECEIPT}{:020}:{:020}", window.started_at, window.ended_at);
+        let bytes = encode(window)?;
+        self.vault
+            .sync_state_put_telemetry_batch(&[(key.as_str(), bytes.as_slice())])
     }
     fn flush_active(&self, active: &mut Active) -> Result<()> {
         if !active.persisted

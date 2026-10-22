@@ -6,9 +6,10 @@
 use std::collections::BTreeSet;
 
 use oneiron::recovery::checkpoint::{
-    AnchorDisposition, ArtifactKind, CheckpointSigner, CustodyPositionFact, CustodyRouteFact,
-    RecipientRetirementDisposition, RestoreAdmission, RestoreAdmissionReason,
-    RestoreDestinationState, RestorePhase, RestoreReport, RetiredBy, SourceExpectation,
+    AnchorDisposition, ArtifactKind, CheckpointSequenceBelowFloor, CheckpointSigner,
+    CustodyPositionFact, CustodyRouteFact, RecipientRetirementDisposition, RestoreAdmission,
+    RestoreAdmissionError, RestoreAdmissionReason, RestoreDestinationState, RestorePhase,
+    RestoreReport, RetiredBy, SourceExpectation,
 };
 use oneiron_vault_contract::restore::facts::{
     AddedRecipientWire, AnchorDispositionWire, CustodyAdmissionWire, CustodyPositionWire,
@@ -79,12 +80,16 @@ pub(super) struct ReceiptContext<'a> {
     pub(super) host_holds: RestoreHostHoldsStatus,
 }
 
-/// The receipt of a verified restore.
+/// The receipt of a verified restore; refused when the report names no
+/// checkpoint sequence, which a restore of a signed artifact always has.
 pub(super) fn receipt(
     context: &ReceiptContext<'_>,
     report: &RestoreReport,
     admission: &RestoreAdmission,
-) -> ManagedRestoreReceipt {
+) -> anyhow::Result<ManagedRestoreReceipt> {
+    let checkpoint_sequence = report
+        .checkpoint_sequence
+        .ok_or_else(|| anyhow::anyhow!("the restore's report names no checkpoint sequence"))?;
     let escrow_spool = admission
         .recipients
         .added
@@ -99,7 +104,7 @@ pub(super) fn receipt(
             },
         })
         .collect();
-    ManagedRestoreReceipt {
+    Ok(ManagedRestoreReceipt {
         schema_version: RESTORE_RECEIPT_SCHEMA_VERSION,
         identity: context.identity.clone(),
         vault_name: context.plan.vault_name.clone(),
@@ -111,6 +116,7 @@ pub(super) fn receipt(
         destination_state: ManagedRestoreDestination::CommittedNotServing,
         report: RestoreReportWire {
             checkpoint_id: report.epoch.checkpoint_id.clone(),
+            checkpoint_sequence,
             restored_at: report.epoch.restored_at,
             rebuilt_entities: report.rebuilt_entities as u64,
             rebuilt_text_documents: report.rebuilt_text_documents as u64,
@@ -126,10 +132,11 @@ pub(super) fn receipt(
                 .collect(),
         },
         admission: admission_wire(admission),
+        wake_sequence_floor: context.plan.wake_sequence_floor,
         evidence: context.plan.evidence.clone(),
         escrow_spool,
         host_holds: context.host_holds,
-    }
+    })
 }
 
 fn admission_wire(admission: &RestoreAdmission) -> RestoreAdmissionWire {
@@ -292,6 +299,19 @@ fn expectation_wire(expected: &SourceExpectation) -> RestoreSourceExpectation {
             })
             .collect(),
         registry_id: expected.registry_id.clone(),
+    }
+}
+
+/// An engine refusal's reason on the wire: a signed checkpoint sequence
+/// below the plan's floor with its two numbers, which the engine carries as
+/// a storage error, else its admission reason.
+pub(super) fn refusal_reason(error: &RestoreAdmissionError) -> RestoreFailureReason {
+    match CheckpointSequenceBelowFloor::of(error.error()) {
+        Some(below) => RestoreFailureReason::CheckpointSequenceBelowFloor {
+            floor: below.floor,
+            observed: below.observed,
+        },
+        None => reason_wire(error.reason),
     }
 }
 

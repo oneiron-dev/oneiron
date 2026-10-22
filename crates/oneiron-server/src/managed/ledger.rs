@@ -390,10 +390,12 @@ impl WakeLedger {
         }
     }
 
+    /// The next revision, kept as telemetry, which moves no backup
+    /// watermark (FIX 6730).
     fn advance_rev(&self) -> Result<u64, ManagedError> {
         let rev = self.rev.fetch_add(1, Ordering::SeqCst).saturating_add(1);
         self.vault
-            .sync_state_put(LEDGER_REV_KEY, &rev.to_le_bytes())
+            .sync_state_put_telemetry_batch(&[(LEDGER_REV_KEY, &rev.to_le_bytes())])
             .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
         Ok(rev)
     }

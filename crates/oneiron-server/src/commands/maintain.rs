@@ -3,13 +3,15 @@
 //! It runs every sweep of the engine's housekeeping pass now, due or not, and
 //! then the repairs the owner names, which only make sense on demand: a
 //! vector-graph rebuild, a short-id recompute, the gate claim-index backfill,
-//! the conversation DAG migration and a text-index rebuild. `--lift-secrets`
-//! queues a historical secret lift run first, which the pass works to its
-//! end. A running `serve` runs the same pass on its own tick and answers
-//! `POST /v1/owner/maintain`. The report is JSON on stdout; a sweep that
-//! failed makes the exit nonzero.
+//! the conversation DAG migration, a text-index rebuild and the audited
+//! repair of the corrupt CLAIMs `--reclassify-corrupt-claim` names.
+//! `--lift-secrets` queues a historical secret lift run first, which the pass
+//! works to its end. A running `serve` runs the same pass on its own tick and
+//! answers `POST /v1/owner/maintain`. The report is JSON on stdout; a sweep
+//! that failed makes the exit nonzero.
 
 use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport};
+use oneiron::maintain::CorruptClaimRepair;
 use oneiron::policy_model::SecretLiftStatus;
 use serde::Serialize;
 
@@ -40,6 +42,8 @@ struct Repairs {
     conversation_dags: Option<ConversationDagRepair>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text_index: Option<TextIndexRepair>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    corrupt_claim_repairs: Option<Vec<CorruptClaimOutcome>>,
 }
 
 impl Repairs {
@@ -49,6 +53,7 @@ impl Repairs {
             && self.gate_claim_index.is_none()
             && self.conversation_dags.is_none()
             && self.text_index.is_none()
+            && self.corrupt_claim_repairs.is_none()
     }
 }
 
@@ -81,6 +86,37 @@ struct ConversationDagRepair {
 struct TextIndexRepair {
     postings_removed: u64,
     documents_reindexed: u64,
+}
+
+/// What the corrupt-CLAIM repair did with one record it was named, ids in
+/// hex (FIX 7800).
+#[derive(Debug, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+enum CorruptClaimOutcome {
+    /// Classified now, with its signed repair event.
+    Reclassified { id: String, repair_receipt: String },
+    /// Classified already, at the header it has now.
+    AlreadyClassified { id: String, repair_receipt: String },
+    /// No stored CLAIM whose body fails its decode: left as it is.
+    NotCorrupt { id: String },
+}
+
+impl CorruptClaimOutcome {
+    fn of(repair: &CorruptClaimRepair) -> Self {
+        match repair {
+            CorruptClaimRepair::Reclassified { id, repair_receipt } => Self::Reclassified {
+                id: id.to_hex(),
+                repair_receipt: repair_receipt.to_hex(),
+            },
+            CorruptClaimRepair::AlreadyClassified { id, repair_receipt } => {
+                Self::AlreadyClassified {
+                    id: id.to_hex(),
+                    repair_receipt: repair_receipt.to_hex(),
+                }
+            }
+            CorruptClaimRepair::NotCorrupt { id } => Self::NotCorrupt { id: id.to_hex() },
+        }
+    }
 }
 
 pub fn maintain(args: MaintainArgs) -> anyhow::Result<()> {
@@ -144,6 +180,19 @@ fn repair(vault: &oneiron::Vault, args: &MaintainArgs) -> anyhow::Result<Repairs
         builder = builder.rebuild_text_index();
         named = true;
     }
+    if !args.reclassify_corrupt_claim.is_empty() {
+        let ids = args
+            .reclassify_corrupt_claim
+            .iter()
+            .map(|hex| {
+                oneiron::EntityId::from_hex(hex).map_err(|_| {
+                    anyhow::anyhow!("--reclassify-corrupt-claim {hex} is not a 32-hex record id")
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        builder = builder.reclassify_corrupt_claims(ids);
+        named = true;
+    }
     if !named {
         return Ok(Repairs::default());
     }
@@ -173,6 +222,13 @@ fn repair(vault: &oneiron::Vault, args: &MaintainArgs) -> anyhow::Result<Repairs
         text_index: args.reindex_text.then_some(TextIndexRepair {
             postings_removed: report.text_postings_removed,
             documents_reindexed: report.text_documents_reindexed,
+        }),
+        corrupt_claim_repairs: (!args.reclassify_corrupt_claim.is_empty()).then(|| {
+            report
+                .corrupt_claim_repairs
+                .iter()
+                .map(CorruptClaimOutcome::of)
+                .collect()
         }),
     })
 }

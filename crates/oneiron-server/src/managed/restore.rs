@@ -244,7 +244,7 @@ impl ManagedRestore {
             completed_at: oneiron_vault_contract::now_ts(),
             host_holds: kept.host_holds,
         };
-        let receipt = receipt::receipt(&context, &kept.report, &kept.admission);
+        let receipt = receipt::receipt(&context, &kept.report, &kept.admission)?;
         let outcome = Arc::new(RestoreOutcome::new(
             self.identity.clone(),
             serde_json::to_vec(&receipt)?,
@@ -372,14 +372,15 @@ struct Refused {
 impl Refused {
     /// The engine's refusal, under the managed check's own reason and
     /// destination state where its `finish` step named a refusal the
-    /// engine's vocabulary does not have.
+    /// engine's vocabulary does not have, and with its two numbers where the
+    /// artifact's sequence is below the plan's floor.
     fn engine(
         error: RestoreAdmissionError,
         own: Option<(RestoreFailureReason, Destination)>,
     ) -> Self {
         let (reason, destination) = own.unwrap_or_else(|| {
             (
-                receipt::reason_wire(error.reason),
+                receipt::refusal_reason(&error),
                 receipt::destination_wire(error.destination),
             )
         });
@@ -426,6 +427,12 @@ impl Job {
         sink.progress(&identity, Phase::SourceCheck);
         let key = CheckpointKey::from_delivered(&dek, &expected)
             .map_err(|error| Refused::engine(error, None))?;
+        // A wake or migrate holds the artifact's signed sequence to the
+        // plan's floor (FIX 969); a historical restore takes none.
+        let key = match plan.wake_sequence_floor {
+            Some(floor) => key.with_wake_sequence_floor(floor),
+            None => key,
+        };
         let seal = if plan.maximum_tier {
             key.restored_page_seal()
         } else {
