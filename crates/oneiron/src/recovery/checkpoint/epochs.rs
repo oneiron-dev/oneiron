@@ -22,8 +22,7 @@ use serde::{Deserialize, Serialize};
 use super::{PadRestoreNote, RESTORE_EPOCH, RestoreEpoch};
 use crate::store::WorldPadCustody;
 use crate::world_keys::{
-    PadRowRest, WorldKeyId, pad_row_erased_in_txn, pad_row_rest_in_txn,
-    world_keys_destroyed_in_txn,
+    PadRowRest, WorldKeyId, pad_row_erased_in_txn, pad_row_rest_in_txn, world_keys_destroyed_in_txn,
 };
 use crate::{Result, Vault};
 

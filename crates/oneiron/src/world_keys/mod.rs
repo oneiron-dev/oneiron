@@ -66,8 +66,8 @@ pub use self::kit::{
     ConfirmedWorldKit, IssuedWorldKit, IssuingRequest, StoredCost, StoredKit, WORLD_KIT_ESCROW,
     WorldKitRestore, WorldKitStatus,
 };
-pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
+pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead,
     OwnerWorkCancelNote, OwnerWorkCancelState, OwnerWorkDiagnostics, OwnerWorkDrain,
