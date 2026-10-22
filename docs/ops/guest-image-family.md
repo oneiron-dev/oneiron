@@ -358,27 +358,28 @@ values, not image sizes. The checker's provisional 2-8 GiB payload can exceed
 the 4 GiB Firecracker cap. Its first build decides between pruning, a split,
 or a reviewed bound change.
 
-## Measured: the current outputs (10-22, runs p2 and p3)
+## Measured: the current outputs (10-22, runs p5 and p6)
 
-`release.toml` records run p3 (kel, builder commit `867c93a04a`, engine
-commit `88741de137`, verify mode from the committed lock, 641 packages,
-tools tree `8a18ff6616c5…`, a fresh store). Run p2 (mel) built the same
+`release.toml` records run p5 (kel, builder commit `0c86704876`, engine
+commit `79a82238e3`, verify mode from the committed lock, 641 packages,
+tools tree `8a18ff6616c5…`, a fresh store). Run p6 (bel) built the same
 head from its own fresh store and measured the same bytes for every
 variant (see Repeatability). Run p1 (mel, learn mode) wrote the lock. The
 budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
 
 | Variant | State | Compressed transfer (OCI archive) | Unpacked filesystem (file bytes) | Payload budget | Sparse ext4 capacity (margin to 4 GiB) | ext4 allocated | Builder peak RSS (kel) |
 |---|---|---|---|---|---|---|---|
-| base | built-candidate | 37.1 MiB (38,912,000) | 105.9 MiB (111,010,272) | <= 256 MiB: within | 224.0 MiB (234,881,024; 3.78 GiB) | 131.3 MiB | 2.06 GiB |
-| browser | built-candidate | 362.6 MiB (380,190,720) | 1,014.8 MiB (1,064,113,779) | <= 2 GiB: within | 1.17 GiB (1,258,291,200; 2.83 GiB) | 1.05 GiB | 2.13 GiB |
-| desktop-cua | built-candidate | 252.5 MiB (264,724,480) | 742.9 MiB (778,973,302) | <= 3 GiB: within | 928.0 MiB (973,078,528; 3.09 GiB) | 790.6 MiB | 2.47 GiB |
-| checker | built-candidate | 950.1 MiB (996,280,320) | 2.67 GiB (2,866,101,240) | 2-8 GiB provisional: within | 3.16 GiB (3,388,997,632; 864 MiB, 905,969,664) | 2.96 GiB | 2.11 GiB |
-| generic-agent | built-candidate | 105.5 MiB (110,622,720) | 270.3 MiB (283,427,546) | <= 1 GiB: within | 400.0 MiB (419,430,400; 3.61 GiB) | 302.8 MiB | 2.09 GiB |
+| base | built-candidate | 37.1 MiB (38,901,760) | 105.9 MiB (111,010,816) | <= 256 MiB: within | 224.0 MiB (234,881,024; 3.78 GiB) | 131.3 MiB | 2.21 GiB |
+| browser | built-candidate | 362.6 MiB (380,190,720) | 1,014.8 MiB (1,064,114,323) | <= 2 GiB: within | 1.17 GiB (1,258,291,200; 2.83 GiB) | 1.05 GiB | 2.21 GiB |
+| desktop-cua | built-candidate | 252.5 MiB (264,724,480) | 742.9 MiB (778,973,846) | <= 3 GiB: within | 928.0 MiB (973,078,528; 3.09 GiB) | 790.6 MiB | 2.44 GiB |
+| checker | built-candidate | 950.1 MiB (996,290,560) | 2.67 GiB (2,866,141,097) | 2-8 GiB provisional: within | 3.16 GiB (3,388,997,632; 864 MiB, 905,969,664) | 2.96 GiB | 2.13 GiB |
+| generic-agent | built-candidate | 105.5 MiB (110,622,720) | 270.3 MiB (283,428,090) | <= 1 GiB: within | 400.0 MiB (419,430,400; 3.61 GiB) | 302.8 MiB | 2.00 GiB |
 
 - **Every output is new bytes, and none is `boot-proved`.** The engine pin
-  moved from `95afa460192b…` to `88741de137…` (FIX 10353): every native
-  binary, the checker's Cargo store and the OCI revision annotation change
-  with it. The browser's Lightpanda smoke (b6's image) and the checker's
+  moved from `95afa460192b…` to `79a82238e3…` (FIX 10353; the first main
+  whose default oneiron-server build compiles, so the vault pack builds at
+  this same pin): every native binary, the checker's Cargo store and the
+  OCI revision annotation change with it. The browser's Lightpanda smoke (b6's image) and the checker's
   offline-check smoke (f1's image) proved layers these outputs do not have,
   so both outputs are `built-candidate` until their smokes run again on
   these images. Their earlier notes are in "Findings" below.
@@ -405,7 +406,7 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
   and three `.idx` db entries are tar hard links (`h`) to the checkouts'.
   That saves 51,695,311 bytes (formualizer 37,648,065 + 700,092, iroh
   11,330,194 + 805,820, sudachi.rs 1,070,600 + 140,540). The store is now
-  816,087,694 bytes, 48,358 files and 1,117 crate archives (f1: 846,002,586
+  816,127,007 bytes, 48,358 files and 1,117 crate archives (f1: 846,002,586
   bytes, 1,080 crates); the new engine lock's 37 extra crates take back
   about 21.8 MB of the saving. The ext4 capacity fell from 3,422,552,064
   to 3,388,997,632 bytes, so the margin under the 4 GiB cap grew from
@@ -414,7 +415,7 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
   of Rust toolchain (643,217,165 bytes) and the store above. The store
   grows with `Cargo.lock`, so the margin shrinks as dependencies are added.
 - **SBOM licence coverage (FIX 10350)**, Debian packages with a declared
-  licence, before (run f1) and after (run p3): base 41 of 59, unchanged;
+  licence, before (run f1) and after (runs p3 and p5, the same): base 41 of 59, unchanged;
   browser 133 of 247, unchanged; checker 285 of 521, unchanged; desktop-cua
   184 of 342 and generic-agent 51 of 76 (no earlier build). Reading the
   common-licenses files changes no package's NOASSERTION: those packages
@@ -430,8 +431,9 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
 - Writable and snapshot bytes, the guest's peak RAM and cold boot are
   unmeasured: no candidate here has been booted.
 - The whole build job's cgroup peak, anonymous memory plus page cache, was
-  15.8 GiB on kel (16,934,707,200 bytes, run p3) and 16.0 GiB on mel
-  (17,171,349,504 bytes, run p2), at a 16 GiB booking for five variants.
+  15.8 GiB on kel (16,943,620,096 bytes, run p5) and 15.5 GiB on bel
+  (16,669,384,704 bytes, run p6), at a 16 GiB booking for five variants
+  (16.0 GiB on mel in run p2).
   kel, bel and mel cap a guest at 16 GiB.
 - The image's non-root and set-id paths match the pinned Debian base layer's
   for every package the variant installs:
@@ -539,21 +541,21 @@ Booting the Firecracker rootfs is a separate step. It needs a host
 `ONEIRON_MICROVM_OCI_IMAGES` row and BLAKE3 pins for that rootfs. Nothing in
 this pack installs those.
 
-**The candidates (10-22, run p3).** All five stay on kel, loaded into its
+**The candidates (10-22, run p5).** All five stay on kel, loaded into its
 containerd-store docker as `oneiron-image-<variant>:candidate`, each archive
 with its receipt, release manifest, SBOM and provenance beside it under
 the run's artifacts directory. The loaded id is the manifest digest:
 
 | Variant | Archive sha256 | Manifest (loaded id) | Config |
 |---|---|---|---|
-| browser | `d1527a681b66…` | `sha256:f88e60cd532d…` | `sha256:f45316e30616…` |
-| checker | `0257e7564559…` | `sha256:8c5ba069fe2b…` | `sha256:99f06d78f5d7…` |
-| desktop-cua | `eaa8a29903b6…` | `sha256:65dcf7ff474b…` | `sha256:25f9714ce0fb…` |
-| generic-agent | `bdb74fedd94e…` | `sha256:a1e4c44cba92…` | `sha256:96178db15092…` |
+| browser | `1af510981b00…` | `sha256:6867151bc397…` | `sha256:51b5931fb2da…` |
+| checker | `8ba259f91fa5…` | `sha256:f57f8a42c3a8…` | `sha256:6b0558ebee2e…` |
+| desktop-cua | `be2aa7bc0c2e…` | `sha256:675ecb661643…` | `sha256:cb3b5dfdc159…` |
+| generic-agent | `ba01a0838eec…` | `sha256:02daa36b4865…` | `sha256:59b2d11bc957…` |
 
-The fence inside every image is `oneiron-fence` sha256 `dcb1b08165f6…` and
-the guest `oneiron-guest` sha256 `fd66c0bb6aa4…`, built in the image's own
-trixie userspace at engine `88741de137`; stage the host fence built from
+The fence inside every image is `oneiron-fence` sha256 `2b05ebe7e6e7…` and
+the guest `oneiron-guest` sha256 `17e000e5bae8…`, built in the image's own
+trixie userspace at engine `79a82238e3`; stage the host fence built from
 that same commit. The browser entrypoint, the desktop entrypoint and the
 checker helper are the pinned repo files, byte for byte. The checker's
 `gst-ptp-helper` keeps its v2 `security.capability`.
@@ -584,6 +586,16 @@ A second, independent build compares payload hashes file by file
 not call an image reproducible until that comparison holds.
 
 ### Findings (10-22)
+
+**Runs p5 (kel) and p6 (bel), at builder `0c86704876`, engine
+`79a82238e3`:** the same result as p2 and p3 below, for all five variants:
+identical lock, tar, members, layer, ext4, OCI ids and native binaries, no
+one-sided entry. Between the two engine pins only the fence, the guest and
+21 files of the checker store's crates.io index cache changed. The
+cache files are the live sparse index's records for crates the lock names
+(the icu_* family among them), fetched about two hours apart: two hosts
+fetching at once agree, but a refetch later can change the checker's store
+bytes with the lock unchanged.
 
 **Runs p2 (mel) and p3 (kel), phase 3 at builder `867c93a04a`, engine
 `88741de137`:** all five variants (base, browser, checker, desktop-cua,
