@@ -8,7 +8,8 @@ use std::collections::VecDeque;
 use serde_json::json;
 
 use crate::code_run::{
-    AgentVerbAnswer, CodeRunBridgeCall, ProgramResumeCall, SelfCall, SelfDispatchOutcome,
+    AgentVerbAnswer, CodeRunBridgeCall, ProgramResumeCall, ProgramRowAnswer, SelfCall,
+    SelfDispatchOutcome,
 };
 
 const DIVERGED: &str = "the pinned source made another call where an earlier entry settled one";
@@ -52,7 +53,8 @@ pub(in crate::engine_executor) enum InjectedAnswer {
 impl ProgramInjection {
     /// The answer for `call`, the next call the pinned source makes. A call
     /// that is not the settled one in its place, a settled row that does not
-    /// decode, or a callable called inside the entry holds the entry.
+    /// decode, or a callable called inside the entry holds the entry. A spawn
+    /// that misses its row (FIX 7447) runs live, as every call after it.
     pub(in crate::engine_executor) fn answer(&mut self, call: &SelfCall) -> InjectedAnswer {
         if !self.entered {
             self.entered = true;
@@ -68,14 +70,23 @@ impl ProgramInjection {
             return self.hold(NESTED_CALLABLE);
         }
         let outcome = match settled.row.program_answer_for(call) {
-            Ok(Some(outcome)) => outcome,
-            Ok(None) => return self.hold(DIVERGED),
+            Ok(ProgramRowAnswer::Settled(outcome)) => outcome,
+            // The same spawn asked for another project or other objectives
+            // (FIX 7447): no row answers it, so it runs live through its
+            // ordinary gates, and so does every call after it, which may read
+            // what it answers now. The rows they settled stay in the record;
+            // the entry lists the calls it made in their place.
+            Ok(ProgramRowAnswer::Missed) => {
+                self.calls.clear();
+                return InjectedAnswer::Live;
+            }
+            Ok(ProgramRowAnswer::Drifted) => return self.hold(DIVERGED),
             Err(_) => return self.hold(UNREADABLE),
         };
         self.answered.push(settled.listed);
         let Some(reply) = settled.reply else {
             return InjectedAnswer::Settled {
-                outcome: Box::new(outcome),
+                outcome,
                 view: None,
             };
         };
