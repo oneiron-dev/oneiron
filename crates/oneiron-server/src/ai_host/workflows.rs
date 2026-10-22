@@ -124,8 +124,7 @@ impl WorkflowPump {
                     }
                 };
                 pump(
-                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed,
-                    stopped,
+                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed, stopped,
                 );
             })?;
         Ok(Self {
