@@ -6281,9 +6281,9 @@ export type QuestionReadRequest = { id: EntityId; version?: number | null }
 /** `oneiron::receipt::questions::QuestionAnswersRequest` */
 export type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null }
 /** `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskStanding` */
-export type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" }
+export type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" }
 /** `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskRecord` */
-export type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null }
+export type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null }
 /** `oneiron::receipt::questions::QuestionAnswer` */
 export type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" })
 /** `oneiron::receipt::questions::QuestionAnswersPage` */

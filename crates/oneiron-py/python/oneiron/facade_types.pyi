@@ -15870,7 +15870,9 @@ class ArtifactAskStandingKept(TypedDict):
     version: int
 class ArtifactAskStandingClosed(TypedDict):
     state: Literal["closed"]
-ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed
+class ArtifactAskStandingFailed(TypedDict):
+    state: Literal["failed"]
+ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed | ArtifactAskStandingFailed
 class ArtifactAskRecord(TypedDict):
     artifact: EntityId
     question_version: int
@@ -15880,6 +15882,7 @@ class ArtifactAskRecord(TypedDict):
     standing: ArtifactAskStanding
     ask_id: NotRequired[EntityId | None]
     failed: NotRequired[str | None]
+    parent_proposal_ref: NotRequired[str | None]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):
