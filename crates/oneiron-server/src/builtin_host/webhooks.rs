@@ -494,7 +494,9 @@ fn line_events(
         // A chat no identity is known to serve (one that routes per sender,
         // or one LINE named no sender in) is recorded for the owner's
         // optional bind offer; the message routes as it does either way.
-        let unserved = reply_chat.as_ref().or(chat.as_ref().filter(|_| user_id.is_none()));
+        let unserved = reply_chat
+            .as_ref()
+            .or(chat.as_ref().filter(|_| user_id.is_none()));
         if let Some(unserved) = unserved {
             observe_line_chat(
                 vault,
@@ -563,9 +565,8 @@ fn observe_line_chat(
 ) {
     let observed = match payload_ref {
         Some(payload_ref) => vault.observe_line_chat(destination, chat, payload_ref, now),
-        None => archive_line_event(vault, destination, event_id, event, now).and_then(
-            |payload_ref| vault.observe_line_chat(destination, chat, &payload_ref, now),
-        ),
+        None => archive_line_event(vault, destination, event_id, event, now)
+            .and_then(|payload_ref| vault.observe_line_chat(destination, chat, &payload_ref, now)),
     };
     if let Err(err) = observed {
         tracing::warn!(error = %err, "a LINE chat observation was not recorded");

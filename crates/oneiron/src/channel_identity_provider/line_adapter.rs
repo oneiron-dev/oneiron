@@ -288,8 +288,8 @@ impl ChannelIdentityProviderAdapter for LineOfficialAccountAdapter {
         // message, and an unbound chat's message that routes per sender
         // (FIX 2838). A 1:1 message's party is its sender.
         let audience = routed_chat.as_ref().or(reply_chat.as_ref());
-        let counterparty_key = line_audience_key(audience, source_user_id.as_deref())
-            .ok_or_else(|| {
+        let counterparty_key =
+            line_audience_key(audience, source_user_id.as_deref()).ok_or_else(|| {
                 Error::InvalidConfig(
                     "LINE inbound names neither its sender nor a group or room".to_owned(),
                 )
