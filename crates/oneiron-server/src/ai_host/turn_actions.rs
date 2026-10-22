@@ -188,11 +188,14 @@ async fn act(
     // credential, so it reads as its actor. A call that runs as it always
     // did is stamped with today's craft before it is shown, and shows none
     // whose stamp fails. Beside a reused prefix, which shows and stamps the
-    // craft it captured, today's call is stamped only if it answers.
+    // craft it captured, today's call is stamped only if it answers. One
+    // layout, the vault's or else the host's, places it (FIX 6676).
+    let layout = ai.prompt_layout();
     let lead = messages.len();
     let at = vault.now_recorded_at();
-    let craft =
-        blocking(|| snapshot_craft_scoped(vault, &vault.memory(actor, class), &context.agent, at));
+    let craft = blocking(|| {
+        snapshot_craft_scoped(vault, &vault.memory(actor, class), &context.agent, at, layout)
+    });
     let (shown, today_craft) = if matches!(reuse, ChatReuse::Reused(_)) {
         craft.map(|craft| (craft.message, craft.entries)).unzip()
     } else {
@@ -238,7 +241,7 @@ async fn act(
     // reply or continuation ask below: that ask is never the latest real
     // user turn. A reused prefix is sent exactly as it was captured.
     if let Some(craft) = shown {
-        place_craft(&mut messages, lead, craft);
+        place_craft(&mut messages, lead, craft, layout);
     }
     let admit = |messages| {
         ai.admit_role(vault, CHAT_ROLE, chat_request(&seat, messages))
