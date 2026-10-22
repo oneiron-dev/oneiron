@@ -49,9 +49,11 @@ impl Carrier {
     /// deferred waits out its pacing first. A backup kind waiting on a
     /// backup label the session did not keep is not scanned, so its records
     /// stay as they are until it goes. A kind waiting on its carrier records
-    /// is scanned again once that wait is due: a scan whose records do not
-    /// write sends none of the kind and makes it wait again, and one that
-    /// writes them ends the wait.
+    /// is scanned again once that wait is due, after each record a set the
+    /// other end sent left unwritten is written again: one that does not
+    /// write again keeps the kind waiting, unscanned. A scan whose records
+    /// do not write sends none of the kind and makes it wait again, and one
+    /// that writes them ends the wait.
     pub(super) fn outgoing(&mut self) -> Vec<OutSet> {
         let mut sets = Vec::new();
         let now = Instant::now();
@@ -62,6 +64,11 @@ impl Carrier {
                     .get(&kind)
                     .is_some_and(|wait| wait.at > now)
             {
+                continue;
+            }
+            // No scan writes a record the other end's set left unwritten, so
+            // none of them proves it written (FIX 7891).
+            if !self.retry_received_records(kind) {
                 continue;
             }
             let root = match self.roots.open(kind) {

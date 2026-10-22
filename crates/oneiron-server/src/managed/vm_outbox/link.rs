@@ -9,6 +9,14 @@ use oneiron_vault_contract::vm_outbox::{
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 
+/// A member's file that did not read while its data was sent, or that
+/// shrank: a failure of this end's own source, not of the connection, which
+/// [`Link::send_data`] returns tagged so its set can be paced (FIX 7892). It
+/// reads as the I/O error it carries.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub(super) struct SourceReadError(std::io::Error);
+
 /// One connection, read and written through its own buffers.
 pub(super) struct Link<S: Read + Write> {
     reader: BufReader<S>,
@@ -52,14 +60,21 @@ impl<S: Read + Write> Link<S> {
         Ok(Some(decode_vm_outbox_frame(std::str::from_utf8(&line)?)?))
     }
 
-    /// `length` bytes of `file`, from its start, in data chunks.
+    /// `length` bytes of `file`, from its start, in data chunks. A read of
+    /// `file` that fails, or finds it shorter, is a [`SourceReadError`].
     pub(super) fn send_data(&mut self, mut file: &File, length: u64) -> anyhow::Result<()> {
         let mut buffer = vec![0u8; VM_OUTBOX_CHUNK_BYTES];
         let mut left = length;
         while left > 0 {
             let want = usize::try_from(left).map_or(buffer.len(), |left| left.min(buffer.len()));
-            let read = file.read(&mut buffer[..want])?;
-            anyhow::ensure!(read > 0, "a member shrank while it was sent");
+            let read = file.read(&mut buffer[..want]).map_err(SourceReadError)?;
+            if read == 0 {
+                let shrank = std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "a member shrank while it was sent",
+                );
+                return Err(SourceReadError(shrank).into());
+            }
             let header = vm_outbox_chunk_header(read)
                 .ok_or_else(|| anyhow::anyhow!("a data chunk outside its bounds"))?;
             self.writer.write_all(&header)?;

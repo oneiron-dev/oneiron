@@ -169,17 +169,29 @@ impl Store {
             .collect()
     }
 
-    /// Writes `member`'s record durably, then keeps it in memory.
+    /// Writes `member`'s record durably, then keeps it in memory; the record
+    /// memory already holds writes nothing.
     pub(super) fn put(
         &mut self,
         kind: VmOutboxKind,
         member: &str,
         record: MemberRecord,
     ) -> std::io::Result<()> {
-        let key = (kind, member.to_owned());
-        if self.records.get(&key) == Some(&record) {
+        if self.records.get(&(kind, member.to_owned())) == Some(&record) {
             return Ok(());
         }
+        self.rewrite(kind, member, record)
+    }
+
+    /// Writes `member`'s record durably, whole, even one memory already
+    /// holds, then keeps it in memory: a receiver's record that did not write
+    /// as its set was applied is written again this way (FIX 7891).
+    pub(super) fn rewrite(
+        &mut self,
+        kind: VmOutboxKind,
+        member: &str,
+        record: MemberRecord,
+    ) -> std::io::Result<()> {
         let stored = Stored {
             kind,
             member: member.to_owned(),
@@ -192,7 +204,7 @@ impl Store {
         hasher.update(member.as_bytes());
         let name = format!("{}.json", hasher.finalize().to_hex());
         write_whole(&self.members, &name, &bytes)?;
-        self.records.insert(key, stored.record);
+        self.records.insert((kind, stored.member), stored.record);
         Ok(())
     }
 

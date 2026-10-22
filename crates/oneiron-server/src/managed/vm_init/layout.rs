@@ -24,6 +24,7 @@
 //!   `guest_runtime`), `/vault/storage/container` and the container CLI's
 //!   [`VM_GUEST_CONTAINER_HOME`] and [`VM_GUEST_CONTAINER_RUNTIME_DIR`] in
 //!   it: the vault UID's, 0700, beside the data directory and never in it.
+//!   The runtime directory is emptied on each of those boots (FIX 8936).
 //!
 //! A directory that already holds content keeps its policy, owner and mode
 //! or is refused: nothing is re-encrypted or re-owned. Every look below the
@@ -39,7 +40,7 @@ use oneiron_vault_contract::vm::{
     VM_GUEST_STORAGE_DIR, VM_VOICE_DIR,
 };
 use oneiron_vault_contract::vm_provision::{VM_PROVISION_RECORD, VmProvision, VmProvisionFailure};
-use rustix::fs::{AtFlags, Mode, OFlags};
+use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, Permissions};
@@ -376,12 +377,42 @@ pub(super) fn lay_out_storage(
 /// [`VM_GUEST_CONTAINER_HOME`] and [`VM_GUEST_CONTAINER_RUNTIME_DIR`] in it,
 /// each the vault UID's with mode 0700 and under the storage's inherited
 /// policy. An empty one is made so; one with content must already be so.
+/// The runtime directory is then emptied, itself kept with its owner and
+/// mode: the CLI's pause process id, locks and sockets are this boot's own,
+/// never an earlier boot's (FIX 8936). `HOME` and the image store in it are
+/// kept.
 pub(super) fn own_container_dirs(uid: u32) -> Result<(), Refusal> {
     let root = open_vault_root()?;
     let storage = open_dir(&root, STORAGE_LEAF, VM_GUEST_STORAGE_DIR, 0o700)?;
     let parent = owned_child(&storage, CONTAINER_LEAF, CONTAINER_DIR, uid)?;
     owned_child(&parent, HOME_LEAF, VM_GUEST_CONTAINER_HOME, uid)?;
-    owned_child(&parent, RUNTIME_LEAF, VM_GUEST_CONTAINER_RUNTIME_DIR, uid)?;
+    let runtime = owned_child(&parent, RUNTIME_LEAF, VM_GUEST_CONTAINER_RUNTIME_DIR, uid)?;
+    empty_dir(&runtime).map_err(failed(VM_GUEST_CONTAINER_RUNTIME_DIR))?;
+    Ok(())
+}
+
+/// Removes everything in the held `dir` and keeps `dir`: each entry is
+/// unlinked without following a link, a directory once it is emptied the
+/// same way through its own held handle.
+fn empty_dir(dir: &File) -> std::io::Result<()> {
+    let mut names = Vec::new();
+    for entry in rustix::fs::Dir::read_from(dir)? {
+        let entry = entry?;
+        if !matches!(entry.file_name().to_bytes(), b"." | b"..") {
+            names.push(entry.file_name().to_owned());
+        }
+    }
+    for name in &names {
+        let stat = rustix::fs::statat(dir, name.as_c_str(), AtFlags::SYMLINK_NOFOLLOW)?;
+        if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
+            let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+            let child = rustix::fs::openat(dir, name.as_c_str(), flags, Mode::empty())?;
+            empty_dir(&File::from(child))?;
+            rustix::fs::unlinkat(dir, name.as_c_str(), AtFlags::REMOVEDIR)?;
+        } else {
+            rustix::fs::unlinkat(dir, name.as_c_str(), AtFlags::empty())?;
+        }
+    }
     Ok(())
 }
 

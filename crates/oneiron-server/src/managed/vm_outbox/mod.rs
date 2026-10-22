@@ -38,9 +38,9 @@ pub use self::guest::run_vm_outbox;
 pub use self::host::{VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label};
 
 use self::local::Owner;
-use self::store::Store;
+use self::store::{MemberRecord, Store};
 use oneiron_vault_contract::vm_outbox::{VmOutboxKind, VmOutboxOutcome, VmOutboxSide};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -89,8 +89,8 @@ struct Carrier {
     backup_wait: Option<VmOutboxOutcome>,
     /// Why each kind waits on this end's carrier records, once one of them
     /// did not write as its sets were scanned or readied, or as a set the
-    /// other end sent was applied. Kept across sessions until a scan of the
-    /// kind writes them again.
+    /// other end sent was applied. Kept across sessions until each applied
+    /// record is written again and a scan of the kind writes its own.
     record_wait: HashMap<VmOutboxKind, RecordWait>,
 }
 
@@ -100,6 +100,10 @@ struct RecordWait {
     outcome: VmOutboxOutcome,
     at: Instant,
     step: Duration,
+    /// Each member's record a set the other end sent did not write as it
+    /// was applied, by member: its file is published, and only this record
+    /// written whole proves it received (FIX 7891). Held in memory only.
+    retry: BTreeMap<String, MemberRecord>,
 }
 
 impl Carrier {
@@ -188,14 +192,85 @@ impl Carrier {
             RECORDS_SAID,
             &format!("its carrier records do not write: {error}"),
         );
-        self.record_wait
-            .insert(kind, RecordWait { outcome, at, step });
+        // The applied records still to write again stay with the wait.
+        let retry = self
+            .record_wait
+            .remove(&kind)
+            .map(|wait| wait.retry)
+            .unwrap_or_default();
+        self.record_wait.insert(
+            kind,
+            RecordWait {
+                outcome,
+                at,
+                step,
+                retry,
+            },
+        );
+    }
+
+    /// Makes `kind` wait on its carrier records, as [`Self::records_failed`],
+    /// once `error` did not write `member`'s `record` as a set the other end
+    /// sent was applied, and keeps `record` to write again before the wait
+    /// can end.
+    fn received_failed(
+        &mut self,
+        kind: VmOutboxKind,
+        member: &str,
+        record: MemberRecord,
+        error: &std::io::Error,
+    ) {
+        self.records_failed(kind, None, error);
+        if let Some(wait) = self.record_wait.get_mut(&kind) {
+            wait.retry.insert(member.to_owned(), record);
+        }
+    }
+
+    /// Forgets a record of `kind`'s `member` kept to write again, once a
+    /// later one for it wrote.
+    fn received_written(&mut self, kind: VmOutboxKind, member: &str) {
+        if let Some(wait) = self.record_wait.get_mut(&kind) {
+            wait.retry.remove(member);
+        }
+    }
+
+    /// Writes again, whole, each record of `kind` kept by
+    /// [`Self::received_failed`], under the gate as a local commit, so a
+    /// parked end waits first: `true` once none is kept. One that does not
+    /// write again stays kept with every one not yet tried, and the kind
+    /// waits one more step. A draining end writes none.
+    fn retry_received_records(&mut self, kind: VmOutboxKind) -> bool {
+        let Some(wait) = self.record_wait.get_mut(&kind) else {
+            return true;
+        };
+        if wait.retry.is_empty() {
+            return true;
+        }
+        let gate = Arc::clone(&self.gate);
+        let held = gate.hold();
+        if *held == Mode::Draining {
+            return false;
+        }
+        while let Some((member, record)) = wait.retry.pop_first() {
+            if let Err(error) = self.store.rewrite(kind, &member, record.clone()) {
+                wait.retry.insert(member, record);
+                self.records_failed(kind, None, &error);
+                return false;
+            }
+        }
+        true
     }
 
     /// Ends `kind`'s wait on its carrier records, once a scan of it wrote
-    /// them.
+    /// them and no record a set the other end sent left unwritten is kept to
+    /// write again.
     fn records_written(&mut self, kind: VmOutboxKind) {
-        if self.record_wait.remove(&kind).is_some() {
+        if self
+            .record_wait
+            .get(&kind)
+            .is_some_and(|wait| wait.retry.is_empty())
+        {
+            self.record_wait.remove(&kind);
             self.settled(kind, RECORDS_SAID);
         }
     }

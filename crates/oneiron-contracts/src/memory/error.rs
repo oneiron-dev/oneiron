@@ -642,7 +642,7 @@ impl From<Error> for MemoryError {
                 message,
                 &[
                     "Nothing of this write was kept, and the stretch is off record again.",
-                    "Witness the turn again to say it off record; only the vault's owner, in the room, puts it back on record.",
+                    "Witness the turn again to say it off record; a participant in the room holding this vault's write grant can save from here.",
                 ],
             ),
             ErrorKind::OffRecordCopyConflict => Self::new(

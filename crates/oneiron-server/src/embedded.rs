@@ -325,6 +325,22 @@ impl UpgradeLifetime {
     }
 }
 
+/// Puts one upgrade lifetime on `app` for plain or managed serve, as an
+/// embedded engine's channels and mesh carry theirs (FIX 4757): each socket
+/// upgraded on a request `app` serves, on its own listener or on the mesh it
+/// is handed to, sees `stopped` turn and holds a place in the drain until it
+/// ends with the calls it admitted. The returned future resolves once every
+/// place is released; its caller awaits it once its listeners have stopped,
+/// with no deadline, before any worker stops.
+pub(crate) fn upgrade_lifetime(
+    app: Router,
+    stopped: watch::Receiver<bool>,
+) -> (Router, impl Future<Output = ()> + Send + 'static) {
+    let upgrades = UpgradeLifetime::new(stopped);
+    let app = app.layer(axum::Extension(upgrades.clone()));
+    (app, async move { upgrades.drained().await })
+}
+
 /// One upgrade's place in its embedded engine's drain, and that engine's stop
 /// watch. Dropped, with the callback that owns it or with an upgrade that
 /// never completed, it releases the place.

@@ -12,7 +12,10 @@
 //! many strangers at once. A socket past that share is the anonymous surface
 //! the rate law lets the server shed: it gets a 503 and is closed. A
 //! connection leaves the share as soon as a request on it authenticates, and
-//! from then on meets only the floor. Loopback meets only the floor.
+//! from then on meets only the floor. Loopback meets only the floor. On the
+//! API listener a socket past its share takes the owner's reserve instead,
+//! while that is free (FIX 9130): its first request is served there only as
+//! the owner's proven read, and any other gets the same 503.
 //!
 //! Request headers must arrive within a deadline, which also bounds an idle
 //! keep-alive connection, and a request body that stops arriving while its
@@ -60,7 +63,7 @@ use crate::wire_telemetry::{
 };
 
 mod owner_admission;
-use owner_admission::{Custody, OwnerGate, OwnerReserve};
+use owner_admission::{Custody, OwnerGate, OwnerReserve, ProbeShed};
 
 /// The listener's bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,6 +90,9 @@ pub(crate) struct ConnectionLimits {
 
 /// What a stranger past its address's share reads before it is closed.
 const SHED_RESPONSE: &[u8] = b"HTTP/1.1 503 Service Unavailable\r\nretry-after: 1\r\nconnection: close\r\ncontent-length: 0\r\n\r\n";
+/// Whether an API socket past its address's share may still prove the owner
+/// on his reserve before it is shed (FIX 9130, L02's call).
+const STRANGER_SHED_OWNER_PROBE: bool = true;
 
 tokio::task_local! {
     /// The connection a request in flight arrived on.
@@ -235,24 +241,35 @@ async fn serve_from_pool(
             () = &mut shutdown => break,
         };
         let address = peer.ip().to_canonical();
+        // Past its share, an API socket is a probe when the owner's reserve is
+        // free at once: it takes no floor permit and no share slot, and its
+        // first request proves the owner or is shed there (FIX 9130).
+        let mut probe = None;
         let stranger = if address.is_loopback() {
             None
         } else {
-            let Some(share) = strangers.take(address) else {
+            let share = strangers.take(address);
+            if share.is_none() && STRANGER_SHED_OWNER_PROBE && gate.is_some() {
+                probe = owner_admission::probe_now(reserve, pressure.as_ref());
+            }
+            if share.is_none() && probe.is_none() {
                 tracing::debug!(
                     reason = "unauthenticated_connections_per_peer",
                     "connection shed at its address's unauthenticated share"
                 );
                 shed(stream);
                 continue;
-            };
-            Some(share)
+            }
+            share
         };
         // Past the floor this socket waits for a connection to close, and
         // nothing more is accepted meanwhile: the next sockets wait in the
         // backlog. The API listener's socket takes the owner's reserve
         // instead whenever it is free (FIX 8274).
         let custody = loop {
+            if let Some(custody) = probe.take() {
+                break custody;
+            }
             if gate.is_some()
                 && let Some(custody) = owner_admission::take_now(floor, reserve, pressure.as_ref())
             {
@@ -297,7 +314,10 @@ async fn serve_from_pool(
                     // On the owner's reserve, each request is judged before
                     // it is routed (FIX 8274).
                     let counted = match gate.as_ref().filter(|_| custody.on_reserve()) {
-                        Some(gate) => gate.admit(&custody, &mut parts, ended).await,
+                        Some(gate) => match gate.admit(&custody, &mut parts, ended).await {
+                            Ok(counted) => counted,
+                            Err(ProbeShed) => return Ok(shed_reply()),
+                        },
                         None => custody.count_body(ended),
                     };
                     let (counted, credential) = counted.unzip();
@@ -447,6 +467,26 @@ fn shed(stream: TcpStream) {
         let _ = io::Read::read(&mut &stream, &mut [0_u8; 4096]);
         let _ = io::Write::write(&mut &stream, SHED_RESPONSE);
     }
+}
+
+/// The 503 [`shed`] writes, as a reply on a connection the HTTP parser
+/// already reads, for a probe the owner did not prove (FIX 9130): the same
+/// status and fields, with the parser's own `date` beside them. The
+/// connection closes after it.
+fn shed_reply() -> axum::response::Response {
+    use axum::http::header::{CONNECTION, CONTENT_LENGTH, RETRY_AFTER};
+    let mut reply = axum::response::Response::new(Body::empty());
+    *reply.status_mut() = axum::http::StatusCode::SERVICE_UNAVAILABLE;
+    for (name, value) in [
+        (RETRY_AFTER, "1"),
+        (CONNECTION, "close"),
+        (CONTENT_LENGTH, "0"),
+    ] {
+        reply
+            .headers_mut()
+            .insert(name, axum::http::HeaderValue::from_static(value));
+    }
+    reply
 }
 
 /// A request body that fails with `TimedOut` once a reader has waited `idle`

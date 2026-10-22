@@ -29,7 +29,8 @@
 //!    cgroup delegated to the vault UID, which every CLI call here and the
 //!    engine start in.
 //! 6. dirs: the CLI's `HOME` and `XDG_RUNTIME_DIR`, made in the encrypted
-//!    storage by the layout's held-directory helpers.
+//!    storage by the layout's held-directory helpers, the runtime directory
+//!    emptied of an earlier boot's state (FIX 8936).
 //! 7. The CLI's own mapping (userns), then each image in the vault UID's own
 //!    store: found by its id, or loaded from its archive (its bytes checked
 //!    again first) and found then (image import, image id). A load a killed
