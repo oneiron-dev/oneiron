@@ -5182,7 +5182,7 @@ pub struct OutcomeBinding {
     pub linked_by: Option<String>,
 }
 
-/// `oneiron_browser::ExpectInput`.
+/// `oneiron_browser::verbs::ExpectInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ExpectInput {
@@ -63183,7 +63183,7 @@ pub struct ConnectorAnswerRequest {
     pub answers: Vec<ConnectorQuestionAnswer>,
 }
 
-/// `oneiron_browser::OpenInput`.
+/// `oneiron_browser::verbs::OpenInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OpenInput {
@@ -63227,7 +63227,7 @@ pub struct TakeoverRecord {
     pub refusal: Option<DestinationRefusal>,
 }
 
-/// `oneiron_browser::TabSwitchCause`.
+/// `oneiron_browser::verbs::TabSwitchCause`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum TabSwitchCause {
     #[serde(rename = "opened")]
@@ -63236,7 +63236,7 @@ pub enum TabSwitchCause {
     Closed,
 }
 
-/// `oneiron_browser::TabSwitch`.
+/// `oneiron_browser::verbs::TabSwitch`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TabSwitch {
     #[serde(rename = "tab")]
@@ -63522,7 +63522,7 @@ pub enum DemonstrationStopCause {
     SessionClosed,
 }
 
-/// `oneiron_browser::ScreenshotTrigger`.
+/// `oneiron_browser::verbs::ScreenshotTrigger`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ScreenshotTrigger {
     #[serde(rename = "outline_thin")]
@@ -63537,7 +63537,7 @@ pub enum ScreenshotTrigger {
     EffectReceipt,
 }
 
-/// `oneiron_browser::ScrollDirection`.
+/// `oneiron_browser::verbs::ScrollDirection`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ScrollDirection {
     #[serde(rename = "up")]
@@ -63550,7 +63550,7 @@ pub enum ScrollDirection {
     Right,
 }
 
-/// `oneiron_browser::DecideStep`.
+/// `oneiron_browser::programs::DecideStep`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct DecideStep {
@@ -63574,7 +63574,7 @@ pub struct DecideStep {
     pub option: Option<String>,
 }
 
-/// `oneiron_browser::BatchStep`.
+/// `oneiron_browser::programs::BatchStep`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "step")]
 pub enum BatchStep {
@@ -64332,7 +64332,7 @@ pub struct EngineSwitchRecord {
     pub outcome: SwitchOutcome,
 }
 
-/// `oneiron_browser::EffectReceipt`.
+/// `oneiron_browser::verbs::EffectReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EffectReceipt {
     #[serde(rename = "seq")]
@@ -64511,7 +64511,7 @@ pub struct LibraryCard {
     pub strict_misses: u32,
 }
 
-/// `oneiron_browser::PartialTree`.
+/// `oneiron_browser::verbs::PartialTree`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PartialTree {
     #[serde(rename = "reason")]
@@ -64537,9 +64537,9 @@ pub struct DialogAnswerFailure {
     pub error: String,
 }
 
-/// `oneiron_browser::Observation`.
+/// `oneiron_browser::verbs::Observation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct Observation2 {
+pub struct VerbsObservation {
     #[serde(rename = "seq")]
     pub seq: u64,
     #[serde(rename = "scope")]
@@ -64576,13 +64576,13 @@ pub struct Observation2 {
     pub dialogs: Option<Vec<DialogAnswerFailure>>,
 }
 
-/// `oneiron_browser::ObservationPage`.
+/// `oneiron_browser::verbs::ObservationPage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ObservationPage {
     #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
     #[serde(flatten)]
-    pub observation2: Observation2,
+    pub verbs_observation: VerbsObservation,
 }
 
 /// `oneiron_browser::answer::BrowserAnswer` with `T` = `ObservationPage`.
@@ -64620,7 +64620,7 @@ pub struct ObservationBase {
     pub seq: u64,
 }
 
-/// `oneiron_browser::ObserveInput`.
+/// `oneiron_browser::verbs::ObserveInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ObserveInput {
@@ -64642,7 +64642,7 @@ pub struct LiveRunRequestObserveInput {
     pub spec: ObserveInput,
 }
 
-/// `oneiron_browser::FindInput`.
+/// `oneiron_browser::verbs::FindInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FindInput {
@@ -64664,7 +64664,7 @@ pub struct LiveRunRequestFindInput {
     pub spec: FindInput,
 }
 
-/// `oneiron_browser::FindOutput`.
+/// `oneiron_browser::verbs::FindOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct FindOutput {
     #[serde(rename = "rows")]
@@ -64702,7 +64702,7 @@ pub struct BrowserAnswerFindOutput {
     pub flattened: FindOutput,
 }
 
-/// `oneiron_browser::ClickInput`.
+/// `oneiron_browser::verbs::ClickInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ClickInput {
@@ -64722,7 +64722,7 @@ pub struct LiveRunRequestClickInput {
     pub spec: ClickInput,
 }
 
-/// `oneiron_browser::PointInput`.
+/// `oneiron_browser::verbs::PointInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct PointInput {
@@ -64746,7 +64746,7 @@ pub struct LiveRunRequestPointInput {
     pub spec: PointInput,
 }
 
-/// `oneiron_browser::TypeInput`.
+/// `oneiron_browser::verbs::TypeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TypeInput {
@@ -64772,7 +64772,7 @@ pub struct LiveRunRequestTypeInput {
     pub spec: TypeInput,
 }
 
-/// `oneiron_browser::SelectInput`.
+/// `oneiron_browser::verbs::SelectInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SelectInput {
@@ -64794,7 +64794,7 @@ pub struct LiveRunRequestSelectInput {
     pub spec: SelectInput,
 }
 
-/// `oneiron_browser::WaitForInput`.
+/// `oneiron_browser::verbs::WaitForInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct WaitForInput {
@@ -64824,7 +64824,7 @@ pub struct LiveRunRequestWaitForInput {
     pub spec: WaitForInput,
 }
 
-/// `oneiron_browser::WaitForOutput`.
+/// `oneiron_browser::verbs::WaitForOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WaitForOutput {
     #[serde(rename = "rows")]
@@ -64882,7 +64882,7 @@ pub struct LiveRunRequestExpectInput {
     pub spec: ExpectInput,
 }
 
-/// `oneiron_browser::ExpectOutput`.
+/// `oneiron_browser::verbs::ExpectOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ExpectOutput {
     #[serde(rename = "met")]
@@ -64924,7 +64924,7 @@ pub struct BrowserAnswerExpectOutput {
     pub flattened: ExpectOutput,
 }
 
-/// `oneiron_browser::ScreenshotInput`.
+/// `oneiron_browser::verbs::ScreenshotInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ScreenshotInput {
@@ -64948,7 +64948,7 @@ pub struct LiveRunRequestScreenshotInput {
     pub spec: ScreenshotInput,
 }
 
-/// `oneiron_browser::ScreenshotOutput`.
+/// `oneiron_browser::verbs::ScreenshotOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ScreenshotOutput {
     #[serde(rename = "image")]
@@ -65002,7 +65002,7 @@ pub struct BrowserAnswerScreenshotOutput {
     pub flattened: ScreenshotOutput,
 }
 
-/// `oneiron_browser::ViewInput`.
+/// `oneiron_browser::verbs::ViewInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ViewInput {
@@ -65020,7 +65020,7 @@ pub struct LiveRunRequestViewInput {
     pub spec: ViewInput,
 }
 
-/// `oneiron_browser::ImageOutput`.
+/// `oneiron_browser::verbs::ImageOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ImageOutput {
     #[serde(rename = "image")]
@@ -65062,7 +65062,7 @@ pub struct BrowserAnswerImageOutput {
     pub flattened: ImageOutput,
 }
 
-/// `oneiron_browser::CropInput`.
+/// `oneiron_browser::verbs::CropInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CropInput {
@@ -65088,7 +65088,7 @@ pub struct LiveRunRequestCropInput {
     pub spec: CropInput,
 }
 
-/// `oneiron_browser::ZoomInput`.
+/// `oneiron_browser::verbs::ZoomInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ZoomInput {
@@ -65116,7 +65116,7 @@ pub struct LiveRunRequestZoomInput {
     pub spec: ZoomInput,
 }
 
-/// `oneiron_browser::BatchInput`.
+/// `oneiron_browser::programs::BatchInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct BatchInput {
@@ -65142,7 +65142,7 @@ pub struct LiveRunRequestBatchInput {
     pub spec: BatchInput,
 }
 
-/// `oneiron_browser::SubgoalStatus`.
+/// `oneiron_browser::programs::SubgoalStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SubgoalStatus {
     #[serde(rename = "done")]
@@ -65176,7 +65176,7 @@ pub struct FailedStepReceipt {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub observation: Option<Observation2>,
+    pub observation: Option<VerbsObservation>,
     #[serde(rename = "error", default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(rename = "refusal", default, skip_serializing_if = "Option::is_none")]
@@ -65194,7 +65194,7 @@ pub struct StepRebound {
     pub rebound: Rebound,
 }
 
-/// `oneiron_browser::BatchOutput`.
+/// `oneiron_browser::programs::BatchOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct BatchOutput {
     #[serde(rename = "status")]
@@ -65228,7 +65228,7 @@ pub struct BatchOutput {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub observation: Option<Observation2>,
+    pub observation: Option<VerbsObservation>,
     #[serde(rename = "receipts", default, skip_serializing_if = "Option::is_none")]
     pub receipts: Option<Vec<EffectReceipt>>,
     #[serde(rename = "decisions", default, skip_serializing_if = "Option::is_none")]
@@ -65878,7 +65878,7 @@ pub struct BrowserAnswerLibraryRunOutput {
     pub flattened: LibraryRunOutput,
 }
 
-/// `oneiron_browser::HandoverInput`.
+/// `oneiron_browser::programs::HandoverInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HandoverInput {
@@ -65896,7 +65896,7 @@ pub struct LiveRunRequestHandoverInput {
     pub spec: HandoverInput,
 }
 
-/// `oneiron_browser::HandoverOutput`.
+/// `oneiron_browser::programs::HandoverOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HandoverOutput {
     #[serde(rename = "reason")]
