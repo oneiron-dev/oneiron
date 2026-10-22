@@ -11,11 +11,12 @@
 //! binding and fscrypt key (FIX 6308, [`provision`]), then hands the engine
 //! the credential frame on the boot port, waits for the ready byte, then
 //! drives its lifecycle connection. Sleep freezes the vault through ctl,
-//! asks the guest for its next wake, and snapshots RAM only when the guest
-//! says no off-record stretch is open (OFFREC-SNAPSHOT = A); otherwise the
-//! vault stops, as a reap does on a node. A snapshot is published by rename
-//! and consumed by rename before it is loaded, so one RAM image never resumes
-//! twice. Placement, the jailer and cgroups stay with the supervisor that
+//! takes its whole wake ledger report in pages and commits it (FIX 9549,
+//! [`ledger_io`]), and snapshots RAM only when the guest says no off-record
+//! stretch is open (OFFREC-SNAPSHOT = A) and the RAM can reach protected
+//! backing (FIX 9497, [`snapshot`]); otherwise the vault stops, as a reap
+//! does on a node. A snapshot is published by rename and consumed by rename
+//! before it is loaded, so one RAM image never resumes twice. Placement, the jailer and cgroups stay with the supervisor that
 //! runs this driver; the guest's UID is the one its provision binding names.
 //! A profile with an `outbox` binds the outbox carrier's attachment before
 //! the VMM starts (FIX 5235, `VmOutboxAttachment`): parked before a
@@ -41,16 +42,20 @@ mod anchor;
 mod backlog;
 mod credentials;
 mod exit;
+mod ledger_io;
 mod network;
 mod provision;
 mod reaper;
 mod restore;
 mod runner;
+mod snapshot;
 
 pub use self::anchor::VmAnchorHostIo;
 pub use self::exit::VmExitWatch;
 pub use self::restore::{VaultVmInspect, VmRestoreFds, VmRestoreHostIo, inspect_vault_vm};
 pub use self::runner::{VaultVmRun, run_vault_vm};
+use self::snapshot::SnapshotLease;
+pub use self::snapshot::{VmSnapshotCustody, VmSnapshotCustodyUnavailable};
 use super::listener::bind_unix_socket;
 use super::vm_outbox::{VmOutboxAttachment, VmOutboxHostRoots};
 use super::vm_schedule::VmWakeSchedule;
@@ -97,7 +102,8 @@ pub struct VaultVmConfig {
     /// which the guest mounts at `/vault` and keeps its fscrypt storage, data
     /// directory and key directory on.
     pub vault_disk: PathBuf,
-    /// Owner-only directory for the API and vsock sockets and the snapshot.
+    /// Owner-only directory for the API and vsock sockets, the wake ledger,
+    /// and the snapshot when no custody is bound and it is protected itself.
     pub state_dir: PathBuf,
     pub vcpus: u8,
     pub mem_mib: u32,
@@ -164,6 +170,13 @@ pub struct VaultVmConfig {
     /// `null` for a VM with no network.
     #[serde(deserialize_with = "Option::deserialize")]
     pub network: Option<VmTapAttachment>,
+    /// The supervisor's snapshot custody (FIX 9497, [`VmSnapshotCustody`]):
+    /// the RAM snapshot goes only into its directory, unlocked for each
+    /// sleep and wake and evicted after each reap. Required: `null` for
+    /// none, when a sleep snapshots only into a state directory that is
+    /// already protected and otherwise stops the vault.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub snapshot_custody: Option<VmSnapshotCustody>,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -206,6 +219,9 @@ pub struct VaultVm {
     outbox: Option<VmOutboxAttachment>,
     /// The custody anchor's exchange and proxy, and what they are bound to.
     anchor: anchor::HostAnchor,
+    /// The bound snapshot custody's unlock this driver holds, until the
+    /// VMM generation it backs is reaped (FIX 9497).
+    snapshot_lease: Option<SnapshotLease>,
 }
 
 impl VaultVm {
@@ -248,6 +264,7 @@ impl VaultVm {
             schedule,
             outbox,
             anchor,
+            snapshot_lease: None,
         })
     }
 
@@ -260,8 +277,11 @@ impl VaultVm {
         guest_initiated_socket(&self.path("vsock.sock"), VM_LEDGER_PORT)
     }
 
+    /// Whether a published snapshot reads now: a bound custody's only once
+    /// it is unlocked.
     pub fn has_snapshot(&self) -> bool {
-        self.path("vm.snap").is_file() && self.path("vm.mem").is_file()
+        let home = self.snapshot_home();
+        home.join("vm.snap").is_file() && home.join("vm.mem").is_file()
     }
 
     pub fn is_running(&self) -> bool {
@@ -278,19 +298,25 @@ impl VaultVm {
 
     /// Restores the published snapshot if there is one, else boots cold,
     /// provisioning the guest with `fscrypt_key` first. Returns once the
-    /// vault reported ready (cold) or rejoined (restore).
+    /// vault reported ready (cold) or rejoined (restore). A bound snapshot
+    /// custody is unlocked first, so its snapshot reads; one that does not
+    /// unlock refuses the start, [`VmSnapshotCustodyUnavailable`], and keeps
+    /// the snapshot (FIX 9497).
     pub async fn start(
         &mut self,
         credentials: &Credentials,
         fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<()> {
+        self.unlock_for_start().await?;
         if let Some(outbox) = &self.outbox {
             outbox.resume();
         }
         if self.has_snapshot() {
             self.restore(timeout).await
         } else {
+            // Nothing to resume: the custody is evicted before the boot.
+            self.evict_after_reap().await;
             self.cold_boot(credentials, fscrypt_key, timeout).await
         }
     }
@@ -391,6 +417,21 @@ impl VaultVm {
         timeout: Duration,
     ) -> anyhow::Result<()> {
         self.boot_vmm(false).await?;
+        // Past the VMM's start each wait ends with its exit too, the custody
+        // anchor credential's read among them (FIX 9501).
+        let exit = self.exit_watch();
+        restore::until_exit(self.serve_cold(credentials, fscrypt_key, timeout), exit).await
+    }
+
+    /// A cold boot's steps once its VMM started: the restore channel, the
+    /// provisioning, the anchor's exchange, the credential frame, the ready
+    /// byte and the join.
+    async fn serve_cold(
+        &mut self,
+        credentials: &Credentials,
+        fscrypt_key: &VmFscryptKey,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
         // An ordinary boot's restore channel says only that it opens.
         drop(self.answer_hello(&VmRestoreBoot::Open, timeout).await?);
         self.provision(fscrypt_key, timeout).await?;
@@ -608,100 +649,6 @@ impl VaultVm {
         self.send(&VmHostFrame::Resumed).await
     }
 
-    /// Freezes the vault, asks for its next wake, and snapshots or stops it.
-    pub async fn sleep(&mut self, timeout: Duration) -> anyhow::Result<SleepOutcome> {
-        let CtlResponse::PrepareReap {
-            quiescent,
-            ledger_rev,
-            next_wake,
-            training: _,
-        } = self.ctl(&CtlRequest::PrepareReap).await?
-        else {
-            anyhow::bail!("prepare_reap answered with another verb");
-        };
-        self.schedule.replace(ledger_rev, next_wake)?;
-        if !quiescent {
-            self.ctl(&CtlRequest::ReapAbort).await?;
-            return Ok(SleepOutcome::Busy);
-        }
-        self.send(&VmHostFrame::Sleep).await?;
-        let (next_wake, snapshot_ok) = loop {
-            if let VmGuestFrame::Idle {
-                next_wake,
-                snapshot_ok,
-            } = self.read_guest(timeout).await?
-            {
-                break (next_wake, snapshot_ok);
-            }
-        };
-        if !snapshot_ok || self.source_attached {
-            self.stop(STOP_GRACE).await?;
-            return Ok(SleepOutcome::Stopped { next_wake });
-        }
-        // No carrier commit is in flight on this end when RAM is taken.
-        if let Some(outbox) = &self.outbox {
-            outbox.park();
-        }
-        self.pause().await?;
-        let (snap_tmp, mem_tmp) = (self.path("vm.snap.tmp"), self.path("vm.mem.tmp"));
-        self.api(
-            "PUT",
-            "/snapshot/create",
-            json!({
-                "snapshot_type": "Full", "snapshot_path": snap_tmp, "mem_file_path": mem_tmp,
-            }),
-        )
-        .await?;
-        for file in [&mem_tmp, &snap_tmp] {
-            std::fs::File::open(file)?.sync_all()?;
-        }
-        // Beside the RAM, the anchor URL its guest was handed (FIX 7183).
-        self.keep_snapshot_anchor()?;
-        std::fs::rename(&mem_tmp, self.path("vm.mem"))?;
-        // The state file last, once the files beside it are durable: its
-        // presence is what publishes the snapshot.
-        std::fs::File::open(&self.config.state_dir)?.sync_all()?;
-        std::fs::rename(&snap_tmp, self.path("vm.snap"))?;
-        std::fs::File::open(&self.config.state_dir)?.sync_all()?;
-        self.kill().await;
-        Ok(SleepOutcome::Snapshotted { next_wake })
-    }
-
-    async fn restore(&mut self, timeout: Duration) -> anyhow::Result<()> {
-        // Consumed before load: a crash from here on never resumes this RAM
-        // a second time, it boots cold from the vault disk instead. A restore
-        // that fails, or is dropped, after a rename unlinks the name it took
-        // (FIX 7702).
-        let snap = TakenSnapshotFile::take(self.path("vm.snap"), self.path("vm.snap.taken"))?;
-        let mem = TakenSnapshotFile::take(self.path("vm.mem"), self.path("vm.mem.taken"))?;
-        let anchor = self.take_snapshot_anchor()?;
-        self.spawn_vmm().await?;
-        let loaded = self
-            .api(
-                "PUT",
-                "/snapshot/load",
-                json!({
-                    "snapshot_path": snap.taken,
-                    "mem_backend": { "backend_type": "File", "backend_path": mem.taken },
-                    "resume_vm": true,
-                }),
-            )
-            .await;
-        snap.remove();
-        loaded?;
-        // The guest's anchor is the one its cold boot was handed, kept with
-        // its snapshot whatever was attached since (FIX 7183).
-        self.resume_anchor_proxy(anchor);
-        self.accept_join(timeout).await?;
-        self.send(&VmHostFrame::Resumed).await?;
-        // The memory file backs guest RAM until the VMM exits; unlinking it
-        // keeps the pages and leaves nothing to resume twice.
-        mem.remove();
-        // Thaw the reap freeze taken before the snapshot.
-        self.ctl(&CtlRequest::ReapAbort).await?;
-        Ok(())
-    }
-
     /// Asks the vault to stop and kills the VMM when the grace runs out.
     /// The outbox attachment denies new transfers from here on and lets its
     /// commit in flight finish; the next start opens it again. The VMM's
@@ -736,6 +683,7 @@ impl VaultVm {
         self.lifecycle = None;
         self.source_attached = false;
         self.anchor.end_proxy();
+        self.evict_after_reap().await;
         Ok(())
     }
 
@@ -744,40 +692,6 @@ impl VaultVm {
         self.lifecycle = None;
         self.source_attached = false;
         self.anchor.end_proxy();
-    }
-}
-
-/// A published snapshot file its restore consumed: renamed to its `.taken`
-/// name, which only this restore holds. Dropped while armed, as a restore
-/// that failed returns or is dropped, it unlinks that name, so no RAM-sized
-/// file is left behind (FIX 7702). It never names the published file, which
-/// the rename gave up.
-struct TakenSnapshotFile {
-    taken: PathBuf,
-    /// Still to unlink when dropped: false once [`Self::remove`] did.
-    armed: bool,
-}
-
-impl TakenSnapshotFile {
-    /// Renames `source` to `taken`; the guard exists only once that rename
-    /// did.
-    fn take(source: PathBuf, taken: PathBuf) -> std::io::Result<Self> {
-        std::fs::rename(source, &taken)?;
-        Ok(Self { taken, armed: true })
-    }
-
-    /// Unlinks the taken name now, where the restore is done with it, and
-    /// disarms the guard.
-    fn remove(mut self) {
-        self.armed = false;
-        let _ = std::fs::remove_file(&self.taken);
-    }
-}
-
-impl Drop for TakenSnapshotFile {
-    fn drop(&mut self) {
-        if self.armed {
-            let _ = std::fs::remove_file(&self.taken);
-        }
+        self.evict_after_reap().await;
     }
 }

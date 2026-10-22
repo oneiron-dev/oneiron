@@ -44,10 +44,13 @@ const OWN_LINEAGE: &str = "the lineage that opened a world-privacy request canno
 impl Vault {
     /// A holder's answer to request `request` from `surface` (audit only):
     /// `yes` accepts a proposal or confirms an ask, else declines or cancels
-    /// it. The holder must hold the world's settings right now and have been
-    /// one it went to, or, for an ask that needs every owner, be a live
-    /// Owner now. A yes applies the frozen settings on the frozen revision: a
-    /// world whose settings moved since is a conflict.
+    /// it. The holder must hold the world's settings right now. In default
+    /// mode that is the whole test: the holders it was first sent to are a
+    /// delivery list, not a second authority gate, so a holder added since
+    /// answers too (FIX 10032). An ask that needs every owner keeps its own
+    /// rule: the holder was one it went to, or is a live Owner now. A yes
+    /// applies the frozen settings on the frozen revision: a world whose
+    /// settings moved since is a conflict.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] for a non-holder or the
@@ -82,10 +85,11 @@ impl Vault {
                 } else {
                     None
                 };
-            let went_to = stored.holders.contains(&actor.to_hex())
-                || live_needs
-                    .as_ref()
-                    .is_some_and(|needs| needs.contains(&actor));
+            let went_to = match &live_needs {
+                // Default mode: any current holder answers (FIX 10032).
+                None => true,
+                Some(needs) => stored.holders.contains(&actor.to_hex()) || needs.contains(&actor),
+            };
             if !holders.contains(&actor) || !went_to {
                 return Err(not_holder());
             }
