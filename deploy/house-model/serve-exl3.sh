@@ -26,6 +26,10 @@ set -euo pipefail
 : "${ONEIRON_HOUSE_EXL3_GPU:=0}"
 : "${ONEIRON_HOUSE_EXL3_PORT:=18091}"
 : "${ONEIRON_HOUSE_PYTHON:=/opt/oneiron-house/.venv/bin/python}"
+# A Unix socket the host's native calls come in on (exl3_ipc.py), beside
+# the HTTP routes; unset, none. The supervisor's managed launch passes its
+# own; set it here only to reach a hand-started server natively.
+: "${ONEIRON_HOUSE_EXL3_NATIVE_SOCKET:=}"
 
 export CUDA_VISIBLE_DEVICES="$ONEIRON_HOUSE_EXL3_GPU"
 exec "$ONEIRON_HOUSE_PYTHON" "$(dirname "$0")/exl3_server.py" \
@@ -36,5 +40,6 @@ exec "$ONEIRON_HOUSE_PYTHON" "$(dirname "$0")/exl3_server.py" \
   --context "$ONEIRON_HOUSE_CONTEXT" \
   --max-in-flight "$ONEIRON_HOUSE_EXL3_IN_FLIGHT" \
   ${ONEIRON_HOUSE_EXL3_CACHE_TOKENS:+--cache-tokens "$ONEIRON_HOUSE_EXL3_CACHE_TOKENS"} \
+  ${ONEIRON_HOUSE_EXL3_NATIVE_SOCKET:+--native-socket "$ONEIRON_HOUSE_EXL3_NATIVE_SOCKET"} \
   --model-id qwen3.8-27b \
   --host 127.0.0.1 --port "$ONEIRON_HOUSE_EXL3_PORT"

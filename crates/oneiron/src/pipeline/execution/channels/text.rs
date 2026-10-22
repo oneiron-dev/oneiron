@@ -6,9 +6,7 @@ use crate::bm25::Bm25Config;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::builder::PipelineBuilder;
-use crate::pipeline::channels::{
-    fusion_fetch_limit, scoped_text_channel_limit, truncate_widened_channel_results_to_scope,
-};
+use crate::pipeline::channels::{fusion_fetch_limit, truncate_widened_channel_results_to_scope};
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
     claim_status_gate_allows, import_claim_gate_decisions_for_scores,
@@ -205,10 +203,9 @@ impl PipelineBuilder<'_> {
                 if self.deadline_reached() {
                     break;
                 }
-                let retry_scoped_text_limit =
-                    scoped_text_channel_limit(retry_channel_limit(*limit));
+                let retry_scoped_text_limit = self.text_channel_limit(retry_channel_limit(*limit));
                 let retry_text_channel_limit = if inputs.recency.is_some() {
-                    scoped_text_channel_limit(
+                    self.text_channel_limit(
                         retry_scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR)),
                     )
                 } else {
@@ -305,14 +302,13 @@ impl PipelineBuilder<'_> {
         mut prefix_probe_claim_gate: ClaimStatusGateCache,
         (metadata_cache, claim_gate): (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
     ) -> Result<Vec<ScoredEntity>> {
-        let scoped_text_limit =
-            scoped_text_channel_limit(if inputs.overrides.widen_channel_limits {
-                retry_channel_limit(limit)
-            } else {
-                limit
-            });
+        let scoped_text_limit = self.text_channel_limit(if inputs.overrides.widen_channel_limits {
+            retry_channel_limit(limit)
+        } else {
+            limit
+        });
         let text_channel_limit = if inputs.recency.is_some() {
-            scoped_text_channel_limit(
+            self.text_channel_limit(
                 scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR)),
             )
         } else {
@@ -340,7 +336,7 @@ impl PipelineBuilder<'_> {
             .as_ref()
             .map_or(query, |expansion| expansion.grounded_query.as_str());
         let candidate_limit = if self.candidate_filter.is_some() {
-            scoped_text_channel_limit(limit)
+            self.text_channel_limit(limit)
         } else {
             text_channel_limit
         };
@@ -349,8 +345,7 @@ impl PipelineBuilder<'_> {
         // fill it and keep later conversations out. Such a run reads on,
         // up to `PER_SCAN_CAP_FACTOR` times the bound, until its rows hold
         // that many turns or the matches run out.
-        let fold_cap =
-            scoped_text_channel_limit(candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR));
+        let fold_cap = self.text_channel_limit(candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR));
         let mut fold_metadata = EntityMetadataCache::default();
         let mut fetch_limit = candidate_limit;
         let mut text_results = loop {

@@ -269,6 +269,8 @@ both bindings and their export-census tests in one change.
 - `ai.chat.completions`
 - `vault.connectors.proxy.admit`
 - `vault.connectors.proxy.revoke_write`
+- `vault.connectors.slates.redraft`
+- `vault.connectors.slates.narrow`
 - `vault.connectors.subscriptions.put`
 - `vault.connectors.subscriptions.list`
 - `vault.connectors.subscriptions.revoke`
@@ -479,6 +481,7 @@ both bindings and their export-census tests in one change.
 - `vault.policy.outbound.decide`
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
+- `vault.connectors.calls.approve_once`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.registry`

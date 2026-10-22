@@ -1240,6 +1240,12 @@ impl DesktopSession {
             engine_switch: None,
             text_source: None,
             text_ref: None,
+            // A desktop act replays in no browser program (CUA E7).
+            action: None,
+            source_url: None,
+            source_origin: None,
+            tab: None,
+            result_tab: None,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };
