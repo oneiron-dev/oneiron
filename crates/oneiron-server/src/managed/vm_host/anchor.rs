@@ -23,6 +23,7 @@
 //! adds no credential and reads nothing that passes. A host bound to no URL
 //! refuses every stream.
 
+use super::credentials::{Cancellable, read_cancellable};
 use super::restore::{distinct, proven};
 use super::{API_TIMEOUT, VaultVm, VmExitWatch};
 use crate::managed::listener::bind_unix_socket;
@@ -126,6 +127,23 @@ enum Credential {
     None,
     Unread(OwnedFd),
     Held(Zeroizing<Vec<u8>>),
+    /// Its pipe's read was cancelled or failed: what the pipe carried is
+    /// gone, so no later boot is handed an empty credential in its place.
+    Lost,
+}
+
+impl Credential {
+    /// Takes the unread pipe for its read, leaving the credential lost until
+    /// the read's bytes replace it.
+    fn take_unread(&mut self) -> Option<OwnedFd> {
+        match std::mem::replace(self, Self::Lost) {
+            Self::Unread(fd) => Some(fd),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
 }
 
 /// One generation's proxy task, ended when this drops, and the URL it
@@ -240,6 +258,10 @@ impl VaultVm {
         &mut self,
         timeout: Duration,
     ) -> anyhow::Result<UnixStream> {
+        anyhow::ensure!(
+            !matches!(self.anchor.credential, Credential::Lost),
+            "the custody anchor credential's read did not finish; this driver holds none to send"
+        );
         let (mut stream, _) =
             tokio::time::timeout(timeout, self.anchor.exchange.accept()).await??;
         let header = VmAnchorHeader {
@@ -268,17 +290,16 @@ impl VaultVm {
         mut stream: UnixStream,
         timeout: Duration,
     ) -> anyhow::Result<()> {
-        let credential = std::mem::replace(&mut self.anchor.credential, Credential::None);
-        self.anchor.credential = match credential {
-            Credential::Unread(fd) => {
-                let read = tokio::task::spawn_blocking(move || read_credential(fd));
-                Credential::Held(read.await??)
-            }
-            other => other,
-        };
+        // The pipe is read on a thread this future's drop wakes and joins
+        // (FIX 9501): a cancelled boot never leaves its read behind. A read
+        // that did not end leaves the credential lost, and no later boot
+        // serves without it.
+        if let Some(fd) = self.anchor.credential.take_unread() {
+            self.anchor.credential = Credential::Held(read_cancellable(fd, read_credential).await?);
+        }
         let bytes: &[u8] = match &self.anchor.credential {
             Credential::Held(bytes) => bytes.as_slice(),
-            Credential::None | Credential::Unread(_) => &[],
+            Credential::None | Credential::Unread(_) | Credential::Lost => &[],
         };
         stream
             .write_all(&vm_anchor_payload_prefix(bytes.len())?)
@@ -391,9 +412,9 @@ impl VaultVm {
 
 /// Reads the credential's pipe to its end into a buffer wiped on drop, sized
 /// once to the exchange's bound so it never moves: a credential over it is
-/// refused, since the exchange cannot carry it.
-fn read_credential(fd: OwnedFd) -> anyhow::Result<Zeroizing<Vec<u8>>> {
-    let mut pipe = std::fs::File::from(fd);
+/// refused, since the exchange cannot carry it. A cancelled read wipes what
+/// it took.
+fn read_credential(pipe: &mut Cancellable) -> anyhow::Result<Zeroizing<Vec<u8>>> {
     let mut held = Zeroizing::new(vec![0u8; MAX_VM_ANCHOR_CREDENTIAL_BYTES + 1]);
     let mut len = 0;
     loop {

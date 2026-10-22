@@ -391,6 +391,21 @@ impl VaultVm {
         timeout: Duration,
     ) -> anyhow::Result<()> {
         self.boot_vmm(false).await?;
+        // Past the VMM's start each wait ends with its exit too, the custody
+        // anchor credential's read among them (FIX 9501).
+        let exit = self.exit_watch();
+        restore::until_exit(self.serve_cold(credentials, fscrypt_key, timeout), exit).await
+    }
+
+    /// A cold boot's steps once its VMM started: the restore channel, the
+    /// provisioning, the anchor's exchange, the credential frame, the ready
+    /// byte and the join.
+    async fn serve_cold(
+        &mut self,
+        credentials: &Credentials,
+        fscrypt_key: &VmFscryptKey,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
         // An ordinary boot's restore channel says only that it opens.
         drop(self.answer_hello(&VmRestoreBoot::Open, timeout).await?);
         self.provision(fscrypt_key, timeout).await?;

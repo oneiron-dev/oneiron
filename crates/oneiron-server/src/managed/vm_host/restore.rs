@@ -332,31 +332,32 @@ impl VaultVm {
     }
 }
 
-/// `restoring`, ended early by the VMM's exit when `exit` watches it: the
-/// exit drops the restore, and with it C's read. With no watch, or one that
-/// fails, the restore runs on as it does with none.
-async fn until_exit(
-    restoring: impl Future<Output = anyhow::Result<Credentials>>,
+/// `booting`, a restore or a cold boot past its VMM's start, ended early by
+/// the VMM's exit when `exit` watches it: the exit drops the boot, and with
+/// it a supervisor pipe's read (FIX 9501). With no watch, or one that fails,
+/// the boot runs on as it does with none.
+pub(super) async fn until_exit<T>(
+    booting: impl Future<Output = anyhow::Result<T>>,
     exit: Option<VmExitWatch>,
-) -> anyhow::Result<Credentials> {
-    let mut restoring = std::pin::pin!(restoring);
+) -> anyhow::Result<T> {
+    let mut booting = std::pin::pin!(booting);
     if let Some(exit) = exit {
         tokio::select! {
             biased;
-            restored = &mut restoring => return restored,
+            booted = &mut booting => return booted,
             exited = exit.wait() => match exited {
                 Ok(status) => {
-                    anyhow::bail!("the vault VM's VMM exited before its restore ended ({status})")
+                    anyhow::bail!("the vault VM's VMM exited before its boot ended ({status})")
                 }
                 Err(error) => tracing::warn!(
                     reason = "vm_exit_unread",
                     %error,
-                    "the vault VM's exit watch failed; its restore runs on without it"
+                    "the vault VM's exit watch failed; its boot runs on without it"
                 ),
             },
         }
     }
-    restoring.await
+    booting.await
 }
 
 /// One control record's body.
