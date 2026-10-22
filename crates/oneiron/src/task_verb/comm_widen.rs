@@ -25,6 +25,9 @@ use crate::agent_dispatch::{
     CommReach, CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest,
     CommWidenState, comm_widen_in, comm_widen_recipient_in_txn, put_comm_widen_in,
 };
+use crate::agent_inbox_lens::{
+    AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
+};
 use crate::attempt_queue::AttemptId;
 use crate::error::Result;
 use crate::memory::{
@@ -532,4 +535,98 @@ fn bind_ask_in(
         put_comm_widen_in(vault, txn, child, &record)?;
     }
     Ok(())
+}
+
+/// The widening a consult TASK asks for (FIX 3901), read in `txn`: its
+/// consult names an ask group whose intent a child's comm widen reservation
+/// routes. `None` for any other consult, and for one whose group or
+/// reservation does not read: that one renders as the plain consult it is.
+pub(super) fn consult_widening_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    consult: Option<&super::ConsultPayload>,
+) -> Option<crate::context_board::ConsultWidening> {
+    let group_ref = consult?.correlation_ref;
+    let group = ask_record::read_group(vault, txn, group_ref).ok()??;
+    let (child, request) = routed_in(vault, txn, group_ref, &group).ok()??;
+    let approved = comm_widen_in(vault, txn, child)
+        .ok()
+        .flatten()
+        .and_then(|record| record.approved)
+        .map(|approval| approval.reach);
+    Some(widening(child, approved, &request))
+}
+
+/// What `child`'s `request` asks: from the reach an earlier approval gave
+/// it, if any, to the reach it needs.
+fn widening(
+    child: AttemptId,
+    approved: Option<CommReach>,
+    request: &CommWidenRequest,
+) -> crate::context_board::ConsultWidening {
+    crate::context_board::ConsultWidening {
+        child: attempt_hex(child),
+        from: approved,
+        to: request.needed,
+    }
+}
+
+impl Vault {
+    /// The comm widen asks waiting on their recipients (FIX 3901), one
+    /// INBOX lens row each: the widening it asks and the recipient's own
+    /// consult TASK, which the recipient answers on the consult's existing
+    /// answer door. No channel identity carries the row. A record that does
+    /// not read makes no row, as an ask it cannot route answers nothing.
+    pub(crate) fn comm_widen_inbox_items(&self) -> Result<Vec<AgentInboxLensItem>> {
+        let txn = self.store.env.read_txn()?;
+        let mut items = Vec::new();
+        for row in crate::attempt_queue::AttemptQueue::new(self).list_in_txn(&txn)? {
+            let Some(record) = comm_widen_in(self, &txn, row.id).ok().flatten() else {
+                continue;
+            };
+            let approved = record.approved.map(|approval| approval.reach);
+            for request in &record.requests {
+                let (CommWidenState::Pending, Some(ask), Some(question), Some(recipient)) = (
+                    request.state,
+                    request.ask,
+                    request.question,
+                    request.recipient.actor(),
+                ) else {
+                    continue;
+                };
+                let Some(member) = ask_record::read_group(self, &txn, ask)
+                    .ok()
+                    .flatten()
+                    .and_then(|group| {
+                        group.members.into_iter().find(|member| {
+                            EntityId::from_hex(&member.actor).ok() == Some(recipient)
+                        })
+                    })
+                else {
+                    continue;
+                };
+                items.push(AgentInboxLensItem {
+                    item_id: format!("comm_widen:{}", ask.to_hex()),
+                    kind: AgentInboxItemKind::ApprovalRequired,
+                    thread_ref: None,
+                    identity_ref: None,
+                    actor_ref: recipient,
+                    facet_ref: None,
+                    participants: vec![AgentInboxParticipant {
+                        identity_ref: None,
+                        actor_ref: recipient,
+                    }],
+                    impact: InboxImpact(crate::agent_dispatch::widen_doors::WIDEN_INBOX_IMPACT),
+                    occurred_at: question.at,
+                    receipt_ref: None,
+                    payload_ref: Some(member.task),
+                    concern: None,
+                    diary_review: None,
+                    sender: None,
+                    widening: Some(widening(row.id, approved, request)),
+                });
+            }
+        }
+        Ok(items)
+    }
 }

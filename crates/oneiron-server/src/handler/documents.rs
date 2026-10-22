@@ -230,11 +230,14 @@ fn owner_request(
     Ok(())
 }
 
-/// An own device's pinned artifact pointer change, with the rows that serve
-/// it. Only the vault owner's bound session on an owner lane may carry one:
-/// a publication is the owner's, already gated where it was made. The vault
-/// applies it once window sync has delivered every row it names, and the
-/// receipt goes back on this socket alone.
+/// One bounded part of an own device's pinned artifact pointer change, with
+/// the rows that serve it (FIX 9575). Only the vault owner's bound session on
+/// an owner lane may carry one: a publication is the owner's, already gated
+/// where it was made. The gate runs for every part, and the vault rechecks
+/// the credential inside every writer that keeps a part or applies the
+/// publication. It applies the publication once every part is there and
+/// window sync has delivered every row it names; only a complete
+/// publication is answered, its receipt on this socket alone.
 fn artifact_publication(
     server: &SyncServer,
     state: &mut ConnState,
@@ -242,12 +245,16 @@ fn artifact_publication(
     payload: &[u8],
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
-    owner_auth(server, state, true)?;
+    let auth = owner_auth(server, state, true)?;
     let receipt = server
         .vault
-        .import_artifact_publication(entity, payload)
+        .import_artifact_publication(entity, payload, |txn| {
+            auth.credential_is_live_in_write_txn(&server.vault, txn)
+        })
         .map_err(storage_error)?;
-    let _ = direct.send(receipt);
+    if let Some(receipt) = receipt {
+        let _ = direct.send(receipt);
+    }
     Ok(())
 }
 

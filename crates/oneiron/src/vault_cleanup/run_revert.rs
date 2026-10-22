@@ -251,7 +251,9 @@ fn revert_record(
             true,
         ));
     };
-    let edited = marks::record_revision_in_txn(vault, txn, id)? != Some(entry.revision);
+    // A scrubbed binding names no bytes: the entry reads as edited (FIX 7615).
+    let edited = entry.revision.is_none()
+        || marks::record_revision_in_txn(vault, txn, id)? != entry.revision;
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok((
             CleanupRevertOutcome::Changed(CleanupRevertReason::Unreadable),
@@ -271,7 +273,10 @@ fn revert_record(
         None => CleanupRevertOutcome::AlreadyRestored,
         Some(mark)
             if mark.reason == Some(TombstoneReason::ArchivedByCleanup)
-                && mark == decode_tombstone_value(&entry.after) =>
+                && entry
+                    .after
+                    .as_deref()
+                    .is_some_and(|after| mark == decode_tombstone_value(after)) =>
         {
             lift(
                 vault,
@@ -329,7 +334,9 @@ fn revert_attempt(
         // Absent, kept, stale or unreadable: nothing hides the row now.
         _ => CleanupRevertOutcome::AlreadyRestored,
     };
-    Ok((outcome, revision != entry.revision))
+    // The current mark and run decide the lift; a scrubbed binding only
+    // reads as edited (FIX 7615).
+    Ok((outcome, entry.revision != Some(revision)))
 }
 
 /// Runs one entry's restore in a savepoint of the revert's write. A restore

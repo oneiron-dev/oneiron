@@ -27,7 +27,7 @@ enum RunSeatBinding {
 }
 
 /// An agent run's seat receipt and the type stamp it was born under.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TaskSeatReceipt {
     pub type_ref: TaskTypeRef,
     pub receipt: SeatChoiceReceipt,

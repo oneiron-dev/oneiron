@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::actions::NotificationAction;
 use super::notification::{
     NotificationBody, NotificationKind, NotificationSource, decode_notification_body,
 };
@@ -60,6 +61,11 @@ pub struct NotificationRow {
     pub origin_conversation: Option<String>,
     pub seen: bool,
     pub acked: bool,
+    /// The taps the row offers its caller now, each a registered verb and
+    /// its input (FIX 5629, 6505). Projected when the row is read, never
+    /// stored; empty for a row with none, or whose target has settled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<NotificationAction>,
 }
 
 /// One inbox page in entity-ID order.
@@ -84,6 +90,7 @@ fn row_for(id: EntityId, learned_at: u64, body: NotificationBody, caller: &str) 
         subject_refs: body.subject_refs,
         created_at: body.created_at,
         origin_conversation: body.origin_conversation,
+        actions: Vec::new(),
     }
 }
 
@@ -222,7 +229,7 @@ impl Memory<'_> {
                     has_more = true;
                     break 'scan;
                 }
-                rows.push(row);
+                rows.push(self.with_notification_actions(row));
             }
             if exhausted {
                 break;
@@ -279,9 +286,9 @@ impl Memory<'_> {
             return Err(notification_not_found());
         };
         if current.acked || (current.seen && mark == NotificationMark::Seen) {
-            return Ok(current);
+            return Ok(self.with_notification_actions(current));
         }
-        self.vault().write_txn_door(Callback::Audited, |wtxn| {
+        let marked = self.vault().write_txn_door(Callback::Audited, |wtxn| {
             // A delegated ack's covering Grant is judged again in the
             // snapshot that writes; it is that ack's row-position scope.
             let covered = delegated
@@ -327,6 +334,7 @@ impl Memory<'_> {
             }
             let learned_at = self.vault().put_notification_in_txn(wtxn, &id, &body)?;
             Ok(row_for(id, learned_at, body, &caller))
-        })
+        })?;
+        Ok(self.with_notification_actions(marked))
     }
 }

@@ -23,7 +23,14 @@
     "add_slide",
     "move_shape",
     "move_cross_slide",
-    "remove_shape"
+    "remove_shape",
+    "edit_points",
+    "ragged_table",
+    "smartart_birth",
+    "smartart_restructure",
+    "held_picture_birth",
+    "multi_level_categories",
+    "per_series_categories"
   ],
   "concurrency": [
     "both_move",
@@ -33,7 +40,8 @@
     "text_animation_range",
     "theme_inherited_style",
     "both_replace_opaque",
-    "both_add_shape"
+    "both_add_shape",
+    "loro_peers"
   ],
   "non_pdf": ["modern_comment", "animated_text"],
   "regression": {
@@ -60,7 +68,11 @@
     "scripts": [
       "deck_gate.py",
       "deck_oracle.py",
+      "deck_session.py",
       "powerpoint.applescript",
+      "powerpoint_windows.applescript",
+      "powerpoint_repair.applescript",
+      "powerpoint_dismiss.applescript",
       "raster.swift",
       "environment.json"
     ]

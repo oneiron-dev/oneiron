@@ -506,6 +506,9 @@ side_tables! {
     /// One owner-label ask a waiting decision put (MessagePack named map). Key: sha256 of the
     /// decision and the case.
     SKILL_OPTIMIZE_EVAL_LABEL_ASK: VaultMeta b"skill_optimize:eval_label_ask:v1:" Raw;
+    /// One paired eval measurement: its frozen request, state, case legs, family summaries and
+    /// card (MessagePack named map). Key: bytes32 (request digest).
+    SKILL_OPTIMIZE_EVAL_MEASUREMENT: VaultMeta b"skill_optimize:eval_measurement:v1:" Named;
     /// The eval family a source root belongs to, per seat. Key: seat token + NUL + root; value:
     /// id16 (family).
     SKILL_OPTIMIZE_EVAL_ROOT: VaultMeta b"skill_optimize:eval_root:v1:" Raw;

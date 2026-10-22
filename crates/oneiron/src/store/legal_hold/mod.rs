@@ -14,6 +14,7 @@
 
 mod events;
 mod notice;
+mod pending;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -23,6 +24,11 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use events::{host_events_in_txn, log_in_txn, owner_events_in_txn};
 pub(crate) use notice::law_notice;
+pub(crate) use pending::{
+    PendingErase, PendingEraseKind, drop_pending_erase_in_txn, due_erases_in_txn,
+    pending_erase_in_txn, put_pending_erase_in_txn, set_pending_veto_act_in_txn,
+    use_limit_pending_privacy_in_txn,
+};
 
 use crate::deletion::{
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind, LegalHoldEventKind,
@@ -48,9 +54,6 @@ const TARGETS: Targets = SideTable::new(&side_table::LEGAL_HOLD_TARGET);
 const HOST_ROWS: Rows = SideTable::new(&side_table::LEGAL_HOLD_HOST_ROW);
 /// What each standing host-order hold holds. Key: held key (17) + id16 (hold).
 const HOST_TARGETS: Targets = SideTable::new(&side_table::LEGAL_HOLD_HOST_TARGET);
-/// An owner erase a host order keeps waiting. Key: id16 (record).
-const PENDING_ERASES: SideTable<EntityId, PendingErase, Named> =
-    SideTable::new(&side_table::LEGAL_HOLD_PENDING_ERASE);
 /// The customer holds an owner's confirm lifted from a record, until its
 /// deletion receipt completes. Key: id16 (record).
 const ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
@@ -61,15 +64,6 @@ const HOST_ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
 /// Records kept after a refused privacy erasure (C6). Key: id16 (record).
 const USE_LIMITS: SideTable<EntityId, LegalHoldUseLimit, Named> =
     SideTable::new(&side_table::LEGAL_HOLD_USE_LIMIT);
-
-/// An owner's confirmed erase that waits on a host order. It names no hold,
-/// so its row tells the owner nothing an order keeps secret.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PendingErase {
-    confirmed_by: Option<String>,
-    confirmed_at: u64,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -557,58 +551,6 @@ pub(crate) fn use_limit_in_txn(
     Ok(Some(limit))
 }
 
-/// Records that an owner confirmed erasing `record` while a host order keeps
-/// it: the erase runs once nothing holds it.
-pub(crate) fn put_pending_erase_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &mut RwTxn<'_>,
-    record: &EntityId,
-    confirmed_by: Option<String>,
-    at: u64,
-) -> Result<()> {
-    PENDING_ERASES.put(
-        dbs,
-        txn,
-        record,
-        &PendingErase {
-            confirmed_by,
-            confirmed_at: at,
-        },
-    )
-}
-
-/// The records whose confirmed erase waits, and that nothing holds now.
-pub(crate) fn due_erases_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
-    let mut due = Vec::new();
-    for record in PENDING_ERASES.scan_keys(dbs, txn, &[])? {
-        if !held_in_txn(dbs, txn, record.as_bytes())? {
-            due.push(record);
-        }
-    }
-    Ok(due)
-}
-
-pub(crate) fn drop_pending_erase_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &mut RwTxn<'_>,
-    record: &EntityId,
-) -> Result<()> {
-    PENDING_ERASES.delete(dbs, txn, record)?;
-    Ok(())
-}
-
-/// Who confirmed the erase of `record` that waits, as its row records them
-/// (FIX 6099): `None` when no erase of it waits.
-pub(crate) fn pending_erase_by_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    record: &EntityId,
-) -> Result<Option<Option<String>>> {
-    Ok(PENDING_ERASES
-        .get(dbs, txn, record)?
-        .map(|pending| pending.confirmed_by))
-}
-
 /// Links `record`'s coming deletion receipt to `hold`, for its "erase
 /// completed" event (C4).
 pub(crate) fn link_erase_in_txn(
@@ -865,6 +807,5 @@ pub(crate) fn expire_in_txn(dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>, now: u
 /// waiting erase. Its erase links stay for the receipt's completion.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     USE_LIMITS.delete(store, txn, id)?;
-    PENDING_ERASES.delete(store, txn, id)?;
-    Ok(())
+    pending::erase_pending_in_txn(store, txn, id)
 }

@@ -39,6 +39,7 @@ pub use critical_confirm::{
 };
 mod birth_position;
 mod booking;
+mod browser_solved;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
@@ -172,8 +173,8 @@ pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
     ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
-    CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite,
-    RecordRefusal, RefusalReason, SafeDeleteReason,
+    CommitReceipt, DeleteReceipt, DeleteRequestState, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
+    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use diagnostics::{

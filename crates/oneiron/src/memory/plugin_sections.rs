@@ -23,7 +23,7 @@ use crate::context_board::{
     PluginInstallOrigin, PluginInstallTarget, PluginSectionAdmission, PluginSectionError,
     PluginSectionRegistry, SectionManifestEnvelope, VaultPluginInstallExecutor,
     VaultPluginInstallSource, digest_to_hex, execute_approved_plugin_section_install,
-    pending_plugin_proposal_rows, propose_plugin_section_install, render_pack_sections,
+    propose_plugin_section_install,
 };
 use crate::dreamer_plugin_suggest::{
     LocalSkillHubPackCatalog, PluginSuggestJob, PluginSuggestionDisposition, WorkflowPatternNotice,
@@ -34,6 +34,8 @@ use crate::entity_id::EntityId;
 use crate::skill_hub::pack_catalog::PackSection;
 use crate::skill_hub::{HubRef, RefFetch, pinned_tracking};
 use crate::write_envelope::{WriteActor, WriteProvenance};
+
+mod pages;
 
 /// The plugin seam's refusals as this surface's errors: a missing claim is
 /// not found, an unapproved one is invalid state, a stored vault error keeps
@@ -130,9 +132,13 @@ pub struct PluginSectionProposal {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginSectionListRequest {
-    /// Most pending proposals to return (default 256, at most 1024).
+    /// Pending proposals on this page (default 256). A page size, not a cap:
+    /// a larger request is served in full.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// The `next_cursor` of the previous page; none starts at the oldest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 /// One install still awaiting owner consent.
@@ -165,12 +171,22 @@ pub struct PluginSectionPackRow {
     pub section: PackSection,
 }
 
-/// `vault.packs.sections.list`'s answer: what waits, what is admitted, and
-/// what installed packs project, plus the pack section names the renderer
-/// produces from that same registry.
+/// `vault.packs.sections.list`'s answer: one page of what waits, every
+/// admitted section, what installed packs project, plus the pack section
+/// names the renderer produces from that same registry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PluginSectionsView {
+    /// This page of pending proposals, oldest consent first.
     pub pending: Vec<PluginSectionPendingRow>,
+    /// Every pending proposal in this read snapshot, across pages.
+    pub pending_total: u64,
+    /// Pending proposals after this page.
+    pub pending_remaining: u64,
+    /// The cursor for the next page of pending proposals; none at the end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// True when this page holds the last pending proposal.
+    pub end: bool,
     pub admitted: Vec<PluginSectionAdmittedRow>,
     pub pack_sections: Vec<PluginSectionPackRow>,
     pub rendered_pack_sections: Vec<String>,
@@ -351,71 +367,6 @@ impl Memory<'_> {
             manifest_digest: digest_to_hex(&proposal.manifest_digest),
             section_id: input.manifest.manifest.section_id.0.clone(),
             manifest: input.manifest.clone(),
-        })
-    }
-
-    /// Pending offers, admitted sections and pack-origin sections, from the
-    /// same registry rebuild the board renders.
-    pub fn plugin_sections_list(
-        &self,
-        input: &PluginSectionListRequest,
-    ) -> MemoryResult<PluginSectionsView> {
-        let vault = self.vault();
-        let limit =
-            usize::try_from(input.limit.unwrap_or(256).clamp(1, 1024)).unwrap_or(usize::MAX);
-        let pending_rows = pending_plugin_proposal_rows(vault, limit).map_err(plugin_error)?;
-        let registry =
-            PluginSectionRegistry::rebuild(vault, &EngineSectionBindings).map_err(plugin_error)?;
-        let rendered = render_pack_sections(&registry, &[]).map_err(plugin_error)?;
-        let mut rows: Vec<EntityId> = pending_rows
-            .iter()
-            .map(|row| row.install_claim_id)
-            .collect();
-        let admitted: Vec<PluginSectionAdmittedRow> = registry
-            .sections()
-            .map(|section| {
-                rows.push(section.install_claim_id);
-                PluginSectionAdmittedRow {
-                    claim_ref: section.install_claim_id.to_hex(),
-                    section_id: section.manifest.section_id().0.clone(),
-                    manifest: section.manifest.envelope().clone(),
-                }
-            })
-            .collect();
-        let pack_sections: Vec<PluginSectionPackRow> = registry
-            .pack_sections()
-            .map(|entry| {
-                if let Ok(source) = EntityId::from_hex(&entry.source_id) {
-                    rows.push(source);
-                }
-                PluginSectionPackRow {
-                    section_id: entry.section.section_id.clone(),
-                    pack_name: entry.pack_name.clone(),
-                    source_id: entry.source_id.clone(),
-                    content_hash: entry.content_hash.clone(),
-                    section: entry.section.clone(),
-                }
-            })
-            .collect();
-        self.produced_from(rows);
-        Ok(PluginSectionsView {
-            pending: pending_rows
-                .into_iter()
-                .map(|row| PluginSectionPendingRow {
-                    claim_ref: row.install_claim_id.to_hex(),
-                    pack_id: row.pack_id,
-                    section_id: row.section_id.0,
-                    label: row.label,
-                    origin: row.origin.kind().to_owned(),
-                    awaiting_owner_consent: row.awaiting_owner_consent,
-                })
-                .collect(),
-            admitted,
-            pack_sections,
-            rendered_pack_sections: rendered
-                .iter()
-                .map(|section| section.name().to_owned())
-                .collect(),
         })
     }
 
