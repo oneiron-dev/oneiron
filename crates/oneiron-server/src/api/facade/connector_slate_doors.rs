@@ -10,7 +10,7 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use super::legal_hold_doors::as_owner_naming;
 use crate::api::owner_routes::connector_slate_routes::redraft_slate;
 use crate::auth::CoreAuth;

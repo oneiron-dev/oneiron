@@ -201,6 +201,23 @@ impl<'a> ScopedRead<'a> {
         let Some(owner) = self.actor_key.vault_owner_ref() else {
             return Ok(());
         };
+        // A due Owner schedule's key (FIX 1259) proves its owner by the
+        // live-owner census here, as its schedule binding does, in place of
+        // an owner actor binding.
+        if self.actor_key.owner_by_census() {
+            if crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &owner)? {
+                return Ok(());
+            }
+            return Err(Error::Claim(
+                crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                    crate::memory::MemoryError::new(
+                        crate::memory::MEMORY_CODE_FORBIDDEN,
+                        "a due owner schedule's owner is no longer a live owner here",
+                        &[],
+                    ),
+                )),
+            ));
+        }
         let human = crate::edge::EdgeActorClass::Human;
         crate::memory::verify_actor_binding_in_txn(self.vault, txn, owner, human)
             .and_then(|()| {

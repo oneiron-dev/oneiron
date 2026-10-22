@@ -10,7 +10,7 @@ use oneiron::note::{
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing};
+use super::host_doors::support::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -165,10 +165,10 @@ pub(crate) async fn vault_notes_history_purge(
         },
         |outcome| match outcome {
             oneiron::task_verb::sdk::NoteHistoryPurgeOutcome::Erased { receipt } => {
-                super::host_doors::hex_rows([&receipt.entity])
+                super::host_doors::support::hex_rows([&receipt.entity])
             }
             oneiron::task_verb::sdk::NoteHistoryPurgeOutcome::Waiting { note_ref, .. } => {
-                super::host_doors::hex_rows([note_ref])
+                super::host_doors::support::hex_rows([note_ref])
             }
         },
     )
@@ -193,7 +193,7 @@ pub(crate) async fn vault_notes_history_purge_execute(
                 input,
             )
         },
-        |receipt| super::host_doors::hex_rows([&receipt.entity]),
+        |receipt| super::host_doors::support::hex_rows([&receipt.entity]),
     )
     .await
 }
@@ -218,7 +218,7 @@ pub(crate) async fn vault_notes_history_purge_receipts(
         |receipts| {
             receipts
                 .iter()
-                .flat_map(|receipt| super::host_doors::hex_rows([&receipt.entity]))
+                .flat_map(|receipt| super::host_doors::support::hex_rows([&receipt.entity]))
                 .collect()
         },
     )

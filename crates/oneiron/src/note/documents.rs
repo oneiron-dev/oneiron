@@ -495,6 +495,58 @@ pub(crate) fn load_head(
     })
 }
 
+/// The exact document a retained, no longer current head of `note` holds,
+/// for a recovery that carries it as a pending fork's parent (FIX 8829): the
+/// proposal carrier kept for `head`, else, for the NOTE's original head, that
+/// head's own slot, its snapshot and updates over its native birth, as a
+/// NOTE open reads a slot. `None` for the current head, whose document is the
+/// live one, and when neither is here: never today's head, another document
+/// or guessed text.
+pub(crate) fn load_retained_head(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    head: EntityId,
+) -> Result<Option<LoroDoc>> {
+    use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
+    if head == head_in(&vault.store, txn, note)?.0 {
+        return Ok(None);
+    }
+    super::ensure_citations_ready(&vault.store, txn, note)?;
+    if let Some(raw) =
+        NOTE_PROPOSAL_DOC.get(&vault.store, txn, &HexPair(HexId(note), HexId(head)))?
+    {
+        let canonical = super::document::NoteDocument::load(note, &raw)?;
+        super::citation_erase::validate_pins(vault, txn, &canonical.pins()?)?;
+        return Ok(Some(canonical.doc));
+    }
+    if head != note {
+        return Ok(None);
+    }
+    let slot = DocumentSlot::of(note);
+    let doc = match vault
+        .store
+        .port_document_row(txn, slot, DocumentRow::Snapshot)?
+    {
+        Some(bytes) => {
+            let doc = LoroDoc::new();
+            super::storage::import_complete(&doc, &bytes)?;
+            doc
+        }
+        None => match super::document_birth_in_txn(vault, txn, note)? {
+            Some(doc) => doc,
+            None => return Ok(None),
+        },
+    };
+    for update in vault.store.port_document_updates(txn, slot)? {
+        if !matches!(update.seq, Some(UpdateSeq::Sequence(_))) {
+            return Err(invalid("invalid canonical document update key"));
+        }
+        super::storage::import_complete(&doc, &update.bytes)?;
+    }
+    Ok(Some(doc))
+}
+
 /// Conservative Unicode diff. A wide changed span is reviewed if it crosses
 /// a citation; never use guessed CRDT IDs or drop intervening citation guards.
 pub(super) fn text_change(before: &str, after: &str) -> super::NoteEdit {

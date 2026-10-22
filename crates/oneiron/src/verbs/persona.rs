@@ -111,7 +111,9 @@ pub struct PersonaSnapshotPreview {
 pub struct PersonaSnapshotMemoryPack {
     pub schema: String,
     pub kind: String,
-    pub subject_ref: EntityId,
+    /// Absent from a copy made without its vault refs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_ref: Option<EntityId>,
     pub identity_line: Option<String>,
     pub audience_ref: Option<String>,
     pub takes_included: bool,

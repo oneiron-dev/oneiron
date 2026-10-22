@@ -10,7 +10,7 @@ use oneiron::llm::model_step::{SettledStepRequest, SettledStepView, settled_step
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing, owner_proof, refused};
+use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

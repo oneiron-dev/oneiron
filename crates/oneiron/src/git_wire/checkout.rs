@@ -16,6 +16,10 @@ impl GitWire<'_> {
     /// The private, repository- and epoch-bound directory that owns one lease's
     /// worktree. Nothing outside this root is ever created or removed.
     pub fn checkout_handle_dir(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<PathBuf> {
+        // A masked copy's checkout lives under the copy store (FIX 7608).
+        if let Some(binding) = self.projected_checkout_binding(lease)? {
+            return Ok(self.projected_checkout_handle_dir(lease, &binding));
+        }
         let repo = self.checkout_repo(lease)?;
         Ok(checkout_handle_dir_for(&self.process_env, &repo, lease))
     }
@@ -82,6 +86,12 @@ impl CheckoutRepoOps for GitWire<'_> {
     /// The handle directory is created exclusively, so a pre-created path is
     /// refused rather than trusted, and the repository head is never moved.
     fn materialize(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<()> {
+        // A masked recipient's lease on a marked store checks out its masked
+        // copy, bound once (FIX 7608 2b-ii-B2); the owner's stays exact.
+        let masked = self.checkout_holder_reads_masked(lease)?;
+        if let Some(binding) = self.select_projected_checkout(lease, masked)? {
+            return self.materialize_projected_checkout(lease, &binding);
+        }
         let repo = self.checkout_repo(lease)?;
         let commit = repo.pinned_commit()?;
         self.preflight_checkout_remote(&repo)?;
@@ -112,6 +122,9 @@ impl CheckoutRepoOps for GitWire<'_> {
         lease: &CheckoutLeaseAct,
         receipt: &PushedHeadReceipt,
     ) -> CheckoutResult<CheckoutTeardownInspection> {
+        if let Some(binding) = self.projected_checkout_binding(lease)? {
+            return self.inspect_projected_checkout_teardown(lease, &binding, receipt);
+        }
         let repo = self.checkout_repo(lease)?;
         let tree = checkout_handle_dir_for(&self.process_env, &repo, lease).join("tree");
         if !tree.exists() || !self.worktree_registered(&repo, &tree)? {
@@ -139,6 +152,11 @@ impl CheckoutRepoOps for GitWire<'_> {
     /// Collects only a proven owned handle, and reconciles git's worktree
     /// registration afterwards.
     fn collect(&self, lease: &CheckoutLeaseAct) -> CheckoutResult<()> {
+        if let Some(binding) = self.projected_checkout_binding(lease)? {
+            self.collect_projected_checkout(lease, &binding)?;
+            crate::origin::secret_projection::disposal::collect_after_checkout(self.vault, lease);
+            return Ok(());
+        }
         let repo = self.checkout_repo(lease)?;
         let handle = checkout_handle_dir_for(&self.process_env, &repo, lease);
         let tree = handle.join("tree");

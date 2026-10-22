@@ -39,6 +39,9 @@ mod execute;
 mod planning;
 mod validation;
 
+// A model stream's continuation terminal judges its reply's records through
+// the same check (FIX 3416).
+pub(in crate::memory::witness) use self::planning::unread_assertion_in;
 use self::validation::*;
 
 /// Where a witness is asked to land. The session is the one parameter the two

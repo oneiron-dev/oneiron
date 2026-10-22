@@ -69,12 +69,14 @@ use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
 use crate::voice_host::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 
+mod assertions;
 mod compaction;
 mod hook_ask;
 mod recall;
 mod sitting;
 mod sources;
 
+pub(crate) use assertions::ReplyAssertionCollector;
 pub(crate) use compaction::{
     AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
 };
@@ -484,11 +486,13 @@ fn start_turn(
         .collect();
     // FIX 6935: the rows the call is read from, gathered as it is assembled.
     let mut sources = sources::TurnSources::of_agent(agent);
-    // OF-490: the answering agent is shown its own craft after its
-    // instructions, read on one snapshot; the reply's receipt keeps the
-    // exact pack once the reply is saved. A turn runs on no attempt. Only
-    // the notes the caller's own read admits are shown (SCAN C009), read
-    // through the handle its self-chat log reads through.
+    // OF-490: the answering agent is shown its own craft, read on one
+    // snapshot; the reply's receipt keeps the exact pack once the reply is
+    // saved. A turn runs on no attempt. Only the notes the caller's own read
+    // admits are shown (SCAN C009), read through the handle its self-chat
+    // log reads through. It joins the request once the history and the
+    // user's turn are in it (FIX 6676).
+    let lead = messages.len();
     let craft = crate::server::blocking(|| {
         let reader = match auth.principal_ref() {
             Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
@@ -500,13 +504,9 @@ fn start_turn(
             &agent,
             vault.now_recorded_at(),
         )
-    })
-    .map(|craft| {
-        crate::ai_host::resident_craft::join_craft(&mut messages, craft.message);
-        craft.entries
     });
-    if let Some(entries) = &craft {
-        sources.craft(entries);
+    if let Some(craft) = &craft {
+        sources.craft(&craft.entries);
     }
     // FIX 4465 D: a self agent on its live fork reads its log from the
     // retained ledger, as the caller reads it where it sits; every other
@@ -544,14 +544,32 @@ fn start_turn(
         }
     }
     messages.push(text_message(LlmMessageRole::User, request.text.clone()));
+    // FIX 6676: the craft goes where the session layout places it, the
+    // user's turn as typed staying the latest user message. The turn's
+    // context is the outgoing request's alone: the witness below keeps the
+    // user's own text, and the kept log never holds it.
+    let (craft, turn_context) = match craft {
+        Some(craft) => {
+            let at =
+                crate::ai_host::resident_craft::place_craft(&mut messages, lead, craft.message);
+            (Some(craft.entries), at)
+        }
+        None => (None, None),
+    };
     // Admitted through its role before anything is written: a vault route
     // this server cannot serve refuses here, with no call made.
     // FIX 6794: the board rides after the stable history, right before the
     // newest User (FIX 6676's layout); a role that does not admit it with
     // the board admits the turn as it was.
+    // The board goes in at the latest user message's place: with no craft,
+    // it opens the turn's context.
+    let board_at = messages
+        .iter()
+        .rposition(|message| message.role == LlmMessageRole::User);
     let board_rows = board.as_ref().map(|board| board.rows.clone());
     let (admitted, recalled, context) =
         recall::admit(&server.ai, &vault, &seat, auth, messages, board);
+    let turn_context = turn_context.or(board_at.filter(|_| recalled));
     // A board the call goes without is no row it read.
     if recalled {
         sources.add(board_rows.as_deref());
@@ -574,6 +592,17 @@ fn start_turn(
         ),
     })?;
     if self_chat.is_some() {
+        // The history before the turn's context is the prefix the next turn
+        // sends again, so its end is marked beside the request's own. Today's
+        // layout keeps today's marks.
+        let stable_prefix = oneiron::prompt::session_prompt_layout()
+            == oneiron::prompt::PromptLayout::StableHistoryThenTurnContext;
+        if let Some(history_end) = turn_context
+            .filter(|_| stable_prefix)
+            .and_then(|at| at.checked_sub(1))
+        {
+            mark_history_end(&mut admitted.request, history_end);
+        }
         compaction::mark_prefix(&mut admitted.request);
     }
     // FIX 6921: what the admitted board showed, frozen against the call it
@@ -743,6 +772,7 @@ fn start_turn(
                 .map(|chat| chat.breakpoint(WriteActor::new(actor, class), locality, recalled)),
             today: None,
             craft,
+            assertions: ReplyAssertionCollector::default(),
         },
         sources.rows(),
     )
@@ -774,6 +804,23 @@ fn start_turn(
         answering,
         credential,
     })
+}
+
+/// Marks the end of message `message` of a self turn's `request` as a
+/// cache boundary (FIX 6676): the end of its history, before the turn's
+/// context. A request that cannot carry the mark is sent without it.
+fn mark_history_end(request: &mut LlmRequest, message: usize) {
+    let Some(part) = request
+        .messages
+        .get(message)
+        .and_then(|held| held.content.len().checked_sub(1))
+    else {
+        return;
+    };
+    let boundary = oneiron::code_run::CacheBoundary::Message { message, part };
+    if oneiron::code_run::mark_cache_boundary(request, boundary).is_err() {
+        tracing::debug!("a self agent's chat history carries no cache boundary");
+    }
 }
 
 /// The logical verb's id the caller carried, if it carried one.
@@ -997,6 +1044,7 @@ fn streamed(started: Started, claim: Option<InvocationClaim>) -> Response {
                 message,
                 usage,
                 finish_reason,
+                ..
             } => Some(line(&ChatLine::Done {
                 text: message_text(&message),
                 usage,
@@ -1150,6 +1198,10 @@ pub(crate) struct Answer {
     /// for a call shown none, a turn that keeps no record, and a turn
     /// action, whose attempt's manifest names its craft.
     pub(crate) craft: Option<Vec<ManifestEntry>>,
+    /// The records this reply cited or created, as trusted host code notes
+    /// them (FIX 3416): a fresh collector per reply, Continue's and Retry's
+    /// too, never an earlier reply's.
+    pub(crate) assertions: ReplyAssertionCollector,
 }
 
 /// Where a reply is written.
@@ -1227,6 +1279,7 @@ fn begin_sourced_answer(
         breakpoint,
         today,
         craft,
+        assertions,
     } = answer;
     // The exact request the reply's craft rides in, read before it is sent.
     let craft = craft.and_then(|entries| {
@@ -1349,6 +1402,7 @@ fn begin_sourced_answer(
         mark,
         container,
         wakes,
+        assertions,
     };
     tokio::spawn(async move {
         let result = produce(producer).await;
@@ -1539,10 +1593,13 @@ impl TerminalSink for AssistantMessage {
         // finalizes it, a length cut or any other stop leaves it partial, and
         // a cancelled terminal keeps its text but is recorded as cancelled.
         // An answer commits only while the credential is live in its own
-        // write transaction.
+        // write transaction. The records the producer stamped on its
+        // terminal are judged and kept with it (FIX 3416).
         let credential = &self.credential;
+        let asserted = assertions::witness_assertions(&terminal.reply_assertions);
+        let finish_reason = terminal.finish_reason.clone();
         let receipt = memory
-            .finalize_model_stream_if(self.handle, terminal.finish_reason.clone(), |txn| {
+            .finalize_model_stream_if(self.handle, finish_reason, &asserted, |txn| {
                 credential.live_in(txn)
             })
             .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
@@ -1573,6 +1630,8 @@ struct Producer {
     container: Option<EntityId>,
     /// Committed TASKs, while the reply listens for an entry.
     wakes: EntryWakes,
+    /// The reply's host-side records, stamped on its terminal.
+    assertions: ReplyAssertionCollector,
 }
 
 /// Drives the model stream into the presence plane and the bus. The run
@@ -1596,6 +1655,7 @@ async fn produce(producer: Producer) -> Result<(), String> {
         mark,
         container,
         mut wakes,
+        assertions,
     } = producer;
     let memory = answer_memory(&vault, agent, session_key);
     let cancel = |reason: StreamCancelReason| {
@@ -1662,8 +1722,9 @@ async fn produce(producer: Producer) -> Result<(), String> {
         }
         if matches!(event, LlmStreamEvent::Done { .. }) {
             // The run settled the answer before it arrived: the provider
-            // spent it whether or not the answer is saved.
-            if let Err(error) = bus.publish(event) {
+            // spent it whether or not the answer is saved. It asserts the
+            // records this host gathered, never the ones it came with.
+            if let Err(error) = bus.publish(assertions.stamp(event)) {
                 if credential.live() {
                     cancel(StreamCancelReason::AgentAborted);
                 } else {

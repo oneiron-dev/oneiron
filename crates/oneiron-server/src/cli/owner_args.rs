@@ -107,6 +107,13 @@ pub struct MaintainArgs {
     #[arg(long)]
     pub reindex_text: bool,
 
+    /// Classify the corrupt CLAIM with this id (32 hex) by its audited
+    /// repair, its bytes unchanged and one signed repair event kept, so its
+    /// hard erase can finish; repeat for more. A record that is no corrupt
+    /// CLAIM is reported and left as it is.
+    #[arg(long, value_name = "ID")]
+    pub reclassify_corrupt_claim: Vec<String>,
+
     /// Queue a historical secret lift run and work it to its end: every
     /// record and authored row is read again by the write door's rules, each
     /// secret they place goes to custody with its handle left in place, and

@@ -25,7 +25,10 @@ use super::paths::{
     SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir,
     origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
+use super::projected_serve::{ProjectedExchange, select_projected_exchange};
 use super::push_admission::{ServeCaller, admit_push, stamp_admission};
+use super::read_projection::RepoGitBackend;
+use super::recipient_serve::RepoGitReadContext;
 use super::serve_cmd::{IncomingQuarantines, ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -174,6 +177,7 @@ pub fn serve_bounded_with_authority(
         wait_for_repository: false,
         push_wait: Some(bounds.repository_wait),
         caller: ServeCaller::InProcess,
+        read: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -211,6 +215,7 @@ pub fn serve_with_provenance(
         wait_for_repository: true,
         push_wait: None,
         caller: ServeCaller::InProcess,
+        read: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -236,6 +241,7 @@ pub fn serve_with_authority(
         wait_for_repository: true,
         push_wait: None,
         caller: ServeCaller::InProcess,
+        read: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -254,6 +260,9 @@ pub(super) struct ServeTerms<'a> {
     pub(super) wait_for_repository: bool,
     pub(super) push_wait: Option<Duration>,
     pub(super) caller: ServeCaller<'a>,
+    /// The read recipient the host proved (FIX 7608 2b-ii-B2); `None` on
+    /// every in-process and exact path, which serves as before.
+    pub(super) read: Option<&'a RepoGitReadContext>,
 }
 
 pub(super) fn serve_request(
@@ -273,6 +282,7 @@ pub(super) fn serve_request(
         wait_for_repository,
         push_wait,
         caller,
+        read,
     } = terms;
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
@@ -295,10 +305,22 @@ pub(super) fn serve_request(
     // Every receive-pack advertisement and RPC meets the push decision
     // before a hook, a child or a body byte exists (G1-PUSH).
     let push = admit_push(vault, request, repo_name, &repo_dir, caller)?;
+    // After that same decision, a masked recipient on a marked store is
+    // served its masked copy or received into its private ingress; every
+    // other exchange is today's (FIX 7608 2b-ii-B2). The canonical store
+    // keeps the coordinator; the ingress is where the push physically lands.
+    let projected = select_projected_exchange(vault, request, &repo_dir, &project_root, read)?;
+    let served_dir = projected
+        .as_ref()
+        .and_then(ProjectedExchange::ingress_root)
+        .map_or_else(|| repo_dir.clone(), Path::to_path_buf);
     let door_root = origin_door_root(vault)?;
     let list_paths = push.as_ref().is_some_and(GitPushStamp::is_checkout);
     let hooks = DoorHooksDir::materialize_listing(&door_root, scan, list_paths)?;
-    let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
+    let command = match &projected {
+        Some(projected) => projected.command(&project_root, hooks.path())?,
+        None => ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?,
+    };
     let coordinator = if request.is_receive_pack() {
         let common_dir = repo_common_dir(&repo_dir)?;
         match push_wait {
@@ -312,12 +334,20 @@ pub(super) fn serve_request(
         // a push and neither delays one.
         None
     };
+    // The ingress's own coordinator, after the canonical one, never before.
+    let ingress_coordinator = match (&coordinator, served_dir != repo_dir) {
+        (Some(_), true) => Some(lock_repository(&repo_common_dir(&served_dir)?)?),
+        _ => None,
+    };
     // The same coordinator guards epoch cutover. Stamp and persist only after
     // acquiring it, so an old accepted request cannot cross an epoch change.
     let mut admission = stamp_admission(vault, request, &repo_dir, seam, push)?;
     if let Some(stamp) = admission.as_mut() {
         stamp.origin_authority = authority.map(OriginAuthorityStamp::from_lease);
-        vault.record_receive_pack_admission(&repo_dir, stamp, seam)?;
+        if let Some(projected) = &projected {
+            projected.bind(vault, stamp)?;
+        }
+        vault.record_receive_pack_admission(&served_dir, stamp, seam)?;
     }
     // This also runs for advertisements and no-op retries. A crash after the
     // backend effect must not leave a ref hidden merely because no new hook runs.
@@ -326,9 +356,9 @@ pub(super) fn serve_request(
     // next request that finds it free: a ref still hidden is the safe side,
     // and a read never queues behind a write.
     if coordinator.is_some() || wait_for_repository {
-        vault.reconcile_receive_pack_operations(&repo_dir)?;
-    } else if let Some(_free) = try_lock_repository(&repo_common_dir(&repo_dir)?)? {
-        vault.reconcile_receive_pack_operations(&repo_dir)?;
+        vault.reconcile_receive_pack_operations(&served_dir)?;
+    } else if let Some(_free) = try_lock_repository(&repo_common_dir(&served_dir)?)? {
+        vault.reconcile_receive_pack_operations(&served_dir)?;
     }
     // No byte of the body is read before the admission above is checked and
     // recorded. A push body the backend would inflate is inflated here
@@ -357,7 +387,7 @@ pub(super) fn serve_request(
     // A publication this push may land on again gets its roots back while no
     // backend can move a ref yet, on the thread holding the coordinator.
     if coordinator.is_some() {
-        vault.repin_pushed_move_owners(&repo_dir, &mut commands.reader().map_err(Error::Io)?)?;
+        vault.repin_pushed_move_owners(&served_dir, &mut commands.reader().map_err(Error::Io)?)?;
     }
     let body = &mut commands.reader().map_err(Error::Io)?.chain(body);
     // Between the coordinator and the child, so on every way out the child
@@ -366,7 +396,7 @@ pub(super) fn serve_request(
     // refused before its backend runs made no quarantine, so it sweeps none.
     let mut quarantines = match coordinator {
         Some(_) => Some(IncomingQuarantines::note(
-            repo_common_dir(&repo_dir)?.join("objects"),
+            repo_common_dir(&served_dir)?.join("objects"),
         )),
         None => None,
     };
@@ -381,10 +411,14 @@ pub(super) fn serve_request(
                 scan,
                 spill_floor: spill_floor.as_ref(),
             },
-            repo_dir: &repo_dir,
+            repo_dir: &served_dir,
             hooks: &hooks,
             idle,
             wait_for_repository,
+            backend: projected.as_ref().and_then(ProjectedExchange::backend),
+            ingress: projected
+                .as_ref()
+                .is_some_and(|projected| projected.ingress_root().is_some()),
         },
         &mut child,
         body,
@@ -420,10 +454,11 @@ pub(super) fn serve_request(
     {
         return Err(serve_failed("stopped before the landing"));
     }
-    let report = finish_serve(vault, request, &repo_dir, admission, exchange);
+    let report = finish_serve(vault, request, &served_dir, admission, exchange);
     // Held to here on purpose: the ref mutation, the quarantine migration and
     // the journaled advance are one window, and it closes here.
     drop(quarantines);
+    drop(ingress_coordinator);
     drop(coordinator);
     report
 }
@@ -486,6 +521,12 @@ struct ExchangeSetup<'a> {
     hooks: &'a DoorHooksDir,
     idle: Duration,
     wait_for_repository: bool,
+    /// The masked copy's frozen read backend, whose gate the advertisement
+    /// passes instead of the canonical one (FIX 7608 2b-ii-B2).
+    backend: Option<&'a RepoGitBackend>,
+    /// Whether the exchange runs in a masked copy's private ingress, whose
+    /// own refs its advertisement names as they stand.
+    ingress: bool,
 }
 
 fn run_exchange(
@@ -502,6 +543,8 @@ fn run_exchange(
         hooks,
         idle,
         wait_for_repository,
+        backend,
+        ingress,
     } = setup;
     let stdin = child.take_stdin()?;
     let stdout = child.take_stdout()?;
@@ -539,7 +582,10 @@ fn run_exchange(
         // The ref list is the one response body this module rewrites, and it
         // is rewritten in flight: the gate holds one pkt-line, never the
         // advertisement.
-        let streamed = if request.is_ref_advertisement() {
+        let streamed = if let (true, Some(backend)) = (request.is_ref_advertisement(), backend) {
+            let mut gate = backend.advertisement_gate(vault, clock, &mut sink);
+            stream_response(stdout, &mut gate)
+        } else if request.is_ref_advertisement() && !ingress {
             let mut gate =
                 AdvertisedRefGate::new(vault, repo_dir, wait_for_repository, clock, &mut sink);
             stream_response(stdout, &mut gate)

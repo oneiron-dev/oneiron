@@ -237,6 +237,27 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         }
     }
 
+    /// [`Self::admit_in_line`] whose wait ends at `wait` rather than at the
+    /// line's own (FIX 9110): the same line, order and permit as
+    /// [`Self::admit_blocking_for`], awaited instead of holding a thread. The
+    /// line's own wait is left as it is for every other caller.
+    pub fn admit_in_line_for(
+        &self,
+        key: K,
+        wait: Duration,
+    ) -> impl Future<Output = Result<LinePermit, WaitTimedOut>> + Send + 'static {
+        let entry = self.enter(Some(key));
+        async move {
+            let mut place = match entry {
+                Entry::Admitted(permit) => return Ok(permit),
+                Entry::Queued(place) => place,
+            };
+            let waiter = Arc::clone(&place.waiter);
+            let _ = tokio::time::timeout(wait, waiter.granted()).await;
+            place.settle().ok_or(WaitTimedOut)
+        }
+    }
+
     /// [`Self::admit`] on this thread, for work that runs on its own thread
     /// rather than on a runtime.
     pub fn admit_blocking(&self, key: K) -> Result<LinePermit, WaitTimedOut> {
@@ -253,6 +274,15 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
     /// A permit for the host's own work, given only when no caller waits.
     pub fn admit_background_blocking(&self) -> Result<LinePermit, WaitTimedOut> {
         self.wait_blocking(None, None)
+    }
+
+    /// [`Self::admit_background_blocking`] whose wait ends at `wait`: the
+    /// host's own work with a deadline of its own, still served last.
+    pub fn admit_background_blocking_for(
+        &self,
+        wait: Duration,
+    ) -> Result<LinePermit, WaitTimedOut> {
+        self.wait_blocking(None, Some(wait))
     }
 
     /// A free permit for the host's own work, or `None` with nothing put in

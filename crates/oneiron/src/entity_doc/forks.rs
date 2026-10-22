@@ -535,9 +535,7 @@ pub(super) fn retain_fork(
     if bundle.settled || !bundle.author.is(req.actor.entity_ref()) {
         return Err(invalid("proposal is closed or belongs to another actor"));
     }
-    if bundle.forks.len() >= 256 {
-        return Err(invalid("proposal fork set exceeds bound"));
-    }
+    // No count bounds a bundle (Rule 5, FIX 8822): the next fork joins it.
     let record = ForkRecord {
         fork: id.to_hex(),
         proposal: proposal.to_hex(),

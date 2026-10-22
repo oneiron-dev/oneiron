@@ -7,7 +7,7 @@ use oneiron::task_verb::sdk::{
     OrgAdminConfigured, OrgAdminPowers, OrgAdminPowersRequest,
 };
 
-use super::host_doors::{Listed, MaybeListed, credential_listing, refused};
+use super::host_doors::support::{Listed, MaybeListed, credential_listing, refused};
 use super::legal_hold_doors::as_owner_naming;
 use super::shared_act_doors::{as_person_naming, person};
 use crate::auth::{CoreAuth, CoreScope};
