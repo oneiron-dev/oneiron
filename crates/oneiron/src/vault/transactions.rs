@@ -543,6 +543,8 @@ impl Vault {
             self.store.notify_proactivity_changes();
         }
         self.store.notify_task_updates(task_ids);
+        // The owner's waiting shed looks again (FIX 10157).
+        self.wake_owner_shed();
         // FIX 1140: a TASK this write settled wakes its peer-result waiters
         // now that it is durable. A wake that does not go out is left to the
         // wake pass and never fails this write.

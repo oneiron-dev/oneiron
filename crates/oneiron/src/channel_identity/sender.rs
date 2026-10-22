@@ -1,3 +1,7 @@
+//! Connector sender identity resolution.
+//! Entry: `resolve_channel_identity_ref_for_connector`.
+//! Defines its own items.
+
 use super::decode_channel_identity_body;
 use super::facts::ChannelIdentityFacts;
 use super::keys::ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND;

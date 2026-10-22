@@ -6,6 +6,7 @@
 //! so does a guest view still inside its scope.
 
 use super::*;
+use crate::federation::record_scope::note_world;
 
 impl ScopedRead<'_> {
     /// Whether the stored row `raw` of `id` stands inside the current
@@ -19,15 +20,12 @@ impl ScopedRead<'_> {
         let Some(proof) = self.actor_key.proof.as_ref() else {
             return true;
         };
+        // A NOTE carries every world it is in; the guest's current scope
+        // holds it at one of them (FIX-LIST 9433).
         self.vault
             .guest_row_admitted_in_txn(txn, proof.claims(), || match self.session_view {
-                Some(view) => crate::federation::record_scope::scope_for_blob(view, txn, *id, raw),
-                None => crate::federation::record_scope::scope_for_blob(
-                    &self.vault.store,
-                    txn,
-                    *id,
-                    raw,
-                ),
+                Some(view) => note_world::blob_scope_every_world(view, txn, *id, raw),
+                None => note_world::blob_scope_every_world(&self.vault.store, txn, *id, raw),
             })
     }
 }

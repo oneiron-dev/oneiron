@@ -8,11 +8,18 @@ use crate::sync::ingest::{
     EntityStep, IngestCtx, authority_parent_order, ingest_entity_in_txn, is_authority_row,
 };
 use crate::{EntityId, Vault};
+use heed::RwTxn;
 use loro::LoroDoc;
 
 /// All writes here are speculative LMDB pages. The transaction is ALWAYS
 /// aborted: a bad later entity/edge cannot publish an earlier valid record.
 /// The real forward pass repeats the same admission before committing.
+///
+/// The writer it takes stays the parent of that transaction, for the
+/// preflight's legal-hold refusals alone: once the speculative transaction
+/// and the materializer lock ended, they are logged in it and committed
+/// before this returns, and nothing else of the attempt is (FIX 2433). With
+/// none, the parent aborts too.
 pub(crate) fn preflight_canonical_recovery(
     vault: &Vault,
     materializer: &Materializer,
@@ -30,10 +37,28 @@ pub(crate) fn preflight_canonical_recovery(
     {
         return Err(ArtifactError::InvalidRecoveryArtifact("analyzer manifest mismatch").into());
     }
-    let _guard = materializer.lock();
-    let mut txn = vault.store.env.write_txn()?;
+    let guard = materializer.lock();
+    let mut parent = vault.store.env.write_txn()?;
+    let refusals = vault.store.begin_refusal_attempt();
+    let preflight = match vault.store.env.nested_write_txn(&mut parent) {
+        Ok(mut txn) => preflight_in_txn(vault, materializer, snapshot, doc, &mut txn),
+        Err(err) => Err(err.into()),
+    };
+    drop(guard);
+    refusals.finish().settle_in(parent);
+    preflight
+}
+
+/// The preflight's speculative work in `txn`, which its caller drops.
+fn preflight_in_txn(
+    vault: &Vault,
+    materializer: &Materializer,
+    snapshot: &CanonicalSnapshot,
+    doc: &LoroDoc,
+    txn: &mut RwTxn<'_>,
+) -> Result<()> {
     crate::recovery::validate_window_documents(doc)?;
-    snapshot.preflight_note_recovery(vault, &txn)?;
+    snapshot.preflight_note_recovery(vault, txn)?;
     let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     let ingest = IngestCtx::new(
         vault,
@@ -64,21 +89,21 @@ pub(crate) fn preflight_canonical_recovery(
         let id = EntityId::from_bytes(entity.id)?;
         if let Some((blob, tombstone)) = crate::recovery::retained_soft_shell(doc, &tombstones, &id)
         {
-            crate::batch::restore_recovery_shell_in_txn(vault, &mut txn, &id, &blob, &tombstone)?;
+            crate::batch::restore_recovery_shell_in_txn(vault, txn, &id, &blob, &tombstone)?;
         } else if let EntityStep::Quarantine(refusal) =
-            ingest_entity_in_txn(&ingest, &mut txn, &id.to_hex(), Some(&entity.blob))?
+            ingest_entity_in_txn(&ingest, txn, &id.to_hex(), Some(&entity.blob))?
         {
             return Err(refusal.err);
         }
         // A file-plane ASSET the ingest skipped as the same body keeps its row (FIX 5393),
         // and a pad row rests as its reference (KS-5).
-        let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?;
+        let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?;
         let landed = match stored {
             Some(stored) if stored == entity.blob => true,
             Some(stored) => {
                 crate::sync::asset_body::file_echo_equal(
                     &vault.store,
-                    &txn,
+                    txn,
                     &id,
                     &stored,
                     &entity.blob,
@@ -113,7 +138,7 @@ pub(crate) fn preflight_canonical_recovery(
             )?;
             if trusted_soft
                 && !matches!(
-                    crate::batch::stored_entity_type(&vault.store, &txn, &target)?,
+                    crate::batch::stored_entity_type(&vault.store, txn, &target)?,
                     Some(
                         crate::registry::ENTITY_TYPE_PERSON
                             | crate::registry::ENTITY_TYPE_AGENT_DEF
@@ -128,7 +153,7 @@ pub(crate) fn preflight_canonical_recovery(
             if !trusted_soft
                 && !crate::conversation_dag::addressed_to_echo_in_txn(
                     &vault.store,
-                    &txn,
+                    txn,
                     &source,
                     &target,
                     fields,
@@ -140,29 +165,29 @@ pub(crate) fn preflight_canonical_recovery(
             }
         } else if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
             let mandated_at =
-                vault.identity_topology_mandated_shell_edge_in_txn(&txn, &source, kind, &target)?;
+                vault.identity_topology_mandated_shell_edge_in_txn(txn, &source, kind, &target)?;
             if !mandated_at.is_some_and(|at| {
                 fields.created_at == at && kind.default_weight() == Some(fields.weight)
             }) {
                 return Err(reserved);
             }
         }
-        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, &txn, &source)?
-            || !crate::ports::EntityStoreRead::port_entity_present(&vault.store, &txn, &target)?
+        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &source)?
+            || !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &target)?
         {
             return Err(ArtifactError::InvalidRecoveryArtifact(
                 "edge endpoint missing at recovery",
             )
             .into());
         }
-        crate::batch::validate_replayed_facet_of_edge(&vault.store, &txn, source, kind, target)?;
+        crate::batch::validate_replayed_facet_of_edge(&vault.store, txn, source, kind, target)?;
         // A stored pair, or the canonical artifact's own link onto an erased
         // shell, is restored as it is held; a new pair its MESSAGEs refute
         // is left out, as the forward pass quarantines it, and one still
         // missing an axis waits for the forward pass.
         if kind == crate::edge::EdgeKind::Regenerates
-            && !crate::edge::regeneration_stored(&vault.store, &txn, &source, &target)?
-            && crate::edge::regeneration_pair(&vault.store, &txn, &source, &target)?
+            && !crate::edge::regeneration_stored(&vault.store, txn, &source, &target)?
+            && crate::edge::regeneration_pair(&vault.store, txn, &source, &target)?
                 == crate::edge::Regeneration::Refuses
         {
             continue;
@@ -175,15 +200,15 @@ pub(crate) fn preflight_canonical_recovery(
                 &target,
                 EdgeValueFields::from_decoded(fields),
             )
-            .apply(&mut txn)?;
+            .apply(txn)?;
     }
     for tombstone in &snapshot.tombstones {
         let entity = EntityId::from_bytes(tombstone.id)?;
-        vault.apply_replayed_tombstone_in_txn(&mut txn, &entity, &tombstone.value)?;
+        vault.apply_replayed_tombstone_in_txn(txn, &entity, &tombstone.value)?;
     }
-    crate::recovery::materialize_recovery_notes_in_txn(vault, &mut txn, doc, snapshot)?;
-    // Drop aborts even on success; in particular lease/quota debits and all
-    // quarantine rows remain speculative and are never committed here.
-    drop(txn);
+    crate::recovery::materialize_recovery_notes_in_txn(vault, txn, doc, snapshot)?;
+    // The caller drops `txn`, aborting it even on success; in particular
+    // lease/quota debits and all quarantine rows remain speculative and are
+    // never committed here.
     Ok(())
 }

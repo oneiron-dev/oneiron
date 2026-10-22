@@ -5,13 +5,9 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::memory::Memory;
 use crate::outbound_intent_ledger::IntentLedgerError;
 
-use super::{
-    ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
-    PENDING_CALLS, PendingConnectorCall, now_ms,
-};
+use super::{ConnectorCallHost, ConnectorCallOutcome, PENDING_CALLS, PendingConnectorCall, now_ms};
 
 impl PendingConnectorCall {
     /// Lists `rows` among the rows the call's passes picked (FIX 5455),
@@ -29,20 +25,6 @@ impl PendingConnectorCall {
 }
 
 impl Vault {
-    /// [`Self::call_connector`], beside the rows its passes picked
-    /// (FIX 5455): the catalog route key, each standing grant read, the
-    /// governing key, each slate read and the custody record a send
-    /// presented. Ids only; `None` when they are not known.
-    pub fn call_connector_listing<H: ConnectorCallHost>(
-        &self,
-        memory: &Memory<'_>,
-        request: ConnectorCallRequest,
-        invocation: Option<ConnectorCallInvocation>,
-        host: &mut H,
-    ) -> Result<(ConnectorCallOutcome, Option<Vec<EntityId>>), IntentLedgerError> {
-        self.start_connector_call(memory, request, invocation, None, None, host)
-    }
-
     /// [`Self::resume_connector_call`], beside the rows the call's passes
     /// picked, kept on its row through every resume (FIX 5455): what a
     /// settler delivers beside the wait reply.

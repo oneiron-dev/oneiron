@@ -282,26 +282,7 @@ impl Vault {
         };
         // Model work never holds the LMDB writer slot. Every quote is checked
         // against the corresponding unmodified source unit before admission.
-        let mut prepared = Vec::new();
-        for segment in docs_semantic_segments(&text) {
-            for claim in extractor.extract(&segment)? {
-                if claim.quote.trim().is_empty() || !segment.text.contains(&claim.quote) {
-                    return Err(invalid("docs deep claim lacks a source quote"));
-                }
-                if claim.predicate == crate::claim::KEY_VALUE_PREDICATE {
-                    return Err(invalid("keyed claim requires its owned write door"));
-                }
-                if prepared.len() == MAX_DEEP_CLAIMS {
-                    return Err(invalid("docs deep claim ceiling exceeded"));
-                }
-                prepared.push((
-                    segment.block.clone(),
-                    segment.text.clone(),
-                    source_hash(&segment.text),
-                    claim,
-                ));
-            }
-        }
+        let prepared = prepare_deep_claims(&text, extractor)?;
         let mut txn = self.store.env.write_txn()?;
         let owner_actor = owner.revalidate_in_txn(self, &txn)?;
         if let Some((reader, _)) = read
@@ -457,21 +438,29 @@ impl Vault {
         if any_admitted {
             admitted.apply(&mut txn)?;
         }
-        for claim in &claims {
-            crate::ports::record_derived_edge_in_txn(
-                &self.store,
-                &mut txn,
-                &claim.id,
-                &claim.chunk,
-            )?;
-            // The dependency index is one hop, not recursive. Bind the root
-            // asset too, so deleting it invalidates the derived claim directly.
-            crate::ports::record_derived_edge_in_txn(&self.store, &mut txn, &claim.id, &asset)?;
-            receipt.claim_refs.push(claim.id.to_hex());
-        }
-        DEEP_RECEIPTS.put(&self.store, &mut txn, &HexId(asset), &receipt)?;
+        self.persist_deep_claim_dependencies(&mut txn, &claims, asset, &mut receipt)?;
         txn.commit()?;
         Ok(receipt)
+    }
+
+    /// Binds each admitted claim to its chunk and its root asset in the
+    /// dependency index, names it on the receipt, and stores the receipt.
+    fn persist_deep_claim_dependencies(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        claims: &[PreparedDeepClaim],
+        asset: EntityId,
+        receipt: &mut DocsDeepReceipt,
+    ) -> Result<()> {
+        for claim in claims {
+            crate::ports::record_derived_edge_in_txn(&self.store, txn, &claim.id, &claim.chunk)?;
+            // The dependency index is one hop, not recursive. Bind the root
+            // asset too, so deleting it invalidates the derived claim directly.
+            crate::ports::record_derived_edge_in_txn(&self.store, txn, &claim.id, &asset)?;
+            receipt.claim_refs.push(claim.id.to_hex());
+        }
+        DEEP_RECEIPTS.put(&self.store, txn, &HexId(asset), receipt)?;
+        Ok(())
     }
 
     fn deep_chunk_in(
@@ -615,4 +604,33 @@ impl Vault {
             project_id,
         ))
     }
+}
+
+/// Every claim the extractor finds in `text`, each checked against its
+/// unmodified source unit, with its block, source text and source hash.
+fn prepare_deep_claims(
+    text: &str,
+    extractor: &dyn DocsDeepExtractor,
+) -> Result<Vec<(String, String, String, DocsDeepClaim)>> {
+    let mut prepared = Vec::new();
+    for segment in docs_semantic_segments(text) {
+        for claim in extractor.extract(&segment)? {
+            if claim.quote.trim().is_empty() || !segment.text.contains(&claim.quote) {
+                return Err(invalid("docs deep claim lacks a source quote"));
+            }
+            if claim.predicate == crate::claim::KEY_VALUE_PREDICATE {
+                return Err(invalid("keyed claim requires its owned write door"));
+            }
+            if prepared.len() == MAX_DEEP_CLAIMS {
+                return Err(invalid("docs deep claim ceiling exceeded"));
+            }
+            prepared.push((
+                segment.block.clone(),
+                segment.text.clone(),
+                source_hash(&segment.text),
+                claim,
+            ));
+        }
+    }
+    Ok(prepared)
 }

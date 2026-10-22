@@ -1,3 +1,7 @@
+//! Delivery-window resolution at the outbound dispatch door.
+//! Entry: `outbound_delivery_window_resolution_at_door`.
+//! Defines its own items.
+
 use super::OutboundDeliveryWindowDecision;
 use super::capability::{OutboundVerbContract, normalize_key};
 use super::dispatch_types::OutboundDispatchRequest;

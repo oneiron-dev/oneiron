@@ -24,6 +24,13 @@ use crate::{
     WriteProvenance,
 };
 
+mod author;
+mod bindings;
+
+pub use self::author::{FOREIGN_SKILL_PUBLISHER, HookAuthor};
+pub use self::bindings::PackHookBinding;
+pub(crate) use self::bindings::is_hook_binding;
+
 /// The binding's predicate: the same row kind a pack's `wakes` write.
 const PREDICATE: &str = "agent.connector_subscription";
 /// A hook binding's payload version; version 1 is a connector-event
@@ -471,141 +478,6 @@ pub(super) fn parse_source_hooks(
     Ok(hooks)
 }
 
-/// A hook's binding: the claim payload under the subscription predicate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PackHookBinding {
-    /// [`HOOK_BINDING_VERSION`].
-    pub version: u8,
-    /// The CODE entity the binding names; the claim's subject.
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub code: EntityId,
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub owner: EntityId,
-    /// The exact pack source the body came from.
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub source: EntityId,
-    pub pack: String,
-    pub hook: String,
-    pub hook_version: String,
-    /// BLAKE3 of `body.js`, lowercase hex.
-    pub body_hash: String,
-    pub selector: HookSelector,
-    /// Row state, like `AgentDefinition.enabled`; a rebind never flips it.
-    pub enabled: bool,
-    /// Whose authority the hook's outcomes run under; `owner` stays the one
-    /// who consented to the binding.
-    pub author: HookAuthor,
-}
-
-/// The foreign-actor kind a hub pack's publisher is (ARCH-0072).
-pub const FOREIGN_SKILL_PUBLISHER: &str = "skill_publisher";
-
-/// Who a hook runs as (ARCH-0080 §6, §9): the owner who bound it, or a hub
-/// pack's publisher as a foreign actor. The foreign fields name ARCH-0072's
-/// foreign-actor admission: the actor's kind, its identity record, the hub
-/// it offers from and the one Grant that admits it, plus the vault-resident
-/// actor its outcomes stamp. Hub trust never chains to it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum HookAuthor {
-    Owner,
-    ForeignActor {
-        actor_kind: String,
-        identity: String,
-        #[serde(with = "crate::serialize::entity_ref")]
-        #[schemars(with = "String")]
-        hub: EntityId,
-        /// The digest of the publisher's standing Grant.
-        grant: String,
-        #[serde(with = "crate::serialize::entity_ref")]
-        #[schemars(with = "String")]
-        actor: EntityId,
-    },
-}
-
-impl PackHookBinding {
-    /// The binding `hook` of `source` gets, with its id: the CODE entity,
-    /// the owner who consents and the author its outcomes run as.
-    pub(crate) fn for_hook(
-        pack: &str,
-        source: EntityId,
-        owner: EntityId,
-        author: HookAuthor,
-        hook: &PackHook,
-        enabled: bool,
-    ) -> Result<(EntityId, Self)> {
-        let material: [&[u8]; 3] = [pack.as_bytes(), hook.name.as_bytes(), &hook.body_hash];
-        let code =
-            crate::codebase::entity_id_from_hash_material(b"oneiron.pack-hook.v1", &material)?;
-        let id = crate::codebase::entity_id_from_hash_material(
-            b"oneiron.pack-hook-binding.v1",
-            &material,
-        )?;
-        Ok((
-            id,
-            Self {
-                version: HOOK_BINDING_VERSION,
-                code,
-                owner,
-                source,
-                pack: pack.to_owned(),
-                hook: hook.name.clone(),
-                hook_version: hook.version.clone(),
-                body_hash: blake3::Hash::from_bytes(hook.body_hash)
-                    .to_hex()
-                    .to_string(),
-                selector: hook.selector.clone(),
-                enabled,
-                author,
-            },
-        ))
-    }
-
-    /// The actor the hook's outcomes run as.
-    #[must_use]
-    pub fn author_id(&self) -> EntityId {
-        match &self.author {
-            HookAuthor::Owner => self.owner,
-            HookAuthor::ForeignActor { actor, .. } => *actor,
-        }
-    }
-
-    /// That actor's class: the owner is a person; a publisher acts as an
-    /// agent, at its own Grant.
-    #[must_use]
-    pub const fn author_class(&self) -> HookActorClass {
-        match self.author {
-            HookAuthor::Owner => HookActorClass::Human,
-            HookAuthor::ForeignActor { .. } => HookActorClass::Agent,
-        }
-    }
-}
-
-/// The vault-resident actor a hub's publisher runs hooks as.
-fn foreign_publisher_actor(hub: EntityId, identity: &str) -> Result<EntityId> {
-    Ok(EntityId::derive(
-        b"oneiron.pack-hook.foreign-publisher.v1",
-        &[hub.as_bytes(), identity.as_bytes()],
-    )?)
-}
-
-/// Whether a subscription-predicate claim carries a hook binding rather than
-/// a connector-event subscription.
-pub(crate) fn is_hook_binding(body: &crate::ClaimBody) -> bool {
-    #[derive(Deserialize)]
-    struct Version {
-        version: u8,
-    }
-    body.value
-        .as_str()
-        .and_then(|text| serde_json::from_str::<Version>(text).ok())
-        .is_some_and(|row| row.version == HOOK_BINDING_VERSION)
-}
-
 /// Every live, approved hook binding, enabled or not. A claim whose payload
 /// is no binding of its CODE entity is skipped with a warning, so one bad row
 /// fails no call; a storage error still fails.
@@ -728,64 +600,6 @@ fn owner_envelope(
 }
 
 impl Vault {
-    /// Every live hook binding, enabled or not. The hook runner reads these.
-    /// A hub hook whose publisher's Grant was revoked is not live.
-    pub fn pack_hook_bindings(&self) -> Result<Vec<(EntityId, PackHookBinding)>> {
-        let txn = self.store.env.read_txn()?;
-        self.pack_hook_bindings_in_txn(&txn)
-    }
-
-    /// Live bindings in the caller's snapshot, including publisher Grant checks.
-    pub(crate) fn pack_hook_bindings_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<Vec<(EntityId, PackHookBinding)>> {
-        let mut live = Vec::new();
-        for (id, row) in bindings_in_txn(&self.store, txn)? {
-            if let HookAuthor::ForeignActor { grant, .. } = &row.author
-                && !crate::consent::standing_grant_is_active_in_txn(&self.store, txn, grant)?
-            {
-                continue;
-            }
-            live.push((id, row));
-        }
-        Ok(live)
-    }
-
-    /// Who the hooks `receipt` installed run as: a pack fetched from a
-    /// configured hub runs as its publisher, a foreign actor (ARCH-0080 §9);
-    /// the owner's own pack runs as the owner.
-    pub(crate) fn hook_author_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        receipt: &super::PackInstallReceipt,
-    ) -> Result<HookAuthor> {
-        let hub = EntityId::from_hex(&receipt.hub_id)?;
-        let configured =
-            match crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &hub)? {
-                Some(raw) => {
-                    EntityMetadataHeader::parse(&raw)
-                        .ok_or(Error::CorruptedIndex("entity header"))?
-                        .entity_type
-                        == crate::registry::ENTITY_TYPE_SKILL_HUB
-                }
-                None => false,
-            };
-        if !configured {
-            return Ok(HookAuthor::Owner);
-        }
-        let identity = receipt.publisher.clone();
-        Ok(HookAuthor::ForeignActor {
-            actor_kind: FOREIGN_SKILL_PUBLISHER.to_owned(),
-            grant: crate::skill_hub::publisher::skill_publisher_grant(&identity, hub)?
-                .digest()
-                .to_hex(),
-            actor: foreign_publisher_actor(hub, &identity)?,
-            identity,
-            hub,
-        })
-    }
-
     /// ARCH-0080 §9's update rule, once `receipt` installed `source` over a
     /// pack whose hooks are bound: a same-capability update rebinds them,
     /// each hook keeping its owner's dial; a wider one leaves them on the old
@@ -805,71 +619,6 @@ impl Vault {
         if bound && receipt.permissions.widening_hooks.is_empty() {
             self.bind_pack_hooks_in_txn(txn, owner, source_id, source)?;
         }
-        Ok(())
-    }
-
-    /// The body a binding names, read from its exact pack source and checked
-    /// against the binding's hash.
-    pub fn pack_hook_body(&self, binding: &PackHookBinding) -> Result<Vec<u8>> {
-        let source = self
-            .get_pack_source(&binding.source)?
-            .ok_or_else(|| invalid("pack source missing"))?;
-        let path = format!("{HOOK_DIR}{}/{HOOK_BODY}", binding.hook);
-        let body = source
-            .files()
-            .iter()
-            .find(|file| file.path == path)
-            .ok_or_else(|| invalid("hook body missing"))?;
-        if blake3::hash(&body.content).to_hex().as_str() != binding.body_hash {
-            return Err(invalid("hook body does not match its binding"));
-        }
-        Ok(body.content.clone())
-    }
-
-    /// Owner consent binds an installed pack's hooks. A hub install lands
-    /// the bytes; content never installs a hook by itself (ARCH-0080 §8).
-    pub fn bind_pack_hooks(&self, owner: &AuthenticatedOwner, pack: &str) -> Result<Vec<EntityId>> {
-        let bound = self.with_write_txn_grouped(|txn| {
-            let receipt = self
-                .installed_pack_in_txn(txn, pack)?
-                .ok_or_else(|| invalid("pack is not installed"))?;
-            let source_id = EntityId::from_hex(&receipt.source_id)?;
-            let source = self
-                .pack_source_in_txn(txn, &source_id)?
-                .ok_or_else(|| invalid("pack source missing"))?;
-            self.bind_pack_hooks_in_txn(txn, owner, source_id, &source)
-        })?;
-        self.verb_hook_bindings_changed();
-        Ok(bound)
-    }
-
-    /// The owner's dial on one binding. The CODE entity stays.
-    pub fn set_pack_hook_enabled(
-        &self,
-        owner: &AuthenticatedOwner,
-        binding: EntityId,
-        enabled: bool,
-    ) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            let owner_id = owner.revalidate_in_txn(self, txn)?;
-            let (id, mut row) = bindings_in_txn(&self.store, txn)?
-                .into_iter()
-                .find(|(id, _)| *id == binding)
-                .ok_or(Error::EntityNotFound)?;
-            row.enabled = enabled;
-            let envelope = owner_envelope(owner, owner_id, &row.pack, &row.source)?;
-            let at = crate::unix_seconds_now();
-            self.batch_in()
-                .claim_candidate(
-                    &id,
-                    binding_candidate(&row)?,
-                    &envelope,
-                    TimeRange { start: at, end: at },
-                    at,
-                )
-                .apply(txn)
-        })?;
-        self.verb_hook_bindings_changed();
         Ok(())
     }
 

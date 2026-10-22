@@ -32,6 +32,7 @@
 pub(crate) mod asset_body;
 pub mod bridge;
 pub mod carrier;
+pub(crate) mod carrier_holds;
 pub(crate) mod carrier_parts;
 pub(crate) mod checkpoint_payload;
 pub mod chunks;

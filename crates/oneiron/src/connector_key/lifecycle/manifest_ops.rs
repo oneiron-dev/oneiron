@@ -133,16 +133,7 @@ impl Vault {
         suite: &dyn ConnectorManifestQualifier,
         at: u64,
     ) -> Result<Option<ConnectorManifestDrift>> {
-        manifest.validate_snapshot()?;
-        validate_protocol_revision(revision)?;
-        let manifest_hash = manifest.hash()?;
-        if serde_json::to_vec(&manifest)
-            .map_err(|_| invalid_body("manifest serialization failed"))?
-            .len()
-            > super::super::record::MAX_CONNECTOR_MANIFEST_BYTES
-        {
-            return Err(invalid_body("resolved manifest exceeds aggregate bound"));
-        }
+        let manifest_hash = validate_staged_manifest(&manifest, revision)?;
         let mut txn = self.store.env.write_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -310,10 +301,7 @@ impl Vault {
         self.sync_derived_keys_in_txn(&mut txn, &staged, at)?;
         txn.commit()?;
 
-        let report_hash = suite.qualify(&manifest, revision)?;
-        if !valid_report_hash(&report_hash) {
-            return Err(invalid_body("connector qualification report hash missing"));
-        }
+        let report_hash = qualify_staged_manifest(suite, &manifest, revision)?;
         let mut txn = self.store.env.write_txn()?;
         let mut record =
             read_connector_key_in_txn(&self.store, &txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -457,6 +445,39 @@ impl Vault {
             || super::super::connector_tool_setting_in_txn(&self.store, &txn, id, &record, tool)?
                 >= crate::connector_key::SlateDisposition::AlwaysAsk)
     }
+}
+
+/// A staged manifest's snapshot, revision and aggregate size checks, in that
+/// order. Returns its hash.
+fn validate_staged_manifest(
+    manifest: &ResolvedConnectorManifest,
+    revision: &str,
+) -> Result<[u8; 32]> {
+    manifest.validate_snapshot()?;
+    validate_protocol_revision(revision)?;
+    let manifest_hash = manifest.hash()?;
+    if serde_json::to_vec(manifest)
+        .map_err(|_| invalid_body("manifest serialization failed"))?
+        .len()
+        > super::super::record::MAX_CONNECTOR_MANIFEST_BYTES
+    {
+        return Err(invalid_body("resolved manifest exceeds aggregate bound"));
+    }
+    Ok(manifest_hash)
+}
+
+/// The qualification suite's run over the staged candidate, outside any
+/// writer. Returns its report hash.
+fn qualify_staged_manifest(
+    suite: &dyn ConnectorManifestQualifier,
+    manifest: &ResolvedConnectorManifest,
+    revision: &str,
+) -> Result<String> {
+    let report_hash = suite.qualify(manifest, revision)?;
+    if !valid_report_hash(&report_hash) {
+        return Err(invalid_body("connector qualification report hash missing"));
+    }
+    Ok(report_hash)
 }
 
 fn catalog_revision_change() -> Error {

@@ -76,6 +76,11 @@ pub(crate) async fn start_desktop_workers(
     // Plain and embedded serve launch `[models.workers]`' managed workers; a
     // managed per-vault process never reaches here (FIX 8315).
     crate::models::permit_worker_launch();
+    // `--no-hooks` turns verb hooks off before any worker starts, so a queued
+    // Continue or Retry taken up below runs none (FIX 9480).
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
+    }
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
     let sync_server = Arc::new(sync_server);
@@ -246,9 +251,6 @@ pub(crate) async fn start_desktop_workers(
             )
             .await,
         );
-    }
-    if !config.hooks {
-        sync_server.vault().suppress_verb_hooks();
     }
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());

@@ -323,8 +323,8 @@ fn owner_attestable(surface: Surface, method: &Method, path: &str) -> bool {
 /// (WILL-PLAN L14 row 01): `GET /api/search/vector`, `/api/search/text`,
 /// `/api/entity/{id}`, `/api/edges/{id}`, `/api/core/discover`,
 /// `/api/booking/{page_token}/agent-instructions`, `/v1/llm/defaults`,
-/// `/v1/ai/waves/{attempt}` and `/v1/ai/video/{job}`; `POST
-/// /v1/core/pairing/links`, `/v1/core/slips/revoke`,
+/// `/v1/ai/waves/{attempt}` and `/v1/ai/video/{job}`, each with its HEAD
+/// (FIX 9496); `POST /v1/core/pairing/links`, `/v1/core/slips/revoke`,
 /// `/v1/core/org-admin/{org}/policy`, the four
 /// `/api/booking/{page_token}/{availability|book|reschedule|cancel}` and
 /// `/mcp`. The rest of the attested routes, root-admin doors among them, are
@@ -335,7 +335,7 @@ fn console_attestable(method: &Method, path: &str) -> bool {
             .and_then(|rest| rest.strip_suffix(suffix))
             .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
     };
-    if *method == Method::GET {
+    if super::attested_routes::registered_method_matches(method, Method::GET.as_str()) {
         matches!(
             path,
             "/api/search/vector" | "/api/search/text" | "/api/core/discover" | "/v1/llm/defaults"

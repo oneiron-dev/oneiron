@@ -10,6 +10,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncSelectorValidation as SelectorError};
+use crate::federation::record_scope::note_world;
 use crate::federation::{
     Ceiling, FederationDirectionScope, FederationGrantScope, Position, ScopeAxis, ScopeId,
     base_world_axis, decode_federation_grant_body,
@@ -516,15 +517,18 @@ pub(super) fn filter_window_doc(
                 return;
             }
         }
-        let scope =
-            match crate::federation::record_scope::scope_for_blob(&vault.store, &rtxn, id, blob) {
-                Ok(Some(scope)) => scope,
-                Ok(None) => return,
-                Err(error) => {
-                    scope_error = Some(error);
-                    return;
-                }
-            };
+        // A NOTE sits at one world it is in that the grant and the selector
+        // both hold (FIX-LIST 9433).
+        let selected = note_world::selector_world_axis(selector.world);
+        let held = [&grant.authority_scope.worlds, &selected];
+        let scope = match note_world::blob_scope_held_at(&vault.store, &rtxn, id, blob, &held) {
+            Ok(Some(scope)) => scope,
+            Ok(None) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        };
         if !grant
             .authority_scope
             .admits("read", &scope, &crate::federation::Scope::top())

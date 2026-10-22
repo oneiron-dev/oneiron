@@ -148,29 +148,7 @@ pub(in crate::booking) fn commit_emergency_item(
                 "emergency booking snapshot is stale or does not belong to this owner",
             ));
         }
-        if !(2..=3).contains(&plan.proposals.len()) {
-            return Err(emergency_refused(
-                "emergency requires two or three genuine proposals",
-            ));
-        }
-        for slot in &plan.proposals {
-            let target = TimeRange {
-                start: slot.start_utc,
-                end: slot.end_utc,
-            };
-            let solved = emergency::solve_live(
-                vault,
-                &plan.booking,
-                calendars,
-                inclusive_occurrence(target)?,
-                input.now_utc,
-            )?;
-            if slot.start_utc <= input.now_utc || !offers_slot(&solved.slots, target) {
-                return Err(emergency_refused(
-                    "an emergency proposal is no longer available",
-                ));
-            }
-        }
+        validate_emergency_proposals(vault, plan, calendars, input)?;
         emergency::verify_initial_invite_in(vault, txn, plan)?;
         let admission = plan
             .payload
@@ -282,22 +260,7 @@ pub(in crate::booking) fn commit_emergency_item(
                 },
             )?;
         }
-        let mut actions = Vec::new();
-        for proposal_index in 0..plan.proposals.len() {
-            let token = OpaqueLifecycleToken(mint_raw_token());
-            EMERGENCY_PICK
-                .put(
-                    &vault.store,
-                    txn,
-                    &token_digest(&token),
-                    &EmergencyPickRow {
-                        emergency_item_key: key.clone(),
-                        proposal_index,
-                    },
-                )
-                .map_err(|error| engine_failure("meta write", error))?;
-            actions.push(token);
-        }
+        let actions = mint_emergency_actions(vault, txn, plan, &key)?;
         let item = EmergencyItem {
             plan: plan.clone(),
             calendar,
@@ -315,26 +278,98 @@ pub(in crate::booking) fn commit_emergency_item(
             apology_delivered: false,
             picked: None,
         };
-        if item.basis == EmergencyLocalBasis::PreStartCancellation {
-            use crate::calendar::outcome::{
-                EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
-            };
-            crate::calendar::outcome::record_lifecycle_outcome_in_txn(
-                vault,
-                txn,
-                event,
-                &EventOutcomeClaimValue {
-                    outcome: EventOutcome::CancelledPreStart,
-                    basis: EventOutcomeBasis::OwnerAttested,
-                    recorded_at: item.committed_at,
-                },
-                None,
-            )
-            .map_err(|error| BookingError::Boundary(Box::new(error.into())))?;
-        }
+        record_prestart_emergency_outcome(vault, txn, event, &item)?;
         emergency::write_item_in(vault, txn, &item)?;
         Ok(item)
     })
+}
+
+/// The plan's two or three proposals, each still a live, future slot the
+/// booking's calendars offer.
+fn validate_emergency_proposals(
+    vault: &Vault,
+    plan: &crate::booking::emergency_reschedule::EmergencyPlan,
+    calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
+    input: &BookingLifecycleConsumerInput,
+) -> Result<(), BookingError> {
+    use crate::booking::emergency_reschedule as emergency;
+    if !(2..=3).contains(&plan.proposals.len()) {
+        return Err(emergency_refused(
+            "emergency requires two or three genuine proposals",
+        ));
+    }
+    for slot in &plan.proposals {
+        let target = TimeRange {
+            start: slot.start_utc,
+            end: slot.end_utc,
+        };
+        let solved = emergency::solve_live(
+            vault,
+            &plan.booking,
+            calendars,
+            inclusive_occurrence(target)?,
+            input.now_utc,
+        )?;
+        if slot.start_utc <= input.now_utc || !offers_slot(&solved.slots, target) {
+            return Err(emergency_refused(
+                "an emergency proposal is no longer available",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// One released pick action per proposal, each row naming the item it picks
+/// for.
+fn mint_emergency_actions(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    plan: &crate::booking::emergency_reschedule::EmergencyPlan,
+    key: &[u8],
+) -> Result<Vec<OpaqueLifecycleToken>, BookingError> {
+    let mut actions = Vec::new();
+    for proposal_index in 0..plan.proposals.len() {
+        let token = OpaqueLifecycleToken(mint_raw_token());
+        EMERGENCY_PICK
+            .put(
+                &vault.store,
+                txn,
+                &token_digest(&token),
+                &EmergencyPickRow {
+                    emergency_item_key: key.to_vec(),
+                    proposal_index,
+                },
+            )
+            .map_err(|error| engine_failure("meta write", error))?;
+        actions.push(token);
+    }
+    Ok(actions)
+}
+
+/// A pre-start cancellation's owner-attested lifecycle outcome on the event.
+fn record_prestart_emergency_outcome(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    event: EntityId,
+    item: &crate::booking::emergency_reschedule::EmergencyItem,
+) -> Result<(), BookingError> {
+    use crate::booking::emergency_reschedule::EmergencyLocalBasis;
+    if item.basis == EmergencyLocalBasis::PreStartCancellation {
+        use crate::calendar::outcome::{EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue};
+        crate::calendar::outcome::record_lifecycle_outcome_in_txn(
+            vault,
+            txn,
+            event,
+            &EventOutcomeClaimValue {
+                outcome: EventOutcome::CancelledPreStart,
+                basis: EventOutcomeBasis::OwnerAttested,
+                recorded_at: item.committed_at,
+            },
+            None,
+        )
+        .map_err(|error| BookingError::Boundary(Box::new(error.into())))?;
+    }
+    Ok(())
 }
 
 /// Resolves only a released proposal action, with its instruction and owner

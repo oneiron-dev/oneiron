@@ -1,3 +1,7 @@
+//! Connector charter compilation and stamped charter constraints.
+//! Entry: `charter_never_list_matches`.
+//! Defines its own items.
+
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};

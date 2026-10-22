@@ -95,10 +95,13 @@ impl<'v> ScopedRead<'v> {
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         let data = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-        let Some(world) = self.record_world_in(txn, id, header.entity_type, data)? else {
+        // A NOTE sits at one world it is in that the asked worlds and the
+        // credential's hold, and the room's too below (FIX-LIST 9433).
+        let ceiling = self.actor_key.world_ceiling();
+        let Some(record) = self.world_record_in(txn, id, header.entity_type, data, &ceiling)?
+        else {
             return Ok(false);
         };
-        let record = super::super::actor_key::record_world_scope(world);
         if self
             .actor_key
             .asked_world_ceiling()
@@ -110,6 +113,10 @@ impl<'v> ScopedRead<'v> {
             let Some(room) = self.room_ceiling_in(txn, turn)? else {
                 return Ok(false);
             };
+            let in_room = ceiling.meet(&room.terms.with(|terms| terms.worlds.clone()));
+            let record = self
+                .world_record_in(txn, id, header.entity_type, data, &in_room)?
+                .unwrap_or(record);
             // A member's contact clearance holds the row to P7 too: it is
             // positively public or sits under the room's Scope (ILDF2). A
             // personal ceiling's roster stands in each private thread as it

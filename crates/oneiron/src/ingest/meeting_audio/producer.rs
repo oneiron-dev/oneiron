@@ -11,9 +11,10 @@ use super::cleanup::{AcousticCandidate, apply_cleanup};
 use super::packing::{pack_speech_cut, packed_audio, quietest_ms, source_times};
 use super::provenance::{execution_mode, pcm_sha256, sha256, validate_receipt};
 use super::{
-    AsrPackRequest, AsrRole, AudioError, AudioFile, AudioResult, BatchAsrRequest, BatchDefault,
-    CleanupRequest, InferenceExecution, MeetingAudioHost, ProcessingTier,
-    ProducedMeetingTranscript, ProducerOptions, TranscriptWord, align_words_to_speakers,
+    AsrPackRequest, AsrRole, AsrRoute, AudioError, AudioFile, AudioResult, BatchAsrRequest,
+    BatchDefault, CleanupRequest, GlobalDiarization, InferenceExecution, MeetingAudioHost, Pcm16,
+    ProcessingTier, ProducedMeetingTranscript, ProducerOptions, TranscriptWord,
+    align_words_to_speakers,
 };
 
 /// Produce without admitting claims, enrolling speakers, or persisting audio.
@@ -42,31 +43,7 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
     let packs = pack_speech_cut(&vad.spans, duration_ms, |lo, hi| {
         quietest_ms(&audio, lo, hi)
     })?;
-    let row = options.batch_asr_policy.clone().unwrap_or_else(|| {
-        crate::llm::PurposeDefaultTable::default()
-            .voice(crate::llm::VoiceLane::AsrBatch)
-            .clone()
-    });
-    let route = host.route_batch_asr(BatchAsrRequest {
-        role: AsrRole::Asr,
-        preferred_tier: if options.local_only {
-            ProcessingTier::Local
-        } else {
-            match row.locality {
-                crate::llm::ModelLocality::OnDevice => ProcessingTier::Local,
-                crate::llm::ModelLocality::OwnServer => ProcessingTier::HomeFleet,
-                crate::llm::ModelLocality::ThirdParty => ProcessingTier::Hosted,
-            }
-        },
-        local_only: options.local_only,
-        batch_default: &options.batch_default,
-    })?;
-    if route.model_id != options.batch_default.model_id()
-        || route.route_receipt_ref.trim().is_empty()
-        || (options.local_only && route.tier != ProcessingTier::Local)
-    {
-        return Err(AudioError::InvalidRoute);
-    }
+    let route = route_meeting_asr(host, options)?;
 
     let mut words = Vec::new();
     let mut acoustic_candidates = HashMap::new();
@@ -147,12 +124,15 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
 
     // Deliberately outside the pack loop. The host gets the original complete
     // PCM (not concatenated speech, not an ASR pack), once and only once.
-    let diarization = host.diarize_full_file(&audio, &pcm_hash)?;
-    validate_receipt(&diarization.provenance, &pcm_hash, &mut invocation_ids)?;
-    if diarization.provenance.model_id != options.diarization_model_id {
-        return Err(AudioError::InvalidProvenance);
-    }
-    align_words_to_speakers(&mut words, &diarization.exclusive_tracks, duration_ms)?;
+    let diarization = diarize_meeting_once(
+        host,
+        &audio,
+        &pcm_hash,
+        &mut invocation_ids,
+        options,
+        &mut words,
+        duration_ms,
+    )?;
     let mut turns = make_turns(&words);
     let cleanup_input = serde_json::to_vec(&turns).map_err(|_| AudioError::Serialization)?;
     let cleanup_hash = sha256(&cleanup_input);
@@ -240,6 +220,60 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
     });
     let json = serde_json::to_string(&document).map_err(|_| AudioError::Serialization)?;
     ProducedMeetingTranscript::new(json, recording_id)
+}
+
+/// The batch ASR route for this file, checked against the configured default
+/// model, a route receipt and the local-only request.
+fn route_meeting_asr<H: MeetingAudioHost + ?Sized>(
+    host: &mut H,
+    options: &ProducerOptions,
+) -> AudioResult<AsrRoute> {
+    let row = options.batch_asr_policy.clone().unwrap_or_else(|| {
+        crate::llm::PurposeDefaultTable::default()
+            .voice(crate::llm::VoiceLane::AsrBatch)
+            .clone()
+    });
+    let route = host.route_batch_asr(BatchAsrRequest {
+        role: AsrRole::Asr,
+        preferred_tier: if options.local_only {
+            ProcessingTier::Local
+        } else {
+            match row.locality {
+                crate::llm::ModelLocality::OnDevice => ProcessingTier::Local,
+                crate::llm::ModelLocality::OwnServer => ProcessingTier::HomeFleet,
+                crate::llm::ModelLocality::ThirdParty => ProcessingTier::Hosted,
+            }
+        },
+        local_only: options.local_only,
+        batch_default: &options.batch_default,
+    })?;
+    if route.model_id != options.batch_default.model_id()
+        || route.route_receipt_ref.trim().is_empty()
+        || (options.local_only && route.tier != ProcessingTier::Local)
+    {
+        return Err(AudioError::InvalidRoute);
+    }
+    Ok(route)
+}
+
+/// The one full-file diarization: its receipt and model checked, then the
+/// words aligned to its speakers.
+fn diarize_meeting_once<H: MeetingAudioHost + ?Sized>(
+    host: &mut H,
+    audio: &Pcm16,
+    pcm_hash: &str,
+    invocation_ids: &mut HashSet<String>,
+    options: &ProducerOptions,
+    words: &mut [TranscriptWord],
+    duration_ms: u64,
+) -> AudioResult<GlobalDiarization> {
+    let diarization = host.diarize_full_file(audio, pcm_hash)?;
+    validate_receipt(&diarization.provenance, pcm_hash, invocation_ids)?;
+    if diarization.provenance.model_id != options.diarization_model_id {
+        return Err(AudioError::InvalidProvenance);
+    }
+    align_words_to_speakers(words, &diarization.exclusive_tracks, duration_ms)?;
+    Ok(diarization)
 }
 
 fn validate_options(file: &AudioFile<'_>, options: &ProducerOptions) -> AudioResult<()> {

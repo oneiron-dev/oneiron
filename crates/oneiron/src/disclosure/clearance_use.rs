@@ -70,7 +70,9 @@ impl Vault {
                 else {
                     continue;
                 };
-                let scope = crate::federation::record_scope::scope_for_blob(
+                // A NOTE carries every world it is in; each clearance holds
+                // it at one of them (FIX-LIST 9433).
+                let scope = crate::federation::record_scope::note_world::blob_scope_every_world(
                     &self.store,
                     &txn,
                     *id,
@@ -92,7 +94,13 @@ impl Vault {
                 }
                 let covered: Vec<EntityId> = delivered
                     .iter()
-                    .filter(|(_, scope)| clearance.scope.admits("read", scope, &Scope::top()))
+                    .filter(|(_, scope)| {
+                        let scope = crate::federation::record_scope::note_world::any_world_at(
+                            scope,
+                            &clearance.scope.worlds,
+                        );
+                        clearance.scope.admits("read", &scope, &Scope::top())
+                    })
                     .map(|(id, _)| *id)
                     .collect();
                 if !covered.is_empty() {
