@@ -1,3 +1,7 @@
+//! Booking quarantine claims and the admission of quarantined submissions.
+//! Entry: `BookingQuarantineReceipt`.
+//! Defines its own items.
+
 use std::num::NonZeroU32;
 
 use super::evaluation::{BookingRequestFacts, quarantine_claim_id};
