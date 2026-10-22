@@ -1,3 +1,9 @@
+//! Runtime configuration, host services, and shared time helpers.
+//! Re-exports the runtime's existing value types and host entry points.
+//! Private children keep each runtime concern in its owning module.
+
+mod clock;
+pub(crate) use self::clock::wall_clock_ms;
 mod config;
 mod gpu;
 pub use gpu::{

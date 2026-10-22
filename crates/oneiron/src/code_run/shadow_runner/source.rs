@@ -8,8 +8,14 @@
 //! start, or the run's row once the step is its last checkpoint. A step
 //! whose end nothing proves, or a body that is gone, is unavailable, never
 //! assumed. The run's results and observations before the step are frozen
-//! with the taint they read under, so the arm reads no live state.
+//! with the taint they read under, so the arm reads no live state. A reader
+//! admitted to the step's capture (FIX 8704, `admitted`) has its admission
+//! read again before each raw read of it: the request, the start and the
+//! record of its end, and each body frozen.
 
+mod admitted;
+
+pub(crate) use self::admitted::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
 use super::types::{
     ShadowBodyRef, ShadowDeterminism, ShadowRequestDigest, ShadowStepIdentity, ShadowUnavailable,
     ShadowUnavailableReason as Reason,
@@ -25,6 +31,10 @@ use crate::{EntityId, LlmRequest, Result, Vault};
 
 /// An arm's source, or why it has none.
 type Outcome<T> = std::result::Result<T, ShadowUnavailable>;
+
+/// Whether the reader preparing a step is still admitted to its capture,
+/// asked before each raw read of it.
+type Admits<'a> = &'a dyn Fn() -> Result<bool>;
 
 /// One result or observation of the step's run before the step, frozen for
 /// the arm: its manifest, the taint the run's occurrence of it read under,
@@ -165,6 +175,17 @@ pub fn prepare_shadow_step_source(
     vault: &Vault,
     capsule: &StepReplayCapsule,
 ) -> Result<Outcome<PreparedShadowStep>> {
+    prepare_step_source(vault, capsule, &|| Ok(true))
+}
+
+/// [`prepare_shadow_step_source`], asking `admits` before each raw read of
+/// the step's capture: once it says no, the step is withheld, and nothing
+/// more of it is read.
+fn prepare_step_source(
+    vault: &Vault,
+    capsule: &StepReplayCapsule,
+    admits: Admits<'_>,
+) -> Result<Outcome<PreparedShadowStep>> {
     let Some(source_actor) = capsule.content.actor() else {
         return Ok(Err(unavailable(Reason::SourceWithheld, "capsule_erased")));
     };
@@ -182,12 +203,18 @@ pub fn prepare_shadow_step_source(
     let Some(start) = capsule.start.clone() else {
         return Ok(Err(unavailable(Reason::SourceMissing, "no_start")));
     };
+    if !admits()? {
+        return Ok(Err(admitted::lapsed()));
+    }
     let Some(request) = capsule_request(vault, capsule)? else {
         return Ok(Err(unavailable(
             Reason::SourceWithheld,
             "request_unreadable",
         )));
     };
+    if !admits()? {
+        return Ok(Err(admitted::lapsed()));
+    }
     let read = {
         let rtxn = vault.store.env.read_txn()?;
         read_step_in_txn(vault, &rtxn, capsule, &start)?
@@ -196,7 +223,7 @@ pub fn prepare_shadow_step_source(
         Ok(read) => read,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
-    let frozen = match freeze_bodies(vault, capsule.run, &prefix)? {
+    let frozen = match freeze_bodies(vault, capsule.run, &prefix, admits)? {
         Ok(frozen) => frozen,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
@@ -312,11 +339,13 @@ fn ends_step(record: &CodeRunReplayRecord, prefix: &CodeRunReplayRecord, step: u
 /// The bodies of `run` before the step its row `prefix` holds that the
 /// step's program may read back, each with the taint the run's occurrence of
 /// it reads under now, and its bytes while it is clean. A clean body that is
-/// gone is unavailable. The bytes frozen are measured, never capped.
+/// gone is unavailable. The bytes frozen are measured, never capped. Each is
+/// read only while `admits` says the reader still may.
 fn freeze_bodies(
     vault: &Vault,
     run: crate::EntityId,
     prefix: &CodeRunReplayRecord,
+    admits: Admits<'_>,
 ) -> Result<Outcome<Vec<FrozenBody>>> {
     let mut frozen = Vec::new();
     let mut frozen_bytes = 0_u64;
@@ -326,6 +355,9 @@ fn freeze_bodies(
         let bytes = if state.is_tainted() {
             None
         } else {
+            if !admits()? {
+                return Ok(Err(admitted::lapsed()));
+            }
             let Some(bytes) = vault.get_code_run_raw_output(&output)? else {
                 return Ok(Err(unavailable(Reason::SourceMissing, "prefix_body")));
             };
