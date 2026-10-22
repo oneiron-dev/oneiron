@@ -20,12 +20,14 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
 pub(crate) use actor_erase::{
-    erase_role_actor_in_txn, erase_run_actor_in_txn, erase_swap_actor_in_txn,
+    erase_role_actor_in_txn, erase_run_id_in_txn, erase_swap_actor_in_txn,
 };
 pub(crate) use authorize::training_run_job_input;
 pub use connector::{TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
-pub use promotion::{SwapExpectation, TrainingEvalInput, ViewedSwap};
-pub(crate) use promotion::{role_swap_receipt_in, training_run_in, training_runs_in};
+pub use promotion::{RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap};
+pub(crate) use promotion::{
+    bind_staged_role_swap_in_txn, role_swap_receipt_in, training_run_in, training_runs_in,
+};
 pub use target::{QUESTION_LABEL_SCHEMA, QUESTION_RENDERER, QuestionTarget, TrainingTarget};
 pub use types::*;
 

@@ -8,7 +8,7 @@ use oneiron::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 
-use super::host_doors::{Listed, credential_listing, refused};
+use super::host_doors::support::{Listed, credential_listing, refused};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 
@@ -88,15 +88,15 @@ pub(crate) async fn execute_code(
     credential_listing(server, auth, caller, "execute_code", move |_, _, memory| {
         let _permit = permit;
         let manifest: serde_json::Value = serde_json::from_str(COMPONENT_MANIFEST)
-            .map_err(|_| super::host_doors::internal("execute_code"))?;
+            .map_err(|_| super::host_doors::support::internal("execute_code"))?;
         let pin = manifest["artifacts"]["foreign"]["sha256"]
             .as_str()
             .filter(|pin| pin.len() == 64 && pin.is_ascii())
-            .ok_or_else(|| super::host_doors::internal("execute_code"))?;
+            .ok_or_else(|| super::host_doors::support::internal("execute_code"))?;
         let mut sha256 = [0; 32];
         for (index, byte) in sha256.iter_mut().enumerate() {
             *byte = u8::from_str_radix(&pin[index * 2..index * 2 + 2], 16)
-                .map_err(|_| super::host_doors::internal("execute_code"))?;
+                .map_err(|_| super::host_doors::support::internal("execute_code"))?;
         }
         memory.execute_foreign_code(
             input,

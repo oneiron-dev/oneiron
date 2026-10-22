@@ -528,6 +528,11 @@ pub(crate) fn note_side_text_in_txn(
 mod document_store;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
+mod files;
+pub use files::{
+    DEFAULT_FILES_EXCLUDE, FILES_DEFAULT_KIND, FILES_TEXT_EXTENSIONS, FILES_WORLD_NAME, FileFacts,
+    FileHandle, FileMeta, FileReadiness, FilesPlacement, FilesWorld, NameOnlyFile, NameOnlyReason,
+};
 mod folder_source;
 pub(crate) use folder_source::erase_folder_source_actor_in_txn;
 pub use folder_source::{

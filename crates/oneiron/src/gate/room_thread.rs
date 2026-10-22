@@ -185,11 +185,10 @@ impl RoomThreadManifest {
         if allowed_fills.is_empty() || !allowed_fills.contains(&base.fill) {
             return None;
         }
+        // Every holder row parses, however many (rule 5); the policy fold
+        // counts them.
         let mut holders = BTreeMap::new();
         let rows = field(entries, "holder_rows")?.as_array()?;
-        if rows.len() > 1_000 {
-            return None;
-        }
         for entry in rows {
             let fields = entry.as_map()?;
             if fields.len() != 2
@@ -239,6 +238,10 @@ impl RoomThreadManifest {
             .values()
             .all(|row| self.allowed_fills.contains(&row.fill))
             .then_some(self)
+    }
+    /// The holder rows this manifest names, for the fold's count.
+    pub(crate) fn holder_rows(&self) -> usize {
+        self.holders.len()
     }
     pub(crate) fn effective(&self, actor: EntityId) -> RoomThreadSettings {
         let base = self.base.capped(self.vault_ceiling);

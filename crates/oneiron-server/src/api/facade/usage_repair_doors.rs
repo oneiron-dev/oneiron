@@ -18,7 +18,7 @@ use oneiron::memory::usage_repair::{
 use oneiron::memory::{Memory, MemoryResult};
 
 use super::FacadeApiError;
-use super::host_doors::{Listed, credential_listing, owner_proof};
+use super::host_doors::support::{Listed, credential_listing, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use crate::usage::UsageScope;

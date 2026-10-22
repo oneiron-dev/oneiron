@@ -57,6 +57,7 @@ pub(super) async fn run_serve(
     request: smart_http::ServeRequest,
     body: Body,
     caller: Option<GitPushCaller>,
+    read: smart_http::RepoGitReadContext,
 ) -> Response {
     // A push runs under the lease this host holds over the repository, read
     // from the vault's own authority row and this install's machine, never
@@ -142,7 +143,7 @@ pub(super) async fn run_serve(
         // serve path persists landed admission and observed outcome evidence;
         // this bridge supplies neither a claim id nor an alternate credential.
         let Some(status_memory) = held else {
-            return Some(smart_http::serve_bounded_as(
+            return Some(smart_http::serve_bounded_for_recipient(
                 vault,
                 &repo,
                 &request,
@@ -150,6 +151,7 @@ pub(super) async fn run_serve(
                 bounds,
                 authority.as_ref(),
                 caller.as_ref(),
+                &read,
                 &mut reader,
                 &mut sink,
             ));
@@ -160,7 +162,7 @@ pub(super) async fn run_serve(
                 .with_floor(Some(floor)),
             failed: None,
         };
-        let served = smart_http::serve_bounded_as(
+        let served = smart_http::serve_bounded_for_recipient(
             vault,
             &repo,
             &request,
@@ -168,6 +170,7 @@ pub(super) async fn run_serve(
             bounds,
             authority.as_ref(),
             caller.as_ref(),
+            &read,
             &mut reader,
             &mut holding,
         );

@@ -411,6 +411,10 @@ side_tables! {
     /// The answers of one held answer proposal whose units changed under it (ARCH-0075 §4): each
     /// with the revision it was judged against, and its proposer's wake. Key: id16 + hash32.
     EDIT_SETTLE_UNIT_WITHDRAWAL: VaultMeta b"edit_settle:withdrawal:v1:" Named;
+    /// An owner-approved retrieval embedder binding staged through a space move, with its move
+    /// and state (OF-577, O3b PR B). Key: id16 (the offer, or the training run).
+    EMBEDDING_BINDING_MOVE: VaultMeta b"embedding/binding_move/" Named
+        => crate::embed::erase_binding_move_actor_in_txn;
     /// The device family and runtime that computed the current embedding vector, outside the space
     /// identity (ARCH-0036). Key: id16.
     EMBEDDING_DEVICE: VaultMeta b"embedding/device/" Named;
@@ -479,9 +483,11 @@ side_tables! {
     ESIGN_PUBLIC_CHECK: VaultMeta b"esign.public_check.v1/" Named;
     /// Public ceremony rate counter. Key: hex32 [/ string].
     ESIGN_PUBLIC_RATE: VaultMeta b"esign.public_rate.v1/" Raw;
-    /// Recipient live capability index. Key: id16 + string.
-    /// Advisory rate count; key: document hex32/string, value window u64be + count u64be.
+    /// Advisory public ceremony rate count, never a signing refusal. Key: document hex32 `/`
+    /// recipient (or `all`); value window u64be + count u64be.
     ESIGN_PUBLIC_RATE_V2: VaultMeta b"esign.public_rate.v2/" Raw;
+    /// Recipient live capability index: every digest minted for the recipient, in mint order, as
+    /// concatenated 32-byte digests. Key: id16 (document) + string (recipient id).
     ESIGN_RECIPIENT_CAPABILITY_INDEX: VaultMeta b"esign.recipient_capability.v1/" Raw;
     /// Completed seal attempt result. Key: id16.
     ESIGN_SEAL_RESULT: VaultMeta b"esign.seal_result.v1/" LegacyJson;

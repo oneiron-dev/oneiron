@@ -292,7 +292,9 @@ impl Vault {
         stamp: &DoorAdmissionStamp,
         seam: DoorSeam,
     ) -> Result<()> {
-        self.require_receive_pack_host_at(repo_dir, stamp.origin_authority.as_ref())?;
+        // The canonical host, for a projection ingress whose proof validates
+        // for this stamp; else today's check on `repo_dir` (FIX 7608).
+        self.require_receive_pack_host_for(repo_dir, stamp)?;
         // Preserve the explicit no-op transport seam, but never describe it
         // as landed policy or scanning evidence. The authenticated server pins
         // Landed; the seam is not selected by any request field or claim id.
@@ -302,6 +304,39 @@ impl Vault {
         };
         let actor = EntityId::from_hex(stamp.principal_ref())
             .map_err(|_| receive_pack_provenance_refused("principal is not an entity id"))?;
+        let mut fields = vec![
+            ("schema_version", Value::from(1)),
+            ("operation_id", Value::from(stamp.operation_id.to_hex())),
+            ("actor_id", Value::from(actor.to_hex())),
+            (
+                "repo_root",
+                Value::from(path_arg(&repo_dir.canonicalize()?)?),
+            ),
+            ("operation", Value::from("git-receive-pack")),
+            ("method", Value::from(stamp.method())),
+            (
+                "credential_presented",
+                Value::from(stamp.credential_fingerprint().is_some()),
+            ),
+            ("door_seam", Value::from(door_seam)),
+            ("effector", Value::from(DOOR_RECEIVE_PACK_EFFECTOR)),
+            ("effector_check", Value::from(effector_check)),
+            ("admitted_at", Value::from(stamp.admitted_at())),
+            (
+                "origin_authority",
+                OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
+            ),
+            // What the push decision admitted it under (G1-PUSH).
+            (
+                "git_push",
+                GitPushStamp::evidence_value(stamp.push.as_ref()),
+            ),
+        ];
+        // Only a projection-bound push names the proof it is received under
+        // (FIX 7608 2b-ii-B2); every other admission's bytes are as before.
+        if let Some(proof) = stamp.ingress_proof {
+            fields.push(("ingress_proof", Value::from(proof.to_hex())));
+        }
         let body = receive_pack_claim(
             ClaimSubject::Edge {
                 source: stamp.operation_id,
@@ -309,34 +344,7 @@ impl Vault {
                 target: actor,
             },
             RECEIVE_PACK_ADMISSION_PREDICATE,
-            receive_pack_fields(vec![
-                ("schema_version", Value::from(1)),
-                ("operation_id", Value::from(stamp.operation_id.to_hex())),
-                ("actor_id", Value::from(actor.to_hex())),
-                (
-                    "repo_root",
-                    Value::from(path_arg(&repo_dir.canonicalize()?)?),
-                ),
-                ("operation", Value::from("git-receive-pack")),
-                ("method", Value::from(stamp.method())),
-                (
-                    "credential_presented",
-                    Value::from(stamp.credential_fingerprint().is_some()),
-                ),
-                ("door_seam", Value::from(door_seam)),
-                ("effector", Value::from(DOOR_RECEIVE_PACK_EFFECTOR)),
-                ("effector_check", Value::from(effector_check)),
-                ("admitted_at", Value::from(stamp.admitted_at())),
-                (
-                    "origin_authority",
-                    OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
-                ),
-                // What the push decision admitted it under (G1-PUSH).
-                (
-                    "git_push",
-                    GitPushStamp::evidence_value(stamp.push.as_ref()),
-                ),
-            ]),
+            receive_pack_fields(fields),
         )?;
         self.put_receive_pack_evidence(stamp.operation_id, &body, stamp.admitted_at())
     }
@@ -554,7 +562,10 @@ impl Vault {
         }
         let authority =
             OriginAuthorityStamp::from_evidence(receive_pack_field(&body, "origin_authority")?)?;
-        self.require_receive_pack_host_in_txn(&rtxn, repo_id, authority.as_ref())?;
+        // The canonical host, for a projection ingress whose intent's proof
+        // validates; else today's check on `repo_id` (FIX 7608).
+        let host = self.receive_pack_host_store_in_txn(&rtxn, repo_id, repo_root, operation)?;
+        self.require_receive_pack_host_in_txn(&rtxn, host, authority.as_ref())?;
         Ok(body)
     }
 

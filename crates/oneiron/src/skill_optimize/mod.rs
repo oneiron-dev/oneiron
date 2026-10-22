@@ -183,6 +183,9 @@ pub use self::eval_set::{
     apply_eval_authoring_plan, eval_authoring_inventory, eval_authoring_inventory_sourced,
     setup_eval_cohorts, sufficiency_card,
 };
+pub(crate) use self::eval_set::{
+    erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row,
+};
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,
     GoalAxisReport, OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
@@ -221,12 +224,16 @@ pub use self::offer::{
     training_offer_checks, training_offer_skill_id, training_offers, union_source_rows,
 };
 pub(crate) use self::offer::{
-    erase_offer_source_in_txn, pending_training_offer_in_txn, settle_training_offer_in_txn,
+    erase_offer_source_in_txn, live_source_rows_in, pending_training_offer_in_txn,
+    settle_training_offer_in_txn,
 };
-pub(crate) use self::offer_switch::erase_switch_actor_in_txn;
+pub(crate) use self::offer_pilot::erase_pilot_source_in_txn;
 pub use self::offer_switch::{
-    OfferSwitchReceipt, OfferSwitchUndo, SwitchOwner, model_role_seat, seat_model_role,
-    training_offer_switch, undo_training_offer_switch,
+    OfferSwitchReceipt, OfferSwitchUndo, SwitchApplication, SwitchOwner, model_role_seat,
+    seat_model_role, training_offer_switch, undo_training_offer_switch,
+};
+pub(crate) use self::offer_switch::{
+    erase_switch_actor_in_txn, settle_staged_switch_in_txn, undo_staged_switch_in_txn,
 };
 pub use self::offer_training::{
     OfferTrainingHandoff, TrainingChoice, authorize_offer_training, check_offer_training_plan,

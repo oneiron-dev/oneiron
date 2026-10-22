@@ -13,6 +13,7 @@ use super::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::settings::ReadDestination;
+use crate::share_travel::{CopyTravelChoice, effective_copy_refs};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
@@ -44,6 +45,9 @@ pub struct PersonaSnapshotCopyRequest {
     pub strike: BTreeSet<String>,
     #[serde(default)]
     pub unstrike: BTreeSet<String>,
+    /// Whether the copy carries its vault refs; absent is today's copy.
+    #[serde(default)]
+    pub travel: Option<CopyTravelChoice>,
 }
 
 /// An accepted copy's stamp fences its edits. Each edit issues a new immutable
@@ -58,6 +62,9 @@ pub struct PersonaSnapshotCopyEditRequest {
     pub strike: BTreeSet<String>,
     #[serde(default)]
     pub unstrike: BTreeSet<String>,
+    /// Whether the new copy carries its vault refs; absent is today's copy.
+    #[serde(default)]
+    pub travel: Option<CopyTravelChoice>,
 }
 
 fn require_stamp(expected: &str, actual: &str) -> Result<()> {
@@ -104,6 +111,7 @@ impl Vault {
             &strikes,
             &consent,
             Some(owner),
+            effective_copy_refs(request.travel.as_ref()),
         )?;
         self.save_persona_snapshot_copy_in_txn(
             &mut txn,
@@ -231,6 +239,7 @@ impl Vault {
             &strikes,
             &consent,
             Some(owner),
+            effective_copy_refs(request.travel.as_ref()),
         )?;
         self.save_persona_snapshot_copy_in_txn(
             &mut txn,

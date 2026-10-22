@@ -15,7 +15,7 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::{EntityId, Vault};
 
-use super::host_doors::{Listed, MaybeListed, internal, owner_proof};
+use super::host_doors::support::{Listed, MaybeListed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

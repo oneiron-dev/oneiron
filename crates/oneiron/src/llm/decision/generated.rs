@@ -42,7 +42,10 @@ pub struct GeneratedRung<'a> {
     /// abstaining fallback.
     pub request: LlmRequest,
     /// The host's last word on the built request (its role authorization and reasoning
-    /// binding), before the step hashes it.
+    /// binding), before the step hashes it. The request it returns is admitted as it
+    /// stands (FIX 8998), so its `envelope.locality` is the host-bound locality of the
+    /// route that will serve it, read from host config, never from caller JSON: an
+    /// on-device locality is unmetered at admission.
     pub seal: &'a (dyn Fn(LlmRequest) -> Result<LlmRequest> + Sync),
 }
 
