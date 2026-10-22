@@ -265,7 +265,7 @@ impl Vault {
             .vault_meta
             .get(&txn, &reader.key(SCHEDULE_PREFIX))?
         {
-            Some(bytes) => match serde_json::from_slice::<WireSchedule>(bytes) {
+            Some(bytes) => match serde_json::from_slice::<WireSchedule>(&bytes) {
                 Ok(wire) => Some(schedule_basis(&wire)?),
                 Err(_) => None,
             },
