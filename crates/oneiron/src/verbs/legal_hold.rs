@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
     ErasePendingReason, LegalHold, LegalHoldEvent, LegalHoldTarget, LiftAndEraseOutcome,
-    LiftAndEraseStatus,
+    LiftAndEraseShownState, LiftAndEraseStatus,
 };
 use crate::error::LegalHoldBound;
 use crate::memory::MemoryResult;
@@ -41,11 +41,21 @@ pub struct LegalHoldWidenRequest {
 }
 
 /// `vault.legal_holds.lift_and_erase`'s input: the records the owner's one
-/// "Lift the hold and erase?" confirm names.
+/// "Lift the hold and erase?" confirm names, whether it releases the
+/// claim-free gate-decision partition too (FIX 9782), and what it showed
+/// the owner (FIX 1462).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldLiftAndEraseRequest {
     pub records: Vec<EntityId>,
+    /// Also release every customer hold on the claim-free partition, the
+    /// one the retention-horizon sweep ages. A host order on it stays.
+    #[serde(default)]
+    pub claim_free_partition: bool,
+    /// What the confirm showed: its title and prompt, these targets, and
+    /// every standing customer hold on them, whole, as the hold list reads
+    /// them. The engine acts only when it reads the same.
+    pub shown_state: LiftAndEraseShownState,
 }
 
 /// What the owner's one confirm did to one record, by one rule wherever the
@@ -116,6 +126,10 @@ pub struct LegalHoldErasedRecord {
 pub struct LegalHoldLiftAndErased {
     pub holds: Vec<EntityId>,
     pub records: Vec<LegalHoldErasedRecord>,
+    /// What the confirm shows now, when it is not what the owner was shown:
+    /// nothing was lifted or erased; confirm again with this (FIX 1462).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<LiftAndEraseShownState>,
 }
 
 impl From<LiftAndEraseOutcome> for LegalHoldLiftAndErased {
@@ -130,6 +144,7 @@ impl From<LiftAndEraseOutcome> for LegalHoldLiftAndErased {
                     status: status.into(),
                 })
                 .collect(),
+            changed: outcome.changed,
         }
     }
 }
@@ -166,14 +181,22 @@ pub fn read_legal_hold_log(
 }
 
 /// `vault.legal_holds.lift_and_erase`: the owner's one "Lift the hold and
-/// erase?" confirm over `input.records`. The engine takes the owner's proof
-/// and the records, and no other token.
+/// erase?" confirm over `input.records`, and the claim-free partition with
+/// `input.claim_free_partition`. The engine takes the owner's proof, the
+/// targets and the state the confirm showed, unchanged, and checks that
+/// state itself: there is no second press, token or expiry, and nothing
+/// here prepares a state the owner was not shown (FIX 1462).
 pub fn lift_legal_hold_and_erase_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: LegalHoldLiftAndEraseRequest,
 ) -> MemoryResult<LegalHoldLiftAndErased> {
     Ok(vault
-        .confirm_lift_legal_hold_and_erase(owner, &input.records)?
+        .confirm_lift_legal_hold_and_erase(
+            owner,
+            &input.records,
+            input.claim_free_partition,
+            &input.shown_state,
+        )?
         .into())
 }

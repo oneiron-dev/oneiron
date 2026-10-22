@@ -39,7 +39,7 @@ const ASSET_BODY_BYTES: &str = "bytes";
 /// ASSET body field holding the bytes' media type.
 const ASSET_BODY_MEDIA_TYPE: &str = "mime_type";
 /// The media type a text document is handed over as.
-const TEXT_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
+pub(super) const TEXT_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
 /// The records the text index embeds ([`super::embeddable_payload_in_txn`]), and so the text
 /// documents a text-bound space holds.
 const TEXT_DOCUMENT_TYPES: [u8; 4] = [
@@ -314,6 +314,14 @@ impl Vault {
                 report.vanished += 1;
                 continue;
             }
+            // A media item lands only as the copy it was sent as (FIX 7608 slice 3).
+            if item.text_hash.is_none()
+                && super::repo_projection::media_copy_hash_in(self, &self.store, &wtxn, &item.id)?
+                    != Some(*blake3::hash(&item.bytes).as_bytes())
+            {
+                report.vanished += 1;
+                continue;
+            }
             let (vector, provenance) = match outcome {
                 Ok(answer) => answer,
                 Err(reason) => {
@@ -511,7 +519,14 @@ impl Vault {
             {
                 let id = id?;
                 report.scanned += 1;
-                let Some(document) = asset_document_in(&self.store, rtxn, id, kinds, report)?
+                let Some(document) = super::repo_projection::asset_document_projected_in(
+                    self,
+                    &self.store,
+                    rtxn,
+                    id,
+                    kinds,
+                    report,
+                )?
                 else {
                     continue;
                 };
@@ -711,7 +726,7 @@ fn text_row_in(
 }
 
 /// The inline media an ASSET body holds: its media type and non-empty bytes.
-fn asset_media(body: &[u8]) -> Option<(String, Vec<u8>)> {
+pub(super) fn asset_media(body: &[u8]) -> Option<(String, Vec<u8>)> {
     let Value::Map(entries) = rmpv::decode::read_value(&mut &body[..]).ok()? else {
         return None;
     };
