@@ -1,3 +1,7 @@
+//! Code-run trust lanes, review context and blast-radius evidence.
+//! The review value is `ReviewContext`.
+//! `recipe` owns the re-exported `CodeConsentRecipe`; other definitions are local.
+
 mod recipe;
 pub use recipe::CodeConsentRecipe;
 
