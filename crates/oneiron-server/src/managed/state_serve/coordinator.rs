@@ -105,7 +105,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // kept in this install's keystore slot under the supervisor's key
     // directory (FIX-LIST 3018): never the delivered DEK, which escrow
     // recipients hold, nor the per-spawn token or caller headers. A fresh
-    // spawn of this install loads the same seed, so the same logged root.
+    // spawn of this install loads the same seed, so the same logged root;
+    // with none, the vault serves rootless and still as a managed vault.
     let (issuer, readiness) = provision_host_authority(
         &vault,
         &config.keystore,
@@ -196,7 +197,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     {
         sync_server = sync_server.with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true));
     }
-    sync_server.managed_issuer = Some(issuer);
+    sync_server.managed_issuer = Some(crate::server::ManagedIssuer::new(issuer));
     if managed.artifact_socket.is_some() {
         sync_server = sync_server.with_artifact_socket();
     }

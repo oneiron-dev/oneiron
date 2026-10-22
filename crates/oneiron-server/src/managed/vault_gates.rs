@@ -27,14 +27,16 @@ use crate::config::KeystoreInstall;
 /// serves without (WILL-PLAN L14 row 17): the supervisor's key directory,
 /// where the owner did not turn the keystore off (`keystore_unbound`), a
 /// keystore that would not open, signing keys that did not load, and a
-/// node the roster did not take. Only the root's own issuer seed stops the
-/// start when it is missing: a managed vault serves under its root.
+/// node the roster did not take. None of them stops the start, nor does a
+/// missing issuer seed (`MANAGED_MISSING_HOST_SEED`): the vault then serves
+/// rootless, said once by its typed reason, its host node not provisioned,
+/// and each host-signed act answers as a host with no issuer does.
 pub(super) fn provision_host_authority(
     vault: &oneiron::Vault,
     keystore: &crate::config::KeystoreConfig,
     keystore_unbound: bool,
     data_dir: &Path,
-) -> oneiron::Result<(oneiron::authority::HostSlipIssuer, ManagedReadiness)> {
+) -> oneiron::Result<(Option<oneiron::authority::HostSlipIssuer>, ManagedReadiness)> {
     let mut missing = Vec::new();
     let mut lacks = |facility, reason| missing.push(FacilityNotice { facility, reason });
     if keystore_unbound {
@@ -44,9 +46,25 @@ pub(super) fn provision_host_authority(
         );
     }
     let installed = keystore.install(vault, data_dir);
-    let issuer = vault.bootstrap_host_slip_issuer()?;
-    vault.ensure_host_root_slip(&issuer)?;
-    vault.provision_engine_machine_identities(&issuer)?;
+    let issuer = match (
+        MANAGED_MISSING_HOST_SEED,
+        vault.bootstrap_host_slip_issuer(),
+    ) {
+        (_, Ok(issuer)) => {
+            vault.ensure_host_root_slip(&issuer)?;
+            vault.provision_engine_machine_identities(&issuer)?;
+            Some(issuer)
+        }
+        (MissingHostSeed::ServeRootlessWarn, Err(error)) => {
+            tracing::warn!(
+                reason = MANAGED_HOST_SEED_UNAVAILABLE,
+                kind = ?error.kind(),
+                "the managed vault serves without signing as its root: this install holds no \
+                 host issuer seed for it (keystore unbound, off or empty); reads and writes go on"
+            );
+            None
+        }
+    };
     match installed {
         KeystoreInstall::Off => {}
         KeystoreInstall::Unavailable => {
@@ -59,7 +77,13 @@ pub(super) fn provision_host_authority(
                     FacilityReason::PrepareFailed,
                 );
             }
-            if let Err(error) = vault.provision_host_node(&issuer) {
+            let provisioned = match issuer.as_ref() {
+                Some(issuer) => vault.provision_host_node(issuer).map(drop),
+                None => Err(oneiron::Error::Secret(
+                    oneiron::error::SecretError::KeystoreUnavailable(MANAGED_HOST_SEED_UNAVAILABLE),
+                )),
+            };
+            if let Err(error) = provisioned {
                 tracing::warn!(
                     kind = ?error.kind(),
                     reason = %error,
@@ -74,6 +98,21 @@ pub(super) fn provision_host_authority(
     }
     Ok((issuer, ManagedReadiness::from_missing(missing)))
 }
+
+/// What a managed start does when this install holds no issuer seed for its
+/// vault (FIX-LIST 3018; CALLS "MANAGED_MISSING_HOST_SEED", open).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MissingHostSeed {
+    /// Serve rootless, warning once by the typed reason, never stopping the
+    /// start: every read and write goes on, and host-signed acts answer as a
+    /// host holding no issuer does.
+    ServeRootlessWarn,
+}
+
+const MANAGED_MISSING_HOST_SEED: MissingHostSeed = MissingHostSeed::ServeRootlessWarn;
+
+/// The typed reason a managed vault serves rootless.
+const MANAGED_HOST_SEED_UNAVAILABLE: &str = "managed_host_issuer_seed_unavailable";
 
 /// Logs each facility a vault that came up degraded serves without, once,
 /// before it signals ready: by its closed name and reason, never a path or

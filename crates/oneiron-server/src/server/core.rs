@@ -100,7 +100,9 @@ pub struct SyncServer {
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
-    pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
+    /// Its presence says the vault is managed; the issuer inside is `None`
+    /// where this install holds no issuer seed for it (FIX-LIST 3018).
+    pub(crate) managed_issuer: Option<ManagedIssuer>,
     /// The self-host root's issuer, loaded at construction from this
     /// install's own issuer seed for the vault when a host secret is
     /// configured (FIX-LIST 3018); `None` with no secret, on a relay, or
@@ -512,16 +514,20 @@ impl SyncServer {
     /// FIX-LIST 3018). Never on a blind relay.
     pub(crate) fn host_root_provisioned(&self) -> bool {
         self.host_root_issuer.is_some()
-            || (self.managed_issuer.is_some()
+            || (self
+                .managed_issuer
+                .as_ref()
+                .is_some_and(|managed| managed.issuer().is_some())
                 && self.vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay)
     }
 
     /// The issuer this host signs with as the vault's root: the managed
     /// issuer, else the self-host root's loaded at construction.
     pub(crate) fn host_issuer(&self) -> Option<&oneiron::authority::HostSlipIssuer> {
-        self.managed_issuer
-            .as_ref()
-            .or(self.host_root_issuer.as_deref())
+        match self.managed_issuer.as_ref() {
+            Some(managed) => managed.issuer(),
+            None => self.host_root_issuer.as_deref(),
+        }
     }
 
     /// Install the host's extraction egress predicate. An absent predicate
@@ -642,6 +648,22 @@ impl SyncServer {
 /// Genuine host authority exists only off the relay posture and with a
 /// non-empty configured secret. Dev/no-secret and blind-relay modes mint
 /// nothing.
+/// A managed vault's host root issuer as managed boot set it: `None` inside
+/// where this install holds no issuer seed for the vault (FIX-LIST 3018), so
+/// the vault serves rootless and each host-signed act answers as a host with
+/// no issuer does.
+pub(crate) struct ManagedIssuer(Option<oneiron::authority::HostSlipIssuer>);
+
+impl ManagedIssuer {
+    pub(crate) fn new(issuer: Option<oneiron::authority::HostSlipIssuer>) -> Self {
+        Self(issuer)
+    }
+
+    pub(crate) fn issuer(&self) -> Option<&oneiron::authority::HostSlipIssuer> {
+        self.0.as_ref()
+    }
+}
+
 fn host_root_secret<'c>(vault: &oneiron::Vault, config: &'c SyncServerConfig) -> Option<&'c str> {
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return None;

@@ -355,8 +355,11 @@ impl SyncServer {
     /// handle, so the device sync's steady pass attests with it the images
     /// its home writes (FIX 4882).
     fn upkeep_authority_checkpoint(&self) -> oneiron::Result<AuthorityCheckpointUpkeep> {
-        if let Some(issuer) = self.managed_issuer.as_ref() {
-            return self.vault().upkeep_authority_checkpoint(issuer);
+        if let Some(managed) = self.managed_issuer.as_ref() {
+            return match managed.issuer() {
+                Some(issuer) => self.vault().upkeep_authority_checkpoint(issuer),
+                None => Ok(AuthorityCheckpointUpkeep::Idle),
+            };
         }
         let Some(issuer) = self.host_root_issuer.as_ref() else {
             return Ok(AuthorityCheckpointUpkeep::Idle);
