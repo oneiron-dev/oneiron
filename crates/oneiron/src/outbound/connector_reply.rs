@@ -8,7 +8,7 @@ use crate::connector_key::events::ConnectorEvent;
 use crate::delivery_window::DeliveryWindowResolvedLevel;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::surface_event::{SurfaceConnectorPayload, SurfaceCounterpartyStamp};
+use crate::surface_event::SurfaceConnectorPayload;
 
 use super::OutboundDeliveryWindowDecision;
 use super::dispatch_types::{
@@ -89,10 +89,11 @@ pub fn connector_reply_request(
     // An answer to an inbound message is a plain chat message on its own
     // thread, not an interrupt: LINE's compatibility `send` included. The
     // live delivery-window claims still decide at the door.
-    .delivery_window_resolved_level(DeliveryWindowResolvedLevel::PlainChat);
-    if let SurfaceCounterpartyStamp::Known { counterparty_ref } = &origin.counterparty {
-        request = request.counterparty_ref(counterparty_ref.clone());
-    }
+    .delivery_window_resolved_level(DeliveryWindowResolvedLevel::PlainChat)
+    // Who the reply answers, in every stamp state: a known contact, a
+    // provider sender key not yet a contact, or an unparsed sender's digest
+    // key. The Gate reads it apart from the transport target (OF-218).
+    .counterparty_ref(origin.counterparty.reference_key());
     // A reply on a pinned thread speaks as the thread's pin (OF-272).
     if let Some(thread) = &origin.thread_ref {
         request = request.reply_thread(thread.clone());

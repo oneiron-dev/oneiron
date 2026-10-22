@@ -3,7 +3,9 @@
 //! persona, so the host picks one from the identities assigned there.
 
 use crate::Vault;
-use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
+use crate::channel_identity::{
+    ChannelIdentityBinding, InboundDisposition, channel_identity_facts_in_txn,
+};
 use crate::error::Result;
 use crate::ports::EntityStore;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
@@ -11,9 +13,13 @@ use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use super::SLACK_CHANNEL;
 
 impl Vault {
-    /// The Active, actor-bound Slack personas of one workspace, earliest
-    /// first: every `{workspace_ref}:persona:{persona}` identity.
-    /// `workspace_ref` is the stamp
+    /// The actor-bound Slack personas of one workspace that take inbound
+    /// now, earliest first: every `{workspace_ref}:persona:{persona}`
+    /// identity whose live facts, read on its row's custody, deliver
+    /// ([`InboundDisposition::Deliver`] or
+    /// [`InboundDisposition::DeliverRetiring`]). A rotating, released or
+    /// quarantined persona keeps its inbound; the routing door stamps the
+    /// retiring ones. `workspace_ref` is the stamp
     /// [`super::SlackSharedPresenceAdapter::workspace_ref`] makes.
     pub fn slack_workspace_personas(&self, workspace_ref: &str) -> Result<Vec<String>> {
         let prefix = format!("{workspace_ref}:persona:");
@@ -21,16 +27,23 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut personas = Vec::new();
         for id in ids {
-            let Some(identity) = self.get_channel_identity(&id)? else {
+            let Some(identity) = self.get_channel_identity_in_txn(&txn, &id)? else {
                 continue;
             };
-            if identity.channel() != SLACK_CHANNEL
-                || identity.state() != ChannelIdentityState::Active
-                || !matches!(identity.binding(), ChannelIdentityBinding::Actor { .. })
+            let Some(facts) = channel_identity_facts_in_txn(&self.store, &txn, &id)? else {
+                continue;
+            };
+            let delivers = matches!(
+                facts.inbound_with_custody(identity.custody()),
+                InboundDisposition::Deliver | InboundDisposition::DeliverRetiring
+            );
+            if facts.channel != SLACK_CHANNEL
+                || !delivers
+                || !matches!(facts.binding, ChannelIdentityBinding::Actor { .. })
             {
                 continue;
             }
-            let Some(persona) = identity.address_or_handle().strip_prefix(&prefix) else {
+            let Some(persona) = facts.address_or_handle.strip_prefix(&prefix) else {
                 continue;
             };
             let since = self
