@@ -74,7 +74,7 @@ pub(super) struct WorkflowIntent {
     pub run_id: Option<String>,
     pub context_spec: Option<ContextSpec>,
     pub context_from: Vec<String>,
-    pub depth_remaining: Option<u8>,
+    pub depth_remaining: Option<u64>,
     pub project_ref: Option<String>,
     /// OF-543: the type the spawner placed the workflow at, as supplied. None
     /// leaves each leaf to dispatch's own placement. A retry naming another

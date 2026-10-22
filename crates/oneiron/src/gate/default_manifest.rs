@@ -48,11 +48,12 @@ use super::resolution::{
 use super::retrieval_retention::{RETRIEVAL_RETENTION_ROWS_KEY, default_retrieval_retention_rows};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
-/// Seeded policy data, not a project-constructor or dispatch constant.
-pub(crate) const SEEDED_PROJECT_DEPTH_DEFAULT: u8 = 10;
-pub(crate) const SEEDED_PROJECT_DEPTH_MAX: u8 = 16;
+/// Seeded policy data, not a project-constructor or dispatch constant. Both
+/// are fallbacks: a holder-authored vault row replaces them (C1).
+pub(crate) const SEEDED_PROJECT_DEPTH_DEFAULT: u64 = 10;
+pub(crate) const SEEDED_PROJECT_DEPTH_MAX: u64 = 16;
 
-pub(crate) const fn seeded_project_depth_default() -> u8 {
+pub(crate) const fn seeded_project_depth_default() -> u64 {
     SEEDED_PROJECT_DEPTH_DEFAULT
 }
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;

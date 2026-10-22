@@ -38,6 +38,7 @@ pub use self::admit::admit_published_inline;
 pub(crate) use self::bridge::{ArmReads, ShadowBridgeHost};
 pub use self::frames::{ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame};
 pub use self::source::{PreparedShadowStep, prepare_shadow_step_source, shadow_source_gone};
+pub(crate) use self::source::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
 pub use self::store::{ShadowBodyStore, ShadowSourceHold};
 pub use self::types::{
     ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, ShadowArmLease, ShadowBodyRef,

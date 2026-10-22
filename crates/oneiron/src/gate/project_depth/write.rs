@@ -132,7 +132,7 @@ pub(crate) fn put_signed_birth_in_txn<S>(
     now: u64,
     signer_key: AuthorityKey,
     signer: S,
-) -> Result<(EntityId, u8)>
+) -> Result<(EntityId, u64)>
 where
     S: FnOnce(&[u8]) -> Result<Vec<u8>>,
 {
@@ -190,7 +190,7 @@ pub(crate) fn put_edit_in_txn<S>(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     project: EntityId,
-    depth: u8,
+    depth: u64,
     writer: &WriteActor,
     now: u64,
     signer_key: AuthorityKey,
@@ -231,7 +231,7 @@ fn signed_edit<S>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     subject: EntityId,
-    depth: u8,
+    depth: u64,
     heads: &[EntityId],
     writer: &WriteActor,
     signer_key: AuthorityKey,
@@ -295,7 +295,7 @@ where
 pub(crate) fn put_default_edit_in_txn<S>(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    depth: u8,
+    depth: u64,
     writer: &WriteActor,
     now: u64,
     signer_key: AuthorityKey,
@@ -340,7 +340,7 @@ impl Vault {
     /// project births retain their original, separately keyed source fact.
     pub fn set_project_creation_depth_default<S>(
         &self,
-        depth: u8,
+        depth: u64,
         authenticated_owner: &WriteActor,
         now: u64,
         signer_key: AuthorityKey,

@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use serde_json::json;
 
+use super::admission::CoachReplayAdmission;
 use super::{CodeFixDecisions, CodeFixHost, CodeFixJob, PublisherCandidateKind, class_name};
 use crate::failure_signals::{
     CodeFixReplay, CodeFixSourceSnapshot, ExactReplay, ExactReplayRequest, ExportScrubber,
@@ -124,12 +125,13 @@ impl CoachReplay<'_> {
     /// one included: the call is replayed no more. Otherwise a copy an erase
     /// took since the job read it, or one that no longer reads as it did, is
     /// dropped and never sent again, and the call may be rebuilt; a copy the
-    /// job did not read is not taken up now.
+    /// job did not read is not taken up now. So is a copy the Coach's Grant
+    /// no longer admits, read again here before the send (FIX 8704).
     fn live_exact(&self) -> Result<ExactReplay> {
         if matches!(*self.exact.borrow(), ExactReplay::Erased) {
             return Ok(ExactReplay::Erased);
         }
-        let live = exact_replay(self.vault, &self.job.origin)?;
+        let live = exact_replay(self.vault, &self.job.origin, self.admitted()?)?;
         if matches!(live, ExactReplay::Erased) {
             *self.exact.borrow_mut() = ExactReplay::Erased;
             *self.baseline.borrow_mut() = Some(None);
@@ -141,6 +143,19 @@ impl CoachReplay<'_> {
         }
         *kept = ExactReplay::NotKept;
         Ok(ExactReplay::NotKept)
+    }
+
+    /// The Coach's admission to the failing call's capture, read again now
+    /// (FIX 8704): `None` once its Grant no longer admits it, or when none
+    /// did.
+    fn admitted(&self) -> Result<Option<&CoachReplayAdmission>> {
+        let Ok(admission) = &self.snapshot.admission else {
+            return Ok(None);
+        };
+        Ok(admission
+            .still_admits(self.vault)?
+            .is_ok()
+            .then_some(admission))
     }
 
     /// The real failing call replayed once for every candidate: the request

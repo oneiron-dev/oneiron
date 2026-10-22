@@ -3,11 +3,50 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::code_run::{CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{
     ByteSpan, ContentPart, LlmMessage, LlmMessageRole, LlmRequest, Segment, SegmentClass,
     SegmentClock, SegmentKind,
 };
+
+/// Where a turn's request puts the context read for that turn (FIX 6676).
+/// Every assembler that builds a turn's request reads
+/// [`session_prompt_layout`]: this module's session builder, the `ai.reply`
+/// board door and a chat answer's craft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptLayout {
+    /// The order before FIX 6676: the turn's context joins the early system
+    /// text, before the history.
+    EarlySystem,
+    /// ARCH-0067 v5's order: the stable system, then the append-only
+    /// history, then the turn's context as one request-only user message
+    /// right before the latest real user turn ([`place_turn_context`]).
+    StableHistoryThenTurnContext,
+}
+
+/// The layout a host uses when its operator names none: today's order
+/// (Engine 10-22 11:35, rubric 1). The answer-quality screen decides whether
+/// the stable-prefix layout becomes the default (FIX 9430).
+pub const DEFAULT_PROMPT_LAYOUT: PromptLayout = PromptLayout::EarlySystem;
+
+/// The environment variable an operator sets to choose the layout:
+/// `stable_history_then_turn_context` for ARCH-0067 v5's order, or
+/// `early_system` for today's. Unset or any other value keeps
+/// [`DEFAULT_PROMPT_LAYOUT`].
+pub const PROMPT_LAYOUT_ENV: &str = "ONEIRON_PROMPT_LAYOUT";
+
+/// The one layout every assembler of a turn's request reads (FIX 6676), as
+/// [`PROMPT_LAYOUT_ENV`] names it when the turn is assembled. Both arms are
+/// policy alternatives, not a compatibility path.
+#[must_use]
+pub fn session_prompt_layout() -> PromptLayout {
+    match std::env::var(PROMPT_LAYOUT_ENV).as_deref() {
+        Ok("stable_history_then_turn_context") => PromptLayout::StableHistoryThenTurnContext,
+        Ok("early_system") => PromptLayout::EarlySystem,
+        _ => DEFAULT_PROMPT_LAYOUT,
+    }
+}
 
 #[cfg(any(test, feature = "test-support"))]
 pub const TEST_PROMPT_PACKAGE_RELATIVE_PATH: &str = "crates/oneiron/tests/fixtures/prompts";
@@ -40,10 +79,16 @@ pub struct ResolvedPrompt {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SessionPromptParts {
+    /// This turn's activated memory: blocks already admitted and rendered,
+    /// fenced and attributed, by the board's renderer. Under
+    /// [`session_prompt_layout`] they ride the turn's context message after
+    /// the history ([`place_turn_context`]), never the system text.
     pub activated_memory: Vec<String>,
     pub history: Vec<LlmMessage>,
     /// Host-supplied sections (including any off-record disclosure).
-    /// The host owns both the wording and its section headings.
+    /// The host owns both the wording and its section headings. They stay
+    /// in the early system text in either layout: a section that changes
+    /// turn by turn belongs in `activated_memory` as a rendered block.
     pub host_sections: Vec<String>,
 }
 
@@ -119,27 +164,8 @@ pub fn assemble_session_prompt(
     package_root: impl AsRef<Path>,
     parts: SessionPromptParts,
 ) -> Result<SessionPromptAssembly, io::Error> {
-    let mut resolved = resolve_prompt(prompt_path, package_root)?;
-    let system_prompt = assemble_system_prompt(
-        &resolved.text,
-        &parts.host_sections,
-        &parts.activated_memory,
-    );
-    resolved.stamp.assembled_fingerprint = Some(hash_hex(system_prompt.as_bytes()));
-    let mut messages = Vec::with_capacity(parts.history.len() + 1);
-    messages.push(LlmMessage {
-        role: LlmMessageRole::System,
-        content: vec![ContentPart::Text {
-            text: system_prompt.clone(),
-        }],
-    });
-    messages.extend(parts.history);
-
-    Ok(SessionPromptAssembly {
-        system_prompt,
-        messages,
-        stamp: resolved.stamp,
-    })
+    let (assembly, _) = assemble_session(prompt_path, package_root, parts)?;
+    Ok(assembly)
 }
 
 pub fn build_session_request(
@@ -148,12 +174,144 @@ pub fn build_session_request(
     package_root: impl AsRef<Path>,
     parts: SessionPromptParts,
 ) -> Result<StampedLlmRequest, io::Error> {
-    let assembly = assemble_session_prompt(prompt_path, package_root, parts)?;
+    let (assembly, context) = assemble_session(prompt_path, package_root, parts)?;
     request.messages = assembly.messages;
+    // Only a placed context message moves the indices today's marks name;
+    // with none (today's layout among them) the caller's marks stand.
+    if context.is_some() {
+        rebuild_cache_boundaries(&mut request, context);
+    }
     Ok(StampedLlmRequest {
         request,
         stamp: assembly.stamp,
     })
+}
+
+/// Puts a turn's context, its already-rendered `blocks` (each fenced and
+/// attributed by its own canonical renderer), in `messages` as one
+/// request-only user message: the nonempty blocks, trimmed, joined by a
+/// blank line, right before the last user message, the latest real user
+/// turn, or after them all when `messages` hold no user message. It adds
+/// no delimiter of its own. The message belongs to the outgoing request
+/// alone, never to history, a witnessed turn or a compaction span. Returns
+/// where it went; `None`, with nothing inserted, when every block is empty.
+pub fn place_turn_context<S: AsRef<str>>(
+    messages: &mut Vec<LlmMessage>,
+    blocks: &[S],
+) -> Option<usize> {
+    let text = blocks
+        .iter()
+        .map(|block| block.as_ref().trim())
+        .filter(|block| !block.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if text.is_empty() {
+        return None;
+    }
+    let at = messages
+        .iter()
+        .rposition(|message| message.role == LlmMessageRole::User)
+        .unwrap_or(messages.len());
+    messages.insert(
+        at,
+        LlmMessage {
+            role: LlmMessageRole::User,
+            content: vec![ContentPart::Text { text }],
+        },
+    );
+    Some(at)
+}
+
+/// [`assemble_session_prompt`], beside where [`session_prompt_layout`] put
+/// the turn's context: its message's index, or `None` when it rode the
+/// system text or there was none. The stamp's assembled fingerprint is the
+/// exact system text sent, in either layout.
+fn assemble_session(
+    prompt_path: impl AsRef<Path>,
+    package_root: impl AsRef<Path>,
+    parts: SessionPromptParts,
+) -> Result<(SessionPromptAssembly, Option<usize>), io::Error> {
+    let mut resolved = resolve_prompt(prompt_path, package_root)?;
+    let layout = session_prompt_layout();
+    let early_memory: &[String] = match layout {
+        PromptLayout::EarlySystem => &parts.activated_memory,
+        PromptLayout::StableHistoryThenTurnContext => &[],
+    };
+    let system_prompt = assemble_system_prompt(&resolved.text, &parts.host_sections, early_memory);
+    resolved.stamp.assembled_fingerprint = Some(hash_hex(system_prompt.as_bytes()));
+    let mut messages = Vec::with_capacity(parts.history.len() + 2);
+    messages.push(LlmMessage {
+        role: LlmMessageRole::System,
+        content: vec![ContentPart::Text {
+            text: system_prompt.clone(),
+        }],
+    });
+    messages.extend(parts.history);
+    let context = match layout {
+        PromptLayout::EarlySystem => None,
+        PromptLayout::StableHistoryThenTurnContext => {
+            place_turn_context(&mut messages, parts.activated_memory.as_slice())
+        }
+    };
+
+    Ok((
+        SessionPromptAssembly {
+            system_prompt,
+            messages,
+            stamp: resolved.stamp,
+        },
+        context,
+    ))
+}
+
+/// Rebuilds the host's cache-boundary descriptor once assembly replaced
+/// `request`'s messages (FIX 6676): a message boundary it carried named a
+/// message the request no longer holds, so none is kept. Where it named
+/// any, the stable prefix's end is marked in their place: the message
+/// before the turn's context (`context`), or the request's last when it
+/// sends none. Tool boundaries stay, as the tools do. A descriptor that
+/// does not decode stays as it is, for the wire to refuse.
+fn rebuild_cache_boundaries(request: &mut LlmRequest, context: Option<usize>) {
+    let end = match context {
+        Some(at) => at.checked_sub(1),
+        None => request.messages.len().checked_sub(1),
+    };
+    let stable_end = end.and_then(|message| {
+        let held = request.messages.get(message)?;
+        let part = held.content.len().checked_sub(1)?;
+        Some(CacheBoundary::Message { message, part })
+    });
+    let Some(options) = request
+        .provider_options
+        .get_mut(HOST_PROVIDER_OPTIONS)
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let Some(Ok(boundaries)) = options
+        .get(CACHE_BOUNDARIES_KEY)
+        .map(|value| serde_json::from_value::<Vec<CacheBoundary>>(value.clone()))
+    else {
+        return;
+    };
+    let named_message = boundaries
+        .iter()
+        .any(|boundary| matches!(boundary, CacheBoundary::Message { .. }));
+    let mut rebuilt: Vec<CacheBoundary> = boundaries
+        .into_iter()
+        .filter(|boundary| matches!(boundary, CacheBoundary::Tool { .. }))
+        .collect();
+    if named_message {
+        rebuilt.extend(stable_end);
+    }
+    match serde_json::to_value(&rebuilt) {
+        Ok(value) => {
+            options.insert(CACHE_BOUNDARIES_KEY.to_owned(), value);
+        }
+        Err(_) => {
+            options.remove(CACHE_BOUNDARIES_KEY);
+        }
+    }
 }
 
 #[derive(Default)]

@@ -1,3 +1,4 @@
+mod binding_move;
 mod cold_attach;
 mod device;
 mod eligibility;
@@ -10,6 +11,13 @@ mod space_card;
 mod space_move;
 mod space_probe;
 mod turn;
+pub use binding_move::{
+    BindingMoveLink, BindingMoveState, BindingNotApplied, BindingSource, PendingEmbedderBinding,
+};
+pub(crate) use binding_move::{
+    erase_binding_move_actor_in_txn, live_binding_move_in, stage_embedder_binding_in_txn,
+    undo_staged_binding_in_txn,
+};
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
 pub use device::{EmbeddingDevice, EmbeddingProvenance, EmbeddingProvenanceCount};
 pub(crate) use device::{

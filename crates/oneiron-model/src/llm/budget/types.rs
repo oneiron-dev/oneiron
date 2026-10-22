@@ -13,8 +13,14 @@ pub const DEFAULT_BUDGET_RESERVE_UNITS: u64 = 8_000;
 )]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BudgetExhaustionPolicy {
+    /// An exhausted paid line admits no further paid call.
     #[default]
     Suspend,
+    /// The same paid admission cap as [`Self::Suspend`] (FIX 8998): an
+    /// exhausted paid line admits no further paid call. A call bound to run on
+    /// this device is unmetered under every policy, before exhaustion too
+    /// ([`super::BudgetGuard::admit_for_request`]), so this variant changes no
+    /// admission; it names the line's intent that local work goes on.
     ContinueOnLocal,
     Overdraft {
         cap: u64,

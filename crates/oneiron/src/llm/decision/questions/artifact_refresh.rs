@@ -36,7 +36,7 @@ use crate::edit_roundtrip::{
 use crate::edit_settle::PendingProposalView;
 use crate::llm::decision::{DecisionBandPolicy, DecisionRung, Reversibility};
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::{EntityId, Error, Result, Vault, WriteActor};
+use crate::{EntityId, Error, ErrorKind, Result, Vault, WriteActor};
 
 /// Key: id16(question) + id16(artifact).
 const ASKED: SideTable<(EntityId, EntityId), ArtifactAsked, Named> =
@@ -555,10 +555,14 @@ pub struct ArtifactAskRecord {
     /// The logged ask's own id; none on an ask stamped before asks were logged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask_id: Option<EntityId>,
-    /// The kind of error that stopped a failed ask, which held nothing; none when the ask
-    /// completed.
+    /// The kind of error that stopped a failed ask, which held nothing, by its stable
+    /// wire name (FIX 9177); none when the ask completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<String>,
+    /// For a wake's re-ask of withdrawn answers, the proposal they were withdrawn from
+    /// (FIX 9174); none for the question's own ask.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_proposal_ref: Option<String>,
 }
 
 /// Where one artifact ask's answers stand, by the same walk the next ask's baseline takes:
@@ -576,6 +580,9 @@ pub enum ArtifactAskStanding {
     /// Nothing waits and no Keep moved the artifact: the answers were discarded, or an edit
     /// withdrew them.
     Closed,
+    /// The ask failed and held nothing (FIX 9177): the record's `failed` names its error's
+    /// kind. A completed ask that answered no unit is [`Self::Unanswered`].
+    Failed,
 }
 
 /// The builder `selection` names, over the readable `files` of a folder ask, asking

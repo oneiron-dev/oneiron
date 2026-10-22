@@ -1,9 +1,10 @@
 //! A live chat turn's typed segments (DESIGN-V2 R2): the manifest of the
 //! call's messages in the order the turn assembled them (instructions,
-//! resident craft, the log, the board, the newest user message), set on
-//! the call once it is admitted and only when it describes the admitted
-//! messages exactly; and, once the reply is committed, the hand-off of the
-//! turn to the model session coordinator with what it was admitted under.
+//! resident craft where the session layout puts it, the log, the board,
+//! the newest user message), set on the call once it is admitted and only
+//! when it describes the admitted messages exactly; and, once the reply is
+//! committed, the hand-off of the turn to the model session coordinator
+//! with what it was admitted under.
 //!
 //! A turn whose log was not read from the retained ledger, or whose rows
 //! are not all known, names no conversation: its manifest keys no session.
@@ -14,10 +15,11 @@ use oneiron::attempt_queue::ManifestEntry;
 use oneiron::claim::{CallerLocality, ScopedReadActorKey};
 use oneiron::compaction::ChatLogLine;
 use oneiron::llm::{
-    ConversationAnchor, ScopeDigest, Segment, SegmentClock, SegmentKind, SegmentLocator,
-    SegmentManifest, SessionInvalidation, VaultRef,
+    ConversationAnchor, ScopeDigest, Segment, SegmentClass, SegmentClock, SegmentKind,
+    SegmentLocator, SegmentManifest, SessionInvalidation, TrustFence, VaultRef,
 };
 use oneiron::memory::StreamFinality;
+use oneiron::prompt::{PromptLayout, session_prompt_layout};
 use oneiron::{EdgeActorClass, EntityId, LlmMessage, LlmMessageRole, Vault};
 
 use super::compaction::SelfChat;
@@ -27,13 +29,13 @@ use crate::api::credential_memory;
 use crate::auth::CoreAuth;
 use crate::models::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
 
-/// Where the turn's messages lie, as it assembled them, before the board.
+/// Where the turn's messages lay as it assembled them, before its craft and
+/// its board went in.
 #[derive(Clone, Copy)]
 pub(super) struct Layout {
-    /// The leading System messages: the agent's instructions, then its
-    /// resident craft when it rode.
+    /// The leading System messages: the agent's instructions.
     pub(super) system_end: usize,
-    /// Where the log ends: the newest user message's place.
+    /// Where the log ended: the newest user message's place.
     pub(super) log_end: usize,
 }
 
@@ -90,38 +92,61 @@ pub(super) fn admitted(
         system_end,
         log_end,
     } = assembled.layout;
-    let craft = assembled.craft.is_some();
     let mut messages = assembled.messages.to_vec();
-    if messages.len() != log_end + 1 || system_end > log_end {
+    if system_end > log_end {
         return None;
     }
+    // The craft, when its message went in (FIX 6676): right after the
+    // instructions in today's layout, inside the prefix; as the turn's
+    // data-only context right before the newest user message in the stable
+    // one, outside it.
+    let early = session_prompt_layout() == PromptLayout::EarlySystem;
+    let craft = match messages.len().checked_sub(log_end + 1) {
+        Some(0) => false,
+        Some(1) if assembled.craft.is_some() => true,
+        _ => return None,
+    };
+    let log_start = system_end + usize::from(craft && early);
     let mut segments = Vec::with_capacity(messages.len() + 1);
     for index in 0..system_end {
-        segments.push(if craft && index + 1 == system_end {
-            Segment::whole(SegmentKind::HostSection, SegmentClock::Live, index)
-        } else {
-            Segment::whole(SegmentKind::System, SegmentClock::Epoch, index)
-        });
+        segments.push(Segment::whole(
+            SegmentKind::System,
+            SegmentClock::Epoch,
+            index,
+        ));
+    }
+    if craft && early {
+        segments.push(Segment::whole(
+            SegmentKind::HostSection,
+            SegmentClock::Live,
+            system_end,
+        ));
     }
     let log = assembled.self_chat.map(SelfChat::log);
     match log {
         Some(log) if log.lines.len() == log_end - system_end => {
             for (offset, (line, id)) in log.lines.iter().zip(&log.message_ids).enumerate() {
-                segments.push(log_segment(line, *id, system_end + offset));
+                segments.push(log_segment(line, *id, log_start + offset));
             }
         }
         Some(_) => return None,
         None => segments.extend(
-            (system_end..log_end)
+            (log_start..log_start + log_end - system_end)
                 .map(|index| Segment::whole(SegmentKind::LogMessage, SegmentClock::Log, index)),
         ),
     }
-    let mut newest = log_end;
+    let mut newest = log_end + usize::from(craft);
+    if craft && !early {
+        let mut context = Segment::whole(SegmentKind::HostSection, SegmentClock::Live, log_end);
+        context.class = SegmentClass::Ephemeral;
+        context.fence = TrustFence::Guest;
+        segments.push(context);
+    }
     if let Some((block, sections)) = assembled.board {
         let at = messages
             .iter()
             .rposition(|message| message.role == LlmMessageRole::User)?;
-        if at != log_end {
+        if at != newest {
             return None;
         }
         messages.insert(at, text_message(LlmMessageRole::User, block.clone()));

@@ -69,6 +69,7 @@ mod router;
 mod run_backend;
 mod served;
 pub(crate) mod soniox;
+mod source_admission;
 mod sse;
 mod status;
 #[cfg(test)]
@@ -104,6 +105,7 @@ pub(crate) use responses_socket::{set_responses_chain_vault, set_responses_store
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
+pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus,
 };
