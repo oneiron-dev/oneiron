@@ -17,6 +17,7 @@
 use oneiron_browser::{DraftOutput, ExpectInput, SecretParam};
 use serde::{Deserialize, Serialize};
 
+use crate::authority::InvocationSlipBinding;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -157,6 +158,10 @@ pub enum SolvedSource {
     /// A library run of the filed program `workflow` met its filled
     /// postcondition: its type and subgoal are the program record's.
     LibraryRun { workflow: EntityId },
+    /// An agent's run of the TASK `task` ended with its done-means' browser
+    /// checks met (CUA E8b): its type is the run's recorded stamp, its
+    /// subgoal the done-means' question.
+    TaskRun { task: EntityId },
 }
 
 /// What a source door captured, before its caller's door scopes it.
@@ -275,11 +280,14 @@ impl SolvedRunEvidence {
 }
 
 /// The source authority a solved run was captured under (CUA E8a), kept
-/// beside its evidence and never in it: no credential, token or key bytes.
-/// The credential reference names the exact instrument and door; the
-/// witness digest is BLAKE3 of the signed binding the request was admitted
-/// on. A later use resolves the live credential from them and revalidates
-/// it then; this row is no authority of its own.
+/// beside its evidence and never in it. The credential reference names the
+/// exact instrument and door; the witness is the signed binding the request
+/// was admitted on (CUA E8b), kept as a queued turn action keeps its slip:
+/// never logged, never in a receipt, gone with the row's erase, and dropped
+/// once an admission job that used it ends. The witness digest is its
+/// BLAKE3, kept after the binding is dropped. A later use verifies the
+/// binding again against current authority and revalidates the credential
+/// then; this row is no authority of its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedBrowserCaller {
     pub scope: SolvedRunScope,
@@ -289,6 +297,9 @@ pub struct SavedBrowserCaller {
     pub call_id: Option<InvocationId>,
     pub credential: Option<VerbAskCredentialRef>,
     pub witness_digest: Option<[u8; 32]>,
+    /// The binding itself, until an admission job that used it ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness: Option<InvocationSlipBinding>,
 }
 
 /// What a capture came to (CUA E8a).

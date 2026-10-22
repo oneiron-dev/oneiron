@@ -29,11 +29,15 @@ use serde::{Deserialize, Serialize};
 
 mod body_actor;
 pub(crate) mod checkpoint;
+mod discard;
 mod lift;
 mod receipts;
 pub(crate) mod reviewed_fork;
 pub use self::body_actor::BodyActor;
 pub(crate) use self::body_actor::{erase_fork_actor_in_txn, names_no_actor};
+pub(crate) use self::discard::{
+    discard_admitted_typed_body_fork_in_txn, discard_typed_body_fork_in_txn,
+};
 pub(crate) use self::lift::{
     LiftedSources, TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn,
 };
@@ -388,30 +392,6 @@ pub(crate) fn merge_admitted_typed_body_fork_in_txn(
     FORKS.put(&vault.store, txn, &key, &record)?;
     FORK_DOCS.delete(&vault.store, txn, &key)?;
     Ok(head)
-}
-
-/// Abandons an open fork's unlanded work.
-pub(crate) fn discard_typed_body_fork_in_txn(
-    vault: &Vault,
-    txn: &mut RwTxn<'_>,
-    entity: &EntityId,
-    fork: &EntityId,
-    actor: WriteActor,
-) -> Result<TypedBodyFork> {
-    let key = (*entity, *fork);
-    let mut record = FORKS
-        .get(&vault.store, txn, &key)?
-        .ok_or(Error::EntityNotFound)?;
-    if record.state != TypedForkState::Open {
-        return Err(invalid("the fork is not open"));
-    }
-    record.state = TypedForkState::Discarded {
-        by: BodyActor::Actor(actor.entity_ref()),
-        at: vault.now_recorded_at(),
-    };
-    FORKS.put(&vault.store, txn, &key, &record)?;
-    FORK_DOCS.delete(&vault.store, txn, &key)?;
-    Ok(record)
 }
 
 /// Removes `entity`'s typed body, every fork of it and their receipts.

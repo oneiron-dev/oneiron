@@ -471,6 +471,7 @@ impl RunGuests {
             desktop: RunDesktop::new(server, run_id),
             refused: browser_guest::KeptRefusal::default(),
             payer: None,
+            admission: None,
         }
     }
 
@@ -483,6 +484,7 @@ impl RunGuests {
             desktop: None,
             refused: browser_guest::KeptRefusal::default(),
             payer: None,
+            admission: None,
         }
     }
 
@@ -632,6 +634,7 @@ impl RunGuests {
                     server: Arc::clone(server),
                     by,
                     scope,
+                    admission: self.admission,
                 };
                 let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets);
                 let fields =
@@ -643,7 +646,8 @@ impl RunGuests {
                     origin,
                     run_id,
                 };
-                let capture = Some(&capture);
+                // An admission job's replay is no source run (CUA E8b).
+                let capture = self.admission.is_none().then_some(&capture);
                 run.call(
                     call.verb, input, decider, library, writer, fresh, fields, capture,
                 )
@@ -672,6 +676,7 @@ impl RunGuests {
                 server: Arc::clone(server),
                 by,
                 scope: None,
+                admission: None,
             };
             planner.observe(call.verb, &call.input, &output, |workflow| {
                 let filed = library.program(workflow).ok().flatten()?;
