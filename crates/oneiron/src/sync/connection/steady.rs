@@ -44,6 +44,10 @@ impl SyncConnection {
         let debounce_ms = u64::from(self.config.client_config.sync_debounce_ms).max(1);
         let mut debounce_buffer: Vec<LocalUpdate> = Vec::new();
         let mut document_buffer: Vec<Vec<u8>> = Vec::new();
+        // One owed artifact publication part at a time, outside the document
+        // buffer, and where this connection stands in them (FIX 9575).
+        let mut publication_cursor = crate::artifact_hosting::ArtifactPublicationCursor::default();
+        let mut publication_slot = None;
         let mut debounce_deadline: Option<Instant> = None;
         let mut ephemeral_housekeeping =
             tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
@@ -268,13 +272,24 @@ impl SyncConnection {
                 _ = debounce_sleep, if debounce_deadline.is_some() => {
                     debounce_deadline = None;
 
-                    if let Err(error) = self.flush_node_batch(
+                    match self.flush_node_batch(
                         &mut write, client, &mut debounce_buffer, &mut document_buffer,
+                        &mut publication_slot,
                     ).await {
-                        flush_to_queue(&self.queue, &mut debounce_buffer);
-                        return LoopExit::Disconnected(error);
+                        Err(error) => {
+                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            return LoopExit::Disconnected(error);
+                        }
+                        Ok(Some((part, sent))) => {
+                            client.artifact_publication_released(&mut publication_cursor, &part, sent);
+                        }
+                        Ok(None) => {}
                     }
-                    if !debounce_buffer.is_empty() || !document_buffer.is_empty() {
+                    // The next owed part goes on the next tick.
+                    if let Err(error) = client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot) {
+                        let _ = event_tx.send(SyncEvent::Error(format!("Artifact publication sync failed: {error}")));
+                    }
+                    if !debounce_buffer.is_empty() || !document_buffer.is_empty() || publication_slot.is_some() {
                         debounce_deadline = Some(Instant::now() + Duration::from_millis(debounce_ms));
                     }
                 }
@@ -428,15 +443,14 @@ impl SyncConnection {
                     if let Err(error) = client.replay_deferred_federation_update() {
                         return LoopExit::Disconnected(format!("federation replay: {error}"));
                     }
-                    // Pinned artifact pointers this device still owes the server.
-                    match client.due_artifact_publication_frames() {
-                        Ok(frames) => {
-                            document_buffer.extend(frames);
-                            if !document_buffer.is_empty() {
-                                debounce_deadline.get_or_insert_with(||
-                                    Instant::now() + Duration::from_millis(debounce_ms));
-                            }
+                    // Pinned artifact pointers this device still owes the server,
+                    // one part at a time.
+                    match client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot) {
+                        Ok(true) => {
+                            debounce_deadline.get_or_insert_with(||
+                                Instant::now() + Duration::from_millis(debounce_ms));
                         },
+                        Ok(false) => {}
                         Err(error) => { let _ = event_tx.send(SyncEvent::Error(format!("Artifact publication sync failed: {error}"))); }
                     }
                     match self.manager.vault().pump_message_streams() {

@@ -4,11 +4,15 @@
 //! It reads the vault's standing legal holds the way backup expiry does,
 //! under the vault's writer ([`oneiron::Vault::with_backup_hold_exclusion`]),
 //! and runs the delete's unlink inside that exclusion. Any standing hold
-//! defers the delete until release; a vault it cannot open, a target of
-//! another vault, or a hold read that fails defers it as unknown. It never
-//! reports a delete it did not make.
+//! defers the delete until release, with only whether the owner may see a
+//! hold that stands, read in that same exclusion (FIX 9500); a vault it
+//! cannot open, a target of another vault, or a hold read that fails defers
+//! it as unknown. It never reports a delete it did not make.
 
 use std::sync::Arc;
+
+use oneiron::recovery::checkpoint::BackupHoldVisibility;
+use oneiron_vault_contract::relay_delete::RelayHoldVisibility;
 
 use crate::managed::{
     RelayDeleteDeferral, RelayDeleteHoldError, RelayDeleteHoldGuard, RelayDeleteHoldOutcome,
@@ -98,9 +102,13 @@ impl RelayDeleteHoldGuard for VaultRelayHoldGuard {
             return Ok(HOLD_STATE_UNKNOWN);
         }
         let guarded = vault.with_backup_hold_exclusion(|holds| {
-            if holds.keeps_backups() {
+            if let Some(held) = holds.held_visibility() {
+                let visibility = match held {
+                    BackupHoldVisibility::Visible => RelayHoldVisibility::Visible,
+                    BackupHoldVisibility::SilentOnly => RelayHoldVisibility::SilentOnly,
+                };
                 return Ok(RelayDeleteHoldOutcome::Deferred(
-                    RelayDeleteDeferral::HeldUntilRelease,
+                    RelayDeleteDeferral::Held { visibility },
                 ));
             }
             unlink()

@@ -9,6 +9,7 @@ use super::{
     EntityStoreRead, Error, Result, Vault, artifact_family_kind_of, decode_code_artifact_body,
     snapshot_file_entry, validate_artifact_id, validate_artifact_path,
 };
+use crate::secret_custody::SecretSight;
 
 impl Vault {
     pub fn artifact_pointer(
@@ -156,9 +157,8 @@ impl Vault {
                 {
                     return Ok(None);
                 }
-                let Some(record) =
-                    self.blob_artifact_version_metadata_in_txn(&rtxn, &artifact_id, version)?
-                else {
+                // The version's own record, or a replica's descriptor (FIX 1195).
+                let Some(record) = self.serving_blob_in_txn(&rtxn, &artifact_id, version)? else {
                     return Ok(None);
                 };
                 // Pin the export presentation with the version. Later body
@@ -167,11 +167,8 @@ impl Vault {
                     return Ok(None);
                 }
                 let bytes = self
-                    .read_blob_artifact_version_in_txn(&rtxn, &artifact_id, version)?
+                    .read_serving_blob_in_txn(&rtxn, &artifact_id, &record, SecretSight::Owner)?
                     .ok_or(Error::EntityNotFound)?;
-                if *blake3::hash(&bytes).as_bytes() != record.content_hash {
-                    return Err(Error::CorruptedIndex("blob export content hash"));
-                }
                 let bytes = self.resolve_docx_authors_in_txn(&rtxn, bytes)?; // FIX 4513
                 let size_bytes = u64::try_from(bytes.len())
                     .map_err(|_| Error::ArithmeticOverflow("blob export length"))?;

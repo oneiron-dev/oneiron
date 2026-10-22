@@ -170,15 +170,15 @@ impl Vault {
         read_blob_asset_in_txn(self, rtxn, &record.content_hash).map(Some)
     }
 
-    /// One version record's stored bytes, which publication sync carries
-    /// verbatim to the sync server's replica of this vault.
-    pub(crate) fn blob_artifact_version_record_bytes_in_txn(
+    /// Whether `artifact_id`'s version bytes may leave
+    /// ([`compaction_response_readable_in`]), for a reader that finds them
+    /// through a published blob's serving descriptor (FIX 1195).
+    pub(crate) fn blob_artifact_bytes_readable_in_txn(
         &self,
         rtxn: &RoTxn<'_>,
         artifact_id: &EntityId,
-        version: u64,
-    ) -> Result<Option<Vec<u8>>> {
-        VERSIONS.get_bytes(&self.store, rtxn, &(*artifact_id, version))
+    ) -> Result<bool> {
+        compaction_response_readable_in(self, rtxn, artifact_id)
     }
 }
 

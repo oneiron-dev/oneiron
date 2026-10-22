@@ -4,20 +4,42 @@
 //! The bytes are content-addressed ASSET rows, and the owner and claim
 //! entities are ordinary rows; window sync already carries all of them,
 //! through its own admission. This lane carries what a window does not: the
-//! pointer row, the code snapshot manifest or the blob version record. The
-//! receiver applies a publication only once every row it names is present
-//! and every byte hashes to its name, so a served file is the pinned file.
-//! Until then it answers `Staged`, and the device sends it again.
+//! pointer row, and the code snapshot manifest or the blob version's serving
+//! descriptor (FIX 1195): its content hash, export name and media type, and
+//! nothing of its provenance, run, claim or history. Each publication names
+//! the pointer change it carries, and goes in bounded parts (`parts`, FIX
+//! 9575). The receiver applies a publication only once every part is there,
+//! the whole hashes to the digest each part names, every row it names is
+//! present and every byte hashes to its name, so a served file is the pinned
+//! file. Until then it answers `Staged`, and the device sends it again.
 
+use super::serving_blob::{ServingBlobDescriptor, put_serving_blob_in_txn};
 use super::*;
-use crate::sync::transport::{document_sub_tags, encode_document};
+use crate::side_table::Named;
 
-/// Empty marker per changed channel pointer; cleared by a matching receipt.
-const PUBLICATION_OUTBOX: SideTable<ArtifactPointerRowKey, (), Raw> =
+// Bounded parts, their spool and the complete receipt (FIX 9575).
+mod parts;
+pub(crate) use self::parts::{
+    ArtifactPublicationCursor, ArtifactPublicationPart, ArtifactPublicationStep,
+};
+
+/// One marker per changed channel pointer, naming that change; cleared by a
+/// receipt for the publication of that change as it stands.
+const PUBLICATION_OUTBOX: SideTable<ArtifactPointerRowKey, PublicationOutboxMarker, Named> =
     SideTable::new(&side_table::ARTIFACT_SYNC_OUTBOX);
 
 const PUBLICATION_ID_DOMAIN: &[u8] = b"oneiron.artifact.publication.v1";
 const RECEIPT_LEN: usize = 33;
+
+/// The change a pointer's outbox marker names: 16 random bytes, fresh for
+/// each change of the pointer, an unpublish included, and kept across that
+/// change's retries. An opaque transfer identity, never a version or an
+/// order between devices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PublicationOutboxMarker {
+    change_id: [u8; 16],
+}
 
 /// What the sync server did with one publication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,15 +72,11 @@ impl ArtifactPublicationOutcome {
     }
 }
 
-/// One frame the device owes the sync server, with the digest its receipt names.
-#[derive(Debug, Clone)]
-pub struct ArtifactPublicationFrame {
-    pub digest: [u8; 32],
-    pub frame: Vec<u8>,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PublicationWire {
+    /// The pointer change this publication carries.
+    change_id: [u8; 16],
     channel: u8,
     artifact: String,
     /// `None`: the channel serves nothing now.
@@ -66,6 +84,7 @@ struct PublicationWire {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PublishedWire {
     /// The pointer row's stored bytes: export, stale stamp and serve tier
     /// (a link tier holds only its token's digest).
@@ -78,11 +97,12 @@ struct PublishedWire {
 enum ExportWire {
     /// The encoded snapshot manifest the fork hash names.
     Code { snapshot: Vec<u8> },
-    /// The blob version record's stored bytes.
-    Blob { version: Vec<u8> },
+    /// What serving the blob version reads, never its version record.
+    Blob { serving: ServingBlobDescriptor },
 }
 
-/// Marks a channel pointer as owed to the sync server, in the transaction that changes it.
+/// Marks a channel pointer as owed to the sync server, under a new change, in
+/// the transaction that changes it.
 pub(super) fn mark_publication_in_txn(
     store: &crate::store::Store,
     wtxn: &mut RwTxn<'_>,
@@ -96,7 +116,9 @@ pub(super) fn mark_publication_in_txn(
             channel,
             artifact: artifact.to_owned(),
         },
-        &(),
+        &PublicationOutboxMarker {
+            change_id: parts::new_publication_change_id(),
+        },
     )
 }
 
@@ -107,48 +129,35 @@ fn publication_entity_id(channel: ArtifactPointerChannel, artifact: &str) -> Res
     )
 }
 
-fn receipt_frame(
-    entity: EntityId,
-    digest: [u8; 32],
-    outcome: ArtifactPublicationOutcome,
-) -> Result<Vec<u8>> {
-    let mut payload = Vec::with_capacity(RECEIPT_LEN);
-    payload.extend_from_slice(&digest);
-    payload.push(outcome.byte());
-    encode_document(entity, document_sub_tags::ARTIFACT_RECEIPT, &payload)
-        .into_result()
-        .map_err(|_| Error::InvariantViolation("artifact receipt exceeds wire limit"))
+/// Writes `wire`'s serialization to `out`: the bytes every part carries and
+/// the complete digest names.
+fn write_publication(out: &mut impl std::io::Write, wire: &PublicationWire) -> Result<()> {
+    rmp_serde::encode::write_named(out, wire)
+        .map_err(|_| Error::InvariantViolation("artifact publication encode"))
 }
 
 fn denied() -> Error {
     Error::sync_protocol(crate::error::SyncProtocolValidation::DocumentAdmissionDenied)
 }
 
-impl Vault {
-    /// Every publication this device still owes the sync server, each as it
-    /// stands now: a pointer changed twice is sent once, in its last state.
-    pub fn artifact_publication_frames(&self) -> Result<Vec<ArtifactPublicationFrame>> {
-        let txn = self.store.env.read_txn()?;
-        let mut frames = Vec::new();
-        for (key, ()) in PUBLICATION_OUTBOX.scan(&self.store, &txn)? {
-            let payload = self.publication_payload_in_txn(&txn, &key)?;
-            let frame = encode_document(
-                publication_entity_id(key.channel, &key.artifact)?,
-                document_sub_tags::ARTIFACT_PUBLICATION,
-                &payload,
-            )
-            .into_result()
-            .map_err(|_| Error::InvariantViolation("artifact publication exceeds wire limit"))?;
-            frames.push(ArtifactPublicationFrame {
-                digest: *blake3::hash(&payload).as_bytes(),
-                frame,
-            });
-        }
-        Ok(frames)
+/// An outbox row that reads as a marker, or `None` for one that does not
+/// decode as one: no publication this lane carries, left as it is. A storage
+/// failure stays an error.
+fn readable_marker(
+    row: Result<(ArtifactPointerRowKey, PublicationOutboxMarker)>,
+) -> Result<Option<(ArtifactPointerRowKey, PublicationOutboxMarker)>> {
+    match row {
+        Ok(row) => Ok(Some(row)),
+        Err(Error::Store(crate::error::StoreError::SideTableRow { .. })) => Ok(None),
+        Err(error) => Err(error),
     }
+}
 
-    /// Clears the outbox row a receipt answers, unless the pointer changed
-    /// after that frame left: its newer state is still owed.
+impl Vault {
+    /// Clears the outbox row a complete receipt answers, and its spool,
+    /// unless the pointer changed after that publication left: its newer
+    /// state is still owed. A receipt names the whole publication, never a
+    /// part.
     pub fn accept_artifact_publication_receipt(
         &self,
         entity: EntityId,
@@ -165,39 +174,62 @@ impl Vault {
             return Ok(outcome);
         }
         let mut wtxn = self.store.env.write_txn()?;
-        for (key, ()) in PUBLICATION_OUTBOX.scan(&self.store, &wtxn)? {
-            if publication_entity_id(key.channel, &key.artifact)? != entity {
+        let mut settled = Vec::new();
+        for row in PUBLICATION_OUTBOX.iter_from(&self.store, &wtxn, &[])? {
+            let Some((key, marker)) = readable_marker(row)? else {
                 continue;
+            };
+            if publication_entity_id(key.channel, &key.artifact)? == entity
+                && self.publication_digest_in_txn(&wtxn, &key, marker.change_id)? == digest
+            {
+                settled.push(key);
             }
-            let current = self.publication_payload_in_txn(&wtxn, &key)?;
-            if *blake3::hash(&current).as_bytes() == digest {
-                PUBLICATION_OUTBOX.delete(&self.store, &mut wtxn, &key)?;
-            }
+        }
+        for key in &settled {
+            PUBLICATION_OUTBOX.delete(&self.store, &mut wtxn, key)?;
+            parts::drop_sent_in_txn(&self.store, &mut wtxn, &entity)?;
         }
         wtxn.commit()?;
         Ok(outcome)
     }
 
-    fn publication_payload_in_txn(
+    /// The publication `key` owes for change `change_id`, as it stands now.
+    fn publication_wire_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         key: &ArtifactPointerRowKey,
-    ) -> Result<Vec<u8>> {
+        change_id: [u8; 16],
+    ) -> Result<PublicationWire> {
         let published = match ARTIFACT_POINTERS.get(&self.store, txn, key)? {
             Some(row) => self.published_wire_in_txn(txn, &key.artifact, &row)?,
             None => None,
         };
-        let wire = PublicationWire {
+        Ok(PublicationWire {
+            change_id,
             channel: key.channel.key_byte(),
             artifact: key.artifact.clone(),
             published,
-        };
-        rmp_serde::to_vec_named(&wire)
-            .map_err(|_| Error::InvariantViolation("artifact publication encode"))
+        })
+    }
+
+    /// The BLAKE3 of that publication's serialization, hashed as it is
+    /// made: no copy of it is held.
+    fn publication_digest_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &ArtifactPointerRowKey,
+        change_id: [u8; 16],
+    ) -> Result<[u8; 32]> {
+        let wire = self.publication_wire_in_txn(txn, key, change_id)?;
+        let mut hasher = blake3::Hasher::new();
+        write_publication(&mut hasher, &wire)?;
+        Ok(*hasher.finalize().as_bytes())
     }
 
     /// The rows a live pointer serves from. A pointer whose export no longer
-    /// resolves here serves nothing here, so it is sent as unpublished.
+    /// resolves here serves nothing here, so it is sent as unpublished. A
+    /// blob version is projected from its own record, its claim checked:
+    /// only the serving descriptor leaves.
     fn published_wire_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -222,34 +254,45 @@ impl Vault {
                 artifact_id,
                 version,
             } => self
-                .blob_artifact_version_record_bytes_in_txn(txn, &artifact_id, version)?
-                .map(|version| PublishedWire {
+                .blob_artifact_version_metadata_in_txn(txn, &artifact_id, version)?
+                .map(|record| PublishedWire {
                     pointer,
                     owner: artifact_id,
-                    rows: ExportWire::Blob { version },
+                    rows: ExportWire::Blob {
+                        serving: ServingBlobDescriptor::of_version(record),
+                    },
                 }),
         })
     }
 
-    /// The sync server's door for one publication frame from the owner's
-    /// device. Returns the receipt frame for that socket. A malformed or
-    /// inconsistent publication is `Refused`, never a socket error; only a
-    /// storage failure is an error.
-    pub fn import_artifact_publication(&self, entity: EntityId, payload: &[u8]) -> Result<Vec<u8>> {
-        let digest = *blake3::hash(payload).as_bytes();
-        let outcome = self.apply_artifact_publication(entity, payload)?;
-        receipt_frame(entity, digest, outcome)
-    }
-
-    fn apply_artifact_publication(
+    /// The sync server's door for one publication part from the owner's
+    /// device. Returns the receipt frame for that socket, only once the
+    /// publication the part completes is applied, staged or refused; a part
+    /// that leaves it incomplete has none. `live` rechecks the caller's
+    /// credential inside every writer that keeps a part or applies the
+    /// publication. A malformed or inconsistent publication is `Refused`,
+    /// never a socket error; a credential no longer live is refused
+    /// admission, and a storage failure is an error.
+    pub fn import_artifact_publication(
         &self,
         entity: EntityId,
         payload: &[u8],
+        live: impl Fn(&RwTxn<'_>) -> bool,
+    ) -> Result<Option<Vec<u8>>> {
+        self.import_publication_part(entity, payload, &live)
+    }
+
+    /// Applies one complete publication in `wtxn`. Its rows and pointer are
+    /// written only for `Applied`, which the caller alone commits; a
+    /// malformed or inconsistent one is `Refused`, and one whose rows window
+    /// sync has not delivered yet `Staged`, each with nothing written.
+    fn apply_publication_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        entity: EntityId,
+        wire: PublicationWire,
     ) -> Result<ArtifactPublicationOutcome> {
         use ArtifactPublicationOutcome::{Applied, Refused};
-        let Ok(wire) = rmp_serde::from_slice::<PublicationWire>(payload) else {
-            return Ok(Refused);
-        };
         let Some(channel) = ArtifactPointerChannel::from_key_byte(wire.channel) else {
             return Ok(Refused);
         };
@@ -263,58 +306,71 @@ impl Vault {
             artifact: wire.artifact.clone(),
         };
         let Some(published) = wire.published else {
-            let mut wtxn = self.store.env.write_txn()?;
-            ARTIFACT_POINTERS.delete(&self.store, &mut wtxn, &key)?;
-            wtxn.commit()?;
+            ARTIFACT_POINTERS.delete(&self.store, wtxn, &key)?;
             return Ok(Applied);
         };
         let Ok(pointer) = ARTIFACT_POINTERS.decode_value(&published.pointer) else {
             return Ok(Refused);
         };
-        // Dropping the transaction unapplied aborts every row written below.
-        let mut wtxn = self.store.env.write_txn()?;
         let outcome = match (pointer.export, published.rows) {
-            (ArtifactExportRef::ForkHash(hash), ExportWire::Code { snapshot }) => {
-                let Ok(snapshot) = crate::codebase::decode_codebase_snapshot(&snapshot) else {
-                    return Ok(Refused);
-                };
-                // The fork hash is recomputed from the manifest, never taken on trust.
-                let Ok(rebuilt) = CodebaseSnapshot::new(
-                    snapshot.project_id.clone(),
-                    snapshot.repo_ref.clone(),
-                    snapshot.commit_hash.clone(),
-                    snapshot.files.clone(),
-                ) else {
-                    return Ok(Refused);
-                };
-                if rebuilt.fork_hash != hash
-                    || snapshot.fork_hash != hash
-                    || snapshot.project_id != wire.artifact
-                {
-                    return Ok(Refused);
-                }
-                self.stage_code_rows_in_txn(&mut wtxn, &published.owner, &rebuilt)?
-            }
+            (ArtifactExportRef::ForkHash(hash), ExportWire::Code { snapshot }) => self
+                .stage_code_publication_in_txn(
+                    wtxn,
+                    &wire.artifact,
+                    hash,
+                    &published.owner,
+                    &snapshot,
+                )?,
             (
                 ArtifactExportRef::BlobVersion {
                     artifact_id,
                     version,
                 },
-                ExportWire::Blob { version: record },
+                ExportWire::Blob { serving },
             ) => {
                 if artifact_id != published.owner || wire.artifact != artifact_id.to_hex() {
                     return Ok(Refused);
                 }
-                self.stage_blob_rows_in_txn(&mut wtxn, &artifact_id, version, &record)?
+                self.stage_serving_blob_in_txn(wtxn, &artifact_id, version, &serving)?
             }
             _ => return Ok(Refused),
         };
-        if outcome != Applied {
-            return Ok(outcome);
+        if outcome == Applied {
+            ARTIFACT_POINTERS.put(&self.store, wtxn, &key, &pointer)?;
         }
-        ARTIFACT_POINTERS.put(&self.store, &mut wtxn, &key, &pointer)?;
-        wtxn.commit()?;
-        Ok(Applied)
+        Ok(outcome)
+    }
+
+    /// A code publication's manifest, checked against the fork hash it is
+    /// published at and staged.
+    fn stage_code_publication_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact: &str,
+        hash: CodebaseForkHash,
+        owner: &EntityId,
+        snapshot: &[u8],
+    ) -> Result<ArtifactPublicationOutcome> {
+        use ArtifactPublicationOutcome::Refused;
+        let Ok(snapshot) = crate::codebase::decode_codebase_snapshot(snapshot) else {
+            return Ok(Refused);
+        };
+        // The fork hash is recomputed from the manifest, never taken on trust.
+        let Ok(rebuilt) = CodebaseSnapshot::new(
+            snapshot.project_id.clone(),
+            snapshot.repo_ref.clone(),
+            snapshot.commit_hash.clone(),
+            snapshot.files.clone(),
+        ) else {
+            return Ok(Refused);
+        };
+        if rebuilt.fork_hash != hash
+            || snapshot.fork_hash != hash
+            || snapshot.project_id != artifact
+        {
+            return Ok(Refused);
+        }
+        self.stage_code_rows_in_txn(wtxn, owner, &rebuilt)
     }
 
     /// The manifest of a hostable code artifact whose owner row and every
@@ -358,41 +414,40 @@ impl Vault {
         Ok(Applied)
     }
 
-    /// The version record of a blob whose artifact row, `blob.version` claim
-    /// and bytes window sync has already delivered.
-    fn stage_blob_rows_in_txn(
+    /// A blob version's serving descriptor, kept once the blob's row and
+    /// the bytes it names have arrived by window sync and the bytes hash to
+    /// that name. No version record is written and no claim is waited on.
+    fn stage_serving_blob_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
         version: u64,
-        record: &[u8],
+        serving: &ServingBlobDescriptor,
     ) -> Result<ArtifactPublicationOutcome> {
         use ArtifactPublicationOutcome::{Applied, Refused, Staged};
+        if !serving.well_formed() {
+            return Ok(Refused);
+        }
         if !matches!(
             self.get_blob_artifact_in_txn(wtxn, artifact_id),
             Ok(Some(_))
         ) {
             return Ok(Staged);
         }
-        let Ok(written) = self.put_synced_blob_artifact_version_in_txn(wtxn, artifact_id, record)
-        else {
-            return Ok(Refused);
-        };
-        if written.version != version {
-            return Ok(Refused);
-        }
-        // The record must agree with its replicated claim, as the reader checks.
+        // Checks the ASSET is there and hashes to the descriptor's name, as
+        // it streams.
         if !matches!(
-            self.blob_artifact_version_metadata_in_txn(wtxn, artifact_id, version),
-            Ok(Some(_))
+            crate::ports::BlobStore::port_blob_reader(
+                self,
+                wtxn,
+                &serving.content_hash,
+                &mut |_: &mut dyn std::io::Read| Ok(()),
+            ),
+            Ok(true)
         ) {
             return Ok(Staged);
         }
-        match self.read_blob_artifact_version_in_txn(wtxn, artifact_id, version) {
-            Ok(Some(bytes)) if *blake3::hash(&bytes).as_bytes() == written.content_hash => {
-                Ok(Applied)
-            }
-            _ => Ok(Staged),
-        }
+        put_serving_blob_in_txn(&self.store, wtxn, artifact_id, version, serving)?;
+        Ok(Applied)
     }
 }

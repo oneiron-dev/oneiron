@@ -149,6 +149,19 @@ impl Vault {
 pub struct BackupHolds {
     /// How many legal holds stand.
     pub standing: u64,
+    /// How the standing holds show to the owner, read in the same walk;
+    /// `None` when none stands.
+    held_visibility: Option<BackupHoldVisibility>,
+}
+
+/// How the holds that keep a vault's backups show to its owner, coarse on
+/// purpose (FIX 9500): no order, issuer, count, date or ordering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackupHoldVisibility {
+    /// A hold the owner may see stands, whatever else stands beside it.
+    Visible,
+    /// Only host orders whose silence still runs stand.
+    SilentOnly,
 }
 
 impl BackupHolds {
@@ -157,14 +170,34 @@ impl BackupHolds {
     pub fn keeps_backups(&self) -> bool {
         self.standing > 0
     }
+
+    /// How the standing holds show to the owner at the read
+    /// (`LegalHold::owner_may_see`), `None` when none stands. Which holds
+    /// keep the backups does not change.
+    #[must_use]
+    pub const fn held_visibility(&self) -> Option<BackupHoldVisibility> {
+        self.held_visibility
+    }
 }
 
 fn backup_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<BackupHolds> {
-    let standing = crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
+    let now = vault.store.clock.now_recorded_at();
+    let mut standing = 0_u64;
+    let mut visible = false;
+    for hold in crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
         .iter()
         .filter(|hold| hold.stands())
-        .count();
+    {
+        standing = standing.saturating_add(1);
+        visible |= hold.owner_may_see(now);
+    }
+    let held_visibility = (standing > 0).then_some(if visible {
+        BackupHoldVisibility::Visible
+    } else {
+        BackupHoldVisibility::SilentOnly
+    });
     Ok(BackupHolds {
-        standing: u64::try_from(standing).unwrap_or(u64::MAX),
+        standing,
+        held_visibility,
     })
 }

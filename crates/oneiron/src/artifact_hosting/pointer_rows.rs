@@ -27,7 +27,9 @@ pub(super) fn put_artifact_pointer_in_txn(
 }
 
 /// A deleted blob must not leave a channel that can spring back to life if
-/// the caller later creates another version chain under the same entity id.
+/// the caller later creates another version chain under the same entity id,
+/// nor a replica's serving descriptor of any of its versions (FIX 1195),
+/// whether or not a pointer still names one.
 pub(crate) fn remove_blob_pointers_in_txn(
     store: &crate::store::Store,
     wtxn: &mut RwTxn<'_>,
@@ -50,7 +52,7 @@ pub(crate) fn remove_blob_pointers_in_txn(
             mark_publication_in_txn(store, wtxn, channel, &artifact)?;
         }
     }
-    Ok(())
+    super::serving_blob::remove_serving_blobs_in_txn(store, wtxn, id)
 }
 
 /// Legacy 32/33-byte fork rows remain byte-identical. A blob row has a

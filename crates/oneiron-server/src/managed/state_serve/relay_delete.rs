@@ -28,15 +28,13 @@ use crate::managed::relay_delete::RelayDeleteJob;
 
 impl ManagedState {
     /// Answers `relay_delete_execute`: what became of the delete, with the
-    /// request's six fields as sent.
+    /// request's seven fields as sent. The log of one not settled names no
+    /// state: a held one's visibility never reaches a log (FIX 9500).
     pub(super) async fn relay_delete_execute(&self, request: RelayDeleteRequest) -> CtlResponse {
         let dispatched = Instant::now();
         let state = self.relay_delete_state(&request, dispatched).await;
         if !state.settled() {
-            tracing::info!(
-                state = ?state,
-                "relay delete not settled; the relay keeps its intent"
-            );
+            tracing::info!("relay delete not settled; the relay keeps its intent");
         }
         CtlResponse::RelayDeleteExecute {
             relay_delete_execute: RelayDeleteExecuteWire { request, state },
@@ -70,6 +68,7 @@ impl ManagedState {
             target: RelayDeleteTarget {
                 vault_id: vault.vault_key_vault_id(),
                 object_id: request.object.clone(),
+                generation: request.generation.clone(),
                 ciphertext_blake3,
             },
             request_id: request.request_id.clone(),
