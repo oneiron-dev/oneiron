@@ -2705,7 +2705,7 @@
      "surface": {
       "crate-vis": 9,
       "enum": 11,
-      "fn": 24,
+      "fn": 25,
       "re-export": 2,
       "struct": 16
      }
@@ -29819,7 +29819,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "The recording JS host, its state and its runtime adapter",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -53231,6 +53231,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/registry/pack_byte_map/revisions.rs",
+     "purpose": "Admitted same-pack revisions (FIX 10062)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/registry/pack_byte_map/state.rs",
      "purpose": "Pure interning state machine",
      "surface": {
@@ -57567,7 +57577,7 @@
      "path": "src/skill/call.rs",
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "re-export": 1
      }
@@ -57579,11 +57589,21 @@
       "CallableSkillAnswer"
      ],
      "path": "src/skill/call/answer.rs",
-     "purpose": "A callable skill's answer, spooled as it streams and checked against its return contract as it is read, with…",
+     "purpose": "A callable skill's answer, spooled to disk as it streams and checked against its return contract as it is…",
      "surface": {
       "crate-vis": 4,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/call/json_tokens.rs",
+     "purpose": "The streaming JSON check behind a callable skill's answer (FIX 10149)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -57645,6 +57665,7 @@
       "CallableHarness",
       "CaseSplit",
       "HarnessScore",
+      "HelperPairedVerdict",
       "SkillForkRequest",
       "SkillSaveRequest",
       "SkillSourceFile"
@@ -57652,11 +57673,20 @@
      "path": "src/skill/helper.rs",
      "purpose": "Agent-authored executable helpers (OF-353): a callable SKILL an agent writes for itself, found, promoted and…",
      "surface": {
-      "const": 1,
-      "enum": 1,
-      "fn": 10,
+      "enum": 2,
+      "fn": 9,
       "struct": 8,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/helper_eval.rs",
+     "purpose": "The helper gate's evidence (FIX 10154, 10155): the shared paired eval measurement of a helper against its…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -57702,10 +57732,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/skill/loaded_revision.rs",
+     "purpose": "The exact SKILL revision an attempt's pack loaded (FIX 10110)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 1,
       "re-export": 8
      }
@@ -57734,7 +57774,7 @@
      "path": "src/skill/record.rs",
      "purpose": "SKILL record types with pinned wire keys and size bounds",
      "surface": {
-      "const": 6,
+      "const": 5,
       "crate-vis": 18,
       "fn": 7,
       "struct": 2
@@ -57758,7 +57798,7 @@
       "SkillRole"
      ],
      "path": "src/skill/role.rs",
-     "purpose": "Skill roles and the bounded executable call contract",
+     "purpose": "Skill roles and the executable call contract",
      "surface": {
       "crate-vis": 3,
       "enum": 1,
@@ -76349,7 +76389,7 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair"
     },
     "registry": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76524,7 +76564,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 19,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76820,7 +76860,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5023,
+   "source_files": 5027,
    "test_files": 902
   },
   "oneiron-android": {
