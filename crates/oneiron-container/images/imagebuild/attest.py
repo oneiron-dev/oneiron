@@ -14,8 +14,14 @@ sbom.spdx.json is an SPDX 2.3 JSON document. Its packages are:
   git source in that store;
 - every pinned payload (an upstream binary, the Rust components) and pinned
   repo file placed in the image.
-Licences are what Cargo declares for a crate; a Debian package's licence is
-not machine-read here, so it is NOASSERTION, never a guess.
+Licences are what Cargo declares for a crate. A Debian package's declared
+licence is read from its own /usr/share/doc/<package>/copyright in the built
+image when that file is machine-readable (DEP-5, copyright-format 1.0); its
+short names map to SPDX ids through DEBIAN_TO_SPDX alone, an unmapped name
+with its text becomes a LicenseRef with that text extracted, and anything
+else stays NOASSERTION with the reason in licenseComments. licenseConcluded
+stays NOASSERTION throughout: this is the packager's declaration, not a
+legal conclusion.
 
 provenance.json is an in-toto Statement v1 with a SLSA provenance v1
 predicate: the builder identity (the tools tree's content hash, mkosi's pin,
@@ -25,7 +31,9 @@ seed, and the output digests as subjects.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import tomllib
 from datetime import datetime, timezone
@@ -42,6 +50,52 @@ REPO = "https://github.com/oneiron-dev/oneiron"
 CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
 NOASSERTION = "NOASSERTION"
 DISTRO = "debian-13"
+DEP5_FORMAT = "copyright-format/1.0"
+# Debian copyright-format short names (and SPDX ids used as names) that are
+# exactly one SPDX licence; matched case-insensitively. Names that are vague
+# in Debian's own list (MIT, BSD, Artistic, Apache, GPL without a version,
+# public-domain, ...) are left out on purpose: they become a LicenseRef
+# carrying the package's own text. This table is the one place the mapping
+# is decided (FIX 9356).
+DEBIAN_TO_SPDX = {
+    "agpl-3": "AGPL-3.0-only",
+    "agpl-3+": "AGPL-3.0-or-later",
+    "agpl-3.0-only": "AGPL-3.0-only",
+    "agpl-3.0-or-later": "AGPL-3.0-or-later",
+    "apache-2.0": "Apache-2.0",
+    "artistic-2.0": "Artistic-2.0",
+    "bsd-2-clause": "BSD-2-Clause",
+    "bsd-3-clause": "BSD-3-Clause",
+    "bsd-4-clause": "BSD-4-Clause",
+    "cc0-1.0": "CC0-1.0",
+    "expat": "MIT",
+    "gpl-1": "GPL-1.0-only",
+    "gpl-1+": "GPL-1.0-or-later",
+    "gpl-2": "GPL-2.0-only",
+    "gpl-2+": "GPL-2.0-or-later",
+    "gpl-2.0-only": "GPL-2.0-only",
+    "gpl-2.0-or-later": "GPL-2.0-or-later",
+    "gpl-3": "GPL-3.0-only",
+    "gpl-3+": "GPL-3.0-or-later",
+    "gpl-3.0-only": "GPL-3.0-only",
+    "gpl-3.0-or-later": "GPL-3.0-or-later",
+    "isc": "ISC",
+    "lgpl-2": "LGPL-2.0-only",
+    "lgpl-2+": "LGPL-2.0-or-later",
+    "lgpl-2.1": "LGPL-2.1-only",
+    "lgpl-2.1+": "LGPL-2.1-or-later",
+    "lgpl-2.1-only": "LGPL-2.1-only",
+    "lgpl-2.1-or-later": "LGPL-2.1-or-later",
+    "lgpl-3": "LGPL-3.0-only",
+    "lgpl-3+": "LGPL-3.0-or-later",
+    "lgpl-3.0-only": "LGPL-3.0-only",
+    "lgpl-3.0-or-later": "LGPL-3.0-or-later",
+    "mpl-1.1": "MPL-1.1",
+    "mpl-2.0": "MPL-2.0",
+    "ofl-1.1": "OFL-1.1",
+    "python-2.0": "Python-2.0",
+    "zlib": "Zlib",
+}
 
 
 def _iso(epoch: int) -> str:
@@ -50,6 +104,141 @@ def _iso(epoch: int) -> str:
 
 def _spdx_id(kind: str, index: int, name: str) -> str:
     return f"SPDXRef-{kind}-{index}-" + re.sub(r"[^A-Za-z0-9.-]", "-", name)
+
+
+def _in_root(root: Path, rel: str) -> Path | None:
+    """rel inside root, every symlink resolved against root (never the host's
+    own /usr); None when it is missing or not a regular file."""
+    parts = [p for p in rel.split("/") if p]
+    held: list[str] = []
+    hops = 0
+    while parts:
+        part = parts.pop(0)
+        if part == ".":
+            continue
+        if part == "..":
+            if held:
+                held.pop()
+            continue
+        path = root.joinpath(*held, part)
+        if path.is_symlink():
+            hops += 1
+            if hops > 40:
+                return None
+            target = os.readlink(path)
+            if target.startswith("/"):
+                held = []
+            parts = [p for p in target.split("/") if p] + parts
+            continue
+        held.append(part)
+    path = root.joinpath(*held)
+    return path if path.is_file() and not path.is_symlink() else None
+
+
+def _paragraphs(text: str) -> list[dict[str, str]] | None:
+    """Control-file paragraphs, {lowercased field: raw value with its
+    continuation lines}; None when a line fits no field."""
+    paragraphs: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    key = None
+    for line in text.splitlines():
+        if not line.strip():
+            if current:
+                paragraphs.append(current)
+            current, key = {}, None
+        elif line.startswith("#"):
+            continue
+        elif line[0] in " \t":
+            if key is None:
+                return None
+            current[key] += "\n" + line
+        else:
+            name, sep, value = line.partition(":")
+            if not sep or not name.strip():
+                return None
+            key = name.strip().lower()
+            current[key] = value.strip()
+    if current:
+        paragraphs.append(current)
+    return paragraphs
+
+
+def _field(value: str) -> tuple[str, str]:
+    """(first line, continuation text): one leading space dropped, ` .` a blank line."""
+    first, _, rest = value.partition("\n")
+    lines = []
+    for line in rest.split("\n") if rest else []:
+        line = line[1:] if line[:1] in (" ", "\t") else line
+        lines.append("" if line.strip() == "." else line)
+    return first.strip(), "\n".join(lines).strip("\n")
+
+
+def _licence_ref(name: str, body: str, extracted: dict[str, dict]) -> str:
+    licence_id = (f"LicenseRef-Debian-{re.sub(r'[^A-Za-z0-9.-]', '-', name)}-"
+                  f"{hashlib.sha256(body.encode()).hexdigest()[:12]}")
+    extracted.setdefault(licence_id, {"licenseId": licence_id, "name": name, "extractedText": body})
+    return licence_id
+
+
+def _expression(field: str, standalone: dict[str, str], extracted: dict[str, dict]) -> tuple[str | None, str]:
+    """One Files paragraph's License field as an SPDX expression, or (None, why).
+    Only a plain list joined by one operator (all `or` or all `and`) is read:
+    commas, `with ... exception` and mixed operators are not written out."""
+    first, text = _field(field)
+    tokens = first.split()
+    names, ops = tokens[0::2], [op.lower() for op in tokens[1::2]]
+    if not tokens or len(tokens) % 2 == 0 or any(c in first for c in ",()"):
+        return None, f"License {first!r} is not a plain list of short names"
+    if any(op not in ("and", "or") for op in ops) or len(set(ops)) > 1:
+        return None, f"License {first!r} uses an exception or mixes and/or"
+    ids = []
+    for name in names:
+        spdx = DEBIAN_TO_SPDX.get(name.lower())
+        if spdx is None:
+            body = text if len(names) == 1 and text else standalone.get(name.lower(), "")
+            if not body.strip():
+                return None, f"{name} has no SPDX id and no licence text"
+            spdx = _licence_ref(name, body, extracted)
+        ids.append(spdx)
+    return (" OR " if ops and ops[0] == "or" else " AND ").join(ids), ""
+
+
+def debian_licence(rootfs: Path, package: str, extracted: dict[str, dict]) -> tuple[str, str]:
+    """(licenseDeclared, licenseComments) for one installed package, from its
+    copyright file in the built image. Every Files paragraph's expression
+    applies to some of the package's files, so they are joined with AND."""
+    rel = f"usr/share/doc/{package}/copyright"
+    path = _in_root(rootfs, rel)
+    if path is None:
+        return NOASSERTION, f"no /{rel} in the image"
+    try:
+        paragraphs = _paragraphs(path.read_bytes().decode("utf-8"))
+    except UnicodeDecodeError:
+        paragraphs = None
+    if not paragraphs or DEP5_FORMAT not in paragraphs[0].get("format", ""):
+        return NOASSERTION, f"/{rel} is not machine-readable (no DEP-5 {DEP5_FORMAT} Format)"
+    standalone = {}
+    for paragraph in paragraphs[1:]:
+        if "files" not in paragraph and "license" in paragraph:
+            name, text = _field(paragraph["license"])
+            standalone.setdefault(name.lower(), text)
+    found = []
+    scratch: dict[str, dict] = {}
+    for paragraph in paragraphs[1:]:
+        if "files" not in paragraph:
+            continue
+        if "license" not in paragraph:
+            return NOASSERTION, f"/{rel}: a Files paragraph has no License"
+        expression, why = _expression(paragraph["license"], standalone, scratch)
+        if expression is None:
+            return NOASSERTION, f"/{rel}: {why}"
+        if expression not in found:
+            found.append(expression)
+    if not found:
+        return NOASSERTION, f"/{rel} has no Files paragraph"
+    extracted.update({k: v for k, v in scratch.items() if k not in extracted})
+    declared = found[0] if len(found) == 1 else " AND ".join(f"({e})" if " " in e else e for e in found)
+    return declared, f"declared in /{rel} (DEP-5): its distinct Files licences, joined with AND"
 
 
 def _cargo_lock(engine: Path) -> dict[tuple[str, str], dict]:
@@ -135,7 +324,7 @@ def _cargo_package(index: int, name: str, version: str, entry: dict | None, lice
 
 
 def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[dict],
-         lock: dict[tuple[str, str], dict]) -> dict:
+         lock: dict[tuple[str, str], dict], rootfs: Path) -> dict:
     variant = record["variant"]
     commit = record["engine_commit"]
     epoch = model.epoch()
@@ -165,8 +354,10 @@ def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[
         relationships.append({"spdxElementId": parent, "relationshipType": kind, "relatedSpdxElement": child})
 
     debs = {(e["name"], e["version"], e["arch"]): e for e in model.lock_entries()}
+    extracted: dict[str, dict] = {}
     for index, (name, version, arch) in enumerate(record["packages"]):
         entry = debs.get((name, version, arch), {})
+        declared, why = debian_licence(rootfs, name, extracted)
         pkg = {
             "SPDXID": _spdx_id("deb", index, name),
             "name": name,
@@ -175,7 +366,8 @@ def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[
             "downloadLocation": NOASSERTION,
             "filesAnalyzed": False,
             "licenseConcluded": NOASSERTION,
-            "licenseDeclared": NOASSERTION,
+            "licenseDeclared": declared,
+            "licenseComments": why,
             "copyrightText": NOASSERTION,
             "externalRefs": [{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl",
                               "referenceLocator": f"pkg:deb/debian/{name}@{version}?arch={arch}&distro={DISTRO}"}],
@@ -288,7 +480,7 @@ def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[
         packages.append(pkg)
         contains(image_id, pkg["SPDXID"])
 
-    return {
+    document = {
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
@@ -299,13 +491,18 @@ def sbom(model: Model, record: dict, plan: Plan, *, closures: dict, store: list[
             "created": _iso(epoch),
             "creators": [f"Tool: oneiron-images-build.py-{record['builder_commit'][:12]}",
                          "Organization: Oneiron"],
-            "comment": "Unsigned. Debian licences are NOASSERTION (not machine-read); "
-                       "Cargo licences are as each crate declares.",
+            "comment": "Unsigned. A Debian package's licenseDeclared is read from its DEP-5 copyright "
+                       "file in the image (NOASSERTION, with the reason, where that file is absent, not "
+                       "DEP-5 or not representable); Cargo licences are as each crate declares; "
+                       "licenseConcluded is NOASSERTION throughout.",
         },
         "documentDescribes": [image_id],
         "packages": packages,
         "relationships": relationships,
     }
+    if extracted:
+        document["hasExtractedLicensingInfos"] = [extracted[k] for k in sorted(extracted)]
+    return document
 
 
 def provenance(model: Model, record: dict, plan: Plan, *, sbom_sha: str) -> dict:
@@ -402,13 +599,15 @@ def _write(path: Path, value: dict) -> str:
     return sha256_bytes(data)
 
 
-def write(model: Model, record: dict, plan: Plan, *, build_dir: Path, engine: Path, cargo_home: Path) -> dict:
-    """Writes sbom.spdx.json and provenance.json beside the artifacts; returns their refs."""
+def write(model: Model, record: dict, plan: Plan, *, build_dir: Path, engine: Path, cargo_home: Path,
+          rootfs: Path) -> dict:
+    """Writes sbom.spdx.json and provenance.json beside the artifacts; returns their refs.
+    rootfs is the assembled image tree the licences are read from."""
     artifacts = Path(record["artifacts"])
     lock = _cargo_lock(engine)
     closures = cargo_closures(build_dir, plan)
     store = store_crates(cargo_home, lock) if any(t["kind"] == "cargo-store" for t in plan.trees) else []
-    document = sbom(model, record, plan, closures=closures, store=store, lock=lock)
+    document = sbom(model, record, plan, closures=closures, store=store, lock=lock, rootfs=rootfs)
     sbom_sha = _write(artifacts / SBOM, document)
     statement = provenance(model, record, plan, sbom_sha=sbom_sha)
     provenance_sha = _write(artifacts / PROVENANCE, statement)

@@ -22,7 +22,7 @@ use serde_json::json;
 
 use super::FacadeApiError;
 use super::action_routes::{ActionRequest, action_bound, attach_run_as, invoke_action_dispatch};
-use super::host_doors::{Listed, credential_listing, internal};
+use super::host_doors::support::{Listed, credential_listing, internal};
 use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
 

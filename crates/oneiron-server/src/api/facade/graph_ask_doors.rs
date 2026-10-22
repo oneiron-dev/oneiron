@@ -43,7 +43,7 @@ use oneiron::receipt::{
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
-use super::host_doors::{Listed, hex_rows, internal, naming};
+use super::host_doors::support::{Listed, hex_rows, internal, naming};
 use crate::auth::CoreAuth;
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;

@@ -361,8 +361,10 @@ impl Vault {
         explainer: &str,
         actor: WriteActor,
     ) -> MemoryResult<NoteReviewBundle> {
-        if forks.is_empty() || forks.len() > 256 || explainer.trim().is_empty() {
-            return Err(invalid("proposal needs bounded forks and an explainer").into());
+        // No count bounds a proposal (Rule 5, FIX 8828): it needs a fork
+        // and an explainer.
+        if forks.is_empty() || explainer.trim().is_empty() {
+            return Err(invalid("proposal needs a fork and an explainer").into());
         }
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
