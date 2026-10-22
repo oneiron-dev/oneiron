@@ -364,7 +364,7 @@ impl SyncServer {
         let Some(issuer) = self.host_root_issuer.as_ref() else {
             return Ok(AuthorityCheckpointUpkeep::Idle);
         };
-        self.vault().hold_checkpoint_root_signer(Arc::clone(issuer));
+        self.vault().hold_checkpoint_root_signer(issuer.clone());
         self.vault().upkeep_authority_checkpoint(issuer)
     }
 
