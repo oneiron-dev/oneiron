@@ -10,7 +10,7 @@ use crate::claim::{ClaimSource, ScopedReadResult};
 use crate::dispatch_byoa::{
     ByoEndpointBackendFactory, ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatcher,
     ByoaEgressPort, ByoaError, ByoaResult, ByoaStream, DispatchByoa, DreamerProviderAdapter,
-    DreamerProviderInput,
+    DreamerProviderInput, staged_job_pointer,
 };
 use crate::limit_ask::EngineLimit;
 use crate::self_heal::healer_host::HealerRegistration;
@@ -131,12 +131,6 @@ struct DevRunnerTask {
     failure_corpus: ScopedReadResult<Vec<DevRunnerFailure>>,
 }
 
-/// The CLI's whole task argument: a host-supplied pointer to the staged job
-/// file, never the job itself.
-fn staged_task_pointer(name: &str) -> String {
-    format!("Your task is the JSON job in `{name}` in the working directory. Read it first.")
-}
-
 impl HealerRegistration<'_> {
     /// Dispatch a coding runner with only scoped, content-free diagnostic data.
     /// The host executes and captures this attempt through `execute_cli` and
@@ -193,7 +187,7 @@ impl HealerRegistration<'_> {
             .vault()
             .measure_limit(EngineLimit::MaintenanceTextBytes, job.len() as u64);
         let pin = dispatcher.persist_staged_input(&job, &request.run_ref, request.now)?;
-        let pointer = staged_task_pointer(&pin.name);
+        let pointer = staged_job_pointer(&pin);
         input.task = pointer.clone();
         let mut connector = provider.connector(input)?;
         let ByoaConnectorSpec::CliSandbox(spec) = &mut connector else {

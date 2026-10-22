@@ -56,8 +56,16 @@ impl Vault {
         if let Some(left) = host.take_awaiting_input() {
             host.abandon_awaiting_input(&left.handle);
         }
-        let dispatch =
-            resume_scoped_mcp_outbound_intent(self, &authority, record.id, now_ms(), &mut *host)?;
+        // A hold names the ask its frozen bytes were first held for, so the
+        // row keeps it current (FIX 990).
+        let dispatch = resume_scoped_mcp_outbound_intent(
+            self,
+            &authority,
+            record.id,
+            record.payload(),
+            now_ms(),
+            &mut *host,
+        )?;
         Ok(Some(step_from_host(&dispatch, host)))
     }
 }
