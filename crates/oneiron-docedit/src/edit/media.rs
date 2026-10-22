@@ -52,7 +52,7 @@ pub(super) fn set_picture(
     else {
         return Err(EditRefusal::Missing("picture bounds"));
     };
-    let (extension, content_type, _) = admit(picture, Rect { x, y, cx, cy })?;
+    let (extension, content_type, _) = admit(picture, Rect { x, y, cx, cy }, next.resources())?;
     let media = xml::next_part(next, "ppt/media/image", &format!(".{extension}"))?;
     let mut allowed = vec![slide.to_owned(), rels_name(slide), media.clone()];
     if !default_names(next, extension, content_type)? {
@@ -140,19 +140,23 @@ pub(super) fn svg_extension(tree: &XmlTree, blip: usize) -> Option<(usize, usize
 pub(super) fn admit(
     picture: &Picture<'_>,
     bounds: Rect,
+    resources: &crate::resource::Resources,
 ) -> Result<(&'static str, &'static str, Rect), EditRefusal> {
     let record = picture.record;
-    let compiled = compile_graphic(&GraphicInput {
-        binding: &AssetBinding {
-            handle: record.artifact.clone(),
-            media: record.media,
+    let compiled = compile_graphic(
+        &GraphicInput {
+            binding: &AssetBinding {
+                handle: record.artifact.clone(),
+                media: record.media,
+            },
+            requested: picture.requested,
+            record,
+            bytes: Some(picture.bytes),
+            bounds,
+            limits: picture.limits,
         },
-        requested: picture.requested,
-        record,
-        bytes: Some(picture.bytes),
-        bounds,
-        limits: picture.limits,
-    })
+        resources,
+    )
     .map_err(EditRefusal::Picture)?;
     let (extension, content_type) = match compiled.output {
         Output::Image(image) if image.media == MediaType::Png => ("png", "image/png"),

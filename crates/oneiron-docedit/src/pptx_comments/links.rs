@@ -20,7 +20,7 @@ pub(super) fn append_extension(
     part: &str,
     common: bool,
     fragment: &str,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<()> {
     let xml = Xml::parse_with_limits(text(parts, part)?, limits)?;
     let root = xml.root(P, "sld")?;
@@ -46,7 +46,7 @@ pub(super) fn add_relationship(
     name: &str,
     kind: &str,
     target: &str,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<String> {
     let rels = relationships(parts, name, limits)?;
     let matches: Vec<_> = rels.iter().filter(|r| r.kind == kind).collect();
@@ -84,7 +84,7 @@ pub(super) fn content_type(
     allowed: &mut BTreeSet<String>,
     part: &str,
     kind: &str,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<()> {
     let xml = Xml::parse_with_limits(text(parts, CONTENT_TYPES)?, limits)?;
     let root = xml.root(CT, "Types")?;
@@ -113,7 +113,7 @@ pub(super) fn content_type(
 pub(super) fn comment_part(
     parts: &Parts,
     slide: &PptxSlideIdentity,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<Option<String>> {
     let xml = Xml::parse_with_limits(text(parts, &slide.part)?, limits)?;
     let root = xml.root(P, "sld")?;
@@ -157,7 +157,7 @@ pub(super) fn ensure_comment_part(
     allowed: &mut BTreeSet<String>,
     slide: &PptxSlideIdentity,
     thread: &str,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<String> {
     if let Some(part) = comment_part(parts, slide, limits)? {
         return Ok(part);
@@ -198,7 +198,7 @@ pub(super) fn ensure_author(
     parts: &mut Parts,
     allowed: &mut BTreeSet<String>,
     author: &PptxAuthor,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<()> {
     let id = canonical_guid(&author.guid)?;
     if author.name.trim().is_empty() {
@@ -256,7 +256,7 @@ pub(super) fn ensure_author(
     content_type(parts, allowed, AUTHORS, AUTHORS_TYPE, limits)
 }
 /// Resolve all internal links without fetching external relationships.
-pub(super) fn validate_links(parts: &Parts, limits: &PptxCommentLimits) -> PatchResult<()> {
+pub(super) fn validate_links(parts: &Parts, limits: &Codec<'_>) -> PatchResult<()> {
     let types = Xml::parse_with_limits(text(parts, CONTENT_TYPES)?, limits)?;
     let root = types.root(CT, "Types")?;
     let mut names = BTreeSet::new();
@@ -295,7 +295,7 @@ pub(super) fn require_content_type(
     parts: &Parts,
     part: &str,
     kind: &str,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<()> {
     let xml = Xml::parse_with_limits(text(parts, CONTENT_TYPES)?, limits)?;
     let root = xml.root(CT, "Types")?;
