@@ -13,6 +13,10 @@
 //! as the exchange lives. A stream's worker reads the stream on while it
 //! waits (FIX 9286, [`super::stream_pump`]), so a stream that ends ends the
 //! exchange then, and its kept owner ask is withdrawn.
+//!
+//! Each round's resume state goes on the call's row beside it, and a server
+//! going away suspends the exchange rather than ending it, so a restart
+//! takes it up again (`super::resume`, FIX 9157).
 
 use oneiron::outbound_consent::{
     ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
@@ -90,10 +94,10 @@ pub(super) fn hand_over(
         aliases,
         receipts,
     };
-    let started = std::thread::Builder::new()
-        .name("connector-elicitation".to_owned())
-        .spawn(move || worker.run());
-    if started.is_err() {
+    // The first round's resume state waits for the engine to bind the round
+    // to its call's row (FIX 9157).
+    let resume = worker.round_resume(&awaiting.questions);
+    if !worker.start() {
         declared
             .registry
             .finish(Some(&**declared.vault), &awaiting.handle);
@@ -101,6 +105,7 @@ pub(super) fn hand_over(
     }
     Sent {
         awaiting: Some(awaiting),
+        resume,
         ..Sent::acked(None, body)
     }
 }
@@ -168,9 +173,9 @@ impl Posted {
 /// unanswered (FIX 3840): the call's binding, the vault held weakly, and
 /// the digest of the question set's handle, never the handle.
 pub(super) struct AnswerReceipts {
-    vault: Weak<Vault>,
-    binding: QuestionBinding,
-    question_set: [u8; 32],
+    pub(super) vault: Weak<Vault>,
+    pub(super) binding: QuestionBinding,
+    pub(super) question_set: [u8; 32],
 }
 
 impl AnswerReceipts {
@@ -299,6 +304,16 @@ impl KeptWire {
     pub(super) fn value(&self) -> Value {
         serde_json::from_str(&self.0).unwrap_or(Value::Null)
     }
+
+    /// The kept serialization, for a round's resume state (FIX 9157).
+    pub(super) fn text(&self) -> &str {
+        self.0.as_str()
+    }
+
+    /// A value a round's resume state kept, as its serialization.
+    pub(super) const fn of_text(text: Zeroizing<String>) -> Self {
+        Self(text)
+    }
 }
 
 /// The reason an answer gets when the original call's grant no longer
@@ -326,6 +341,9 @@ pub(super) enum Continuation {
     Stream {
         stream: Option<EventStream>,
         request_id: KeptWire,
+        /// The stream's last event id as the round's request was read: what
+        /// a restart reattaches after (FIX 9157).
+        last_event_id: Option<Zeroizing<String>>,
     },
     /// A result that asked for input: answered by the same `tools/call`
     /// again, with the responses and the opaque request state.
@@ -350,7 +368,7 @@ pub(super) enum Next {
 }
 
 /// Where a worker waits for each round's answer.
-enum Inbox {
+pub(super) enum Inbox {
     /// The answers alone: a retried call holds no stream between rounds.
     Commands(mpsc::Receiver<AnswerCommand>),
     /// The answers and the stream together (FIX 9286).
@@ -361,40 +379,50 @@ enum Inbox {
 /// for an answer to each round as long as the exchange lives, sends it, and
 /// reads what the connector says next.
 pub(super) struct Worker {
-    session: LiveSession,
-    continuation: Continuation,
-    inbox: Inbox,
+    pub(super) session: LiveSession,
+    pub(super) continuation: Continuation,
+    pub(super) inbox: Inbox,
     /// The registry, held weakly: a server going away drops it, and with it
     /// every question set's channel.
-    registry: Weak<ConnectorElicitationRegistry>,
-    handle: String,
-    generation: u64,
+    pub(super) registry: Weak<ConnectorElicitationRegistry>,
+    pub(super) handle: String,
+    pub(super) generation: u64,
     /// How many questions the current round asks.
-    asked: usize,
+    pub(super) asked: usize,
     /// The value the send presented, kept as the session keeps its header:
     /// each later question and the terminal reply are cleared of it.
-    kept: Option<KeptSentValue>,
+    pub(super) kept: Option<KeptSentValue>,
     /// The current round's aliases: its answer goes on the wire under the
     /// connector's own keys (FIX 8051).
-    aliases: KeyAliases,
+    pub(super) aliases: KeyAliases,
     /// Where each answer and each round ended unanswered is receipted.
-    receipts: AnswerReceipts,
+    pub(super) receipts: AnswerReceipts,
 }
 
 impl Worker {
+    /// Runs the worker on its own thread; `false` when it could not start.
+    pub(super) fn start(self) -> bool {
+        std::thread::Builder::new()
+            .name("connector-elicitation".to_owned())
+            .spawn(move || self.run())
+            .is_ok()
+    }
+
     fn run(mut self) {
         // The connector answered the call: its row keeps the delivery.
         let mut delivered = false;
         loop {
-            // A server going away, or a call that left no one to answer
-            // (FIX 3844), cancels the questions. A round never lapses
-            // (FIX 3837).
+            // A call that left no one to answer (FIX 3844) cancels the
+            // questions; a server going away suspends a round a restart can
+            // take up again, and cancels any other (FIX 9157). A round never
+            // lapses (FIX 3837).
             let waited = match &mut self.inbox {
                 Inbox::Commands(commands) => commands.recv().map_or(Waited::Closed, Waited::Answer),
                 Inbox::Pumped(pump) => pump.wait_answer(&self.session),
             };
             let command = match waited {
                 Waited::Answer(command) => command,
+                Waited::Closed if self.suspends() => return,
                 Waited::Closed => {
                     self.cancel(ElicitationDisposition::Cancel);
                     break;
@@ -445,6 +473,7 @@ impl Worker {
                             live_until_ms,
                         )
                     });
+                    self.keep_resume(call_ref, &questions);
                     let _ = command.reply.send(WorkerEvent::Question {
                         questions,
                         live_until_ms,
@@ -499,7 +528,7 @@ impl Worker {
 
     /// Writes the call `call_ref`'s row through `write`, when the row is
     /// bound and the vault still stands; a write that fails is logged.
-    fn keep_row(
+    pub(super) fn keep_row(
         &self,
         call_ref: Option<EntityId>,
         write: impl FnOnce(&Vault, &EntityId) -> Result<bool, IntentLedgerError>,
@@ -517,7 +546,11 @@ impl Worker {
     fn answer(&mut self, responses: &BTreeMap<String, Value>) -> Next {
         let (generation, answered) = (self.generation, dispositions(responses));
         match &mut self.continuation {
-            Continuation::Stream { request_id, .. } => {
+            Continuation::Stream {
+                request_id,
+                last_event_id,
+                ..
+            } => {
                 let Some(result) = self.aliases.response(responses, wire::STREAM_KEY) else {
                     self.receipts.record(
                         generation,
@@ -551,7 +584,9 @@ impl Worker {
                     }
                 }
                 match &mut self.inbox {
-                    Inbox::Pumped(pump) => pump.read_round(&self.session, request_id, CALL_TIMEOUT),
+                    Inbox::Pumped(pump) => {
+                        pump.read_round(&self.session, request_id, last_event_id, CALL_TIMEOUT)
+                    }
                     Inbox::Commands(_) => Next::Over(WorkerEvent::Failed {
                         sent: true,
                         reason: "connector_reply_unreadable",
