@@ -716,6 +716,16 @@ pub fn draft_from_steps(
     steps: &[DraftStep],
     page: &DraftPage,
 ) -> Result<DraftOutput, BrowserError> {
+    draft_with_secrets(input, steps, page).map(|(output, _)| output)
+}
+
+/// [`draft_from_steps`], with the typed secret slots its proposal names
+/// (CUA E8a): a durable copy keeps their kinds once its args lose them.
+pub(crate) fn draft_with_secrets(
+    input: &DraftInput,
+    steps: &[DraftStep],
+    page: &DraftPage,
+) -> Result<(DraftOutput, Vec<SecretParam>), BrowserError> {
     let span = span(input, steps, page)?;
     let mut draft = Draft {
         origin: span.origin.clone(),
@@ -761,7 +771,7 @@ pub fn draft_from_steps(
             .gaps
             .iter()
             .all(|gap| matches!(gap.gap, DraftGapKind::PrePress { .. }));
-    Ok(DraftOutput {
+    let output = DraftOutput {
         site,
         origin: span.origin,
         after_seq: span.after_seq,
@@ -780,5 +790,6 @@ pub fn draft_from_steps(
         gaps: draft.gaps,
         pressed_through: draft.pressed,
         complete,
-    })
+    };
+    Ok((output, draft.secret))
 }

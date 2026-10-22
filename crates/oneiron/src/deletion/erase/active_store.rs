@@ -118,6 +118,9 @@ impl Vault {
         self.mark_dependent_skills_stale_in_txn(wtxn, id)?;
         let citing = crate::note::erase_citations_in_txn(self, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
+        // A solved run's evidence claim takes its group ref and source
+        // authority with it, and moves its group on (CUA E8a).
+        crate::browser_library::invalidate_solved_source_in_txn(self, wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
         // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
@@ -236,6 +239,9 @@ impl Vault {
         )?;
         crate::ports::keep_deleted_worlds_in_txn(&self.store, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
+        // A solved run's evidence claim takes its group ref and source
+        // authority with it, and moves its group on (CUA E8a).
+        crate::browser_library::invalidate_solved_source_in_txn(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
             deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
         if hint_had_graph_mutation {

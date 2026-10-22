@@ -306,6 +306,7 @@ impl RunBrowser {
         writer: ReceiptWriter,
         fresh: RunFreshGuest,
         fields: RunFieldWriter,
+        capture: Option<&BrowserCapture<'_, '_>>,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -343,7 +344,13 @@ impl RunBrowser {
         // the agent's verbs moved to another tab (one its act opened, or the
         // one a closed tab gave way to) names the move as `switched`. Every
         // answer names the engine that ran it (FIX 6680).
+        let asked = capture.map(|capture| (capture, driver.history_mark(), input.clone()));
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
+        // CUA E8a: what the call solved is kept while its seat is held,
+        // before the run's planner hears how it ended.
+        if let Some((capture, mark, input)) = asked {
+            capture.after_call(driver, verb, &input, &output, mark);
+        }
         self.seats.asked(self.run_id, driver.takeover());
         if let Some(object) = output.as_object_mut() {
             object.insert("engine".into(), Value::from(driver.engine().as_str()));
@@ -613,15 +620,33 @@ impl RunGuests {
                 run.call(call.verb, input, decider, writer, secrets, fields)
             }
             (_, Some(run)) if !desktop => {
+                // The library this call files in names the caller's solved
+                // group (CUA E8a).
+                let scope = memory
+                    .solved_run_scope()
+                    .inspect_err(|error| {
+                        tracing::warn!(%error, "browser caller's solved-run scope did not encode");
+                    })
+                    .ok();
                 let library = VaultLibrary {
                     server: Arc::clone(server),
                     by,
+                    scope,
                 };
                 let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets);
                 let fields =
                     RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());
                 let input = call.input.clone();
-                run.call(call.verb, input, decider, library, writer, fresh, fields)
+                let capture = BrowserCapture {
+                    vault: &server.vault,
+                    memory,
+                    origin,
+                    run_id,
+                };
+                let capture = Some(&capture);
+                run.call(
+                    call.verb, input, decider, library, writer, fresh, fields, capture,
+                )
             }
             _ => Err(BrowserError::Unbound),
         };
@@ -646,6 +671,7 @@ impl RunGuests {
             let mut library = VaultLibrary {
                 server: Arc::clone(server),
                 by,
+                scope: None,
             };
             planner.observe(call.verb, &call.input, &output, |workflow| {
                 let filed = library.program(workflow).ok().flatten()?;

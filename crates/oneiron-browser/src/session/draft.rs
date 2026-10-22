@@ -14,11 +14,12 @@
 
 use super::BrowserSession;
 use super::trail::{Event, Marker, origin_of, value_secret, withheld};
+use crate::library::draft_with_secrets;
 use crate::secret::bare_handle;
 use crate::{
     BrowserDriver, BrowserError, DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput,
     DraftPage, DraftStep, EffectReceipt, ExpectInput, OperandGap, ReplayAction, SecretKind,
-    draft_from_steps, is_live_handle,
+    SecretParam, is_live_handle,
 };
 use std::collections::BTreeMap;
 
@@ -89,10 +90,22 @@ impl BrowserSession {
     /// demonstration's recorded steps (CUA E9), through the one helper.
     pub(super) fn draft_over(
         &mut self,
-        mut input: DraftInput,
+        input: DraftInput,
         steps: &[DraftStep],
         url: String,
     ) -> Result<DraftOutput, BrowserError> {
+        self.draft_over_with_secrets(input, steps, url)
+            .map(|(output, _)| output)
+    }
+
+    /// [`Self::draft_over`], with the typed secret slots its proposal names
+    /// (CUA E8a): a solved run's durable copy keeps their kinds.
+    pub(super) fn draft_over_with_secrets(
+        &mut self,
+        mut input: DraftInput,
+        steps: &[DraftStep],
+        url: String,
+    ) -> Result<(DraftOutput, Vec<SecretParam>), BrowserError> {
         let origin = origin_of(&url);
         let mut secrets = BTreeMap::new();
         let mut gaps = Vec::new();
@@ -121,15 +134,15 @@ impl BrowserSession {
             origin,
             secrets,
         };
-        let mut output = draft_from_steps(&input, steps, &page)?;
+        let (mut output, secret) = draft_with_secrets(&input, steps, &page)?;
         output.complete &= gaps.is_empty();
         output.gaps.extend(gaps);
-        Ok(output)
+        Ok((output, secret))
     }
 
     /// The history as draft steps, in order: a stop after an effect marks
     /// that effect failed.
-    fn draft_steps(&self) -> Vec<DraftStep> {
+    pub(super) fn draft_steps(&self) -> Vec<DraftStep> {
         let mut steps: Vec<DraftStep> = self
             .trail
             .iter()

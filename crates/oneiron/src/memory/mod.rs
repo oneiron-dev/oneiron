@@ -39,6 +39,7 @@ pub use critical_confirm::{
 };
 mod birth_position;
 mod booking;
+mod browser_solved;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
