@@ -454,7 +454,7 @@ impl Vault {
             return Ok(true);
         }
         Ok(record.tool_requires_confirmation(tool)
-            || super::super::connector_tool_setting_in_txn(&self.store, &txn, &record, tool)?
+            || super::super::connector_tool_setting_in_txn(&self.store, &txn, id, &record, tool)?
                 >= crate::connector_key::SlateDisposition::AlwaysAsk)
     }
 }

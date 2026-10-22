@@ -1979,12 +1979,21 @@ class Oneiron:
         @property
         def proxy(self) -> "Oneiron._VaultConnectorsProxyVerbs": ...
         @property
+        def slates(self) -> "Oneiron._VaultConnectorsSlatesVerbs": ...
+        @property
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs": ...
+        @property
+        def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs": ...
     class _VaultConnectorsProxyVerbs:
         def admit(self, spec: Facade.ProxyConnectorAdmitRequest) -> Facade.ProxyConnectorRegistration:
             """The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key."""
         def revoke_write(self, spec: Facade.ProxyConnectorRevokeWriteRequest) -> Facade.ProxyConnectorRegistration:
             """The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact."""
+    class _VaultConnectorsSlatesVerbs:
+        def redraft(self, spec: Facade.ConnectorSlateRedraftRequest) -> Facade.ConnectorSlateRedraftReply:
+            """The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable."""
+        def narrow(self, spec: Facade.ConnectorSlateNarrowRequest) -> Facade.ConnectorSlateNarrowView:
+            """The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it."""
     class _VaultConnectorsSubscriptionsVerbs:
         def put(self, spec: Facade.ChannelSubscriptionRequest) -> Facade.ChannelMessageSubscription:
             """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
@@ -1992,6 +2001,9 @@ class Oneiron:
             """An agent's connector event subscriptions, standing and revoked, for the owner."""
         def revoke(self, spec: Facade.ChannelSubscriptionRevokeRequest) -> Facade.ChannelSubscriptionRevoked:
             """The owner stops one connector event subscription; the agent's key for the channel stays."""
+    class _VaultConnectorsCallsVerbs:
+        def approve_once(self, spec: Facade.ConnectorCallApproveOnceRequest) -> Facade.ConsentActReceipt:
+            """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
             """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""

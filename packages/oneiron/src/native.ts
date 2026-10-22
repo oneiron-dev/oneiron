@@ -295,6 +295,8 @@ vaultPacksSectionsSuggestionsSet(input: unknown): unknown
 aiChatCompletions(input: unknown): unknown
 vaultConnectorsProxyAdmit(input: unknown): unknown
 vaultConnectorsProxyRevokeWrite(input: unknown): unknown
+vaultConnectorsSlatesRedraft(input: unknown): unknown
+vaultConnectorsSlatesNarrow(input: unknown): unknown
 vaultConnectorsSubscriptionsPut(input: unknown): unknown
 vaultConnectorsSubscriptionsList(input: unknown): unknown
 vaultConnectorsSubscriptionsRevoke(input: unknown): unknown
@@ -505,6 +507,7 @@ vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
 vaultConsentApproveOnce(input: unknown): unknown
+vaultConnectorsCallsApproveOnce(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown

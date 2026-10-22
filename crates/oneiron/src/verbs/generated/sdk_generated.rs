@@ -1337,6 +1337,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ProxyConnectorRevokeWriteRequest>(),
             ),
             (
+                "vault.connectors.slates.redraft",
+                crate::code_run::vault_read::request_schema::<ConnectorSlateRedraftRequest>(),
+            ),
+            (
+                "vault.connectors.slates.narrow",
+                crate::code_run::vault_read::request_schema::<ConnectorSlateNarrowRequest>(),
+            ),
+            (
                 "vault.connectors.subscriptions.put",
                 crate::code_run::vault_read::request_schema::<ChannelSubscriptionRequest>(),
             ),
@@ -2539,6 +2547,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::consent::lifecycle::ApproveOnceRequest,
                 >(),
+            ),
+            (
+                "vault.connectors.calls.approve_once",
+                crate::code_run::vault_read::request_schema::<ConnectorCallApproveOnceRequest>(),
             ),
             (
                 "vault.consent.deny",
@@ -6767,6 +6779,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.chat.completions",
     "vault.connectors.proxy.admit",
     "vault.connectors.proxy.revoke_write",
+    "vault.connectors.slates.redraft",
+    "vault.connectors.slates.narrow",
     "vault.authority.history.export",
     "vault.authority.history.import",
     "vault.wire_health.thresholds.get",
@@ -6895,6 +6909,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.policy.owner.configure",
     "vault.policy.owner.row.change",
     "vault.consent.approve_once",
+    "vault.connectors.calls.approve_once",
     "vault.consent.deny",
     "vault.consent.create_standing_grant",
     "vault.consent.registry",
@@ -7943,6 +7958,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.connectors.proxy.revoke_write" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ProxyConnectorRegistration,
         >(),
+        "vault.connectors.slates.redraft" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorSlateRedraftReply,
+        >(),
+        "vault.connectors.slates.narrow" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorSlateNarrowView,
+        >(),
         "vault.authority.history.export" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SignedAuthorityHistory,
         >(),
@@ -8335,6 +8356,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::policy_model::PolicyRowReceipt>()
         }
         "vault.consent.approve_once" => crate::code_run::vault_read::request_schema::<
+            crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.connectors.calls.approve_once" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
         "vault.consent.deny" => crate::code_run::vault_read::request_schema::<
@@ -11652,6 +11676,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.connectors.slates.redraft" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.narrow" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.connectors.subscriptions.put" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13050,6 +13088,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.approve_once" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.calls.approve_once" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18609,6 +18654,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.connectors.proxy.revoke_write" => {
             let _input: ProxyConnectorRevokeWriteRequest = decode(value.clone())?;
         }
+        "vault.connectors.slates.redraft" => {
+            let _input: ConnectorSlateRedraftRequest = decode(value.clone())?;
+        }
+        "vault.connectors.slates.narrow" => {
+            let _input: ConnectorSlateNarrowRequest = decode(value.clone())?;
+        }
         "vault.connectors.subscriptions.put" => {
             let _input: ChannelSubscriptionRequest = decode(value.clone())?;
         }
@@ -19289,6 +19340,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.consent.approve_once" => {
             let _input: crate::consent::lifecycle::ApproveOnceRequest = decode(value.clone())?;
+        }
+        "vault.connectors.calls.approve_once" => {
+            let _input: ConnectorCallApproveOnceRequest = decode(value.clone())?;
         }
         "vault.consent.deny" => {
             let _input: crate::consent::lifecycle::DenyConsentRequest = decode(value.clone())?;
@@ -22220,6 +22274,12 @@ pub fn invoke(
         "vault.connectors.proxy.revoke_write" => {
             encode(vault_connectors_proxy_revoke_write(memory, decode(value)?)?)
         }
+        "vault.connectors.slates.redraft" => {
+            encode(vault_connectors_slates_redraft(memory, decode(value)?)?)
+        }
+        "vault.connectors.slates.narrow" => {
+            encode(vault_connectors_slates_narrow(memory, decode(value)?)?)
+        }
         "vault.connectors.subscriptions.put" => {
             encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
         }
@@ -22679,6 +22739,9 @@ pub fn invoke(
         }
         "vault.policy.relay.decide" => encode(vault_policy_relay_decide(memory, decode(value)?)?),
         "vault.consent.approve_once" => encode(vault_consent_approve_once(memory, decode(value)?)?),
+        "vault.connectors.calls.approve_once" => {
+            encode(vault_connectors_calls_approve_once(memory, decode(value)?)?)
+        }
         "vault.consent.deny" => encode(vault_consent_deny(memory, decode(value)?)?),
         "vault.consent.create_standing_grant" => {
             encode(vault_consent_create_standing_grant(memory, decode(value)?)?)
@@ -26347,6 +26410,18 @@ pub fn vault_connectors_proxy_revoke_write(
 ) -> MemoryResult<crate::task_verb::sdk::ProxyConnectorRegistration> {
     crate::task_verb::sdk::host_only(memory, "vault.connectors.proxy.revoke_write", &input)
 }
+pub fn vault_connectors_slates_redraft(
+    memory: &Memory<'_>,
+    input: ConnectorSlateRedraftRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorSlateRedraftReply> {
+    crate::task_verb::sdk::host_only(memory, "vault.connectors.slates.redraft", &input)
+}
+pub fn vault_connectors_slates_narrow(
+    memory: &Memory<'_>,
+    input: ConnectorSlateNarrowRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorSlateNarrowView> {
+    crate::task_verb::sdk::narrow_connector_slate_embedded(memory, input)
+}
 pub fn vault_connectors_subscriptions_put(
     memory: &Memory<'_>,
     input: ChannelSubscriptionRequest,
@@ -28076,6 +28151,16 @@ pub fn vault_consent_approve_once(
     crate::consent::lifecycle::approve_once(
         memory.vault(),
         &memory.embedded_owner("vault.consent.approve_once")?,
+        input,
+    )
+}
+pub fn vault_connectors_calls_approve_once(
+    memory: &Memory<'_>,
+    input: ConnectorCallApproveOnceRequest,
+) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    crate::task_verb::sdk::approve_connector_call_once(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.calls.approve_once")?,
         input,
     )
 }

@@ -1316,6 +1316,16 @@ export_facade! {
     let output = client.vault_connectors_proxy_revoke_write(&input)?;
     crate::codec::lift_record("vault.connectors.proxy.revoke_write", &output)
 };
+"vault.connectors.slates.redraft" => fn vault_connectors_slates_redraft(&self, input: ConnectorSlateRedraftRequest) -> ConnectorSlateRedraftReply = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorSlateRedraftRequest = crate::codec::lower_record("vault.connectors.slates.redraft", input)?;
+    let output = client.vault_connectors_slates_redraft(&input)?;
+    crate::codec::lift_record("vault.connectors.slates.redraft", &output)
+};
+"vault.connectors.slates.narrow" => fn vault_connectors_slates_narrow(&self, input: ConnectorSlateNarrowRequest) -> ConnectorSlateNarrowView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorSlateNarrowRequest = crate::codec::lower_record("vault.connectors.slates.narrow", input)?;
+    let output = client.vault_connectors_slates_narrow(&input)?;
+    crate::codec::lift_record("vault.connectors.slates.narrow", &output)
+};
 "vault.connectors.subscriptions.put" => fn vault_connectors_subscriptions_put(&self, input: ChannelSubscriptionRequest) -> ChannelMessageSubscription = |client| {
     let input: oneiron::task_verb::sdk::ChannelSubscriptionRequest = crate::codec::lower_record("vault.connectors.subscriptions.put", input)?;
     let output = client.vault_connectors_subscriptions_put(&input)?;
@@ -2365,6 +2375,11 @@ export_facade! {
     let input: oneiron::consent::lifecycle::ApproveOnceRequest = crate::codec::lower_record("vault.consent.approve_once", input)?;
     let output = client.vault_consent_approve_once(&input)?;
     crate::codec::lift_record("vault.consent.approve_once", &output)
+};
+"vault.connectors.calls.approve_once" => fn vault_connectors_calls_approve_once(&self, input: ConnectorCallApproveOnceRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorCallApproveOnceRequest = crate::codec::lower_record("vault.connectors.calls.approve_once", input)?;
+    let output = client.vault_connectors_calls_approve_once(&input)?;
+    crate::codec::lift_record("vault.connectors.calls.approve_once", &output)
 };
 "vault.consent.deny" => fn vault_consent_deny(&self, input: DenyConsentRequest) -> ConsentActReceipt = |client| {
     let input: oneiron::consent::lifecycle::DenyConsentRequest = crate::codec::lower_record("vault.consent.deny", input)?;

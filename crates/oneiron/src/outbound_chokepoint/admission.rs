@@ -2,7 +2,7 @@
 
 use super::dedupe;
 use super::replay::{
-    effect_result, gate_rejection, replay_record, send_pending, suppression_result,
+    effect_result, gate_rejection, replay_record, send_admitted, suppression_result,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 use super::types::BEFORE_NEW_ADMISSION;
@@ -536,6 +536,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // decision, typed proof, budget marker and Pending insert commit together.
     pending.admitted_approval = governance.admitted_send_approval(pending.id);
     let pinned_approval = governance.pinned_send_approval(pending.id);
+    let spent = governance.spent_press_digest();
     if pending.id != intent_id {
         return Err(IntentLedgerError::InvalidRecord(
             "prepared outbound identity changed",
@@ -573,7 +574,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // FIX 6424 part 2a: the presses it spent, kept for its retry once it stands.
     super::types::keep_spent_presses(vault, pending.id, pinned_approval, co_spent)?;
 
-    let mut result = send_pending(vault, authority, pending, now_ms, false, transport)?;
+    let mut result = send_admitted(vault, authority, pending, spent, now_ms, transport)?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));
     result.gate_outcome = Some(decision.outcome().as_str().to_owned());
     result.gate_reason_codes = decision

@@ -267,6 +267,8 @@ pub enum AgentVerb {
     AiChatCompletions,
     VaultConnectorsProxyAdmit,
     VaultConnectorsProxyRevokeWrite,
+    VaultConnectorsSlatesRedraft,
+    VaultConnectorsSlatesNarrow,
     VaultConnectorsSubscriptionsPut,
     VaultConnectorsSubscriptionsList,
     VaultConnectorsSubscriptionsRevoke,
@@ -477,6 +479,7 @@ pub enum AgentVerb {
     VaultPolicyOutboundDecide,
     VaultPolicyRelayDecide,
     VaultConsentApproveOnce,
+    VaultConnectorsCallsApproveOnce,
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentRegistry,
@@ -1431,6 +1434,8 @@ impl AgentVerb {
         Self::AiChatCompletions,
         Self::VaultConnectorsProxyAdmit,
         Self::VaultConnectorsProxyRevokeWrite,
+        Self::VaultConnectorsSlatesRedraft,
+        Self::VaultConnectorsSlatesNarrow,
         Self::VaultConnectorsSubscriptionsPut,
         Self::VaultConnectorsSubscriptionsList,
         Self::VaultConnectorsSubscriptionsRevoke,
@@ -1641,6 +1646,7 @@ impl AgentVerb {
         Self::VaultPolicyOutboundDecide,
         Self::VaultPolicyRelayDecide,
         Self::VaultConsentApproveOnce,
+        Self::VaultConnectorsCallsApproveOnce,
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentRegistry,
@@ -2598,6 +2604,8 @@ impl AgentVerb {
             Self::AiChatCompletions => "ai.chat.completions",
             Self::VaultConnectorsProxyAdmit => "vault.connectors.proxy.admit",
             Self::VaultConnectorsProxyRevokeWrite => "vault.connectors.proxy.revoke_write",
+            Self::VaultConnectorsSlatesRedraft => "vault.connectors.slates.redraft",
+            Self::VaultConnectorsSlatesNarrow => "vault.connectors.slates.narrow",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
             Self::VaultConnectorsSubscriptionsList => "vault.connectors.subscriptions.list",
             Self::VaultConnectorsSubscriptionsRevoke => "vault.connectors.subscriptions.revoke",
@@ -2820,6 +2828,7 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultConsentApproveOnce => "vault.consent.approve_once",
+            Self::VaultConnectorsCallsApproveOnce => "vault.connectors.calls.approve_once",
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
@@ -3792,6 +3801,8 @@ impl AgentVerb {
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
+                | Self::VaultConnectorsSlatesRedraft
+                | Self::VaultConnectorsSlatesNarrow
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -4002,6 +4013,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
@@ -4983,6 +4995,8 @@ impl AgentVerb {
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
+                | Self::VaultConnectorsSlatesRedraft
+                | Self::VaultConnectorsSlatesNarrow
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -5193,6 +5207,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
@@ -6301,6 +6316,8 @@ impl AgentVerb {
                 | Self::VaultPacksSectionsSuggestionsSet
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
+                | Self::VaultConnectorsSlatesRedraft
+                | Self::VaultConnectorsSlatesNarrow
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -6510,6 +6527,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
@@ -7289,6 +7307,8 @@ impl AgentVerb {
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
+                | Self::VaultConnectorsSlatesRedraft
+                | Self::VaultConnectorsSlatesNarrow
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsRevoke
                 | Self::VaultPacksSetupPrepare
@@ -7430,6 +7450,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRevoke
@@ -8132,6 +8153,8 @@ impl AgentVerb {
             Self::AiChatCompletions => &["spec"],
             Self::VaultConnectorsProxyAdmit => &["spec"],
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
+            Self::VaultConnectorsSlatesRedraft => &["spec"],
+            Self::VaultConnectorsSlatesNarrow => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -8342,6 +8365,7 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
@@ -9297,6 +9321,8 @@ impl AgentVerb {
             Self::AiChatCompletions => &["spec"],
             Self::VaultConnectorsProxyAdmit => &["spec"],
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
+            Self::VaultConnectorsSlatesRedraft => &["spec"],
+            Self::VaultConnectorsSlatesNarrow => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -9507,6 +9533,7 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
@@ -10981,6 +11008,12 @@ impl AgentVerb {
             Self::VaultConnectorsProxyRevokeWrite => {
                 "The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact."
             }
+            Self::VaultConnectorsSlatesRedraft => {
+                "The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable."
+            }
+            Self::VaultConnectorsSlatesNarrow => {
+                "The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it."
+            }
             Self::VaultConnectorsSubscriptionsPut => {
                 "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."
             }
@@ -11590,6 +11623,9 @@ impl AgentVerb {
             }
             Self::VaultConsentApproveOnce => {
                 "The owner approves exactly one engine-emitted effect digest; no standing grant is created."
+            }
+            Self::VaultConnectorsCallsApproveOnce => {
+                "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."
             }
             Self::VaultConsentDeny => {
                 "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."

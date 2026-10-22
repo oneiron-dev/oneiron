@@ -54,7 +54,7 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::{
     ConnectorCallRoute, ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance,
-    SlateDataClass, canonical_scoped_server_segment,
+    SlateDataClass, SlateDisposition, canonical_scoped_server_segment,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -74,7 +74,7 @@ use super::result_scrub::OutboundResultSender;
 use super::scope::{
     DataClass, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
 };
-use super::tool_call::{MutationIntent, ToolCallDescriptor};
+use super::tool_call::{ConnectorToolCallPreparation, MutationIntent, ToolCallDescriptor};
 
 /// The most bytes of one connector reply a host reads and keeps. One
 /// constant, so a later ruling changes one line.
@@ -474,6 +474,7 @@ pub enum ConnectorToolSchema {
 /// The tool beneath one grant, for a schema read: the governing key the
 /// grant mints and the tool's approved schema there.
 struct GoverningTool {
+    key_id: EntityId,
     key: ConnectorKeyRecord,
     schema: Value,
 }
@@ -857,6 +858,13 @@ impl Vault {
             Ok(governed) => governed,
             Err(stop) => return Ok(unavailable(stop)),
         };
+        // A tool its setting removes (FIX 990), its holder's own narrow
+        // included (FIX 987), is not callable: there is no schema to call by.
+        if self.connector_tool_setting(&governed.key_id, tool)? == SlateDisposition::NeverAllow {
+            return Ok(unavailable(refused(escalation_code(
+                ScopedMcpEscalationReason::ConnectorSlateNeverAllow,
+            ))));
+        }
         let (_, destructive_hint, _) =
             self.connector_tool_class(&governed.key, &route, tool, &mut Vec::new())?;
         Ok(ConnectorToolSchema::Approved {
@@ -1118,6 +1126,10 @@ impl Vault {
             // read-only nor idempotent is effectful and not idempotent.
             replay,
         };
+        // FIX 990: the tool's setting, read with the key. An `always ask`
+        // call still goes to its admission, which spends the owner's press
+        // on exactly this call if one is waiting and else holds it naming
+        // the digest; `never allow` mints nothing to send.
         let prepared = match self.prepare_connector_tool_call(
             &key_id,
             call,
@@ -1125,7 +1137,11 @@ impl Vault {
             &arguments,
             pending.mutation,
         ) {
-            Ok(prepared) => prepared,
+            Ok(ConnectorToolCallPreparation::Ready(prepared)) => prepared,
+            Ok(ConnectorToolCallPreparation::ConsentRequired { candidate }) => candidate,
+            Ok(ConnectorToolCallPreparation::Denied { reason }) => {
+                return Ok(refused(escalation_code(reason)));
+            }
             Err(Error::InvalidConfig(_)) => return Ok(refused("connector_arguments_invalid")),
             Err(error) => return Err(error.into()),
         };
@@ -1184,7 +1200,8 @@ impl Vault {
         let Some(capability) = ScopedCapabilityProvenance::mint(server, &grant_id) else {
             return Ok(Err(refused("connector_name_not_scoped")));
         };
-        let Some((_, key)) = self.connector_key_for(capability.connector(), Some(&actor))? else {
+        let Some((key_id, key)) = self.connector_key_for(capability.connector(), Some(&actor))?
+        else {
             return Ok(Err(held("connector_key_unregistered")));
         };
         match key.status {
@@ -1208,7 +1225,11 @@ impl Vault {
                 refused("connector_tool_unknown")
             }));
         };
-        Ok(Ok(GoverningTool { key, schema }))
+        Ok(Ok(GoverningTool {
+            key_id,
+            key,
+            schema,
+        }))
     }
 
     /// The principal's live scoped grant for exactly this server and tool:
@@ -1384,6 +1405,14 @@ fn step_from_dispatch(
         {
             Step::Unsettled { intent, reasons }
         }
+        // FIX 990: `never allow` stops the request; a send that may already
+        // have reached the connector stays an unsettled delivery.
+        (Some(IntentState::Abandoned), Some(intent))
+            if escalation == Some(IntentEscalationReason::ConnectorSlateNeverAllow)
+                && dispatch.delivery_unresolved() =>
+        {
+            Step::Unsettled { intent, reasons }
+        }
         (Some(IntentState::Abandoned), _) => {
             if reasons.is_empty() {
                 reasons.push("abandoned".to_owned());
@@ -1433,6 +1462,8 @@ pub(super) fn escalation_code(reason: ScopedMcpEscalationReason) -> &'static str
         ScopedMcpEscalationReason::StaleConnectorManifest { .. } => "connector_manifest_stale",
         ScopedMcpEscalationReason::ConnectorKeyCharterNeverList => "charter_never_list",
         ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted => "effector_budget_exhausted",
+        ScopedMcpEscalationReason::ConnectorSlateAlwaysAsk => "connector_key_slate_always_ask",
+        ScopedMcpEscalationReason::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
     }
 }
 
@@ -1447,6 +1478,7 @@ pub(super) fn intent_escalation_code(reason: IntentEscalationReason) -> &'static
         IntentEscalationReason::DedupeReservationReplaced => "dedupe_reservation_replaced",
         IntentEscalationReason::DedupeSuppressed => "dedupe_suppressed",
         IntentEscalationReason::OwnerStopped => "owner_stopped",
+        IntentEscalationReason::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
     }
 }
 

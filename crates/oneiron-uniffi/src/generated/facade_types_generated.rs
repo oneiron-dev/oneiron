@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1139 facade rows, 3979 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1091.
+// UniFFI census: 1142 facade rows, 3984 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1094.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -17139,6 +17139,73 @@ pub struct ProxyConnectorRevokeWriteRequest {
     pub revision: u64,
 }
 
+/// `oneiron::verbs::connector_slate::ConnectorSlateRedraftRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorSlateRedraftRequest {
+    #[serde(rename = "slate_ref")]
+    pub slate_ref: String,
+    #[serde(rename = "expected_revision")]
+    pub expected_revision: u64,
+    #[serde(rename = "instruction")]
+    pub instruction: String,
+}
+
+/// `oneiron::verbs::connector_slate::ConnectorSlateRedraftReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum ConnectorSlateRedraftReply {
+    #[serde(rename = "proposed")]
+    Proposed {
+        #[serde(rename = "slate_ref")]
+        slate_ref: String,
+        #[serde(rename = "expected_revision")]
+        expected_revision: u64,
+        #[serde(rename = "proposed")]
+        proposed: std::collections::HashMap<String, SlateDisposition>,
+        #[serde(rename = "rationale")]
+        rationale: std::collections::HashMap<String, String>,
+    },
+    #[serde(rename = "unavailable")]
+    Unavailable {
+        #[serde(rename = "code")]
+        code: String,
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::verbs::connector_slate::ConnectorSlateNarrowRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorSlateNarrowRequest {
+    #[serde(rename = "key_ref")]
+    pub key_ref: String,
+    #[serde(rename = "expected_revision")]
+    pub expected_revision: u64,
+    #[serde(rename = "narrows", default, skip_serializing_if = "Option::is_none")]
+    pub narrows: Option<std::collections::HashMap<String, SlateDisposition>>,
+    #[serde(rename = "facets", default, skip_serializing_if = "Option::is_none")]
+    pub facets: Option<Vec<String>>,
+}
+
+/// `oneiron::verbs::connector_slate::ConnectorSlateNarrowView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorSlateNarrowView {
+    #[serde(rename = "key_ref")]
+    pub key_ref: String,
+    #[serde(rename = "slate_ref")]
+    pub slate_ref: String,
+    #[serde(rename = "slate_revision")]
+    pub slate_revision: u64,
+    #[serde(rename = "settings")]
+    pub settings: std::collections::HashMap<String, SlateDisposition>,
+    #[serde(rename = "facets", default, skip_serializing_if = "Option::is_none")]
+    pub facets: Option<Vec<String>>,
+    #[serde(rename = "narrows")]
+    pub narrows: std::collections::HashMap<String, SlateHolderNarrow>,
+}
+
 /// `oneiron::verbs::host::ChannelSubscriptionRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -27376,6 +27443,16 @@ pub struct ConsentActReceipt {
     pub grant_ref: Option<String>,
     #[serde(rename = "diff_handle")]
     pub diff_handle: Vec<u8>,
+}
+
+/// `oneiron::verbs::connector_call::ConnectorCallApproveOnceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorCallApproveOnceRequest {
+    #[serde(rename = "call_ref")]
+    pub call_ref: String,
+    #[serde(rename = "approval_digest")]
+    pub approval_digest: String,
 }
 
 /// `oneiron::consent::lifecycle::DenyConsentRequest`.

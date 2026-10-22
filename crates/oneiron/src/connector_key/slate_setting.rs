@@ -10,10 +10,13 @@ use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
-/// The setting a call on `tool` meets under the key's bound slate.
+/// The setting a call on `tool` meets under key `key_id` (record `key`): its
+/// bound slate's, a per-grant key's tightened by its holder's own narrows
+/// (FIX 987).
 pub(crate) fn connector_tool_setting_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
     key: &ConnectorKeyRecord,
     tool: &str,
 ) -> Result<SlateDisposition> {
@@ -26,7 +29,14 @@ pub(crate) fn connector_tool_setting_in_txn(
     };
     let slate = read_slate_in_store_txn(store, txn, slate_id)?
         .ok_or_else(|| super::record::invalid_body("connector slate missing"))?;
-    Ok(slate.tool_setting(tool))
+    super::slate_holder::narrowed_setting_in_txn(
+        store,
+        txn,
+        key_id,
+        key,
+        tool,
+        slate.tool_setting(tool),
+    )
 }
 
 /// The slate calls under `key` meet, by id, resolved as
@@ -70,11 +80,12 @@ pub(crate) fn effect_slate_always_allows(
         }
         None => (super::record::normalize_connector_key(channel), verb),
     };
-    let Some((_, key)) = governing_connector_key(store, txn, &connector, actor)? else {
+    let Some((key_id, key)) = governing_connector_key(store, txn, &connector, actor)? else {
         return Ok(false);
     };
     Ok(key.status == ConnectorKeyStatus::Active
-        && connector_tool_setting_in_txn(store, txn, &key, tool)? == SlateDisposition::AlwaysAllow)
+        && connector_tool_setting_in_txn(store, txn, &key_id, &key, tool)?
+            == SlateDisposition::AlwaysAllow)
 }
 
 /// `never allow` removes a tool from what the connector lists as callable.
@@ -115,7 +126,8 @@ fn elicitation_setting_of(slate: Option<&ConnectorGrantSlate>) -> SlateDispositi
 
 /// The effective elicitation setting a call on key `id` meets: the row on
 /// the slate [`governing_slate_in_txn`] resolves (the key's own, else its
-/// catalog's), never one read by catalog name alone. A dangling slate ref
+/// catalog's), never one read by catalog name alone, a per-grant key's
+/// tightened by its holder's own narrow (FIX 987). A dangling slate ref
 /// errors.
 pub(crate) fn connector_elicitation_setting_in_txn(
     store: &Store,
@@ -124,9 +136,15 @@ pub(crate) fn connector_elicitation_setting_in_txn(
 ) -> Result<SlateDisposition> {
     let key = read_connector_key_in_txn(store, txn, id)?.ok_or(Error::EntityNotFound)?;
     let governing = governing_slate_in_txn(store, txn, &key)?;
-    Ok(elicitation_setting_of(
-        governing.as_ref().map(|(_, slate)| slate),
-    ))
+    let base = elicitation_setting_of(governing.as_ref().map(|(_, slate)| slate));
+    super::slate_holder::narrowed_setting_in_txn(
+        store,
+        txn,
+        id,
+        &key,
+        super::slate::ELICITATION_ROW_KEY,
+        base,
+    )
 }
 
 impl Vault {
@@ -135,7 +153,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &txn, id)?.ok_or(Error::EntityNotFound)?;
-        connector_tool_setting_in_txn(&self.store, &txn, &record, tool)
+        connector_tool_setting_in_txn(&self.store, &txn, id, &record, tool)
     }
     /// The effective elicitation setting a call on key `id` meets: the
     /// elicitation row of the slate its calls meet.

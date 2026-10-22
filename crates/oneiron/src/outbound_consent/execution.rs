@@ -10,7 +10,7 @@ use crate::outbound_chokepoint::OutboundEffectResult;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::outbound_intent_ledger::{
     BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalationReason,
-    IntentLedgerError, IntentState, OutboundSendOutcome,
+    IntentLedgerError, IntentResolution, IntentState, OutboundSendOutcome, UnconfirmedDelivery,
 };
 
 use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
@@ -39,6 +39,8 @@ pub struct ScopedMcpDispatchResult {
     /// FIX 6424 part 3: the prepared request a Gate hold of this call named
     /// its approve-once digest for.
     held_ask: Option<super::approval::HeldConnectorAsk>,
+    /// The ledger stopped the call while its delivery was still unknown.
+    delivery_unresolved: bool,
 }
 
 impl ScopedMcpDispatchResult {
@@ -56,6 +58,12 @@ impl ScopedMcpDispatchResult {
     /// The prepared request a Gate hold of this call asked about.
     pub(super) fn held_ask(&self) -> Option<&super::approval::HeldConnectorAsk> {
         self.held_ask.as_ref()
+    }
+
+    /// Whether the ledger stopped this call with its delivery still unknown:
+    /// a send that may have reached the connector, never a refusal.
+    pub(super) fn delivery_unresolved(&self) -> bool {
+        self.delivery_unresolved
     }
 
     /// The gate decision this dispatch recorded (`gate:<hex>`), when the
@@ -97,6 +105,7 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("gate_outcome", &self.gate_outcome)
             .field("gate_reasons", &self.gate_reasons)
             .field("held_ask", &self.held_ask)
+            .field("delivery_unresolved", &self.delivery_unresolved)
             .finish()
     }
 }
@@ -229,10 +238,13 @@ pub(super) fn scoped_mcp_gate_input(
 /// ledger's own bytes, grant binding and endpoint, never a fresh
 /// preparation. The frozen binding, key, manifest and charter checks still
 /// run before transport and refuse or hold a call whose authority changed.
+/// A hold that names an approve-once digest (the tool's `always ask`, FIX
+/// 990) keeps the ask `payload`, the row's frozen bytes, was first held for.
 pub(super) fn resume_scoped_mcp_outbound_intent<S: OutboundResultSender>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     intent_id: [u8; 32],
+    payload: &[u8],
     now_ms: u64,
     sender: &mut S,
 ) -> std::result::Result<ScopedMcpDispatchResult, IntentLedgerError> {
@@ -245,7 +257,13 @@ pub(super) fn resume_scoped_mcp_outbound_intent<S: OutboundResultSender>(
         &mut transport,
     )?;
     let decision = resumed_decision(&effect);
-    Ok(dispatch_result(effect, decision, transport, 0))
+    let held_ask = effect.approval_digest.clone().and_then(|digest| {
+        let prepared = PreparedToolCall::from_frozen(payload).ok()?;
+        super::approval::HeldConnectorAsk::of(Some(digest), &prepared)
+    });
+    let mut result = dispatch_result(effect, decision, transport, 0);
+    result.held_ask = held_ask;
+    Ok(result)
 }
 
 /// Packs one effect and its transport's counters into the dispatch result.
@@ -265,6 +283,13 @@ fn dispatch_result<S>(
         || effect.dispatch.send_outcome.is_some()
         || effect.dispatch.replayed)
         .then_some(effect.dispatch);
+    let delivery_unresolved = matches!(
+        effect.resolution,
+        Some(IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::Unresolved,
+            ..
+        })
+    );
     let gate_reasons = effect
         .gate_receipt_reasons
         .into_iter()
@@ -283,6 +308,7 @@ fn dispatch_result<S>(
         gate_outcome: effect.gate_outcome,
         gate_reasons,
         held_ask: None,
+        delivery_unresolved,
     }
 }
 
@@ -305,6 +331,9 @@ fn resumed_decision(effect: &OutboundEffectResult) -> ScopedMcpConsentDecision {
         Some(IntentEscalationReason::BindingInvalid) => {
             ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant)
         }
+        Some(IntentEscalationReason::ConnectorSlateNeverAllow) => {
+            ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorSlateNeverAllow)
+        }
         _ => ScopedMcpConsentDecision::AutoFire,
     }
 }
@@ -320,6 +349,12 @@ fn connector_gate_reason(reasons: &[String]) -> Option<ScopedMcpEscalationReason
         "connector_manifest_drift" => Some(ScopedMcpEscalationReason::ConnectorManifestDrift),
         "charter_never_list" => Some(ScopedMcpEscalationReason::ConnectorKeyCharterNeverList),
         "effector_budget_exhausted" => Some(ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted),
+        "connector_key_slate_always_ask" => {
+            Some(ScopedMcpEscalationReason::ConnectorSlateAlwaysAsk)
+        }
+        "connector_key_slate_never_allow" => {
+            Some(ScopedMcpEscalationReason::ConnectorSlateNeverAllow)
+        }
         _ => None,
     })
 }
@@ -389,6 +424,19 @@ fn scoped_decision_after_effect(
     {
         return Ok(ScopedMcpConsentDecision::Escalate(
             ScopedMcpEscalationReason::InvalidGrant,
+        ));
+    }
+    // FIX 990: the tool turned `never allow` between admission and send.
+    if effect
+        .dispatch
+        .escalation
+        .as_ref()
+        .is_some_and(|escalation| {
+            escalation.reason == IntentEscalationReason::ConnectorSlateNeverAllow
+        })
+    {
+        return Ok(ScopedMcpConsentDecision::Escalate(
+            ScopedMcpEscalationReason::ConnectorSlateNeverAllow,
         ));
     }
     if effect

@@ -11,6 +11,7 @@ mod authority;
 mod connector_call;
 mod connector_call_asks;
 mod connector_call_code;
+mod connector_call_consent;
 mod connector_call_input;
 mod connector_call_output;
 mod connector_call_pending;
@@ -40,6 +41,9 @@ pub use self::connector_call::{
 pub(crate) use self::connector_call::{connector_call_effector, held_connector_call_in_txn};
 pub(crate) use self::connector_call_code::{
     code_wait_admission_in_txn, settle_code_owned_call_in_txn,
+};
+pub(crate) use self::connector_call_consent::{
+    SLATE_ALWAYS_ASK_REASON, frozen_scoped_candidate_in_txn,
 };
 pub use self::connector_call_input::ConnectorCallInput;
 pub use self::connector_elicitation_asks::{

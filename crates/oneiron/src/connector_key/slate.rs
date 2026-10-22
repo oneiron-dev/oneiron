@@ -973,6 +973,15 @@ impl Vault {
                 row.holder_narrow = None;
             }
         }
+        // ...and each per-grant key's narrow of it (FIX 987).
+        let ruled: BTreeSet<&str> = overrides.keys().map(String::as_str).collect();
+        super::slate_holder::clear_ruled_narrows_in_txn(
+            &self.store,
+            txn,
+            id,
+            &ruled,
+            facet_limit.is_some(),
+        )?;
         if let Some(limit) = facet_limit {
             if limit.as_ref().is_some_and(BTreeSet::is_empty) {
                 return Err(invalid());
