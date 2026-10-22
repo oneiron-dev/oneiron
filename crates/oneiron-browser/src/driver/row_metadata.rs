@@ -107,7 +107,10 @@ impl CdpDriver {
             let Some(root) = read.get("root") else {
                 return DomRead::Failed;
             };
-            Dom::index(root)
+            let dom = Dom::index(root);
+            // A deep read is taken apart without nesting (FIX 6963).
+            crate::cdp::deep::dismantle(read);
+            dom
         };
         if dom.needs_main_base(lines) {
             dom.bases[0] = self.main_base();

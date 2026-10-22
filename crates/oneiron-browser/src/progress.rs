@@ -171,6 +171,7 @@ pub(crate) fn handed_up(
         missed: Vec::new(),
         observation: Some(page),
         error: Some(NO_PROGRESS.to_owned()),
+        refusal: None,
     });
     output.elapsed_ms = elapsed_ms(started);
     output

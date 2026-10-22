@@ -5,8 +5,9 @@
 //! every other stop names its true cause, never a guess.
 
 use crate::{
-    BatchOutput, BrowserDriver, BrowserError, EffectReceipt, ExpectInput, ExpectOutput,
-    FieldTextReason, Observation, ObservationBase, ObserveInput, StepStop, SubgoalStatus,
+    BatchOutput, BrowserDriver, BrowserError, DestinationRefusal, EffectReceipt, ExpectInput,
+    ExpectOutput, FieldTextReason, Observation, ObservationBase, ObserveInput, StepStop,
+    SubgoalStatus,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -169,6 +170,11 @@ pub struct FailedStepReceipt {
     /// The stop's stable code, as the batch's `error`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The host's refusal of a page request's destination that stopped the
+    /// step, in the host's words (FIX 7406): the batch's `error` names only
+    /// its code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<DestinationRefusal>,
 }
 
 impl BatchStopCause {
@@ -319,12 +325,17 @@ pub(crate) fn stopped<D: BrowserDriver + ?Sized>(
     output.receipts.extend(stop.receipt);
     output.error = Some(code.clone());
     output.stop_cause = Some(stop.cause.clone());
+    let refusal = match stop.error {
+        BrowserError::DestinationRefused(refusal) => Some(refusal),
+        _ => None,
+    };
     output.failed_receipt = Some(FailedStepReceipt {
         step: Some(step),
         stop_cause: stop.cause,
         missed: stop.missed,
         observation,
         error: Some(code),
+        refusal,
     });
     output.elapsed_ms = elapsed_ms(started);
     output

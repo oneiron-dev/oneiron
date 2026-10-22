@@ -258,6 +258,9 @@ impl BrowserSession {
             lease,
             manifest,
         } = attached?;
+        if let Some(starter) = &starter {
+            driver.book_inbound(starter.state_charge());
+        }
         Ok(Self {
             driver,
             guest: lease,

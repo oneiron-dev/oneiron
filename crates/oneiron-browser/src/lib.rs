@@ -61,7 +61,7 @@ pub use demonstration::{
 #[cfg(feature = "driver")]
 pub use desktop::{AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover};
 pub use engine::BrowserEngine;
-pub use fact::{ActionFact, ActionTarget, NoEffectReason, ViewportPoint};
+pub use fact::{ActionFact, ActionTarget, DialogAnswerFailure, NoEffectReason, ViewportPoint};
 pub use field::{
     FIELD_WRITER, FieldSpec, FieldTextReason, FieldWrite, FieldWriteError, FieldWriter,
     FieldWritten, NoWriter, TextCheck, TextCheckReply, TextProvenance, TextReference, TextSource,
@@ -166,6 +166,10 @@ pub struct Observation {
     /// whenever a read could not prove it did not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fact: Option<ActionFact>,
+    /// The dialogs a page opened since the last observation whose answer
+    /// the browser refused (FIX 6768), on the first page only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dialogs: Vec<DialogAnswerFailure>,
 }
 
 /// Where a desktop window's tree walk stopped short of its end (Rule 5):

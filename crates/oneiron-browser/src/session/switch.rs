@@ -443,6 +443,7 @@ fn stage(
         secrets.clone(),
     );
     let mut target = switch_commit_policy(SwitchStage::Attach, attached)?;
+    target.driver.book_inbound(starter.state_charge());
     let (kept, losses) = (&mut record.carried, &mut record.not_carried);
     seed_state(&target.driver, record.to, state, kept, losses)?;
     if state.origin.is_some() {

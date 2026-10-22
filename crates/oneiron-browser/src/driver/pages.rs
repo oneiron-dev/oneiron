@@ -162,6 +162,7 @@ impl Observations {
             walk_next: None,
             rebound: None,
             fact: None,
+            dialogs: Vec::new(),
         };
         self.history.push_back(Snapshot {
             seq: read.seq,
@@ -193,6 +194,7 @@ impl Observations {
             walk_next: None,
             rebound: None,
             fact: None,
+            dialogs: Vec::new(),
         };
         // AB-003: the two forms say the same; the answer takes the one
         // whose pages are fewer bytes, the whole one on a tie.
@@ -262,6 +264,7 @@ impl Observations {
         page.observation.library = std::mem::take(&mut observation.library);
         page.observation.rebound = observation.rebound.take();
         page.observation.fact = observation.fact.take();
+        page.observation.dialogs = std::mem::take(&mut observation.dialogs);
         let seq = observation.seq;
         self.paged.retain(|held| held.seq != seq);
         self.paged.push_back(observation);
@@ -459,6 +462,7 @@ fn part(whole: &Observation, rows: Vec<Row>, offset: Option<usize>, last: bool) 
             .map(|_| walk_cursor(whole.seq)),
         rebound: None,
         fact: None,
+        dialogs: Vec::new(),
     }
 }
 

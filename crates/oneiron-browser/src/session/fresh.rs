@@ -131,6 +131,7 @@ impl BrowserSession {
             Ok(fresh) => {
                 // The replay is the same run: its secrets are the run's.
                 fresh.secrets.adopt(&self.secrets);
+                fresh.driver.book_inbound(factory.state_charge());
                 let mut charge = factory.state_charge();
                 let guest = fresh_guest_state_policy(self, &fresh, charge.as_mut());
                 guest.map(|guest| (fresh, guest))

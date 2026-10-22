@@ -73,6 +73,9 @@ pub(super) struct Pages {
     tops: HashMap<String, String>,
     /// The seed URLs armed on this pipe: their commits are no visits.
     seeds: HashSet<String>,
+    /// The page target of each in-page frame the browser attached as its
+    /// own target, by that frame's own session (FIX 6892).
+    pub(super) frames: HashMap<String, String>,
 }
 
 /// An armed seed document.
@@ -191,6 +194,9 @@ impl Pipe {
             navigations.remove(session);
         }
         self.forget_documents(session);
+        if let Ok(mut pages) = self.pages.lock() {
+            pages.frames.remove(session);
+        }
         if let Ok(mut pages) = self.pages.lock()
             && let Some(target) = pages.bound.remove(session)
             && !pages.bound.values().any(|bound| *bound == target)

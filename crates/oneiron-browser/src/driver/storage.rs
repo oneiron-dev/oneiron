@@ -264,6 +264,12 @@ impl CdpDriver {
         self.pipe.collect(sink);
     }
 
+    /// Books this driver's CDP messages past the pipe's framing threshold
+    /// to `charge` on the host's memory floor (FIX 7988), so they read on.
+    pub(crate) fn book_inbound(&self, charge: Box<dyn crate::retention::HandleRetention>) {
+        self.pipe.book_inbound(charge);
+    }
+
     /// Keeps a read of the front tab's stores another step took: a
     /// switch's fresh export.
     pub(crate) fn keep(&self, phase: StoragePhase, sample: Sample) {

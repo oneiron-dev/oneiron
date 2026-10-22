@@ -15,18 +15,19 @@
 //! bytes and each call hands it its message, through one bounded queue, so a
 //! call goes out while no reply arrives and no lock is held across a read.
 //! Its writes reach the guest through a writer thread, so a guest slow to
-//! read never stops it taking replies. A message past [`MAX_MESSAGE`] fails
-//! only its own call, or is dropped as an event, as one past it on
-//! Chromium's pipe does: the frame gate (`gate`) keeps it from tungstenite,
-//! whose own bounds stay as they are. Every message is routed as
-//! Chromium's are.
+//! read never stops it taking replies. A message past [`MAX_MESSAGE`], the
+//! framing threshold, reads on charged to the host's memory floor, or is
+//! cut where the floor admits no more of it, as one past it on Chromium's
+//! pipe does: the frame gate (`gate`) keeps it from tungstenite, whose own
+//! bounds stay as they are, and hands it back in order. Every message is
+//! routed as Chromium's are.
 
 mod gate;
 
-use super::{MAX_MESSAGE, Outbound, Pipe, overrun, route};
+use super::{MAX_MESSAGE, Outbound, Pipe, route};
 use crate::BrowserError;
 use crate::request::Custody;
-use gate::Gate;
+use gate::{Gate, Out};
 use oneiron_container::EgressRelay;
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -313,8 +314,8 @@ fn refused(why: &str) -> BrowserError {
 
 /// Runs the WebSocket until the guest ends or the socket closes or fails:
 /// the guest's bytes pass the frame gate, those past the upgrade's answer
-/// (`ahead`) first, are read into whole messages and routed, and each call
-/// is sent.
+/// (`ahead`) first, are read into whole messages and routed, a message the
+/// gate hands back after every one ahead of it, and each call is sent.
 fn pump(
     mut socket: WebSocket<Carrier>,
     ahead: Vec<u8>,
@@ -326,10 +327,15 @@ fn pump(
     for event in std::iter::once(Event::Read(ahead)).chain(inbound) {
         let open = match event {
             Event::Read(bytes) => {
-                let over = gate.pass(&bytes, &mut socket.get_mut().read);
-                over.iter()
-                    .all(|prefix| overrun::oversize_message_policy(pipe, prefix))
-                    && deliver(&mut socket, pipe, relay)
+                let mut rest = bytes.as_slice();
+                loop {
+                    let (used, out) = gate.pass(rest, &mut socket.get_mut().read, pipe);
+                    rest = &rest[used..];
+                    let open = deliver(&mut socket, pipe, relay) && handed(out, pipe, relay);
+                    if !open || rest.is_empty() {
+                        break open;
+                    }
+                }
             }
             Event::Ended => {
                 socket.get_mut().ended = true;
@@ -341,6 +347,22 @@ fn pump(
         if !open {
             return;
         }
+    }
+}
+
+/// Routes a message the gate handed back: whole, as every message is, its
+/// charge given back once it is; cut, answered alone. False once the routes
+/// are lost.
+fn handed(out: Option<Out>, pipe: &Pipe, relay: Option<&Arc<dyn EgressRelay>>) -> bool {
+    match out {
+        None => true,
+        Some(Out::Whole(body)) => {
+            let open = route(pipe, relay, &body);
+            drop(body);
+            pipe.release_inbound();
+            open
+        }
+        Some(Out::Cut(cut)) => cut.answer(pipe),
     }
 }
 

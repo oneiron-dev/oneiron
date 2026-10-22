@@ -533,7 +533,9 @@ impl CdpDriver {
             no_tree: false,
             partial: None,
         };
-        Ok(self.pages.observe(read, base))
+        let mut observation = self.pages.observe(read, base);
+        observation.dialogs = self.pipe.take_dialog_failures();
+        Ok(observation)
     }
 
     /// The row `target` names on the page as it is now, and its DOM node,
