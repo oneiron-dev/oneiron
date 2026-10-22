@@ -2439,11 +2439,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/report/routing.rs` | src | s | 2 struct · 2 enum · 4 fn · 5 crate-vis | ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature | Maker routing and disclosure |
 | `src/feedback/report/store.rs` | src | s | 3 fn · 4 crate-vis | — | Durable issue identity, entity-local review, and the arrival index |
 | `src/feedback/tests.rs` | test | L | — | — | — |
-| `src/feedback/triage.rs` | src | m | 9 struct · 2 enum · 2 fn · 4 const · 3 re-export · 3 crate-vis | FeedbackTriageBinding, FeedbackTriageContinuation, FeedbackTriageFinding, FeedbackTriageHandoff, FeedbackTriageInput, FeedbackTriageItem, FeedbackTriageJob, FeedbackTriageOutput +3 | Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the… |
+| `src/feedback/triage.rs` | src | m | 9 struct · 2 enum · 2 fn · 7 const · 5 re-export · 4 crate-vis | FeedbackTriageBinding, FeedbackTriageContinuation, FeedbackTriageFinding, FeedbackTriageHandoff, FeedbackTriageInput, FeedbackTriageItem, FeedbackTriageJob, FeedbackTriageOutput +3 | Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the… |
 | `src/feedback/triage/erased.rs` | src | s | 3 crate-vis | — | The `erased` end of a feedback triage revision (FIX 7551) |
 | `src/feedback/triage/github.rs` | src | m | 3 struct · 1 enum · 3 fn · 1 const · 1 crate-vis | GithubIssueKind, GithubIssuePage, GithubIssueRevision, GithubSweepContinuation | The feedback triage's GitHub issue sources (OF-420 T1; ARCH-0056: "GitHub issues still work |
+| `src/feedback/triage/jobs.rs` | src | s | 1 fn · 7 crate-vis | — | A revision's triage job on the Coach's host queue: its input as it rides the queue, its queueing and… |
 | `src/feedback/triage/owner.rs` | src | m | 7 struct · 1 enum · 4 fn | FeedbackTriageBindingRequest, FeedbackTriageChild, FeedbackTriageErased, FeedbackTriageHold, FeedbackTriageRun, FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest | The owner's feedback triage doors: run the sweep now, read a sweep's status, and read or set the skill binding |
 | `src/feedback/triage/source.rs` | src | s | 2 struct · 1 enum · 2 crate-vis | FeedbackTriageSourceError, FeedbackTriageSourceErrorKind, FeedbackTriageSourceFault | Each triage source's state beside its continuation: what stopped its last walk, and the retry time the… |
+| `src/feedback/triage/work.rs` | src | m | 6 struct · 1 enum · 4 fn · 2 crate-vis | FeedbackTriageNodeAnswer, FeedbackTriagePin, FeedbackTriageSpan, FeedbackTriageSplit, FeedbackTriageStep, FeedbackTriageWork, FeedbackTriageWorkNode | A long revision's durable work graph (FIX 7549) |
+| `src/feedback/triage/work_store.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 crate-vis | FeedbackTriageNodeInput, FeedbackTriageNodeJob | The writers of a long revision's work graph (FIX 7549) |
 | `src/fusion.rs` | src | s | 1 crate-vis | — | Score fusion kernels, defined in `oneiron-retrieval` |
 | `src/gate/ask_policy.rs` | src | s | 12 crate-vis | — | Manifest-owned operating policy for cross-vault ask confirmation |
 | `src/gate/auto_signals.rs` | src | s | 1 crate-vis | — | Receipt-derived rate and failure streak supplied to the existing auto checker |
@@ -4395,7 +4398,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill/invocation.rs` | src | s | 6 crate-vis | — | The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an… |
 | `src/skill/lifecycle.rs` | src | s | 2 enum · 6 fn · 1 crate-vis | SkillGovernanceTier, SkillLifecycle | SKILL lifecycle machine and governance-tier axis |
 | `src/skill/mod.rs` | src | s | 1 mod · 8 re-export · 9 crate-vis | — | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
-| `src/skill/pack_load.rs` | src | m | 1 struct · 7 fn · 5 crate-vis | LoadedSkillPack | Attempt-bound pack reads stamp their actual revision in the same transaction |
+| `src/skill/pack_load.rs` | src | m | 1 struct · 8 fn · 5 crate-vis | LoadedSkillPack | Attempt-bound pack reads stamp their actual revision in the same transaction |
 | `src/skill/record.rs` | src | s | 2 struct · 7 fn · 6 const · 18 crate-vis | SkillDependency, SkillRecord | SKILL record types with pinned wire keys and size bounds |
 | `src/skill/resident.rs` | src | s | 10 crate-vis | — | Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base |
 | `src/skill/role.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | SkillCallContract, SkillRole | Skill roles and the bounded executable call contract |

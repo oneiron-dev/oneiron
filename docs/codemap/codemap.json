@@ -31354,11 +31354,11 @@
      "path": "src/feedback/triage.rs",
      "purpose": "Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the…",
      "surface": {
-      "const": 4,
-      "crate-vis": 3,
+      "const": 7,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 2,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 9
      }
     },
@@ -31389,6 +31389,17 @@
       "enum": 1,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/triage/jobs.rs",
+     "purpose": "A revision's triage job on the Coach's host queue: its input as it rides the queue, its queueing and…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
      }
     },
     {
@@ -31426,6 +31437,43 @@
       "crate-vis": 2,
       "enum": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FeedbackTriageNodeAnswer",
+      "FeedbackTriagePin",
+      "FeedbackTriageSpan",
+      "FeedbackTriageSplit",
+      "FeedbackTriageStep",
+      "FeedbackTriageWork",
+      "FeedbackTriageWorkNode"
+     ],
+     "path": "src/feedback/triage/work.rs",
+     "purpose": "A long revision's durable work graph (FIX 7549)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FeedbackTriageNodeInput",
+      "FeedbackTriageNodeJob"
+     ],
+     "path": "src/feedback/triage/work_store.rs",
+     "purpose": "The writers of a long revision's work graph (FIX 7549)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -56112,7 +56160,7 @@
      "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
      "surface": {
       "crate-vis": 5,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -73753,7 +73801,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 43,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -74658,7 +74706,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4836,
+   "source_files": 4839,
    "test_files": 902
   },
   "oneiron-android": {
@@ -89114,13 +89162,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/feedback_triage.rs",
      "purpose": "The Coach's feedback triage on the host (OF-420 T1; ARCH-0056: \"GitHub issues still work",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -89129,6 +89177,26 @@
      "notable": [],
      "path": "src/ai_host/feedback_triage/github.rs",
      "purpose": "The feedback sweep's GitHub issue sources (OF-420 T1; ARCH-0056: \"GitHub issues still work",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/feedback_triage/parts.rs",
+     "purpose": "A long revision's parts (FIX 7549): the window a request must fit on the Coach's seat, and the item cut into…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/feedback_triage/synthesis.rs",
+     "purpose": "A long revision's synthesis (FIX 7549): its answers, in order, joined in batches whose requests each fit the…",
      "surface": {
       "crate-vis": 4
      }
@@ -102692,7 +102760,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 81,
+     "files": 83,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103163,7 +103231,7 @@
    },
    "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1139,
+   "source_files": 1141,
    "test_files": 182
   },
   "oneiron-spawn": {
