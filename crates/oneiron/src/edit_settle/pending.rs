@@ -20,9 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::codec::{RECORD, settlement_key_parts};
 use super::receipts::{already_settled, settlement_receipt_record};
-use super::records::{
-    SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome, SettlementRecord,
-};
+use super::records::{SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome};
 use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::{
@@ -41,7 +39,9 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod admission;
+mod output_settle;
 pub use admission::MadeByReader;
+use output_settle::output_record;
 
 /// Key: id16 + hash32 (blake3 of the proposal ref), as the settlement ledger.
 pub(super) const PENDING: SideTable<(EntityId, [u8; 32]), PendingRow, Named> =
@@ -715,44 +715,6 @@ impl Vault {
     fn drop_pending(&self, artifact_id: &EntityId, proposal_ref: &str) -> Result<()> {
         let key = settlement_key_parts(artifact_id, proposal_ref);
         self.with_write_txn_grouped(|wtxn| PENDING.delete(&self.store, wtxn, &key).map(|_| ()))
-    }
-}
-
-/// The ledger record of a native output's settle: `version` the version it
-/// became, `replaced` the head that version replaced.
-fn output_record(
-    row: &PendingRow,
-    outcome: SettleOutcomeKind,
-    (consent, actor): (&SettleConsent, WriteActor),
-    settled_at: u64,
-    (version, replaced): (
-        Option<&crate::blob_artifact::BlobArtifactVersion>,
-        Option<u64>,
-    ),
-) -> SettlementRecord {
-    let report = match &row.body {
-        PendingBody::Output { report, .. } => report.as_bytes(),
-        PendingBody::Edit { manifest, .. } => manifest.as_slice(),
-    };
-    SettlementRecord {
-        proposal_ref: row.proposal_ref.clone(),
-        outcome,
-        settled_at,
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        brief_ref: consent.brief_ref().map(str::to_owned),
-        before_version: version.and(replaced),
-        version: version.map(|version| version.version),
-        content_hash: version.map(|version| version.content_hash),
-        manifest_ref: version.map(|_| *blake3::hash(report).as_bytes()),
-        manifest_ops: 0,
-        pptx_slide_creation_id_mints: Vec::new(),
-        pptx_review_identities: Vec::new(),
-        pptx_judgments: Vec::new(),
-        docx_judgments: Vec::new(),
-        anchors: Vec::new(),
-        reason: None,
-        sheet_answers: None,
-        deck: None,
     }
 }
 
