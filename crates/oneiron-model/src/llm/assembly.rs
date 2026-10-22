@@ -2,7 +2,7 @@
 
 use super::{
     ContentPart, FatalLlmError, FinishReason, LlmMessage, LlmMessageRole, LlmResult,
-    LlmStreamEvent, LlmUsage,
+    LlmStreamEvent, LlmUsage, ReplyAssertions,
 };
 use std::collections::BTreeMap;
 
@@ -220,6 +220,8 @@ impl StreamAssembly {
             },
             usage,
             finish_reason: reason,
+            // A wire's assembly is a raw boundary: it asserts no record.
+            reply_assertions: ReplyAssertions::default(),
         });
         Ok(events)
     }
@@ -248,6 +250,7 @@ impl StreamAssembly {
             },
             usage,
             finish_reason: FinishReason::Cancelled,
+            reply_assertions: ReplyAssertions::default(),
         });
         events
     }

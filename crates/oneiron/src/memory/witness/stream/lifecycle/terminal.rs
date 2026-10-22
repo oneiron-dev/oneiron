@@ -25,6 +25,7 @@ pub(super) fn commit_terminal(
     state: &mut State,
     (finality, reason): (StreamFinality, StreamFinalityReason),
     finish_reason: Option<FinishReason>,
+    assertions: &WitnessAssertions,
     recovered: bool,
     gate: TerminalGate<'_>,
 ) -> MessageStreamResult<MessageStreamReceipt> {
@@ -35,6 +36,7 @@ pub(super) fn commit_terminal(
         state,
         (finality, reason),
         finish_reason,
+        assertions,
         recovered,
         gate,
         &refused,
@@ -66,11 +68,16 @@ fn retire_refused_retry(vault: &Vault, state: &mut State) -> MessageStreamResult
     vault.message_streams.remove(state.handle())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the terminal write joins its outcome, its reply's assertions and its gates"
+)]
 fn terminal_write(
     vault: &Vault,
     state: &State,
     (finality, reason): (StreamFinality, StreamFinalityReason),
     finish_reason: Option<FinishReason>,
+    assertions: &WitnessAssertions,
     recovered: bool,
     gate: TerminalGate<'_>,
     refused: &std::cell::Cell<bool>,
@@ -136,9 +143,20 @@ fn terminal_write(
     } else {
         Callback::Audited
     };
+    // OF-063 (FIX 3416): a continuation reads the records its terminal
+    // asserts through the writer's own lane, opened before its writer; a
+    // new MESSAGE's witness opens its own. `unread` carries the first
+    // pointer the lane cannot read out of the aborted writer.
+    let lane = if seed.continuation {
+        reply_assertions::continuation_lane(&memory, assertions)?
+    } else {
+        None
+    };
+    let unread = std::cell::Cell::new(None);
     let written: MessageStreamResult<()> = if seed.continuation {
         vault.write_txn_door(callback, |txn| -> MessageStreamResult<()> {
             admit_terminal(gate, txn)?;
+            reply_assertions::judge_in_txn(lane.as_ref(), txn, assertions, &unread)?;
             let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
             let text = format!("{base}{}", state.pending);
             admission::authorize(vault, txn, seed, &text)?;
@@ -178,6 +196,9 @@ fn terminal_write(
         // A recovered stream's `pending` is its seed's checkpoint.
         let text = state.text();
         receipt.bytes = text.len() as u64;
+        // The reply's assertions ride the turn its terminal witnesses, and
+        // its metadata keeps them; the seed stays as it was (FIX 3416).
+        let turn = reply_assertions::terminal_turn(seed, text, assertions)?;
         // A Retry's reads take their own snapshots, so they open before the
         // writer does.
         match seed
@@ -192,7 +213,7 @@ fn terminal_write(
             }
             Ok(lanes) => memory
                 .witness_with_route_prepare_and_txn_effect(
-                    &seed.turn(text),
+                    &turn,
                     None,
                     callback,
                     || {},
@@ -262,6 +283,7 @@ fn terminal_write(
                 .map_err(MessageStreamError::from),
         }
     };
+    let written = reply_assertions::settle(&memory, &unread, written);
     if let Err(error) = written {
         let landed = {
             let txn = vault.store.env.read_txn()?;

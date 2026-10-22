@@ -42,6 +42,9 @@ impl<'a> LocalEventStream<'a> {
             },
             usage: self.generation.usage.clone(),
             finish_reason,
+            // A local model's reply asserts no record: its host alone does
+            // (FIX 3416).
+            reply_assertions: Default::default(),
         }
     }
 

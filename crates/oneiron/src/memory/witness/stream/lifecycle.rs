@@ -2,7 +2,7 @@
 use super::*;
 use crate::FinishReason;
 use crate::error::Error;
-use crate::memory::MemoryResult;
+use crate::memory::{MemoryResult, WitnessAssertions};
 use crate::store::Callback;
 
 mod terminal;
@@ -33,6 +33,7 @@ impl Memory<'_> {
                 StreamFinalityReason::ExplicitFinalize,
             ),
             None,
+            &WitnessAssertions::default(),
             None,
         )
     }
@@ -53,6 +54,7 @@ impl Memory<'_> {
                 StreamFinalityReason::ExplicitFinalize,
             ),
             None,
+            &WitnessAssertions::default(),
             Some(&admit),
         )
     }
@@ -61,10 +63,19 @@ impl Memory<'_> {
     /// write transaction; a length cut, a filter or another stop leaves it
     /// partial under the same condition, so it reads incomplete; a cancelled
     /// terminal keeps its text and is recorded as cancelled.
+    ///
+    /// `assertions` are the typed records the reply cited or created, from
+    /// its host's own evidence (OF-063, FIX 3416). Each is read through the
+    /// writer's own lane, opened before its writer, and judged in the
+    /// terminal's write: one it cannot read refuses the terminal, which
+    /// commits nothing and leaves the stream open. A new MESSAGE keeps the
+    /// set admitted in its metadata under `reply_assertions`, in that write;
+    /// a continuation's MESSAGE keeps its birth envelope.
     pub fn finalize_model_stream_if(
         &self,
         handle: MessageStreamHandle,
         finish_reason: FinishReason,
+        assertions: &WitnessAssertions,
         admit: impl Fn(&heed::RwTxn<'_>) -> bool,
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let entry = self.stream_entry(handle)?;
@@ -97,8 +108,14 @@ impl Memory<'_> {
                 None,
             ),
         };
-        self.vault
-            .finish_stream_entry(&entry, handle, outcome, Some(finish_reason), gate)
+        self.vault.finish_stream_entry(
+            &entry,
+            handle,
+            outcome,
+            Some(finish_reason),
+            assertions,
+            gate,
+        )
     }
     pub fn cancel_stream(
         &self,
@@ -124,6 +141,7 @@ impl Memory<'_> {
             handle,
             (StreamFinality::Cancelled, reason),
             None,
+            &WitnessAssertions::default(),
             None,
         )
     }
@@ -167,12 +185,21 @@ impl Vault {
         handle: MessageStreamHandle,
         outcome: (StreamFinality, StreamFinalityReason),
         finish_reason: Option<FinishReason>,
+        assertions: &WitnessAssertions,
         gate: TerminalGate<'_>,
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let mut state = lock(entry)?;
         state.check(handle)?;
         self.close_withheld(&mut state)?;
-        let receipt = commit_terminal(self, &mut state, outcome, finish_reason, false, gate)?;
+        let receipt = commit_terminal(
+            self,
+            &mut state,
+            outcome,
+            finish_reason,
+            assertions,
+            false,
+            gate,
+        )?;
         // Storage success is authoritative. No output is removed on an error.
         state.terminal = true;
         #[cfg(feature = "sync")]
@@ -216,6 +243,7 @@ impl Vault {
                     &mut state,
                     (StreamFinality::Partial, reason),
                     None,
+                    &WitnessAssertions::default(),
                     false,
                     None,
                 )
@@ -340,6 +368,7 @@ impl Vault {
                         StreamFinalityReason::ProcessCrashRecovery,
                     ),
                     None,
+                    &WitnessAssertions::default(),
                     true,
                     None,
                 ) && !state.terminal

@@ -94,6 +94,8 @@ impl Memory<'_> {
                 .get("metadata")
                 .filter(|value| !value.is_null())
                 .cloned();
+            // Never the old reply's evidence (FIX 3416).
+            reply_assertions::drop_copied(&mut metadata);
             let mut audience = None;
             if let Some(permit) = &permit {
                 let fields = metadata

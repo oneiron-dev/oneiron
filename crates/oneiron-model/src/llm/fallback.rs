@@ -1,7 +1,7 @@
 //! Named deterministic non-LLM fallback runners. No backend or write capability crosses this seam.
 use super::{
     ContentPart, DeterministicFallback, FatalLlmError, FinishReason, LlmMessage, LlmMessageRole,
-    LlmRequest, LlmResponse, LlmUsage,
+    LlmRequest, LlmResponse, LlmUsage, ReplyAssertions,
 };
 use std::collections::BTreeMap;
 
@@ -116,6 +116,8 @@ impl FallbackRegistry {
             finish_reason: FinishReason::Other {
                 name: format!("fallback:{}:{source}", declared.name),
             },
+            // A deterministic runner is no host evidence: it asserts no record.
+            reply_assertions: ReplyAssertions::default(),
         })
     }
 

@@ -184,10 +184,12 @@ pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
                 message,
                 usage,
                 finish_reason,
+                reply_assertions,
             } => Some(LlmResponse {
                 message,
                 usage,
                 finish_reason,
+                reply_assertions,
             }),
             _ => None,
         })

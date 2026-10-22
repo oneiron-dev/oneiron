@@ -111,12 +111,14 @@ where
                     message,
                     usage,
                     finish_reason,
+                    reply_assertions,
                 } = event?
                 {
                     return Ok(LlmResponse {
                         message,
                         usage,
                         finish_reason,
+                        reply_assertions,
                     });
                 }
             }

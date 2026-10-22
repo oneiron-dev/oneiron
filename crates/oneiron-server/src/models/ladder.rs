@@ -1815,6 +1815,7 @@ impl OfferLadder {
                 message,
                 usage,
                 finish_reason,
+                reply_assertions,
             } => {
                 warmth.answered(&self.rests);
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
@@ -1823,6 +1824,7 @@ impl OfferLadder {
                         message,
                         usage: self.answered(index, walk, usage),
                         finish_reason,
+                        reply_assertions,
                     }),
                     Err(denied) => Err(denied.into()),
                 };
