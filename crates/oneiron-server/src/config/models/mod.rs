@@ -29,6 +29,7 @@ mod browser_planner;
 mod compaction;
 mod decision_read;
 mod decisions;
+mod dreamer_wording;
 mod levels;
 mod media;
 mod planner;
@@ -48,6 +49,7 @@ pub use decisions::{
     BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings,
     ImagePickSettings, ImportAudienceSettings, SeatPickSettings, SystemOneSettings,
 };
+pub use dreamer_wording::DreamerWording;
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
 pub use planner::{PlannerSeatSetting, PlannerSettings};
@@ -135,6 +137,10 @@ struct DreamerFile {
     person_about_prompt: Option<String>,
     person_about_prompt_file: Option<PathBuf>,
     urgent_digest_question: Option<String>,
+    /// `[models.dreamer.wording]`: the host's wording of the engine's asks
+    /// (FIX 8696); each piece unset keeps its shipped default.
+    #[serde(default)]
+    wording: dreamer_wording::DreamerWordingFile,
     /// The owner's BYO runner seats (OF-137): ordered named runners, the
     /// official seats registered as named providers, and what a spent seat
     /// does. Labels and custody handles only; no vendor login can be
@@ -290,6 +296,9 @@ pub struct DreamerSettings {
     /// The wording of the urgent digest's harm question (OF-194). Without
     /// one, the host's shipped wording.
     pub urgent_digest_question: Option<String>,
+    /// The wording the engine's own asks go out in (FIX 8696): the shipped
+    /// default for each piece the owner left unset.
+    pub wording: DreamerWording,
     /// The owner's BYO runner-seat policy (OF-137), validated at load: the
     /// ordered named runners Dreamer work may be dispatched to and where
     /// the work goes when a seat's quota is spent. Without one, the
@@ -428,6 +437,7 @@ impl ModelsFile {
                 .dreamer
                 .urgent_digest_question
                 .filter(|text| !text.trim().is_empty()),
+            wording: self.dreamer.wording.resolve(base)?,
             runner_seats: self.dreamer.runner_seats,
         };
         if let Some(runner_seats) = &dreamer.runner_seats {
