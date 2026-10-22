@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5053 | 902 | 128 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5055 | 902 | 128 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 47 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 145 | 18 | 0 |
@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 19 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 48 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1247 | 182 | 34 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1249 | 182 | 34 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 11 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 51 | 1 | 0 |
@@ -78,7 +78,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `board_verb` | file | 1 | s | — | — |
 | `booking` | dir | 80 | m | — | Engine-generic booking module |
 | `branch_store_oracle` | dir | 9 | m | — | BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725) |
-| `browser_library` | file+dir | 5 | m | — | The replay library's store (OF-598; EIRI-ARCH-0002 "The replay library"): solved browser runs, filed per… |
+| `browser_library` | file+dir | 6 | m | — | The replay library's store (OF-598; EIRI-ARCH-0002 "The replay library"): solved browser runs, filed per… |
 | `build_cache` | file+dir | 6 | m | — | Explicit account-scoped immutable build results |
 | `calendar` | dir | 69 | m | yes | Calendar module home (CAL-00) |
 | `campaign` | file+dir | 52 | L | — | CRM pack engine-side registration home |
@@ -95,7 +95,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_document` | dir | 14 | m | yes | Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested… |
 | `code_memory` | file+dir | 7 | m | — | Symbol-anchored memory slots, transfers and scoped pulls |
 | `code_revision` | dir | 24 | m | yes | Code revisions, tested forks and reviewed import promotion |
-| `code_run` | dir | 155 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
+| `code_run` | dir | 156 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
 | `code_sandbox` | dir | 47 | L | yes | Sandbox boundary contract for code-mode execution |
 | `code_symbol` | dir | 13 | m | yes | Code-symbol manifests, semantic changes and producing-operation views |
 | `code_view` | dir | 4 | m | — | Per-agent file views over codebase blobs, with one owned shared service set |
@@ -695,8 +695,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `actions` | file | 1 | s | Host-bound UI and agent action executor over the engine's one verb registry |
 | `admission` | file+dir | 2 | s | Admission for work a remote caller can start |
-| `ai_host` | dir | 95 | L | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
-| `api` | dir | 561 | XL | HTTP query routes for web dashboard access |
+| `ai_host` | dir | 96 | L | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
+| `api` | dir | 562 | XL | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 12 | L | HTTP authentication for log-backed version-two capability slips |
 | `big_rung` | file | 1 | m | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
