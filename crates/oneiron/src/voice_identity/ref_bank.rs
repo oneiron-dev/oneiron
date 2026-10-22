@@ -580,7 +580,7 @@ impl Vault {
 
     /// Nonblocking check for synchronous callers. A waiting withdrawal writer
     /// makes a new read lock unavailable; report stale rather than block.
-    pub(crate) fn voice_ref_fence_current_now(
+    pub fn voice_ref_fence_current_now(
         &self,
         voice_id: &str,
         target: &str,
