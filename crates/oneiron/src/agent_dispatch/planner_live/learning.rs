@@ -6,11 +6,12 @@
 //! plan reads (solo reliability, each pattern skill's reliability, each
 //! width's anchored team outcomes) reads its own evidence plus `q` times the
 //! same cell keyed in the vault's scope at the vault tree's type for that
-//! node (FIX 6038), with `q` the shared fade ([`donor_weight`]). The primary read keeps its prior once,
-//! a borrowed backoff included; only the donor cell's measured outcomes are
-//! added, never its prior, and never as own runs. The blend lives in the
-//! plan's evidence alone: nothing is stored. A donor read that fails drops
-//! the whole overlay, and the plan reads what it read before.
+//! node (FIX 6038), with `q` the shared fade ([`donor_weight`]). The primary
+//! read keeps its prior once, a borrowed backoff included; only the donor
+//! cell's measured outcomes are added, never its prior, and never as own
+//! runs. The blend lives in the plan's evidence alone: nothing is stored.
+//! A donor read that fails drops the whole overlay, and the plan reads what
+//! it read before.
 
 use std::collections::BTreeMap;
 
