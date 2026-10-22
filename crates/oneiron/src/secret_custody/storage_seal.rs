@@ -47,8 +47,8 @@ use crate::vault::Vault;
 mod image;
 
 pub(crate) use self::image::{
-    CredentialDisposition, CredentialRoute, PlannedCredentials, image_credential_ref,
-    plan_archived_credentials, withhold_plain_image_credential,
+    CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
+    image_credential_row, plan_archived_credentials,
 };
 
 use super::codec::{BodyValue, decode_custody_map, encode_custody_map};
@@ -290,6 +290,31 @@ pub(crate) fn read_stored_custody_in_txn(
         return Err(Error::CorruptedIndex("secret custody entity type"));
     }
     decode_stored_custody_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+}
+
+/// Whether record `id`'s stored value, sealed at `generation`, opens now
+/// under the exact leaf `leaf` gives for it: a restore's or an activation's
+/// read-back of a value it landed sealed (KS-6 part 2). The opened bytes are
+/// wiped at once; any fault reads as `false`.
+pub(crate) fn stored_value_opens_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    generation: u32,
+    leaf: impl FnOnce(&EntityId, u32) -> Result<CredentialLeaf>,
+) -> bool {
+    let Ok(Some(stored)) = read_stored_custody_in_txn(store, txn, id) else {
+        return false;
+    };
+    let StoredValue::Sealed {
+        generation: sealed_at,
+        bytes,
+    } = &stored.value;
+    *sealed_at == generation
+        && !bytes.is_empty()
+        && leaf(id, generation)
+            .and_then(|leaf| open_value(&leaf, id, generation, bytes))
+            .is_ok()
 }
 
 /// Record `id` with its value opened from current custody: the read every

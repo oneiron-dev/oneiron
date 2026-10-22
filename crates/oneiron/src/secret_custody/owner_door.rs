@@ -354,6 +354,7 @@ pub(super) fn recheck_manifest_snapshot_in_txn(
     txn: &heed::RoTxn<'_>,
     record: &SecretCustodyRecord,
     snapshot: Option<&str>,
+    binder: &EntityId,
 ) -> Result<Option<OwnerWorkRefusal>> {
     match CUSTODY_MANIFEST_RECHECK {
         CustodyManifestRecheck::OwnerApprovedSnapshot => {}
@@ -375,8 +376,12 @@ pub(super) fn recheck_manifest_snapshot_in_txn(
         && manifest.secrets.iter().any(|entry| {
             entry.name == record.name
                 && entry.declared_paths == record.declared_paths
-                && refuse_wider_than_entry(entry, record.class, &manifest_scoped(&record.bindings))
-                    .is_ok()
+                && refuse_wider_than_entry(
+                    entry,
+                    record.class,
+                    &manifest_scoped(&record.bindings, binder),
+                )
+                .is_ok()
         });
     Ok((!agrees).then_some(OwnerWorkRefusal::InvalidInput))
 }
@@ -464,19 +469,25 @@ pub(super) fn default_import_fetch_actor(bindings: &mut [SecretBinding], actor: 
     }
 }
 
-/// `bindings` as a holder's manifest recheck reads them: an import-fetch
-/// binding's actor scopes are its binder's, never a scope the manifest
-/// grants, so the actor the door fills never fails that recheck (FIX 7592).
-fn manifest_scoped(bindings: &[SecretBinding]) -> Vec<SecretBinding> {
+/// `bindings` as a holder's manifest recheck reads them: the one actor
+/// scope [`default_import_fetch_actor`] fills, `actor:<binder hex>` alone on
+/// an import-fetch binding, is its binder's, never a scope the manifest
+/// grants, so it never fails that recheck (FIX 7592). Any other actor scope,
+/// a stated one included, is checked as before.
+fn manifest_scoped(bindings: &[SecretBinding], binder: &EntityId) -> Vec<SecretBinding> {
     let fetch = crate::repo_mutation::external_import::EXTERNAL_IMPORT_FETCH_EFFECTOR;
+    let filled = format!("{ACTOR_SCOPE_PREFIX}{}", binder.to_hex());
     bindings
         .iter()
         .map(|binding| {
             let mut binding = binding.clone();
-            if binding.effector == fetch {
-                binding
-                    .scopes
-                    .retain(|scope| !scope.starts_with(ACTOR_SCOPE_PREFIX));
+            let actors = binding
+                .scopes
+                .iter()
+                .filter(|scope| scope.starts_with(ACTOR_SCOPE_PREFIX))
+                .collect::<Vec<_>>();
+            if binding.effector == fetch && actors == [&filled] {
+                binding.scopes.retain(|scope| *scope != filled);
             }
             binding
         })

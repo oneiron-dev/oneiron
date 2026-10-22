@@ -83,66 +83,99 @@ fn credential_ref(id: EntityId, stored: &StoredCustody) -> Option<CredentialRef>
     })
 }
 
-/// The value credential row `raw`, under row key `key`, commits to: `None`
-/// for any other row, one that does not decode (it rides and lands as it
-/// is), and one that holds no value (a revoked record's).
-pub(crate) fn image_credential_ref(key: &[u8], raw: &[u8]) -> Option<CredentialRef> {
-    let header = EntityMetadataHeader::parse(raw)?;
-    if header.entity_type != ENTITY_TYPE_SECRET_CUSTODY {
-        return None;
+/// A credential row a value could not be read from: named by its id,
+/// its generation unknown (0).
+fn faulted(id: EntityId) -> CredentialRef {
+    CredentialRef {
+        id,
+        generation: 0,
+        name: id.to_hex(),
+        head_eligible: false,
     }
-    let id = EntityId::from_bytes(<[u8; 16]>::try_from(key).ok()?).ok()?;
-    let stored = super::decode_stored_custody_body(&raw[ENTITY_METADATA_HEADER_LEN..]).ok()?;
-    credential_ref(id, &stored)
 }
 
-/// A credential row `raw`, under row key `key`, that an image carries with
-/// its value in the clear (no current snapshot writes one): its stored form
-/// with the value withheld ([`WITHHELD_SEALED_VALUE`]; none for a row that
-/// holds none), and the value it names, for its PendingCustody note. The
-/// value is never landed (CALLS `KS-6 image value form`). `None` for any
-/// other row.
-pub(crate) fn withhold_plain_image_credential(
-    key: &[u8],
-    raw: &[u8],
-) -> Option<(Vec<u8>, Option<CredentialRef>)> {
+fn row_id(key: &[u8]) -> Option<EntityId> {
+    <[u8; 16]>::try_from(key)
+        .ok()
+        .and_then(|key| EntityId::from_bytes(key).ok())
+}
+
+/// What a restore does with one entity row of an image (CALLS `KS-6 image
+/// value form`).
+pub(crate) enum ImageCredentialRow {
+    /// Not a credential row: it rides as it is.
+    Other,
+    /// A credential row as it rests, sealed: the value it commits to, if
+    /// any, is planned.
+    Sealed(Option<CredentialRef>),
+    /// A credential row with its value in the clear (no current snapshot
+    /// writes one): it lands as this stored form, its value slot withheld
+    /// ([`WITHHELD_SEALED_VALUE`]; none for a row that holds none), never
+    /// as a value; the value it named is PendingCustody.
+    Withheld(Vec<u8>, Option<CredentialRef>),
+    /// A credential row whose body is neither form: it never lands, and
+    /// the record it names is PendingCustody.
+    Malformed(Option<CredentialRef>),
+}
+
+/// Classifies entity row `raw`, under row key `key`, for a restore: a row
+/// whose header is a credential's is never kept unvalidated.
+pub(crate) fn image_credential_row(key: &[u8], raw: &[u8]) -> ImageCredentialRow {
     match CUSTODY_IMAGE_VALUE_FORM {
         CustodyImageValueForm::StoredSealedOnly => {}
     }
-    let header = EntityMetadataHeader::parse(raw)?;
-    if header.entity_type != ENTITY_TYPE_SECRET_CUSTODY {
-        return None;
+    if !EntityMetadataHeader::parse(raw)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_SECRET_CUSTODY)
+    {
+        return ImageCredentialRow::Other;
     }
-    let (record, BodyValue::Plain(mut value)) =
-        decode_custody_map(&raw[ENTITY_METADATA_HEADER_LEN..]).ok()?
-    else {
-        return None;
-    };
-    let held = !value.is_empty();
-    value.zeroize();
-    let sealed = if held {
-        WITHHELD_SEALED_VALUE.to_vec()
-    } else {
-        Vec::new()
-    };
-    let mut row = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
-    row.extend_from_slice(&encode_custody_map(&record, BodyValue::Sealed(sealed)).ok()?);
-    let id = <[u8; 16]>::try_from(key)
-        .ok()
-        .and_then(|key| EntityId::from_bytes(key).ok());
-    let credential = id.filter(|_| held).map(|id| CredentialRef {
-        id,
-        generation: record.rotation_generation,
-        name: record.name.clone(),
-        head_eligible: head_eligible(&record),
-    });
-    if let Some(credential) = &credential {
-        tracing::warn!(
-            credential = %credential.id.to_hex(),
-            "a credential row rode its image in the clear; it lands withheld, never as a value"
-        );
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if let Ok(stored) = super::decode_stored_custody_body(body) {
+        return ImageCredentialRow::Sealed(row_id(key).and_then(|id| credential_ref(id, &stored)));
     }
-    Some((row, credential))
+    let withheld = match decode_custody_map(body) {
+        Ok((record, BodyValue::Plain(mut value))) => {
+            let held = !value.is_empty();
+            value.zeroize();
+            let sealed = if held {
+                WITHHELD_SEALED_VALUE.to_vec()
+            } else {
+                Vec::new()
+            };
+            encode_custody_map(&record, BodyValue::Sealed(sealed))
+                .ok()
+                .map(|stored| {
+                    let mut row = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+                    row.extend_from_slice(&stored);
+                    let credential = row_id(key).filter(|_| held).map(|id| CredentialRef {
+                        id,
+                        generation: record.rotation_generation,
+                        name: record.name.clone(),
+                        head_eligible: head_eligible(&record),
+                    });
+                    (row, credential)
+                })
+        }
+        Ok((_, BodyValue::Sealed(_))) | Err(_) => None,
+    };
+    let id = row_id(key);
+    let shown = id.map(|id| id.to_hex()).unwrap_or_default();
+    match withheld {
+        Some((row, credential)) => {
+            tracing::warn!(
+                credential = %shown,
+                "a credential row rode its image in the clear; it lands withheld, never as a value"
+            );
+            ImageCredentialRow::Withheld(row, credential)
+        }
+        None => {
+            tracing::warn!(
+                credential = %shown,
+                "a credential row in this image is malformed; it is withheld, pending"
+            );
+            ImageCredentialRow::Malformed(id.map(faulted))
+        }
+    }
 }
 
 /// Where a restore, or an activation, takes its credentials' keys from.
@@ -188,6 +221,9 @@ pub(crate) enum CredentialDisposition {
 pub(crate) struct PlannedCredentials {
     live: Vec<CredentialRef>,
     noted: Vec<(CredentialRef, CredentialDisposition)>,
+    /// The rows listed before a census that did not finish: discovery
+    /// pending for the rest, never an empty success.
+    census_pending: Option<usize>,
 }
 
 impl PlannedCredentials {
@@ -274,6 +310,12 @@ impl PlannedCredentials {
         }
     }
 
+    /// How many rows a census listed before it failed, when it did not
+    /// finish: the rest rest as they are, discovery pending.
+    pub(crate) fn census_pending(&self) -> Option<usize> {
+        self.census_pending
+    }
+
     /// What is said of each value named, by handle and generation, read
     /// from `store`'s short ids; empty when every value landed readable.
     pub(crate) fn outcomes(self, store: &Store) -> Vec<(String, u32, CredentialDisposition)> {
@@ -305,38 +347,47 @@ fn named<R: Borrow<CredentialRef>>(
 /// Plans every credential value this archived store's rows seal through its
 /// activation's one `plan` (KS-6 part 2): by exact id, from its source's
 /// custody, required ([`CredentialRoute::Required`]). A row that does not
-/// read is warned and left as it rests; a fault listing the rows plans
-/// none, warned, and the activation goes on as before.
+/// read stays as it rests, PendingCustody; a census that stops part way
+/// plans what it listed and says the rest is pending discovery. Never
+/// stops the activation.
 pub(crate) fn plan_archived_credentials(
     store: &Store,
     plan: &mut CustodyPlan,
 ) -> PlannedCredentials {
-    let refs = (|| -> Result<Vec<CredentialRef>> {
+    let mut refs = Vec::new();
+    let mut faulted_rows = Vec::new();
+    let census = (|| -> Result<()> {
         let txn = store.env.read_txn()?;
-        let mut refs = Vec::new();
         for entry in store.port_entity_ids_by_type(&txn, ENTITY_TYPE_SECRET_CUSTODY, None)? {
             let id = entry?;
             match super::read_stored_custody_in_txn(store, &txn, &id) {
                 Ok(Some(stored)) => refs.extend(credential_ref(id, &stored)),
                 Ok(None) => {}
-                Err(error) => tracing::warn!(
-                    credential = %id.to_hex(),
-                    kind = ?error.kind(),
-                    "an archived credential row did not read; it stays as it rests"
-                ),
+                Err(error) => {
+                    tracing::warn!(
+                        credential = %id.to_hex(),
+                        kind = ?error.kind(),
+                        "an archived credential row did not read; it stays as it rests, pending"
+                    );
+                    faulted_rows.push(faulted(id));
+                }
             }
         }
-        Ok(refs)
+        Ok(())
     })();
-    match refs {
-        Ok(refs) => PlannedCredentials::plan(plan, refs, CredentialRoute::Required),
-        Err(error) => {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "an archived vault's credential rows did not list; none is planned, each rests \
-                 sealed"
-            );
-            PlannedCredentials::default()
-        }
+    let listed = refs.len() + faulted_rows.len();
+    let mut planned = PlannedCredentials::plan(plan, refs, CredentialRoute::Required);
+    for credential in faulted_rows {
+        planned.pending(credential);
     }
+    if let Err(error) = census {
+        tracing::warn!(
+            kind = ?error.kind(),
+            listed,
+            "an archived vault's credential census did not finish; the rows it listed are \
+             planned, the rest rest sealed, discovery pending"
+        );
+        planned.census_pending = Some(listed);
+    }
+    planned
 }

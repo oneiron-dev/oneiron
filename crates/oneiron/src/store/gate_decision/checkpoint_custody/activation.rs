@@ -328,9 +328,10 @@ impl Store {
     }
 }
 
-/// Reads back each credential value `credentials` planned live from the
-/// custody `txn` binds (the forked one): one that does not read, or a
-/// binding that does not, leaves it sealed, pending (CALLS `KS-6
+/// Reads back each credential value `credentials` planned live: its row in
+/// `txn` opened under its exact leaf from the custody `txn` binds (the
+/// forked one), the bytes wiped at once. One that does not open, or a
+/// binding that does not read, leaves it sealed, pending (CALLS `KS-6
 /// credential fork fault`), never a refusal.
 fn read_back_credentials_in_txn(
     store: &Store,
@@ -340,7 +341,15 @@ fn read_back_credentials_in_txn(
     let binding: Option<CustodyBinding> = key_custody::binding_in_txn(store, txn).ok().flatten();
     credentials.read_back(|credential, generation| {
         binding.as_ref().is_some_and(|binding| {
-            crate::store::credential_value_reads_in(binding, credential, generation)
+            crate::secret_custody::stored_value_opens_in_txn(
+                store,
+                txn,
+                credential,
+                generation,
+                |credential, generation| {
+                    crate::store::credential_value_leaf_in(binding, credential, generation)
+                },
+            )
         })
     });
 }

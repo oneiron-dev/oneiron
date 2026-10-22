@@ -19,11 +19,15 @@
 //! reading back one value is that value's alone: its row rests sealed,
 //! PendingCustody, warned (CALLS `KS-6 credential fork fault`). A row an
 //! image carried in the clear never lands as a value: it lands withheld,
-//! PendingCustody, and the rest restores (CALLS `KS-6 image value form`).
+//! PendingCustody; a credential row neither form validates never lands at
+//! all, PendingCustody; the rest restores (CALLS `KS-6 image value form`).
+//! A landed value is read back by opening it under its exact leaf.
 
 use super::{CheckpointImage, Custody, Rejected, codec_error};
 use crate::Vault;
-use crate::secret_custody::{CredentialDisposition, CredentialRoute, PlannedCredentials};
+use crate::secret_custody::{
+    CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
+};
 use crate::store::Store;
 
 /// What a restore says of a credential value its rows commit to that it did
@@ -47,9 +51,15 @@ pub enum CredentialRestoreNote {
     /// executor or recipient. None is named while the carrier wire ships
     /// off (CALLS `KS-6 carrier wire`).
     RelayOnly { handle: String, generation: u32 },
-    /// Its key did not read from custody now, or its row came in the clear:
-    /// its row rests sealed, pending. Retry, or re-enter it.
+    /// Its key is not in the custody taken, or its value did not open
+    /// under it now, or its row came in the clear or malformed (withheld;
+    /// generation 0 when its row did not read): pending. Retry, or re-enter
+    /// it.
     PendingCustody { handle: String, generation: u32 },
+    /// The credential census stopped after `listed` rows: those were
+    /// planned, and any other credential rests as it was, its discovery
+    /// pending, never a complete pass.
+    CensusPending { listed: u64 },
 }
 
 /// The form a restore's credential diagnostics take (CALLS `KS-6 restore
@@ -108,8 +118,13 @@ impl std::fmt::Display for CredentialRestoreNote {
             ),
             Self::PendingCustody { handle, generation } => write!(
                 f,
-                "credential {handle} generation {generation}: its key did not read from custody; \
-                 it rests sealed, pending: retry, or re-enter it"
+                "credential {handle} generation {generation}: its value did not open from \
+                 custody here; it rests sealed or withheld, pending: retry, or re-enter it"
+            ),
+            Self::CensusPending { listed } => write!(
+                f,
+                "the credential census stopped after {listed} row(s); any other credential rests \
+                 as it was, its discovery pending"
             ),
         }
     }
@@ -138,16 +153,23 @@ pub(super) fn require(
         .ok_or_else(codec_error)?;
     let mut withheld = Vec::new();
     let mut refs = Vec::new();
+    let mut malformed = std::collections::BTreeSet::new();
     for (key, raw) in rows.iter_mut() {
-        if let Some((row, credential)) =
-            crate::secret_custody::withhold_plain_image_credential(key, raw)
-        {
-            *raw = row;
-            withheld.extend(credential);
-        } else if let Some(credential) = crate::secret_custody::image_credential_ref(key, raw) {
-            refs.push(credential);
+        match crate::secret_custody::image_credential_row(key, raw) {
+            ImageCredentialRow::Other => {}
+            ImageCredentialRow::Sealed(credential) => refs.extend(credential),
+            ImageCredentialRow::Withheld(row, credential) => {
+                *raw = row;
+                withheld.extend(credential);
+            }
+            ImageCredentialRow::Malformed(credential) => {
+                malformed.insert(key.clone());
+                withheld.extend(credential);
+            }
         }
     }
+    // A credential row neither form validates never lands raw.
+    rows.retain(|(key, _)| !malformed.contains(key));
     let mut planned = PlannedCredentials::plan(plan, refs, route);
     for credential in withheld {
         planned.pending(credential);
@@ -155,28 +177,44 @@ pub(super) fn require(
     Ok(CredentialLanding(planned))
 }
 
-/// Once the rows landed and `vault` reopened under its own custody: reads
-/// each landed value's key back from the custody the vault now holds, and
-/// returns what the restore says of each it did not land readable.
+/// Once the rows landed and `vault` reopened under its own custody: opens
+/// each landed value under its exact leaf from the custody the vault now
+/// holds, the bytes wiped at once, and returns what the restore says of
+/// each it did not land readable.
 pub(super) fn land(vault: &Vault, landing: CredentialLanding) -> Vec<CredentialRestoreNote> {
     let CredentialLanding(mut planned) = landing;
+    let txn = vault.store.env.read_txn().ok();
     planned.read_back(|credential, generation| {
-        vault
-            .store
-            .read_credential_value_leaf(credential, generation)
-            .is_ok()
+        txn.as_ref().is_some_and(|txn| {
+            crate::secret_custody::stored_value_opens_in_txn(
+                &vault.store,
+                txn,
+                credential,
+                generation,
+                |credential, generation| {
+                    vault
+                        .store
+                        .read_credential_value_leaf(credential, generation)
+                },
+            )
+        })
     });
+    drop(txn);
     notes(&vault.store, planned)
 }
 
 /// What a restore or an activation says of the credential values `planned`
 /// names, by their handles in `store`.
 pub(super) fn notes(store: &Store, planned: PlannedCredentials) -> Vec<CredentialRestoreNote> {
+    let census = planned.census_pending();
     planned
         .outcomes(store)
         .into_iter()
         .map(|(handle, generation, disposition)| {
             CredentialRestoreNote::of(handle, generation, disposition)
         })
+        .chain(census.map(|listed| CredentialRestoreNote::CensusPending {
+            listed: u64::try_from(listed).unwrap_or(u64::MAX),
+        }))
         .collect()
 }

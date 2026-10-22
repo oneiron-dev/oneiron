@@ -116,19 +116,20 @@ pub(crate) fn plan_credential_value(
     })
 }
 
-/// Whether the key credential `credential`'s value at `generation` reads,
-/// strictly, from the custody `binding` names: a restore's or a fork's
-/// read-back of a value it landed sealed. A fault reads as `false`.
-pub(crate) fn credential_value_reads_in(
+/// The key credential `credential`'s value at `generation` is sealed
+/// under, read strictly from the custody `binding` names: an activation's
+/// read-back from the custody it forked, before that binding commits.
+///
+/// # Errors
+/// The key is not there to read.
+pub(crate) fn credential_value_leaf_in(
     binding: &CustodyBinding,
     credential: &EntityId,
     generation: u32,
-) -> bool {
-    value_subject(binding, credential)
-        .map(|subject| subject.at(u64::from(generation)))
-        .and_then(|id| crate::store::key_custody::LocalCustody::at(binding).read(&id))
-        .and_then(|secret| copy_leaf(CustodyKind::CredentialValue, secret.expose()))
-        .is_ok()
+) -> Result<CredentialLeaf> {
+    let id = value_subject(binding, credential)?.at(u64::from(generation));
+    let secret = crate::store::key_custody::LocalCustody::at(binding).read(&id)?;
+    copy_leaf(CustodyKind::CredentialValue, secret.expose())
 }
 
 impl Store {
