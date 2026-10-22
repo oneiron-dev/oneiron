@@ -56,6 +56,8 @@ pub use label_read::{
 mod model_id;
 mod protocol;
 mod safeguard;
+mod segments;
+mod session;
 
 pub use budget::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
@@ -117,4 +119,20 @@ pub use self::protocol::{
 pub use self::safeguard::{
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, SafeguardModelBinding,
     SafeguardModelBindingError,
+};
+// DESIGN-V2 R2: the typed segment manifest a host sets on a call, and the
+// session contracts of exact conversation reuse on a model worker.
+pub use self::segments::{
+    ByteSpan, DisclosureLabel, ManifestDigest, MessageDigest, MessageStamp, Segment, SegmentClass,
+    SegmentClock, SegmentKind, SegmentLocator, SegmentManifest, SourceRevision, TrustFence,
+    message_digest, role_name,
+};
+pub use self::session::{
+    BranchHandle, CanonicalCheckpointRef, ConditioningDigest, ConversationAnchor,
+    SESSION_HANDLE_BYTES, SESSION_SCHEMA_MINOR, SESSIONS_CAPABILITY, ScopeDigest, SessionAppend,
+    SessionAppended, SessionBinding, SessionCapability, SessionCheckpoint, SessionCheckpointed,
+    SessionCreate, SessionCreated, SessionDrop, SessionFork, SessionForked, SessionGenerate,
+    SessionHandle, SessionInvalidation, SessionKey, SessionOp, SessionOpStamp, SessionReleased,
+    SessionResidency, SessionRestore, SessionRestored, SessionSuffixCommit, SessionSuffixStaged,
+    SessionTarget, TokenDigest, VaultRef,
 };
