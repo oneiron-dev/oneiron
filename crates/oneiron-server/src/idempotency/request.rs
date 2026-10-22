@@ -4,12 +4,16 @@
 
 use super::{
     ANONYMOUS_PRINCIPAL, ApiError, Body, CachedHttpResponse, CoreAuth, EnvelopedApiError,
-    HeaderMap, IDEMPOTENCY_KEY_HEADER, IDEMPOTENCY_MAX_REQUEST_BODY_BYTES,
-    IDEMPOTENCY_MAX_RESPONSE_BODY_BYTES, IDEMPOTENCY_SYNC_STATE_PREFIX, IdempotencyLayerState,
+    HeaderMap, IDEMPOTENCY_KEY_HEADER, IDEMPOTENCY_SYNC_STATE_PREFIX, IdempotencyLayerState,
     IdempotencyLookup, IntoResponse, Next, OriginalUri, Replay, Request, Response,
     SHARED_SECRET_PRINCIPAL, ServedRows, State, StatusCode, SyncServer, SyncServerConfig, caller,
-    replay_admits, require_owner_auth, to_bytes,
+    intent, replay_admits, require_owner_auth, to_bytes,
 };
+
+/// A keyed request's body is read up to axum's default extractor limit, the
+/// keyed routes' own, so the layer cuts short no body its route would accept
+/// (FIX 6056, rule 5). A keyed outcome is kept whole, whatever its size.
+const ROUTE_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 
 pub(crate) async fn idempotency_middleware(
     State(state): State<IdempotencyLayerState>,
@@ -97,7 +101,7 @@ async fn idempotent(
     let store_key = store_key(&principal, &key);
     let target = request_target(&request);
     let (parts, body) = request.into_parts();
-    let body = match to_bytes(body, IDEMPOTENCY_MAX_REQUEST_BODY_BYTES).await {
+    let body = match to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
         Ok(body) => body,
         Err(_) => {
             tracing::warn!(
@@ -157,6 +161,9 @@ async fn idempotent(
                 is_core_auth_route,
             );
         }
+        Ok(IdempotencyLookup::Interrupted) => {
+            return api_error_response(intent::outcome_unknown(), is_core_auth_route);
+        }
         Ok(IdempotencyLookup::Miss) => {}
         Err(_) => {
             tracing::error!(
@@ -170,10 +177,40 @@ async fn idempotent(
         }
     }
 
+    // The caller owns the response beside the rows it served: its
+    // principal's entity, when its credential names one (KS-2B2), a verified
+    // individual's on any other route (FIX 7357). Its intent is stamped so.
+    let stamp = core_auth
+        .as_ref()
+        .and_then(|auth| auth.as_ref().ok())
+        .map(caller::EntryStamp::core)
+        .or(individual_stamp)
+        .unwrap_or_default();
+    // FIX 9527: the intent is kept before the route runs, so a run that never
+    // finishes leaves a row a retry finds, never a miss that acts again. No
+    // effect has run when it cannot be kept.
+    if state
+        .store
+        .insert_intent(&store_key, target.clone(), request_body.clone(), stamp)
+        .is_err()
+    {
+        tracing::error!(
+            reason = "idempotency_intent_write_failed",
+            "failed to persist idempotency intent"
+        );
+        return api_error_response(
+            ApiError::internal_server_error("failed to persist idempotency intent"),
+            is_core_auth_route,
+        );
+    }
+
     let request = Request::from_parts(parts, Body::from(request_body.clone()));
     let response = next.run(request).await;
     let (parts, body) = response.into_parts();
-    let body = match to_bytes(body, IDEMPOTENCY_MAX_RESPONSE_BODY_BYTES).await {
+    // The outcome is read whole: a large success is kept and answered, never
+    // turned into a failure after its effect landed (FIX 6056). A body that
+    // does not read leaves the intent, so a retry is not run again.
+    let body = match to_bytes(body, usize::MAX).await {
         Ok(body) => body,
         Err(_) => {
             tracing::error!(
@@ -209,29 +246,24 @@ async fn idempotent(
             admit: served.admit,
             sources: served.sources,
         };
-
-        // The caller owns the response beside the rows it served: its
-        // principal's entity, when its credential names one (KS-2B2), a
-        // verified individual's on any other route (FIX 7357).
-        let stamp = core_auth
-            .as_ref()
-            .and_then(|auth| auth.as_ref().ok())
-            .map(caller::EntryStamp::core)
-            .or(individual_stamp)
-            .unwrap_or_default();
-        if let Err(_error) = state
+        // The effect landed: its success is answered even when its outcome
+        // is not kept. The intent then stays, so a retry learns the outcome
+        // is unknown rather than acting again (FIX 6056, 9527).
+        if state
             .store
-            .insert(&store_key, target, request_body, cached, stamp)
+            .settle(&store_key, target, request_body, cached, stamp)
+            .is_err()
         {
             tracing::error!(
                 reason = "idempotency_cache_write_failed",
-                "failed to persist idempotency response"
-            );
-            return api_error_response(
-                ApiError::internal_server_error("failed to persist idempotency response"),
-                is_core_auth_route,
+                "failed to persist idempotency response; its intent stands"
             );
         }
+    } else if state.store.release_intent(&store_key).is_err() {
+        tracing::error!(
+            reason = "idempotency_intent_release_failed",
+            "failed to release an idempotency intent after a failure"
+        );
     }
 
     Response::from_parts(parts, Body::from(response_body))
@@ -250,7 +282,6 @@ pub(crate) async fn idempotency_for_mutating_form(
     mutates: impl FnOnce(&[u8]) -> bool,
     release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &Replay<'_>) -> Option<Response>,
 ) -> Response {
-    const ROUTE_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
     if !request.headers().contains_key(IDEMPOTENCY_KEY_HEADER) {
         return next.run(request).await;
     }

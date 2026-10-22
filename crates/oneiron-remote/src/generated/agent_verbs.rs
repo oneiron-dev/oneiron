@@ -1427,6 +1427,12 @@ impl OneironClient {
                 "vault.cleanup.run" => remote_agent_verb_output::<
                     oneiron::vault_cleanup::surface::CleanupRunView,
                 >(client, verb, &input),
+                "vault.cleanup.review" => remote_agent_verb_output::<
+                    oneiron::vault_cleanup::CleanupReviewView,
+                >(client, verb, &input),
+                "vault.cleanup.decide" => remote_agent_verb_output::<
+                    oneiron::vault_cleanup::CleanupDecideView,
+                >(client, verb, &input),
                 "vault.archive.delete.preview" => remote_agent_verb_output::<
                     oneiron::memory::ArchiveDeletePreviewView,
                 >(client, verb, &input),
@@ -9179,6 +9185,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.cleanup.run", value)
+    }
+    pub fn vault_cleanup_review(
+        &self,
+        input: &oneiron::vault_cleanup::CleanupReviewRequest,
+    ) -> Result<oneiron::vault_cleanup::CleanupReviewView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cleanup.review", value)
+    }
+    pub fn vault_cleanup_decide(
+        &self,
+        input: &oneiron::vault_cleanup::CleanupDecideRequest,
+    ) -> Result<oneiron::vault_cleanup::CleanupDecideView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cleanup.decide", value)
     }
     pub fn vault_archive_delete_preview(
         &self,

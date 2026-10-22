@@ -268,9 +268,11 @@ pub(crate) fn record_receive_secret_marks_in_txn(
     let write = CustodyWrite::of(vault);
     let mut custody = RetainedRepoCustody::load_in_writer(&vault.store, wtxn)?;
     let mut written: u64 = 0;
+    let mut marked_blobs = Vec::new();
     marks.drain(&mut |observation, plan| {
         let placed =
             mark_retained_repo_blob_in_txn(&write, wtxn, &mut custody, plan, operation_id, at)?;
+        marked_blobs.push(placed.raw_blake3);
         let placements = placements(&placed);
         for (source, path) in sources(&observation, updates) {
             for (placement, detector_kind) in &placements {
@@ -297,6 +299,15 @@ pub(crate) fn record_receive_secret_marks_in_txn(
         }
         Ok(())
     })?;
+    // The index copies these blobs already derive are refreshed under their
+    // new marks, once for the batch (FIX 7608 slice 3).
+    if written > 0 {
+        crate::origin::secret_projection::index::refresh_repo_index_projection_in_txn(
+            vault,
+            wtxn,
+            &marked_blobs,
+        )?;
+    }
     Ok(written)
 }
 

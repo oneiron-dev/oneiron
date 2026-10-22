@@ -1577,6 +1577,10 @@ export class Oneiron {
     cleanup: {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
       run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
+      /** The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts. */
+      review: (input: Facade.CleanupReviewRequest): Facade.CleanupReviewView => this.#call(() => this.#client.vaultCleanupReview(input) as Facade.CleanupReviewView),
+      /** The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected. */
+      decide: (input: Facade.CleanupDecideRequest): Facade.CleanupDecideView => this.#call(() => this.#client.vaultCleanupDecide(input) as Facade.CleanupDecideView),
     },
     archive: {
       delete: {
@@ -1603,7 +1607,7 @@ export class Oneiron {
       list: (input: Facade.EmptyRequest = {}): Facade.LegalHold[] => this.#call(() => this.#client.vaultLegalHoldsList(input) as Facade.LegalHold[]),
       /** The owner-visible legal hold log, oldest first. */
       log: (input: Facade.EmptyRequest = {}): Facade.LegalHoldEvent[] => this.#call(() => this.#client.vaultLegalHoldsLog(input) as Facade.LegalHoldEvent[]),
-      /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
+      /** The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
     },
     courtesy_delete: {

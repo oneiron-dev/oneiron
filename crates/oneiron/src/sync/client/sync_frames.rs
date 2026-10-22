@@ -53,6 +53,7 @@ impl SyncClient {
             .clear();
         self.root_bootstrapped = false;
         self.residence_acks.clear();
+        self.reset_window_pads();
         let root_doc = LoroDoc::new();
         let _meta = root_doc.get_map("meta");
         // Same peer-id pinning as `new`: the client never authors root ops,

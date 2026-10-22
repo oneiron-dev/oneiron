@@ -213,6 +213,13 @@ impl RepoMarkFacts {
         self.select(|mark| mark.raw_blake3 == *raw_blake3)
     }
 
+    /// The whole-blob BLAKE3 of every marked blob, sorted and once each
+    /// (FIX 7608 slice 3): the sources a repo-derived index copy stands in
+    /// for.
+    pub(crate) fn raw_hashes(&self) -> std::collections::BTreeSet<[u8; 32]> {
+        self.marks.iter().map(|mark| mark.raw_blake3).collect()
+    }
+
     /// The marks of `address`'s blob in its store.
     pub(crate) fn for_blob(&self, address: &RepoBlobAddress) -> RepoBlobMarks {
         self.select(|mark| mark.store_id == address.store && mark.blob_oid == address.blob)

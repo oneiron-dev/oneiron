@@ -218,6 +218,11 @@ pub(crate) fn weave_lens_model_input(vault: &Vault, stored: &StoredWeaveDigest) 
         WeaveDigestReader::Person(id) => (id, EdgeActorClass::Human, "person"),
         WeaveDigestReader::Owner(id) => (id, EdgeActorClass::Human, "owner"),
         WeaveDigestReader::Agent(id) => (id, EdgeActorClass::Agent, "agent"),
+        WeaveDigestReader::Admin(key) => (
+            key.actor(),
+            EdgeActorClass::Human,
+            crate::gate::weave_policy::ADMIN_ROLE,
+        ),
     };
     let sections = vault
         .memory(id, class)
@@ -506,6 +511,9 @@ pub(super) fn compose_weave_lens_framed(
     let items = keyed_items(report);
     let mut frame = opener_frame(read)?;
     let agent = read.actor_key().actor_class() == Some(EdgeActorClass::Agent.gate_actor_class());
+    // An Admin's card (OF-499 A3) binds no backing ref and files no label
+    // from its rows yet: its frame reads nothing, and its verbs are L13's.
+    let admin = matches!(reader, WeaveReader::Admin(_));
     let sources: Vec<EntityId> = items
         .values()
         .filter_map(|item| item_sources(item))
@@ -513,7 +521,7 @@ pub(super) fn compose_weave_lens_framed(
         .into_iter()
         .collect();
     let mut handles = BTreeMap::new();
-    if !sources.is_empty() {
+    if !sources.is_empty() && !admin {
         let reads: Vec<_> = sources.iter().map(|id| PointRead::id(*id)).collect();
         for (index, row) in read.read(&reads, None)?.value.into_iter().enumerate() {
             let Some(row) = row else { continue };
@@ -576,6 +584,7 @@ pub(super) fn compose_weave_lens_framed(
                 target,
             } = item
                 && !agent
+                && !admin
             {
                 let input = serde_json::to_string(&super::WeaveWrongLinkRequest {
                     source_ref: source.to_hex(),
@@ -597,6 +606,7 @@ pub(super) fn compose_weave_lens_framed(
             }
             if let Some(target) = super::WeaveItemTarget::of(item)
                 && !agent
+                && !admin
             {
                 let input = serde_json::to_string(&super::WeaveWrongItemRequest::of(target))
                     .map_err(|_| Error::InvalidConfig("weave wrong item input".into()))?;
@@ -741,21 +751,26 @@ fn report_cards(report: &WeaveReport) -> impl Iterator<Item = String> + '_ {
 
 /// Whether `reader` used a wrong control on any of the rows at or after
 /// `since`: labelled one of `links` or `items` wrong, or dismissed one of
-/// `cards`.
+/// `cards`. Its labels are its own namespace's: an Admin's those filed
+/// under its grant, every other reader's those filed under none (OF-499
+/// A3).
 fn corrected_since(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    reader: EntityId,
+    reader: WeaveDigestReader,
     links: impl IntoIterator<Item = EdgeRef>,
     items: impl IntoIterator<Item = EntityId>,
     cards: &[String],
     since: u64,
 ) -> Result<bool> {
+    let (actor, grant) = (reader.id(), reader.admin_grant());
     for link in links {
         if vault
             .weave_link_correction_labels_in_txn(txn, link)?
             .iter()
-            .any(|label| label.actor == reader && label.recorded_at >= since)
+            .any(|label| {
+                label.actor == actor && label.admin_grant == grant && label.recorded_at >= since
+            })
         {
             return Ok(true);
         }
@@ -764,7 +779,9 @@ fn corrected_since(
         if vault
             .weave_item_correction_labels_in_txn(txn, item)?
             .iter()
-            .any(|label| label.actor == reader && label.recorded_at >= since)
+            .any(|label| {
+                label.actor == actor && label.admin_grant == grant && label.recorded_at >= since
+            })
         {
             return Ok(true);
         }
@@ -779,7 +796,7 @@ fn corrected_since(
         };
         if card.outcome
             == crate::dreamer_runner::maintenance::agent_health::AgentHealthOutcome::Dismissed
-            && card.outcome_by == Some(reader)
+            && card.outcome_by == Some(actor)
             && card.outcome_at.is_some_and(|at| at >= since)
         {
             return Ok(true);
@@ -811,7 +828,7 @@ pub(crate) fn settle_live_weave_lens(
         let corrected = corrected_since(
             vault,
             txn,
-            id,
+            reader,
             links.iter().copied(),
             items.iter().copied(),
             &kept.cards,
@@ -878,7 +895,7 @@ pub(crate) fn settle_weave_lens_axes(
         let corrected = corrected_since(
             vault,
             txn,
-            id,
+            reader,
             report_links(report),
             report_items(report),
             &cards,
