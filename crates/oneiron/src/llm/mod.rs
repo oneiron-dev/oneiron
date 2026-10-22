@@ -106,6 +106,8 @@ pub use oneiron_model::llm::{
 };
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use oneiron_model::llm::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
+// FIX 3416: the typed records a reply cited or created, which its host alone fills.
+pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
