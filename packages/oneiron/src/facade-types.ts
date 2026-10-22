@@ -2413,7 +2413,7 @@ export type HeapDropReport = { sync_windows: number; ppr_cache_rows: number; ppr
 /** `oneiron::slim::ShedBlocker` */
 export type ShedBlocker = { kind: "no_pending_outbound_step" } | { kind: "multiple_pending_outbound_steps"; count: number } | { kind: "sync_window_busy"; window_key: string; outstanding_handles: number } | { kind: "already_slim_for_different_step" }
 /** `oneiron::slim::public::SlimDropOutcome` */
-export type SlimDropOutcome = { status: "entered"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "already_slim"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "refused"; blocker: ShedBlocker }
+export type SlimDropOutcome = { status: "entered"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "already_slim"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "refused"; blocker: ShedBlocker } | { status: "nothing_pending" }
 /** `oneiron::slim::public::SlimDropReceipt` */
 export type SlimDropReceipt = { process_id: number; outcome: SlimDropOutcome }
 /** `oneiron::slim::public::SlimResumeOutcome` */

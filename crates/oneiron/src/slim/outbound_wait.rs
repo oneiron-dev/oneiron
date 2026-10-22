@@ -152,6 +152,10 @@ impl Drop for LiveWaitScope<'_> {
             .retain(|wait| wait.wait_id != self.wait_id);
         if let Some(mut state) = state {
             *state = SlimState::Full;
+            drop(state);
+            // A retired model wait may let the owner's waiting shed decide
+            // (FIX 10157): woken once both locks are released.
+            self.vault.wake_owner_shed();
         }
     }
 }

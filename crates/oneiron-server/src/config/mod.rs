@@ -5,6 +5,7 @@ pub mod browser;
 pub mod connectors;
 pub mod desktop;
 pub mod device_sync;
+mod diagnostics;
 pub mod embedder;
 mod embedder_shape;
 mod embedder_space;
@@ -36,6 +37,7 @@ pub use browser::BrowserConfig;
 pub use connectors::{ConnectorHostConfig, ConnectorTransport};
 pub use desktop::DesktopConfig;
 pub use device_sync::DeviceSyncConfig;
+pub(crate) use diagnostics::parse_toml;
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
