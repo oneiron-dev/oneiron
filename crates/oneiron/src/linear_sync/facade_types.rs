@@ -7,11 +7,8 @@ use serde::{Deserialize, Serialize};
 use super::mirror_event::LinearMirrorEvent;
 use super::model::{LinearFieldConflict, LinearIssueRef};
 
-/// A provenance page's rows when the caller names no limit.
+/// A provenance page's rows when the caller names no limit, or zero.
 pub const LINEAR_PROVENANCE_PAGE_DEFAULT: u32 = 50;
-
-/// The most rows one provenance page holds.
-pub const LINEAR_PROVENANCE_PAGE_MAX: u32 = 200;
 
 /// `vault.tasks.linear.mapping`'s input: the TASK named.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -123,8 +120,9 @@ pub struct LinearProvenanceRequest {
     /// The `next_cursor` of the page before.
     #[serde(default)]
     pub cursor: Option<String>,
-    /// At most [`LINEAR_PROVENANCE_PAGE_MAX`]; [`LINEAR_PROVENANCE_PAGE_DEFAULT`]
-    /// when absent.
+    /// The rows the page holds, any positive count, with `next_cursor`
+    /// naming where the rest resume; [`LINEAR_PROVENANCE_PAGE_DEFAULT`] when
+    /// absent or zero.
     #[serde(default)]
     pub limit: Option<u32>,
 }

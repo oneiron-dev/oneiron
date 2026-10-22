@@ -1378,6 +1378,8 @@ fn mcp_agent_verb_input(
         "self.browser.batch" => a.spec.clone().ok_or_else(invalid),
         "self.browser.library.find" => a.spec.clone().ok_or_else(invalid),
         "self.browser.library.draft" => a.spec.clone().ok_or_else(invalid),
+        "self.browser.demonstration.start" => a.spec.clone().ok_or_else(invalid),
+        "self.browser.demonstration.stop" => a.spec.clone().ok_or_else(invalid),
         "self.browser.library.propose" => a.spec.clone().ok_or_else(invalid),
         "self.browser.library.retire" => a.spec.clone().ok_or_else(invalid),
         "self.browser.library.retired" => a.spec.clone().ok_or_else(invalid),
@@ -4876,6 +4878,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.browser.library.draft" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.browser.demonstration.start" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.browser.demonstration.stop" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.browser.library.propose" => {
@@ -21467,6 +21475,67 @@ async fn execute_agent_verb_row(
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(
                     &memory,
                     "self.browser.library.draft",
+                ),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.browser.demonstration.start" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.browser.demonstration.start", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::BrowserDemonstrationStartInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::self_browser_demonstration_start(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.demonstration.start",
+                    ),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.browser.demonstration.stop" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.browser.demonstration.stop", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::BrowserDemonstrationStopInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::self_browser_demonstration_stop(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.demonstration.stop",
                 ),
                 input,
             )

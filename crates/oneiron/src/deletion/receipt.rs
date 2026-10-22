@@ -8,10 +8,18 @@ use crate::entity_id::EntityId;
 use crate::error::SyncError;
 use crate::error::{Error, Result};
 
-use super::erase::take_staged_sweep_refs_in_txn;
+use super::erase::{take_corrupt_capture_in_txn, take_staged_sweep_refs_in_txn};
 use super::receipt_final::finish_redaction_erase_in_txn;
 use super::sweep_queue::{HardEraseSweepExtras, hard_erase_sweep_deadline_at};
 use super::tombstone::DeleteReason;
+
+// The audited corrupt-CLAIM classification's repair event and failure record (FIX 7800).
+mod capture;
+
+pub(crate) use capture::{
+    CAPTURE_FAILED, CaptureFailure, encode_corrupt_claim_repair_event,
+    is_corrupt_claim_repair_event,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RedactionScope {
@@ -63,6 +71,11 @@ pub(crate) struct RedactionAuditReceipt {
     /// (kind tag, item id, generation), fixed when the erase ran. Empty is
     /// the explicit `not required`: nothing it erased was in custody here.
     pub(crate) custody_retirements: Vec<String>,
+    /// Each record whose capture took the audited corrupt-CLAIM exception, with
+    /// the repair event that classified it, ascending by id (FIX 7800); absent
+    /// when none did. Fixed when the erase ran, as its linked rows copy it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) capture_failures: Vec<CaptureFailure>,
     pub(crate) verification: BTreeMap<String, String>,
 }
 
@@ -152,7 +165,9 @@ pub(crate) fn hex_lower(bytes: &[u8]) -> String {
 
 /// Encodes an erase's initial REDACTION_AUDIT receipt body, signed by this
 /// device (OD-6), binding `custody_retirements`, the names of the custody
-/// retirements the erase owes (FIX 5844; empty: `not required`).
+/// retirements the erase owes (FIX 5844; empty: `not required`), and
+/// `capture_failures`, its records that took the audited corrupt-CLAIM
+/// exception (FIX 7800; empty for every other erase).
 ///
 /// `receipt_id` and `input.hard_purge_complete_at` (the envelope
 /// `learned_at`) are bound into the transcript so a valid receipt cannot be
@@ -160,6 +175,7 @@ pub(crate) fn hex_lower(bytes: &[u8]) -> String {
 pub(crate) fn encode_redaction_audit_receipt(
     input: RedactionReceiptInput,
     custody_retirements: Vec<String>,
+    capture_failures: Vec<CaptureFailure>,
     receipt_id: &EntityId,
     identity: &crate::identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
@@ -185,6 +201,7 @@ pub(crate) fn encode_redaction_audit_receipt(
         room_role: input.room_authority.map(|(_, role)| role),
         erase_complete_at: None,
         custody_retirements,
+        capture_failures,
         verification: BTreeMap::new(),
     };
     sign_redaction_audit_receipt(receipt, receipt_id, envelope_learned_at, identity)
@@ -200,38 +217,45 @@ pub(super) fn sign_redaction_audit_receipt(
     envelope_learned_at: u64,
     identity: &crate::identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
-    use ed25519_dalek::Signer;
-
     receipt.verification.clear();
     // Transcript tail: the body bytes with verification EMPTY.
     let body_unsigned = rmp_serde::to_vec_named(&receipt)
         .map_err(|_| Error::InvariantViolation("redaction audit receipt encode"))?;
+    receipt.verification =
+        receipt_attestation(&body_unsigned, receipt_id, envelope_learned_at, identity);
+    rmp_serde::to_vec_named(&receipt)
+        .map_err(|_| Error::InvariantViolation("redaction audit receipt encode"))
+}
+
+/// The four att_ entries (OD-6) over `body_unsigned`, a REDACTION_AUDIT body
+/// encoded with `verification` EMPTY, for entity `receipt_id` whose
+/// point-event envelope is stamped `envelope_learned_at`. Shared by the erase
+/// receipt rows and the corrupt-CLAIM repair event, one transcript for both.
+fn receipt_attestation(
+    body_unsigned: &[u8],
+    receipt_id: &EntityId,
+    envelope_learned_at: u64,
+    identity: &crate::identity::DeviceIdentity,
+) -> BTreeMap<String, String> {
+    use ed25519_dalek::Signer;
+
     let header = receipt_envelope_header(envelope_learned_at);
     let mut msg =
         Vec::with_capacity(RECEIPT_ATT_DOMAIN.len() + 16 + header.len() + body_unsigned.len());
     msg.extend_from_slice(RECEIPT_ATT_DOMAIN);
     msg.extend_from_slice(receipt_id.as_bytes());
     msg.extend_from_slice(&header);
-    msg.extend_from_slice(&body_unsigned);
+    msg.extend_from_slice(body_unsigned);
     let signature = identity.signing_key.sign(&msg);
 
-    receipt.verification.insert(
-        ATT_KEY_CLIENT.to_owned(),
-        format!("{:016x}", identity.client_id),
-    );
-    receipt.verification.insert(
-        ATT_KEY_PK.to_owned(),
-        hex_lower(&identity.signing_key.verifying_key().to_bytes()),
-    );
-    receipt
-        .verification
-        .insert(ATT_KEY_SIG.to_owned(), hex_lower(&signature.to_bytes()));
-    receipt
-        .verification
-        .insert(ATT_KEY_V.to_owned(), ATT_VERSION.to_owned());
-
-    rmp_serde::to_vec_named(&receipt)
-        .map_err(|_| Error::InvariantViolation("redaction audit receipt encode"))
+    let client = format!("{:016x}", identity.client_id);
+    let public_key = hex_lower(&identity.signing_key.verifying_key().to_bytes());
+    BTreeMap::from([
+        (ATT_KEY_CLIENT.to_owned(), client),
+        (ATT_KEY_PK.to_owned(), public_key),
+        (ATT_KEY_SIG.to_owned(), hex_lower(&signature.to_bytes())),
+        (ATT_KEY_V.to_owned(), ATT_VERSION.to_owned()),
+    ])
 }
 
 /// Decodes a REDACTION_AUDIT receipt BODY (post-envelope bytes).
@@ -418,6 +442,18 @@ impl Vault {
             )?);
         }
         input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
+        // A classified corrupt CLAIM this erase took the audited exception for
+        // leaves its classification here, as `capture_failed` on the receipt and
+        // the queued sweep, in the commit that writes both (FIX 7800).
+        if input.sweep_queued_at.is_some() {
+            for id in &ids {
+                take_corrupt_capture_in_txn(self, wtxn, id, &mut sweep_extras)?;
+            }
+        }
+        let failures = &mut sweep_extras.capture_failures;
+        failures.sort_by(|left, right| left.entity_id.cmp(&right.entity_id));
+        failures.dedup_by(|left, right| left.entity_id == right.entity_id);
+        let capture_failures = failures.clone();
         // This erase's own custody retirements, everything it retires staged
         // by now in this transaction, bound by name on its receipt and never
         // changed (FIX 5844). Missing proof later reads as pending.
@@ -455,8 +491,13 @@ impl Vault {
                 },
             )?;
         }
-        let body =
-            encode_redaction_audit_receipt(input, custody_retirements, receipt_id, &identity)?;
+        let body = encode_redaction_audit_receipt(
+            input,
+            custody_retirements,
+            capture_failures,
+            receipt_id,
+            &identity,
+        )?;
         self.put_redaction_audit_receipt_in_txn(wtxn, receipt_id, hard_purge_complete_at, &body)?;
         // An erase that queued no sweep and owes no custody retirement is
         // complete now: its final row lands in this transaction. Any other

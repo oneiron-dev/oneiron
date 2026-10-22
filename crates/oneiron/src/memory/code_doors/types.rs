@@ -1,3 +1,7 @@
+//! Code symbol lease, proposal and mutation-log request and view records.
+//! `CodeSymbolsDeclareRequest` is the first of its records.
+//! These are local definitions; `memory::code_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;

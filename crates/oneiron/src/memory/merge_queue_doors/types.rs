@@ -1,3 +1,7 @@
+//! Merge queue request, batch, pointer and observation records.
+//! `MergeQueueRepoRequest` is the first of its records.
+//! These are local definitions; `memory::merge_queue_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;

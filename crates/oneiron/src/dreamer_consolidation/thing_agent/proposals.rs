@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::ThingProposalRef;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::code_run::{host_run_recorded, stage_host_output};
+use crate::code_run::{host_run_recorded, read_host_output, stage_host_output};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
@@ -59,6 +59,28 @@ pub(super) fn earlier_parent(
         let run = host_parent_run(attempt, earlier)?;
         if host_run_recorded(vault, run)? {
             return Ok(Some(run));
+        }
+    }
+    Ok(None)
+}
+
+/// The newest checkpoint an earlier generation of `attempt` actually left,
+/// before `generation` (FIX 9016): every earlier host parent run is read,
+/// newest first, so a generation that ran and left none (its child settled,
+/// or it was cut before it staged one) never hides an older one.
+///
+/// # Errors
+///
+/// The store's own errors.
+pub(super) fn newest_checkpoint(
+    vault: &Vault,
+    attempt: AttemptId,
+    generation: u32,
+) -> Result<Option<Vec<u8>>> {
+    for earlier in (0..generation).rev() {
+        let run = host_parent_run(attempt, earlier)?;
+        if let Some(checkpoint) = read_host_output(vault, run, CHECKPOINT_PATH)? {
+            return Ok(Some(checkpoint));
         }
     }
     Ok(None)

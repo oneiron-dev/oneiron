@@ -44,7 +44,9 @@ pub struct HostInput {
 /// Commits `inputs` on `vault` as run `parent_run`'s own complete result
 /// occurrences, in its replay record, and answers each as a loan lends it:
 /// by its name, its whole body. An input whose path the record already
-/// holds answers the occurrence it holds.
+/// holds answers the occurrence it holds. The record is `actor`'s run's
+/// (FIX 9019): its owner row is stamped with its put, so an erase of that
+/// actor, and its outputs' retention, reach a run that only holds outputs.
 ///
 /// # Errors
 ///
@@ -52,6 +54,7 @@ pub struct HostInput {
 pub fn commit_host_inputs(
     vault: &Vault,
     parent_run: EntityId,
+    actor: EntityId,
     inputs: Vec<HostInput>,
 ) -> Result<BTreeMap<String, DelegatedSource>> {
     let stored = vault.get_code_run_replay_record(&parent_run)?;
@@ -86,7 +89,7 @@ pub fn commit_host_inputs(
         );
     }
     if published {
-        vault.put_code_run_replay_record(&record)?;
+        vault.put_host_run_record(&record, actor)?;
     }
     Ok(lent)
 }
