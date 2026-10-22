@@ -127,8 +127,10 @@ pub struct LegalHold {
     /// when its silence ended).
     #[serde(default)]
     pub owner_told: bool,
-    /// A host order also forbids using what it keeps (C6). Never set on a
-    /// customer hold.
+    /// A host order's own terms also forbid using what it keeps (C6), kept
+    /// as the order's data. Never set on a customer hold. A record a hosted
+    /// privacy erasure kept is use-limited under any standing hold either way
+    /// (FIX 8849).
     #[serde(default)]
     pub requires_non_use: bool,
 }
@@ -248,9 +250,9 @@ pub struct HostOrderHold {
     pub jurisdiction: Option<String>,
     /// Who issued the order, as an opaque ref.
     pub issuing_authority_ref: Option<String>,
-    /// The order also forbids using what it keeps: a refused privacy
-    /// erasure keeps the record under a use limit while the order stands
-    /// (C6). `false` keeps the bytes only.
+    /// The order's own terms also forbid using what it keeps (C6), recorded
+    /// as its term. A refused hosted privacy erasure keeps the record under a
+    /// use limit while any hold stands, whether this is set or not (FIX 8849).
     pub requires_non_use: bool,
 }
 
@@ -298,9 +300,10 @@ pub struct LiftAndEraseOutcome {
 }
 
 /// A record kept after a refused privacy erasure: it serves only the legal
-/// reason that kept it (C6, hosted only), while a standing host order that
-/// forbids its use ([`HostOrderHold::requires_non_use`]) still names it. Read
-/// enforcement is the scope checks' (L02).
+/// reason that kept it (C6, hosted only), while any standing hold, customer
+/// or host order, still names it, for that hold's whole retention (FIX 8849).
+/// A host order's [`HostOrderHold::requires_non_use`] is its own term, not
+/// what makes this limit. Read enforcement is the scope checks' (L02).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldUseLimit {

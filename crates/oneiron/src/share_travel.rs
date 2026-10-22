@@ -17,6 +17,7 @@ use crate::{Result, Vault};
 
 pub mod agent_pack;
 mod agent_pack_export;
+mod copy;
 mod pack_notice;
 mod reader_prompts;
 
@@ -25,6 +26,7 @@ pub use self::agent_pack::{
     AgentPackTravelProjection,
 };
 pub use self::agent_pack_export::{AgentPackExport, AgentPackExportFile, AgentPackExportRequest};
+pub use self::copy::{CopyRefs, CopyTravelChoice, effective_copy_refs};
 pub use self::pack_notice::{
     AGENT_PACK_IMPORT_DOUBLE_CHECK, OWNER_PACK_EXPORT_RECIPIENT_NOTICE, PACK_NOTICE_AUDIENCE,
     PACK_NOTICE_CHANNEL, PACK_NOTICE_VOICE, PACK_NOTICE_WORDING, PackNoticeWording,

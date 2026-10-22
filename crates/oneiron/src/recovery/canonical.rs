@@ -15,7 +15,15 @@ use crate::ports::{
 use crate::{EntityId, Vault};
 
 mod peer_origins;
+mod rebuild;
+mod row_births;
+mod withdrawn_cutoffs;
 pub use peer_origins::CanonicalPeerOrigin;
+pub use rebuild::rebuild_vault_window_from_canonical;
+#[cfg(feature = "sync")]
+pub(crate) use rebuild::{RebuildAt, rebuild_page, rebuild_start};
+pub use row_births::CanonicalRowBirth;
+pub use withdrawn_cutoffs::CanonicalCutoff;
 
 /// Canonical Layer-1 artifact discriminator (not a Loro snapshot).
 pub const CANONICAL_SNAPSHOT_ARTIFACT_TYPE: u16 = 1;
@@ -98,8 +106,9 @@ impl CanonicalEntityDocument {
                         + metadata_size(&version.metadata)
                 });
                 let pins = history.pins.iter().map(|pin| 96 + pin.quote.len());
+                // Ids, times, flags and the u64 place in its bundle.
                 let forks = history.forks.iter().map(|fork| {
-                    96 + fork.output.as_ref().map_or(0, String::len)
+                    108 + fork.output.as_ref().map_or(0, String::len)
                         + fork.output_metadata.as_ref().map_or(0, metadata_size)
                         + 16 * fork.read_refs.len()
                         + fork.keep.as_ref().map_or(0, String::len)
@@ -222,8 +231,10 @@ pub struct CanonicalDocumentFork {
     /// The retained output text of a pending fork.
     pub output: Option<String>,
     pub output_metadata: Option<BTreeMap<String, Vec<u8>>>,
-    pub proposal_index: u16,
-    pub proposal_len: u16,
+    /// Its place in its bundle, and the bundle's size: no count bounds a
+    /// bundle (Rule 5, FIX 8822).
+    pub proposal_index: u64,
+    pub proposal_len: u64,
     pub proposal_settled: bool,
     pub read_refs: Vec<[u8; 16]>,
     pub keep: Option<String>,
@@ -408,12 +419,22 @@ pub struct CanonicalSnapshot {
     /// row's exact blob. Absent when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub peer_origins: Vec<CanonicalPeerOrigin>,
+    /// The final rows' births (FIX 3069), by row id: the window's carrier,
+    /// else the birth stamped here. Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_births: Vec<CanonicalRowBirth>,
+    /// The window's withdrawal fences and session epoch floors (FIX 8820),
+    /// by map key. Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub withdrawn_cutoffs: Vec<CanonicalCutoff>,
 }
 
 impl CanonicalSnapshot {
     /// Validate every section and reference before any reconstruction or storage write.
     pub fn validate(&self) -> Result<()> {
-        validation::validate(self)
+        validation::validate(self)?;
+        row_births::validate(self)?;
+        withdrawn_cutoffs::validate(self)
     }
 
     /// Deterministic MessagePack, protected by the blake3 artifact envelope.
@@ -476,6 +497,8 @@ impl CanonicalSnapshot {
             "room_facts",
             "document_pins",
             "peer_origins",
+            "row_births",
+            "withdrawn_cutoffs",
         ] {
             rows.push(CanonicalContainerManifest {
                 container_id: name.to_owned(),
@@ -649,6 +672,8 @@ pub(crate) fn capture_canonical_window_within(
         room_facts: Vec::new(),
         document_pins: Vec::new(),
         peer_origins: Vec::new(),
+        row_births: Vec::new(),
+        withdrawn_cutoffs: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         // A pad row goes by its bare reference, its pad in current custody
@@ -946,6 +971,12 @@ pub(crate) fn capture_canonical_window_within(
     }
     // FIX 4550: the peer origins of the final rows, with their final bytes.
     peer_origins::capture(doc, &mut snapshot, budget)?;
+    // FIX 3069, 8820: the final rows' births, and the window's cutoffs.
+    #[cfg(feature = "sync")]
+    {
+        row_births::capture(vault, &txn, doc, &mut snapshot, budget)?;
+        withdrawn_cutoffs::capture(vault, &txn, doc, &mut snapshot, budget)?;
+    }
     // Only a TASK row carries a refusal: a forged fact may name any id as its
     // task, and the artifact's validation refuses a mark on anything else.
     for entity in &snapshot.entity_blobs {
@@ -1020,89 +1051,6 @@ pub(crate) fn capture_canonical_window_within(
         }
     }
     Ok(snapshot)
-}
-
-/// Reconstructs Layer 1 from values, not by importing an old CRDT snapshot.
-/// Available without `sync`; the sync materialization door consumes this same doc.
-pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Result<LoroDoc> {
-    snapshot.validate()?;
-    let doc = LoroDoc::new();
-    for entity in &snapshot.entity_blobs {
-        insert(&doc, "entities", &id(entity.id)?.to_hex(), &entity.blob)?;
-    }
-    peer_origins::rebuild(&doc, snapshot)?;
-    for shell in &snapshot.retained_claim_worlds {
-        insert(
-            &doc,
-            "retained_claim_worlds",
-            &id(shell.id)?.to_hex(),
-            &shell.world,
-        )?;
-    }
-    for edge in &snapshot.base_edges {
-        insert(&doc, "edges", &edge.key()?, &edge.value)?;
-    }
-    for row in &snapshot.custody_transitions {
-        let key = crate::secret_custody::custody_row_key(id(row.id)?, row.piece);
-        insert(&doc, "custody", &key, &row.carrier)?;
-    }
-    for row in &snapshot.room_turns {
-        insert(&doc, "room_turns", &id(row.id)?.to_hex(), &row.row)?;
-    }
-    for row in &snapshot.room_facts {
-        insert(&doc, "room_facts", &row.key, &row.row)?;
-    }
-    for row in &snapshot.document_pins {
-        insert(&doc, "document_pins", &row.key, &row.row)?;
-    }
-    for tombstone in &snapshot.tombstones {
-        insert(
-            &doc,
-            "tombstones",
-            &id(tombstone.id)?.to_hex(),
-            &tombstone.value,
-        )?;
-    }
-    // An explicit document carrier scopes replacement even for an inline NOTE
-    // with no document rows. Ordinary sync windows have no such carrier.
-    doc.get_map("documents");
-    // Documents are canonical records inside the window; each is reconstructed
-    // into its own fresh LoroDoc by the ordinary forward document pass.
-    for document in &snapshot.doc_snapshots {
-        insert(&doc, "documents", &document.key(), &pack(document)?)?;
-    }
-    for row in &snapshot.entity_documents {
-        insert(
-            &doc,
-            "entity_documents",
-            &id(row.entity_id)?.to_hex(),
-            &pack(row)?,
-        )?;
-    }
-    for head in &snapshot.document_heads {
-        insert(
-            &doc,
-            "document_heads",
-            &id(head.entity_id)?.to_hex(),
-            &pack(head)?,
-        )?;
-    }
-    for receipt in &snapshot.head_move_receipts {
-        insert(
-            &doc,
-            "head_move_receipts",
-            &id(receipt.id)?.to_hex(),
-            &pack(receipt)?,
-        )?;
-    }
-    for fork in &snapshot.note_forks {
-        insert(&doc, "note_forks", &fork.fork.to_hex(), &pack(fork)?)?;
-    }
-    for bundle in &snapshot.note_proposals {
-        insert(&doc, "note_proposals", &bundle.id.to_hex(), &pack(bundle)?)?;
-    }
-    doc.commit();
-    Ok(doc)
 }
 
 #[cfg(feature = "sync")]

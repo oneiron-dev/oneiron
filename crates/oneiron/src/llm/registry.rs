@@ -4,11 +4,13 @@ mod description;
 pub use backend::{ModelBackendPin, ModelCostReceipt, PricedModelBackend};
 mod installed_pack;
 pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
+mod source_erase;
+pub(crate) use source_erase::erase_registry_source_in_txn;
 
 use super::{LlmCatalogEntry, ModelId};
 use crate::entity_id::EntityId;
 use crate::side_table::{self, LegacyJson, SideTable};
-use crate::skill_optimize::union_source_rows;
+use crate::skill_optimize::{live_source_rows_in, union_source_rows};
 use crate::{
     Vault,
     error::{Error, Result},
@@ -224,6 +226,9 @@ impl Vault {
         // Scores change only through a snapshot, so the row keeps the
         // evidence its stored scores were read from (FIX 5760).
         let mut row = row.clone();
+        // A source an erase reached since the row was read does not come
+        // back (FIX 6933).
+        row.source_rows = live_source_rows_in(self, &txn, row.source_rows.take())?;
         if let Some(old) = previous.as_ref().filter(|old| !old.scores.is_empty()) {
             row.source_rows =
                 union_source_rows([row.source_rows.as_deref(), old.source_rows.as_deref()]);
@@ -388,7 +393,12 @@ impl Vault {
         seed: &CatalogSeed,
         prior: Option<&CatalogSeed>,
     ) -> Result<()> {
-        let checked = CatalogSeed::from_json(&encode(seed)?)?;
+        let mut checked = CatalogSeed::from_json(&encode(seed)?)?;
+        // A source an erase reached since the seed was read does not come
+        // back (FIX 6933).
+        for row in &mut checked.rows {
+            row.source_rows = live_source_rows_in(self, txn, row.source_rows.take())?;
+        }
         // The rows the seed was read from: a retirement it marks derives
         // from them (FIX 5760).
         let seed_sources =
@@ -516,6 +526,9 @@ impl Vault {
             if snapshot.source.trim().is_empty() || snapshot.source.len() > 128 {
                 return Err(invalid("invalid benchmark source"));
             }
+            // A source an erase reached since the snapshot was read does not
+            // come back (FIX 6933).
+            let evidence = live_source_rows_in(self, txn, snapshot.source_rows.clone())?;
             let mut seen = std::collections::BTreeSet::new();
             let mut prior_watermarks = BTreeMap::new();
             for observation in &snapshot.observations {
@@ -539,10 +552,8 @@ impl Vault {
                 }
                 // Every write below reads this snapshot's evidence too (FIX
                 // 5760).
-                row.source_rows = union_source_rows([
-                    row.source_rows.as_deref(),
-                    snapshot.source_rows.as_deref(),
-                ]);
+                row.source_rows =
+                    union_source_rows([row.source_rows.as_deref(), evidence.as_deref()]);
                 let scores = row.scores.entry(snapshot.source.clone()).or_default();
                 let previous = scores.get(&observation.benchmark).copied();
                 if prior_watermark == Some(snapshot.fetched_at)

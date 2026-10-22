@@ -31,7 +31,7 @@ use oneiron::task_verb::sdk::{
     ResidencePruneRequest, ResidencePruned, ResidenceQueued,
 };
 
-use super::host_doors::{Listed, internal, naming, owner_proof};
+use super::host_doors::support::{Listed, internal, naming, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
