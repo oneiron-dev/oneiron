@@ -5,6 +5,7 @@ mod eligibility;
 mod evidence;
 mod locality;
 mod media;
+mod repo_projection;
 mod session_media;
 mod space;
 mod space_card;
@@ -30,6 +31,7 @@ pub(crate) use eligibility::{
 };
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
+pub(crate) use repo_projection::{repo_envelope_copies_in_txn, requeue_repo_embedding_in_txn};
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
 pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
@@ -892,7 +894,9 @@ fn pending_input_in_txn(
     // A record the shared rule does not embed — an ordinary witness SUMMARY, a
     // lexical hint, a text with nothing in it — is `None`, which the caller
     // retires as stale rather than failing the whole leased batch on it.
-    let Some(payload) = embeddable_payload(raw.entity_type, &raw.body) else {
+    let Some(payload) =
+        repo_projection::pending_payload_in_txn(vault, wtxn, raw.entity_type, &raw.body)?
+    else {
         return Ok(None);
     };
     Ok(Some(PendingEmbeddingInput {
