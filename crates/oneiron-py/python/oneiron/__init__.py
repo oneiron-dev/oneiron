@@ -5538,6 +5538,9 @@ class Oneiron:
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs":
             return Oneiron._SelfBrowserLibraryVerbs(self._client)
+        @property
+        def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs":
+            return Oneiron._SelfBrowserDemonstrationVerbs(self._client)
         def handover(self, spec):
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
             return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
@@ -5565,6 +5568,15 @@ class Oneiron:
         def run(self, spec):
             """Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift."""
             return json.loads(_translate(lambda: self._client.self_browser_library_run(json.dumps(spec))))
+    class _SelfBrowserDemonstrationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def start(self, spec):
+            """Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running."""
+            return json.loads(_translate(lambda: self._client.self_browser_demonstration_start(json.dumps(spec))))
+        def stop(self, spec):
+            """Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."""
+            return json.loads(_translate(lambda: self._client.self_browser_demonstration_stop(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

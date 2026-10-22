@@ -10004,6 +10004,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_browser_demonstration_start(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.demonstration.start", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_browser_demonstration_stop(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.demonstration.stop", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_browser_library_propose(
         &self,
         input: serde_json::Value,

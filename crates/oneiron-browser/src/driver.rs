@@ -40,6 +40,7 @@ mod document;
 mod handles;
 mod lightpanda;
 pub(crate) mod pages;
+pub(crate) mod recorder;
 mod row_metadata;
 mod secrets;
 pub(crate) mod state;
@@ -1266,6 +1267,8 @@ fn attach_tab(pipe: &Pipe, target: &str, engine: BrowserEngine) -> Result<String
     if enabled.is_ok() {
         pipe.watch_navigations(&session, target);
         storage::hook_exits(pipe, &session, engine);
+        // A tab found while a demonstration records is recorded too.
+        pipe.record_on(&session, target, target, Instant::now() + CALL);
     }
     Ok(session)
 }
