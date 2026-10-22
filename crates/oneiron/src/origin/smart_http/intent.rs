@@ -182,6 +182,11 @@ pub(super) struct ReceivePackIntent {
     // What the scan came to, written with the push's marks (FIX 8032): the
     // only source its outcomes' `scan` reads.
     scan: ReceivePackScanSummary,
+    // The ingress proof record a projection-bound push was accepted under
+    // (FIX 7608 2b-ii), lower hex; absent, and unwritten, on every
+    // ordinary intent, whose bytes stay as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ingress_proof: Option<String>,
 }
 
 impl ReceivePackIntent {

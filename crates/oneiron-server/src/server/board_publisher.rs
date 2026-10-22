@@ -145,11 +145,14 @@ impl SyncServer {
                     .await;
             match state {
                 Ok(Ok(Some(state))) => {
-                    let readers = self
-                        .mcp_registry
-                        .lock()
-                        .await
-                        .stream_readers_for(&state.recipients().collect::<Vec<_>>());
+                    let (readers, runs) = {
+                        let registry = self.mcp_registry.lock().await;
+                        let recipients = state.recipients().collect::<Vec<_>>();
+                        (
+                            registry.stream_readers_for(&recipients),
+                            registry.run_readers_for(&recipients),
+                        )
+                    };
                     let vault = Arc::clone(self.vault());
                     let admitted = tokio::task::spawn_blocking(move || {
                         readers
@@ -158,6 +161,11 @@ impl SyncServer {
                                 crate::api::mcp_stream_reads_task(&vault, reader, &task)
                             })
                             .map(|reader| reader.stream_connection)
+                            .chain(
+                                runs.into_iter()
+                                    .filter(|(_, reader)| run_reads_task(&vault, reader, &task))
+                                    .map(|(connection, _)| connection),
+                            )
                             .collect::<BTreeSet<_>>()
                     })
                     .await;
@@ -180,4 +188,22 @@ impl SyncServer {
             }
         }
     }
+}
+
+/// Whether a pumped run's own board reader may be told about `task` now
+/// (FIX 4888): the TASK still stands on the board and the run's own key
+/// reads it, as its board's TASK rows are read. Any failure to decide is a
+/// no.
+fn run_reads_task(
+    vault: &oneiron::Vault,
+    reader: &oneiron::claim::ScopedReadActorKey,
+    task: &oneiron::EntityId,
+) -> bool {
+    matches!(
+        oneiron::context_board::CommittedTaskBoardState::read(vault, *task),
+        Ok(Some(_))
+    ) && vault
+        .scoped_read(reader.clone())
+        .is_ref_readable(task)
+        .unwrap_or(false)
 }
