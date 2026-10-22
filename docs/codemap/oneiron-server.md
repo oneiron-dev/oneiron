@@ -504,7 +504,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/secret_control_routes/sealed_spool.rs` | src | s | 3 crate-vis | — | The sealed custody change's body, spooled (FIX 5674, Rule 5) |
 | `src/api/owner_routes/secret_found_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/found*`: the owner's side of the found-key notice (OF-560) |
 | `src/api/owner_routes/secret_lift_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/lift*`: the owner's side of the historical lift sweep's proposals (OF-067) |
-| `src/api/owner_routes/secret_reveal_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/reveal*`: the owner's side of reveal by handle (OF-560; ARCH-0069 #reveal-check) |
+| `src/api/owner_routes/secret_reveal_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/secrets/reveal*`: the owner's side of reveal by handle (OF-560; ARCH-0069 #reveal-check) |
 | `src/api/owner_routes/secret_use_routes.rs` | src | s | 1 crate-vis | — | `POST /v1/owner/secrets/bind`: the owner binds a secret to an effector, so an agent's `self.use` can hand it… |
 | `src/api/owner_routes/shared_training_setup_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/conversation-learning/setup`: a shared vault's one training question, asked once at setup (OF-420… |
 | `src/api/owner_routes/skill_judge_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/skills/judge`: the serve skill judge (OF-495) |
@@ -525,7 +525,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/pairing/renewal_error.rs` | src | s | 1 crate-vis | — | FIX 4651: a credential renewal's named refusal over HTTP (CALLS row "FIX 4651 renewal reason status") |
 | `src/api/params.rs` | src | s | 9 crate-vis | — | Shared query/body param extractors, hex-id parsing, and small scalar helpers |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
-| `src/api/recovery_bundle.rs` | src | s | 4 crate-vis | — | The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no… |
+| `src/api/recovery_bundle.rs` | src | m | 9 crate-vis | — | The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no… |
 | `src/api/report.rs` | src | s | 3 crate-vis | — | OF-537 report execution and owner triage |
 | `src/api/run_tree.rs` | src | m | 28 crate-vis | — | — |
 | `src/api/run_tree/cancel.rs` | src | s | 3 crate-vis | — | Run-tree cancel through the caller-bound cancel door (FIX 8219) |
@@ -748,10 +748,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/trusted_proxy.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | TrustedProxy | `trusted_proxies`: the reverse proxies whose `X-Forwarded-For` entries the server believes when it keys a… |
 | `src/connector_admission_host.rs` | src | m | 12 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
 | `src/connector_call_host.rs` | src | m | 1 struct · 1 fn · 15 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
-| `src/connector_call_host/live_exchange.rs` | src | m | 25 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned, and the reply… |
+| `src/connector_call_host/live_exchange.rs` | src | m | 18 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned |
 | `src/connector_call_host/presenting.rs` | src | m | 11 crate-vis | — | What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646… |
+| `src/connector_call_host/reply_read.rs` | src | s | 8 crate-vis | — | The reply readers both halves of the call host share: one reply body, JSON read whole or an event stream… |
 | `src/connector_call_settle.rs` | src | s | 4 crate-vis | — | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
 | `src/connector_elicitation.rs` | src | m | 13 crate-vis | — | The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510) |
+| `src/connector_elicitation/owner.rs` | src | s | 2 crate-vis | — | The owner's ruling on an answer under `always ask` (FIX 3837, 3842): the ask raised or reused for exactly… |
 | `src/control_keys.rs` | src | s | 2 struct · 1 enum · 6 fn · 1 const · 1 mod | ControlKeys, KeyError, KeyRecord | Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every… |
 | `src/control_keys/http.rs` | src | s | 1 fn | — | Optional private control-plane router; tenant bearer auth remains separate |
 | `src/control_keys/tests.rs` | test | s | — | — | — |
@@ -876,6 +878,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/custody.rs` | src | s | 1 crate-vis | — | `residence.custody.status`, `.frames`, `.put` and `.commit`: this home as the residence target of its… |
 | `src/livequery/residence/home_handoff.rs` | src | s | 1 crate-vis | — | `residence.home_handoff.status`, `.part`, `.commit` and `.cancel`: this node as the new home a home handoff… |
 | `src/livequery/residence/machine_history.rs` | src | s | 1 crate-vis | — | `residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine… |
+| `src/livequery/residence/pad_objects.rs` | src | s | 1 crate-vis | — | A kept pad object a get finds missing or short below its length (FIX 7106): a typed answer, never the… |
 | `src/livequery/residence/pages.rs` | src | s | 1 crate-vis | — | A residence search served in pages (FIX 8865): a search for more hits than one page carries is never refused… |
 | `src/livequery/residence/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/livequery/routing.rs` | src | s | 5 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |

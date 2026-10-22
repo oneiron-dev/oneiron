@@ -344,7 +344,8 @@ impl Vault {
         now: u64,
     ) -> Result<Option<ReportDeliveryRecord>> {
         let id = EntityId::from_hex(issue_ref)?;
-        let Some(payload) = self.report_routed_payload(&id)? else {
+        // The content-free projection: this lane carries no text (FIX 8747).
+        let Some(payload) = self.report_signature_payload(&id)? else {
             return Ok(None);
         };
         let ReportRoute::Publisher { publisher_ref } = &payload.route else {
