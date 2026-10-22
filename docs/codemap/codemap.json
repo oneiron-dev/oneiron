@@ -4102,9 +4102,19 @@
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 15,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip/stored_read.rs",
+     "purpose": "A verified read proof kept in engine-owned state (FIX 1667): the effective view the verifier produced for a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -5559,7 +5569,7 @@
      "path": "src/batch/builder/commit.rs",
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -5616,6 +5626,16 @@
      "surface": {
       "crate-vis": 13,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/builder/reference_read.rs",
+     "purpose": "A bound writer's read through the committing terminal (OF-063, FIX 1223, 6068)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -6350,7 +6370,7 @@
      "path": "src/batch/put_apply/claim_admission.rs",
      "purpose": "Claim-body and immutable-ledger admission before any put side effect",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -6380,7 +6400,7 @@
      "path": "src/batch/put_apply/mod.rs",
      "purpose": "Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -21425,7 +21445,7 @@
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 4
      }
     },
@@ -31247,13 +31267,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/federation/content_write.rs",
      "purpose": "Actor-bound content transaction interface",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -33037,7 +33057,7 @@
      "path": "src/gate/doors/recorded.rs",
      "purpose": "Recorded claim decisions retained until transaction commit or selective denial rollback",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -42057,7 +42077,7 @@
      "path": "src/memory/notes.rs",
      "purpose": "Agent-facing NOTE verbs; actor identity is bound to the memory facade",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -43917,6 +43937,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/witness/stream/reader.rs",
+     "purpose": "The handle a stream's terminal reads under: its opener's (FIX 1667)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/witness/stream/reply_assertions.rs",
      "purpose": "A model stream's reply assertions at its terminal (OF-063, FIX 3416)",
      "surface": {
@@ -45236,8 +45266,18 @@
      "path": "src/note/verbs.rs",
      "purpose": "Actor-bound NOTE creation, edit and source-entity bridge",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/verbs/source_read.rs",
+     "purpose": "A bound caller's read of the source it copies into a NOTE (FIX 9953)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -51040,6 +51080,16 @@
      "path": "src/ports/time/tests.rs",
      "purpose": "The store clock's reads, observed through what a caller gets back",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/vault_read.rs",
+     "purpose": "Vault reads in a snapshot the caller holds (FIX 5870): [`Vault::get`] and the TURN doors' admission and…",
+     "surface": {
+      "fn": 6
+     }
     },
     {
      "bucket": "s",
@@ -69281,7 +69331,7 @@
      "purpose": "Vault edge writes, adjacency queries and graph traversal",
      "surface": {
       "crate-vis": 8,
-      "fn": 13,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -76049,7 +76099,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 196,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76063,7 +76113,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 144,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76833,7 +76883,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 276,
+     "files": 277,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76854,7 +76904,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -76966,7 +77016,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77521,7 +77571,7 @@
    },
    "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5087,
+   "source_files": 5092,
    "test_files": 902
   },
   "oneiron-android": {
@@ -94166,7 +94216,7 @@
      "path": "src/api/conversations.rs",
      "purpose": "The `/v1/core/conversations` and `/v1/core/turns` routes: conversations and their turns",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 11
      }
     },
     {
@@ -94176,6 +94226,16 @@
      "path": "src/api/conversations/tests.rs",
      "purpose": "The conversation list reads as a named reader, on the read lane recall and the transcript use (ARCH-0006a…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/conversations/turn_reads.rs",
+     "purpose": "The TURN read and list doors' rows (FIX 5652, 5938), each one judged and its words read in one snapshot (FIX…",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "s",
@@ -107361,7 +107421,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 562,
+     "files": 563,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -107832,7 +107892,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1259,
+   "source_files": 1260,
    "test_files": 182
   },
   "oneiron-spawn": {
