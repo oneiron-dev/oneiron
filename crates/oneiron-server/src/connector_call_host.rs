@@ -72,10 +72,12 @@ use crate::server::SyncServer;
 mod live_exchange;
 mod presenting;
 mod reply_read;
+mod sent;
 mod stream_pump;
 use live_exchange::{Continuation, KeptWire, LiveSession, hand_over, post_json};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
 use reply_read::{Reply, StreamEvent, open_reply, read_reply};
+use sent::Sent;
 
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -479,51 +481,6 @@ fn tool_result(message: &Value) -> Option<UntrustedToolResult> {
         is_error: result.get("isError").and_then(Value::as_bool) == Some(true),
         rpc_error: None,
     })
-}
-
-/// What one send came to, before the ledger scrubs its raw fields.
-struct Sent {
-    outcome: OutboundSendOutcome,
-    reply: Option<UntrustedToolResult>,
-    /// The questions the connector answered with, in place of a reply.
-    awaiting: Option<ConnectorAwaitingInput>,
-    body: Option<Vec<u8>>,
-    error: Option<String>,
-}
-
-impl Sent {
-    /// Certain non-delivery: the `tools/call` request never left.
-    fn not_sent(kind: OutboundFailureKind, code: Option<u16>) -> Self {
-        Self {
-            outcome: OutboundSendOutcome::Failed(OutboundSendFailure { kind, code }),
-            reply: None,
-            awaiting: None,
-            body: None,
-            error: None,
-        }
-    }
-
-    /// The request went and no readable answer came back.
-    fn ambiguous(error: &str) -> Self {
-        Self {
-            outcome: OutboundSendOutcome::Ambiguous,
-            reply: None,
-            awaiting: None,
-            body: None,
-            error: Some(error.to_owned()),
-        }
-    }
-
-    /// The connector answered the call.
-    fn acked(reply: Option<UntrustedToolResult>, body: Vec<u8>) -> Self {
-        Self {
-            outcome: OutboundSendOutcome::Acked,
-            reply,
-            awaiting: None,
-            body: Some(body),
-            error: None,
-        }
-    }
 }
 
 /// What a send that declares elicitation keeps a question with.
