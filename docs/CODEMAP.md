@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4744 | 902 | 157 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4747 | 902 | 155 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 47 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 145 | 18 | 0 |
@@ -220,7 +220,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `retrieval_depth` | file+dir | 7 | m | — | ONE-207: the retrieval half of the effort dial |
 | `retrieval_quality` | file | 1 | s | — | Retrieval quality report vocabulary |
 | `run_tree` | dir | 9 | m | — | Run tree projection and control adapter over generic AttemptQueue rows |
-| `runtime_hooks` | dir | 35 | L | yes | Runtime hooks (ARCH-0080) |
+| `runtime_hooks` | dir | 38 | m | yes | Runtime hooks (ARCH-0080) |
 | `saved_query` | dir | 15 | L | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
 | `scan_check` | file+dir | 3 | m | yes | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
 | `scope_summary` | dir | 22 | L | yes | Retained spawned sub-sessions and Dreamer-composed scope summaries |

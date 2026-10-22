@@ -1266,7 +1266,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/microvm/tests.rs` | test | m | — | — | — |
 | `src/code_sandbox/mod.rs` | src | s | 8 mod · 5 re-export | — | Sandbox boundary contract for code-mode execution |
 | `src/code_sandbox/paths.rs` | src | s | 2 struct · 1 enum · 10 fn · 5 const | SandboxMount, SandboxMountTable, SandboxVirtualPath | The stable /mnt guest namespace: mounts, virtual paths and host-path resolution |
-| `src/code_sandbox/proposal.rs` | src | s | 7 struct · 2 enum · 10 fn · 2 re-export · 1 crate-vis | SandboxClaimProposal, SandboxDirectoryOpaqueProposal, SandboxFileDeleteProposal, SandboxFileEditProposal, SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxProposalDelta, SandboxProposalKind +1 | The proposal-delta channel a guest write becomes instead of a direct mutation |
+| `src/code_sandbox/proposal.rs` | src | m | 7 struct · 2 enum · 10 fn · 2 re-export · 1 crate-vis | SandboxClaimProposal, SandboxDirectoryOpaqueProposal, SandboxFileDeleteProposal, SandboxFileEditProposal, SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxProposalDelta, SandboxProposalKind +1 | The proposal-delta channel a guest write becomes instead of a direct mutation |
 | `src/code_sandbox/proposal/body.rs` | src | s | 3 struct · 15 fn | SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter | A proposed file's bytes, spooled to an anonymous host temp file as they arrive |
 | `src/code_sandbox/proposal/spool.rs` | src | s | 1 struct · 1 enum · 2 trait · 2 fn | ProposalSpoolClaim, ProposalSpoolFloor, SpoolAtFloor, SpoolFloorRefusal | Where a proposal body is spooled, and the disk floor each of its appends keeps (FIX 7650) |
 | `src/code_sandbox/quickjs.rs` | src | s | 1 struct · 3 fn | QuickJsRuntimeFactory | Hash-pinned, readiness-checked QuickJS artifact factory |
@@ -1278,7 +1278,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/wasmtime_runtime/isolated.rs` | src | s | 1 crate-vis | — | Finite foreign steps use the selected backend, never an engine worker |
 | `src/code_sandbox/wasmtime_runtime/mod.rs` | src | m | 2 struct · 4 fn · 1 const · 1 mod | ComponentBudget, WasmtimeComponentRuntime | Pinned, in-process Component Model execution for host-trusted code |
 | `src/code_sandbox/wasmtime_runtime/tests.rs` | test | m | — | — | — |
-| `src/code_sandbox/wasmtime_runtime/typed.rs` | src | m | 1 crate-vis | — | Canonical typed WIT imports over the bounded engine-host channel |
+| `src/code_sandbox/wasmtime_runtime/typed.rs` | src | m | 3 crate-vis | — | Canonical typed WIT imports over the bounded engine-host channel |
 | `src/code_sandbox/wasmtime_runtime/wire.rs` | src | L | 3 crate-vis | — | Internal bounded JSON bridge between typed WIT and the borrowed engine host |
 | `src/code_sandbox/wasmtime_runtime/wire/describe.rs` | src | s | 3 crate-vis | — | How code mode routes a raw `describe` before any typed row: a result the run holds, a secret's handle… |
 | `src/code_sandbox/wasmtime_runtime/wire/search.rs` | src | s | 1 crate-vis | — | `vault.search`'s reply body (WILL L11-01 S01-2c): the hits, framed as the row's output, and, in an… |
@@ -4048,7 +4048,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/run_tree/types.rs` | src | s | 7 struct · 4 enum | RunTree, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeFailureDiagram, RunTreeNode, RunTreeNodeMarker, RunTreeNodeMarkerKind +3 | Run-tree view types: nodes, status/event vocab, repairs, and markers |
 | `src/runtime_hooks/apply.rs` | src | m | 3 crate-vis | — | Applying saved intents (ARCH-0080 §4 Crash-safe outcomes, §6 authority) |
 | `src/runtime_hooks/block.rs` | src | s | 1 struct · 1 enum · 2 fn · 6 crate-vis | HookBlock, HookBlockLifetime | Hook blocks (ARCH-0080 §11): the timed pins an AddBlock outcome leaves for a recipient's next board deliveries |
-| `src/runtime_hooks/body.rs` | src | s | 1 struct · 2 trait · 1 type | HookBodyRun, HookBodyRuntime, HookVerdict | The seam between the runner and the hook sandbox (ARCH-0080 §6) |
+| `src/runtime_hooks/body.rs` | src | s | 3 struct · 2 trait · 6 fn · 1 type · 1 crate-vis | HookBodyRun, HookBodyRuntime, HookBudgetOverrun, HookRunContext, HookVerdict | The seam between the runner and the hook sandbox (ARCH-0080 §6) |
 | `src/runtime_hooks/dial.rs` | src | s | 2 fn | — | The vault's hook switch, `hooks.enabled` (ARCH-0080 §10) |
 | `src/runtime_hooks/filter.rs` | src | s | 6 crate-vis | — | The filters a fact passes in Rust before any sandbox starts (ARCH-0080 §4 Filters) |
 | `src/runtime_hooks/grant.rs` | src | s | 1 struct · 5 fn · 2 crate-vis | HookGrant | Every hook has a grant (ARCH-0080 §6) |
@@ -4057,17 +4057,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime_hooks/lineage.rs` | src | s | 2 struct · 1 enum · 2 fn · 5 crate-vis | HookCheck, HookCheckReason, LineageLink | Causal lineage and the cycle check (ARCH-0080 §4 Lineage and loops) |
 | `src/runtime_hooks/mod.rs` | src | s | 3 mod · 11 re-export · 5 crate-vis | — | Runtime hooks (ARCH-0080) |
 | `src/runtime_hooks/outcome.rs` | src | s | 6 struct · 1 enum · 1 fn · 4 crate-vis | BlockRequest, EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim, ProposedEdge, ProposedNote | The one outcome a hook body returns (ARCH-0080 §4 Outcomes) |
-| `src/runtime_hooks/read.rs` | src | m | 6 crate-vis | — | The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through the reader's `ScopedRead` lane… |
+| `src/runtime_hooks/read.rs` | src | m | 5 crate-vis | — | The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through the reader's `ScopedRead` lane… |
 | `src/runtime_hooks/regen.rs` | src | m | 6 struct · 2 enum · 1 trait · 9 fn · 1 crate-vis | HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure, HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest +1 | Hook regen (ARCH-0080 §8, slice 3): the shape of lens regen (OF-321), with records typed for hooks |
 | `src/runtime_hooks/replay.rs` | src | m | 1 struct · 3 enum · 2 fn · 5 crate-vis | HookReplayCase, HookReplayCompare, HookReplayEntry, HookReplayResult | `hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome beside the one… |
-| `src/runtime_hooks/runner.rs` | src | L | 2 struct · 4 fn · 1 type · 2 const · 8 crate-vis | FactHookRunner, HookPassReport | The fact-hook runner (ARCH-0080 §4 Delivery) |
+| `src/runtime_hooks/replay/body.rs` | src | s | 3 crate-vis | — | One replayed body run (ARCH-0080 §6 Replay): on a run's memo, on a verb run's saved copy, or live on an… |
+| `src/runtime_hooks/runner.rs` | src | m | 2 struct · 4 fn · 1 type · 2 const · 6 crate-vis | FactHookRunner, HookPassReport | The fact-hook runner (ARCH-0080 §4 Delivery) |
+| `src/runtime_hooks/runner/body.rs` | src | s | 8 crate-vis | — | A fact-hook run's body call and what comes of it (ARCH-0080 §4, §6): its `ai.verdict` asks and their pins… |
 | `src/runtime_hooks/sandbox/mod.rs` | src | m | 1 struct · 3 fn · 2 const · 1 mod | HookSandbox | The pinned QuickJS sandbox a hook body runs in |
 | `src/runtime_hooks/scope.rs` | src | s | 4 crate-vis | — | A hook's scope (ARCH-0080 §3): a world, facet, room or project, named `<axis>:<32 hex>` |
 | `src/runtime_hooks/source.rs` | src | m | 4 struct · 5 enum · 7 fn · 1 const · 10 crate-vis | ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SettledFact, SettledOutcome, SettlementKind +1 | Fact sources and their typed positions (ARCH-0080 §4 Sources and cursors) |
 | `src/runtime_hooks/store.rs` | src | m | 26 crate-vis | — | The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index… |
 | `src/runtime_hooks/verb/ask.rs` | src | m | 1 const · 27 crate-vis | — | A pre-hook's Ask (ARCH-0080 §3 Ask) |
 | `src/runtime_hooks/verb/ask/session.rs` | src | m | 6 crate-vis | — | A session-only call's hook ask (L13 PR-D, FIX 4283, FIX 5383; Engine 10-19 16:1x ruling (a), 17:3x) |
-| `src/runtime_hooks/verb/chain.rs` | src | L | 3 crate-vis | — | The verb-hook chain (ARCH-0080 §3): matching, run order, each run's input and verdict, the failure policy by… |
+| `src/runtime_hooks/verb/chain.rs` | src | m | 3 crate-vis | — | The verb-hook chain (ARCH-0080 §3): matching, run order, each run's input and verdict, the failure policy by… |
+| `src/runtime_hooks/verb/chain/run.rs` | src | s | 2 crate-vis | — | One verb-hook run (ARCH-0080 §3): its body run under the hook's grant, the verdict, the engine's own checks… |
 | `src/runtime_hooks/verb/chain/session.rs` | src | s | 9 crate-vis | — | A chain of a session-only call (WILL L11-01 S01-2c): the lanes its hooks read through, over a room's view… |
 | `src/runtime_hooks/verb/chain/storage.rs` | src | s | 6 crate-vis | — | A chain's records (ARCH-0080 §6): the one vault write that commits its receipts, saved runs, blocks and… |
 | `src/runtime_hooks/verb/credential.rs` | src | m | 6 struct · 4 enum · 1 trait · 6 fn · 13 crate-vis | VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope, VerbAskInstrument +3 | A credential caller's call a verb hook's ask stopped, resumed through the door it came in by (ARCH-0080 §3… |
