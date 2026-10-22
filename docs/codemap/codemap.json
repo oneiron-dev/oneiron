@@ -2323,10 +2323,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/engine/mutate.rs",
-     "purpose": "Retry/intervene/manifest append plus lease-cleanup mutation doors",
+     "purpose": "Retry/intervene/manifest append mutation doors",
      "surface": {
       "crate-vis": 7,
-      "fn": 6
+      "fn": 3
      }
     },
     {
@@ -2368,6 +2368,16 @@
      "surface": {
       "crate-vis": 25,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/reclaim.rs",
+     "purpose": "Lease cleanup: an expired lease goes back to the ready index under the same try, and an expired landing…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -2422,7 +2432,7 @@
      "path": "src/attempt_queue/engine/workflow.rs",
      "purpose": "Transactional point-claim and retry lineage reads for ordered host composition",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -2459,7 +2469,7 @@
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 17,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -2522,10 +2532,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/result.rs",
-     "purpose": "Transaction-composable result attachment and abandonment",
+     "purpose": "Transaction-composable result attachment and abandonment, and the durable exhaust a settled try records (FIX…",
      "surface": {
-      "crate-vis": 3,
-      "fn": 2
+      "crate-vis": 4,
+      "fn": 3
      }
     },
     {
@@ -2693,10 +2703,10 @@
      "path": "src/attempt_queue/types.rs",
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 11,
       "fn": 24,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 16
      }
     },
@@ -2716,6 +2726,28 @@
       "enum": 1,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptTerminalExhaust"
+     ],
+     "path": "src/attempt_queue/types/exhaust.rs",
+     "purpose": "What a terminal attempt left behind (FIX 9578): its durable outputs and the checkpoint frontier it recorded…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/types/hold.rs",
+     "purpose": "The pause a paused attempt row is held under (FIX 9579), kept on the row itself rather than read back from…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -6580,7 +6612,7 @@
      "path": "src/batch/secret_scan/lift_history/record_text.rs",
      "purpose": "Text a record keeps beside its body and the text it was indexed with, which the records census reads too…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -6634,13 +6666,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/mask/carrier.rs",
      "purpose": "The batch door's file mark (owner ruling C2) for a carrier's stored text no door rewrites (OF-067, Engine…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 18
      }
     },
     {
@@ -30449,7 +30481,7 @@
      "path": "src/entity_doc/verbs.rs",
      "purpose": "Stable-cursor edit verbs and the lossless whole-text timeout path",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -44183,7 +44215,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 42,
+      "crate-vis": 43,
       "enum": 3,
       "fn": 4,
       "re-export": 17,
@@ -44390,7 +44422,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -44403,7 +44435,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "fn": 9
      }
     },
@@ -44527,6 +44559,16 @@
      "purpose": "One rescan of an attached folder against its ledger: new files land, changed files supersede what they…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/free_text.rs",
+     "purpose": "Free text a NOTE carrier takes from its writer that no door screened before (FIX 2375): a proposal's…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -44665,6 +44707,16 @@
       "crate-vis": 5,
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/pending_request.rs",
+     "purpose": "A semantic NOTE command as this host queues it for its authority (FIX 2375; C-NOTE-COMMAND)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -54018,10 +54070,20 @@
      "path": "src/run_tree/signal.rs",
      "purpose": "Durable, branch-addressed Signal inbox",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 4,
       "fn": 7,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/run_tree/signal/intent.rs",
+     "purpose": "The keyed fingerprint of a signal's exact intent (FIX 10066), kept beside a signal the side-row wall masked…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -54033,7 +54095,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RunTree",
@@ -61503,7 +61565,7 @@
      "path": "src/store/known_history.rs",
      "purpose": "The known-value index's custody client (KS-3, FIX 5684 = FIX 5503 card A; owner KEY STORE = A): the index's…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -66768,7 +66830,7 @@
      "path": "src/task_verb/highway_runner/workflow_try/binder.rs",
      "purpose": "Who binds a saved workflow's run to a TASK, as the door that took the request proved them (FIX 5316): the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -75279,7 +75341,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 54,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76091,7 +76153,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 61,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -76336,7 +76398,7 @@
      "purpose": "Retrieval quality report vocabulary"
     },
     "run_tree": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76758,7 +76820,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5017,
+   "source_files": 5023,
    "test_files": 902
   },
   "oneiron-android": {
@@ -96994,7 +97056,7 @@
      "path": "src/api/run_tree.rs",
      "purpose": "The run tree routes: one run's tree of attempts, its observation and the owner's interventions",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 23
      }
     },
     {
@@ -97011,10 +97073,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/run_tree/encode.rs",
+     "purpose": "The run tree's JSON, written on a heap stack (FIX 10067)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/run_tree/keyed.rs",
      "purpose": "Keyed run-tree interventions (FIX 6056)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/run_tree/projection.rs",
+     "purpose": "The engine run tree's projection onto the core run-tree DTOs, one node at a time (FIX 10067): a node is…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -106211,7 +106293,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 557,
+     "files": 559,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -106682,7 +106764,7 @@
    },
    "over_bar": 35,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1240,
+   "source_files": 1242,
    "test_files": 182
   },
   "oneiron-spawn": {
