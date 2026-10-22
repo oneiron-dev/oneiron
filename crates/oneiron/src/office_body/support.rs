@@ -81,6 +81,7 @@ pub(super) fn fork_view(record: TypedBodyFork) -> OfficeBodyFork {
             TypedForkState::Discarded { by, at } => ForkState::Discarded { by, at },
         },
         run_root: None,
+        origin: None,
     }
 }
 

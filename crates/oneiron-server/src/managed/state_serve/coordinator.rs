@@ -410,6 +410,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // Queued browser program admissions, each pass under the same admission (CUA E8b).
+    ladder_workers.push(crate::ai_host::browser_program_admission::spawn(
+        &sync_server,
+        admitted(),
+    ));
     // The Linear mirror started before ready stops with the ladder.
     ladder_workers.extend(linear);
     // An accepted Coach person-threshold row goes live on the ladder (Q3).

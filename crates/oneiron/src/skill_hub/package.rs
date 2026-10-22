@@ -1,3 +1,7 @@
+//! Hub package and capability surface shapes.
+//! Entry: `HubPackage`.
+//! Defines its own items.
+
 use std::collections::BTreeSet;
 
 use crate::error::{Error, Result};

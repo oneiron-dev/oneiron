@@ -320,19 +320,23 @@ pub(crate) fn park_for_payer(
 /// funding now reads otherwise. Each is released to the queue as the same
 /// try and admitted again from the start; a funding that now fails another
 /// way fails it there. One whose payer still waits stays parked, unwritten.
-/// Returns how many were taken up. It runs on each pump pass: an answer's
-/// write wakes the pumps, and their timed recheck catches the rest.
+/// Returns how many still wait (or were not read or resumed). It runs on each
+/// pump pass: an answer's write wakes the pumps, and a funding change no
+/// commit signals is caught by their timed recheck, which runs while any
+/// payer park still waits (FIX 9467).
 pub(crate) fn resume_payer_parks(vault: &Vault, owner: &str, now: u64) -> usize {
     let rows = match AttemptQueue::new(vault).list() {
         Ok(rows) => rows,
         Err(error) => {
             tracing::warn!(%error, "payer parks could not be listed");
-            return 0;
+            // Unread parks may wait: the recheck stays.
+            return 1;
         }
     };
     let runner = DreamerRunnerStore::new(vault);
     let dispatcher = AgentDispatcher::new(vault);
     let mut resumed = 0;
+    let mut waiting = 0;
     for row in rows
         .iter()
         .filter(|row| matches!(row.state, AttemptState::Leased))
@@ -360,12 +364,14 @@ pub(crate) fn resume_payer_parks(vault: &Vault, owner: &str, now: u64) -> usize 
             }
         };
         if waits {
+            waiting += 1;
             continue;
         }
         match runner.resume_parked(row.id, owner, now) {
             Ok(Some(_)) => resumed += 1,
             Ok(None) => {}
             Err(error) => {
+                waiting += 1;
                 tracing::warn!(%error, attempt = ?row.id, "a payer park was not resumed");
             }
         }
@@ -373,5 +379,5 @@ pub(crate) fn resume_payer_parks(vault: &Vault, owner: &str, now: u64) -> usize 
     if resumed > 0 {
         tracing::info!(resumed, owner, "attempts parked on their payer resume");
     }
-    resumed
+    waiting
 }
