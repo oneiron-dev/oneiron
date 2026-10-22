@@ -1,3 +1,7 @@
+//! Budget lease settlement.
+//! Entry: BudgetGuard::settle_usage.
+//! BudgetGuard is owned by guard; BudgetState by state; this module owns settlement impls.
+
 use super::state::BudgetState;
 use super::{
     BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, LeaseState, apply_usage_for_lease,
