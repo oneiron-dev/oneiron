@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::super::{
-    ArtifactKind, CheckpointKey, CheckpointSigner, CustodyRecovery, CustodyStatus, PadRestoreNote,
+    ArtifactKind, CheckpointKey, CheckpointSigner, CredentialRestoreNote, CustodyRecovery,
+    CustodyStatus, PadRestoreNote,
 };
 use crate::VaultConfig;
 use crate::world_keys::EscrowRetirement;
@@ -152,6 +153,9 @@ pub struct CustodyAdmissionFacts {
     /// names them (KS-5): erased since the image, withheld by their world's
     /// sealed copies setting, or pending.
     pub pad_notes: Vec<PadRestoreNote>,
+    /// The credential values the restore did not land readable, as its
+    /// report names them (KS-6 part 2).
+    pub credential_notes: Vec<CredentialRestoreNote>,
 }
 
 /// A fresh recipient the restored key was wrapped to.

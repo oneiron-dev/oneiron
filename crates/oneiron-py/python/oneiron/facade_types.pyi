@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1142 facade rows, 4007 declarations.
+Census: 1142 facade rows, 4008 declarations.
 Inputs: 1076 of 1142 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1028 of 1142 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
@@ -2411,11 +2411,16 @@ class StreamFinalityReasonIdleTimeout(TypedDict):
 class StreamFinalityReasonCustom(TypedDict):
     custom: str
 StreamFinalityReason = Literal["explicit_finalize", "idle_timeout30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
+IncompleteReason = Literal["terminal_disagreement"]
 class FinishReasonOtherBody(TypedDict):
     name: str
 class FinishReasonOther(TypedDict):
     other: FinishReasonOtherBody
-FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther
+class FinishReasonIncompleteBody(TypedDict):
+    reason: IncompleteReason
+class FinishReasonIncomplete(TypedDict):
+    incomplete: FinishReasonIncompleteBody
+FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther | FinishReasonIncomplete
 class MessageStreamReceipt(TypedDict):
     message_id: EntityId
     actor: EntityId

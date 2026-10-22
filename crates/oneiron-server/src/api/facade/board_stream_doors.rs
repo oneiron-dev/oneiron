@@ -146,7 +146,7 @@ pub(crate) async fn self_focus_wakes(
 ) -> MemoryResult<BoardWakeReply> {
     let (writer, run, held) = hold_live_run(server, auth, None, &input.live_run).await?;
     let connection = run_connection(run.run_id());
-    let (subscribed, wakes) = {
+    let (subscribed, wakes, run_reader) = {
         let mut registry = server.mcp_registry.lock().await;
         let subscribed = registry
             .streams_mut()
@@ -154,11 +154,12 @@ pub(crate) async fn self_focus_wakes(
             .map(|state| state.subscribed.clone())
             .unwrap_or_default();
         let wakes = registry.streams_mut().drain_wakes(&connection);
-        (subscribed, wakes)
+        (subscribed, wakes, registry.run_reader(&connection))
     };
     // An envelope is a notice, not a read grant: each TASK is read again
-    // under this credential now, and a wake whose scope the connection no
-    // longer holds, or whose TASK no longer reads, is dropped.
+    // now, under the run's own reader the connection is bound to (FIX 4888)
+    // and under this credential, and a wake whose scope the connection no
+    // longer holds, or whose TASK either no longer reads, is dropped.
     let (server, auth) = (Arc::clone(server), auth.clone());
     let wakes = tokio::task::spawn_blocking(move || -> MemoryResult<Vec<WakeEnvelope>> {
         let memory = crate::api::credential_memory(
@@ -191,7 +192,14 @@ pub(crate) async fn self_focus_wakes(
             let Ok(task) = EntityId::from_hex(&wake.task_ref) else {
                 continue;
             };
-            if memory.get_entity_tolerant(&task.to_hex())?.value.is_none() {
+            let run_reads = run_reader.as_ref().is_some_and(|reader| {
+                server
+                    .vault()
+                    .scoped_read(reader.clone())
+                    .is_ref_readable(&task)
+                    .unwrap_or(false)
+            });
+            if !run_reads || memory.get_entity_tolerant(&task.to_hex())?.value.is_none() {
                 continue;
             }
             kept.push(wake);

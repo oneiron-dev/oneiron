@@ -20,6 +20,8 @@ serde_bytes = "0.11"
 # test-support fixture door; the benchmark is not a shipped engine host.
 oneiron = { path = "../oneiron", features = ["sync", "test-support"] }
 oneiron-llm-openai = { path = "../oneiron-llm-openai" }
+oneiron-organ-protocol = { path = "../oneiron-organ-protocol" }
+rustix = { version = "1.1", features = ["net", "process"] }
 # FIX 6559: `infer --transport own-server` drives the shipped own-server
 # backend, and redeems the loopback server's owner pairing link through the
 # SDK (`OneironClient::pair`), which the backend crate does not re-export.

@@ -7,6 +7,31 @@ use super::{
     LlmResult, MediaFuture, MediaJobState, MediaRequest, MediaResponse, ModelId,
 };
 
+/// Whether an offer's wire carries a call's whole reference set (FIX 8612,
+/// 8614, 8627). A call is never cut to fit: an offer that cannot take every
+/// reference, in order, is passed unsent, and the call goes on to an offer
+/// that can.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceCompatibility {
+    /// The wire sends every reference the call carries, in order.
+    Whole,
+    /// The wire has room for at most `slots` references (a video wire's one
+    /// start frame): a call with more is not this offer's.
+    Slots { slots: usize },
+}
+
+impl ReferenceCompatibility {
+    /// Whether an offer with this answer takes a call carrying `references`
+    /// reference parts whole.
+    #[must_use]
+    pub fn takes(self, references: usize) -> bool {
+        match self {
+            Self::Whole => true,
+            Self::Slots { slots } => references <= slots,
+        }
+    }
+}
+
 /// A provider adapter's media wire. Each call carries the lease of the
 /// permit that bought it; a host-built transport sends one request per call,
 /// so a run's media gate may wrap it. A job's poll and cancel ride the
@@ -47,6 +72,15 @@ pub trait MediaBackend: Send + Sync {
         _lease: &'a BudgetLease,
     ) -> MediaFuture<'a, ()> {
         Box::pin(async { Err::<(), LlmError>(FatalLlmError::InvalidRequest.into()) })
+    }
+
+    /// Whether this offer's wire carries `request`'s whole reference set,
+    /// with no I/O. A host's ladder asks it before the call's permit starts
+    /// and passes an offer that cannot, unsent. The default takes every
+    /// reference.
+    fn reference_compatibility(&self, request: &MediaRequest) -> ReferenceCompatibility {
+        let _ = request;
+        ReferenceCompatibility::Whole
     }
 
     /// Every check this backend makes before it sends, with no I/O: the

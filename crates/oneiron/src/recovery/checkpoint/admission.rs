@@ -155,7 +155,7 @@ impl Vault {
         let (custody, landing, route_fact) = match route {
             CustodyRoute::Local => (Custody::Keep, None, CustodyRouteFact::Local),
             CustodyRoute::Landed(landing) => {
-                (Custody::Keep, Some(landing), CustodyRouteFact::Landed)
+                (Custody::Landed, Some(landing), CustodyRouteFact::Landed)
             }
             CustodyRoute::Absent => (Custody::NewHost, None, CustodyRouteFact::NoHead),
         };
@@ -254,6 +254,7 @@ impl Vault {
             custody_note: report.custody_note.clone(),
             training_note: report.training_note.clone(),
             pad_notes: report.pad_notes.clone(),
+            credential_notes: report.credential_notes.clone(),
         };
         forked.keep();
         made.keep(&mut vault);

@@ -1,6 +1,15 @@
 //! The serving side: the node that has the model runs another owner node's
 //! call under its own admission, and hands a stream's events back in
 //! batches as the asking node pulls them.
+//!
+//! What a connection holds is booked on the node's [`StagingBudget`] for
+//! its whole life (FIX 8618): each body staged in, from its first piece
+//! (its entry too, an empty one included) until a call takes it; each reply
+//! out, from before it is written until it is sent or its last piece is
+//! read; each stream's entry, and the batch a pull fills, from before the
+//! stream is read. A full budget pauses the work that waits on it, in
+//! arrival order; nothing made is dropped, and the connection's end drops
+//! what it held.
 
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -15,8 +24,10 @@ use oneiron::{
 use oneiron_mesh_transport::{
     MachineId, MeshConnection, MeshError, MeshFuture, MeshService, MeshStream,
 };
+use serde::Serialize;
 
-use super::{Batch, LLM_ALPN, Reply, Request, Staging, encode, lock, seal, unseal};
+use super::staging::{BookedBody, Booking, OUTGOING_ENTRY, Staging, StagingBudget};
+use super::{Batch, LLM_ALPN, Reply, Request, encode, lock, seal, unseal};
 
 /// How long a pull waits for the first event before it answers with none.
 const PULL_WAIT: Duration = Duration::from_secs(20);
@@ -47,6 +58,8 @@ pub trait LlmMeshHandler: Send + Sync + 'static {
 #[derive(Clone)]
 pub struct LlmMeshService {
     handler: Arc<dyn LlmMeshHandler>,
+    /// The bytes every connection's calls hold at once.
+    budget: StagingBudget,
 }
 
 impl std::fmt::Debug for LlmMeshService {
@@ -57,19 +70,36 @@ impl std::fmt::Debug for LlmMeshService {
 
 type Running = Arc<tokio::sync::Mutex<LlmStream<'static>>>;
 
+/// One running stream, its entry booked.
+struct Held {
+    running: Running,
+    _entry: Booking,
+}
+
 /// One connection's staged bodies and running streams. Dropping it drops
-/// the streams, which ends their calls.
-#[derive(Default)]
+/// the streams, which ends their calls, and frees all it booked.
 struct Session {
     staging: Staging,
-    streams: Mutex<HashMap<u64, Running>>,
+    streams: Mutex<HashMap<u64, Held>>,
     next: AtomicU64,
 }
 
+impl Session {
+    fn new(budget: StagingBudget) -> Self {
+        Self {
+            staging: Staging::new(budget),
+            streams: Mutex::default(),
+            next: AtomicU64::default(),
+        }
+    }
+}
+
 impl LlmMeshService {
+    /// Serves `handler`'s calls, every connection's holding at most
+    /// `budget`'s bytes at once: the host's, or [`StagingBudget::default`].
     #[must_use]
-    pub fn new(handler: Arc<dyn LlmMeshHandler>) -> Self {
-        Self { handler }
+    pub fn new(handler: Arc<dyn LlmMeshHandler>, budget: StagingBudget) -> Self {
+        Self { handler, budget }
     }
 
     /// Serves one admitted connection until it closes. A connection on
@@ -81,7 +111,7 @@ impl LlmMeshService {
         }
         let peer = conn.machine();
         let conn: Arc<dyn MeshConnection> = Arc::from(conn);
-        let session = Arc::new(Session::default());
+        let session = Arc::new(Session::new(self.budget.clone()));
         let mut tasks = Vec::new();
         while let Ok(stream) = conn.accept_stream().await {
             let service = self.clone();
@@ -106,46 +136,66 @@ impl LlmMeshService {
         mut stream: Box<dyn MeshStream>,
     ) -> Result<(), MeshError> {
         let request: Request = unseal(&stream.recv().await?)?;
-        let reply = match request {
+        // The reply's bytes stay booked until it is sent.
+        let (reply, _held) = self.answer(peer, session, request).await;
+        stream.send(&seal(&reply)?).await
+    }
+
+    /// The reply to `request`, and the booking of its inline body, if any.
+    async fn answer(
+        &self,
+        peer: MachineId,
+        session: &Session,
+        request: Request,
+    ) -> (Reply, Option<Booking>) {
+        let refused = |why: String| (Reply::Refused(why), None);
+        match request {
             Request::Put {
                 hash,
                 total,
                 offset,
                 bytes,
-            } => match session.staging.put(hash, total, offset, &bytes) {
-                Ok(()) => Reply::Put,
-                Err(why) => Reply::Refused(why),
+            } => match session.staging.put(hash, total, offset, &bytes).await {
+                Ok(()) => (Reply::Put, None),
+                Err(why) => refused(why),
             },
             Request::Get { hash, offset } => match session.staging.piece(hash, offset) {
-                Ok(piece) => Reply::Piece(piece),
-                Err(why) => Reply::Refused(why),
+                Ok(BookedBody { bytes, booking }) => (Reply::Piece(bytes), Some(booking)),
+                Err(why) => refused(why),
             },
             Request::Generate { request } => match self.request(session, request) {
                 Ok(request) => match self.handler.generate(peer, request).await {
-                    Ok(response) => match serde_json::to_vec(&response) {
-                        Ok(bytes) => Reply::Generated(Ok(session.staging.offer(bytes))),
-                        Err(err) => Reply::Refused(err.to_string()),
+                    Ok(response) => match booked_json(&session.staging.budget, &response).await {
+                        Ok(body) => {
+                            let (carried, held) = session.staging.offer(body);
+                            (Reply::Generated(Ok(carried)), held)
+                        }
+                        Err(why) => refused(why),
                     },
-                    Err(error) => Reply::Generated(Err(error)),
+                    Err(error) => (Reply::Generated(Err(error)), None),
                 },
-                Err(why) => Reply::Refused(why),
+                Err(why) => refused(why),
             },
             Request::Stream { request } => match self.request(session, request) {
                 Ok(request) => match self.handler.stream(peer, request) {
                     Ok(running) => {
                         let id = session.next.fetch_add(1, Ordering::Relaxed);
-                        lock(&session.streams)
-                            .insert(id, Arc::new(tokio::sync::Mutex::new(running)));
-                        Reply::Started(Ok(id))
+                        let entry = session.staging.budget.charged(STREAM_ENTRY);
+                        let held = Held {
+                            running: Arc::new(tokio::sync::Mutex::new(running)),
+                            _entry: entry,
+                        };
+                        lock(&session.streams).insert(id, held);
+                        (Reply::Started(Ok(id)), None)
                     }
-                    Err(error) => Reply::Started(Err(error)),
+                    Err(error) => (Reply::Started(Err(error)), None),
                 },
-                Err(why) => Reply::Refused(why),
+                Err(why) => refused(why),
             },
             Request::Next { stream: id } => pull(session, id).await,
             Request::Cancel { stream: id } => {
                 lock(&session.streams).remove(&id);
-                Reply::Cancelled
+                (Reply::Cancelled, None)
             }
             Request::Catalog => {
                 let offered: Vec<LlmCatalogEntry> = self
@@ -154,21 +204,24 @@ impl LlmMeshService {
                     .into_iter()
                     .filter(|entry| super::advertises(entry.locality))
                     .collect();
-                match serde_json::to_vec(&offered) {
-                    Ok(bytes) => Reply::Catalog(session.staging.offer(bytes)),
-                    Err(err) => Reply::Refused(err.to_string()),
+                match booked_json(&session.staging.budget, &offered).await {
+                    Ok(body) => {
+                        let (carried, held) = session.staging.offer(body);
+                        (Reply::Catalog(carried), held)
+                    }
+                    Err(why) => refused(why),
                 }
             }
-        };
-        stream.send(&seal(&reply)?).await
+        }
     }
 
     /// The request a body names, refused when this node does not run its
-    /// model.
+    /// model. The body's booking goes once it is decoded.
     fn request(&self, session: &Session, body: super::Carried) -> Result<LlmRequest, String> {
-        let bytes = session.staging.take(body)?;
-        let request: LlmRequest =
-            serde_json::from_slice(&bytes).map_err(|_| "the request does not decode".to_owned())?;
+        let body = session.staging.take(body)?;
+        let request: LlmRequest = serde_json::from_slice(&body.bytes)
+            .map_err(|_| "the request does not decode".to_owned())?;
+        drop(body);
         if !self.handler.serves(&request.model) {
             return Err(format!("this node does not run {}", request.model));
         }
@@ -185,11 +238,50 @@ impl MeshService for LlmMeshService {
     }
 }
 
+/// What a running stream's entry costs past its stream.
+const STREAM_ENTRY: usize = 2 * (size_of::<u64>() + size_of::<Held>());
+
+/// `value` as JSON, in room booked for it first: its length is counted, its
+/// room and its reply entry booked, waiting its turn, and only then is it
+/// written.
+async fn booked_json<T: Serialize>(
+    budget: &StagingBudget,
+    value: &T,
+) -> Result<BookedBody, String> {
+    let mut counted = Counted(0);
+    serde_json::to_writer(&mut counted, value).map_err(|err| err.to_string())?;
+    let mut body = BookedBody::room(budget, counted.0, OUTGOING_ENTRY).await?;
+    serde_json::to_writer(&mut body.bytes, value).map_err(|err| err.to_string())?;
+    Ok(body)
+}
+
+/// A writer that only counts what it is given.
+struct Counted(usize);
+
+impl std::io::Write for Counted {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The stream's next events: waits for the first, then takes what is ready.
-async fn pull(session: &Session, id: u64) -> Reply {
-    let Some(running) = lock(&session.streams).get(&id).cloned() else {
-        return Reply::Refused("no such stream".into());
+/// Room for the batch, its events and their encoding both, is booked before
+/// the stream is read, so a full budget pauses the stream here and drops
+/// nothing it made; an event past that room is charged as it comes.
+async fn pull(session: &Session, id: u64) -> (Reply, Option<Booking>) {
+    let Some(running) = lock(&session.streams)
+        .get(&id)
+        .map(|held| Arc::clone(&held.running))
+    else {
+        return (Reply::Refused("no such stream".into()), None);
     };
+    let budget = &session.staging.budget;
+    let mut booking = budget.reserve(2 * BATCH_BYTES + OUTGOING_ENTRY).await;
     let mut running = running.lock().await;
     let mut events = Vec::new();
     let mut bytes = 0;
@@ -217,6 +309,9 @@ async fn pull(session: &Session, id: u64) -> Reply {
                     Ok(json) => {
                         bytes += json.len();
                         events.push(Ok(json));
+                        if bytes > BATCH_BYTES {
+                            budget.charge(&mut booking, 2 * bytes + OUTGOING_ENTRY);
+                        }
                     }
                     Err(_) => {
                         events.push(Err(oneiron::FatalLlmError::InvalidRequest.into()));
@@ -236,10 +331,20 @@ async fn pull(session: &Session, id: u64) -> Reply {
         lock(&session.streams).remove(&id);
     }
     match encode(&Batch { events }) {
-        Ok(batch) => Reply::Events {
-            events: session.staging.offer(batch),
-            end,
-        },
-        Err(err) => Reply::Refused(err.to_string()),
+        Ok(batch) => {
+            budget.charge(&mut booking, batch.len() + OUTGOING_ENTRY);
+            let (carried, held) = session.staging.offer(BookedBody {
+                bytes: batch,
+                booking,
+            });
+            (
+                Reply::Events {
+                    events: carried,
+                    end,
+                },
+                held,
+            )
+        }
+        Err(err) => (Reply::Refused(err.to_string()), None),
     }
 }
