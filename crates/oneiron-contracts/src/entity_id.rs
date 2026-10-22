@@ -110,8 +110,8 @@ impl EntityId {
     ///
     /// Reserved for internal construction where the caller already knows the
     /// bytes are either valid entity IDs or intentional sentinel values.
-    #[cfg(any(test, feature = "test-support"))]
-    /// Test seam: `pub` only for `oneiron`'s tests, behind the `test-support` feature.
+    /// Engine seam: `pub` only so `oneiron` can name sentinel ids (the zero
+    /// machine id, unnamed-actor ids) across the crate split; tests use it too.
     #[doc(hidden)]
     pub fn from_bytes_unchecked(bytes: [u8; 16]) -> Self {
         Self(bytes)
