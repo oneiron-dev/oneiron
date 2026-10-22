@@ -10457,13 +10457,13 @@ impl AgentVerb {
                 "The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance."
             }
             Self::VaultShapeRead => {
-                "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."
+                "The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read."
             }
             Self::VaultShapePlan => {
-                "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."
+                "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing."
             }
             Self::VaultShapeApply => {
-                "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."
+                "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan."
             }
             Self::SelfMessage => {
                 "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."
@@ -10853,7 +10853,7 @@ impl AgentVerb {
                 "One saved query the caller owns; a query absent or not the caller's reads as not found."
             }
             Self::SelfSavedQueryUpdate => {
-                "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."
+                "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it."
             }
             Self::SelfSavedQueryArchive => {
                 "Archives a saved query under a definition-version check: it stays readable and is never evaluated again."
@@ -11764,7 +11764,7 @@ impl AgentVerb {
                 "Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes."
             }
             Self::VaultPolicyRelayDecide => {
-                "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."
+                "Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer."
             }
             Self::VaultConsentApproveOnce => {
                 "The owner approves exactly one engine-emitted effect digest; no standing grant is created."

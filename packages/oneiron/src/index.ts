@@ -470,11 +470,11 @@ export class Oneiron {
       },
     },
     shape: {
-      /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+      /** The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read. */
       read: (input: Facade.EmptyRequest = {}): Facade.ShapeRead => this.#call(() => this.#client.vaultShapeRead(input) as Facade.ShapeRead),
-      /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+      /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing. */
       plan: (input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan),
-      /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+      /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan. */
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
     companions: {
@@ -1662,7 +1662,7 @@ export class Oneiron {
         decide: (input: Facade.PolicyOutboundRequest): Facade.PolicyModelEnforcement => this.#call(() => this.#client.vaultPolicyOutboundDecide(input) as Facade.PolicyModelEnforcement),
       },
       relay: {
-        /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
+        /** Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer. */
         decide: (input: Facade.PolicyOutboundRequest): Facade.HostedRelayDecision => this.#call(() => this.#client.vaultPolicyRelayDecide(input) as Facade.HostedRelayDecision),
       },
     },
@@ -3030,7 +3030,7 @@ export class Oneiron {
       create: (input: Facade.SavedQueryCreateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryCreate(input) as Facade.SavedQueryRecordView),
       /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
       read: (input: Facade.SavedQueryReadRequest): Facade.SavedQueryReadResult => this.#call(() => this.#client.selfSavedQueryRead(input) as Facade.SavedQueryReadResult),
-      /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+      /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it. */
       update: (input: Facade.SavedQueryUpdateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryUpdate(input) as Facade.SavedQueryRecordView),
       /** Archives a saved query under a definition-version check: it stays readable and is never evaluated again. */
       archive: (input: Facade.SavedQueryArchiveRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryArchive(input) as Facade.SavedQueryRecordView),
