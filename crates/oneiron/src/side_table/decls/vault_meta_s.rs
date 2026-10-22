@@ -47,6 +47,11 @@ side_tables! {
     /// sealed to the change's holder, with the second it was sealed at and the request it is for,
     /// kept to relay until its holder answers. Holds no plaintext. Key: hash32 (the ciphertext
     /// digest the request names).
+    /// The terminal fence of one credential an authorized erase reached (KS-6 part 2, FIX 7403):
+    /// value-free and permanent, whether its custody discovery is complete (every key its id names
+    /// staged to retire) or still owed. Never a value, key, name or count; a re-entered credential
+    /// takes a new id. Key: id16 (custody record id).
+    SECRET_CUSTODY_ERASE: VaultMeta b"secret_custody:erase:v1:" Raw Engine;
     SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext;
     /// Name index mapping a live secret-custody record's name to its EntityId, then the name's
     /// generation high-water as a big-endian u32, kept after the record is gone (FIX 5958). Key:
@@ -74,6 +79,11 @@ side_tables! {
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).
     SECRET_CUSTODY_TRANSITION: VaultMeta b"secret_custody:transition:v1:" Raw Custody;
+    /// One numbered part of a custody request's signed entry that a relayed input carries as its
+    /// witness when the whole is past one row (FIX 8088): the part, its place and count, the
+    /// request, input and whole-witness commitment it binds, signed by the request's signer. Holds
+    /// no value. Key: hash32 (the part's own key).
+    SECRET_CUSTODY_WITNESS: VaultMeta b"secret_custody:witness:v1:" Raw Engine;
     /// Forward sidecar of secret taint-refs attached to one piece of build exhaust. Key: hex32(entity
     /// id).
     SECRET_EXHAUST_TAINT: VaultMeta b"secret_exhaust_taint:v1:" Raw;

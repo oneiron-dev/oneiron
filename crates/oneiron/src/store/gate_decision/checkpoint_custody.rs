@@ -94,14 +94,16 @@ fn live_only_at(home: &Path) -> Result<Vec<u8>> {
 
 /// The `vault_meta` rows a vault's live custody state is read from: its
 /// custody binding, its archive mark, its store identity, its body erase
-/// receipts (FIX 9066), its key-retirement intents, and its host orders,
-/// whose target index the intents read.
+/// receipts (FIX 9066), its erased credentials' fences (KS-6 part 2), its
+/// key-retirement intents, and its host orders, whose target index the
+/// intents read.
 fn live_custody_prefixes() -> Vec<&'static [u8]> {
     let mut prefixes = vec![
         key_custody::binding_key(),
         ARCHIVED.decl().prefix,
         STORE_IDENTITY.decl().prefix,
         side_table::PROVENANCE_BODY_ERASED.prefix,
+        crate::store::credential_fence_prefix(),
     ];
     prefixes.extend(
         retirement_prefixes()
@@ -225,6 +227,12 @@ impl LiveCustody {
         let mut key = owner.as_bytes().to_vec();
         key.extend_from_slice(instance);
         self.erased_by.contains(&key)
+    }
+
+    /// The credentials its erases fenced (KS-6 part 2): a copy, a fork or
+    /// an activation never brings one back.
+    pub(crate) fn credential_fences(&self) -> crate::store::CredentialFences {
+        crate::store::CredentialFences::in_rows(&self.rows)
     }
 
     /// Where its custody is: its binding's root, or beside its own root

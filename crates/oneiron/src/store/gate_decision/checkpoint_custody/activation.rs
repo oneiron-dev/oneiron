@@ -34,10 +34,10 @@ use crate::ports::{EntityStoreMaintenance, ScrubbedRecord};
 use crate::side_table::{self, SideKey, SideTableDbs};
 use crate::store::key_custody::{self, CustodyBinding, LocalCustody};
 use crate::store::{
-    BODY_KEYS, BodyKeyRow, INLINE_ASSETS, RESPONSE_BINDINGS, ResponseBinding, ResponseFamily,
-    Store, body_instances_in_rows, body_key_in, carrier_row, known_history_prefixes,
-    prune_retired_bodies_in_rows, read_back_known_history, require_body_instances,
-    require_known_history,
+    BODY_KEYS, BodyKeyRow, CredentialFences, INLINE_ASSETS, RESPONSE_BINDINGS, ResponseBinding,
+    ResponseFamily, Store, body_instances_in_rows, body_key_in, carrier_row,
+    known_history_prefixes, prune_retired_bodies_in_rows, read_back_known_history,
+    require_body_instances, require_known_history,
 };
 
 /// The `vault_meta` families a body prune reads and writes: the instance
@@ -174,9 +174,17 @@ impl Store {
         // Its credential values' keys fork with the rest, each by exact id
         // from its source's custody (KS-6 part 2, CALLS `KS-6 required
         // restore set`): one the source lacks, or a custody fault, leaves
-        // that row sealed, pending, warned.
+        // that row sealed, pending, warned. One its source's fence, its own
+        // or a retired key of the custody it binds names erased is never
+        // forked, and its fence comes with it (CALLS `KS-6 erase fence
+        // form`).
+        let mut fences = source.credential_fences();
+        fences.merge(&CredentialFences::in_rows(&rows));
+        if let Some(binding) = custody.plan_mut().source() {
+            fences.derive_from(binding);
+        }
         let mut credentials =
-            crate::secret_custody::plan_archived_credentials(self, custody.plan_mut());
+            crate::secret_custody::plan_archived_credentials(self, custody.plan_mut(), &fences);
         // The environment's path is the canonical root it was opened at.
         let root = self.env.path().to_path_buf();
         refuse_custody_beside(&root)?;
@@ -195,7 +203,7 @@ impl Store {
             .and_then(|()| self.read_back_known_in_txn(&wtxn, &prune.kept))
             .and_then(|()| {
                 read_back_credentials_in_txn(self, &wtxn, &mut credentials);
-                Ok(())
+                fences.put_in_txn(self, &mut wtxn)
             })
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             // The orders standing on its source now, not the ones it had.

@@ -20,7 +20,9 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
-use crate::store::{CustodyPlan, PlannedCredential, Store, plan_credential_value};
+use crate::store::{
+    CredentialFences, CustodyPlan, FenceLookup, PlannedCredential, Store, plan_credential_value,
+};
 
 use super::super::codec::{BodyValue, decode_custody_map, encode_custody_map};
 use super::{NONCE_BYTES, StoredCustody, StoredValue, credential_handle, head_eligible};
@@ -178,6 +180,27 @@ pub(crate) fn image_credential_row(key: &[u8], raw: &[u8]) -> ImageCredentialRow
     }
 }
 
+/// Entity row `raw`, a credential's as it rests, its value slot withheld
+/// ([`WITHHELD_SEALED_VALUE`]; none for a row that holds none): how a
+/// restore lands the row of a credential an erase fenced, or whose fence
+/// did not read, so nothing opens it whatever key custody still holds
+/// (CALLS `KS-6 erase fence form`). `None` for a row that is no stored
+/// credential row.
+pub(crate) fn withheld_credential_row(raw: &[u8]) -> Option<Vec<u8>> {
+    let header = raw.get(..ENTITY_METADATA_HEADER_LEN)?;
+    let stored = super::decode_stored_custody_body(raw.get(ENTITY_METADATA_HEADER_LEN..)?).ok()?;
+    let StoredValue::Sealed { bytes, .. } = &stored.value;
+    let sealed = if bytes.is_empty() {
+        Vec::new()
+    } else {
+        WITHHELD_SEALED_VALUE.to_vec()
+    };
+    let body = encode_custody_map(&stored.record, BodyValue::Sealed(sealed)).ok()?;
+    let mut row = header.to_vec();
+    row.extend_from_slice(&body);
+    Some(row)
+}
+
 /// Where a restore, or an activation, takes its credentials' keys from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CredentialRoute {
@@ -282,6 +305,35 @@ impl PlannedCredentials {
         planned
     }
 
+    /// What `fences` say of `credential` before a restore, a fork or an
+    /// activation plans it (CALLS `KS-6 erase fence form`): `true` when it
+    /// is named here, never planned, so no fork copies its key and nothing
+    /// reads it back. An erase fenced it: ErasedUnavailable. Its fence did
+    /// not read: PendingCustody, warned, with a retry. An id no fence names
+    /// is left to the plan as before.
+    pub(crate) fn fenced(&mut self, fences: &CredentialFences, credential: &CredentialRef) -> bool {
+        let disposition = match fences.lookup(&credential.id) {
+            FenceLookup::Clear => return false,
+            FenceLookup::Fenced => CredentialDisposition::ErasedUnavailable,
+            FenceLookup::Faulted => {
+                tracing::warn!(
+                    credential = %credential.id.to_hex(),
+                    "a credential's erase fence did not read; it is withheld here, pending"
+                );
+                CredentialDisposition::PendingCustody
+            }
+        };
+        self.noted.push((credential.clone(), disposition));
+        true
+    }
+
+    /// Takes every value `other` named or planned as this one's too.
+    pub(crate) fn merge(&mut self, mut other: Self) {
+        self.live.append(&mut other.live);
+        self.noted.append(&mut other.noted);
+        self.census_pending = self.census_pending.or(other.census_pending);
+    }
+
     /// Names `credential` PendingCustody (CALLS `KS-6 credential fork
     /// fault`).
     pub(crate) fn pending(&mut self, credential: CredentialRef) {
@@ -348,11 +400,13 @@ fn named<R: Borrow<CredentialRef>>(
 /// activation's one `plan` (KS-6 part 2): by exact id, from its source's
 /// custody, required ([`CredentialRoute::Required`]). A row that does not
 /// read stays as it rests, PendingCustody; a census that stops part way
-/// plans what it listed and says the rest is pending discovery. Never
-/// stops the activation.
+/// plans what it listed and says the rest is pending discovery. One
+/// `fences` names is named and never planned, so its key is never forked
+/// ([`PlannedCredentials::fenced`]). Never stops the activation.
 pub(crate) fn plan_archived_credentials(
     store: &Store,
     plan: &mut CustodyPlan,
+    fences: &CredentialFences,
 ) -> PlannedCredentials {
     let mut refs = Vec::new();
     let mut faulted_rows = Vec::new();
@@ -376,7 +430,10 @@ pub(crate) fn plan_archived_credentials(
         Ok(())
     })();
     let listed = refs.len() + faulted_rows.len();
+    let mut fenced = PlannedCredentials::default();
+    refs.retain(|credential| !fenced.fenced(fences, credential));
     let mut planned = PlannedCredentials::plan(plan, refs, CredentialRoute::Required);
+    planned.merge(fenced);
     for credential in faulted_rows {
         planned.pending(credential);
     }

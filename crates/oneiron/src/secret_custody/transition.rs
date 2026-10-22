@@ -673,6 +673,7 @@ pub(crate) enum CustodyApplied {
     /// An admitted revoke names the record's id, so this live transition is
     /// refused: a held portable record and its leases were revoked here, and
     /// nothing the transition carries is written or kept (WILL L04 row 04).
+    /// So is one an erase fenced here, which never comes back (KS-6 part 2).
     Refused,
     /// The transition does not stand on this transaction's fold (CALLS
     /// CUSTODY_PAYLOAD): nothing it carries is written or kept.
@@ -707,6 +708,11 @@ pub(crate) fn apply_custody_transition_in_txn(
         && super::control::custody_revoked_in_txn(vault, wtxn, &transition.id)?
     {
         super::control::settle_revoked_in_txn(vault, wtxn, &transition.id, at)?;
+        return Ok(CustodyApplied::Refused);
+    }
+    // An erased credential never comes back by a transition (KS-6 part 2).
+    let fence = vault.store.credential_fence_in_txn(wtxn, &transition.id);
+    if fence == crate::store::FenceLookup::Fenced {
         return Ok(CustodyApplied::Refused);
     }
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;

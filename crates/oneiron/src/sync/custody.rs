@@ -44,8 +44,12 @@
 //!   own after the admission and on this upkeep (CALLS
 //!   CUSTODY_ROSTER_REWRAP); any other linked machine only from a rewrap the
 //!   owner records (CALLS CUSTODY_PERMITS).
+//! - A witness past one row rides as signed numbered parts of its own, and
+//!   each input row with a signed reference to them (FIX 8088, `witness`).
+//!   Every input and witness row commits on its own.
 
 pub(super) mod checkpoint;
+mod witness;
 
 use std::collections::BTreeMap;
 
@@ -114,15 +118,20 @@ fn input_open(fold: &AuthorityFold, input: &RelayedInput) -> bool {
 fn input_row_done(fold: &AuthorityFold, input: &RelayedInput) -> bool {
     match CUSTODY_INPUT_PRUNE {
         CustodyInputPrune::WitnessedTerminalOrInvalid => {
-            let Some(witnessed) = input.witnessed() else {
-                return false;
+            // A row whose witness travels in parts proves its request by its
+            // signed reference, and leaves once that request is terminal
+            // here (FIX 8088).
+            let invalid = match input.witnessed() {
+                Some(witnessed) => witnessed.folded_invalid(fold, &input.request),
+                None if input.witness_group().is_some() => false,
+                None => return false,
             };
             fold.owner_work_result(&input.request).is_some()
                 || fold.refused_owner_work().contains(&input.request)
                 || fold
                     .owner_work_request(&input.request)
                     .is_some_and(|request| fold.custody_revoked(&request.act.target))
-                || witnessed.folded_invalid(fold, &input.request)
+                || invalid
         }
     }
 }
@@ -191,13 +200,18 @@ pub(crate) fn admit_custody_carrier(
         if bytes_to_hex_lower(&input.row_key()) != row_key {
             return Err(refused("input filed under another digest"));
         }
-        if input.witnessed().is_none() {
+        // Its signed request whole, or its signed reference to a witness
+        // that travels in parts (FIX 8088).
+        if input.witnessed().is_none() && input.witness_group().is_none() {
             return Err(refused("input without its signed request"));
         }
         if key.is_some_and(|key| *key != WindowKey::from_timestamp(input.sealed_at)) {
             return Err(refused("input outside its sealing month's base window"));
         }
         return Ok(());
+    }
+    if let Some(row_key) = map_key.strip_prefix(witness::WITNESS_ROW_PREFIX) {
+        return witness::admit_witness_part(key, row_key, bytes);
     }
     let transition = CustodyTransition::decode(bytes)?;
     if transition.row_key() != map_key {
@@ -337,7 +351,7 @@ fn mirror_custody_inputs(
     let kept = held_inputs(vault)?;
     let holds = holds_custody_map(doc);
     if kept.is_empty() && !holds {
-        return Ok(false);
+        return witness::mirror_witness_parts(vault, doc, key, fold);
     }
     let mut wrote = false;
     for (digest, bytes) in kept {
@@ -350,10 +364,13 @@ fn mirror_custody_inputs(
         let map = doc.get_map(CUSTODY_MAP);
         let row = input_row(&digest);
         if map_get_bytes(&map, &row).as_deref() != Some(bytes.as_slice()) {
+            // Each row commits on its own: no one update outgrows a frame.
             map_insert_bytes(&map, &row, &bytes)?;
+            commit_custody(doc);
             wrote = true;
         }
     }
+    wrote |= witness::mirror_witness_parts(vault, doc, key, fold)?;
     if holds {
         let map = doc.get_map(CUSTODY_MAP);
         let mut done = Vec::new();
@@ -454,6 +471,10 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
         .into_iter()
         .partition(|(map_key, _)| map_key.starts_with(INPUT_ROW_PREFIX));
     keep_relayed_inputs(vault, window, inputs);
+    let (witnesses, rows): (Vec<_>, Vec<_>) = rows
+        .into_iter()
+        .partition(|(map_key, _)| map_key.starts_with(witness::WITNESS_ROW_PREFIX));
+    witness::keep_relayed_witnesses(vault, window, witnesses);
     if rows.is_empty() {
         return;
     }

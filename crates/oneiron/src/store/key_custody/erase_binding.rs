@@ -17,15 +17,30 @@ use crate::error::{Error, Result};
 use crate::store::Store;
 
 /// The kinds an erase stages retirements of: its records' claim keys and
-/// known-value history, the body instances it retired or owes, and the pads
-/// of a world it erased or of a pad row it erased. No credential erase
-/// stages one yet (KS-6 part 2).
-const ERASE_KINDS: [CustodyKind; 4] = [
+/// known-value history, the body instances it retired or owes, the pads of
+/// a world it erased or of a pad row it erased, and an erased credential's
+/// value and carrier keys (KS-6 part 2), matched by the credential's id as
+/// their items' first 16 bytes.
+const ERASE_KINDS: [CustodyKind; 7] = [
     CustodyKind::ClaimDecision,
     CustodyKind::KnownValueEntry,
     CustodyKind::BodyInstance,
     CustodyKind::WorldPad,
+    CustodyKind::CredentialValue,
+    CustodyKind::CustodyTransition,
+    CustodyKind::CustodyRequestInput,
 ];
+
+/// Whether `kind` is one an erased credential's id names (KS-6 part 2):
+/// its retirements are one obligation, its credential's whole erase.
+fn credential_parent_kind(kind: CustodyKind) -> bool {
+    matches!(
+        kind,
+        CustodyKind::CredentialValue
+            | CustodyKind::CustodyTransition
+            | CustodyKind::CustodyRequestInput
+    )
+}
 
 /// `<kind tag>.<item hex>.<through hex>`.
 fn retirement_name(subject: &CustodySubject, through: u64) -> String {
@@ -77,8 +92,11 @@ impl Store {
     /// record's claim key or known-value history, or for a pad of a world or
     /// pad row it erased, and each body instance the erase retired or owes
     /// (one another holder keeps waits on that holder, KS-2A), through the
-    /// newest generation it retires. Empty when the erase owes none here, no
-    /// custody bound included: its explicit `not required`.
+    /// newest generation it retires. Each credential it fenced owes its
+    /// whole erase too, under its value's name, even with no key found yet
+    /// (KS-6 part 2): its discovery and every key its id names, as late as
+    /// they are found. Empty when the erase owes none here, no custody bound
+    /// included: its explicit `not required`.
     ///
     /// # Errors
     ///
@@ -107,6 +125,11 @@ impl Store {
                 let ours = match kind {
                     CustodyKind::BodyInstance => owed.contains_key(&intent.subject),
                     CustodyKind::WorldPad => pad_of(&records, intent.subject.item()),
+                    kind if credential_parent_kind(kind) => intent
+                        .subject
+                        .item()
+                        .get(..16)
+                        .is_some_and(|parent| records.contains(parent)),
                     _ => records.contains(intent.subject.item()),
                 };
                 if ours && intent.cause == RetireCause::Erase {
@@ -114,6 +137,12 @@ impl Store {
                     *through = (*through).max(intent.through);
                 }
             }
+        }
+        for credential in self.fenced_credentials_in_txn(txn, erased)? {
+            let parent = custody
+                .binding()
+                .subject(CustodyKind::CredentialValue, credential.as_bytes())?;
+            owed.entry(parent).or_insert(0);
         }
         let names: BTreeSet<String> = owed
             .iter()
@@ -127,10 +156,12 @@ impl Store {
     /// every generation through the bound one is retired here, and each of
     /// its journal obligations is complete, every required target having
     /// acknowledged it and the anchor advanced past it (with no anchor set,
-    /// the acknowledgements alone, rollback not proven). A retirement with
-    /// no obligation recorded, or no custody bound to read it, has not:
-    /// missing proof stays pending, never `not required`. No names: none is
-    /// owed.
+    /// the acknowledgements alone, rollback not proven). An erased
+    /// credential's names stand for its whole erase (KS-6 part 2): its
+    /// discovery complete, and every key its id names, found then or later,
+    /// finished so. A retirement with no obligation recorded, or no custody
+    /// bound to read it, has not: missing proof stays pending, never `not
+    /// required`. No names: none is owed.
     ///
     /// # Errors
     ///
@@ -146,9 +177,23 @@ impl Store {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(false);
         };
+        let mut credentials = BTreeSet::new();
         for name in names {
             let (kind, item, through) = retirement_of_name(name)
                 .ok_or(Error::CorruptedIndex("redaction audit receipt body"))?;
+            if credential_parent_kind(kind) {
+                let parent = <[u8; 16]>::try_from(item.get(..16).unwrap_or_default())
+                    .ok()
+                    .map(EntityId::from_bytes)
+                    .transpose()?
+                    .ok_or(Error::CorruptedIndex("redaction audit receipt body"))?;
+                if credentials.insert(parent)
+                    && !self.credential_erase_finished_in_txn(txn, &parent)?
+                {
+                    return Ok(false);
+                }
+                continue;
+            }
             let subject = custody.binding().subject(kind, &item)?;
             if retirement_in_txn(self, txn, &subject)?.is_some() {
                 return Ok(false);

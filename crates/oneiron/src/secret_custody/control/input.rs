@@ -35,9 +35,14 @@
 //! commits to the whole input and each part is checked on its own as it is
 //! admitted. The holder joins the parts before it opens the input; while one
 //! is missing, the request stays pending.
+//!
+//! A witness past one row's bound travels in signed numbered parts of its
+//! own, and each input row carries a signed reference to them (FIX 8088,
+//! `witness`).
 
 mod attached;
 mod envelopes;
+mod witness;
 
 use getrandom::SysRng;
 use oneiron_crypto::{
@@ -62,6 +67,11 @@ use crate::world_keys::MachineSecret;
 pub(crate) use self::attached::{
     Attached, AttachedManifest, attach_manifest, attach_no_manifest, attach_published_manifests,
     attach_unread, split_attached,
+};
+pub(crate) use self::witness::{WitnessJoin, keep_witnessed_input_in_txn, witness_joined_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use self::witness::{
+    WitnessPart, held_witness_in_txn, held_witnesses, keep_witness_in_txn,
 };
 
 const INPUT_LABEL: &[u8] = b"oneiron/custody-input/v1";
@@ -599,8 +609,9 @@ pub(crate) fn assembled_input_in_txn(
 }
 
 /// Forgets the input the request names `digest` of: its whole row, or each
-/// of its parts. A part left behind goes with the answered request
-/// ([`Vault::settle_custody_inputs`]).
+/// of its parts, found by the digest each names, a first part missing
+/// included, and every part of its witness (FIX 8088). A part that arrives
+/// later goes with the answered request ([`Vault::settle_custody_inputs`]).
 pub(crate) fn drop_input_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -613,7 +624,7 @@ pub(crate) fn drop_input_in_txn(
     for index in (0_u32..).take(parts) {
         INPUTS.delete(&vault.store, wtxn, &part_key(digest, index))?;
     }
-    Ok(())
+    witness::drop_rows_of_in_txn(vault, wtxn, digest)
 }
 
 /// Forgets every input row kept for a request on record `id`, each part of
@@ -639,7 +650,11 @@ pub(crate) fn drop_inputs_for_in_txn(
     for key in &doomed {
         INPUTS.delete(&vault.store, wtxn, key)?;
     }
-    Ok(doomed.len())
+    // Every witness part kept for such a request goes too (FIX 8088).
+    let witnesses = witness::drop_witnesses_in_txn(vault, wtxn, |group| {
+        witness::witness_target(&fold, group) == Some(*id)
+    })?;
+    Ok(doomed.len() + witnesses)
 }
 
 /// Every input row this vault keeps, by its key, as stored.
@@ -656,31 +671,36 @@ impl Vault {
     /// relay of work still awaiting its holder. The owner work drain runs it
     /// beside the revoke settle. Returns how many rows it forgot.
     pub(crate) fn settle_custody_inputs(&self) -> Result<usize> {
-        let done: Vec<[u8; 32]> = {
+        let (done, witnesses) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
-            INPUTS
+            let settled = |request: &AuthorityEntryHash| {
+                fold.owner_work_result(request).is_some()
+                    || fold
+                        .owner_work_request(request)
+                        .is_none_or(|request| fold.custody_revoked(&request.act.target))
+            };
+            let done: Vec<[u8; 32]> = INPUTS
                 .scan(&self.store, &txn)?
                 .into_iter()
                 .filter(|(_, bytes)| {
-                    RelayedInput::decode(bytes).is_none_or(|input| {
-                        fold.owner_work_result(&input.request).is_some()
-                            || fold
-                                .owner_work_request(&input.request)
-                                .is_none_or(|request| fold.custody_revoked(&request.act.target))
-                    })
+                    RelayedInput::decode(bytes).is_none_or(|input| settled(&input.request))
                 })
                 .map(|(key, _)| key)
-                .collect()
+                .collect();
+            // So does every witness part kept for one (FIX 8088).
+            let witnesses = witness::settled_witnesses_in_txn(&self.store, &txn, settled)?;
+            (done, witnesses)
         };
-        if done.is_empty() {
+        if done.is_empty() && witnesses.is_empty() {
             return Ok(0);
         }
         self.with_write_txn(|txn| {
             for key in &done {
                 INPUTS.delete(&self.store, txn, key)?;
             }
-            Ok(done.len())
+            witness::delete_witnesses_in_txn(self, txn, &witnesses)?;
+            Ok(done.len() + witnesses.len())
         })
     }
 }
