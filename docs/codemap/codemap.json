@@ -12442,7 +12442,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 6,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 1
      }
     },
@@ -12681,7 +12681,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "StoredWeaveDigest",
@@ -12741,10 +12741,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/dependencies.rs",
+     "purpose": "The rows a saved weave period's copies depend on, for its erase index: the sources its own checks read, each…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/claim/scoped_read/weave_digest/loop_decisions.rs",
      "purpose": "A saved weave period's loop-decision rows (OF-499 A2): their saved carrier, the erase index over their refs…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/rewrite.rs",
+     "purpose": "A hard delete inside a saved weave period (FIX 7693, 8672)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -12789,7 +12809,7 @@
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
       "const": 5,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 4,
       "struct": 6
      }
@@ -12800,6 +12820,16 @@
      "notable": [],
      "path": "src/claim/scoped_read/weave_lens/loop_decisions.rs",
      "purpose": "A loop decision's weave lens row (OF-499 A2): its decision, time, family, kind, exact outcome and redacted…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_lens/snapshot.rs",
+     "purpose": "A report's rows as one read showed them, against a later read of the same report (FIX 7694)",
      "surface": {
       "crate-vis": 1
      }
@@ -12818,7 +12848,7 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 3,
       "fn": 2,
       "struct": 3
@@ -12835,13 +12865,16 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "RedactedSieveDecision"
+     ],
      "path": "src/claim/scoped_read/weave_report/sieve_score.rs",
      "purpose": "A weave report's SieveScore section reads the sampled sieve audits (OF-499, ARCH-0063 §6)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7,
+      "struct": 1
      }
     },
     {
@@ -12876,10 +12909,20 @@
      "path": "src/claim/scoped_read/weave_serve.rs",
      "purpose": "The served weave lens (OF-499): the per-reader report and its saved digests as wire views, for the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 13,
       "struct": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_serve/items.rs",
+     "purpose": "The served weave items (FIX 7904): each report item lowered into its wire view, and a saved period's view…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -71800,9 +71843,9 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 90,
+     "files": 94,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)"
     },
@@ -73132,7 +73175,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4704,
+   "source_files": 4708,
    "test_files": 902
   },
   "oneiron-android": {
