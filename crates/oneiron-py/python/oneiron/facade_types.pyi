@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1136 facade rows, 3976 declarations.
-Inputs: 1070 of 1136 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1022 of 1136 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1138 facade rows, 3985 declarations.
+Inputs: 1072 of 1138 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1024 of 1138 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
@@ -2253,6 +2253,37 @@ class RsiTopUpShare(TypedDict):
     share: str
     units: int
 RsiTopUp = RsiTopUpTokens | RsiTopUpExploration | RsiTopUpShare
+SeatAuth = Literal["vendor_login", "api_key"]
+class RunnerSeat(TypedDict):
+    runner: str
+    auth: SeatAuth
+    egress_profile_ref: str
+    credential_handles: NotRequired[list[str]]
+class RunnerSeatQuotasRequest(TypedDict):
+    seats: list[RunnerSeat]
+SpentKind = Literal["window", "credit"]
+class SeatSpent(TypedDict):
+    kind: NotRequired[SpentKind | None]
+    retry_after: NotRequired[int | None]
+    resets_at: list[int]
+class RunnerSeatQuota(TypedDict):
+    seat: int
+    runner: str
+    spent: NotRequired[SeatSpent | None]
+    observed_at: NotRequired[int | None]
+    back_at: NotRequired[int | None]
+    available: bool
+    last_capture: NotRequired[str | None]
+    topped_up_at: NotRequired[int | None]
+class RunnerSeatQuotasView(TypedDict):
+    quotas: list[RunnerSeatQuota]
+class RunnerSeatCreditTopUpRequest(TypedDict):
+    seat: RunnerSeat
+    expected_spent_attempt: str
+RunnerSeatTopUpEffect = Literal["cleared", "already_clear", "observation_changed", "not_credit"]
+class RunnerSeatTopUpReceipt(TypedDict):
+    effect: RunnerSeatTopUpEffect
+    quota: RunnerSeatQuota
 FanoutLaunchRuling = Literal["approve_once", "approve_and_remember", "deny"]
 class FanoutResumeRequest(TypedDict):
     launch_ref: EntityId
@@ -14448,7 +14479,6 @@ class FatalLlmErrorLabelRead(TypedDict):
     LabelRead: LabelReadFailure
 FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased"] | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
 ModelStepFailureClass = Literal["retryable", "fatal", "budget_denied", "schema_validation", "fallback", "finalize_refused", "deadline_hard_cut", "engine"]
-SpentKind = Literal["window", "credit"]
 class RetryableLlmErrorRateLimitedBody(TypedDict):
     retry_after: NotRequired[int | None]
     resets_at: NotRequired[list[int]]

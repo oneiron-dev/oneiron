@@ -444,6 +444,9 @@ class Oneiron:
         @property
         def budgets(self) -> "Oneiron._VaultBudgetsVerbs":
             return Oneiron._VaultBudgetsVerbs(self._client)
+        @property
+        def runners(self) -> "Oneiron._VaultRunnersVerbs":
+            return Oneiron._VaultRunnersVerbs(self._client)
         def commit_message(self, spec):
             """Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."""
             return json.loads(_translate(lambda: self._client.vault_commit_message(json.dumps(spec))))
@@ -1119,6 +1122,21 @@ class Oneiron:
         def resume(self, spec):
             """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
             return json.loads(_translate(lambda: self._client.vault_budgets_rsi_hold_resume(json.dumps(spec))))
+    class _VaultRunnersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def seats(self) -> "Oneiron._VaultRunnersSeatsVerbs":
+            return Oneiron._VaultRunnersSeatsVerbs(self._client)
+    class _VaultRunnersSeatsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def quotas(self, spec):
+            """The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."""
+            return json.loads(_translate(lambda: self._client.vault_runners_seats_quotas(json.dumps(spec))))
+        def top_up(self, spec):
+            """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
+            return json.loads(_translate(lambda: self._client.vault_runners_seats_top_up(json.dumps(spec))))
     class _VaultMessagesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
