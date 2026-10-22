@@ -11,7 +11,7 @@ use super::{CapturedSyncRow, Placement, SyncCarrier, SyncPayloadOwners, SyncUncl
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::note::{NoteChange, NoteOperation};
+use crate::note::{NoteChange, NoteOperation, PendingNoteRequest};
 use crate::side_table::{
     SYNC_QD_E, SYNC_QN_E, SYNC_RESIDENCE_ITEM_BLOB, SYNC_RESIDENCE_ITEM_DOCUMENT,
 };
@@ -117,10 +117,12 @@ fn pending_note(key: &[u8], value: &[u8]) -> Placement {
 }
 
 /// The owners a request of `note` holds only while they do: a citation's
-/// claim and its source document. `None` unless `value` is the frame of
-/// that NOTE's request `request`.
+/// claim and its source document. `None` unless `value` is the queued
+/// envelope of that NOTE's request `request`, whose frame is the command as
+/// admitted (FIX 2375).
 fn note_request(note: EntityId, request: &str, value: &[u8]) -> Option<Vec<OwnerRef>> {
-    let frame = frame(value)
+    let queued = PendingNoteRequest::decode(value)?.frame;
+    let frame = frame(queued)
         .filter(|frame| frame.entity == note && frame.kind == document_sub_tags::NOTE_OPS)?;
     let operation = NoteOperation::decode(frame.payload).ok()?;
     if operation.request_id.to_hex() != request {

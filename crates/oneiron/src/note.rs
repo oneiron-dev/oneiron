@@ -464,10 +464,15 @@ pub(crate) use pin_index::citation_delete_scope_exists;
 pub(crate) use pin_index::{remove_citation_request, track_citation_request};
 #[cfg(feature = "sync")]
 mod citation_scrub;
+mod free_text;
+#[cfg(feature = "sync")]
+mod pending_request;
 #[cfg(feature = "sync")]
 pub(crate) use citation_erase::validate_pins as validate_citation_dependencies;
 #[cfg(feature = "sync")]
 pub(crate) use citation_scrub::scrub_pending_citations;
+#[cfg(feature = "sync")]
+pub(crate) use pending_request::{PendingNoteRequest, admit_note_operation_in_txn};
 #[cfg(test)]
 mod erasure_tests;
 mod live_body;
