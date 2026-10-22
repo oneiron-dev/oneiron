@@ -123,6 +123,11 @@ pub struct OffRecordRecallRequest {
 pub struct OffRecordNoteRequest {
     pub session_ref: String,
     pub note: crate::task_verb::sdk::CreateNoteRequest,
+    /// TURN refs the NOTE was written from, kept in its room birth as
+    /// supplied (FIX 4281): each the room reads as a TURN is an input; any
+    /// other is kept as bookkeeping, and none refuses the NOTE.
+    #[serde(default)]
+    pub evidence_turn_refs: Vec<String>,
 }
 
 /// `vault.off_record.claims.upsert`'s input: one claim, as

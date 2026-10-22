@@ -7,6 +7,7 @@ use super::Rect;
 use super::brief::{Block, BlockContent, Brief, Carrier, Cell, Dataset};
 use crate::deck::{MasterView, Placeholder, RetainedNode, ShapeView, Spacing, State, TextStyle};
 use crate::fonts::{Face, FontBook};
+use crate::native_patch::{TableLayout, grid};
 use std::sync::Arc;
 
 /// EMU per hundredth of a point.
@@ -528,7 +529,7 @@ pub(super) fn fit(need: &Need<'_>, room: &Room<'_>) -> Option<(Carry, i64)> {
             }
             let (dataset, metrics) = ((*dataset)?, room.ordinary?);
             let height = match carrier {
-                Carrier::Table => table_height(dataset, metrics, bounds.cx)?,
+                Carrier::Table => table_height(dataset, metrics, bounds)?,
                 Carrier::Chart => chart_height(dataset, metrics, bounds.cx)?,
                 Carrier::Share => share_height(dataset, metrics, bounds.cx)?,
             };
@@ -550,7 +551,19 @@ pub(super) fn measured(need: &Need<'_>, room: &Room<'_>, carry: Carry) -> Option
                 dataset: Some(dataset),
                 ..
             },
-            Carry::Table | Carry::Chart | Carry::Share,
+            Carry::Table,
+        ) => {
+            // The table's displayed text, as creation writes it (FIX 8577).
+            let layout = TableLayout::of(dataset, &dataset.merges).ok()?;
+            let texts: Vec<&str> = layout.text.iter().flatten().map(String::as_str).collect();
+            room.ordinary?.measured(&texts)
+        }
+        (
+            Need::Data {
+                dataset: Some(dataset),
+                ..
+            },
+            Carry::Chart | Carry::Share,
         ) => {
             let texts: Vec<String> = dataset
                 .columns
@@ -564,58 +577,52 @@ pub(super) fn measured(need: &Need<'_>, room: &Room<'_>, carry: Carry) -> Option
     }
 }
 
-/// Columns share the width in proportion to their longest word; each row is
-/// as tall as its tallest cell.
-fn table_height(dataset: &Dataset, metrics: &Metrics, width: i64) -> Option<i64> {
+/// The height a native table needs in `bounds` (FIX 8577), measured on the
+/// table creation writes there: the same displayed text, equal columns and
+/// rows with the remainder last, each shown cell over its whole merged
+/// rectangle inside the cell margins, and covered cells showing nothing. A
+/// row needs its tallest one-row cell; a cell merged down needs its rows
+/// together, any shortfall going to its last row. PowerPoint grows a row
+/// past its share of the frame, so when one would grow the grown table's
+/// height is returned and the room does not take it; otherwise the height
+/// its content needs.
+fn table_height(dataset: &Dataset, metrics: &Metrics, bounds: Rect) -> Option<i64> {
     let [left, top, right, bottom] = DEFAULT_INSETS;
-    let header: Vec<String> = dataset
-        .columns
-        .iter()
-        .map(|column| match &column.unit {
-            Some(unit) => format!("{} ({unit})", column.name),
-            None => column.name.clone(),
-        })
-        .collect();
-    let rows: Vec<Vec<String>> = std::iter::once(header)
-        .chain(
-            dataset
-                .rows
-                .iter()
-                .map(|row| row.iter().map(cell_text).collect()),
-        )
-        .collect();
-    let needs: Vec<i64> = (0..dataset.columns.len())
-        .map(|column| {
-            let longest = rows
-                .iter()
-                .flat_map(|row| row[column].split_whitespace())
-                .map(|word| metrics.advance(word))
-                .max()
-                .unwrap_or(0);
-            longest + left + right
-        })
-        .collect();
-    let total: i64 = needs.iter().sum();
-    if total <= 0 || total > width {
-        return None;
+    let layout = TableLayout::of(dataset, &dataset.merges).ok()?;
+    let widths = grid(bounds.cx, layout.cols())?;
+    let shares = grid(bounds.cy, layout.rows())?;
+    let mut rows = vec![0_i64; shares.len()];
+    let mut down = Vec::new();
+    for (row, col, span_rows, span_cols, text) in layout.shown() {
+        let width: i64 = widths[col..col + span_cols].iter().sum();
+        let need =
+            metrics.lines(text, (width - left - right).max(1)) * metrics.line() + top + bottom;
+        if span_rows == 1 {
+            rows[row] = rows[row].max(need);
+        } else {
+            down.push((row, span_rows, need));
+        }
     }
-    let usable: Vec<i64> = needs
-        .iter()
-        .map(|need| width * need / total - left - right)
-        .collect();
-    let height = rows
-        .iter()
-        .map(|row| {
-            let lines = row
-                .iter()
-                .zip(&usable)
-                .map(|(text, &usable)| metrics.lines(text, usable.max(1)))
-                .max()
-                .unwrap_or(1);
-            lines * metrics.line() + top + bottom
-        })
-        .sum();
-    Some(height)
+    let settled = |mut heights: Vec<i64>| -> i64 {
+        for &(row, span, need) in &down {
+            let held: i64 = heights[row..row + span].iter().sum();
+            if need > held {
+                heights[row + span - 1] += need - held;
+            }
+        }
+        heights.iter().sum()
+    };
+    let grown = settled(
+        shares
+            .iter()
+            .zip(&rows)
+            .map(|(share, need)| *share.max(need))
+            .collect(),
+    );
+    if grown > bounds.cy {
+        return Some(grown);
+    }
+    Some(settled(rows))
 }
 
 /// A floor, not a layout: each category needs a line of width, the plot a

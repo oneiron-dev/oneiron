@@ -29,6 +29,7 @@ use crate::store::{ManifestDbs, Store};
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 pub(crate) mod checkpoint;
+pub(crate) mod room;
 
 /// Most hex characters a birth's input hash may carry.
 const MAX_CONTENT_HASH_HEX: usize = 128;
@@ -52,6 +53,33 @@ pub struct RowBirth {
     /// ([`RowBirth::masked`]); empty in the vault's own birth row.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub withheld: Vec<WithheldRef>,
+    /// The evidence refs a room write's caller supplied, as supplied (FIX
+    /// 4281): bookkeeping only a room's own stamper keeps
+    /// ([`room::stamp_room_birth_in_txn`]), never authenticated evidence. A
+    /// base stamp treats it as absent, and no copy carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_evidence: Option<RoomEvidence>,
+}
+
+/// The evidence refs a room write's caller named, each with what the room
+/// read it as (FIX 4281, Engine 10-22). A ref the room did not read as a
+/// TURN is kept as supplied: the room accepts it, and it is no evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RoomEvidence {
+    /// Every supplied ref, in the order given.
+    pub refs: Vec<RoomEvidenceRef>,
+}
+
+/// One supplied evidence ref of a room write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RoomEvidenceRef {
+    /// The ref as the caller spelled it.
+    pub supplied: String,
+    /// The 32 hex digits of the TURN the caller read it as in the room, one
+    /// of the birth's inputs; `None` for a ref the room read as no TURN.
+    pub turn: Option<String>,
 }
 
 /// A ref a birth names that its copy's destination may not see (Q26 = B): a
@@ -158,16 +186,19 @@ impl RowBirth {
             made_by,
             content_hash: String::new(),
             withheld: Vec::new(),
+            room_evidence: None,
         }
     }
 
     /// This birth as a copy carries it to a destination that sees only the
     /// rows `ships` admits (Q26 = B). Each input, and the trigger, whose row
     /// it refuses moves to `withheld` as a handle. Who made the row, by which
-    /// process and when, and the input hash ship whole.
+    /// process and when, and the input hash ship whole. A room's evidence
+    /// refs never ship: they are the room's bookkeeping, as supplied.
     #[must_use]
     pub fn masked(&self, ships: impl Fn(&EntityId) -> bool, key: &WithheldKey) -> Self {
         let mut birth = self.clone();
+        birth.room_evidence = None;
         let mut withheld = std::mem::take(&mut birth.withheld);
         birth.made_by.inputs.retain(|input| {
             if ships(&input.row) {
@@ -199,10 +230,12 @@ impl RowBirth {
     /// names, renamed by `rename`: a copy that lands a ref's row under
     /// another id names it by that id (FIX 3890). The trigger keeps its kind.
     /// Who made the row, by which process and when, the input hash and the
-    /// refs it already withholds stay as they are.
+    /// refs it already withholds stay as they are. A room's evidence refs,
+    /// spelled as supplied, are not renamed: the copy drops them.
     #[must_use]
     pub fn renamed_refs(&self, rename: impl Fn(EntityId) -> EntityId) -> Self {
         let mut birth = self.clone();
+        birth.room_evidence = None;
         for input in &mut birth.made_by.inputs {
             input.row = rename(input.row);
         }
@@ -263,6 +296,7 @@ impl RowBirth {
                 Self::content_hash_of(read)
             },
             withheld: Vec::new(),
+            room_evidence: None,
         })
     }
 
@@ -288,7 +322,9 @@ impl RowBirth {
     /// process, a hex input hash, well-formed withheld handles, and a prompt
     /// input on every triggered birth (the same rule `RowProvenance::fold`
     /// applies to a birth commit). A concluded birth names what it was made
-    /// from. No count of inputs or handles is refused.
+    /// from, but for a room's: it keeps the evidence its caller supplied,
+    /// none of which the room may have read as a TURN (FIX 4281). No count
+    /// of inputs or handles is refused.
     fn check_shape(&self) -> Result<()> {
         let made_by = &self.made_by;
         let withheld = |role: WithheldRole| self.withheld.iter().any(|w| w.role == role);
@@ -318,7 +354,9 @@ impl RowBirth {
             || !hash_ok
             || !handles_ok
             || (names_trigger && !has_prompt)
-            || (made_by.process.class == MadeByClass::Concluded && !names_input)
+            || (made_by.process.class == MadeByClass::Concluded
+                && !names_input
+                && self.room_evidence.is_none())
         {
             return Err(Error::InvalidConfig(
                 "a row birth needs a valid process, a hex input hash, well-formed withheld handles \
@@ -327,6 +365,17 @@ impl RowBirth {
             ));
         }
         Ok(())
+    }
+
+    /// This birth as a base stamp takes it: a room's evidence stripped, so a
+    /// marker a guest supplied counts for nothing outside a room (FIX 4281).
+    fn base_form(&self) -> std::borrow::Cow<'_, Self> {
+        if self.room_evidence.is_none() {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut birth = self.clone();
+        birth.room_evidence = None;
+        std::borrow::Cow::Owned(birth)
     }
 }
 
@@ -378,13 +427,16 @@ pub(crate) fn run_exists(vault: &crate::Vault, run: &EntityId) -> Result<bool> {
 ///
 /// [`Error::InvalidConfig`] for a malformed envelope, an absent row, an
 /// unreadable prompt or a dead trigger; [`Error::InvariantViolation`] when the
-/// row already has a different birth; storage errors as they occur.
+/// row already has a different birth; storage errors as they occur. A
+/// room's evidence on `birth` is treated as absent ([`RowBirth::base_form`]).
 pub(crate) fn stamp_row_birth_in_txn(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     row: &EntityId,
     birth: &RowBirth,
 ) -> Result<()> {
+    let birth = birth.base_form();
+    let birth = &*birth;
     birth.check_shape()?;
     // A local producer names its own refs; only a copy withholds any.
     if !birth.withheld.is_empty() {
@@ -466,13 +518,16 @@ pub(crate) fn stamp_birth_if_absent_in_txn(
 /// [`Error::InvalidConfig`] for a malformed envelope, an absent row or an
 /// actor erased here; [`Error::InvariantViolation`] when the row already has
 /// a different birth that is not a document birth; storage errors as they
-/// occur.
+/// occur. A room's evidence on `birth` is treated as absent
+/// ([`RowBirth::base_form`]).
 pub(crate) fn stamp_replicated_row_birth_in_txn(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     row: &EntityId,
     birth: &RowBirth,
 ) -> Result<()> {
+    let birth = birth.base_form();
+    let birth = &*birth;
     birth.check_shape()?;
     if !live_entity_row_in_txn(store, txn, row)?.is_live() {
         return Err(Error::InvalidConfig(
@@ -573,8 +628,10 @@ pub(crate) fn erase_birth_actor_in_txn(
 
 /// The births a legal hold kept from the scrubs of the hard-erased ids
 /// `erased`, once nothing holds their rows (FIX 6280): each goes, with its
-/// born-from index row, and when one did, every window carrier of a birth
-/// one of them made whose row no hold keeps. A row still held keeps both.
+/// born-from index row, and so does every window carrier of a birth one of
+/// them made whose row no hold keeps, whether or not its birth landed here
+/// (FIX 6386): a carrier whose row was never born here, or whose stamp was
+/// refused, has no local birth to drop first. A row still held keeps both.
 ///
 /// # Errors
 ///
@@ -584,30 +641,49 @@ pub(crate) fn release_held_births_in_txn(
     wtxn: &mut RwTxn<'_>,
     erased: &BTreeSet<EntityId>,
 ) -> Result<()> {
-    if drop_actor_births_in_txn(vault, wtxn, erased)? {
-        #[cfg(feature = "sync")]
-        crate::sync::row_birth::actor_erase::erase_birth_carriers_in_txn(vault, wtxn, erased)?;
-    }
+    drop_actor_births_in_txn(vault, wtxn, erased)?;
+    #[cfg(feature = "sync")]
+    crate::sync::row_birth::actor_erase::erase_birth_carriers_in_txn(vault, wtxn, erased)?;
     Ok(())
 }
 
 /// Drops each birth whose process actor is in `actors`, but for a born row a
-/// legal hold keeps. Whether any went.
+/// legal hold keeps.
 fn drop_actor_births_in_txn(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
     actors: &BTreeSet<EntityId>,
-) -> Result<bool> {
-    let mut dropped = false;
+) -> Result<()> {
     for (row, birth) in ROW_BIRTH.scan(&vault.store, wtxn)? {
         if actors.contains(&birth.made_by.process.actor)
             && !birth_held_in_txn(&vault.store, wtxn, &row)?
         {
             erase_row_birth_in_txn(&vault.store, wtxn, &row)?;
-            dropped = true;
         }
     }
-    Ok(dropped)
+    Ok(())
+}
+
+/// Whether a birth one of `actors` made is still stored here: one a legal
+/// hold kept from its actor's scrub, or one a lifted hold kept until the
+/// next due pass drops it (FIX 6386). An erase of one of `actors` is not
+/// complete while one is.
+///
+/// # Errors
+///
+/// Storage errors, or a stored birth that does not decode.
+pub(crate) fn births_made_by_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    actors: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    for row in ROW_BIRTH.iter_from(store, txn, &[])? {
+        let (_, birth) = row?;
+        if actors.contains(&birth.made_by.process.actor) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether a legal hold keeps `row`'s birth: a hold on the row itself or,

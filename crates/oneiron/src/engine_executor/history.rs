@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::code_run::{
-    ExecutorStorage,
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, ExecutorStorage, ProgramPreparationNote, TypeDiagnostics,
     fold_api::{FoldHistoryRequest, FoldUnfoldRequest},
 };
 use crate::compaction::{FoldDescription, FoldList, FoldReply, FoldUnfold, SelfFoldCall};
@@ -42,6 +42,15 @@ pub struct FoldHistoryStep {
     pub step: u64,
     pub code: String,
     pub console: String,
+    /// The step's type check as it stands now (FIX 8277): the host's
+    /// feedback beside its console, never part of it. None when no feedback
+    /// was kept for the step, or its program is withheld.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_diagnostics: Option<TypeDiagnostics>,
+    /// What the program's preparation noted, when it ran as written though
+    /// it was not JavaScript Oxc accepts (FIX 8276).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation_note: Option<ProgramPreparationNote>,
 }
 
 /// Reads only checkpointed steps under the host's sealed live lease. The host
@@ -123,10 +132,21 @@ pub fn read_fold_history(
         {
             return Err(Error::InvalidConfig("history source was withdrawn".into()));
         }
+        let code = load_context_output(&storage, &record, &script_output_path(step))?;
+        // A feedback row that cannot be read leaves the step without one.
+        let feedback = (code != CODE_RUN_OUTPUT_PREVIEW_WITHHELD)
+            .then(|| vault.type_diagnostics_row((run, step, 0)).ok().flatten())
+            .flatten()
+            .map(|row| row.feedback((run, step, 0)));
+        let (type_diagnostics, preparation_note) = feedback.map_or((None, None), |feedback| {
+            (Some(feedback.type_diagnostics), feedback.preparation_note)
+        });
         steps.push(FoldHistoryStep {
             step,
-            code: load_context_output(&storage, &record, &script_output_path(step))?,
+            code,
             console: load_context_output(&storage, &record, &observation_output_path(step))?,
+            type_diagnostics,
+            preparation_note,
         });
     }
     proof.leased_record(vault)?;

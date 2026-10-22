@@ -65,7 +65,7 @@ impl RunFieldWriter {
     /// The writer for one browser call of `asker` (`fill_writer_line`,
     /// CALLS row): on the run's own line where the run's door bound one (an
     /// agent's run, with the payer it bills), else on code mode's own meter,
-    /// the one a run's executor steps spend on, with no payer. A host with
+    /// the one a run's executor steps spend on. A host with
     /// neither has no writer for the call.
     /// A caller whose door bound no line bills `payer`, the attached live
     /// run's, where it has one (FIX 8902).
@@ -233,6 +233,7 @@ fn writer_request(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     })
 }
 
