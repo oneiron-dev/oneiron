@@ -9,7 +9,7 @@
 //! request: no store, cache, session, clock, or response is read or mutated.
 
 use super::one_line_token;
-use super::tasks::TasksSection;
+use super::tasks::{TasksSection, fits_row};
 use crate::tokenizer::count_context_pack_tokens;
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +32,9 @@ pub const MAX_BOARD_ROW_BYTES: usize = 16 * 1024;
 /// then hands the line to the board renderer, which refuses ANY row over
 /// [`MAX_BOARD_ROW_BYTES`]. Every one of those tokens is bounded far inside a
 /// kibibyte, so reserving one keeps the label's preview from being the reason
-/// the whole TASKS section is rejected at render time.
+/// the whole TASKS section is rejected at render time. The `children=` token
+/// is not among them: the row budgets it against the ceiling itself, down to
+/// an additive `+N` (FIX 9757).
 pub const TASK_ROW_FIXED_TOKEN_BYTES: usize = 1_024;
 
 /// The most of a task's label one TASKS intent row shows, in BYTES.
@@ -275,11 +277,30 @@ impl BoardSection {
     pub fn policy(&self) -> SectionPolicy {
         self.policy
     }
+
+    /// The section with `rows` as its discovery hints: they render after
+    /// the full view and shed first, at [`ShedRank::CapabilityDiscovery`],
+    /// while the section's own rows stay until its own rank. A hint over
+    /// the row ceiling is a hint left out, never a refused section.
+    #[must_use]
+    pub fn with_discovery_rows(mut self, rows: Vec<String>) -> Self {
+        self.discovery_rows = rows
+            .into_iter()
+            .filter(|row| row.len() <= MAX_BOARD_ROW_BYTES)
+            .collect();
+        self
+    }
 }
 
 /// The TASKS section with `lead` detail rows ahead of the task rows (a
 /// project view rides here) and the structural overflow footer after them.
 /// The count fallback counts the task rows the window rendered.
+///
+/// Each task's `fits:` persons ride as discovery rows, so they shed at
+/// [`ShedRank::CapabilityDiscovery`] while every task's status, label and
+/// who stay until [`ShedRank::TasksToCounts`] (FIX 9756). A task row still
+/// over [`MAX_BOARD_ROW_BYTES`] after its own budget (FIX 9757) does not
+/// refuse the board: the section renders its count fallback instead.
 pub fn assemble_tasks_section(
     tasks: &TasksSection,
     lead: Vec<String>,
@@ -287,16 +308,24 @@ pub fn assemble_tasks_section(
     let mut detail = lead;
     detail.extend(tasks.rows.iter().map(|row| row.line.clone()));
     detail.extend(tasks.overflow.and_then(|overflow| overflow.line()));
-    BoardSection::new(
+    let count = vec![format!("count: {}", tasks.rows.len())];
+    let fits: Vec<String> = tasks.rows.iter().filter_map(fits_row).collect();
+    let (detail, fits) = if detail.iter().any(|row| row.len() > MAX_BOARD_ROW_BYTES) {
+        (count.clone(), Vec::new())
+    } else {
+        (detail, fits)
+    };
+    Ok(BoardSection::new(
         "TASKS",
         Vec::new(),
         detail,
-        vec![format!("count: {}", tasks.rows.len())],
+        count,
         SectionPolicy {
             pinned: false,
             shed_rank: Some(ShedRank::TasksToCounts),
         },
-    )
+    )?
+    .with_discovery_rows(fits))
 }
 
 /// The typed render input: header, mandatory legend, ordered sections.

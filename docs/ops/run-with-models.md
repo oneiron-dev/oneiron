@@ -2084,11 +2084,15 @@ owner holds the desktop, every desktop verb refuses `desktop_taken_over` (a
 batch stops `NEEDS_YOU`) and no receipt screenshot is taken. Handing it back
 writes the takeover's record (who, the ask, when it was taken and returned,
 how many inputs) as the run's `desktop_takeover` sandbox receipt, and the
-agent's next desktop answer carries it as `takeover`. When the window the
-agent's verbs read is gone (a dialog closed, an app quit), the session
-reads the window in front, and the next answer names the move as
-`switched` (`{window, app, title, from}`). Both are typed on every browser
-and desktop answer in the code-mode declarations.
+agent's next desktop answer carries it as `takeover`. When an act opens a
+window in front (a dialog, a document), the agent's verbs follow it and the
+next observation is whole. When the window they read is gone (a dialog
+closed, an app quit), the session follows the window in front. The next
+desktop answer names the move as `switched` (`{window, app, title, from,
+why}`), with `why` being `opened` or `closed`. The move is carried once;
+moves before that answer join from the window the agent was last told of,
+with the last move's `why`. Both are typed on every browser and desktop
+answer in the code-mode declarations.
 
 A handover is each owner's inbox Ask (producer `guest.takeover`): its source
 names the run, its result is the take route, and its `detail` is the

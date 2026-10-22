@@ -15,6 +15,7 @@ use crate::outbound_intent_ledger::{
 
 use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
 use super::connector_call::escalation_code;
+use super::connector_elicitation_asks::ConnectorElicitationAnswer;
 use super::result_scrub::{OutboundResultSender, scrub_outbound_result};
 use super::scope::{
     ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
@@ -556,11 +557,13 @@ impl Vault {
     /// server, tool, endpoint and data class, on an active governing key;
     /// otherwise it escalates (a revoked key refuses). Then the key's
     /// elicitation setting, read now, decides: never allow refuses, always
-    /// allow sends, always ask asks the owner, and auto takes rule 1 under
-    /// the original grant. `answers` is the frozen answer, whose own content
-    /// class counts beside the tool's (FIX 8807); `answers_digest` names it,
-    /// for the record, never its text. Each grant, key and slate the check
-    /// reads lists on `memory`'s answer (FIX 5816).
+    /// allow sends, always ask asks the owner unless a standing grant the
+    /// owner's stop-asking press minted covers the answer (FIX 8808), and
+    /// auto takes rule 1 under the original grant. `answers` is the frozen
+    /// answer, whose own content class counts beside the tool's (FIX 8807);
+    /// `answer` names its round and digest, for the record and the owner's
+    /// consent, never its text. Each grant, key and slate the check reads
+    /// lists on `memory`'s answer (FIX 5816).
     ///
     /// # Errors
     ///
@@ -570,12 +573,12 @@ impl Vault {
         memory: &crate::memory::Memory<'_>,
         binding: &ConnectorElicitationBinding,
         answers: &serde_json::Value,
-        answers_digest: [u8; 32],
+        answer: &ConnectorElicitationAnswer<'_>,
         carries_content: bool,
     ) -> crate::Result<ElicitationAnswerVerdict> {
         let verdict = if carries_content {
             let mut read = Vec::new();
-            let verdict = self.elicitation_answer_verdict(binding, answers, &mut read);
+            let verdict = self.elicitation_answer_verdict(binding, answers, answer, &mut read);
             memory.produced_from(read);
             verdict?
         } else {
@@ -584,7 +587,7 @@ impl Vault {
         tracing::debug!(
             grant = %binding.grant_id.to_hex(),
             key = %binding.key_ref.to_hex(),
-            answers = %crate::entity_id::bytes_to_hex_lower(&answers_digest),
+            answers = %crate::entity_id::bytes_to_hex_lower(&answer.digest),
             ?verdict,
             "connector elicitation answer authorized"
         );
@@ -596,6 +599,7 @@ impl Vault {
         &self,
         binding: &ConnectorElicitationBinding,
         answers: &serde_json::Value,
+        answer: &ConnectorElicitationAnswer<'_>,
         read: &mut Vec<EntityId>,
     ) -> crate::Result<ElicitationAnswerVerdict> {
         let escalate = |reason: &str| -> crate::Result<ElicitationAnswerVerdict> {
@@ -664,7 +668,7 @@ impl Vault {
                     ElicitationAnswerVerdict::Refuse("elicitation_never_allow".to_owned())
                 }
                 crate::connector_key::SlateDisposition::AlwaysAsk => {
-                    ElicitationAnswerVerdict::AskOwner
+                    self.always_ask_elicitation_verdict(binding, answer)
                 }
                 // Rule 1 under the original grant: a reversible answer runs, and
                 // an irreversible one runs because the standing grant checked

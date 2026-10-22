@@ -27,18 +27,15 @@ use crate::driver::CdpDriver;
 use crate::driver::state::{Store, StoreRead};
 use crate::retention::HandleRetention;
 use crate::{StoragePhase, SwitchComponent, SwitchLoss, SwitchNotCarried};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-/// What a switch and the session's snapshots hold of a page at most
-/// (`switch_state_limits`, CALLS row, open). A page's cookies and storage
-/// are page-controlled input: a part past a bound is not carried, and the
-/// record says so, never cut short and called whole.
+/// What the session's snapshots hold of a page at most
+/// (`switch_state_limits`, CALLS row, open). A page's storage is
+/// page-controlled input: a snapshot past a bound is not carried, and the
+/// record says so, never cut short and called whole. A switch's own read of
+/// its cookies and its current origin's stores takes them whole (FIX 8008).
 pub(crate) struct SwitchStateLimits {
-    /// Cookies carried, in the order the source lists them.
-    pub(crate) cookies: usize,
-    /// Bytes of the carried cookies' names, values, domains and paths.
-    pub(crate) cookie_bytes: usize,
     /// Items one store holds.
     pub(crate) items: usize,
     /// UTF-16 code units of one store's keys and values: at six bytes each
@@ -65,14 +62,11 @@ pub(crate) struct SwitchStateLimits {
     pub(crate) losses: usize,
 }
 
-/// See [`SwitchStateLimits`]: as many cookies as Chromium keeps for one
-/// profile before it prunes, the five million characters Chromium grants
+/// See [`SwitchStateLimits`]: the five million characters Chromium grants
 /// one origin's store less room for its JSON, and snapshots of as many
 /// origins as a long run's tab visits, held to 64 MiB.
 pub(crate) const fn switch_state_limits() -> SwitchStateLimits {
     SwitchStateLimits {
-        cookies: 3_000,
-        cookie_bytes: 8 << 20,
         items: 10_000,
         store_chars: 4 << 20,
         origins: 256,
@@ -173,6 +167,9 @@ pub(crate) struct OriginSnapshots {
     live: u64,
     /// Pipes given a sink so far.
     pipes: u64,
+    /// The closed tabs whose snapshots were dropped: a late read of one (a
+    /// Chromium exit read that raced the close) keeps nothing (FIX 7411).
+    dropped: HashSet<String>,
 }
 
 /// The session's snapshots, shared with its engine's pipe: the pipe's
@@ -303,6 +300,7 @@ impl OriginSnapshots {
             receipt: 0,
             live: 1,
             pipes: 0,
+            dropped: HashSet::new(),
         }))
     }
 
@@ -323,7 +321,7 @@ impl OriginSnapshots {
     }
 
     fn keep(&mut self, pipe: u64, tab: &str, phase: StoragePhase, sample: Sample) {
-        if pipe != self.live {
+        if pipe != self.live || self.dropped.contains(tab) {
             return;
         }
         let Sample {
@@ -473,7 +471,7 @@ impl OriginSnapshots {
     }
 
     fn exclude(&mut self, pipe: u64, tab: &str, origin: String, reason: SwitchLoss) {
-        if pipe != self.live {
+        if pipe != self.live || self.dropped.contains(tab) {
             return;
         }
         let named = self.tabs.get(tab).is_some_and(|kept| {
@@ -503,6 +501,7 @@ impl OriginSnapshots {
         if pipe != self.live {
             return;
         }
+        self.dropped.insert(tab.to_owned());
         if let Some(gone) = self.tabs.remove(tab) {
             self.held = self.held.saturating_sub(tab_bytes(&gone));
             self.charge.resize(self.held);
@@ -648,7 +647,6 @@ pub(crate) fn switch_storage_scope(
 pub(super) fn export_stores(
     driver: &CdpDriver,
     origin: &str,
-    limits: &SwitchStateLimits,
     after: u64,
     losses: &mut Vec<SwitchNotCarried>,
 ) -> [Option<Items>; 2] {
@@ -658,7 +656,7 @@ pub(super) fn export_stores(
     let mut relaxed = false;
     for (((store, component), kept), read) in STORES.into_iter().zip(&mut stores).zip(&mut sample) {
         let loss = |reason, count| store_loss(component, origin, reason, count, (phase, after));
-        match driver.read_store(store, origin, limits) {
+        match driver.read_store(store, origin) {
             StoreRead::Items {
                 pairs,
                 chars,
@@ -681,10 +679,6 @@ pub(super) fn export_stores(
                     after,
                     relaxed: other,
                 });
-            }
-            StoreRead::Over { count } => {
-                losses.push(loss(SwitchLoss::Limit, Some(count)));
-                *read = StoreSample::Over { count };
             }
             StoreRead::Lost => losses.push(loss(SwitchLoss::ContextLost, None)),
             StoreRead::Threw => {

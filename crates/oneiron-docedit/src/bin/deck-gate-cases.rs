@@ -9,66 +9,18 @@
 //! (`office/deck_gate.py` inside that directory) runs on the Mac mini and
 //! assembles the oracle receipt. docs/ops/deck-gate.md has the commands.
 //!
+//! This binary has no Loro body, so step 4's two-peer convergence case
+//! stays inconclusive here; the gate's engine half runs the engine's
+//! `deck-gate-engine` (crates/oneiron), the same runner with that merge.
+//! `--source` names the commit the runner was built from; without it the
+//! run's provenance is recorded as missing and step 6 stays inconclusive.
+//!
 //! Exit status: 0 when every engine half passed, 1 when the run was written
 //! but an engine half failed or stayed open, 2 when no complete run was
 //! written (the journal keeps whatever cases finished).
 
-use oneiron_docedit::live::oracle_run::{RunOptions, run};
-use std::io::Write as _;
-use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: deck-gate-cases --out <new dir> [--repo <repo root>] [--corpus <dir>] [--source <revision>]";
-
-fn options(mut args: impl Iterator<Item = String>) -> Result<RunOptions, String> {
-    let mut repo = PathBuf::from(".");
-    let mut out = None;
-    let mut corpus = None;
-    let mut source = "unknown".to_owned();
-    while let Some(flag) = args.next() {
-        let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
-        match flag.as_str() {
-            "--repo" => repo = PathBuf::from(value()?),
-            "--out" => out = Some(PathBuf::from(value()?)),
-            "--corpus" => corpus = Some(PathBuf::from(value()?)),
-            "--source" => source = value()?,
-            other => return Err(format!("unknown argument {other}")),
-        }
-    }
-    Ok(RunOptions {
-        repo,
-        out: out.ok_or("--out is required")?,
-        corpus,
-        source,
-    })
-}
-
 fn main() -> ExitCode {
-    let mut stdout = std::io::stdout();
-    let mut stderr = std::io::stderr();
-    let options = match options(std::env::args().skip(1)) {
-        Ok(options) => options,
-        Err(why) => {
-            let _ = writeln!(stderr, "deck-gate-cases: {why}\n{USAGE}");
-            return ExitCode::from(2);
-        }
-    };
-    let _ = writeln!(stderr, "deck-gate-cases: writing {}", options.out.display());
-    match run(&options) {
-        Ok(summary) => {
-            for line in &summary.lines {
-                let _ = writeln!(stdout, "{line}");
-            }
-            let _ = writeln!(stdout, "manifest: {}", summary.manifest.display());
-            if summary.engine_passed {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            }
-        }
-        Err(why) => {
-            let _ = writeln!(stderr, "deck-gate-cases: {why}");
-            ExitCode::from(2)
-        }
-    }
+    oneiron_docedit::live::oracle_run::main_with("deck-gate-cases", std::env::args().skip(1), None)
 }
