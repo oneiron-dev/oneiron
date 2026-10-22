@@ -9439,6 +9439,21 @@
       "openapi": true
     },
     {
+      "name": "vault.code.type_diagnostics",
+      "description": "Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again.",
+      "input": "crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest",
+      "output": "Option<crate::code_run::ProgramStepFeedback>",
+      "call": "memory.code_run_type_diagnostics_as(&memory.embedded_owner(\"vault.code.type_diagnostics\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.waits.resolve",
       "description": "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.",
       "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",

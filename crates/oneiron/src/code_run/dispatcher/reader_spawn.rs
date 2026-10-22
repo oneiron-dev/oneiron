@@ -13,7 +13,9 @@ use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::code_run::scoped_child::{
     READER_SOURCE_NAME, SCOPED_CHILD_PORT_NOT_LENT, scoped_child_call_allowed, scoped_child_input,
 };
-use crate::code_run::storage::{NewReaderJob, ReportOutcome, SpawnAdmission, WaitSetOutcome};
+use crate::code_run::storage::{
+    NewReaderJob, ReportOutcome, SpawnAdmission, WaitSetOutcome, runs_program_steps,
+};
 use crate::code_run::types::{
     SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason,
     SelfEffect, SelfFailedResult,
@@ -423,7 +425,15 @@ impl HostSelfDispatcher<'_> {
                 .storage
                 .reduce_reader_wait(set, crate::unix_millis_now())?
             {
-                WaitSetOutcome::Reduced(result) if result.done => {
+                WaitSetOutcome::Reduced(mut result) if result.done => {
+                    // The settled children's type feedback as it stands,
+                    // beside the reduction, never kept in it (FIX 8277).
+                    let settled: Vec<EntityId> = own
+                        .iter()
+                        .filter(|job| !result.pending.contains(&job.task))
+                        .map(|job| job.run)
+                        .collect();
+                    result.program_steps = runs_program_steps(&self.storage, &settled);
                     SelfDispatchOutcome::TaskWaitSet(result)
                 }
                 WaitSetOutcome::Reduced(_) => SelfDispatchOutcome::DurableWait(SelfDurableWait {

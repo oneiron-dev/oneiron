@@ -4,6 +4,15 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Names the one program step whose type feedback the owner reads.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunTypeDiagnosticsRequest {
+    /// The step's `check_ref`, as its feedback named it:
+    /// `type_diagnostics:<run>:<step>:<invocation>`.
+    pub check_ref: String,
+}
+
 /// Names the one model whose healed-turn tally the owner reads.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

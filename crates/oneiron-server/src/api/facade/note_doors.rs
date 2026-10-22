@@ -16,6 +16,9 @@ use crate::server::SyncServer;
 
 /// A bind retains the engine's actual edit handle. Admission is checked again
 /// after its live-document turn, so waiting never extends an expired grant.
+/// A NOTE the caller's verified room holds binds to the room's hold instead
+/// (FIX 4280; Engine 10-22: bind, read and close only): it reads in the room
+/// and holds no vault document, body copy or writer.
 pub(crate) async fn vault_notes_editor_bind(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -29,6 +32,9 @@ pub(crate) async fn vault_notes_editor_bind(
         caller,
         "vault.notes.editor.bind",
         move |server, _, memory| {
+            if let Some(room) = memory.room_note_editor(&input.note_ref)? {
+                return bind_room_note(server, caller.0, &memory, room, input);
+            }
             let admitted = memory.get_entity_tolerant(&input.note_ref)?;
             if admitted.value.is_none() {
                 return Ok(ScopedReadResult {
@@ -77,6 +83,48 @@ pub(crate) async fn vault_notes_editor_bind(
         },
     )
     .await
+}
+
+/// [`vault_notes_editor_bind`] of a room NOTE: the room's read of it, then
+/// a binding to its hold, charged to the host's retained memory as a vault
+/// binding is.
+fn bind_room_note(
+    server: &SyncServer,
+    actor: EntityId,
+    memory: &oneiron::Memory<'_>,
+    room: oneiron::off_record::RoomNoteHandle,
+    input: NoteAccessRequest,
+) -> Result<ScopedReadResult<Option<NoteEditorBinding>>, MemoryError> {
+    let read = memory.read_note(&NoteReadRequest {
+        note_ref: input.note_ref,
+        reason: input.reason,
+        version: None,
+        spans: Vec::new(),
+    })?;
+    let value = match read.value {
+        Some(note) => {
+            let bytes = server
+                .retained
+                .try_reserve_alone(
+                    crate::server::NoteEditors::binding_bytes(),
+                    server.wire_telemetry.limit_questions(),
+                )
+                .ok_or_else(|| {
+                    MemoryError::new(
+                        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                        "NOTE editor binding reached the host's retained-memory floor",
+                        &[],
+                    )
+                })?;
+            let binding = server.note_editors.bind_room(actor, room, bytes)?;
+            Some(NoteEditorBinding { binding, note })
+        }
+        None => None,
+    };
+    Ok(ScopedReadResult {
+        value,
+        receipt: read.receipt,
+    })
 }
 
 /// Only the binding's own principal can close it; its id is not a credential.
