@@ -418,6 +418,40 @@ pub struct QuestionRecord {
     pub principal: EntityId,
     pub definition: QuestionDefinition<DecisionQuestion>,
     pub created_at: u64,
+    /// The class the principal authenticated as when it wrote this version
+    /// (FIX 1588): every create and edit stores it from the writer, never
+    /// from the principal's entity type. None on an internal one-off record,
+    /// which keeps no authenticated asker.
+    pub asker_class: Option<QuestionAskerClass>,
+}
+
+/// An asker's authenticated actor class, as a question version keeps it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionAskerClass {
+    Human,
+    Agent,
+    System,
+}
+
+impl From<crate::EdgeActorClass> for QuestionAskerClass {
+    fn from(class: crate::EdgeActorClass) -> Self {
+        match class {
+            crate::EdgeActorClass::Human => Self::Human,
+            crate::EdgeActorClass::Agent => Self::Agent,
+            crate::EdgeActorClass::System => Self::System,
+        }
+    }
+}
+
+impl From<QuestionAskerClass> for crate::EdgeActorClass {
+    fn from(class: QuestionAskerClass) -> Self {
+        match class {
+            QuestionAskerClass::Human => Self::Human,
+            QuestionAskerClass::Agent => Self::Agent,
+            QuestionAskerClass::System => Self::System,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
