@@ -3,8 +3,8 @@
 //! machinery, with no separate routine entity.
 //!
 //! - **Catalog.** [`callable_catalog`] lists the loadable callable skills
-//!   with their typed call contracts, so an agent can see what a helper takes
-//!   and returns before it calls one.
+//!   the caller's bound read admits, with their typed call contracts, so an
+//!   agent can see what a helper takes and returns before it calls one.
 //! - **Promotion.** An agent-born helper lands Candidate + Proposed and can
 //!   never activate itself. [`gate_callable_helper`] scores it on frozen
 //!   cases the engine splits (the author never picks the held-out half, and
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::Vault;
-use crate::claim::ClaimApprovalStatus;
+use crate::claim::{ClaimApprovalStatus, ScopedRead};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::learning::{LearningCell, LearningPredicate, TypeRef};
@@ -65,14 +65,20 @@ pub struct CallableCard {
     pub call: SkillCallContract,
 }
 
-/// Every loadable callable skill and its call contract, ordered by skill id.
+/// Every loadable callable skill `read` admits, with its call contract,
+/// ordered by skill id. The type scan only finds candidates: a helper the
+/// caller's bound read does not admit is absent, its identity, description
+/// and contract never read into a card (FIX 9958).
 ///
 /// # Errors
 ///
-/// Storage errors.
-pub fn callable_catalog(vault: &Vault) -> Result<Vec<CallableCard>> {
+/// Storage and read-lane errors.
+pub fn callable_catalog(vault: &Vault, read: &ScopedRead<'_>) -> Result<Vec<CallableCard>> {
     let mut cards = Vec::new();
     for id in vault.entities_by_type(ENTITY_TYPE_SKILL)? {
+        if !read.is_entity_readable(&id)? {
+            continue;
+        }
         let Some(record) = vault.get_skill_record(&id)? else {
             continue;
         };
