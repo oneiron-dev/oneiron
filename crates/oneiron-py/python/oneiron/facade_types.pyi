@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1136 facade rows, 3979 declarations.
+Census: 1136 facade rows, 3982 declarations.
 Inputs: 1070 of 1136 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1022 of 1136 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
@@ -15382,6 +15382,7 @@ class GraphAskOutcomeFailed(TypedDict):
     message: str
     answers: list[AnswerRecord]
     abstained: list[EntityId]
+    declined: list[GraphAskDeclined]
 GraphAskOutcome = GraphAskOutcomeDone | GraphAskOutcomeFailed
 class GraphAdmitRequest(TypedDict):
     question: DecisionQuestion
@@ -15424,11 +15425,13 @@ DecisionQuestionInput = TypedDict("DecisionQuestionInput", {"text": str, "class"
 QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinitionInput
+QuestionAskerClass = Literal["human", "agent", "system"]
 class QuestionRecord(TypedDict):
     schema_version: int
     principal: str
     definition: QuestionDefinition[DecisionQuestion]
     created_at: int
+    asker_class: NotRequired[QuestionAskerClass | None]
 class QuestionEditRequest(TypedDict):
     id: EntityId
     expected_version: int
@@ -15452,6 +15455,8 @@ class QuestionReadRequest(TypedDict):
     version: NotRequired[int | None]
 class QuestionAnswersRequest(TypedDict):
     id: EntityId
+    cursor: NotRequired[str | None]
+    page_size: NotRequired[int | None]
 class ArtifactAskStandingUnanswered(TypedDict):
     state: Literal["unanswered"]
 class ArtifactAskStandingWaiting(TypedDict):
@@ -15469,11 +15474,17 @@ class ArtifactAskRecord(TypedDict):
     asked_at: int
     proposal_ref: NotRequired[str | None]
     standing: ArtifactAskStanding
+    ask_id: NotRequired[EntityId | None]
+    failed: NotRequired[str | None]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):
     kind: Literal["artifact"]
 QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
+class QuestionAnswersPage(TypedDict):
+    answers: list[QuestionAnswer]
+    next_cursor: NotRequired[str | None]
+QuestionAnswersReply = list[QuestionAnswer] | QuestionAnswersPage
 class QuestionRefreshRequest(TypedDict):
     id: EntityId
 class QuestionOutcomesRequest(TypedDict):

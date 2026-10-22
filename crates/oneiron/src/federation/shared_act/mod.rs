@@ -14,8 +14,7 @@ pub use erase_ask::{
     EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
 };
 pub use membership::{
-    OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation,
-    SharedInvitationState,
+    OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState,
 };
 
 use super::FederationGrantRole as Role;
