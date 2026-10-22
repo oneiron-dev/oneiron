@@ -146,6 +146,34 @@ pub(super) fn media_query_projected_in(
     )
 }
 
+/// The whole BLAKE3 of exactly the bytes a model receives now for ASSET
+/// `id`'s media item, as `store` reads it ([`asset_document_projected_in`]);
+/// `None` when it holds none. A writer landing a media answer compares it
+/// with the bytes it sent: an answer of an older copy does not land.
+///
+/// # Errors
+/// A store failure, or a mark that does not decode.
+pub(super) fn media_copy_hash_in(
+    vault: &Vault,
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let Some(row) = store.port_entity_record(txn, id)? else {
+        return Ok(None);
+    };
+    let Some((_, bytes)) = super::media::asset_media(&row.body) else {
+        return Ok(None);
+    };
+    let input = masked_repo_index_input_in_txn(vault, txn, bytes)?;
+    let bytes = if input.opaque() {
+        opaque_index_text().into_bytes()
+    } else {
+        input.into_bytes()
+    };
+    Ok(Some(*blake3::hash(&bytes).as_bytes()))
+}
+
 /// Every inline ASSET whose media bytes are, by their own whole BLAKE3, a
 /// blob in `sources`: the envelope copies a mask change reaches.
 ///

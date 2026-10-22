@@ -77,6 +77,9 @@ impl SessionMediaRefusals {
 #[derive(Clone, Copy)]
 struct PassRead {
     text_hash: Option<[u8; TEXT_HASH_LEN]>,
+    /// The whole BLAKE3 of the media bytes the model was sent (FIX 7608
+    /// slice 3).
+    copy: Option<[u8; 32]>,
 }
 
 impl Vault {
@@ -177,7 +180,16 @@ impl Vault {
                 }
                 match read {
                     Some(PassRead {
+                        text_hash: None,
+                        copy: Some(sent),
+                    }) if super::repo_projection::media_copy_hash_in(self, &view, &*wtxn, id)?
+                        != Some(sent) =>
+                    {
+                        return Ok(false);
+                    }
+                    Some(PassRead {
                         text_hash: Some(embedded),
+                        ..
                     }) => {
                         let current = super::media::text_document_in(self, &view, &*wtxn, id)?;
                         if current.is_none_or(|text| super::space::text_hash(&text) != embedded) {
@@ -355,6 +367,7 @@ impl Vault {
                 &vector,
                 Some(PassRead {
                     text_hash: document.text_hash,
+                    copy: Some(*blake3::hash(&document.bytes).as_bytes()),
                 }),
                 Some(&provenance),
             ) {

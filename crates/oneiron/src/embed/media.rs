@@ -314,6 +314,14 @@ impl Vault {
                 report.vanished += 1;
                 continue;
             }
+            // A media item lands only as the copy it was sent as (FIX 7608 slice 3).
+            if item.text_hash.is_none()
+                && super::repo_projection::media_copy_hash_in(self, &self.store, &wtxn, &item.id)?
+                    != Some(*blake3::hash(&item.bytes).as_bytes())
+            {
+                report.vanished += 1;
+                continue;
+            }
             let (vector, provenance) = match outcome {
                 Ok(answer) => answer,
                 Err(reason) => {

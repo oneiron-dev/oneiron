@@ -359,7 +359,14 @@ impl Vault {
             let moved = match document.text_hash {
                 Some(hash) => super::media::text_document_in_txn(self, &wtxn, &document.id)?
                     .is_none_or(|text| super::space::text_hash(&text) != hash),
-                None => false,
+                None => {
+                    super::repo_projection::media_copy_hash_in(
+                        self,
+                        &self.store,
+                        &wtxn,
+                        &document.id,
+                    )? != Some(*blake3::hash(&document.bytes).as_bytes())
+                }
             };
             if moved
                 || self
