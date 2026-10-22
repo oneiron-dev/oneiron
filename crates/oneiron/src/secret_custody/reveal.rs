@@ -53,6 +53,7 @@ use crate::vault::Vault;
 pub(crate) use self::actor_erase::erase_reveal_actor_in_txn;
 pub(super) use self::actor_erase::names_no_actor;
 pub use self::actor_erase::{ACTOR_ERASE_REVEAL_ASK, RevealAskErase};
+pub use self::file::RepoFileRevealScope;
 pub(crate) use self::file::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
     RepoFileRevealTarget, RepoFileSight,

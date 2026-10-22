@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::branch::QueuedBranch;
 use super::super::watermark::decode_turn_body;
+use super::chunk_identity::ChunkPin;
 use super::chunks::{self, WakePreparationChunks};
 use super::{AttemptPreparation, held_round_away_in};
 use crate::attempt_queue::AttemptId;
@@ -41,12 +42,14 @@ pub(super) struct Retry {
 }
 
 /// What every retry of one wake resolves against: the wake's frozen sources,
-/// each attempt's held round and lineage, read at one snapshot.
+/// each attempt's held round and lineage, and the lane's completed chunk
+/// keys (FIX 7488), read at one snapshot.
 pub(super) struct Snapshot<'s, 't> {
     pub(super) vault: &'s Vault,
     pub(super) txn: &'s heed::RoTxn<'t>,
     pub(super) scope: DreamerConsolidationScope,
     pub(super) sources: &'s BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
+    pub(super) completed: &'s BTreeSet<String>,
     pub(super) rounds: &'s BTreeMap<[u8; 16], (String, String)>,
     pub(super) lineage: &'s BTreeMap<[u8; 16], Lineage>,
 }
@@ -69,6 +72,10 @@ impl Snapshot<'_, '_> {
         retries: Vec<Retry>,
     ) -> Result<Vec<WakePreparationChunks>> {
         let admission_time = crate::ports::job_recorded_at_in_txn(&self.vault.store, self.txn)?;
+        let pin = ChunkPin {
+            sources: self.sources,
+            completed: self.completed,
+        };
         let mut owed = Vec::new();
         for retry in retries {
             let limit = match preparations.get(&retry.attempt) {
@@ -96,6 +103,7 @@ impl Snapshot<'_, '_> {
                 retry.attempt,
                 lineage,
                 chunks::split_parts(&retry.branch, &split),
+                pin,
             ));
             if let Some(first) = first {
                 let outcome = self.drift_outcome(&retry.attempt, first)?;
@@ -113,6 +121,7 @@ impl Snapshot<'_, '_> {
                 retry.attempt,
                 lineage,
                 chunks::overflow_chunks(&retry.branch, overflow, limit),
+                pin,
             ));
         }
         Ok(owed)
@@ -253,6 +262,7 @@ fn widen(
                 conversation_ref: part.conversation_ref,
                 turns: kept.remove(index).unwrap_or_default(),
                 watermark_last_learned_at: part.watermark_last_learned_at,
+                line: part.line,
             }
         })
         .collect();

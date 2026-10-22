@@ -1,3 +1,7 @@
+//! Code conflict doors: record a conflict and read its history.
+//! `Memory::code_conflict_record_as` is its call surface.
+//! `memory::code_doors::conflict_types` defines the records these return.
+
 use super::*;
 use crate::repo_mutation::RepoConflictClaim;
 

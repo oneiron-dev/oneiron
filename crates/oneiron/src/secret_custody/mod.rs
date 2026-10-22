@@ -139,9 +139,9 @@ pub use self::owner_door::{
 };
 pub use self::reveal::{
     ACTOR_ERASE_REVEAL_ASK, HandleReveal, NO_PROJECT_SELECTOR, OwnerSecretReveal,
-    REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RevealAskErase,
-    RevealTarget, SECRET_REVEAL_REASON_ASKED, SECRET_REVEAL_REASON_OWNER, SecretHandleCard,
-    SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
+    REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RepoFileRevealScope,
+    RevealAskErase, RevealTarget, SECRET_REVEAL_REASON_ASKED, SECRET_REVEAL_REASON_OWNER,
+    SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
     SecretRevealDecision, SecretRevealReceipt, SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
 };
 pub(crate) use self::reveal::{
@@ -156,6 +156,9 @@ pub(crate) use self::storage_seal::{
     credentials_eligible_for_heads, image_credential_row, plan_archived_credentials,
     put_stored_custody_in_txn, read_secret_custody_meta_in_txn, read_stored_custody_in_txn,
     stored_value_held_in_txn, stored_value_opens_in_txn,
+};
+pub(crate) use self::storage_seal::{
+    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::moves_custody_floor;

@@ -1,5 +1,6 @@
 //! New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert.
 
+use super::budget::{charge_once, co_actor_exhausted, rate_paced, rate_window_result};
 use super::dedupe;
 use super::replay::{
     effect_result, gate_rejection, replay_record, send_admitted, suppression_result,
@@ -12,10 +13,7 @@ use super::types::{
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::connector_key::{
-    self, ConnectorKeyStatus, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
-    EffectorBudgetOnExhaust,
-};
+use crate::connector_key;
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
 use crate::outbound::validate_publisher_signature_in_txn;
@@ -411,6 +409,23 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
         _ => true,
     };
+    // FIX 8788: a Linear mutation whose only full rows are Rate windows that
+    // refuse waits for them: dropping the writer leaves nothing recorded,
+    // bound or charged.
+    if co_governance.is_some() {
+        let co = co_governance.as_mut().filter(|_| co_key_distinct);
+        if rate_paced(
+            vault,
+            &mut wtxn,
+            &mut governance,
+            co,
+            prepared.budget_class,
+            co_pool,
+        )? {
+            drop(wtxn);
+            return Ok(rate_window_result(intent_id));
+        }
+    }
     let co_exhausted = match co_governance.as_mut() {
         Some(co) if co_key_distinct => {
             co_actor_exhausted(vault, &mut wtxn, co, prepared.budget_class, now_ms, co_pool)?
@@ -627,114 +642,6 @@ pub(super) fn enforce_step_failure_policy(
         return Err(IntentLedgerError::FailureResultIneligible);
     }
     Ok(())
-}
-
-/// OF-427: whether a co-actor's own (distinct) connector key is exhausted.
-/// An exhausted key goes through the regular charger, which applies its
-/// suspend-on-exhaust without debiting it, and the co-actor's decision turns
-/// into a budget-exhausted denial. Nothing else has been charged yet.
-fn co_actor_exhausted(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    co: &mut gate::ExternalEffectGovernance,
-    budget_class: BudgetClass,
-    now_ms: u64,
-    pool: bool,
-) -> Result<bool, IntentLedgerError> {
-    let Some(target) = co.budget_target_mut() else {
-        return Ok(false);
-    };
-    let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    if connector_key::preflight_effector_budgets_pooled(
-        &vault.store,
-        wtxn,
-        &target.key_id,
-        &target.key,
-        &target.governing_connector,
-        budget_class.is_send(),
-        now,
-        pool,
-    )?
-    .is_none()
-    {
-        return Ok(false);
-    }
-    let (_, _, exhausted) = charge_once(vault, wtxn, co, budget_class, now_ms, pool)?;
-    if !exhausted {
-        return Err(Error::InvariantViolation("co-actor budget preflight diverged").into());
-    }
-    co.deny_budget_exhausted();
-    Ok(true)
-}
-
-fn charge_once(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    governance: &mut gate::ExternalEffectGovernance,
-    budget_class: BudgetClass,
-    now_ms: u64,
-    pool: bool,
-) -> Result<(BudgetChargeMarker, Option<EffectorBudgetCharge>, bool), IntentLedgerError> {
-    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    let Some(target) = governance.budget_target_mut() else {
-        return Ok((
-            BudgetChargeMarker {
-                key_ref: None,
-                budget_class,
-                matched_rows: Vec::new(),
-                sends_debit: 0,
-                accounted_at_ms: now_ms,
-            },
-            None,
-            false,
-        ));
-    };
-    // Budget windows are enforcement state, so they advance on the engine's
-    // trusted clock rather than a caller-supplied occurrence timestamp. This
-    // also keeps the post-charge echo aligned with `effector_budget_read`.
-    let budget_now = mutation_recorded_at;
-    let outcome = connector_key::charge_effector_budgets_pooled(
-        &vault.store,
-        wtxn,
-        &target.key_id,
-        &mut target.key,
-        &target.governing_connector,
-        budget_class.is_send(),
-        budget_now,
-        pool,
-    )?;
-    let (mut charge, exhausted) = match outcome {
-        EffectorBudgetChargeOutcome::NoRows(charge)
-        | EffectorBudgetChargeOutcome::Charged(charge) => (charge, false),
-        EffectorBudgetChargeOutcome::Exhausted {
-            row_index,
-            on_exhaust,
-            mut charge,
-        } => {
-            if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                connector_key::suspend_connector_key_in_txn(
-                    &vault.store,
-                    wtxn,
-                    &target.key_id,
-                    &target.key,
-                    connector_key::budget_exhausted_reason(row_index),
-                    now_ms,
-                )?;
-                charge.read.status = ConnectorKeyStatus::Suspended;
-            }
-            (charge, true)
-        }
-    };
-    charge.matched_rows.sort_unstable();
-    charge.matched_rows.dedup();
-    let marker = BudgetChargeMarker {
-        key_ref: Some(charge.key_ref),
-        budget_class,
-        matched_rows: charge.matched_rows.clone(),
-        sends_debit: charge.sends_debit,
-        accounted_at_ms: now_ms,
-    };
-    Ok((marker, Some(charge), exhausted))
 }
 
 pub(super) fn verify_booking_effect(

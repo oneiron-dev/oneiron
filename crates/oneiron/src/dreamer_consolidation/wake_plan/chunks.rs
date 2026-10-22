@@ -11,11 +11,14 @@
 //! same scoped read at its own wake. A source that fails there refuses or
 //! defers that chunk alone, never the retry.
 //!
-//! A multi-part branch's part that cannot be read whole at the snapshot is
-//! owed the same way (FIX 7524, Engine ruling B): a one-part sibling of the
-//! same thing and watermark, so the other parts run. Every sibling names the
-//! attempt that first owed its work (`origin`), which the nightly merge fans
-//! it in beside.
+//! A multi-part branch's part that cannot be read whole at the snapshot, or
+//! that the wake's host scope does not name (FIX 7728), is owed the same way
+//! (FIX 7524, Engine ruling B): a one-part sibling of the same thing and
+//! watermark, so the other parts run. Every sibling names the attempt that
+//! first owed its work (`origin`), which the nightly merge fans it in
+//! beside. A chunk is keyed by its exact lineage and TURN versions
+//! (`chunk_identity`, FIX 7488): one that already completed is not owed
+//! again.
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::ConversationPart;
@@ -27,6 +30,7 @@ use crate::dreamer_runner::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, Result, Vault};
 
+use super::chunk_identity::ChunkPin;
 use super::retry::Lineage;
 
 /// The widening floor a sibling chunk is queued with. No TURN is learned at
@@ -34,7 +38,7 @@ use super::retry::Lineage;
 /// deferred chunk never splits its conversation again.
 const CHUNK_WIDENS_NOTHING: u64 = u64::MAX;
 
-/// The work one prepared attempt owes as siblings.
+/// The work one prepared attempt owes as siblings, each chunk with its key.
 #[derive(Debug, Clone)]
 pub(super) struct WakePreparationChunks {
     /// The attempt whose preparation owed them.
@@ -42,17 +46,35 @@ pub(super) struct WakePreparationChunks {
     origin: AttemptId,
     parent: Option<AttemptId>,
     run_id: Option<String>,
-    chunks: Vec<QueuedBranch>,
+    chunks: Vec<(QueuedBranch, String)>,
 }
 
 impl WakePreparationChunks {
-    /// `chunks` owed by `source` under its `lineage`; `None` when there are
-    /// none.
+    /// `chunks` owed by `source` under its `lineage`, each keyed at `pin`;
+    /// a chunk that already completed at the pin's versions is not owed
+    /// again. `None` when none is left.
     pub(super) fn new(
         source: [u8; 16],
         lineage: &Lineage,
         chunks: Vec<QueuedBranch>,
+        pin: ChunkPin<'_>,
     ) -> Option<Self> {
+        let offered = chunks.len();
+        let chunks: Vec<(QueuedBranch, String)> = chunks
+            .into_iter()
+            .map(|chunk| {
+                let key = pin.key(&chunk, lineage);
+                (chunk, key)
+            })
+            .filter(|(_, key)| !pin.completed(key))
+            .collect();
+        if chunks.len() < offered {
+            tracing::debug!(
+                retry = %bytes_to_hex_lower(&source),
+                done = offered - chunks.len(),
+                "owed chunks that already completed at the same versions are not owed again"
+            );
+        }
         if chunks.is_empty() {
             return None;
         }
@@ -78,14 +100,14 @@ impl WakePreparationChunks {
         let now = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
         let source = AttemptId::from_bytes(&self.source)?;
         let mut queued = 0_usize;
-        for chunk in &self.chunks {
+        for (chunk, key) in &self.chunks {
             let outcome = store.enqueue_consolidation_in_txn(
                 txn,
                 EnqueueDreamerConsolidationAttempt {
                     scope,
                     input: super::super::partition::encode_branch_payload(chunk, Some(self.origin)),
                     parent_attempt: self.parent,
-                    dedupe_key: Some(self.chunk_key(chunk)),
+                    dedupe_key: Some(key.clone()),
                     run_id: self.run_id.clone(),
                     now,
                 },
@@ -114,31 +136,6 @@ impl WakePreparationChunks {
             }
         }
         Ok(queued)
-    }
-
-    /// One chunk's advisory dedupe key, by the exact turns it owes under its
-    /// parent and branch: a retry prepared again re-queues no chunk that is
-    /// still pending. A one-part chunk's branch identity is its partition's
-    /// hash, the key it had.
-    fn chunk_key(&self, chunk: &QueuedBranch) -> String {
-        let turns = chunk.turn_ids();
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron:dreamer:retry-chunk:v1");
-        hasher.update(&chunk.identity());
-        match self.parent {
-            Some(parent) => {
-                hasher.update(&[1]);
-                hasher.update(parent.as_bytes());
-            }
-            None => {
-                hasher.update(&[0]);
-            }
-        }
-        hasher.update(&(turns.len() as u64).to_be_bytes());
-        for turn in &turns {
-            hasher.update(turn.as_bytes());
-        }
-        format!("retry-chunk:{}", hasher.finalize().to_hex())
     }
 }
 
@@ -186,6 +183,7 @@ pub(super) fn overflow_chunks(
                 conversation_ref: part.conversation_ref,
                 turns: chunk.to_vec(),
                 watermark_last_learned_at: CHUNK_WIDENS_NOTHING,
+                line: 0,
             }],
         }));
     }

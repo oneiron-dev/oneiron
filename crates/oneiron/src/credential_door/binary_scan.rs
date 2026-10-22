@@ -26,8 +26,8 @@
 use std::io::Cursor;
 
 use super::door_types::{
-    CredentialDoorError, DoorResult, DoorScanVerdict, PushedBlob, ReceiveScanDisposition,
-    SecretLiftProposal,
+    CheckoutSecretLiftProposal, CredentialDoorError, DoorResult, DoorScanVerdict, PushedBlob,
+    ReceiveScanDisposition,
 };
 // The hit's types live with the verdict that carries them; this module's
 // old path still names them.
@@ -133,7 +133,7 @@ pub(super) fn resolve_receive_scan_hits(
                     binary = hit.content_kind == ReceiveBlobKind::Binary,
                     "receive scan hit refused with lift advice"
                 );
-                proposals.push(SecretLiftProposal::new(repo, &hit.path, hit.reason));
+                proposals.push(CheckoutSecretLiftProposal::new(repo, &hit.path, hit.reason));
             }
             Ok(DoorScanVerdict::Rejected { proposals, hits })
         }
