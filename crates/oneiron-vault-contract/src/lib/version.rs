@@ -227,6 +227,22 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// at most one final LF, or the boot is refused, with no reader of another
 /// form kept. No `Ping` field is added and this version stays 3.
 ///
+/// VM trusted organ builds (FIX 7889): the config drive's
+/// `/config/trusted-organ-builds`
+/// ([`VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE`](crate::vm::VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE)),
+/// one organ build's blake3 per line, which the image's init passes to an
+/// open's or a cold restore's engine as one `--trusted-organ-build` each,
+/// carries a build floor, at the engine revision it merged in, proven by the
+/// image manifest's required `vm_trusted_organ_builds_revision` 1
+/// ([`VM_TRUSTED_ORGAN_BUILDS_REVISION`](crate::vm::VM_TRUSTED_ORGAN_BUILDS_REVISION)).
+/// An image before the floor ignores the file, so every pack organ build in
+/// its vault runs as third party: a supervisor checks the revision, the
+/// manifest's hashes and the merge floor before it stages a list, and counts
+/// a list applied only on an image at or after the floor. No file, or an
+/// empty one, lists none; a line the flag's parser refuses refuses the boot,
+/// as the flag does on a node, with no reader of another form kept. No
+/// `Ping` field is added and this version stays 3.
+///
 /// Guest runtime fact (FIX 7670): `--guest-runtime-fact`
 /// ([`GUEST_RUNTIME_FACT_ARG`](crate::GUEST_RUNTIME_FACT_ARG)) carries the
 /// trusted supervisor's one observation of the guest runtime it provisioned

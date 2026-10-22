@@ -118,6 +118,14 @@ pub trait SlideRenderer: Send + Sync {
         let _ = bytes;
         Ok(())
     }
+    /// Name `reserved` of the bytes admitted allocated, as the `actual` bytes
+    /// the caller now holds (FIX 8240): an exact reservation made, what an
+    /// estimate came to, room left unused (`actual` 0), or bytes read before
+    /// their size was known (`reserved` 0). Only bookkeeping: it never waits
+    /// or refuses. A renderer that keeps no account of memory ignores it.
+    fn materialized(&self, reserved: u64, actual: u64) {
+        let _ = (reserved, actual);
+    }
 }
 
 /// User-configured display words, including the severity words in comments.

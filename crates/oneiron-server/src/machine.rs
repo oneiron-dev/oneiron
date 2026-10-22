@@ -385,11 +385,12 @@ fn memory_reserve(total: u64) -> u64 {
 ///
 /// A lease of `bytes` is admitted when the memory available now (read live,
 /// [`oneiron_contracts::limit_ask::available_memory_bytes`]), less the
-/// reserve ([`memory_reserve`]) and the bytes of every other live lease,
-/// still holds them. A lease whose memory is already allocated is counted
-/// twice, once in what the machine reads as used and once as a lease: that
-/// only delays admission and never overcommits. Where available memory
-/// cannot be read, leases are counted against the machine's whole memory
+/// reserve ([`memory_reserve`]) and the pending bytes of every other live
+/// lease, still holds them. Leased bytes are pending until their holder
+/// names them allocated ([`MemoryLease::materialized`], FIX 8240): the
+/// machine's reading already shows those as used, so they are not counted a
+/// second time. Where available memory cannot be read, every leased byte,
+/// pending or allocated, is counted against the machine's whole memory
 /// instead; nothing is admitted unaccounted.
 ///
 /// Waiters queue first in, first out: a later request never takes room an
@@ -420,6 +421,8 @@ struct MemoryShared {
 struct MemoryLine {
     /// Bytes every live lease holds.
     leased: u64,
+    /// The part of `leased` not yet named allocated.
+    pending: u64,
     /// The ticket the next waiter takes.
     next_ticket: u64,
     /// Waiting tickets, the head first: only the head may be admitted.
@@ -433,6 +436,8 @@ struct MemoryLine {
 pub(crate) struct MemoryLease {
     shared: Arc<MemoryShared>,
     bytes: u64,
+    /// The part of `bytes` not yet named allocated.
+    pending: u64,
 }
 
 /// Why [`MachineMemory::lease`] admitted nothing.
@@ -525,25 +530,39 @@ impl MachineMemory {
         }
     }
 
+    /// A lease of no bytes, taken without waiting: one a holder grows as it
+    /// allocates and names allocated what it already read
+    /// ([`MemoryLease::materialized`]). It admits nothing itself.
+    pub(crate) fn empty_lease(&self) -> MemoryLease {
+        MemoryLease {
+            shared: Arc::clone(&self.shared),
+            bytes: 0,
+            pending: 0,
+        }
+    }
+
     fn admit(&self, line: &mut MemoryLine, bytes: u64) -> MemoryLease {
         line.leased = line.leased.saturating_add(bytes);
+        line.pending = line.pending.saturating_add(bytes);
         MemoryLease {
             shared: Arc::clone(&self.shared),
             bytes,
+            pending: bytes,
         }
     }
 }
 
 impl MemoryShared {
     /// Whether `bytes` more leave the reserve free past every live lease,
-    /// measured now: against the memory available, or the machine's whole
-    /// memory where that cannot be read.
+    /// measured now: against the memory available, past the leases' pending
+    /// bytes, or the machine's whole memory, past every leased byte, where
+    /// that cannot be read (FIX 8240).
     fn fits(&self, line: &MemoryLine, bytes: u64) -> bool {
-        oneiron_contracts::limit_ask::available_memory_bytes()
-            .unwrap_or(self.total)
-            .saturating_sub(self.reserve)
-            .saturating_sub(line.leased)
-            >= bytes
+        let (room, held) = match oneiron_contracts::limit_ask::available_memory_bytes() {
+            Some(available) => (available, line.pending),
+            None => (self.total, line.leased),
+        };
+        room.saturating_sub(self.reserve).saturating_sub(held) >= bytes
     }
 }
 
@@ -577,11 +596,32 @@ impl MemoryLease {
             shared: Arc::clone(&self.shared),
         };
         let mut grown = machine.lease_until(more, deadline, stopped)?;
-        // The growth's bytes move into this lease; the emptied one gives
-        // back nothing as it drops.
+        // The growth's bytes, pending, move into this lease; the emptied one
+        // gives back nothing as it drops.
         self.bytes = whole;
+        self.pending = self.pending.saturating_add(grown.pending);
         grown.bytes = 0;
+        grown.pending = 0;
         Ok(())
+    }
+
+    /// Names `reserved` of this lease's pending bytes allocated, as `actual`
+    /// bytes now held (FIX 8240): the lease then holds `actual` in their
+    /// place, and the live reading, which shows them as used, is no longer
+    /// charged them twice. `(n, n)` names a reservation made; `(estimate,
+    /// made)` keeps what was made of an estimate; `(room, 0)` gives back room
+    /// left unused; `(0, read)` records bytes read before their size was
+    /// known. Never waits or refuses; `reserved` past the lease's pending
+    /// bytes counts as all of them.
+    pub(crate) fn materialized(&mut self, reserved: u64, actual: u64) {
+        let reserved = reserved.min(self.pending);
+        let mut line = lock(&self.shared.line);
+        line.pending = line.pending.saturating_sub(reserved);
+        line.leased = line.leased.saturating_sub(reserved).saturating_add(actual);
+        self.pending -= reserved;
+        self.bytes = self.bytes.saturating_sub(reserved).saturating_add(actual);
+        drop(line);
+        self.shared.changed.notify_all();
     }
 }
 
@@ -589,6 +629,7 @@ impl Drop for MemoryLease {
     fn drop(&mut self) {
         let mut line = lock(&self.shared.line);
         line.leased = line.leased.saturating_sub(self.bytes);
+        line.pending = line.pending.saturating_sub(self.pending);
         drop(line);
         self.shared.changed.notify_all();
     }
