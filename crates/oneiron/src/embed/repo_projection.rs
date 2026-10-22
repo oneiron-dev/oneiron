@@ -162,7 +162,11 @@ pub(super) fn media_copy_hash_in(
     let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let Some((_, bytes)) = super::media::asset_media(&row.body) else {
+    // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+    let Some((_, bytes)) = crate::memory::asset_media_in(&row.body, |blob| {
+        Ok(store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+    })?
+    else {
         return Ok(None);
     };
     let input = masked_repo_index_input_in_txn(vault, txn, bytes)?;

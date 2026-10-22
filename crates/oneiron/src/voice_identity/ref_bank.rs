@@ -362,71 +362,6 @@ fn limits_for(
         .ok_or_else(|| invalid("invalid voice reference policy"))
 }
 
-fn validate_provider_value(value: &str, max_bytes: u64) -> Result<()> {
-    if value.trim().is_empty() || value.contains('\0') || value.len() as u64 > max_bytes {
-        return Err(invalid("invalid voice provider value"));
-    }
-    Ok(())
-}
-
-fn validate_target_record(
-    record: &VoiceTargetRecord,
-    voice_id: &str,
-    target: &str,
-    limits: VoiceRefLimits,
-) -> Result<()> {
-    if record.voice_id != voice_id
-        || record.target != target
-        || record.cloned_at == 0
-        || record.source_packs.is_empty()
-        || validate_provider_value(&record.vendor_voice_id, limits.max_vendor_voice_id_bytes)
-            .is_err()
-    {
-        return Err(invalid("corrupt voice target clone"));
-    }
-    Ok(())
-}
-
-impl VoiceRefPack {
-    fn validate(&self, limits: VoiceRefLimits) -> Result<()> {
-        valid_id(&self.id)?;
-        valid_id(&self.voice_id)?;
-        if self.version != 1 {
-            return Err(invalid("unsupported voice reference pack version"));
-        }
-        match &self.origin {
-            VoiceRefOrigin::Designed { vendor } => {
-                validate_provider_value(vendor, limits.max_design_vendor_bytes)?;
-            }
-            VoiceRefOrigin::Captured { consent_event_ref } => valid_id(consent_event_ref)?,
-            VoiceRefOrigin::Generated => {}
-        }
-        if self.clips.is_empty()
-            || self.clips.len() as u64 > limits.max_clips_per_pack
-            || self
-                .clips
-                .iter()
-                .try_fold(0u64, |total, c| total.checked_add(c.audio.len() as u64))
-                .is_none_or(|bytes| bytes > limits.max_audio_bytes_per_pack)
-        {
-            return Err(invalid("invalid voice reference pack size"));
-        }
-        let mut names = BTreeSet::new();
-        for clip in &self.clips {
-            if clip.register.trim().is_empty()
-                || clip.register.len() as u64 > limits.max_register_bytes
-                || !names.insert(&clip.register)
-                || !clip.media_type.starts_with("audio/")
-                || clip.audio.is_empty()
-                || clip.transcript.len() as u64 > limits.max_transcript_bytes
-            {
-                return Err(invalid("invalid voice reference clip"));
-            }
-        }
-        Ok(())
-    }
-}
-
 pub(super) fn delete_owner_refs(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -704,7 +639,7 @@ fn store_pack_in(
     pack: &VoiceRefPack,
     bytes: &[u8],
 ) -> Result<()> {
-    pack.validate(limits_for(store, &txn, &pack.owner)?)?;
+    validation::validate_pack_integrity(pack)?;
     if let Some(existing) = PACKS.get_bytes(store, &txn, &pack.id)? {
         if existing != bytes {
             return Err(invalid("voice reference pack id already exists"));
@@ -762,6 +697,9 @@ fn store_pack_in(
     if identity.owner != pack.owner {
         return Err(invalid("voice identity owner mismatch"));
     }
+    // Its count and sizes are measured against the owner's rows, never
+    // refused for them (FIX 10177).
+    validation::measure_pack_intake(pack, limits_for(store, &txn, &pack.owner)?);
     identity.pack_ids.push(pack.id.clone());
     PACKS.put(store, &mut txn, &pack.id, pack)?;
     IDENTITIES.put(store, &mut txn, &pack.voice_id, &identity)?;
@@ -804,8 +742,8 @@ fn record_target_clone_in(
     let owner = read_identity(store, &txn, &request.voice_id)?
         .ok_or_else(|| invalid("unknown voice identity"))?
         .owner;
-    let limits = limits_for(store, &txn, &owner)?;
-    validate_target_record(&record, &request.voice_id, &request.target, limits)?;
+    validation::validate_target_integrity(&record, &request.voice_id, &request.target)?;
+    validation::measure_target_intake(&record, limits_for(store, &txn, &owner)?);
     if let Some(existing) = read_row(
         TARGETS,
         store,
@@ -813,7 +751,7 @@ fn record_target_clone_in(
         &target_key,
         "corrupt voice target clone",
     )? {
-        validate_target_record(&existing, &request.voice_id, &request.target, limits)?;
+        validation::validate_target_integrity(&existing, &request.voice_id, &request.target)?;
         if existing.source_packs == request.source_packs
             && existing.ref_digest == request.ref_digest
         {
@@ -886,10 +824,7 @@ fn current_target(
         return Ok(None);
     };
     let selected = select_clone(store, txn, voice_id, target, include_generated, locality)?;
-    let owner = read_identity(store, txn, voice_id)?
-        .ok_or_else(|| invalid("unknown voice identity"))?
-        .owner;
-    validate_target_record(&record, voice_id, target, limits_for(store, txn, &owner)?)?;
+    validation::validate_target_integrity(&record, voice_id, target)?;
     if record.source_packs != selected.source_packs || record.ref_digest != selected.ref_digest {
         return Ok(None);
     }
@@ -1012,7 +947,9 @@ fn read_pack(
     else {
         return Ok(None);
     };
-    pack.validate(limits_for(store, txn, &pack.owner)?)?;
+    // Integrity alone: a lowered intake row never strands a banked pack's
+    // withdrawal or eviction (FIX 10220).
+    validation::validate_pack_integrity(&pack)?;
     if pack.id != id {
         return Err(invalid("voice reference key mismatch"));
     }
@@ -1029,6 +966,9 @@ mod owner_acts;
 // Every render decision, kept once beside the current one (FIX 4396).
 #[path = "ref_bank/render_history.rs"]
 mod render_history;
+// Stored packs checked for integrity, new intake measured (FIX 10177, FIX 10220).
+#[path = "ref_bank/validation.rs"]
+mod validation;
 pub use actor::{VoiceBankActor, VoiceCreator};
 pub use owner_acts::{
     VoiceBankInspection, VoiceClipSummary, VoiceIdentityView, VoicePackSummary,

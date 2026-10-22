@@ -147,7 +147,9 @@ pub use asset_resolve::{
     LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
     pull_image, resolve_audio_ref, resolve_image_ref,
 };
-pub(crate) use asset_resolve::{asset_audio_in_lane, asset_image_in_lane};
+pub(crate) use asset_resolve::{
+    asset_audio_in_lane, asset_image_in_lane, asset_media_in, release_asset_blob_in_txn,
+};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,

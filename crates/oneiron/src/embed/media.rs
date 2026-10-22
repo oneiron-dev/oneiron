@@ -602,7 +602,11 @@ pub(super) fn asset_document_in(
     };
     let learned_at = row.learned_at;
     let raw = row.encode();
-    let Some((media_type, bytes)) = raw.get(ENTITY_METADATA_HEADER_LEN..).and_then(asset_media)
+    let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+    let Some((media_type, bytes)) = crate::memory::asset_media_in(body, |blob| {
+        Ok(store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+    })?
     else {
         report.no_media += 1;
         return Ok(None);
