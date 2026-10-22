@@ -6,7 +6,7 @@
 
 use crate::{
     BatchOutput, BrowserDriver, BrowserError, EffectReceipt, ExpectInput, ExpectOutput,
-    FieldTextReason, Observation, ObservationBase, ObserveInput, SubgoalStatus,
+    FieldTextReason, Observation, ObservationBase, ObserveInput, StepStop, SubgoalStatus,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -270,6 +270,18 @@ impl From<BrowserError> for Stop {
     fn from(error: BrowserError) -> Self {
         Self::new(BatchStopCause::of(&error), error)
     }
+}
+
+/// Notes `stop`, which stopped a `step` step, in `driver`'s history (CUA
+/// E7): its cause and code, and the receipt of an effect it made first.
+pub(crate) fn noted<D: BrowserDriver + ?Sized>(driver: &mut D, step: &str, stop: &Stop) {
+    driver.note_stop(StepStop {
+        step: step.to_owned(),
+        cause: stop.cause.clone(),
+        error: stop.code(),
+        receipt: stop.receipt.as_ref().map(|receipt| receipt.seq),
+        effect_class: None,
+    });
 }
 
 /// `output`, its batch started at `started`, stopped at step `step` by

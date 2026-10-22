@@ -13,7 +13,7 @@ use crate::observation::splice_of;
 use crate::stop::elapsed_ms;
 use crate::{
     BatchOutput, BatchStep, BatchStopCause, BrowserDriver, FailedStepReceipt, Observation,
-    ObserveInput, SubgoalStatus,
+    ObserveInput, StepStop, SubgoalStatus,
 };
 
 /// The steps in a row that count and leave the page unchanged before the
@@ -136,6 +136,19 @@ fn unchanged(was: Option<&Observation>, now: Option<&Observation>) -> bool {
     }
     let (splice, rows) = splice_of(&was.rows, &now.rows);
     splice.delete_count == 0 && rows.is_empty()
+}
+
+/// The stop a batch's history notes when it went up for no progress at a
+/// `step` step (CUA E7): the receipt of that step's effect, which ran,
+/// marked failed with it.
+pub(crate) fn no_progress(step: &str, receipt: Option<u64>) -> StepStop {
+    StepStop {
+        step: step.to_owned(),
+        cause: BatchStopCause::NoProgress,
+        error: NO_PROGRESS.to_owned(),
+        receipt,
+        effect_class: None,
+    }
 }
 
 /// `output`, gone up to the planner for no progress at step `step`, the

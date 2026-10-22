@@ -6289,6 +6289,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.browser.library.draft",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryDraftInput,
+                    >,
+                >(),
+            ),
+            (
                 "self.browser.library.propose",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<
@@ -7319,6 +7327,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.browser.zoom",
     "self.browser.batch",
     "self.browser.library.find",
+    "self.browser.library.draft",
     "self.browser.library.propose",
     "self.browser.library.retire",
     "self.browser.library.retired",
@@ -9643,6 +9652,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.browser.library.find" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserLibraryFindOutput,
+        >(),
+        "self.browser.library.draft" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryDraftOutput,
         >(),
         "self.browser.library.propose" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserLibraryProposeOutput,
@@ -17578,6 +17590,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.browser.library.draft" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.browser.library.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21533,6 +21552,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 crate::task_verb::sdk::BrowserLibraryFindInput,
             > = decode(value.clone())?;
         }
+        "self.browser.library.draft" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryDraftInput,
+            > = decode(value.clone())?;
+        }
         "self.browser.library.propose" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::task_verb::sdk::BrowserLibraryProposeInput,
@@ -21653,6 +21677,9 @@ pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryRe
         }
         "self.browser.library.find" => {
             let _input: crate::task_verb::sdk::BrowserLibraryFindInput = decode(value.clone())?;
+        }
+        "self.browser.library.draft" => {
+            let _input: crate::task_verb::sdk::BrowserLibraryDraftInput = decode(value.clone())?;
         }
         "self.browser.library.propose" => {
             let _input: crate::task_verb::sdk::BrowserLibraryProposeInput = decode(value.clone())?;
@@ -23773,6 +23800,7 @@ pub fn invoke(
         "self.browser.zoom" => encode(self_browser_zoom(memory, decode(value)?)?),
         "self.browser.batch" => encode(self_browser_batch(memory, decode(value)?)?),
         "self.browser.library.find" => encode(self_browser_library_find(memory, decode(value)?)?),
+        "self.browser.library.draft" => encode(self_browser_library_draft(memory, decode(value)?)?),
         "self.browser.library.propose" => {
             encode(self_browser_library_propose(memory, decode(value)?)?)
         }
@@ -23925,6 +23953,12 @@ pub fn invoke_browser(
             let input: crate::task_verb::sdk::BrowserLibraryFindInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = oneiron_browser::BrowserAnswer::of(driver.library_find(input)?);
+            serde_json::to_value(output)
+        }
+        "self.browser.library.draft" => {
+            let input: crate::task_verb::sdk::BrowserLibraryDraftInput =
+                serde_json::from_value(value).map_err(invalid)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.library_draft(input)?);
             serde_json::to_value(output)
         }
         "self.browser.library.propose" => {
@@ -33506,6 +33540,12 @@ pub fn self_browser_library_find(
     input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>,
 ) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryFindOutput> {
     crate::task_verb::sdk::host_only(memory, "self.browser.library.find", &input)
+}
+pub fn self_browser_library_draft(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryDraftInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryDraftOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.draft", &input)
 }
 pub fn self_browser_library_propose(
     memory: &Memory<'_>,

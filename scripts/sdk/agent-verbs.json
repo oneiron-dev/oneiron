@@ -14110,6 +14110,23 @@
       }
     },
     {
+      "name": "self.browser.library.draft",
+      "description": "Drafts a proposal from this session's receipts and stops on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press.",
+      "input": "crate::task_verb::sdk::BrowserLibraryDraftInput",
+      "output": "crate::task_verb::sdk::BrowserLibraryDraftOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.library_draft(input)?)",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryDraftInput>",
+        "description": "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
       "name": "self.browser.library.propose",
       "description": "Offers a solved run's program, fill steps too, to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires.",
       "input": "crate::task_verb::sdk::BrowserLibraryProposeInput",

@@ -9995,6 +9995,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_browser_library_draft(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.library.draft", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_browser_library_propose(
         &self,
         input: serde_json::Value,

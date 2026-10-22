@@ -650,7 +650,7 @@ impl BrowserSession {
         let drained = self.driver.drain_visits();
         let shown = drained.get(&tab).map(|shown| shown.origins.clone());
         self.history.absorb(drained, limits.origins);
-        let after = self.receipt_seq;
+        let after = self.landed_seq();
         let mut state = export(&self.driver, &limits, after, with_scroll, losses);
         let visited = self.history.tabs.get(&tab);
         if let Some(collector) = &self.snapshots {
@@ -750,6 +750,12 @@ impl BrowserSession {
             engine_switch: Some(record),
             text_source: None,
             text_ref: None,
+            // No replay step switches engines: a draft names it a gap.
+            action: None,
+            source_url: None,
+            source_origin: None,
+            tab: None,
+            result_tab: None,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };
@@ -763,7 +769,7 @@ impl BrowserSession {
             }
             self.receipt_sink = Some(sink);
         }
-        self.receipts.push(receipt.clone());
+        self.keep(receipt.clone());
         self.landed();
         receipt
     }

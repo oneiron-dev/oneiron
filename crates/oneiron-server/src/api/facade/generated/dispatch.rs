@@ -34935,6 +34935,47 @@ async fn self_browser_library_find(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn self_browser_library_draft(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.library.draft")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.library.draft", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.browser.library.draft", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_browser_library_draft(
+            server,
+            auth,
+            call.session()?,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn self_browser_library_propose(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37310,6 +37351,7 @@ pub(crate) async fn call_verb(
         "self.browser.zoom" => self_browser_zoom(server, call, input).await,
         "self.browser.batch" => self_browser_batch(server, call, input).await,
         "self.browser.library.find" => self_browser_library_find(server, call, input).await,
+        "self.browser.library.draft" => self_browser_library_draft(server, call, input).await,
         "self.browser.library.propose" => self_browser_library_propose(server, call, input).await,
         "self.browser.library.retire" => self_browser_library_retire(server, call, input).await,
         "self.browser.library.retired" => self_browser_library_retired(server, call, input).await,

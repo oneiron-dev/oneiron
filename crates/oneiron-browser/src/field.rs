@@ -128,6 +128,10 @@ pub struct TextProvenance {
     /// id, a template's digest (`blake3:` and hex), or the writer call's
     /// id; none for supplied text.
     pub text_ref: Option<String>,
+    /// The Fill step's field, as its step named it: what its receipt keeps
+    /// for a replay (CUA E7), never rebuilt from the text's source. None
+    /// for a `type`.
+    pub fill: Option<FieldSpec>,
 }
 
 impl TextProvenance {
@@ -137,6 +141,7 @@ impl TextProvenance {
         Self {
             source: TextSource::Supplied,
             text_ref: None,
+            fill: None,
         }
     }
 
@@ -376,7 +381,9 @@ pub(crate) fn fill<D: BrowserDriver + ?Sized>(
         page: &page,
         row: row.as_ref(),
     };
-    let (text, provenance) = resolve(routine, writer, &field, prepared, &on)?;
+    let (text, mut provenance) = resolve(routine, writer, &field, prepared, &on)?;
+    // The field as the step named it is the receipt's replay (CUA E7).
+    provenance.fill = Some(field);
     let typed = driver.fill_text(
         TypeInput {
             target: target.clone(),
@@ -463,6 +470,7 @@ fn resolve(
         let provenance = TextProvenance {
             source: TextSource::Reference,
             text_ref: Some(chosen.id),
+            fill: None,
         };
         return Ok((chosen.text, provenance));
     }
@@ -470,6 +478,7 @@ fn resolve(
         let provenance = TextProvenance {
             source: TextSource::Template,
             text_ref: Some(template_ref(&template)),
+            fill: None,
         };
         return Ok((template, provenance));
     }
@@ -557,6 +566,7 @@ fn generate(
             let provenance = TextProvenance {
                 source: TextSource::Generated,
                 text_ref: Some(written.call),
+                fill: None,
             };
             Ok((written.text, provenance))
         }

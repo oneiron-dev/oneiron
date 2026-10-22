@@ -1,9 +1,10 @@
 //! Browser wire shapes, shared by code mode and the credential-bound host doors.
 pub use oneiron_browser::{
     BatchInput as BrowserBatchInput, ClickInput as BrowserClickInput,
-    CropInput as BrowserCropInput, ExpectInput as BrowserExpectInput,
-    FindInput as BrowserFindInput, HandoverInput as BrowserHandoverInput,
-    LibraryFindInput as BrowserLibraryFindInput, LibraryRetireInput as BrowserLibraryRetireInput,
+    CropInput as BrowserCropInput, DraftInput as BrowserLibraryDraftInput,
+    ExpectInput as BrowserExpectInput, FindInput as BrowserFindInput,
+    HandoverInput as BrowserHandoverInput, LibraryFindInput as BrowserLibraryFindInput,
+    LibraryRetireInput as BrowserLibraryRetireInput,
     LibraryRetiredInput as BrowserLibraryRetiredInput, LibraryRunInput as BrowserLibraryRunInput,
     ObservationBase as BrowserObservationBase, ObserveInput as BrowserObserveInput,
     OpenInput as BrowserOpenInput, PointInput as BrowserPointInput,
@@ -23,6 +24,7 @@ pub type BrowserExpectOutput = oneiron_browser::BrowserAnswer<oneiron_browser::E
 pub type BrowserFindOutput = oneiron_browser::BrowserAnswer<oneiron_browser::FindOutput>;
 pub type BrowserHandoverOutput = oneiron_browser::BrowserAnswer<oneiron_browser::HandoverOutput>;
 pub type BrowserImageOutput = oneiron_browser::BrowserAnswer<oneiron_browser::ImageOutput>;
+pub type BrowserLibraryDraftOutput = oneiron_browser::BrowserAnswer<oneiron_browser::DraftOutput>;
 pub type BrowserLibraryFindOutput =
     oneiron_browser::BrowserAnswer<oneiron_browser::LibraryFindOutput>;
 pub type BrowserLibraryProposeOutput =

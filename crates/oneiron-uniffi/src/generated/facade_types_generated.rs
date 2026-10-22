@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1138 facade rows, 3967 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1090.
+// UniFFI census: 1139 facade rows, 3979 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1091.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -61205,6 +61205,123 @@ pub struct EngineSwitchRecord {
     pub outcome: SwitchOutcome,
 }
 
+/// `oneiron_browser::replay::OperandGap`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OperandGap {
+    #[serde(rename = "no_custody")]
+    NoCustody,
+    #[serde(rename = "refused")]
+    Refused,
+    #[serde(rename = "unknown_kind")]
+    UnknownKind,
+    #[serde(rename = "unbound")]
+    Unbound,
+}
+
+/// `oneiron_browser::replay::TypeOperand`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "operand")]
+pub enum TypeOperand {
+    #[serde(rename = "literal")]
+    Literal {
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "secret")]
+    Secret {
+        #[serde(rename = "kind")]
+        kind: SecretKind,
+        #[serde(rename = "handle")]
+        handle: String,
+    },
+    #[serde(rename = "withheld")]
+    Withheld {
+        #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+        kind: Option<SecretKind>,
+        #[serde(rename = "cause")]
+        cause: OperandGap,
+    },
+}
+
+/// `oneiron_browser::field::TextReference`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TextReference {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron_browser::field::FieldSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FieldSpec {
+    #[serde(rename = "supplied", default, skip_serializing_if = "Option::is_none")]
+    pub supplied: Option<String>,
+    #[serde(
+        rename = "references",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub references: Option<Vec<TextReference>>,
+    #[serde(rename = "template", default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(rename = "generate", default, skip_serializing_if = "Option::is_none")]
+    pub generate: Option<bool>,
+    #[serde(
+        rename = "instruction",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub instruction: Option<String>,
+    #[serde(
+        rename = "enum_values",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub enum_values: Option<Vec<String>>,
+}
+
+/// `oneiron_browser::replay::ReplayAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "action")]
+pub enum ReplayAction {
+    #[serde(rename = "open")]
+    Open {
+        #[serde(rename = "url")]
+        url: String,
+    },
+    #[serde(rename = "click")]
+    Click {
+        #[serde(rename = "locator")]
+        locator: String,
+    },
+    #[serde(rename = "type")]
+    Type {
+        #[serde(rename = "locator")]
+        locator: String,
+        #[serde(rename = "operand")]
+        operand: TypeOperand,
+        #[serde(rename = "clear", default, skip_serializing_if = "Option::is_none")]
+        clear: Option<bool>,
+    },
+    #[serde(rename = "select")]
+    Select {
+        #[serde(rename = "locator")]
+        locator: String,
+        #[serde(rename = "option")]
+        option: String,
+    },
+    #[serde(rename = "fill")]
+    Fill {
+        #[serde(rename = "locator")]
+        locator: String,
+        #[serde(rename = "field")]
+        field: FieldSpec,
+    },
+}
+
 /// `oneiron_browser::EffectReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EffectReceipt {
@@ -61276,6 +61393,28 @@ pub struct EffectReceipt {
     pub text_source: Option<TextSource>,
     #[serde(rename = "text_ref", default, skip_serializing_if = "Option::is_none")]
     pub text_ref: Option<String>,
+    #[serde(rename = "action", default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<ReplayAction>,
+    #[serde(
+        rename = "source_url",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_url: Option<String>,
+    #[serde(
+        rename = "source_origin",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_origin: Option<String>,
+    #[serde(rename = "tab", default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
+    #[serde(
+        rename = "result_tab",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_tab: Option<String>,
     #[serde(rename = "duration_ms")]
     pub duration_ms: u64,
 }
@@ -61936,46 +62075,6 @@ pub struct DecideStep {
     pub option: Option<String>,
 }
 
-/// `oneiron_browser::field::TextReference`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TextReference {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "text")]
-    pub text: String,
-}
-
-/// `oneiron_browser::field::FieldSpec`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct FieldSpec {
-    #[serde(rename = "supplied", default, skip_serializing_if = "Option::is_none")]
-    pub supplied: Option<String>,
-    #[serde(
-        rename = "references",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub references: Option<Vec<TextReference>>,
-    #[serde(rename = "template", default, skip_serializing_if = "Option::is_none")]
-    pub template: Option<String>,
-    #[serde(rename = "generate", default, skip_serializing_if = "Option::is_none")]
-    pub generate: Option<bool>,
-    #[serde(
-        rename = "instruction",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub instruction: Option<String>,
-    #[serde(
-        rename = "enum_values",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub enum_values: Option<Vec<String>>,
-}
-
 /// `oneiron_browser::BatchStep`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "step")]
@@ -62259,6 +62358,44 @@ pub struct BrowserAnswerLibraryFindOutput {
     pub flattened: LibraryFindOutput,
 }
 
+/// `oneiron_browser::library::draft::DraftInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DraftInput {
+    #[serde(rename = "subgoal")]
+    pub subgoal: String,
+    #[serde(
+        rename = "postcondition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub postcondition: Option<Vec<ExpectInput>>,
+    #[serde(rename = "after_seq", default, skip_serializing_if = "Option::is_none")]
+    pub after_seq: Option<u64>,
+    #[serde(
+        rename = "through_seq",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub through_seq: Option<u64>,
+    #[serde(
+        rename = "past_press",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub past_press: Option<bool>,
+}
+
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `DraftInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestDraftInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: DraftInput,
+}
+
 /// `oneiron_browser::library::ProposeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -62287,6 +62424,154 @@ pub struct ProposeInput {
     pub supersedes: Option<String>,
     #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<WorkflowSeed>,
+}
+
+/// `oneiron_browser::library::draft::SlotField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SlotField {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "option")]
+    Choice,
+}
+
+/// `oneiron_browser::library::draft::SlotCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlotCandidate {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "field")]
+    pub field: SlotField,
+    #[serde(rename = "literal")]
+    pub literal: String,
+    #[serde(rename = "suggested_param")]
+    pub suggested_param: String,
+}
+
+/// `oneiron_browser::library::draft::DraftGapKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "why")]
+pub enum DraftGapKind {
+    #[serde(rename = "pre_press")]
+    PrePress {
+        #[serde(rename = "effect_class")]
+        effect_class: String,
+    },
+    #[serde(rename = "unknown_press")]
+    UnknownPress,
+    #[serde(rename = "no_action")]
+    NoAction,
+    #[serde(rename = "secret_withheld")]
+    SecretWithheld {
+        #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+        kind: Option<SecretKind>,
+        #[serde(rename = "cause")]
+        cause: OperandGap,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "cause")]
+        cause: BatchStopCause,
+    },
+    #[serde(rename = "no_effect")]
+    NoEffect,
+    #[serde(rename = "missing_opening")]
+    MissingOpening,
+    #[serde(rename = "empty_span")]
+    EmptySpan,
+    #[serde(rename = "no_live_origin")]
+    NoLiveOrigin,
+    #[serde(rename = "foreign_origin")]
+    ForeignOrigin {
+        #[serde(rename = "origin", default, skip_serializing_if = "Option::is_none")]
+        origin: Option<String>,
+    },
+    #[serde(rename = "tab_change")]
+    TabChange,
+    #[serde(rename = "missing_context")]
+    MissingContext,
+    #[serde(rename = "check_unknown_ref")]
+    CheckUnknownRef {
+        #[serde(rename = "check")]
+        check: u64,
+    },
+    #[serde(rename = "check_secret_withheld")]
+    CheckSecretWithheld {
+        #[serde(rename = "check")]
+        check: u64,
+        #[serde(rename = "cause")]
+        cause: OperandGap,
+    },
+    #[serde(rename = "no_postcondition")]
+    NoPostcondition,
+    #[serde(rename = "no_subgoal")]
+    NoSubgoal,
+}
+
+/// `oneiron_browser::library::draft::DraftGap`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DraftGap {
+    #[serde(rename = "seq", default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(rename = "verb", default, skip_serializing_if = "Option::is_none")]
+    pub verb: Option<String>,
+    #[serde(rename = "gap")]
+    pub gap: DraftGapKind,
+}
+
+/// `oneiron_browser::library::draft::PressedThrough`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PressedThrough {
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "effect_class")]
+    pub effect_class: String,
+}
+
+/// `oneiron_browser::library::draft::DraftOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DraftOutput {
+    #[serde(rename = "site", default, skip_serializing_if = "Option::is_none")]
+    pub site: Option<String>,
+    #[serde(rename = "origin", default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    #[serde(rename = "after_seq")]
+    pub after_seq: u64,
+    #[serde(rename = "through_seq")]
+    pub through_seq: u64,
+    #[serde(rename = "proposal")]
+    pub proposal: ProposeInput,
+    #[serde(
+        rename = "slot_candidates",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub slot_candidates: Option<Vec<SlotCandidate>>,
+    #[serde(rename = "gaps", default, skip_serializing_if = "Option::is_none")]
+    pub gaps: Option<Vec<DraftGap>>,
+    #[serde(
+        rename = "pressed_through",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pressed_through: Option<Vec<PressedThrough>>,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+}
+
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `DraftOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerDraftOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
+    #[serde(flatten)]
+    pub flattened: DraftOutput,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `ProposeInput`.

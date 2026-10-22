@@ -31,6 +31,7 @@
 //! is checked; each step resolves its locators on the page as it runs.
 
 mod admission;
+mod draft;
 mod live_run;
 mod secret_slots;
 mod targets;
@@ -38,6 +39,10 @@ mod targets;
 pub use admission::{
     AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal,
     WorkflowSeed, validate_replay_args,
+};
+pub use draft::{
+    DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput, DraftPage, DraftStep,
+    PressedThrough, SlotCandidate, SlotField, draft_from_steps,
 };
 #[cfg(feature = "driver")]
 pub(crate) use live_run::run;
@@ -742,8 +747,9 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
         });
     }
     let replayed = fresh.observe(hidden_look())?;
+    let withheld = secret_slots::values(&program, &args, &replay_args);
     let (replay_receipts, replay_decisions) =
-        secret_slots::unbound(replay.receipts.clone(), replay.decisions.clone());
+        secret_slots::unbound(replay.receipts.clone(), replay.decisions.clone(), &withheld);
     let proof = WorkflowProof {
         args: secret_slots::public(&program, args),
         replay_args: secret_slots::public(&program, replay_args),

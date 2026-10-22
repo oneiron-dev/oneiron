@@ -40,6 +40,7 @@ mod observation;
 mod outline;
 mod progress;
 mod receipt_evidence;
+mod replay;
 mod request;
 mod retention;
 mod row;
@@ -61,12 +62,14 @@ pub use field::{
     TextVerdict,
 };
 pub use library::{
-    AdmissionRefusal, Admitted, FiledWorkflow, LibraryCard, LibraryFindInput, LibraryFindOutput,
+    AdmissionRefusal, Admitted, DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput,
+    DraftPage, DraftStep, FiledWorkflow, LibraryCard, LibraryFindInput, LibraryFindOutput,
     LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
-    LibraryRunInput, LibraryRunMode, LibraryRunOutput, ProposeInput, ProposeOutput, RecentCounts,
-    ReplayGuest, RetiredCard, RunOutcome, SecretParam, SupersedeOutcome, SupersedeRefusal,
-    WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof, WorkflowSeed, default_mode,
-    effective_mode, model_free, site_of, validate_replay_args,
+    LibraryRunInput, LibraryRunMode, LibraryRunOutput, PressedThrough, ProposeInput, ProposeOutput,
+    RecentCounts, ReplayGuest, RetiredCard, RunOutcome, SecretParam, SlotCandidate, SlotField,
+    SupersedeOutcome, SupersedeRefusal, WorkflowCheck, WorkflowLibrary, WorkflowProgram,
+    WorkflowProof, WorkflowSeed, default_mode, draft_from_steps, effective_mode, model_free,
+    site_of, validate_replay_args,
 };
 pub use observation::{
     HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound, is_live_handle,
@@ -76,6 +79,7 @@ pub use oneiron_container::{GuestLimits, ImageRef};
 pub use progress::NO_PROGRESS_STEPS;
 use progress::Progress;
 pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
+pub use replay::{OperandGap, ReplayAction, StepStop, TypeOperand};
 pub use request::DestinationRefusal;
 #[cfg(feature = "driver")]
 pub use request::{BrowserRequestHandler, RenderedDocument};
@@ -257,6 +261,26 @@ pub struct EffectReceipt {
     /// (`blake3:` and hex), or the writer call's id; none for supplied text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_ref: Option<String>,
+    /// The act as a replay program's step takes it again (CUA E7): its
+    /// operands as its verb took them, a secret by its run-bound handle.
+    /// Absent on an act no step replays (a `click_at`, an engine switch, a
+    /// desktop's act): a draft names it a gap, never skips it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<ReplayAction>,
+    /// The page the act began on (CUA E7): its URL, before the act moved it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// That page's origin (scheme, host and port), parsed from its URL;
+    /// absent on a page with no such origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_origin: Option<String>,
+    /// The tab the act acted in, by the browser's stable id for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
+    /// The tab in front once the act settled: another than `tab` when the
+    /// act opened one, or closed its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_tab: Option<String>,
     /// How long the effect took, in milliseconds of the monotonic clock:
     /// from its verb's entry through its screenshot and this receipt,
     /// before the host keeps the screenshot.
@@ -1355,6 +1379,19 @@ pub trait BrowserDriver: Send {
         ))
     }
 
+    /// Drafts a proposal from the driver's own history of effects and
+    /// stops for its open page (CUA E7), with no model and no library: a
+    /// driver with no such history serves none, and never answers an empty
+    /// draft.
+    fn library_draft(&mut self, _input: DraftInput) -> Result<DraftOutput, BrowserError> {
+        Err(BrowserError::Unsupported("library_draft".to_owned()))
+    }
+
+    /// Notes in the driver's history that a step stopped (CUA E7), with the
+    /// receipt of an effect it made first, so a draft never takes it for a
+    /// step that worked. A driver that keeps no history notes nothing.
+    fn note_stop(&mut self, _stop: StepStop) {}
+
     /// A desktop key press.
     fn press_key(&mut self, _input: KeyInput) -> Result<Observation, BrowserError> {
         Err(BrowserError::Unsupported("key".to_owned()))
@@ -1465,6 +1502,7 @@ pub trait BrowserDriver: Send {
                 _ => None,
             });
         if let Some((index, stop)) = unfit {
+            stop::noted(self, input.steps[index].name(), &stop);
             return Ok(stop::stopped(self, output, index, stop, base, started));
         }
         let mut routine = Routine {
@@ -1480,6 +1518,7 @@ pub trait BrowserDriver: Send {
         let mut monitor = Progress::new();
         for (index, step) in input.steps.into_iter().enumerate() {
             let counts = step.counts_for_progress();
+            let name = step.name();
             monitor.before(self, counts);
             // The targets this step matched by their locators.
             let mut rebindings = Vec::new();
@@ -1625,8 +1664,10 @@ pub trait BrowserDriver: Send {
             match outcome {
                 Ok(observation) => {
                     output.completed += 1;
+                    let mut acted = None;
                     if let Some(observation) = observation {
                         if let Some(receipt) = &observation.receipt {
+                            acted = Some(receipt.seq);
                             output.receipts.push(receipt.clone());
                         }
                         output.observation = Some(observation);
@@ -1634,10 +1675,12 @@ pub trait BrowserDriver: Send {
                     // The step's effect is kept; the page read after it
                     // may show it the last of a run that changed nothing.
                     if let Some(page) = monitor.after(self, counts) {
+                        self.note_stop(progress::no_progress(name, acted));
                         return Ok(progress::handed_up(output, index, page, started));
                     }
                 }
                 Err(stop) => {
+                    stop::noted(self, name, &stop);
                     return Ok(stop::stopped(self, output, index, stop, base, started));
                 }
             }

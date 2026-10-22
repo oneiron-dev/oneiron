@@ -10026,6 +10026,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_browser_library_draft(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.library.draft")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.library.draft", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_browser_library_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.browser.library.propose")?;
         let output = py
