@@ -19193,7 +19193,7 @@ pub struct ProjectRecord {
     #[serde(rename = "schema_version")]
     pub schema_version: u8,
     #[serde(rename = "depth", default, skip_serializing_if = "Option::is_none")]
-    pub depth: Option<u8>,
+    pub depth: Option<u64>,
     #[serde(rename = "parents")]
     pub parents: Vec<String>,
     #[serde(
@@ -19211,13 +19211,13 @@ pub struct ProjectRecord {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub depth_limit: Option<u8>,
+    pub depth_limit: Option<u64>,
     #[serde(
         rename = "depth_remaining",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub depth_remaining: Option<u8>,
+    pub depth_remaining: Option<u64>,
     #[serde(
         rename = "write_proof",
         default,
@@ -49213,6 +49213,8 @@ pub enum ArtifactAskStanding {
     },
     #[serde(rename = "closed")]
     Closed,
+    #[serde(rename = "failed")]
+    Failed,
 }
 
 /// `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskRecord`.
@@ -49239,6 +49241,12 @@ pub struct ArtifactAskRecord {
     pub ask_id: Option<String>,
     #[serde(rename = "failed", default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<String>,
+    #[serde(
+        rename = "parent_proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_proposal_ref: Option<String>,
 }
 
 /// `oneiron::receipt::questions::QuestionAnswer`.
@@ -64763,7 +64771,7 @@ pub struct AgentSpawnInput {
     )]
     pub context_from: Option<Vec<String>>,
     #[serde(rename = "depth", default, skip_serializing_if = "Option::is_none")]
-    pub depth: Option<u8>,
+    pub depth: Option<u64>,
     #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     #[serde(
@@ -64926,7 +64934,7 @@ pub struct LeaderSplitOutput {
     #[serde(rename = "leader")]
     pub leader: String,
     #[serde(rename = "depth_remaining")]
-    pub depth_remaining: u8,
+    pub depth_remaining: u64,
 }
 
 /// `oneiron::code_run::run_verbs::SkillCallInput`.

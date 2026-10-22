@@ -235,7 +235,7 @@ impl TrainingOwner {
     }
 
     /// Makes this no one when it is `actor`; whether it was.
-    pub(super) fn forget(&mut self, actor: EntityId) -> bool {
+    pub(crate) fn forget(&mut self, actor: EntityId) -> bool {
         let named = self.is(actor);
         if named {
             *self = Self::Erased;
