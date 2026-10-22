@@ -41952,7 +41952,7 @@
      "path": "src/memory/session_reads.rs",
      "purpose": "The reads a code run bound to an off-record session serves through the room's own view (WILL L11-01, S01-1)…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -43402,7 +43402,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 41,
+      "crate-vis": 42,
       "enum": 3,
       "fn": 4,
       "re-export": 17,
@@ -43434,7 +43434,7 @@
      "path": "src/note/birth.rs",
      "purpose": "Deterministic NOTE birth on the shared document registry's first load",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -43609,7 +43609,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -43622,7 +43622,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 9
      }
     },
@@ -43647,7 +43647,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -43948,7 +43948,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "NoteAccessRequest",
@@ -43965,7 +43965,7 @@
      "path": "src/note/reads.rs",
      "purpose": "Caller-scoped NOTE text, stable edit anchors and retained operation attribution",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 9
@@ -44005,10 +44005,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/note/room_reads.rs",
+     "purpose": "A room NOTE's reads (FIX 4280; Engine 10-22: bind, read and close only): `vault.notes.read`…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/note/run_review.rs",
      "purpose": "Transaction-composable review and compensation over the existing NOTE door",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/scan.rs",
+     "purpose": "A NOTE document's sizes, measured where a store-aware entrance loads or a room projects one (rule 5; FIX 4280)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -44036,7 +44057,7 @@
      "path": "src/note/storage.rs",
      "purpose": "Canonical entity-document carriers shared by local NOTE edits and sync",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -44109,7 +44130,7 @@
      "path": "src/note/verbs.rs",
      "purpose": "Actor-bound NOTE creation, edit and source-entity bridge",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -44173,8 +44194,22 @@
      "path": "src/off_record/lifecycle/mod.rs",
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 5
+      "crate-vis": 5,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomNoteHandle"
+     ],
+     "path": "src/off_record/lifecycle/note_reads.rs",
+     "purpose": "A room's NOTEs where the room holds them (FIX 4280; Engine 10-22: bind, read and close only): the stretch a…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -44226,7 +44261,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -44262,6 +44297,16 @@
      "purpose": "The threads an off-record room's copy carries, for its export's audit and notices (FIX 6427, 6681), split…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/room_births.rs",
+     "purpose": "What a room write stages beside its row (FIX 4280, 4281; Engine 10-22): the row's birth and, for a NOTE, its…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -44373,7 +44418,7 @@
      "path": "src/off_record/mod.rs",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 2
      }
@@ -49963,6 +50008,8 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "RoomEvidence",
+      "RoomEvidenceRef",
       "RowBirth",
       "WithheldKey",
       "WithheldRef",
@@ -49971,10 +50018,10 @@
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 9,
-      "struct": 3
+      "struct": 5
      }
     },
     {
@@ -49983,6 +50030,16 @@
      "notable": [],
      "path": "src/provenance/birth/checkpoint.rs",
      "purpose": "The checkpoint getter of row births (KS7-2): each birth envelope under its born row's entity tree, and each…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/provenance/birth/room.rs",
+     "purpose": "A room write's birth (FIX 4281; Engine 10-22): the `made_by` envelope a NOTE or claim staged in an…",
      "surface": {
       "crate-vis": 3
      }
@@ -53846,7 +53903,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 3,
       "re-export": 1,
       "struct": 1
@@ -66227,7 +66284,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 19,
+      "fn": 20,
       "struct": 1
      }
     },
@@ -74708,14 +74765,14 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 59,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 24,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74855,7 +74912,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -75375,7 +75432,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4899,
+   "source_files": 4904,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90923,7 +90980,17 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/call_receipt/room_notes.rs",
+     "purpose": "Which call serves a room NOTE, and so keeps no durable call receipt or hook record (FIX 4280; Engine 10-22)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -99155,13 +99222,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/rpc.rs",
      "purpose": "The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -102880,7 +102947,7 @@
      "path": "src/server/note_editors.rs",
      "purpose": "Explicit NOTE editor handles, owned by the principal that opened them",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -104075,7 +104142,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 544,
+     "files": 545,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104539,7 +104606,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1198,
+   "source_files": 1199,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -107801,6 +107868,8 @@
       "RoomClaimReceipt",
       "RoomClaimRequest",
       "RoomEntry",
+      "RoomEvidence",
+      "RoomEvidenceRef",
       "RoomHostHand",
       "RoomHostPin",
       "RoomHostRequest",
@@ -108822,7 +108891,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1000,
-      "struct": 3081
+      "struct": 3083
      }
     },
     {
