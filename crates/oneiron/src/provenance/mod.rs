@@ -226,11 +226,16 @@ pub(crate) fn erase_row_provenance_in_txn(
     // planned intent it asked or whose plan seats it keeps only its erased
     // form (Engine 10-22).
     if erase {
+        // The asks of the spawns it seated leave the code-run replay rows and
+        // the step starts that carry them first, while those calls still name
+        // it (FIX 9180).
+        let erased = std::collections::BTreeSet::from([*row]);
+        crate::code_run::erase_spawn_targets_in_txn(store, txn, &erased)?;
         crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
         crate::agent_dispatch::AgentDispatcher::erase_planned_intent_content_in_txn(
             store,
             txn,
-            &std::collections::BTreeSet::from([*row]),
+            &erased,
         )?;
     }
     Ok(())

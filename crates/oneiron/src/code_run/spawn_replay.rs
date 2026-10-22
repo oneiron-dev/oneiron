@@ -192,6 +192,11 @@ impl SpawnTargets {
     pub(crate) fn reached_by(&self, erased: &BTreeSet<EntityId>) -> bool {
         self.seats.iter().any(|seat| erased.contains(seat))
     }
+
+    /// Every seat, sorted and distinct.
+    pub(crate) fn seats(&self) -> &[EntityId] {
+        &self.seats
+    }
 }
 
 /// `targets` as a bridge row stores them: Nil for none.

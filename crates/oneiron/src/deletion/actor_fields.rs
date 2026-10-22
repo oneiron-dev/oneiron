@@ -32,10 +32,17 @@ pub(super) fn erase_actor_fields_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    scrub_actor_fields_in_txn(vault, wtxn, actor)?;
     // A marker-only hard path writes the marker before this sweep and never
     // reaches the provenance door's erase.
-    if HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))? {
+    let hard = HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))?;
+    // The asks of the spawns it seated leave the code-run replay rows and
+    // their step starts before its other fields go (FIX 9180).
+    if hard {
+        let erased = BTreeSet::from([*actor]);
+        crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
+    }
+    scrub_actor_fields_in_txn(vault, wtxn, actor)?;
+    if hard {
         crate::attempt_queue::erase_attempt_payload_actor_in_txn(&vault.store, wtxn, actor)?;
     }
     Ok(())
@@ -109,6 +116,9 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
 ) -> Result<()> {
     let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
     erased.extend(live);
+    // The spawn asks the image brings back for any of them, actor or not,
+    // leave its replay rows and step starts again (FIX 9180).
+    crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
     // The planned intents they asked or are seated by take their erased
     // form first, while each still names its asker (Engine 10-22).
     crate::agent_dispatch::AgentDispatcher::erase_planned_intent_content_in_txn(
