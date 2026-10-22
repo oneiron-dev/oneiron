@@ -8,8 +8,8 @@ use oneiron::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use oneiron::prompt::{
-    PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptLayout, PromptRecompileStamp,
-    SESSION_PROMPT_LAYOUT, place_turn_context,
+    PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptLayout, PromptRecompileStamp, place_turn_context,
+    session_prompt_layout,
 };
 use oneiron::receipt::ContextReceiptFields;
 use oneiron::task_verb::sdk::{AiReply, AiReplyL2Base, AiReplyRequest};
@@ -159,7 +159,7 @@ async fn reply(
     // every message, rides the request-only turn context right before the
     // caller's message, which is sent as the caller wrote it and retrieval
     // read it.
-    request.messages = match SESSION_PROMPT_LAYOUT {
+    request.messages = match session_prompt_layout() {
         PromptLayout::EarlySystem => vec![
             text_message(LlmMessageRole::System, outgoing.clone()),
             text_message(LlmMessageRole::User, input.message),

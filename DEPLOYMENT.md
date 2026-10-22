@@ -397,6 +397,17 @@ seat_host = true    # the default; false leaves queued CLI attempts to another r
 GH_TOKEN = "cli:gh"
 ```
 
+## Prompt layout
+
+`ONEIRON_PROMPT_LAYOUT` chooses where a turn's context (activated memory, the
+`ai.reply` board, a chat answer's craft) sits in the request (FIX 6676).
+`early_system`, the default, keeps today's order: the context joins the early
+system text, before the history. `stable_history_then_turn_context` puts the
+stable system and the append-only history first and the turn's context in one
+request-only message right before the latest user turn, so a provider's
+prompt cache can reuse the prefix. Any other value keeps the default. The
+answer-quality screen decides whether the default flips.
+
 ## CJK Dictionaries
 
 Oneiron can run without CJK dictionaries, but Japanese, Chinese, and Korean
