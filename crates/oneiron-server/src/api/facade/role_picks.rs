@@ -55,12 +55,29 @@ async fn asks(
 ) -> Result<Json<Vec<SkillTradeoffAsk>>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
     let (actor, _) = facade_actor(&server, &auth)?;
-    let vault = Arc::clone(&server.vault);
-    let asks = tokio::task::spawn_blocking(move || skill_tradeoff_asks_for(&vault, &actor))
-        .await
-        .map_err(|_| internal())?
-        .map_err(engine)?;
+    let asks = tokio::task::spawn_blocking(move || -> Result<_, FacadeApiError> {
+        let asks = skill_tradeoff_asks_for(&server.vault, &actor).map_err(engine)?;
+        // FIX 8162: of the asks the reached-role check picked, the ones the
+        // credential's own lane reads whole, at its destination.
+        Ok(crate::api::scoped_auth::lane_reads_each(
+            &server.vault,
+            &auth,
+            asks,
+            tradeoff_ask_refs,
+        )?)
+    })
+    .await
+    .map_err(|_| internal())??;
     Ok(Json(asks))
+}
+
+/// The rows a tradeoff ask names (FIX 8162): the optimizer proposal its
+/// question is about and the project its goal is joined to. Its goal id is
+/// derived, never a stored row, and its scores and digests name none.
+pub(crate) fn tradeoff_ask_refs(ask: &SkillTradeoffAsk) -> Vec<EntityId> {
+    std::iter::once(ask.question.proposal)
+        .chain(ask.question.project)
+        .collect()
 }
 
 /// `POST /v1/core/skills/tradeoff-asks/pick`: a person or agent role

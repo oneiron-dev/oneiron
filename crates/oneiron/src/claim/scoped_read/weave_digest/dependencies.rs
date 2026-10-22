@@ -135,6 +135,8 @@ impl ScopedRead<'_> {
         scrub_erased_drafts_in(&self.vault.store, txn, report)?;
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         self.redact_sieve_decisions_in(txn, &policy, &filter, report);
+        // A saved card's moves are judged again for this reader (FIX 8536).
+        self.project_card_moves_in(txn, &policy, &filter, report);
         Ok(())
     }
 }

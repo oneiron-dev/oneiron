@@ -108,8 +108,18 @@ async fn self_decisions_asks_answer(
     const VERB: &str = "self.decisions.asks";
     let holder = holder(auth, VERB)?.entity_ref();
     let server = Arc::clone(server);
+    let auth = auth.clone();
     tokio::task::spawn_blocking(move || -> MemoryResult<Vec<DecisionAsk>> {
-        Ok(server.vault().decision_asks_held_by(holder)?)
+        let asks = server.vault().decision_asks_held_by(holder)?;
+        // FIX 8174: the asks the caller's own lane reads whole, as
+        // `GET /v1/core/decisions/asks` lists them.
+        crate::api::scoped_auth::lane_reads_each(
+            server.vault(),
+            &auth,
+            asks,
+            super::decision_role_asks::decision_ask_refs,
+        )
+        .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
     })
     .await
     .map_err(|_| internal(VERB))?

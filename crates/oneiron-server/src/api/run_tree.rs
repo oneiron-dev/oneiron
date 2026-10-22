@@ -19,7 +19,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use axum::response::Json;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use futures_util::{Stream, stream};
+use futures_util::Stream;
 use oneiron::task_verb::run_cancel::RunCancelOutcome;
 use oneiron::task_verb::run_control::RunControl;
 use serde::Deserialize;
@@ -30,6 +30,10 @@ use utoipa::IntoParams;
 use utoipa::ToSchema;
 
 mod cancel;
+mod keyed;
+mod scoped;
+
+pub(crate) use self::keyed::intervene_idempotency;
 
 pub(crate) const CORE_RUN_TREE_RUN_ID_MAX_BYTES: usize = 128;
 
@@ -341,46 +345,9 @@ pub(crate) async fn core_run_tree_observe(
         .map_err(|e| core_engine_error("core run tree observe failed", e))?;
     let initial = serde_json::to_string(&core_run_tree_response(initial))
         .map_err(|_| ApiError::internal_server_error("run tree serialization failed"))?;
-    let updates = stream::unfold(
-        (server, receiver, run_id, initial, true, false),
-        |(server, mut receiver, run_id, mut previous, first, done)| async move {
-            if done {
-                return None;
-            }
-            if first {
-                let event = Event::default().event("run-tree").data(previous.clone());
-                return Some((
-                    Ok(event),
-                    (server, receiver, run_id, previous, false, false),
-                ));
-            }
-            loop {
-                match receiver.recv().await {
-                    Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-                }
-                let tree = oneiron::RunTreeAdapter::new(&server.vault).read_run(&run_id);
-                let current = tree
-                    .ok()
-                    .and_then(|tree| serde_json::to_string(&core_run_tree_response(tree)).ok());
-                let Some(current) = current else {
-                    let event = Event::default().event("error").data("run_tree_read_failed");
-                    return Some((Ok(event), (server, receiver, run_id, previous, false, true)));
-                };
-                // Co-commits and other runs carry only invalidations. They do
-                // not expose names, counts or a frame for unrelated work.
-                if current == previous {
-                    continue;
-                }
-                previous = current;
-                let event = Event::default().event("run-tree").data(previous.clone());
-                return Some((
-                    Ok(event),
-                    (server, receiver, run_id, previous, false, false),
-                ));
-            }
-        },
-    );
+    // FIX 8221: the stream keeps the admitted credential and judges its read
+    // authority again before each snapshot it sends.
+    let updates = scoped::observe(server, auth, receiver, run_id, initial);
     Ok(Sse::new(updates).keep_alive(KeepAlive::default()))
 }
 
@@ -471,18 +438,11 @@ pub(crate) async fn core_run_tree_intervene(
 
     let response_attempt_id = hex_bytes(outcome.record.id.as_bytes());
     let run_id = outcome.record.run_id.clone();
-    let tree = if let Some(run_id) = run_id.as_deref() {
-        let adapter = oneiron::RunTreeAdapter::new(&server.vault);
-        Some(core_run_tree_response(
-            adapter.read_run(run_id).map_err(|error| {
-                // A run id is free text its proposer chose; the attempt id is not.
-                tracing::error!(kind = ?error.kind(), attempt_id = %response_attempt_id, "core run tree intervention snapshot failed");
-                core_engine_error("core run tree intervention snapshot failed", error)
-            })?,
-        ))
-    } else {
-        None
-    };
+    // FIX 8220: the effect stands whatever the caller reads; the tree goes
+    // with it only as the caller's current read authority admits it.
+    let tree = run_id
+        .as_deref()
+        .and_then(|run_id| scoped::intervention_tree(&server, &auth, run_id, &response_attempt_id));
 
     Ok(Json(CoreRunTreeInterventionResponse {
         attempt_id: response_attempt_id,
