@@ -23,7 +23,9 @@ they are.
   - the engine commit and the `Cargo.lock` hash;
   - every existing pin, by path + sha256 at that commit;
   - the contract revisions;
-  - the Lightpanda, CUA, Bun and tsrs payload pins.
+  - the Lightpanda, Bun and tsrs payload pins, and the CUA driver's source
+    pin: its archive sha256, the paths taken from it, its `Cargo.lock` hash
+    and the Rust release its source pins.
 
   `[variants.*.outputs."linux/amd64"]` holds what a build measured.
   `[variants.*.budget]` holds proposed targets.
@@ -36,10 +38,11 @@ they are.
 host. It refuses a moving `latest`, a malformed hash or commit, a missing
 variant, a stale lock scope, and an output field on an unbuilt variant.
 
-`fetch` and `build` refuse a variant the builder cannot install yet before
-they enter a namespace or download anything: desktop-cua's external source
-build, and generic-agent's archive and npm payloads. Every tool they run
-writes to stderr. `build` prints its record JSON on stdout, whole and last,
+`fetch` and `build` refuse a plan the builder cannot install before they
+enter a namespace or download anything: a payload kind with no installer
+(`mkosi_run.INSTALLERS` has `file`, `archive`, `npm` and `rust-toolchain`),
+or a source build whose pin lacks a field the build needs. Every tool they
+run writes to stderr. `build` prints its record JSON on stdout, whole and last,
 so stdout is one JSON document.
 
 ## Build
@@ -74,8 +77,14 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
    - the base's amd64 rootfs layer, over the registry HTTP API;
    - the mkosi source archive;
    - the Rust components;
-   - payloads;
+   - payloads: a file or zip by sha256, an npm tarball by its sha512 SRI
+     integrity (`blobs/sha512/<hex>`; a mirror hit is hashed again);
    - a clean `CARGO_HOME` filled by `cargo fetch --locked` at the engine commit;
+   - for each external source build (desktop-cua's `cua-driver`): its
+     archive, its pinned Rust, and a Cargo store of its own,
+     `cargo-home-<pin>/`, filled by `cargo fetch --locked` from the source's
+     own `Cargo.lock` in the same fetch root. The checker's store never
+     holds its crates;
    - the Debian packages for the tools tree and the requested variants.
 
    Cargo reads `.cargo/config.toml` in every parent of its working directory,
@@ -97,7 +106,8 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
    deb.debian.org, which no pin governs.
 
    The first run on a fresh mirror passes `--learn` and writes
-   `packages.lock.toml`. Commit that lock. A later fetch without `--learn`
+   `packages.lock.toml`: a replacement lock, covering only the scopes that
+   run named, so name every variant. Commit that lock. A later fetch without `--learn`
    refuses any `.deb` whose bytes differ from the lock, and any newly
    downloaded `.deb` the lock does not name.
 2. **Build (offline).** `build.py build --variant base` re-enters a namespace
@@ -117,8 +127,19 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
       its build overlay, so they link against the glibc the image ships. It
       runs `--locked --offline` with the mirror's clean `CARGO_HOME`,
       `--remap-path-prefix` for every build path, and `SOURCE_DATE_EPOCH`.
-   4. `mkosi.postinst` places the guest account, pinned files, payloads and
-      links. `mkosi.finalize` empties `machine-id` and removes random seeds,
+      An external source build runs after it, in `env -i` with only the
+      variables it names: its own Rust and store, `--remap-path-prefix` and
+      C `-ffile-prefix-map` for its source, store, toolchain and target dir,
+      `SOURCE_DATE_EPOCH`, and the pin's `build_env` (for the CUA driver,
+      the two source SHAs its build script would otherwise ask git for).
+      Default features, as the Docker recipe built it.
+   4. `mkosi.postinst` places the guest account, pinned files, payloads,
+      launchers and links. An npm package is unpacked without npm or its
+      lifecycle scripts: `package/package.json` must name the pinned
+      package and version, `package/` goes, a link or `..` member refuses
+      it, and modes are normalized (directories 0755, files 0644, files the
+      tarball marks executable 0555). A launcher is two lines,
+      `#!/bin/sh` and `exec <runtime> <entry> "$@"`, 0555. `mkosi.finalize` empties `machine-id` and removes random seeds,
       credentials, keys, apt lists and caches, logs, the ldconfig aux cache
       and backup files. Licence files and dpkg's database stay. For a plan
       with an offline Cargo store (the checker), it then normalizes the
@@ -160,11 +181,16 @@ digest. Signing them is the release signature's seam (`manifest.md`).
     packages it links: `cargo tree -e normal` in the build chroot, so with
     the features this build resolved. Crates only its build compiled are
     `BUILD_DEPENDENCY_OF` it.
+  - each external source build's binary (desktop-cua's `cua-driver`) with its
+    sha256, the source archive and lock it came from, and the Cargo packages
+    it links and compiled, joined with that source's own `Cargo.lock` in an
+    SPDX id space of their own;
   - for the checker, every crate archive and git source in the offline store;
-  - the pinned payloads (Lightpanda, the Rust components) and pinned repo
-    files placed in the image.
+  - the pinned payloads (Lightpanda, Bun, each npm package with its sha512
+    and purl, the Rust components) and pinned repo files placed in the image.
 
-  Licences are what each crate declares. A Debian package's
+  Licences are what each crate declares, and an npm package's own
+  `package.json` licence. A Debian package's
   `licenseDeclared` is read from its own `/usr/share/doc/<package>/copyright`
   in the built image; symlinked doc directories resolve inside the image.
   The rules:
@@ -181,6 +207,13 @@ digest. Signing them is the release signature's seam (`manifest.md`).
     `LicenseRef-Debian-<name>-<text sha256 prefix>`, and that text goes
     under the document's `hasExtractedLicensingInfos`. Vague names such as
     MIT, BSD, Artistic or public-domain land here.
+  - When that text names `/usr/share/common-licenses/<name>`, the file's own
+    text is appended after the package's text, read from the built image
+    (symlinks resolved inside it), never from the build host or tools tree;
+    a missing file adds nothing (FIX 10350). The package's grant stays
+    first: whether a GPL is "only" or "or later" is the grant's, never the
+    common file's, and a bare `GPL` or `LGPL` is never mapped to an SPDX id
+    because a system symlink points at one version.
   - A name with no text, a missing file, or a file that is not DEP-5 leaves
     the package `NOASSERTION`, with the reason in `licenseComments`.
   - The Files paragraphs of one package are joined with AND: each covers
@@ -193,7 +226,9 @@ digest. Signing them is the release signature's seam (`manifest.md`).
     commit;
   - every input pin, each a resolved dependency: the engine commit, the base
     layer, the mkosi archive, the Rust components, the Debian sources plus the
-    lock hash, `Cargo.lock`, the git dependencies, payloads and pinned files;
+    lock hash, `Cargo.lock`, the git dependencies, payloads (an npm one by
+    sha512), each source build's archive, commit, lock hash and Rust
+    components, and pinned files;
   - the epoch, seed and rootfs UUID;
   - the OCI archive, manifest, config, `rootfs.tar` and `rootfs.ext4` digests
     as subjects.
@@ -214,20 +249,24 @@ Ownership a maintainer script sets and no rule names stays root.
 **Extended attributes and file capabilities.** A maintainer script's
 `setcap` leaves a `security.capability` attribute on the file. The checker's
 `gst-ptp-helper` (libgstreamer1.0-0) is the case in today's variants. The
-exporter reads every entry's xattrs without following symlinks and writes
-each one as a PAX `SCHILY.xattr.<name>` record holding the raw value bytes.
-A value that is not UTF-8 goes out under `hdrcharset=BINARY`, byte for
-byte. The export policy:
+exporter exports only the names in `export.XATTR_KEEP`, exactly
+`security.capability` today (FIX 10349); it reads them without following
+symlinks and writes each one as a PAX `SCHILY.xattr.<name>` record holding
+the raw value bytes. A value that is not UTF-8 goes out under
+`hdrcharset=BINARY`, byte for byte. The export policy:
 - `security.capability` is written as a v2 value (magic, permitted and
   inheritable masks, no rootid), which a guest's own root reads as given.
   Inside the builder's namespace the kernel already reads the value as v2.
   A v3 value is translated only when its rootid is the builder's mapped
   root (0, or the invoking uid). Any other capability value is refused.
-- Every other name is exported as it is. Today's variants carry none.
-- The OCI layer carries every exported name. The ext4 rootfs carries
-  `security.capability` only: `mke2fs -d rootfs.tar` imports through
-  libarchive, and e2fsprogs 1.47.2 keeps only that name (and
-  `gnu.translator`) from a tar.
+- No other name is exported, whatever the build host's filesystem put on a
+  file: an SELinux label (`security.selinux`), IMA/EVM, a POSIX ACL,
+  `user.*` or `trusted.*` never reaches the layer, the members listing or
+  the tools-tree hash. A package that needs another name gets it added to
+  `XATTR_KEEP` by an explicit decision, once both forms carry it.
+- So the OCI layer and the ext4 rootfs carry the same set: `mke2fs -d
+  rootfs.tar` imports through libarchive, and e2fsprogs 1.47.2 keeps only
+  `security.capability` (and `gnu.translator`) from a tar.
 - `rootfs.members.tsv` adds a ninth column, `xattrs`, holding sorted
   `name=<hex>` pairs joined by `;`. The tools tree's `tree_digest` hashes
   the same text.
@@ -240,25 +279,28 @@ image, never the mirror, so that two fetches of one lock give the same
 bytes (FIX 9353):
 - it removes `.global-cache` (with `-wal` and `-shm`), cargo's SQLite record
   of last-use times; the scratch copy recreates it;
+- it first removes each checkout's `.git/index` (stat data) and `.git/logs`
+  (times). They are roots the bare db does not have: in runs f1 and f2 they
+  were still there when the checkout was repacked, so its pack differed from
+  the db's by a few bytes and the pair stayed two files (FIX 10348);
 - it repacks every git object store, each `git/db` repo and each checkout's
   `.git`, from its refs. The image's own git does this (`mkosi-chroot
   /usr/bin/git`, so the tools tree carries no git) with fixed options:
   `pack.threads=1`, `pack.window=10`, `pack.depth=50`,
   `repack -a -d -f -F -n --no-write-bitmap-index`, and no reverse index,
   bitmap, multi-pack index or commit-graph. The server's pack and delta
-  choices no longer reach the image, and unreachable objects go;
-- it then removes each checkout's `.git/index` and `.git/logs`;
-- it links a checkout pack that is identical to its db's pack back to that
-  pack, as the fetch left them. In runs f1 and f2 no pair was identical: the
-  checkout's index and reflogs are roots of its repack, so its pack differs
-  from the db's by a few bytes, and both stay as files of their own.
+  choices no longer reach the image. No `gc`, reflog expiry or prune runs:
+  `-d` drops only packs the new one makes redundant;
+- it links a checkout pack byte-identical to its db's pack back to that
+  pack (same name, `cmp`), as the fetch left them.
 
 Each checkout keeps its sources, `.cargo-ok`, HEAD, refs and objects.
 
 ## Rebuild from the mirror, and retention
 
-A release is rebuildable while its mirror exists. That mirror is the `blobs/`,
-`pkgcache/`, `mkosi-cache/` (the signed apt metadata) and `cargo-home/`
+A release is rebuildable while its mirror exists. That mirror is the `blobs/`
+(`sha256/` and `sha512/`), `pkgcache/`, `mkosi-cache/` (the signed apt
+metadata), `cargo-home/` and each source build's `cargo-home-<pin>/`
 directories. Run `build` (and `fetch` without `--learn`, to re-verify) against
 the same `--mirror` with any checkout that holds the pinned engine commit. The
 work directory is disposable.
