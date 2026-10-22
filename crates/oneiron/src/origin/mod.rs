@@ -14,8 +14,12 @@ pub use document_candidate_types::{
     ReceivedRefSource,
 };
 pub(crate) use document_candidates::CandidateQueue;
+pub use document_candidates::projected::{
+    RepoProjectedCandidateFilePin, RepoProjectedCandidatePins,
+};
 pub use document_ingress::ReceivedFileOperation;
 pub(crate) use document_ingress::erase_code_operations_actor_in_txn;
+pub use secret_projection::clearance::RepoProjectionHoldCause;
 pub mod lfs;
 pub mod publication;
 pub mod smart_http;
