@@ -74,7 +74,7 @@ impl ActorScopedVault {
         let engine_input = HabitCheckinInput {
             habit_ref: input.habit_ref,
             id: input.id,
-            data: input.data,
+            data: input.data.map(super::js_json::js_json),
             occurred_at: ts_to_engine(input.occurred_at, "occurred_at").map_err(boundary_error)?,
             learned_at: ts_opt_to_engine(input.learned_at, "learned_at").map_err(boundary_error)?,
         };
@@ -99,7 +99,7 @@ impl ActorScopedVault {
             id: input.id,
             subject_ref: input.subject_ref,
             predicate: input.predicate,
-            value: input.value,
+            value: super::js_json::js_json(input.value),
             occurred_at: ts_to_engine(input.occurred_at, "occurred_at").map_err(boundary_error)?,
             learned_at: ts_opt_to_engine(input.learned_at, "learned_at").map_err(boundary_error)?,
         };
@@ -301,7 +301,7 @@ impl ActorScopedVault {
     ) -> napi::Result<NapiDreamerJobRef> {
         let engine_input = ConsolidationAttemptInput {
             scope: input.scope,
-            input: input.input,
+            input: super::js_json::js_json(input.input),
             run_id: input.run_id,
             dedupe_key: input.dedupe_key,
             now: ts_opt_to_engine(input.now, "now").map_err(boundary_error)?,

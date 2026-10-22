@@ -105,7 +105,7 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
             author,
             message_type: message.message_type.clone(),
             content: message.content.clone(),
-            metadata: message.metadata.clone(),
+            metadata: message.metadata.clone().map(super::js_json::js_json),
             is_visible: message.is_visible.unwrap_or(true),
             order: message.order,
             quote: message.quote.as_ref().map(quote_to_engine).transpose()?,
@@ -333,7 +333,7 @@ pub(super) fn structural_put_to_engine(
     Ok(StructuralPutInput {
         id: input.id.clone(),
         kind: input.kind.clone(),
-        body: input.body.clone(),
+        body: super::js_json::js_json(input.body.clone()),
         text_fields: input.text_fields.as_ref().map(|fields| {
             fields
                 .iter()
