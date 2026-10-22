@@ -13,6 +13,7 @@ mod code_mode_verbs;
 mod device_release;
 mod envelope;
 mod exec_board_verbs;
+mod facade_refusals;
 mod memory_response;
 mod owner_call;
 mod served_rows;
@@ -63,8 +64,9 @@ pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
 // unused in non-test builds.
 #[cfg(test)]
 pub(crate) use self::envelope::MCP_PROTOCOL_VERSION;
+pub(crate) use self::facade_refusals::mcp_facade_error;
 pub(crate) use self::tasks_response::{
     execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_api_error,
-    mcp_engine_error, mcp_error_response, mcp_facade_error, mcp_scoped_read, mcp_text_content,
+    mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,
 };
 use super::hex_bytes;

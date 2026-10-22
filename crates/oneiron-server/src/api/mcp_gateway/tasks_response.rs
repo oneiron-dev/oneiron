@@ -2,8 +2,9 @@
 
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, McpServed, execute_mcp_board_verb,
-    mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
-    mcp_release_listed, mcp_request_id, mcp_resolve_page, mcp_scoped_tasks_section,
+    mcp_current_board, mcp_endpoint_result, mcp_facade_error, mcp_page_cursor_error,
+    mcp_preflight_page, mcp_release_listed, mcp_request_id, mcp_resolve_page,
+    mcp_scoped_tasks_section,
 };
 use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
 use crate::mcp::McpActorClass;
@@ -420,74 +421,6 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
             McpGatewayError::new(-32020, MCP_HOST_ACTION_REFUSED, error.to_string())
         }
         _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
-    }
-}
-
-/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
-pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
-    if let Some(stop) = error.hook {
-        return mcp_hook_stop(*stop);
-    }
-    if let Some(correction) = error.wrong_root {
-        let mut refusal = McpGatewayError::new(-32601, "wrong_root", error.message);
-        refusal.wrong_root = Some(correction);
-        return refusal;
-    }
-    let code = match error.code.as_str() {
-        oneiron::MEMORY_CODE_NOT_FOUND => -32004,
-        // OF-123: an effect whose person is not settled yet is a typed
-        // refusal like these, never an argument error; its kind below names it.
-        oneiron::MEMORY_CODE_FORBIDDEN
-        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
-        | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
-        | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
-        | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
-        | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
-        | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
-        | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
-        | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
-        oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
-        _ => -32602,
-    };
-    // A paid call's own refusals keep their names: a client tells a spent
-    // line from a model that did not answer without reading the sentence.
-    let kind = match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BUDGET_SPENT => Some("budget_spent"),
-        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => Some("model_unavailable"),
-        // OF-123: an effect whose person is not settled yet keeps its name
-        // too, so an agent reads it as `error.data.error_code`, not prose.
-        oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => Some("identity_unsettled"),
-        // FIX 2222: one stable kind for the typed host refusal, whichever
-        // door reported it.
-        oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),
-        // WILL-PLAN L13 row 03: the room's audience gave no consent to this
-        // management; an agent reads the name, not the sentence.
-        oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
-            Some("off_record_room_management_consent_unavailable")
-        }
-        // FIX 7650: a foreign guest's proposal spool met the host's disk
-        // floor; the agent reads the name, not the sentence.
-        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
-            Some("sandbox_proposal_disk_floor")
-        }
-        _ => None,
-    };
-    if let Some(kind) = kind {
-        // A model that did not answer says when to call again (FIX 3194).
-        return McpGatewayError {
-            retry_after: error.retry_after,
-            ..McpGatewayError::new(code, kind, error.message)
-        };
-    }
-    // A facade refusal carrying a successor keeps the same stable kind and
-    // typed data the engine-error path emits (ONE-1936) — one vocabulary for
-    // one condition, whichever door reported it.
-    match error.successor_short_id {
-        Some(successor_short_id) => {
-            McpGatewayError::new(code, "write_verb_target_stale", error.message)
-                .with_successor_short_id(successor_short_id)
-        }
-        None => McpGatewayError::new(code, "facade_error", error.message),
     }
 }
 
