@@ -24,8 +24,10 @@ side_tables! {
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
-    /// In-flight streamed message recovery seed. Key: id16.
-    MESSAGE_STREAM_ACTIVE: VaultMeta b"message_stream:v1:" Named;
+    /// In-flight streamed message recovery seed. Key: id16. FIX 10668: this entry's scrub takes
+    /// the signed slip out of a Retry seed's action its erased requester asked.
+    MESSAGE_STREAM_ACTIVE: VaultMeta b"message_stream:v1:" Named
+        => crate::memory::scrub_stream_seed_actor_in_txn;
     /// Vault default message-streaming policy. Key: ().
     MESSAGE_STREAM_POLICY: VaultMeta b"message_stream_policy:v1" Named;
     /// Latest terminal stream receipt of a message. Key: id16.

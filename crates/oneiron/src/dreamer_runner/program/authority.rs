@@ -46,13 +46,15 @@ enum Proof {
     /// delegated from, the FEDERATION_GRANT it was minted under, the digest
     /// of the effective scope it was admitted with, and the instrument the
     /// request presented, which is no authority on its own: each judgment
-    /// verifies it again in its own snapshot (FIX 8717).
+    /// verifies it again in its own snapshot (FIX 8717). The erase of the
+    /// actor takes the instrument out (`None`, FIX 10668); the witnesses
+    /// stay, and an authority with no instrument no longer stands.
     Slip {
         slip_id: [u8; 32],
         parent: Option<[u8; 32]>,
         grant: Option<EntityId>,
         scope_digest: [u8; 32],
-        instrument: InvocationSlipBinding,
+        instrument: Option<InvocationSlipBinding>,
     },
     /// A self-hosted vault's host credential acting as the vault's owner
     /// (FIX 2222): the host root by id, or the explicit local dev mode.
@@ -104,7 +106,7 @@ impl TurnProgramAuthority {
                 parent: claims.parent_id,
                 grant,
                 scope_digest,
-                instrument: instrument.clone(),
+                instrument: Some(instrument.clone()),
             },
         })
     }
@@ -134,6 +136,20 @@ impl TurnProgramAuthority {
 
     pub(crate) fn actor(&self) -> EntityId {
         self.actor
+    }
+
+    /// The erase of `actor` takes the signed instrument out of this sealed
+    /// authority when `actor` is its waking actor (FIX 10668). The proof
+    /// stays a slip's, with its slip id, parent, Grant and scope digest as
+    /// content-free witnesses, and stands no more. Whether it changed.
+    pub(super) fn scrub_instrument_of(&mut self, actor: &EntityId) -> bool {
+        if self.actor != *actor {
+            return false;
+        }
+        match &mut self.proof {
+            Proof::Slip { instrument, .. } => instrument.take().is_some(),
+            Proof::HostAction { .. } | Proof::Native => false,
+        }
     }
 
     pub(crate) fn class(&self) -> Result<EdgeActorClass> {
@@ -188,6 +204,10 @@ impl TurnProgramAuthority {
                 instrument,
                 ..
             } => {
+                // An erased instrument proves nothing (FIX 10668).
+                let Some(instrument) = instrument else {
+                    return Ok(Standing::Lapsed);
+                };
                 if !vault.capability_slip_id_is_live_in_txn(txn, slip_id)? {
                     return Ok(Standing::Lapsed);
                 }

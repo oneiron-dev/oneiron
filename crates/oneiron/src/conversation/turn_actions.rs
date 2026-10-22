@@ -23,6 +23,8 @@
 //! carries the capability slip its request was admitted on, and runs only
 //! while that slip verifies and still binds the requester: revoking it stops
 //! the queued action. Only the in-process host queues one without a slip.
+mod actor_erase;
+
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};

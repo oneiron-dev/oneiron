@@ -4,7 +4,7 @@ use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
 
 /// In-flight streamed message recovery seed. Key: id16 (message id).
@@ -108,6 +108,41 @@ pub(crate) fn erase_stream_seeds_in_txn(
     Ok(())
 }
 
+/// The erase of `actor` takes the signed instrument out of each Retry seed
+/// whose action `actor` asked (FIX 10668): the seed, its saved text and its
+/// reply stay, and the action no longer stands. A seed that does not decode
+/// names no requester and stays. MESSAGE_STREAM_ACTIVE's actor scrub.
+pub(crate) fn scrub_stream_seed_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, txn, actor)? {
+        return Ok(());
+    }
+    let mut scrubbed = Vec::new();
+    for row in ACTIVE.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, bytes) = row?;
+        let Some(message) = <EntityId as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        let Ok(mut seed) = ACTIVE.decode_value(&bytes) else {
+            continue;
+        };
+        if seed
+            .action
+            .as_mut()
+            .is_some_and(|action| action.scrub_actor_instrument(actor))
+        {
+            scrubbed.push((message, seed));
+        }
+    }
+    for (message, seed) in scrubbed {
+        ACTIVE.put(&vault.store, txn, &message, &seed)?;
+    }
+    Ok(())
+}
+
 pub(super) fn receipt(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -152,6 +187,25 @@ pub(super) fn checkpoint(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &Seed) -
         .ok_or(Error::CorruptedIndex("stream recovery metadata missing"))?;
     if stored.generation != row.generation {
         return Err(Error::ConcurrentWrite("message stream generation changed"));
+    }
+    // The erase of a Retry's requester took the slip out of the stored seed
+    // (FIX 10668): the stream's own copy, read before it, never puts it back.
+    let erased = stored
+        .action
+        .as_ref()
+        .is_some_and(|action| action.invocation_slip.is_none());
+    if erased
+        && row
+            .action
+            .as_ref()
+            .is_some_and(|action| action.invocation_slip.is_some())
+    {
+        let mut row = row.clone();
+        if let Some(action) = row.action.as_mut() {
+            let requester = action.actor;
+            action.scrub_actor_instrument(&requester);
+        }
+        return ACTIVE.put(&vault.store, txn, &row.message_id, &row);
     }
     ACTIVE.put(&vault.store, txn, &row.message_id, row)
 }

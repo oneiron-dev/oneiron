@@ -33,6 +33,7 @@ use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, agent_dispatch_actor,
     decode_agent_dispatch_input, record_dispatch_input,
 };
+use crate::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
 use crate::dispatch_byoa::{
     BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, RunnerTaskSource, StagedInputPin,
     decode_byoa_attempt_payload, encode_byoa_attempt_payload,
@@ -234,7 +235,19 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         let Ok(mut record) = decode_record(&raw, id) else {
             continue;
         };
-        if record.kind == BYOA_ATTEMPT_KIND {
+        if record.kind == TURN_ACTION_ATTEMPT_KIND {
+            // A turn action keeps the slip its requester's request was
+            // admitted on; the requester's erase takes it out, in every
+            // state (FIX 10668). A payload that does not decode names no
+            // requester and stays.
+            if let Ok(mut action) = TurnActionAttempt::decode(&record) {
+                let requester = action.actor;
+                if actors.contains(&requester) && action.scrub_actor_instrument(&requester) {
+                    record.payload = action.encode()?;
+                    rewrites.push((raw.into_owned(), record));
+                }
+            }
+        } else if record.kind == BYOA_ATTEMPT_KIND {
             byoa.gather(&raw, record, &tasks);
         } else if dispatch_payload_actor(&record).is_some_and(|actor| owners.contains(&actor))
             && erase_dispatch_payload_text(&mut record)?
@@ -463,6 +476,38 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
     txn: &heed::RoTxn<'_>,
     record: &mut AttemptRecord,
 ) {
+    if record.kind == TURN_ACTION_ATTEMPT_KIND {
+        // A turn action whose requester bears the marker writes back no
+        // slip (FIX 10668), as the pass leaves it.
+        let Ok(mut action) = TurnActionAttempt::decode(record) else {
+            return;
+        };
+        let requester = action.actor;
+        if action.invocation_slip.is_none() {
+            return;
+        }
+        match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &requester) {
+            Ok(false) => {}
+            Ok(true) => {
+                if action.scrub_actor_instrument(&requester) {
+                    match action.encode() {
+                        Ok(bytes) => record.payload = bytes,
+                        Err(_) => tracing::warn!(
+                            attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                            "attempt payload fence: an erased requester's slip could not be removed"
+                        ),
+                    }
+                }
+            }
+            Err(_) => {
+                tracing::warn!(
+                    attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                    "attempt payload fence: the requester's hard-delete marker could not be read"
+                );
+            }
+        }
+        return;
+    }
     if record.kind == BYOA_ATTEMPT_KIND {
         scrub_hard_erased_task_copy_in_txn(store, txn, record);
         return;
