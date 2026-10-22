@@ -225,6 +225,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let write_admission = Arc::new(admission::Admission::default());
     let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
     let control = admission::dreamer_control(&write_admission, &reap_gate);
+    // `--no-hooks` turns verb hooks off before any worker starts, so a queued
+    // Continue or Retry taken up below runs none (FIX 9480).
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
+    }
     let (sync_server, ai) = crate::ai_host::AiHost::attach_controlled(
         sync_server,
         config.models.as_ref(),
@@ -324,9 +329,6 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         drop(hooks_stopped);
         None
     };
-    if !config.hooks {
-        sync_server.vault().suppress_verb_hooks();
-    }
 
     // The owner's `[linear]` mirror and webhook mapping, as plain serve
     // starts them, each pass admitted like a served write and holding it
