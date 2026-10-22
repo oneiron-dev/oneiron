@@ -37,9 +37,12 @@
 //!   registers and waits like any other, and the row asks whether
 //!   everything is okay. Only the memory floor ends a question.
 //! - [`answer_connector_question`]'s owner ask: under `always ask` an answer
-//!   that carries content waits for the owner's yes on exactly that answer;
-//!   a no sends a decline. Past the lease the ask stays, and the same
-//!   answer given again reads its ruling.
+//!   that carries content waits for the owner's consent on exactly that
+//!   answer (FIX 8808): approve once, approve and stop asking (a standing
+//!   grant covers later answers), or deny, which sends a decline. Only the
+//!   owner's authenticated press rules, and the send spends its once mark.
+//!   Past the lease the ask stays, and the same answer given again reads
+//!   its ruling.
 //! - [`check_answer`]: the answer that goes is read by the release check's
 //!   secret shapes; a match raises the owner's typed "is everything okay"
 //!   check and never stops the answer (FIX 3841).
@@ -52,8 +55,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use oneiron::EntityId;
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::{
-    ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorElicitationBinding,
-    ConnectorElicitationOwnerAsk, ConnectorQuestion, ElicitationAnswerVerdict, UntrustedToolResult,
+    ConnectorAwaitingInput, ConnectorCallOutcome, ConnectorElicitationAnswer,
+    ConnectorElicitationBinding, ConnectorElicitationOwnerAsk, ConnectorQuestion,
+    ElicitationAnswerVerdict, UntrustedToolResult,
 };
 use oneiron::task_verb::sdk::{
     ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorCallReply, ConnectorQuestionAnswer,
@@ -65,7 +69,8 @@ use crate::connector_call_host::elicitation_response;
 use crate::server::SyncServer;
 
 mod owner;
-use owner::{owner_rules, withdraw_owner_ask};
+pub(crate) use owner::press_owner_consent;
+use owner::{owner_rules, spend_owner_consent, withdraw_owner_ask};
 
 /// A round's live lease, from when it arrived: how long one answer call
 /// waits on the owner's ruling. Never an expiry (FIX 3837).
@@ -535,13 +540,20 @@ pub(crate) fn answer_connector_question(
     };
     let frozen = freeze(&claim.keys(), &request.answers)?;
     let authority = claim.binding.authority();
+    let answer = ConnectorElicitationAnswer {
+        handle: &claim.handle,
+        generation: claim.generation,
+        questions: &claim.questions,
+        answers: &frozen.text,
+        digest: frozen.digest,
+    };
     let verdict = server
         .vault()
         .authorize_connector_elicitation_answer(
             memory,
             &authority,
             &frozen.value(),
-            frozen.digest,
+            &answer,
             frozen.carries_content,
         )
         .map_err(MemoryError::from)?;
@@ -558,8 +570,18 @@ pub(crate) fn answer_connector_question(
             });
         }
         ElicitationAnswerVerdict::AskOwner => {
-            match owner_rules(server, &claim, &authority, &frozen) {
-                OwnerRuling::Yes => (frozen.responses, Vec::new()),
+            match owner_rules(server, &claim, &call_ref, &authority, &answer) {
+                // The send spends the once mark the owner's press left
+                // (FIX 8808); one already spent sends nothing again.
+                OwnerRuling::Yes if spend_owner_consent(server.vault(), &call_ref, &answer) => {
+                    (frozen.responses, Vec::new())
+                }
+                OwnerRuling::Yes => {
+                    return Ok(ConnectorCallReply::Refused {
+                        decision_ref: None,
+                        reasons: vec!["connector_answer_owner_consent_spent".to_owned()],
+                    });
+                }
                 OwnerRuling::No => (
                     frozen.replaced(ConnectorAnswerAction::Decline),
                     vec!["connector_answer_owner_declined".to_owned()],

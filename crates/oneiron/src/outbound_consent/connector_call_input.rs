@@ -29,6 +29,7 @@ use super::connector_call::{
     ACKNOWLEDGED_CALLS, AcknowledgedConnectorCall, ConnectorAwaitingInput, ConnectorCallOutcome,
     PENDING_CALLS, PendingConnectorCall, SettledConnectorCall,
 };
+use super::connector_elicitation_consent::ElicitationOwnerConsent;
 
 /// The round of questions one call's connector asked, on the call's row:
 /// ids and counts, never the questions' text.
@@ -49,6 +50,10 @@ pub(super) struct PendingConnectorInput {
     /// delivery is uncertain.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) uncertain: bool,
+    /// The owner's consent ask on the round's frozen answer under `always
+    /// ask`, and the owner's press on it (FIX 8808).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) owner_consent: Option<ElicitationOwnerConsent>,
 }
 
 impl PendingConnectorInput {
@@ -61,6 +66,7 @@ impl PendingConnectorInput {
             intent,
             live_until_ms: input.live_until_ms,
             uncertain: false,
+            owner_consent: None,
         }
     }
 
@@ -140,6 +146,7 @@ impl Vault {
             input.asked = asked;
             input.live_until_ms = live_until_ms;
             input.uncertain = false;
+            input.owner_consent = None;
             true
         })
     }
