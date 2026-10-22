@@ -88339,9 +88339,19 @@
      "path": "src/budget.rs",
      "purpose": "One admission budget for every organ: threads, memory, in-flight calls",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 30,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/clock.rs",
+     "purpose": "A call's time, which stops while the call waits for budget room (Engine ruling, 10-20; FIX 6196, 8020)",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -88397,8 +88407,8 @@
      "path": "src/host.rs",
      "purpose": "The organ host: install, call, unload, revoke",
      "surface": {
-      "crate-vis": 1,
-      "fn": 16,
+      "crate-vis": 2,
+      "fn": 17,
       "re-export": 1,
       "struct": 1
      }
@@ -88446,7 +88456,7 @@
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -88507,7 +88517,7 @@
      "path": "src/outcome.rs",
      "purpose": "What an organ call proposed, checked by the host that ran it: on this machine, or on another of the owner's…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "struct": 2
      }
     },
@@ -88529,6 +88539,26 @@
      "purpose": "One live organ process: spawn, handshake, a reader thread, calls",
      "surface": {
       "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/process/frames.rs",
+     "purpose": "A process's frames, booked before each allocation they make (FIX 6195, 7890): the body of each frame the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/process/lifeline.rs",
+     "purpose": "One organ process's life: the child, the cell its descendants are fenced in (FIX 7887), the kernel limits…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -88593,19 +88623,35 @@
      "purpose": "Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on…",
      "surface": {
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DescendantFence",
+      "NamespaceFact",
+      "OrganIsolation"
+     ],
+     "path": "src/sandbox.rs",
+     "purpose": "What the host does to an organ process between fork and exec",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "struct": 1
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/sandbox.rs",
-     "purpose": "What the host does to an organ process between fork and exec",
+     "path": "src/sandbox/fence.rs",
+     "purpose": "The descendant fence (FIX 7887): a cgroup of its own for each organ process, made under the engine's own…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -88694,7 +88740,7 @@
      "path": "src/slot.rs",
      "purpose": "One installed organ: its process, its crash history, its condition",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "struct": 1
      }
@@ -88788,6 +88834,13 @@
      "layout": "file",
      "purpose": "One admission budget for every organ: threads, memory, in-flight calls"
     },
+    "clock": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A call's time, which stops while the call waits for budget room (Engine ruling, 10-20; FIX 6196, 8020)"
+    },
     "error": {
      "files": 1,
      "impl_vault": false,
@@ -88852,10 +88905,10 @@
      "purpose": "Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are…"
     },
     "process": {
-     "files": 1,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "L",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "One live organ process: spawn, handshake, a reader thread, calls"
     },
     "receipt": {
@@ -88887,10 +88940,10 @@
      "purpose": "Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on…"
     },
     "sandbox": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "What the host does to an organ process between fork and exec"
     },
     "seal": {
@@ -88924,7 +88977,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 32,
+   "source_files": 36,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -88939,7 +88992,22 @@
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…",
      "surface": {
       "enum": 1,
-      "fn": 10
+      "fn": 10,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FrameBooking"
+     ],
+     "path": "src/frame/booked.rs",
+     "purpose": "Booked frames (FIX 6195): room for every allocation a frame makes, made before it is made",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "trait": 1
      }
     },
     {
@@ -88987,7 +89055,6 @@
      "kind": "src",
      "notable": [
       "Answer",
-      "AskBytes",
       "AskReply",
       "Asker",
       "CallContext",
@@ -89000,8 +89067,25 @@
      "surface": {
       "const": 2,
       "fn": 10,
-      "struct": 7,
+      "re-export": 1,
+      "struct": 6,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnswerMemory",
+      "AskBytes"
+     ],
+     "path": "src/runtime/answer.rs",
+     "purpose": "An answer's bytes, in the organ's own memory (FIX 8454)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -89033,7 +89117,7 @@
      "purpose": "A structural check of a MessagePack frame before it is decoded",
      "surface": {
       "const": 2,
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -89112,10 +89196,10 @@
    ],
    "modules": {
     "frame": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…"
     },
     "memory": {
@@ -89133,10 +89217,10 @@
      "purpose": "Read-only shared regions: how blob bytes cross without being copied"
     },
     "runtime": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The organ side: handshake, frames, a small worker pool and cancel flags"
     },
     "seal": {
@@ -89170,7 +89254,7 @@
    },
    "over_bar": 0,
    "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 9,
+   "source_files": 11,
    "test_files": 2
   },
   "oneiron-py": {
@@ -90163,7 +90247,7 @@
      "path": "src/memory.rs",
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 4,
       "struct": 2,
