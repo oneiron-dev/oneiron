@@ -12,6 +12,7 @@ use crate::{EdgeActorClass, Error, Result};
 
 use super::live_run::{CodeRunLiveRunBinding, LiveRunCredential};
 use super::payload::self_effect_from_str;
+use super::spawn_replay::{decode_spawn_targets, spawn_targets_value};
 use super::replay::{
     CODE_RUN_REPLAY_SCHEMA_VERSION, CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism,
     CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayRecord,
@@ -36,7 +37,7 @@ pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 9] = [
     "live_run",
 ];
 pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
-pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 7] = [
+pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 8] = [
     "seq",
     "effect",
     "request",
@@ -44,6 +45,7 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 7] = [
     "started_at_ms",
     "finished_at_ms",
     "action_digest",
+    "spawn_targets",
 ];
 pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
     ["seq", "label", "state_hash", "created_at_ms"];
@@ -92,6 +94,7 @@ const KEY_OUTCOME: &str = CODE_RUN_BRIDGE_CALL_KEYS[3];
 const KEY_STARTED_AT_MS: &str = CODE_RUN_BRIDGE_CALL_KEYS[4];
 const KEY_FINISHED_AT_MS: &str = CODE_RUN_BRIDGE_CALL_KEYS[5];
 const KEY_ACTION_DIGEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[6];
+const KEY_SPAWN_TARGETS: &str = CODE_RUN_BRIDGE_CALL_KEYS[7];
 
 const KEY_LABEL: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[1];
 const KEY_STATE_HASH: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[2];
@@ -267,6 +270,10 @@ fn encode_bridge_call(call: &CodeRunBridgeCall) -> Value {
                 .as_deref()
                 .map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from(KEY_SPAWN_TARGETS),
+            spawn_targets_value(&call.spawn_targets),
+        ),
     ])
 }
 
@@ -283,6 +290,10 @@ fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
             Value::Nil => None,
             digest => Some(str_value(digest)?.to_owned()),
         },
+        spawn_targets: decode_spawn_targets(required(
+            fields[7],
+            "missing bridge spawn_targets",
+        )?)?,
     })
 }
 
@@ -587,6 +598,7 @@ fn validate_bridge_call(call: &CodeRunBridgeCall) -> Result<()> {
         ));
     }
     call.validate_speech_coherence()?;
+    call.validate_spawn_coherence()?;
     Ok(())
 }
 
