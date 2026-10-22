@@ -407,6 +407,9 @@ impl Vault {
     /// scrub must notify even when later CRDT publication fails. The existing
     /// tee is vault-scoped and has no recipient if no window manager is live.
     pub(super) fn notify_local_delete_materialized(&self, ids: &[EntityId]) {
+        // FIX 10466: the host's live snapshot copies that may depend on an
+        // erased id go too, whatever the build's features.
+        self.inference_snapshots_erased(ids);
         #[cfg(feature = "sync")]
         {
             let manager = self

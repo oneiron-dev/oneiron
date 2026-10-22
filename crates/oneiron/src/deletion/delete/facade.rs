@@ -120,6 +120,8 @@ impl Vault {
         #[cfg(unix)]
         self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();
+        // FIX 10466: the bodies and keys of the snapshots this erase retired.
+        self.finish_inference_snapshot_retirements_after_commit();
         Ok(outcome)
     }
 
