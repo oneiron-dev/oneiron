@@ -1,5 +1,6 @@
 //! Pure TASKS row rendering: intent rows, folded jobs, cause tokens, expansion detail.
 
+use super::super::frame::MAX_BOARD_ROW_BYTES;
 use super::super::{TASK_LABEL_MAX_BYTES, one_line_token};
 use super::projection::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow, TasksSection,
@@ -106,35 +107,87 @@ pub(crate) fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
     if folded_job_count > 0 {
         tokens.push(format!("jobs={folded_job_count}"));
     }
-    if !intent.children.is_empty() {
-        tokens.push(format!(
-            "children={}",
-            intent
-                .children
-                .iter()
-                .map(|(_, child)| single_token(child))
-                .collect::<Vec<_>>()
-                .join(",")
-        ));
-    }
+    let children_at = tokens.len();
     // ONE-1896: the refusal signal rides BESIDE the status, exactly like a
     // cause token — the row still says `running`, because the worker IS
     // running; what the owner learns is that it will not stop when asked.
     if let Some(pathology) = intent_cancel_pathology(intent) {
         tokens.push(pathology.token());
     }
-    if !intent.fits.is_empty() {
-        tokens.push(format!(
-            "fits: {}",
-            intent
-                .fits
+    // FIX 3901: a comm widen ask reads as the widening it asks for. Its
+    // answer is still the consult's own.
+    if let Some(widening) = &intent.widening {
+        tokens.push(widening.token());
+    }
+    // `fits:` is not here: it renders as the section's discovery rows, which
+    // shed with discovery (FIX 9756).
+    let others = tokens.iter().map(String::len).sum::<usize>() + tokens.len() - 1;
+    if let Some(children) = children_token(&intent.children, others) {
+        tokens.insert(children_at, children);
+    }
+    TaskRow::from_intent(intent, tokens.join(" "))
+}
+
+/// The `children=` token of a row whose other tokens take `others` bytes,
+/// budgeted so the whole row stays inside [`MAX_BOARD_ROW_BYTES`] (FIX 9757).
+/// A row whose children all fit renders them as it always did, in the order
+/// they were attached. Past the ceiling the children go in attempt-id order,
+/// as many as fit, and an additive `+N` counts the rest; a row too long even
+/// for `children=+N` takes the section's count fallback.
+fn children_token(children: &[(String, String)], others: usize) -> Option<String> {
+    const KEY: &str = "children=";
+    if children.is_empty() {
+        return None;
+    }
+    let room = MAX_BOARD_ROW_BYTES.saturating_sub(others + 1);
+    let all: Vec<String> = children
+        .iter()
+        .map(|(_, child)| single_token(child))
+        .collect();
+    let full = format!("{KEY}{}", all.join(","));
+    if full.len() <= room {
+        return Some(full);
+    }
+    let mut ordered: Vec<&(String, String)> = children.iter().collect();
+    ordered.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut shown: Vec<String> = Vec::new();
+    let mut used = KEY.len();
+    for (index, (_, child)) in ordered.iter().enumerate() {
+        let token = single_token(child);
+        let rest = ordered.len() - index - 1;
+        let overflow = if rest == 0 {
+            0
+        } else {
+            format!(",+{rest}").len()
+        };
+        let comma = usize::from(!shown.is_empty());
+        if used + comma + token.len() + overflow > room {
+            break;
+        }
+        used += comma + token.len();
+        shown.push(token);
+    }
+    let omitted = ordered.len() - shown.len();
+    if omitted > 0 {
+        shown.push(format!("+{omitted}"));
+    }
+    Some(format!("{KEY}{}", shown.join(",")))
+}
+
+/// The discovery row naming who `fits:` `row`'s task (FIX 9756), apart from
+/// its TASKS row so it sheds with discovery; `None` when no one does.
+pub(crate) fn fits_row(row: &TaskRow) -> Option<String> {
+    (!row.fits.is_empty()).then(|| {
+        format!(
+            "{} fits: {}",
+            single_token(&row.id),
+            row.fits
                 .iter()
                 .map(|person| single_token(person))
                 .collect::<Vec<_>>()
                 .join(",")
-        ));
-    }
-    TaskRow::from_intent(intent, tokens.join(" "))
+        )
+    })
 }
 
 /// A task's label as its row shows it: on one line, and past
@@ -217,5 +270,7 @@ pub(super) fn bare_job_row(job: &JobPresence) -> TaskRow {
         ladder_disposition: None,
         counter_task_ref: None,
         cancel_pathology: job.cancel_pathology.clone(),
+        widening: None,
+        fits: Vec::new(),
     }
 }

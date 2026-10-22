@@ -75,6 +75,35 @@ impl CancelRejectionPathology {
     }
 }
 
+/// A consult TASK that is a child run's comm widen ask (FIX 3901): the run
+/// that asks, the reach it holds and the reach it asks for. Its answer goes
+/// through the consult's own answer door, as any consult's does.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct ConsultWidening {
+    /// The asking child run's attempt, as 32 hex.
+    pub child: String,
+    /// The reach an earlier approval already gave the child; the comm widen
+    /// record keeps no other, so a child asking from its spawn dial has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<crate::authority::CommReach>,
+    /// The reach it asks to widen to.
+    pub to: crate::authority::CommReach,
+}
+
+impl ConsultWidening {
+    /// The board token: `widening=<from>-><to>`, or `widening=<to>` with no
+    /// earlier approval to widen from.
+    #[must_use]
+    pub fn token(&self) -> String {
+        match self.from {
+            Some(from) => format!("widening={}->{}", from.as_str(), self.to.as_str()),
+            None => format!("widening={}", self.to.as_str()),
+        }
+    }
+}
+
 /// One collapsed TASKS row.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TaskRow {
@@ -100,6 +129,15 @@ pub struct TaskRow {
     /// ONE-1896: the realizing job that keeps refusing to stop, when one does.
     /// `None` is the ordinary case and leaves every existing row byte-identical.
     pub cancel_pathology: Option<CancelRejectionPathology>,
+    /// FIX 3901: the widening a consult row asks for, when it is a comm
+    /// widen ask; `None` on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widening: Option<ConsultWidening>,
+    /// The persons who `fits:` this open, unassigned task, as the reader's
+    /// board names them. They render as the section's discovery rows, apart
+    /// from [`Self::line`], so they shed with discovery (FIX 9756).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fits: Vec<String>,
 }
 
 impl TaskRow {
@@ -121,6 +159,8 @@ impl TaskRow {
             ladder_disposition: intent.ladder_disposition,
             counter_task_ref: intent.counter_task_ref.clone(),
             cancel_pathology: intent_cancel_pathology(intent),
+            widening: intent.widening.clone(),
+            fits: intent.fits.clone(),
         }
     }
 }
@@ -539,6 +579,9 @@ pub struct TaskIntentPresence {
     /// Live children realizing this task: each one's attempt id and its
     /// `<agent>:<status>[:lead]` token, in the order they were attached.
     pub children: Vec<(String, String)>,
+    /// FIX 3901: the widening this consult asks for, when it is a comm widen
+    /// ask.
+    pub widening: Option<ConsultWidening>,
 }
 
 impl TaskIntentPresence {
@@ -572,6 +615,7 @@ impl TaskIntentPresence {
             who_label: None,
             fits: Vec::new(),
             children: Vec::new(),
+            widening: None,
         }
     }
 

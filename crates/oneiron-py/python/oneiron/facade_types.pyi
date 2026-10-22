@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1154 facade rows, 4088 declarations.
+Census: 1154 facade rows, 4090 declarations.
 Inputs: 1089 of 1154 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1040 of 1154 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 101; unread shapes: 0.
+Results: 1038 of 1154 fully typed, 116 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 102; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -412,6 +412,9 @@ class NotificationSource(TypedDict):
     run: NotRequired[str | None]
     result: NotRequired[str | None]
     detail: NotRequired[str | None]
+class NotificationAction(TypedDict):
+    verb: str
+    args: Any
 class NotificationRow(TypedDict):
     id: str
     learned_at: int
@@ -422,6 +425,7 @@ class NotificationRow(TypedDict):
     origin_conversation: NotRequired[str | None]
     seen: bool
     acked: bool
+    actions: NotRequired[list[NotificationAction]]
 class NotificationPage(TypedDict):
     rows: list[NotificationRow]
     next_after: NotRequired[str | None]
@@ -1342,6 +1346,8 @@ class CancelRejectionPathology(TypedDict):
     rejections: int
     threshold: int
     last_status: NotRequired[str | None]
+CommReach = Literal["parent", "subtree", "project", "vault"]
+ConsultWidening = TypedDict("ConsultWidening", {"child": str, "from": NotRequired[CommReach | None], "to": CommReach})
 class TaskRow(TypedDict):
     id: str
     line: str
@@ -1356,6 +1362,8 @@ class TaskRow(TypedDict):
     ladder_disposition: NotRequired[LadderTerminalDisposition | None]
     counter_task_ref: NotRequired[str | None]
     cancel_pathology: NotRequired[CancelRejectionPathology | None]
+    widening: NotRequired[ConsultWidening | None]
+    fits: NotRequired[list[str]]
 class TasksOverflow(TypedDict):
     known_omitted_rows: int
     source_exhausted: bool
@@ -3371,7 +3379,6 @@ class FederationDirectionScope(TypedDict):
 class CredentialPactCeiling(TypedDict):
     grant_ref: ScopeId
     ceiling: FederationDirectionScope
-CommReach = Literal["parent", "subtree", "project", "vault"]
 class CredentialCaveat(TypedDict):
     scope: NotRequired[CredentialCeiling | None]
     expires_at: NotRequired[int | None]
@@ -4549,10 +4556,10 @@ class InboxLensRequest(TypedDict):
     before_impact: NotRequired[int | None]
     before_at: NotRequired[int | None]
     before_id: NotRequired[str | None]
-InboxLensKind = Literal["conversation", "waiting_on_you", "coordination_update", "concern"]
+InboxLensKind = Literal["conversation", "waiting_on_you", "coordination_update", "concern", "digest"]
 InboxLensPile = Literal["conversations", "waiting_on_you", "updates"]
 class InboxLensParticipant(TypedDict):
-    identity: str
+    identity: NotRequired[str | None]
     actor: str
 class InboxLensConcern(TypedDict):
     agent: str
@@ -4568,7 +4575,7 @@ class InboxLensRow(TypedDict):
     kind: InboxLensKind
     pile: InboxLensPile
     thread_ref: NotRequired[str | None]
-    identity: str
+    identity: NotRequired[str | None]
     actor: str
     facet: NotRequired[str | None]
     participants: list[InboxLensParticipant]
@@ -4578,6 +4585,8 @@ class InboxLensRow(TypedDict):
     payload_ref: NotRequired[str | None]
     concern: NotRequired[InboxLensConcern | None]
     diary_review: NotRequired[InboxLensDiaryReview | None]
+    sender: NotRequired[str | None]
+    widening: NotRequired[ConsultWidening | None]
 class InboxConcernGroup(TypedDict):
     agent: str
     items: list[str]

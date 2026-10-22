@@ -370,21 +370,42 @@ pub(super) fn board_parts(
             let slice = vault
                 .agent_inbox_slice(actor, BOARD_INBOX_CAP, None)
                 .map_err(|error| core_engine_error("board inbox failed", error))?;
-            for item in slice {
+            for mut item in slice {
                 let mut admitting = Vec::new();
                 for participant in item
                     .participants
                     .iter()
                     .filter(|row| row.actor_ref == actor)
                 {
+                    // A row no identity carries (a digest, a comm widen ask)
+                    // is admitted by the record it names (FIX 1261, 3901).
+                    let Some(source) = participant.identity_ref.or_else(|| {
+                        item.payload_ref
+                            .as_deref()
+                            .and_then(|record| EntityId::from_hex(record).ok())
+                    }) else {
+                        continue;
+                    };
                     if read
-                        .is_ref_readable(&participant.identity_ref)
+                        .is_ref_readable(&source)
                         .map_err(|error| core_engine_error("board inbox failed", error))?
                     {
-                        admitting.push(participant.identity_ref);
+                        admitting.push(source);
                     }
                 }
                 if !admitting.is_empty() {
+                    // FIX 9745: the sender renders only while the caller's
+                    // read reads it; otherwise the row names no sender.
+                    if let Some(sender) = item.sender {
+                        if read
+                            .is_ref_readable(&sender)
+                            .map_err(|error| core_engine_error("board inbox failed", error))?
+                        {
+                            inbox_sources.push(sender);
+                        } else {
+                            item.sender = None;
+                        }
+                    }
                     inbox_sources.extend(admitting);
                     inbox_sources.extend(inbox_named_sources(read, &item, actor)?);
                     rows.push(item);
