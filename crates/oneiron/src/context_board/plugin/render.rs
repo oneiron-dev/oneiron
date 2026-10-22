@@ -2,13 +2,11 @@
 use super::super::frame::{BoardSection, SectionPolicy, ShedRank, section_policy_for_budget_ref};
 use super::super::one_line_token;
 use super::admission::{PluginSectionRegistry, section_is_live};
-use super::claim::{PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload};
 use super::errors::{PluginResult, PluginSectionError};
 use super::install::PluginInstallOrigin;
 use super::manifest::{SectionId, SkillLifecycleSource};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use super::pages::{PluginProposalPage, PluginSectionSnapshotPage};
 use crate::entity_id::EntityId;
-use crate::vault::Vault;
 
 // ---------------------------------------------------------------------------
 // §5 — pure rendering
@@ -66,6 +64,16 @@ pub fn render_plugin_row(row: &PluginSectionRow) -> String {
     out
 }
 
+/// The count fallback row: the plain row count for a complete set, and the
+/// truthful total, shown and remaining counts for one page of a longer one.
+fn count_row(total: u64, shown: usize, remaining: u64) -> String {
+    if remaining == 0 && u64::try_from(shown).is_ok_and(|shown| shown == total) {
+        format!("count: {total}")
+    } else {
+        format!("count: {total} shown: {shown} remaining: {remaining}")
+    }
+}
+
 /// Builds validated [`BoardSection`] values for every still-live admitted
 /// plugin section.
 ///
@@ -78,17 +86,48 @@ pub fn render_plugin_sections(
     snapshots: &[PluginSectionSnapshot],
     skills: &dyn SkillLifecycleSource,
 ) -> PluginResult<Vec<BoardSection>> {
+    render_live_sections(registry, skills, |section_id| {
+        snapshots
+            .iter()
+            .find(|snapshot| snapshot.section_id == *section_id)
+            .map(|snapshot| {
+                let shown = u64::try_from(snapshot.rows.len()).unwrap_or(u64::MAX);
+                (snapshot, shown, 0)
+            })
+    })
+}
+
+/// [`render_plugin_sections`] over paged snapshots: each section's count row
+/// carries its page's truthful total and remaining counts.
+pub fn render_plugin_section_pages(
+    registry: &PluginSectionRegistry,
+    pages: &[PluginSectionSnapshotPage],
+    skills: &dyn SkillLifecycleSource,
+) -> PluginResult<Vec<BoardSection>> {
+    render_live_sections(registry, skills, |section_id| {
+        pages
+            .iter()
+            .find(|page| page.snapshot.section_id == *section_id)
+            .map(|page| (&page.snapshot, page.total, page.remaining))
+    })
+}
+
+fn render_live_sections<'a>(
+    registry: &PluginSectionRegistry,
+    skills: &dyn SkillLifecycleSource,
+    snapshot_for: impl Fn(&SectionId) -> Option<(&'a PluginSectionSnapshot, u64, u64)>,
+) -> PluginResult<Vec<BoardSection>> {
     let mut sections = Vec::new();
     for admitted in registry.sections() {
         let manifest = &admitted.manifest;
         if !section_is_live(manifest, skills)? {
             continue;
         }
-        let snapshot = snapshots
-            .iter()
-            .find(|snapshot| snapshot.section_id == *manifest.section_id())
-            .ok_or_else(|| PluginSectionError::MissingSnapshot {
-                section_id: manifest.section_id().0.clone(),
+        let (snapshot, total, remaining) =
+            snapshot_for(manifest.section_id()).ok_or_else(|| {
+                PluginSectionError::MissingSnapshot {
+                    section_id: manifest.section_id().0.clone(),
+                }
             })?;
 
         let policy = section_policy_for_budget_ref(manifest.budget_policy())?;
@@ -102,7 +141,7 @@ pub fn render_plugin_sections(
         }
 
         let detail_rows: Vec<String> = snapshot.rows.iter().map(render_plugin_row).collect();
-        let count_rows = vec![format!("count: {}", snapshot.rows.len())];
+        let count_rows = vec![count_row(total, snapshot.rows.len(), remaining)];
         // `BoardSection::new` applies the shared per-row byte clamp BEFORE
         // anything is tokenized, so an over-limit hostile row is rejected
         // deterministically and never reaches the shed loop's repeated
@@ -170,75 +209,6 @@ pub struct PluginProposalRow {
 /// plus the collision check on admitted ids.
 pub const PLUGIN_PROPOSALS_SECTION_NAME: &str = "PROPOSALS";
 
-/// Bound on the pending-consent scan the proposal projection performs.
-const PLUGIN_PROPOSAL_SCAN_LIMIT: usize = 1_024;
-
-/// Projects every STILL-PENDING plugin-section install as one typed row.
-///
-/// Reads the public pending-consent surface and filters to
-/// [`PREDICATE_PLUGIN_SECTION_INSTALL`]. Both origins are returned:
-/// `Conversation` and `DreamerSuggestion` alike. Origin decides provenance
-/// and dedupe, never whether the agent may SEE an unresolved install — a
-/// conversation-initiated install that vanished from the board would leave
-/// the agent unable to explain a pending question it raised itself.
-///
-/// This is a projection over the gate's own pending rows. It mints nothing,
-/// stores nothing, and is not install authority: a row here can neither
-/// accept consent nor register a section.
-///
-/// Rows are ordered by claim id so a render is byte-stable across restarts.
-/// `limit` caps the number of ROWS returned.
-///
-/// # Errors
-///
-/// Storage errors, and [`PluginSectionError::MalformedClaimPayload`] never:
-/// a pending row whose payload or manifest does not strictly decode is
-/// SKIPPED rather than failing the whole board, so one corrupt claim cannot
-/// blank the section.
-pub fn pending_plugin_proposal_rows(
-    vault: &Vault,
-    limit: usize,
-) -> PluginResult<Vec<PluginProposalRow>> {
-    let mut rows: Vec<PluginProposalRow> = Vec::new();
-    for pending in vault.pending_gate_consents(PLUGIN_PROPOSAL_SCAN_LIMIT)? {
-        let Ok(claim_id) = EntityId::from_bytes(pending.claim_id) else {
-            continue;
-        };
-        let Some(body) = vault.get_claim(&claim_id)? else {
-            continue;
-        };
-        if body.predicate != PREDICATE_PLUGIN_SECTION_INSTALL {
-            continue;
-        }
-        // A pending row survives only while the claim is genuinely awaiting
-        // an owner: an approved, retracted, or superseded body has already
-        // been decided and must not keep asking.
-        if body.approval != ClaimApprovalStatus::Proposed
-            || body.lifecycle != ClaimLifecycleStatus::Active
-            || body.stale
-        {
-            continue;
-        }
-        let Ok(payload) = PluginInstallClaimPayload::from_value(&body.value) else {
-            continue;
-        };
-        let Ok(envelope) = payload.manifest() else {
-            continue;
-        };
-        rows.push(PluginProposalRow {
-            install_claim_id: claim_id,
-            origin: payload.origin,
-            pack_id: envelope.manifest.provenance.pack_id,
-            section_id: payload.section_id,
-            label: envelope.manifest.name,
-            awaiting_owner_consent: true,
-        });
-    }
-    rows.sort_by_key(|row| *row.install_claim_id.as_bytes());
-    rows.truncate(limit);
-    Ok(rows)
-}
-
 /// Renders the fixed `PROPOSALS` section over the pending rows.
 ///
 /// One detail row per pending proposal through the shared row fence and the
@@ -253,11 +223,30 @@ pub fn pending_plugin_proposal_rows(
 ///
 /// [`PluginSectionError::Frame`] when a row exceeds the shared byte clamp.
 pub fn render_plugin_proposal_section(rows: &[PluginProposalRow]) -> PluginResult<BoardSection> {
+    let shown = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+    proposal_section(rows, shown, 0)
+}
+
+/// [`render_plugin_proposal_section`] over one proposal page: the count row
+/// carries the complete matching total and how many remain past the page.
+///
+/// # Errors
+///
+/// [`PluginSectionError::Frame`] when a row exceeds the shared byte clamp.
+pub fn render_plugin_proposal_page(page: &PluginProposalPage) -> PluginResult<BoardSection> {
+    proposal_section(&page.rows, page.matching_total, page.remaining)
+}
+
+fn proposal_section(
+    rows: &[PluginProposalRow],
+    total: u64,
+    remaining: u64,
+) -> PluginResult<BoardSection> {
     let detail_rows: Vec<String> = rows.iter().map(render_plugin_proposal_row).collect();
     // Non-empty on purpose, including at zero: the shed ladder degrades a
     // section TO its count rows, and an empty fallback is rejected by
     // `BoardSection::new`.
-    let count_rows = vec![format!("count: {}", rows.len())];
+    let count_rows = vec![count_row(total, rows.len(), remaining)];
     Ok(BoardSection::new(
         PLUGIN_PROPOSALS_SECTION_NAME,
         Vec::new(),

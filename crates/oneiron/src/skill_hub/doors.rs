@@ -99,8 +99,9 @@ impl Vault {
             .entity)
     }
 
-    /// Fetches an indexed adapter package and cross-checks its declared hash
-    /// against the engine's canonical recomputation before any write begins.
+    /// Fetches an indexed adapter package and cross-checks its declared skill
+    /// id, version and hash against the fetched record and the engine's
+    /// canonical recomputation before any write begins.
     pub fn ingest_skill_from_adapter_checked<A: SkillHubAdapter>(
         &self,
         adapter: &A,
@@ -116,6 +117,11 @@ impl Vault {
             HubPin::ContentHash(declared_hex.clone()),
         )?;
         let package = adapter.fetch_package(&hub_ref)?;
+        if package.record.skill_id != entry.name || package.record.version != entry.version {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "fetched package skill id or version does not match the declared entry",
+            )));
+        }
         let canonical_hash = package.content_hash()?;
         let mut canonical_record = package.record.clone();
         canonical_record.content_hash = Some(canonical_hash);

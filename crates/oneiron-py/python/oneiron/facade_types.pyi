@@ -5530,6 +5530,7 @@ class PluginSectionProposal(TypedDict):
     manifest: SectionManifestEnvelope
 class PluginSectionListRequest(TypedDict):
     limit: NotRequired[int | None]
+    cursor: NotRequired[str | None]
 class PluginSectionPendingRow(TypedDict):
     claim_ref: str
     pack_id: str
@@ -5549,6 +5550,10 @@ class PluginSectionPackRow(TypedDict):
     section: PackSection
 class PluginSectionsView(TypedDict):
     pending: list[PluginSectionPendingRow]
+    pending_total: int
+    pending_remaining: int
+    next_cursor: NotRequired[str | None]
+    end: bool
     admitted: list[PluginSectionAdmittedRow]
     pack_sections: list[PluginSectionPackRow]
     rendered_pack_sections: list[str]

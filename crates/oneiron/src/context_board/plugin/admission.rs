@@ -3,8 +3,8 @@ use super::claim::{PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload};
 use super::errors::{PluginResult, PluginSectionError};
 use super::install::ValidatedSectionManifest;
 use super::manifest::{
-    PluginInstallExecutor, SectionBindingResolver, SectionId, SectionVerbAllowlist, SectionVerbRef,
-    SkillLifecycleSource,
+    ApprovedPluginIdentity, PluginInstallExecutor, SectionBindingResolver, SectionId,
+    SectionVerbAllowlist, SectionVerbRef, SkillLifecycleSource,
 };
 use super::validate::{provenance_matches_record, validate_manifest_for_admission};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
@@ -61,6 +61,8 @@ pub fn execute_approved_plugin_section_install(
 
     let payload = PluginInstallClaimPayload::from_value(&body.value)?;
     let envelope = payload.manifest()?;
+    // The reviewed package identity. Every record below must be exactly it.
+    let approved = ApprovedPluginIdentity::from_reviewed(&payload, &envelope)?;
     let verbs = SectionVerbAllowlist::from_exported_verbs();
 
     let skill_ref = payload.target.target_skill_ref();
@@ -68,11 +70,12 @@ pub fn execute_approved_plugin_section_install(
     let record = match existing {
         Some(record) => record,
         None => {
-            // Only now — after consent — do the pinned bytes move, and they
+            // Only now — after consent — do the approved bytes move, and they
             // land as Candidate through the existing checked import door.
             let imported = source.import_candidate_under_claim(
                 vault,
                 &payload.target,
+                &approved,
                 &install_claim_id,
                 now,
             )?;
@@ -93,6 +96,9 @@ pub fn execute_approved_plugin_section_install(
                 })?
         }
     };
+    // An existing or newly imported record that is not the approved package
+    // stops here, before any activation step.
+    approved.check_record(&record)?;
 
     let record = if record.lifecycle_status == SkillLifecycle::Candidate {
         // Same approved install claim, existing Candidate→Active door, no
@@ -101,17 +107,15 @@ pub fn execute_approved_plugin_section_install(
     } else {
         record
     };
+    // The post-admission record is checked again before this door answers
+    // either PendingActivation or Admitted.
+    approved.check_record(&record)?;
 
     if !record.lifecycle_status.loads_as_canon() {
         return Ok(PluginSectionAdmission::PendingActivation { skill_ref });
     }
 
     let validated = validate_manifest_for_admission(envelope, &record, bindings, &verbs)?;
-    if validated.provenance().content_hash_hex != payload.content_hash_hex
-        || validated.provenance().skill_version != payload.skill_version
-    {
-        return Err(PluginSectionError::ProvenanceMismatch);
-    }
     let section_id = validated.section_id().clone();
     registry.adopt(install_claim_id, validated)?;
     Ok(PluginSectionAdmission::Admitted {
@@ -217,10 +221,16 @@ impl PluginSectionRegistry {
             let Ok(envelope) = payload.manifest() else {
                 continue;
             };
+            let Ok(approved) = ApprovedPluginIdentity::from_reviewed(&payload, &envelope) else {
+                continue;
+            };
             let Ok(Some(record)) = vault.get_skill_record(&payload.target.target_skill_ref())
             else {
                 continue;
             };
+            if approved.check_record(&record).is_err() {
+                continue;
+            }
             let Ok(validated) =
                 validate_manifest_for_admission(envelope, &record, bindings, &verbs)
             else {

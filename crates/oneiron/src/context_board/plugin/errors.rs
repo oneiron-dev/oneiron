@@ -56,6 +56,8 @@ pub enum PluginSectionError {
     MissingPendingConsent,
     #[error("plugin suggestion key must be exactly 64 lowercase hex characters")]
     MalformedSuggestionKey,
+    #[error("page cursor is not one an earlier page of this list returned")]
+    MalformedCursor,
     #[error("section snapshot is missing for admitted section: {section_id}")]
     MissingSnapshot { section_id: String },
     #[error("canonical MessagePack codec failure for the section manifest")]
