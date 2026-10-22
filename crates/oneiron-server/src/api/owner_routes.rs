@@ -68,6 +68,7 @@ mod handoff_alarm_routes;
 mod history_routes;
 mod house_routes;
 mod inbox_routes;
+mod intent_routes;
 mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
@@ -156,6 +157,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(history_routes::routes())
         .merge(house_routes::routes())
         .merge(inbox_routes::routes())
+        .merge(intent_routes::routes())
         .merge(concern_routes::routes())
         .merge(learning_setting_routes::routes())
         .merge(machine_routes::routes())

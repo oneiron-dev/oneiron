@@ -337,6 +337,7 @@ async fn supervise(
             task_instruction: settings.task_instruction.clone().unwrap_or_else(|| {
                 oneiron::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION.to_owned()
             }),
+            confession_instruction: settings.wording.confession().to_owned(),
             windows,
             weaver: None,
             weaver_ladder: None,
@@ -469,6 +470,8 @@ struct ObservedFactory {
     /// A Dreamer-lane TASK realizes with this: the host's wording, else the
     /// catalogue's own.
     task_instruction: String,
+    /// A TASK's realization is asked for its confession in this (FIX 8696).
+    confession_instruction: String,
     windows: BTreeMap<ModelId, u64>,
     /// The weaver's narrative route: the model and window a resident that
     /// inherits dreams on, never its diary.
@@ -712,6 +715,7 @@ impl PassExecutorFactory for ObservedFactory {
                 egress: self.egress,
                 actor: self.actor,
                 instruction: &self.task_instruction,
+                confession: &self.confession_instruction,
             });
         let check = self
             .weaver
@@ -767,6 +771,7 @@ impl PassExecutorFactory for ObservedFactory {
                 egress: self.egress,
                 actor: self.actor,
                 instruction: &self.task_instruction,
+                confession: &self.confession_instruction,
             });
         let check = self
             .weaver
@@ -1011,6 +1016,7 @@ struct TaskLend<'p> {
     egress: bool,
     actor: WriteActor,
     instruction: &'p str,
+    confession: &'p str,
 }
 
 impl TaskLend<'_> {
@@ -1042,6 +1048,7 @@ impl TaskLend<'_> {
                 role: self.role,
                 actor: self.actor,
                 instruction: self.instruction,
+                confession: self.confession,
             },
         )
         .await?;
