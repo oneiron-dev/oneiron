@@ -6,7 +6,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{AiReply, AiReplyRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, owner_proof, refused};
+use super::host_doors::support::{Listed, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
