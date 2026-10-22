@@ -45,7 +45,18 @@ pub struct RuntimeConfig {
     #[serde(skip)]
     #[schema(ignore)]
     pub host_destinations: BTreeMap<String, String>,
+    /// `[runtime] seat_host`: whether this host claims and runs the queued
+    /// official CLI attempts itself (FIX 4552). On by default; an owner
+    /// whose CLI logins live with another runner turns it off, and those
+    /// attempts wait for that runner as before.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub seat_host: bool,
 }
+
+/// Whether a host runs the queued official CLI attempts itself when its
+/// config names no `[runtime] seat_host`.
+pub(crate) const SEAT_HOST_DEFAULT: bool = true;
 
 impl PartialEq for RuntimeConfig {
     fn eq(&self, other: &Self) -> bool {
@@ -54,6 +65,7 @@ impl PartialEq for RuntimeConfig {
             && self.byo_key_secret == other.byo_key_secret
             && self.role_defaults == other.role_defaults
             && self.host_destinations == other.host_destinations
+            && self.seat_host == other.seat_host
     }
 }
 
@@ -67,6 +79,7 @@ impl fmt::Debug for RuntimeConfig {
             .field("byo_key_secret", &self.byo_key_secret)
             .field("role_defaults", &self.role_defaults)
             .field("host_destinations", &self.host_destinations)
+            .field("seat_host", &self.seat_host)
             .finish()
     }
 }
@@ -90,12 +103,16 @@ impl RuntimeConfig {
             role_defaults: RuntimeRoleDefaults::for_mode(mode),
             role_default_explicit_fields: RuntimeRoleDefaultExplicitFields::default(),
             host_destinations: BTreeMap::new(),
+            seat_host: SEAT_HOST_DEFAULT,
         }
     }
 
     pub fn apply_override(&mut self, value: RuntimeConfigOverride) {
         if let Some(host_destinations) = value.host_destinations {
             self.host_destinations = host_destinations;
+        }
+        if let Some(seat_host) = value.seat_host {
+            self.seat_host = seat_host;
         }
         // The BYO key's source is one choice: a layer that names one replaces
         // both, before a BYO mode looks for one.

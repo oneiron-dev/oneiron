@@ -380,6 +380,23 @@ carry `bodyOmitted` in place of their body; reading that row on its own
 returns its body whole. An over-large `limit` is served at 1,000 rows, and
 the response says it was clamped.
 
+## Own-runtime CLI seats
+
+On a self-hosted local vault, the server claims the queued official CLI
+attempts (claude, codex, opencode) and runs them itself (FIX 4552).
+`[runtime] seat_host = false` leaves them to another runner, as before.
+`[runtime.host_destinations]` binds an environment variable to the effector
+the owner's secret binding names, for the processes such a run starts. It is
+empty by default, so no run is offered a T1 destination.
+
+```toml
+[runtime]
+seat_host = true    # the default; false leaves queued CLI attempts to another runner
+
+[runtime.host_destinations]
+GH_TOKEN = "cli:gh"
+```
+
 ## CJK Dictionaries
 
 Oneiron can run without CJK dictionaries, but Japanese, Chinese, and Korean

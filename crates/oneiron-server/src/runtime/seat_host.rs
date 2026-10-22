@@ -71,9 +71,12 @@ const SEAT_RUN_BUDGET: ExecutionBudget = ExecutionBudget::new(3600, 4096, 128);
 
 impl SyncServer {
     /// Starts the seat host, or `None` on a vault whose posture keeps the
-    /// own-runtime executor off it (a hosted or relay vault).
+    /// own-runtime executor off it (a hosted or relay vault), or when the
+    /// owner's `[runtime] seat_host` leaves the attempts to another runner.
     pub(crate) fn spawn_seat_host(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
-        if self.vault().privacy_posture() != HostingPrivacyPosture::SelfHostLocal {
+        if !self.config.runtime.seat_host
+            || self.vault().privacy_posture() != HostingPrivacyPosture::SelfHostLocal
+        {
             return None;
         }
         let server = Arc::clone(self);
