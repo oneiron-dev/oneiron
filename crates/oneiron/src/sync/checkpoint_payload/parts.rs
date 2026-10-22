@@ -53,7 +53,9 @@ impl PartHolders {
     }
 
     /// Where the part under `key` in `root` goes: one copy under each
-    /// holder a manifest named it for, or unclassified.
+    /// holder a manifest named it for, or unclassified. One owner holding it
+    /// with other dependencies under two manifests is two holders, and the
+    /// window projection keeps their copies apart (FIX 9128).
     pub(crate) fn place(&self, root: &str, key: &str) -> Placement {
         let Some(claim) = self.parts.get(&(root.to_owned(), key.to_owned())) else {
             return Placement::unclassified(None, SyncUnclassified::OrphanPart);

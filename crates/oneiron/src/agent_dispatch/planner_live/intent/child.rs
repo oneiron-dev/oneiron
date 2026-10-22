@@ -78,7 +78,7 @@ struct LeasedAsk<'a> {
     comm: Option<CommReach>,
     room: Option<RoomWork>,
     objectives: Option<&'a [String]>,
-    depth_remaining: Option<u8>,
+    depth_remaining: Option<u64>,
     project_ref: Option<EntityId>,
     budget: Option<u64>,
     team: Option<&'a TeamRunStamp>,

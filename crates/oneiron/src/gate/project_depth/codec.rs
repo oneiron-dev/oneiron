@@ -6,10 +6,10 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 
 const DOMAIN: &[u8] = b"oneiron.project.depth.policy.v1\0";
-const MAX_BODY: usize = 16 * 1024;
 const PREFIX: &[u8; 4] = &[0xD5, 0x9A, 0x3C, 0x7E];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,7 +29,7 @@ pub(crate) enum ProjectDepthContribution {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ProjectDepthDefault {
     pub(crate) version: u8,
-    pub(crate) depth: u8,
+    pub(crate) depth: u64,
 }
 
 pub(crate) fn seeded_default() -> ProjectDepthDefault {
@@ -64,7 +64,7 @@ pub(crate) fn canonical_birth(project: EntityId) -> Result<ProjectDepthBirth> {
 pub(crate) struct ProjectDepthBirth {
     pub(crate) version: u8,
     pub(crate) project_ref: String,
-    pub(crate) depth: u8,
+    pub(crate) depth: u64,
     pub(crate) source_manifest: String,
     pub(crate) source_hash: [u8; 32],
     pub(crate) owner: Option<ProjectBirthOwnerProof>,
@@ -108,7 +108,7 @@ pub(crate) fn birth_transcript(birth: &ProjectDepthBirth) -> Result<Vec<u8>> {
 pub(crate) struct ProjectDepthEdit {
     pub(crate) version: u8,
     pub(crate) project_ref: String,
-    pub(crate) depth: u8,
+    pub(crate) depth: u64,
     pub(crate) vault_id: [u8; 32],
     pub(crate) actor_ref: String,
     pub(crate) frontier: [u8; 32],
@@ -174,8 +174,10 @@ pub(crate) fn is_project_depth_contribution(bytes: &[u8]) -> bool {
         })
 }
 
+/// The whole contribution decodes, however long its body (rule 5): its put
+/// door counts the bytes and predecessors, and refuses neither.
 pub(crate) fn decode_contribution(bytes: &[u8]) -> Result<ProjectDepthContribution> {
-    if bytes.len() > MAX_BODY || bytes.is_empty() {
+    if bytes.is_empty() {
         return Err(invalid());
     }
     let value: ProjectDepthContribution = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
@@ -188,16 +190,16 @@ pub(crate) fn decode_contribution(bytes: &[u8]) -> Result<ProjectDepthContributi
         }
         return Ok(value);
     }
-    let (project_ref, depth, version) = match &value {
+    // Depth is owner-editable policy to any value; the engine's ancestor
+    // walk never bounds it.
+    let (project_ref, version) = match &value {
         ProjectDepthContribution::Default(_) => unreachable!("handled above"),
-        ProjectDepthContribution::Birth(b) => (&b.project_ref, b.depth, b.version),
+        ProjectDepthContribution::Birth(b) => (&b.project_ref, b.version),
         ProjectDepthContribution::Edit(e) | ProjectDepthContribution::DefaultEdit(e) => {
-            (&e.project_ref, e.depth, e.version)
+            (&e.project_ref, e.version)
         }
     };
-    if version != 1
-        || usize::from(depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
-        || !EntityId::from_hex(project_ref).is_ok_and(|id| id.to_hex() == *project_ref)
+    if version != 1 || !EntityId::from_hex(project_ref).is_ok_and(|id| id.to_hex() == *project_ref)
     {
         return Err(invalid());
     }
@@ -256,7 +258,6 @@ fn validate_signed_edit(e: &ProjectDepthEdit) -> Result<()> {
     let actor = EntityId::from_hex(&e.actor_ref).map_err(|_| invalid())?;
     if actor.to_hex() != e.actor_ref
         || e.predecessors.is_empty()
-        || e.predecessors.len() > 256
         || e.predecessors.windows(2).any(|pair| pair[0] >= pair[1])
         || e.predecessors
             .iter()
@@ -318,7 +319,29 @@ pub(crate) fn validate_contribution_put(
     replicated: bool,
     posture: crate::HostingPrivacyPosture,
 ) -> Result<()> {
+    // A long frontier is one atomic signed fact (C3): past their threshold
+    // rows its bytes and predecessors ask whether everything is okay.
+    let mut bytes = ScanCount::start(
+        store,
+        txn,
+        EngineScan::ProjectDepthContributionBytes,
+        id.as_bytes(),
+    )?;
+    bytes.rows(body.len());
+    bytes.defer(store);
     let value = decode_contribution(body)?;
+    if let ProjectDepthContribution::Edit(edit) | ProjectDepthContribution::DefaultEdit(edit) =
+        &value
+    {
+        let mut heads = ScanCount::start(
+            store,
+            txn,
+            EngineScan::ProjectDepthPredecessors,
+            id.as_bytes(),
+        )?;
+        heads.rows(edit.predecessors.len());
+        heads.defer(store);
+    }
     // The seeded row is derived by every replica and is never a stored fact.
     if content_id(body)? != id || matches!(value, ProjectDepthContribution::Default(_)) {
         return Err(invalid());
