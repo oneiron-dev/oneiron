@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+mod headers;
+
+pub use self::headers::header_parameters;
+
+use self::headers::{canonical_header, declared_headers, dynamic_header};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolGrantDataClass {
@@ -387,7 +393,8 @@ pub fn prepare_tool_call(
     super::tool_schema::validate(schema, &checked, &call.tool)?;
     let mut headers = BTreeMap::new();
     let mut requirements = Vec::new();
-    for (parameter, names) in declared_headers(schema, &checked, &call.tool)? {
+    let declared = declared_headers(schema, &checked, &call.tool)?;
+    for (parameter, names) in declared.named {
         let names = names
             .into_iter()
             .map(canonical_header)
@@ -417,6 +424,22 @@ pub fn prepare_tool_call(
                 data_class: ToolGrantDataClass::XMcpHeader,
             });
         }
+    }
+    // A key a pattern or `additionalProperties` declares goes as its header
+    // when it can by the same rules; else it stays in the body (FIX 9284).
+    for (parameter, names) in declared.dynamic {
+        let Some((header, value)) =
+            dynamic_header(&body, parameter, &names, &headers, destructive_hint)
+        else {
+            continue;
+        };
+        body.remove(parameter);
+        headers.insert(header.clone(), value);
+        requirements.push(HeaderGrantRequirement {
+            parameter: parameter.to_owned(),
+            header,
+            data_class: ToolGrantDataClass::XMcpHeader,
+        });
     }
     requirements.sort_by(|a, b| a.parameter.cmp(&b.parameter));
     // The frozen content's own class raises the tool's (FIX 8807): every
@@ -515,31 +538,6 @@ pub(super) fn invalid_schema() -> Error {
     Error::InvalidConfig("tool schema or resolved header parameters are invalid".into())
 }
 
-/// Each `x-mcp-header` parameter `schema` declares where `value` meets it,
-/// with every header name it names there: its own for `true`, the given one
-/// for a string. A branch's annotation counts as the root's does, and a
-/// parameter two branches name differently goes under each name (FIX
-/// 8810); `false` declares none, and any other annotation refuses.
-fn declared_headers<'a>(
-    schema: &'a Value,
-    value: &Value,
-    tool: &str,
-) -> Result<BTreeMap<&'a str, std::collections::BTreeSet<&'a str>>> {
-    let mut declared: BTreeMap<&str, std::collections::BTreeSet<&str>> = BTreeMap::new();
-    for properties in super::tool_schema::applicable_properties(schema, Some((value, tool)))? {
-        for (parameter, property) in properties {
-            let name = match property.get("x-mcp-header") {
-                None | Some(Value::Bool(false)) => continue,
-                Some(Value::Bool(true)) => parameter.as_str(),
-                Some(Value::String(name)) => name.as_str(),
-                Some(_) => return Err(invalid_schema()),
-            };
-            declared.entry(parameter.as_str()).or_default().insert(name);
-        }
-    }
-    Ok(declared)
-}
-
 /// The class `content` shows by itself (FIX 8807): `Secret` when the shared
 /// release check finds a credential or secret in it, read on a copy;
 /// otherwise the lowest, so the tool's slate class (its trusted provenance)
@@ -552,48 +550,6 @@ pub(super) fn content_data_class(content: &Value) -> DataClass {
     }
 }
 
-/// The parameters an `x-mcp-header` annotation in `schema` can send as
-/// headers, sorted: those in the root `properties` and in every branch a
-/// call may meet (FIX 8810), as [`prepare_tool_call`] extracts them.
-pub fn header_parameters(schema: &Value) -> Vec<String> {
-    let mut names = std::collections::BTreeSet::new();
-    for properties in super::tool_schema::applicable_properties(schema, None).unwrap_or_default() {
-        for (parameter, property) in properties {
-            if matches!(
-                property.get("x-mcp-header"),
-                Some(Value::Bool(true) | Value::String(_))
-            ) {
-                names.insert(parameter.clone());
-            }
-        }
-    }
-    names.into_iter().collect()
-}
-fn canonical_header(name: &str) -> Result<String> {
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&c))
-    {
-        return Err(invalid_schema());
-    }
-    let name = name.to_ascii_lowercase();
-    if matches!(
-        name.as_str(),
-        "authorization"
-            | "host"
-            | "cookie"
-            | "connection"
-            | "transfer-encoding"
-            | "mcp-method"
-            | "mcp-name"
-    ) || name.starts_with("content-")
-        || name.starts_with("proxy-")
-    {
-        return Err(invalid_schema());
-    }
-    Ok(name)
-}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -449,14 +449,16 @@ impl Memory<'_> {
             }))
     }
 
-    /// Reads the immutable birth in the same snapshot as the admitted row.
+    /// Reads the immutable birth in the same snapshot as the admitted row,
+    /// where the lane reads: a room's view holds the births of the rows its
+    /// room staged (FIX 4281).
     fn made_by_in_lane(
         &self,
         lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> MemoryResult<Option<crate::provenance::made_by::MadeBy>> {
-        let Some(birth) = crate::provenance::birth::row_birth_in_txn(&self.vault.store, txn, id)?
+        let Some(birth) = crate::provenance::birth::row_birth_in_txn(&lane.store_read(), txn, id)?
         else {
             return Ok(None);
         };
