@@ -121,6 +121,18 @@ pub(crate) fn rows_still_admitted(
     })
 }
 
+/// [`known_denied`] for one item of a listing, `value`, derived from `rows`
+/// (FIX 8164): whether it holds a detail exactly known to be withheld from
+/// `destination`.
+pub(super) fn known_denied_rows(
+    vault: &oneiron::Vault,
+    destination: &ReadDestination,
+    rows: &[EntityId],
+    value: &serde_json::Value,
+) -> bool {
+    known_denied(vault, destination, Some(rows), value, false)
+}
+
 /// Whether an answer `value` derived from `rows` holds a detail exactly known
 /// to be withheld from `destination` (F1): a listed row, or a row it names by
 /// whole id or short ref, that a world withheld from there keeps. Unknown
