@@ -10,7 +10,7 @@ use crate::claim::{ClaimSource, ScopedReadResult};
 use crate::dispatch_byoa::{
     ByoEndpointBackendFactory, ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatcher,
     ByoaEgressPort, ByoaError, ByoaResult, ByoaStream, DispatchByoa, DreamerProviderAdapter,
-    DreamerProviderInput, staged_job_pointer,
+    DreamerProviderInput, StagedJob,
 };
 use crate::limit_ask::EngineLimit;
 use crate::self_heal::healer_host::HealerRegistration;
@@ -186,11 +186,13 @@ impl HealerRegistration<'_> {
         let _ = dispatcher
             .vault()
             .measure_limit(EngineLimit::MaintenanceTextBytes, job.len() as u64);
-        let pin = dispatcher.persist_staged_input(&job, &request.run_ref, request.now)?;
-        let pointer = staged_job_pointer(&pin);
+        // FIX 7613: the pointer is derived before anything is written; the
+        // job is stored and its run lands together in one writer.
+        let staged = StagedJob::new(&job);
+        let pointer = staged.pointer();
         input.task = pointer.clone();
-        let mut connector = provider.connector(input)?;
-        let ByoaConnectorSpec::CliSandbox(spec) = &mut connector else {
+        let connector = provider.connector(input)?;
+        let ByoaConnectorSpec::CliSandbox(spec) = &connector else {
             return Err(ByoaError::Backend(
                 "dev runner requires a CLI connector".into(),
             ));
@@ -200,16 +202,20 @@ impl HealerRegistration<'_> {
                 "dev runner adapter replaced the task".into(),
             ));
         }
-        spec.staged_input = Some(pin);
-        let dispatch = dispatcher.dispatch(DispatchByoa {
-            user_login: request.user_login,
-            connector,
-            task_ref: request.task_ref,
-            parent_attempt_id: request.parent_attempt_id,
-            run_id: Some(request.run_ref),
-            dedupe_key: None,
-            now: request.now,
-        })?;
+        let run_ref = request.run_ref.clone();
+        let dispatch = dispatcher.dispatch_staged_job(
+            &staged,
+            &run_ref,
+            DispatchByoa {
+                user_login: request.user_login,
+                connector,
+                task_ref: request.task_ref,
+                parent_attempt_id: request.parent_attempt_id,
+                run_id: Some(request.run_ref),
+                dedupe_key: None,
+                now: request.now,
+            },
+        )?;
         Ok(DevRunnerDispatch {
             dispatch,
             failure_corpus,
