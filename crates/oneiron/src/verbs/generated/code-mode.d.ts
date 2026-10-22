@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1193 code-mode rows (1153 host rows, 40 run rows), 4062 declarations.
-// Replies: 1073 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1198 code-mode rows (1158 host rows, 40 run rows), 4082 declarations.
+// Replies: 1078 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1387,6 +1387,26 @@ declare namespace Sdk {
   type SupportGrantList = { grants: SupportGrantView[] };
   type SupportGrantRevokeRequest = { grant_ref: string };
   type SupportGrantRevokeAnswer = { grant_ref: string; holder: EntityId; changed: boolean; revoked_at?: number | null; decision_ref?: string | null; delivered_recallable: boolean };
+  type FilesSourceAttachRequest = { path: string; include?: string[]; exclude?: string[] | null; kind?: string | null };
+  type FilesWorldView = { world: EntityId; machine: EntityId };
+  type FilesSourceView = { source: EntityId; folder: string; world: EntityId; machine: EntityId; include?: string[]; exclude: string[]; kind: string; attached_at: number; last_rescan_at?: number | null; files: number; name_only: number; retracted: number; proposed: number };
+  type FilesRescanCounts = { landed: number; links: number; unchanged: number; superseded: number; proposed: number; retracted: number; restored: number; removed: number; name_only: number; failed: number; first_error?: string | null };
+  type FilesLimitCrossed = { row: string; limit: number; observed: number };
+  type FilesRescanView = { source: EntityId; folder: string; counts?: FilesRescanCounts | null; error?: string | null; limits_crossed?: FilesLimitCrossed[] };
+  type FilesSourceAttachAnswer = { world: FilesWorldView; source: FilesSourceView; rescan: FilesRescanView };
+  type FilesSourceRescanRequest = { source?: EntityId | null };
+  type FilesRescanAnswer = { rescans: FilesRescanView[] };
+  type FilesSourceDetachRequest = { source: EntityId };
+  type FilesSourceDetachAnswer = { source: EntityId; folder?: string | null; detached: boolean };
+  type FilesSourceListRequest = Record<string, never>;
+  type FilesSourceList = { world?: FilesWorldView | null; sources: FilesSourceView[] };
+  type FilesSourceFilesRequest = { source: EntityId };
+  type FileHandle = { source: EntityId; path: string };
+  type FilesFileState = "landed" | "proposed" | "retracted" | "name_only";
+  type NameOnlyReason = "unsupported" | "not_text" | "unreadable" | "empty" | "linked";
+  type FileReadiness = "text" | { name_only: { why: NameOnlyReason } };
+  type FilesFileView = { handle: FileHandle; state: FilesFileState; readiness: FileReadiness; note?: EntityId | null; fork?: EntityId | null; revision?: string | null; bytes?: number | null; modified_at?: number | null; first_seen_at?: number | null; indexed_at?: number | null };
+  type FilesSourceFiles = { source: EntityId; files: FilesFileView[] };
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
   type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
@@ -5665,6 +5685,20 @@ declare const vault: Sdk.VaultHost & {
       share_consent(input: Sdk.CoreferenceShareConsentRequest): Promise<Sdk.CoreferenceShareConsentReceipt | StoredResult>;
       /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
       unlink(input: Sdk.CoreferencePairRequest): Promise<Sdk.CoreferenceUnlinkReceipt | StoredResult>;
+    };
+  };
+  files: {
+    sources: {
+      /** The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current. */
+      attach(input: Sdk.FilesSourceAttachRequest): Promise<Sdk.FilesSourceAttachAnswer | StoredResult>;
+      /** The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay. */
+      detach(input: Sdk.FilesSourceDetachRequest): Promise<Sdk.FilesSourceDetachAnswer | StoredResult>;
+      /** The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates. */
+      files(input: Sdk.FilesSourceFilesRequest): Promise<Sdk.FilesSourceFiles | StoredResult>;
+      /** The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts. */
+      list(input: Sdk.FilesSourceListRequest): Promise<Sdk.FilesSourceList | StoredResult>;
+      /** The owner rescans one Files source now, or every one: new files land, changed files supersede, files with no text are held by name, missing files retract. */
+      rescan(input: Sdk.FilesSourceRescanRequest): Promise<Sdk.FilesRescanAnswer | StoredResult>;
     };
   };
   /** Commits the stream as final and releases its handle, returning the immutable terminal receipt. */

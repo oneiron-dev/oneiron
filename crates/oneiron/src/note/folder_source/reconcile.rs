@@ -235,9 +235,7 @@ impl Vault {
             for (note, id) in batch.notes.iter().zip(&ids) {
                 let key = file_key(landing.folder, &note.path);
                 // A file held by its name until now keeps when it was first seen.
-                let old = FILES
-                    .get(&self.store, txn, &key)?
-                    .and_then(|row| row.meta);
+                let old = FILES.get(&self.store, txn, &key)?.and_then(|row| row.meta);
                 let hash = text_hash(&note.markdown);
                 let row = FolderSourceFile {
                     path: note.path.clone(),

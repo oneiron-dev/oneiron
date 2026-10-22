@@ -3133,6 +3133,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_files_sources_attach(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.attach", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_files_sources_rescan(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.rescan", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_files_sources_detach(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.detach", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_files_sources_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_files_sources_files(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.files", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_residence_mode(
         &self,
         input: serde_json::Value,

@@ -69,5 +69,8 @@ fn walk_files(
     _excluded: &dyn Fn(&std::path::Path) -> bool,
     _visit: &mut dyn FnMut(&std::path::Path, std::fs::File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    anyhow::bail!("reading a Files source ({}) needs a unix host", path.display())
+    anyhow::bail!(
+        "reading a Files source ({}) needs a unix host",
+        path.display()
+    )
 }

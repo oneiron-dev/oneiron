@@ -213,14 +213,7 @@ pub(crate) fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Res
         };
         let bytes = read_all(file, shown)?;
         // A file with no text is passed over, and counted.
-        read_text(
-            path,
-            bytes,
-            written_at(&metadata),
-            kind,
-            counts,
-            &mut notes,
-        );
+        read_text(path, bytes, written_at(&metadata), kind, counts, &mut notes);
         Ok(())
     })?;
     Ok(notes)

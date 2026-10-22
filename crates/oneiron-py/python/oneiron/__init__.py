@@ -604,6 +604,9 @@ class Oneiron:
         def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs":
             return Oneiron._VaultSupportGrantsVerbs(self._client)
         @property
+        def files(self) -> "Oneiron._VaultFilesVerbs":
+            return Oneiron._VaultFilesVerbs(self._client)
+        @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs":
             return Oneiron._VaultResidenceVerbs(self._client)
         @property
@@ -2558,6 +2561,30 @@ class Oneiron:
         def revoke(self, spec):
             """The owner revokes one support grant; what support already read is not recalled."""
             return json.loads(_translate(lambda: self._client.vault_support_grants_revoke(json.dumps(spec))))
+    class _VaultFilesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def sources(self) -> "Oneiron._VaultFilesSourcesVerbs":
+            return Oneiron._VaultFilesSourcesVerbs(self._client)
+    class _VaultFilesSourcesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def attach(self, spec):
+            """The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_attach(json.dumps(spec))))
+        def rescan(self, spec):
+            """The owner rescans one Files source now, or every one: new files land, changed files supersede, files with no text are held by name, missing files retract."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_rescan(json.dumps(spec))))
+        def detach(self, spec):
+            """The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_detach(json.dumps(spec))))
+        def list(self, spec):
+            """The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_list(json.dumps(spec))))
+        def files(self, spec):
+            """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_files(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

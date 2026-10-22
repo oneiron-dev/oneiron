@@ -118,8 +118,11 @@ fn open(
     serve: &ServeArgs,
 ) -> anyhow::Result<(oneiron::Vault, oneiron::consent::AuthenticatedOwner)> {
     let config = resolve_serve_config(serve)?;
-    let vault =
-        super::owner::open_stopped_vault_with(&config, super::owner::vault_config(&config), INSTEAD)?;
+    let vault = super::owner::open_stopped_vault_with(
+        &config,
+        super::owner::vault_config(&config),
+        INSTEAD,
+    )?;
     let owner = crate::owner::local_owner(&vault)?;
     Ok((vault, owner))
 }

@@ -149,7 +149,11 @@ pub(crate) fn rescan(
             let read = super::files::read_files(folder, &files.exclude, &mut counts)?;
             (read.notes, read.name_only, read.facts)
         }
-        None => (read_folder(folder, &mut counts)?, Vec::new(), HashMap::new()),
+        None => (
+            read_folder(folder, &mut counts)?,
+            Vec::new(),
+            HashMap::new(),
+        ),
     };
     let warnings = crossed_rows(vault, &counts);
     // A part goes with its file.

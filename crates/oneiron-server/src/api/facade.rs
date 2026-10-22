@@ -85,6 +85,7 @@ mod fanout_doors;
 mod federation_burst_doors;
 mod federation_connect_doors;
 mod feedback_doors;
+mod files_doors;
 mod fold_doors;
 mod foreign_code_doors;
 pub(super) mod free_time_doors;

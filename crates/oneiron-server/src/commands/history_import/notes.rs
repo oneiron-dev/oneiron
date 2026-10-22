@@ -253,7 +253,6 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
     Ok(())
 }
 
-
 /// A frontmatter `type` as stdout shows it: a short name as it is, anything
 /// else (prose, a long value) as `(other)`, so no note text reaches stdout.
 fn shown_label(label: Option<&str>) -> &str {
@@ -283,7 +282,6 @@ fn quoted(text: &str) -> String {
         format!("'{}'", text.replace('\'', "'\\''"))
     }
 }
-
 
 #[cfg(all(test, unix))]
 mod tests {

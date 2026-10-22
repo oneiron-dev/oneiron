@@ -112,6 +112,8 @@ pub(crate) use super::coreference_doors::*;
 pub(crate) use super::federation_burst_doors::*;
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::feedback_doors::*;
+// The owner's Files world source doors (FIX 6942), likewise.
+pub(crate) use super::files_doors::*;
 pub(crate) use super::goal_optimize_doors::*;
 pub(crate) use super::guest_document_doors::*;
 pub(crate) use super::guest_doors::*;
@@ -1689,6 +1691,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.support_grants.mint"
         | "vault.support_grants.list"
         | "vault.support_grants.revoke"
+        | "vault.files.sources.attach"
+        | "vault.files.sources.rescan"
+        | "vault.files.sources.detach"
+        | "vault.files.sources.list"
+        | "vault.files.sources.files"
         | "vault.projects.confirm"
         | "vault.weave.owner.link.wrong"
         | "vault.weave.owner.item.wrong"

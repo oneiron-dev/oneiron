@@ -44,9 +44,9 @@ fn text_kind(path: &str) -> Option<TextKind> {
 /// its name or by its whole path.
 fn excludes(exclude: &[String], path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
-    exclude
-        .iter()
-        .any(|pattern| super::source::matches(pattern, name) || super::source::matches(pattern, path))
+    exclude.iter().any(|pattern| {
+        super::source::matches(pattern, name) || super::source::matches(pattern, path)
+    })
 }
 
 /// Every file under `folder` that `exclude` leaves, in path order: its

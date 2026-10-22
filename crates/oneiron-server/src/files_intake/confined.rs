@@ -177,14 +177,14 @@ impl Wanted {
     fn visits(self, name: &OsStr) -> bool {
         self.every_file
             || Path::new(name).extension().is_some_and(|extension| {
-            self.extensions.iter().any(|wanted| {
-                if self.any_case {
-                    extension.eq_ignore_ascii_case(wanted)
-                } else {
-                    extension == *wanted
-                }
+                self.extensions.iter().any(|wanted| {
+                    if self.any_case {
+                        extension.eq_ignore_ascii_case(wanted)
+                    } else {
+                        extension == *wanted
+                    }
+                })
             })
-        })
     }
 }
 
@@ -253,7 +253,14 @@ pub(crate) fn walk_files(
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut left = FILES.entries;
-    walk_below(&open_root(root)?, root, 0, (FILES, excluded), &mut left, visit)
+    walk_below(
+        &open_root(root)?,
+        root,
+        0,
+        (FILES, excluded),
+        &mut left,
+        visit,
+    )
 }
 
 /// One folder of a walk, `depth` below where it started, passing over what
@@ -309,14 +316,7 @@ fn walk_below(
                             path.display()
                         )
                     })?;
-                walk_below(
-                    &child,
-                    &path,
-                    depth + 1,
-                    (wanted, excluded),
-                    left,
-                    visit,
-                )?;
+                walk_below(&child, &path, depth + 1, (wanted, excluded), left, visit)?;
             }
             FileType::RegularFile if wanted.visits(&name) => {
                 visit(&path, open_file(dir, &name, &path)?)?;

@@ -13,8 +13,7 @@ use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
 use crate::note::{
-    FileHandle, FileReadiness, FolderFileState, FolderRescanReport, FolderSource,
-    FolderSourceFile,
+    FileHandle, FileReadiness, FolderFileState, FolderRescanReport, FolderSource, FolderSourceFile,
 };
 
 /// `vault.files.sources.attach`'s input: the folder, and what of it the
@@ -293,8 +292,7 @@ pub fn files_source_view(vault: &Vault, source: &FolderSource) -> MemoryResult<F
     })?;
     let ledger = vault.folder_source_files(&source.folder)?;
     let count = |wanted: fn(&FolderFileState) -> bool| {
-        u64::try_from(ledger.iter().filter(|file| wanted(&file.state)).count())
-            .unwrap_or(u64::MAX)
+        u64::try_from(ledger.iter().filter(|file| wanted(&file.state)).count()).unwrap_or(u64::MAX)
     };
     Ok(FilesSourceView {
         source: files.source,
