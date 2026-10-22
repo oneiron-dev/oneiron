@@ -85,6 +85,7 @@ async fn reply(
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     // The same inference policy and metered run as the existing text door.
     let (ladder, run) = super::super::llm::admit(server, auth, &mut request)
