@@ -17699,7 +17699,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 2,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -17910,6 +17910,20 @@
       "enum": 1,
       "fn": 8,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectorKeySlateNarrowed"
+     ],
+     "path": "src/connector_key/slate_holder.rs",
+     "purpose": "ARCH-0072 self-update on a per-grant key (FIX 987): \"Any holder may narrow its own Grant, and the owner…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -45370,6 +45384,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound_chokepoint/connector_slate.rs",
+     "purpose": "FIX 990: the tool's capability setting (DEC-0006) at the last boundary before a Pending scoped call's send…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound_chokepoint/dedupe.rs",
      "purpose": "OF-327 mechanical semantic cooldown under the effect admission writer lock",
      "surface": {
@@ -45425,7 +45449,7 @@
      "path": "src/outbound_chokepoint/replay.rs",
      "purpose": "Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -45527,6 +45551,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_consent.rs",
+     "purpose": "FIX 990: the owner's `always ask` setting on an admitted connector call",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ConnectorCallInput"
      ],
@@ -45610,7 +45645,7 @@
      "path": "src/outbound_consent/execution.rs",
      "purpose": "Scoped-call execution, post-effect decision, and result transport",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 5,
       "struct": 2
@@ -45623,13 +45658,13 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 11
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AuthorizedRecoveryError",
@@ -45705,6 +45740,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorToolCallPreparation",
       "FrozenToolCallView",
       "HeaderGrantRequirement",
       "MutationIntent",
@@ -45715,8 +45751,8 @@
      "path": "src/outbound_consent/tool_call.rs",
      "purpose": "Resolve header parameters once and freeze them with the consent-visible tool call",
      "surface": {
-      "crate-vis": 12,
-      "enum": 2,
+      "crate-vis": 13,
+      "enum": 3,
       "fn": 18,
       "struct": 4
      }
@@ -66264,6 +66300,7 @@
      "notable": [
       "ConnectorAnswerAction",
       "ConnectorAnswerRequest",
+      "ConnectorCallApproveOnceRequest",
       "ConnectorCallReply",
       "ConnectorCallStatus",
       "ConnectorCallStatusRequest",
@@ -66277,8 +66314,8 @@
      "surface": {
       "const": 2,
       "enum": 3,
-      "fn": 9,
-      "struct": 6
+      "fn": 10,
+      "struct": 7
      }
     },
     {
@@ -66303,6 +66340,24 @@
      "purpose": "Typed, source-bound connector-pack admission and delta re-consent",
      "surface": {
       "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorSlateNarrowRequest",
+      "ConnectorSlateNarrowView",
+      "ConnectorSlateRedraftReply",
+      "ConnectorSlateRedraftRequest"
+     ],
+     "path": "src/verbs/connector_slate.rs",
+     "purpose": "FIX 987: `vault.connectors.slates.redraft` and `vault.connectors.slates.narrow` (ARCH-0072 \"re-draft\", and…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 3
      }
     },
     {
@@ -66580,7 +66635,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1170
+      "fn": 1173
      }
     },
     {
@@ -66977,7 +67032,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 10,
-      "re-export": 76,
+      "re-export": 77,
       "struct": 39
      }
     },
@@ -71885,7 +71940,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72445,14 +72500,14 @@
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327"
     },
     "outbound_chokepoint": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73005,7 +73060,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 81,
+     "files": 82,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73077,7 +73132,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4700,
+   "source_files": 4704,
    "test_files": 902
   },
   "oneiron-android": {
@@ -84118,7 +84173,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1139
+      "fn": 1142
      }
     },
     {
@@ -85406,7 +85461,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1140
+      "fn": 1143
      }
     },
     {
@@ -89222,10 +89277,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/connector_slate_doors.rs",
+     "purpose": "FIX 987: the owner's slate re-draft and a key holder's own narrow, shared by HTTP, SDK and MCP",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/consent_doors.rs",
      "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -89605,7 +89670,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 187
+      "crate-vis": 188
      }
     },
     {
@@ -91215,7 +91280,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -91305,7 +91370,7 @@
      "path": "src/api/owner_routes/connector_admission_routes.rs",
      "purpose": "`/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -91316,6 +91381,16 @@
      "purpose": "`/v1/owner/connectors/consent`: the owner's one act that lets an actor call a catalog connector's tools…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/connector_slate_routes.rs",
+     "purpose": "`/v1/owner/connectors/slate/redraft` (FIX 987): the owner asks the host's configured drafter to re-draft one…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -100416,7 +100491,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 505,
+     "files": 507,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -100873,7 +100948,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1101,
+   "source_files": 1103,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -101887,6 +101962,7 @@
       "ConnectWindow",
       "ConnectorAnswerAction",
       "ConnectorAnswerRequest",
+      "ConnectorCallApproveOnceRequest",
       "ConnectorCallReply",
       "ConnectorCallRequest",
       "ConnectorCallStatus",
@@ -101920,6 +101996,10 @@
       "ConnectorSchemaReply",
       "ConnectorSchemaRequest",
       "ConnectorSendTaskOutcome",
+      "ConnectorSlateNarrowRequest",
+      "ConnectorSlateNarrowView",
+      "ConnectorSlateRedraftReply",
+      "ConnectorSlateRedraftRequest",
       "ConnectorSlateView",
       "ConnectorToolResult",
       "ConnectorView",
@@ -105053,8 +105133,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 971,
-      "struct": 3008
+      "enum": 972,
+      "struct": 3012
      }
     },
     {
