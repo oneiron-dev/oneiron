@@ -19552,7 +19552,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/memory_pins.rs",
@@ -19570,7 +19570,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 9,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -19888,7 +19888,7 @@
      "path": "src/context_board/room.rs",
      "purpose": "Stateless ROOM projection and the one roster-to-Scope function",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 3,
       "struct": 3,
@@ -19911,7 +19911,8 @@
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
       "crate-vis": 16,
-      "fn": 5
+      "fn": 3,
+      "re-export": 1
      }
     },
     {
@@ -19935,13 +19936,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RoomSectionPage"
+     ],
+     "path": "src/context_board/room_verbs/projection.rs",
+     "purpose": "ROOM as one ordered stream of rows (FIX 9746, 9747): the room's roster by actor id, then the rules the…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/room_verbs/thread_readers.rs",
      "purpose": "A thread's own reader and ceiling (OF-529, FIX 2951): who reads one thread of a room, and the ceiling that…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -19973,10 +19987,10 @@
       "ScratchpadRecallLine"
      ],
      "path": "src/context_board/scratchpad.rs",
-     "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
+     "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed when its own session ends…",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -52758,6 +52772,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/window_pad_refs.rs",
+     "purpose": "A window's persisted snapshot in a physical image (KS-5, FIX 7107): a `sync_state` `d:w:` row goes with its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AtWriteFloor",
       "RecoveryWriteBudget"
@@ -65136,7 +65160,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 6,
       "mod": 1,
       "re-export": 9,
@@ -65148,14 +65172,17 @@
      "kind": "src",
      "notable": [
       "PreparedWindowPads",
-      "WindowPadPartRepair"
+      "WindowPadPartRepair",
+      "WindowPadReceiptWitness"
      ],
      "path": "src/sync/window/pad_custody.rs",
      "purpose": "A window pad envelope's two engine doors (KS-5, FIX 7107), one for each side of the wire and both crates'…",
      "surface": {
-      "const": 1,
-      "enum": 1,
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 2,
       "fn": 8,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -65167,6 +65194,17 @@
      "purpose": "A window blob's pad references as today's carriers again (KS-5, FIX 7107, KEEP TODAY): what a send that may…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/pad_custody/persist.rs",
+     "purpose": "A window blob as it persists here (KS-5, FIX 7107): its pad rows as their bare references, the form a `u:`…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -75399,7 +75437,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76092,7 +76130,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -76365,7 +76403,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 256,
+     "files": 257,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76570,7 +76608,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4999,
+   "source_files": 5002,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92645,7 +92683,7 @@
      "path": "src/api/context_board/board.rs",
      "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
