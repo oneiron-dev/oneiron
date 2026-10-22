@@ -1,6 +1,6 @@
 //! `/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same
 //! owner door as every other owner route. The peer-facing routes live in
-//! `api::cooperative_deletion`, outside it. The owner's
+//! `api::courtesy_delete`, outside it. The owner's
 //! `vault.courtesy_delete.*` rows are host doors over these same calls
 //! (`api::facade::courtesy_delete_doors`).
 
@@ -20,7 +20,7 @@ use super::{OwnerReply, blocking, owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
 use crate::error::ApiErrorEnvelope;
-use crate::owner::cooperative_deletion;
+use crate::owner::courtesy_delete;
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -49,7 +49,7 @@ pub(crate) async fn send(
 ) -> OwnerReply<CourtesyDeleteSent> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let sent = blocking(move || cooperative_deletion::send(&server, &owner, &request)).await?;
+    let sent = blocking(move || courtesy_delete::send(&server, &owner, &request)).await?;
     Ok(Json(sent))
 }
 
@@ -64,7 +64,7 @@ pub(crate) async fn sent(
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<Vec<CourtesyDeleteSent>> {
     owner(&auth, &server)?;
-    let sent = blocking(move || cooperative_deletion::sent(&server)).await?;
+    let sent = blocking(move || courtesy_delete::sent(&server)).await?;
     Ok(Json(sent))
 }
 
@@ -79,7 +79,7 @@ pub(crate) async fn incoming(
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<Vec<CourtesyDeleteIncoming>> {
     owner(&auth, &server)?;
-    let incoming = blocking(move || cooperative_deletion::incoming(&server)).await?;
+    let incoming = blocking(move || courtesy_delete::incoming(&server)).await?;
     Ok(Json(incoming))
 }
 
@@ -100,7 +100,6 @@ pub(crate) async fn answer(
 ) -> OwnerReply<CourtesyDeleteIncoming> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let answered =
-        blocking(move || cooperative_deletion::answer(&server, &owner, &request)).await?;
+    let answered = blocking(move || courtesy_delete::answer(&server, &owner, &request)).await?;
     Ok(Json(answered))
 }

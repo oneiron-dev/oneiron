@@ -21,6 +21,10 @@ side_tables! {
     /// Marker that the one-time row-deletion-fence backfill from applied soft-delete markers has
     /// run. Key: ().
     DELETION_ROW_FENCE_BACKFILLED: VaultMeta b"deletion.row_fence.v1.backfilled" Raw;
+    /// FIX 7800: an owner-selected corrupt CLAIM's audited capture exception until its hard
+    /// erase commits its receipt and sweep: the exact header seen, the signed repair event and
+    /// whether a SoftErase has scrubbed the body since. No content. Key: id16 (claim).
+    DELETION_CORRUPT_CAPTURE: VaultMeta b"deletion:corrupt_capture:" Named;
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw;
@@ -407,6 +411,10 @@ side_tables! {
     /// The answers of one held answer proposal whose units changed under it (ARCH-0075 §4): each
     /// with the revision it was judged against, and its proposer's wake. Key: id16 + hash32.
     EDIT_SETTLE_UNIT_WITHDRAWAL: VaultMeta b"edit_settle:withdrawal:v1:" Named;
+    /// An owner-approved retrieval embedder binding staged through a space move, with its move
+    /// and state (OF-577, O3b PR B). Key: id16 (the offer, or the training run).
+    EMBEDDING_BINDING_MOVE: VaultMeta b"embedding/binding_move/" Named
+        => crate::embed::erase_binding_move_actor_in_txn;
     /// The device family and runtime that computed the current embedding vector, outside the space
     /// identity (ARCH-0036). Key: id16.
     EMBEDDING_DEVICE: VaultMeta b"embedding/device/" Named;

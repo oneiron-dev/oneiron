@@ -143,11 +143,31 @@ pub enum EngineScan {
     /// The records one private-thread walk reaches from one record: its
     /// places and the sources of its words.
     PrivateThreadAncestryRecords,
+    /// One trusted policy manifest's room-policy rows, each fold.
+    RoomPolicyRows,
+    /// One trusted policy manifest's room-thread holder rows, each fold.
+    RoomThreadHolderRows,
+    /// The signed creation-default edits a creation-default fold reads.
+    ProjectDepthDefaultRows,
+    /// One project's stored depth-policy contributions a depth fold reads.
+    ProjectDepthPolicyRows,
+    /// The default-edit ancestry one pinned birth source's walk reads.
+    ProjectDepthSourceAncestors,
+    /// One depth-policy edit's predecessors, at its put.
+    ProjectDepthPredecessors,
+    /// One depth-policy contribution's bytes, at its put.
+    ProjectDepthContributionBytes,
+    /// The attempt records one dispatch ancestor walk reads, wrappers
+    /// included.
+    DispatchAncestorRows,
+    /// One TASK's Linear mirror event index rows a provenance page reads,
+    /// its lookahead row included.
+    LinearProvenanceRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 56] = [
+    pub const ALL: [Self; 65] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -204,6 +224,15 @@ impl EngineScan {
         Self::AudienceEdgeRows,
         Self::RoomAncestryRecords,
         Self::PrivateThreadAncestryRecords,
+        Self::RoomPolicyRows,
+        Self::RoomThreadHolderRows,
+        Self::ProjectDepthDefaultRows,
+        Self::ProjectDepthPolicyRows,
+        Self::ProjectDepthSourceAncestors,
+        Self::ProjectDepthPredecessors,
+        Self::ProjectDepthContributionBytes,
+        Self::DispatchAncestorRows,
+        Self::LinearProvenanceRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -274,6 +303,15 @@ impl EngineScan {
             Self::AudienceEdgeRows => "audience_edge_rows",
             Self::RoomAncestryRecords => "room_ancestry_records",
             Self::PrivateThreadAncestryRecords => "private_thread_ancestry_records",
+            Self::RoomPolicyRows => "room_policy_rows",
+            Self::RoomThreadHolderRows => "room_thread_holder_rows",
+            Self::ProjectDepthDefaultRows => "project_depth_default_rows",
+            Self::ProjectDepthPolicyRows => "project_depth_policy_rows",
+            Self::ProjectDepthSourceAncestors => "project_depth_source_ancestors",
+            Self::ProjectDepthPredecessors => "project_depth_predecessors",
+            Self::ProjectDepthContributionBytes => "project_depth_contribution_bytes",
+            Self::DispatchAncestorRows => "dispatch_ancestor_rows",
+            Self::LinearProvenanceRows => "linear_provenance_rows",
         }
     }
 
@@ -290,6 +328,17 @@ impl EngineScan {
             Self::RetrievalRunRows => 1024,
             Self::CallReceiptRows => 8192,
             Self::BlockedRunReports => 128,
+            Self::RoomPolicyRows => 1024,
+            Self::RoomThreadHolderRows => 1000,
+            Self::ProjectDepthDefaultRows
+            | Self::ProjectDepthPolicyRows
+            | Self::ProjectDepthSourceAncestors => 4096,
+            Self::ProjectDepthPredecessors => 256,
+            Self::ProjectDepthContributionBytes => 16 * 1024,
+            Self::DispatchAncestorRows => {
+                crate::context_projection::CONTEXT_PROJECTION_ANCESTOR_CHECK
+            }
+            Self::LinearProvenanceRows => 200,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -352,6 +401,15 @@ impl EngineScan {
             Self::AudienceEdgeRows => 81,
             Self::RoomAncestryRecords => 82,
             Self::PrivateThreadAncestryRecords => 83,
+            Self::RoomPolicyRows => 84,
+            Self::RoomThreadHolderRows => 85,
+            Self::ProjectDepthDefaultRows => 86,
+            Self::ProjectDepthPolicyRows => 87,
+            Self::ProjectDepthSourceAncestors => 88,
+            Self::ProjectDepthPredecessors => 89,
+            Self::ProjectDepthContributionBytes => 90,
+            Self::DispatchAncestorRows => 91,
+            Self::LinearProvenanceRows => 92,
         }]
     }
 }

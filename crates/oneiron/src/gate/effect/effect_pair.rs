@@ -38,6 +38,11 @@ pub(crate) struct PairAdmission {
 /// an exhausted second key never consumes the first key's allowance.
 /// `retries` holds each actor's press its earlier admission of this same
 /// mutation spent, which its evaluation reuses.
+///
+/// FIX 8788: a new mutation both actors' grants allow whose every exhausted
+/// budget row only paces (a Rate row that refuses rather than suspends) is
+/// `None`: nothing is recorded or charged, and the caller waits the window
+/// out and asks again. Any other exhausted row denies as before.
 pub(crate) fn check_external_effect_policy_pair(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -46,7 +51,7 @@ pub(crate) fn check_external_effect_policy_pair(
     policy: &PolicyManifestResolution,
     new_effect: bool,
     retries: [Option<AdmittedApproval>; 2],
-) -> Result<PairAdmission> {
+) -> Result<Option<PairAdmission>> {
     let context = |retry: Option<AdmittedApproval>| match retry {
         Some(proof) => ApprovalContext::Retry(proof),
         None if new_effect => ApprovalContext::FirstAdmission,
@@ -75,7 +80,7 @@ pub(crate) fn check_external_effect_policy_pair(
         authored.release_unadmitted_press();
         let host = record_external_effect_policy(store, wtxn, host)?;
         let authored = record_external_effect_policy(store, wtxn, authored)?;
-        return Ok(held([host, authored]));
+        return Ok(Some(held([host, authored])));
     }
     let same_key = matches!(
         (host.budget_target.as_ref(), authored.budget_target.as_ref()),
@@ -90,6 +95,27 @@ pub(crate) fn check_external_effect_policy_pair(
         };
     if new_effect {
         let now = crate::ports::recorded_at_in_txn(store, wtxn)?;
+        let mut block = connector_key::BudgetBlock::Open;
+        for (index, governance) in [&host, &authored].into_iter().enumerate() {
+            if index == 1 && same_key {
+                continue;
+            }
+            if let Some(target) = governance.budget_target.as_ref() {
+                block = block.and(connector_key::budget_block_pooled(
+                    store,
+                    wtxn,
+                    &target.key_id,
+                    &target.key,
+                    &target.governing_connector,
+                    true,
+                    now,
+                    !(index == 1 && shared_pool),
+                )?);
+            }
+        }
+        if matches!(block, connector_key::BudgetBlock::Paced { .. }) {
+            return Ok(None);
+        }
         for index in 0..2 {
             if index == 1 && same_key {
                 continue;
@@ -128,7 +154,7 @@ pub(crate) fn check_external_effect_policy_pair(
                 authored.release_unadmitted_press();
                 let host = record_external_effect_policy(store, wtxn, host)?;
                 let authored = record_external_effect_policy(store, wtxn, authored)?;
-                return Ok(held([host, authored]));
+                return Ok(Some(held([host, authored])));
             }
         }
         for (index, governance) in [&mut host, &mut authored].into_iter().enumerate() {
@@ -149,14 +175,14 @@ pub(crate) fn check_external_effect_policy_pair(
     let spent_presses = [host.spent_press_digest(), authored.spent_press_digest()];
     let (id, host_decision) = record_external_effect_policy(store, wtxn, host)?;
     let (writer_id, writer_decision) = record_external_effect_policy(store, wtxn, authored)?;
-    Ok(PairAdmission {
+    Ok(Some(PairAdmission {
         admitted: Some(id),
         decisions: [
             (id, host_decision.outcome()),
             (writer_id, writer_decision.outcome()),
         ],
         spent_presses,
-    })
+    }))
 }
 
 /// A mutation the pair did not admit: both decisions as recorded.

@@ -1,3 +1,7 @@
+//! Codebase snapshot request, file, view and definition records.
+//! `CodeRepoPointer` is the first of its records.
+//! Local definitions, plus projection kinds re-exported from `crate::origin::secret_projection`.
+
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;

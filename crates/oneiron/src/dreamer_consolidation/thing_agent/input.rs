@@ -1,8 +1,9 @@
 //! The owned, framed inputs a thing's agent is lent (FIX 7508): each of the
-//! branch's extraction slices, its neighbourhood rendered in, cut into
-//! pieces no larger than one share of the agent's window and every piece
-//! lent; the `src` manifest naming them; the pack the decide port takes; and
-//! the checkpoint an earlier transport run of the attempt left.
+//! branch's clean extraction slices (FIX 9017), its neighbourhood rendered
+//! in, cut into pieces no larger than one share of the agent's window and
+//! every piece lent; the `src` manifest naming them; the pack the decide
+//! port takes; and the newest checkpoint an earlier transport run of the
+//! attempt left.
 //!
 //! A slice keeps its labels and its source offsets: each piece's header
 //! names its slice, its place among the slice's pieces and the byte range
@@ -60,7 +61,7 @@ impl ThingPlan {
 /// tokens of its slice's text, with the manifest, the pack and, when an
 /// earlier run left one, the `checkpoint`; and the plan that maps them back.
 pub(super) fn frame_inputs(
-    slices: &[ExtractionSlice],
+    slices: &[&ExtractionSlice],
     grain_tokens: u64,
     checkpoint: Option<Vec<u8>>,
 ) -> (Vec<HostInput>, ThingPlan) {
@@ -136,9 +137,10 @@ pub(super) fn frame_inputs(
     (inputs, plan)
 }
 
-/// The scope a thing's loan lends: its branch's axes, every slice's
-/// readable resources and no writable one.
-pub(super) fn lent_scope(request: &Scope, slices: &[ExtractionSlice]) -> Scope {
+/// The scope a thing's loan lends: its branch's axes, every lent slice's
+/// readable resources and no writable one. A slice held back is not read
+/// into it, so the loan never widens past what it lends.
+pub(super) fn lent_scope(request: &Scope, slices: &[&ExtractionSlice]) -> Scope {
     Scope {
         world: request.world,
         facet: request.facet,

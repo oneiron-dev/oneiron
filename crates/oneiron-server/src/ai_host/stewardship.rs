@@ -5,7 +5,10 @@
 //! asks the generative role once on the Dreamer's budget (once more, over
 //! the newest sources, when that call fails), and hands the answer back
 //! pre-materialized. The owner's own instruction is the system
-//! message; the sources go as data. What lands is a representation proposal
+//! message; the sources go as data, each model the call reaches sent only
+//! the sources its own destination may receive (FIX 8714, `sources`), and
+//! the draft scheduled with the evidence the one that answered was sent.
+//! What lands is a representation proposal
 //! the owner reviews at `/v1/owner/representation` before any send. A draft
 //! the owner's rule moved under while it was written is drafted again at
 //! once against the current rule (FIX 6079). The host's pause (a managed
@@ -20,13 +23,16 @@ use oneiron::dreamer_runner::maintenance::stewardship::{
 };
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
 };
 use tokio::sync::watch;
 
+use self::sources::{DraftSources, draft_messages};
 use super::CHAT_ROLE;
 use super::dreamer::{PassAdmission, admit, pause, paused};
 use crate::models::ModelRuntime;
+
+mod sources;
 
 /// The purpose a draft's call is metered and routed under.
 const DRAFT_PURPOSE: &str = "stewardship_follow_up";
@@ -197,45 +203,21 @@ async fn draft_with_fallback(
     }
 }
 
-fn message(role: LlmMessageRole, text: String) -> LlmMessage {
-    LlmMessage {
-        role,
-        content: vec![ContentPart::Text { text }],
-    }
-}
-
-/// One model draft of `draft`, scheduled as the request it was written for:
-/// `Stale` when the owner's rule or the reach-out moved meanwhile.
+/// One model draft of `draft`, scheduled as the request the model that
+/// answered read: `Stale` when the owner's rule or the reach-out moved
+/// meanwhile.
 async fn draft_one(
     vault: &Vault,
     runtime: &ModelRuntime,
     budget_units: u64,
     draft: &StewardshipDraftRequest,
 ) -> oneiron::Result<StewardshipDraftOutcome> {
+    // Read on this device, for the call's admission: no byte of it goes to
+    // a model before its own destination's read (FIX 8714).
     let context = vault.representation_context(&draft.request)?;
     let seat = runtime
         .seat(CHAT_ROLE)
         .ok_or_else(|| Error::InvalidConfig("no [models] rung drafts follow-ups".into()))?;
-    // Each evidence source carries the marker its citation checks for; the
-    // voice samples are the owner's own words.
-    let sources = serde_json::json!({
-        "kind": "follow_up",
-        "channel": draft.request.channel,
-        "target": draft.request.target,
-        "evidence": context
-            .evidence
-            .iter()
-            .map(|source| serde_json::json!({
-                "cite": source.cite(String::new()).marker(),
-                "text": source.text,
-            }))
-            .collect::<Vec<_>>(),
-        "voice": context
-            .voice
-            .iter()
-            .map(|source| source.text.as_str())
-            .collect::<Vec<_>>(),
-    });
     let purpose = CallPurpose::Other {
         name: DRAFT_PURPOSE.to_owned(),
     };
@@ -250,10 +232,7 @@ async fn draft_one(
             response_format: ResponseFormat::Text,
             locality: seat.locality,
         },
-        messages: vec![
-            message(LlmMessageRole::System, draft.instruction.clone()),
-            message(LlmMessageRole::User, sources.to_string()),
-        ],
+        messages: draft_messages(draft, &context),
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
@@ -271,9 +250,12 @@ async fn draft_one(
         vault.dreamer_authority()?,
     )?;
     let run = runtime.undeclared_run(run_id, guard);
+    // Each offer the call reaches, the first included, is sent only what its
+    // own destination may receive, read and kept before the send.
+    let sources = DraftSources::new(vault, draft);
     let response = call
         .ladder
-        .generate(&run, call.request, None)
+        .generate_admitted(&run, call.request, None, &sources)
         .await
         .map_err(|error| Error::InvalidConfig(format!("stewardship draft call failed: {error}")))?;
     let text: String = response
@@ -288,5 +270,9 @@ async fn draft_one(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
-    vault.schedule_stewardship_draft(draft, &mut PrematerializedDraft { text }, now)
+    // Scheduled with the evidence the offer that answered was sent.
+    let served = sources
+        .served()
+        .ok_or_else(|| Error::InvalidConfig("stewardship draft was sent no sources".into()))?;
+    vault.schedule_stewardship_draft(&served, &mut PrematerializedDraft { text }, now)
 }

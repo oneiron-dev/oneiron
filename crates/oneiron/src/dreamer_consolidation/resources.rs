@@ -178,6 +178,7 @@ impl<'a> BranchResources<'a> {
                 conversation_ref: partition.conversation_ref,
                 turns: turns.to_vec(),
                 watermark_last_learned_at: 0,
+                line: 0,
             }],
         };
         Self::open_branch(
