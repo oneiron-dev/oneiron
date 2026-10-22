@@ -98345,7 +98345,7 @@
      "path": "src/managed/restore/receipt.rs",
      "purpose": "The engine's restore facts on the contract's wire: total, field by field projections, never a parse of prose",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -108053,7 +108053,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 5,
-      "fn": 6
+      "fn": 7
      }
     },
     {
