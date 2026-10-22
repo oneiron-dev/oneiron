@@ -1345,6 +1345,28 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConnectorSlateNarrowRequest>(),
             ),
             (
+                "vault.connectors.slates.scope_outcome",
+                crate::code_run::vault_read::request_schema::<ConnectorScopeOutcomeRequest>(),
+            ),
+            (
+                "vault.connectors.slates.revision_offers",
+                crate::code_run::vault_read::request_schema::<ConnectorSlateRevisionOffersRequest>(
+                ),
+            ),
+            (
+                "vault.connectors.slates.defer_revision",
+                crate::code_run::vault_read::request_schema::<ConnectorSlateRevisionDeferRequest>(),
+            ),
+            (
+                "vault.connectors.slates.accept_revision",
+                crate::code_run::vault_read::request_schema::<ConnectorSlateRevisionAcceptRequest>(
+                ),
+            ),
+            (
+                "vault.connectors.slates.reask_issuer",
+                crate::code_run::vault_read::request_schema::<ConnectorIssuerReaskRequest>(),
+            ),
+            (
                 "vault.connectors.subscriptions.put",
                 crate::code_run::vault_read::request_schema::<ChannelSubscriptionRequest>(),
             ),
@@ -6797,6 +6819,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.connectors.proxy.revoke_write",
     "vault.connectors.slates.redraft",
     "vault.connectors.slates.narrow",
+    "vault.connectors.slates.scope_outcome",
+    "vault.connectors.slates.revision_offers",
+    "vault.connectors.slates.defer_revision",
+    "vault.connectors.slates.accept_revision",
+    "vault.connectors.slates.reask_issuer",
     "vault.authority.history.export",
     "vault.authority.history.import",
     "vault.wire_health.thresholds.get",
@@ -7981,6 +8008,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.connectors.slates.narrow" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ConnectorSlateNarrowView,
+        >(),
+        "vault.connectors.slates.scope_outcome" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorScopeOutcomeView,
+        >(),
+        "vault.connectors.slates.revision_offers" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorSlateRevisionOffersView,
+        >(),
+        "vault.connectors.slates.defer_revision" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorRevisionSnoozeView,
+        >(),
+        "vault.connectors.slates.accept_revision" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorSlateRevisionAcceptedView,
+        >(),
+        "vault.connectors.slates.reask_issuer" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorCredentialBindingView,
         >(),
         "vault.authority.history.export" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SignedAuthorityHistory,
@@ -11708,6 +11750,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.connectors.slates.narrow" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.scope_outcome" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.revision_offers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.defer_revision" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.accept_revision" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.slates.reask_issuer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18698,6 +18775,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.connectors.slates.narrow" => {
             let _input: ConnectorSlateNarrowRequest = decode(value.clone())?;
         }
+        "vault.connectors.slates.scope_outcome" => {
+            let _input: ConnectorScopeOutcomeRequest = decode(value.clone())?;
+        }
+        "vault.connectors.slates.revision_offers" => {
+            let _input: ConnectorSlateRevisionOffersRequest = decode(value.clone())?;
+        }
+        "vault.connectors.slates.defer_revision" => {
+            let _input: ConnectorSlateRevisionDeferRequest = decode(value.clone())?;
+        }
+        "vault.connectors.slates.accept_revision" => {
+            let _input: ConnectorSlateRevisionAcceptRequest = decode(value.clone())?;
+        }
+        "vault.connectors.slates.reask_issuer" => {
+            let _input: ConnectorIssuerReaskRequest = decode(value.clone())?;
+        }
         "vault.connectors.subscriptions.put" => {
             let _input: ChannelSubscriptionRequest = decode(value.clone())?;
         }
@@ -22336,6 +22428,24 @@ pub fn invoke(
         "vault.connectors.slates.narrow" => {
             encode(vault_connectors_slates_narrow(memory, decode(value)?)?)
         }
+        "vault.connectors.slates.scope_outcome" => encode(vault_connectors_slates_scope_outcome(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.connectors.slates.revision_offers" => encode(
+            vault_connectors_slates_revision_offers(memory, decode(value)?)?,
+        ),
+        "vault.connectors.slates.defer_revision" => encode(vault_connectors_slates_defer_revision(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.connectors.slates.accept_revision" => encode(
+            vault_connectors_slates_accept_revision(memory, decode(value)?)?,
+        ),
+        "vault.connectors.slates.reask_issuer" => encode(vault_connectors_slates_reask_issuer(
+            memory,
+            decode(value)?,
+        )?),
         "vault.connectors.subscriptions.put" => {
             encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
         }
@@ -26495,6 +26605,56 @@ pub fn vault_connectors_slates_narrow(
     input: ConnectorSlateNarrowRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ConnectorSlateNarrowView> {
     crate::task_verb::sdk::narrow_connector_slate_embedded(memory, input)
+}
+pub fn vault_connectors_slates_scope_outcome(
+    memory: &Memory<'_>,
+    input: ConnectorScopeOutcomeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorScopeOutcomeView> {
+    crate::task_verb::sdk::record_connector_scope_outcome(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.slates.scope_outcome")?,
+        input,
+    )
+}
+pub fn vault_connectors_slates_revision_offers(
+    memory: &Memory<'_>,
+    input: ConnectorSlateRevisionOffersRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorSlateRevisionOffersView> {
+    crate::task_verb::sdk::connector_slate_revision_offers(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.slates.revision_offers")?,
+        input,
+    )
+}
+pub fn vault_connectors_slates_defer_revision(
+    memory: &Memory<'_>,
+    input: ConnectorSlateRevisionDeferRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorRevisionSnoozeView> {
+    crate::task_verb::sdk::defer_connector_slate_revision(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.slates.defer_revision")?,
+        input,
+    )
+}
+pub fn vault_connectors_slates_accept_revision(
+    memory: &Memory<'_>,
+    input: ConnectorSlateRevisionAcceptRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorSlateRevisionAcceptedView> {
+    crate::task_verb::sdk::accept_connector_slate_revision(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.slates.accept_revision")?,
+        input,
+    )
+}
+pub fn vault_connectors_slates_reask_issuer(
+    memory: &Memory<'_>,
+    input: ConnectorIssuerReaskRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorCredentialBindingView> {
+    crate::task_verb::sdk::reask_connector_issuer(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.slates.reask_issuer")?,
+        input,
+    )
 }
 pub fn vault_connectors_subscriptions_put(
     memory: &Memory<'_>,

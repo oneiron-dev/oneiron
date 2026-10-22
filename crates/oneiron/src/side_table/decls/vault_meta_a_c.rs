@@ -185,6 +185,10 @@ side_tables! {
     AUTORESEARCH_RESERVATION: VaultMeta b"autoresearch:reservation:v1:" Named;
     /// One autoresearch selection round's receipt. Key: id16 (root attempt) + u64be (round).
     AUTORESEARCH_ROUND: VaultMeta b"autoresearch:round:v1:" Named;
+    /// The last commit a write that changes no content stamped (FIX 6730): its transaction id,
+    /// the last content commit's and its class, so a host's telemetry and a backup's own writes
+    /// move no backup watermark. Runtime-tier: no image carries it. Key: ().
+    BACKUP_CHANGE: VaultMeta b"backup:change:v1" Named;
     /// This store's backup incarnation: 16 random bytes minted at its first backup, which a
     /// backup watermark carries so a restored or recreated store never compares equal to an
     /// older one. Runtime-tier: no image carries it. Key: ().
@@ -657,10 +661,14 @@ side_tables! {
     /// The place a removed epoch summary held in its session's count: the highest removed epoch
     /// and the turn it ended at, no words (OF-013). Key: id16(session).
     COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;
+    /// One connector credential slot's issuer binding and issuer change (FIX 988). Key: id16.
+    CONNECTOR_CREDENTIAL_BINDING: VaultMeta b"connector.credential_binding.v1/" Named;
     /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).
     CONNECTOR_GRANT_SLATE_BINDING: VaultMeta b"connector.grant_slate.binding.v1/" Raw;
     /// A per-grant key's holder narrows of the slate its calls meet (FIX 987). Key: id16(key).
     CONNECTOR_SLATE_HOLDER_NARROW: VaultMeta b"connector.grant_slate.holder_narrow.v1/" Named;
+    /// One logical connector call's typed scope exceed and its ruling (FIX 988). Key: id16.
+    CONNECTOR_SLATE_SCOPE_SIGNAL: VaultMeta b"connector.grant_slate.scope_signal.v1/" Named;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.
     CONNECTOR_GRANT_SLATE: VaultMeta b"connector.grant_slate.v1/" LegacyJson;
     /// Idempotent wake-decision record for one connector-event subscription match. Key: hash32.

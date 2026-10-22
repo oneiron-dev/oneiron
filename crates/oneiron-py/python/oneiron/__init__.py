@@ -2145,6 +2145,21 @@ class Oneiron:
         def narrow(self, spec):
             """The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it."""
             return json.loads(_translate(lambda: self._client.vault_connectors_slates_narrow(json.dumps(spec))))
+        def scope_outcome(self, spec):
+            """The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_scope_outcome(json.dumps(spec))))
+        def revision_offers(self, spec):
+            """Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_revision_offers(json.dumps(spec))))
+        def defer_revision(self, spec):
+            """The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_defer_revision(json.dumps(spec))))
+        def accept_revision(self, spec):
+            """The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_accept_revision(json.dumps(spec))))
+        def reask_issuer(self, spec):
+            """The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_reask_issuer(json.dumps(spec))))
     class _VaultConnectorsSubscriptionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

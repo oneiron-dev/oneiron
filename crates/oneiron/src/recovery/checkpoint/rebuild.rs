@@ -45,16 +45,39 @@ pub(super) fn unlease_attempt(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
     out.extend(rmp_serde::to_vec_named(&record).map_err(|_| codec_error())?);
     Ok(out)
 }
+/// Whether the row `raw` embeds its own body: a summary's, and a claim's
+/// that is not a lexical query hint. A header-only claim (an erase's shell,
+/// a retired response's) embeds nothing and is never decoded here (FIX
+/// 8827): its markers and fences stand as they are.
 pub(super) fn has_embedding_source(raw: &[u8]) -> Result<bool> {
     let header = EntityMetadataHeader::parse(raw).ok_or_else(codec_error)?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     match header.entity_type {
         crate::registry::ENTITY_TYPE_SUMMARY => Ok(!body.is_empty()),
+        crate::registry::ENTITY_TYPE_CLAIM if body.is_empty() => Ok(false),
         crate::registry::ENTITY_TYPE_CLAIM => Ok(crate::claim::decode_claim_body(body, true)?
             .predicate
             != crate::claim::PREDICATE_LEXICAL_QUERY_HINT),
         _ => Ok(false),
     }
+}
+
+/// Whether a checkpoint's vector for `id`, whose row is `raw`, has a
+/// canonical source a restore embeds it again from, as [`rebuild`] does: its
+/// own body ([`has_embedding_source`]) or, for a TURN, its messages' text
+/// read in `txn` (FIX 8826).
+pub(super) fn has_checkpoint_embedding_source(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    if has_embedding_source(raw)? {
+        return Ok(true);
+    }
+    let header = EntityMetadataHeader::parse(raw).ok_or_else(codec_error)?;
+    Ok(header.entity_type == crate::registry::ENTITY_TYPE_TURN
+        && crate::embed::turn_text_in_txn(vault, txn, id)?.is_some())
 }
 /// Marks a restored record to be embedded again and queues the worker's job
 /// for it: the image holds no vectors, and the worker leases queued jobs only,
@@ -78,7 +101,14 @@ fn mark_for_reembedding(
     Ok(())
 }
 
-pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
+/// Rebuilds every entity's mechanical projections. A claim in `opaque`, a
+/// step claim whose response never decoded and landed as it rested (FIX
+/// 6227), keeps its type and time index rows; nothing is decoded, indexed
+/// or embedded again from its body.
+pub(super) fn rebuild(
+    vault: &Vault,
+    opaque: &std::collections::BTreeSet<EntityId>,
+) -> Result<(usize, usize, usize)> {
     vault.with_write_txn_grouped(|txn| {
         let rows = crate::ports::EntityStoreRead::port_entity_raw_records(&vault.store, txn)?
             .collect::<Result<Vec<_>>>()?;
@@ -96,6 +126,9 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                 },
                 header.learned_at,
             )?;
+            if opaque.contains(id) {
+                continue;
+            }
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             match header.entity_type {
                 // An erase's shell, a soft-erased claim's or one a restore
