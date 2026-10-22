@@ -7,6 +7,10 @@
 //! Authority is the owner's live proof alone (`Memory::code_run_owner`). The
 //! tally spans every run of the vault and names no caller, so no run handle
 //! or run caller reads it.
+//!
+//! The typed type-feedback door (FIX 8277) reads one program step's type
+//! feedback by its check reference, as the owner: the late result of a
+//! check its run never waited on, without running anything again.
 
 mod types;
 
@@ -14,6 +18,7 @@ pub use types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::ModelId;
+use crate::code_run::{ProgramStepFeedback, parse_check_ref};
 use crate::consent::AuthenticatedOwner;
 
 impl Memory<'_> {
@@ -22,12 +27,12 @@ impl Memory<'_> {
     /// this handle's own human actor. The tally is an aggregate over every
     /// run, keyed by model alone, so no narrower caller can be filtered to
     /// its own share of it.
-    fn code_run_owner(&self, owner: &AuthenticatedOwner) -> MemoryResult<()> {
+    fn code_run_owner(&self, owner: &AuthenticatedOwner, read: &str) -> MemoryResult<()> {
         let actor = owner.revalidate(self.vault)?;
         if actor != self.actor || self.actor_class != crate::EdgeActorClass::Human {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
-                "the model heal count is read as the authenticated owner",
+                format!("{read} is read as the authenticated owner"),
                 &["Present the owner's own verified, unattenuated credential."],
             ));
         }
@@ -45,13 +50,39 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeRunModelHealCountRequest,
     ) -> MemoryResult<CodeRunModelHealCountView> {
-        self.code_run_owner(owner)?;
+        self.code_run_owner(owner, "the model heal count")?;
         let model = heal_count_model(input.model_id)?;
         let count = self.vault.code_run_model_heal_count(&model)?;
         Ok(CodeRunModelHealCountView {
             model_id: count.model_id,
             healed_turns: count.healed_turns,
         })
+    }
+}
+
+impl Memory<'_> {
+    /// `vault.code.type_diagnostics`: the owner reads one program step's
+    /// type feedback by its `check_ref`, as it stands now: a check that
+    /// landed after its step answers under the step's identity, a pending
+    /// one of a checker that is gone answers interrupted. Nothing runs again.
+    /// `None` for a reference no step's feedback was kept under.
+    ///
+    /// The CALL behind the scope: the canonical rows of this vault alone. An
+    /// off-record session's steps keep their feedback with their run.
+    pub fn code_run_type_diagnostics_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeRunTypeDiagnosticsRequest,
+    ) -> MemoryResult<Option<ProgramStepFeedback>> {
+        self.code_run_owner(owner, "a step's type feedback")?;
+        let key = parse_check_ref(&input.check_ref).ok_or_else(|| {
+            MemoryError::bad_request(
+                "check_ref is not a step check reference \
+                 (type_diagnostics:<run>:<step>:<invocation>)",
+            )
+        })?;
+        let row = self.vault.type_diagnostics_row(key)?;
+        Ok(row.map(|row| row.feedback(key)))
     }
 }
 

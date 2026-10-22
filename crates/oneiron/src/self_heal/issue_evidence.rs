@@ -19,6 +19,7 @@ use super::DiagnosticReplayCoordinate;
 use super::blocked_reports;
 use super::issue_work::{
     DiagnosticIssue, EVIDENCE, ISSUES, IssueCoalescingPolicy, IssueFact, append_fact_in_txn,
+    same_key_in_txn,
 };
 use super::tiered::{DetectorPolicy, ProposedTier};
 use crate::dreamer_runner::DreamerRunnerStore;
@@ -243,26 +244,6 @@ fn issue_evidence_in_txn(
     // Every fact is read: past its threshold row the read asks and reads on.
     let _ = vault.measure_limit(EngineLimit::MaintenanceScanRows, rows);
     Ok(evidence)
-}
-
-/// Every issue filed under `key`, read whole.
-fn same_key_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    key: &[u8; 32],
-) -> Result<Vec<(EntityId, DiagnosticIssue)>> {
-    let mut rows = 0u64;
-    let mut matched = Vec::new();
-    for row in ISSUES.iter_from(&vault.store, txn, &[])? {
-        let (issue_id, issue) = row?;
-        rows += 1;
-        if issue.recurrence_key == *key {
-            matched.push((issue_id, issue));
-        }
-    }
-    // Every issue is read: past its threshold row the read asks and reads on.
-    let _ = vault.measure_limit(EngineLimit::MaintenanceScanRows, rows);
-    Ok(matched)
 }
 
 /// `runs` as an observed window, each run with its replay hash, and the window's coordinate as

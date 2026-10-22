@@ -114,6 +114,10 @@ pub struct PromotionOutcome {
     pub held: Vec<EntityId>,
     /// Not written (typed reason per candidate); the loop continues.
     pub rejected: Vec<(EntityId, String)>,
+    /// The engine error kind behind each rejection that carried one, in
+    /// `rejected`'s order (FIX 9429): a sink refuses the write under its
+    /// typed kind, so the driver parks or retries it as that kind says.
+    pub rejected_kinds: Vec<(EntityId, crate::error::ErrorKind)>,
 }
 
 /// Promotes consolidated candidates as vault claims through the gate
@@ -180,7 +184,12 @@ pub fn promote_consolidated_claims_with_checker(
                     other.as_str()
                 ),
             )),
-            Err(rejection) => outcome.rejected.push((claim_id, rejection.reason)),
+            Err(rejection) => {
+                if let Some(kind) = rejection.kind {
+                    outcome.rejected_kinds.push((claim_id, kind));
+                }
+                outcome.rejected.push((claim_id, rejection.reason));
+            }
         }
     }
 
@@ -353,10 +362,11 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
         self.outcome.pended.extend(outcome.pended);
         self.outcome.held.extend(outcome.held);
         self.outcome.rejected.extend(outcome.rejected);
-        if refused {
-            return Err(Error::InvalidClaimBody(
-                "scoped consolidation write refused",
-            ));
+        // The write's one error carries its door's typed kind (FIX 9429).
+        let refusal = refused.then(|| attempt_sink::write_refusal(&outcome.rejected_kinds));
+        self.outcome.rejected_kinds.extend(outcome.rejected_kinds);
+        if let Some(refusal) = refusal {
+            return Err(refusal);
         }
         Ok(())
     }
@@ -372,6 +382,7 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
         self.outcome.pended.extend(outcome.pended);
         self.outcome.held.extend(outcome.held);
         self.outcome.rejected.extend(outcome.rejected);
+        self.outcome.rejected_kinds.extend(outcome.rejected_kinds);
         Ok(())
     }
 }

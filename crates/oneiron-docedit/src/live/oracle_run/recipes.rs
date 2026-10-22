@@ -1,6 +1,9 @@
 //! The live mutations step 2 exercises, each over the first slide and its
 //! first text shape: the operations, the parts their kind may add, and the
-//! checks PowerPoint owes the export.
+//! checks PowerPoint owes the export. [`more`] holds the ones FIX 5670
+//! adds.
+
+mod more;
 
 use super::assets::OracleAssets;
 use super::edits::{
@@ -13,6 +16,7 @@ use crate::live::{
     ChartCategories, ChartKind, ChartSeries, ChartSource, ConnectorEnd, DeckOp, NodeId, NodeKind,
     NodePayload, TableBody,
 };
+pub(super) use more::stage;
 
 /// One mutation over the probed baseline.
 pub(super) struct Plan {
@@ -47,6 +51,9 @@ pub(super) fn plan(
         .paragraphs
         .first()
         .ok_or("the text body has no paragraph")?;
+    if let Some(plan) = more::plan(recipe, subject, ids)? {
+        return Ok(plan);
+    }
     Ok(match recipe {
         Recipe::SetText => {
             let (next, edited) = appended(body, EDIT_MARK)?;

@@ -9439,6 +9439,21 @@
       "openapi": true
     },
     {
+      "name": "vault.code.type_diagnostics",
+      "description": "Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again.",
+      "input": "crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest",
+      "output": "Option<crate::code_run::ProgramStepFeedback>",
+      "call": "memory.code_run_type_diagnostics_as(&memory.embedded_owner(\"vault.code.type_diagnostics\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.waits.resolve",
       "description": "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.",
       "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",
@@ -14049,7 +14064,7 @@
     },
     {
       "name": "self.browser.open",
-      "description": "Opens a URL in the run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Opens a URL in the run's browser and observes the page whole, each row with its live ref and locator, in pages read on with observe and its next cursor; a blocked, empty or interstitial page is the cue to switch_engine to chromium and retry.",
       "input": "crate::task_verb::sdk::BrowserOpenInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| driver.open(input))?)",
@@ -14270,7 +14285,7 @@
     },
     {
       "name": "self.browser.batch",
-      "description": "Runs one batched browser program for a subgoal; type and expect take a secret by handle, fill types supplied, reference, template or checked written text (text_source, text_ref); a failing or no_progress stop names its stop_cause.",
+      "description": "Runs one batched browser program for a subgoal; type, fill and expect take a secret by handle; a stop names its stop_cause; a blocked, empty or interstitial page is the cue to switch_engine to chromium and retry.",
       "input": "crate::task_verb::sdk::BrowserBatchInput",
       "output": "crate::task_verb::sdk::BrowserBatchOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.batch(input)?)",
@@ -16598,7 +16613,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.review",
-      "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names.",
+      "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head and fork frontier a merge names.",
       "refs": [
         "/artifact_ref",
         "/fork_ref"
@@ -16631,7 +16646,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.merge",
-      "description": "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses.",
+      "description": "A person lands a reviewed deck fork up to the fork frontier its review read, merged or switched in; later fork work waits for its own review. A moved head, a conflict or the opener as merger refuses.",
       "refs": [
         "/artifact_ref",
         "/fork_ref"

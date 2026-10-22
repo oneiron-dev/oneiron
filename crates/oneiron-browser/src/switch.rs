@@ -143,8 +143,9 @@ pub struct SwitchNotCarried {
 /// with the change check's mark, or before a person's input in a takeover
 /// (`pre_input`); once an act's page settled (`post_act`); as the document
 /// was left, on Chromium only (`exit`); when a person handed the browser
-/// back (`hand_back`); or at the switch itself, the current origin only
-/// (`switch_export`).
+/// back (`hand_back`); at the switch itself, the current origin only
+/// (`switch_export`); or as a proposal's fresh guest takes the session's
+/// sign-ins, the current origin only (`fresh_export`, FIX 7877).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StoragePhase {
@@ -153,6 +154,7 @@ pub enum StoragePhase {
     Exit,
     HandBack,
     SwitchExport,
+    FreshExport,
 }
 
 /// What a carried or not carried part of the page is.

@@ -171,7 +171,7 @@ pub(super) async fn facade_hooks_pre(
     let resume = RowHookResume {
         credential,
         drain: call.drain().cloned(),
-        session: hook_session::facade_hook_session(server, call, bound, verb)?,
+        session: hook_session::facade_hook_session(server, call, bound, verb, &value)?,
     };
     // What a hook reads, built on every call so a binding installed after
     // this door looked still finds it: the caller's read key, its
