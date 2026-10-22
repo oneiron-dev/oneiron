@@ -5,6 +5,7 @@
 
 use super::edits::office_text;
 use super::record::{DOCUMENT, Res, failed, text};
+use super::schema::SchemaEvidence;
 use super::text_check::{Fields, same_text};
 use super::variants::{COMMENT_REL, P, P188, PC, PROBE_NS, part_text, presentation_part, xml_tree};
 use crate::deck::{DeckView, SlideView};
@@ -23,15 +24,38 @@ const MASTER_ID_FLOOR: u32 = 2_147_483_648;
 
 /// Step 5 on one candidate: only defects its baseline did not already have
 /// count, so a regression deck's own damage is not charged to the export.
-pub(super) fn corruption(bytes: &[u8], limits: Limits, baseline: &[String]) -> StepOutcome {
-    let found: Vec<String> = defects(bytes, limits)
+/// Schema validation is necessary too (ARCH-0077, FIX 8590): clean
+/// structural checks pass only beside a schema report bound to these bytes
+/// (`sha256`) that charges nothing; without one the step is inconclusive.
+pub(super) fn corruption(
+    bytes: &[u8],
+    limits: Limits,
+    baseline: &[String],
+    schema: &SchemaEvidence,
+    sha256: &str,
+) -> StepOutcome {
+    let mut found: Vec<String> = defects(bytes, limits)
         .into_iter()
         .filter(|defect| !baseline.contains(defect))
         .collect();
-    if found.is_empty() {
-        StepOutcome::Passed
-    } else {
-        failed(found.join("; "))
+    let open = match schema {
+        SchemaEvidence::Validated {
+            sha256: bound,
+            diagnostics,
+            ..
+        } if bound == sha256 => {
+            found.extend(diagnostics.iter().map(|diagnostic| format!("schema: {diagnostic}")));
+            None
+        }
+        SchemaEvidence::Validated { sha256: bound, .. } => Some(format!(
+            "the schema report is for other bytes ({bound}, not {sha256})"
+        )),
+        SchemaEvidence::Absent { why } => Some(format!("no schema-validation evidence: {why}")),
+    };
+    match (found.is_empty(), open) {
+        (false, _) => failed(found.join("; ")),
+        (true, Some(why)) => StepOutcome::Inconclusive(why),
+        (true, None) => StepOutcome::Passed,
     }
 }
 

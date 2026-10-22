@@ -523,5 +523,6 @@ fn edit_body(
         lane: Lane::Core,
         checks: owed,
         baseline: &subject.deck.defects,
+        origin: &subject.deck.bytes,
     })
 }

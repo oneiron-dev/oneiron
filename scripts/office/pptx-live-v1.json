@@ -60,7 +60,11 @@
     "scripts": [
       "deck_gate.py",
       "deck_oracle.py",
+      "deck_session.py",
       "powerpoint.applescript",
+      "powerpoint_windows.applescript",
+      "powerpoint_repair.applescript",
+      "powerpoint_dismiss.applescript",
       "raster.swift",
       "environment.json"
     ]

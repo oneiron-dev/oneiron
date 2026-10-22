@@ -6,12 +6,12 @@
 //! replacing the other.
 
 use super::{
-    Conflict, DeckDiff, DeckFork, LiveDeck, NodeId, NodeKind, NodeMove, OpaqueChange,
-    PreflightReport, sibling_index, slide_of, unit_changed, written,
+    Conflict, DeckDiff, DeckFork, DeckNode, LiveDeck, NodeId, NodeKind, NodeMove, NodePayload,
+    OpaqueChange, PreflightReport, TableBody, sibling_index, slide_of, unit_changed, written,
 };
 use super::{chart, table};
 use crate::live::LiveError;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Compare base, current head and proposal. Text and formatting are
 /// reported separately; own geometry separately from moves, and preset and
@@ -88,10 +88,6 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
             if let Some(slide) = slide_of(proposal, *id).or_else(|| slide_of(base, *id)) {
                 affected.insert(slide);
             }
-        }
-        // Head-only work: changed on the head, untouched by the proposal.
-        if unit_changed(base, head, *id) && !unit_changed(base, proposal, *id) {
-            out.head_only.push(*id);
         }
         // Conflicts: both sides changed the same unit incompatibly.
         let head_node = head.nodes.get(id);
@@ -185,7 +181,202 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
         }
     }
     out.affected_slides = affected.into_iter().collect();
+    // What a switch to the proposal would take off the head.
+    out.head_only = switch_losses(base, head, proposal);
     out
+}
+
+/// What a switch to `result` loses of the head's work since `base` (FIX
+/// 8592): each node the head added that `result` lacks, each node the head
+/// removed that `result` still holds, the head's edits on a node `result`
+/// drops, and each node one of whose fields the head changed while `result`
+/// holds that field otherwise: its parent, its place among the siblings all
+/// three hold, its kind, name, placeholder and preset, each geometry
+/// property, its text, and its payload (a table's rows, columns, cells and
+/// merges, a chart's series, by identity; a chart's other fields one by
+/// one). A head change `result` also holds is no loss, and a field only the
+/// proposal changed is not the head's. Bindings are retained-package
+/// evidence, never content.
+pub(super) fn switch_losses(base: &LiveDeck, head: &LiveDeck, result: &LiveDeck) -> Vec<NodeId> {
+    let ids: BTreeSet<NodeId> = base
+        .nodes
+        .keys()
+        .chain(head.nodes.keys())
+        .chain(result.nodes.keys())
+        .copied()
+        .collect();
+    ids.into_iter()
+        .filter(|id| {
+            match (base.nodes.get(id), head.nodes.get(id), result.nodes.get(id)) {
+                // The head's addition, gone; the head's removal, undone.
+                (None, Some(_), None) | (Some(_), None, Some(_)) => true,
+                // The head's edits on a node the switch drops.
+                (Some(_), Some(_), None) => unit_changed(base, head, *id),
+                // One node both sides hold that no base held: the head's
+                // version is what a different result loses.
+                (None, Some(_), Some(_)) => unit_changed(head, result, *id),
+                (Some(b), Some(h), Some(r)) => {
+                    fields_lost(b, h, r)
+                        || lost(&base.texts.get(id), &head.texts.get(id), &result.texts.get(id))
+                        || order_lost([base, head, result], *id)
+                }
+                _ => false,
+            }
+        })
+        .collect()
+}
+
+/// The head changed a field from the base, and the result holds it
+/// otherwise.
+fn lost<T: PartialEq>(base: &T, head: &T, result: &T) -> bool {
+    base != head && head != result
+}
+
+/// A node's own fields, its payload by identity where it has one.
+fn fields_lost(b: &DeckNode, h: &DeckNode, r: &DeckNode) -> bool {
+    let (gb, gh, gr) = (&b.geometry, &h.geometry, &r.geometry);
+    lost(&b.parent, &h.parent, &r.parent)
+        || lost(&b.kind, &h.kind, &r.kind)
+        || lost(&b.name, &h.name, &r.name)
+        || lost(&b.placeholder, &h.placeholder, &r.placeholder)
+        || lost(&b.preset, &h.preset, &r.preset)
+        || lost(&gb.offset, &gh.offset, &gr.offset)
+        || lost(&gb.extent, &gh.extent, &gr.extent)
+        || lost(&gb.rotation, &gh.rotation, &gr.rotation)
+        || lost(&gb.flip_h, &gh.flip_h, &gr.flip_h)
+        || lost(&gb.flip_v, &gh.flip_v, &gr.flip_v)
+        || payload_lost(&b.payload, &h.payload, &r.payload)
+}
+
+/// A node's place: the sibling before it among the siblings all three hold
+/// under its parent, when all three keep it under one parent.
+fn order_lost(decks: [&LiveDeck; 3], id: NodeId) -> bool {
+    let parents: Vec<Option<NodeId>> = decks
+        .iter()
+        .map(|deck| deck.nodes.get(&id).and_then(|node| node.parent))
+        .collect();
+    let Some(parent) = parents[0].filter(|parent| parents.iter().all(|p| *p == Some(*parent)))
+    else {
+        return false;
+    };
+    let lists: Vec<&[NodeId]> = decks
+        .iter()
+        .map(|deck| {
+            deck.nodes
+                .get(&parent)
+                .map_or(&[][..], |node| node.children.as_slice())
+        })
+        .collect();
+    let [b, h, r] = [lists[0], lists[1], lists[2]].map(|list| before(list, id, &lists));
+    lost(&b, &h, &r)
+}
+
+/// The id before `id` in `list` among the ids every one of `lists` holds.
+fn before(list: &[NodeId], id: NodeId, lists: &[&[NodeId]]) -> Option<NodeId> {
+    list.iter()
+        .take_while(|at| **at != id)
+        .filter(|at| lists.iter().all(|other| other.contains(at)))
+        .last()
+        .copied()
+}
+
+/// An identity list's work: an id the head added the result lacks, one it
+/// removed the result holds, or the order of the ids all three hold that
+/// the head changed and the result does not keep.
+fn listed_lost<K: Ord + Copy>(b: &[K], h: &[K], r: &[K]) -> bool {
+    let set = |ids: &[K]| -> BTreeSet<K> { ids.iter().copied().collect() };
+    let (sb, sh, sr) = (set(b), set(h), set(r));
+    let added = sh.difference(&sb).any(|id| !sr.contains(id));
+    let removed = sb.difference(&sh).any(|id| sr.contains(id));
+    let common = |ids: &[K]| -> Vec<K> {
+        ids.iter()
+            .copied()
+            .filter(|id| sb.contains(id) && sh.contains(id) && sr.contains(id))
+            .collect()
+    };
+    added || removed || lost(&common(b), &common(h), &common(r))
+}
+
+fn payload_lost(b: &Option<NodePayload>, h: &Option<NodePayload>, r: &Option<NodePayload>) -> bool {
+    match (b, h, r) {
+        (Some(NodePayload::Table(b)), Some(NodePayload::Table(h)), Some(NodePayload::Table(r))) => {
+            table_lost(b, h, r)
+        }
+        (
+            Some(NodePayload::Chart {
+                family: fb,
+                categories: cb,
+                series: sb,
+                source: ob,
+                plots: pb,
+                view: vb,
+            }),
+            Some(NodePayload::Chart {
+                family: fh,
+                categories: ch,
+                series: sh,
+                source: oh,
+                plots: ph,
+                view: vh,
+            }),
+            Some(NodePayload::Chart {
+                family: fr,
+                categories: cr,
+                series: sr,
+                source: or,
+                plots: pr,
+                view: vr,
+            }),
+        ) => {
+            let ids = |series: &[chart::ChartSeries]| -> Vec<Option<NodeId>> {
+                series.iter().map(|one| one.id).collect()
+            };
+            let by_id = |series: &[chart::ChartSeries]| -> BTreeMap<Option<NodeId>, chart::ChartSeries> {
+                series.iter().map(|one| (one.id, one.clone())).collect()
+            };
+            let (mb, mh, mr) = (by_id(sb), by_id(sh), by_id(sr));
+            let keys: BTreeSet<&Option<NodeId>> = mb.keys().chain(mh.keys()).chain(mr.keys()).collect();
+            lost(fb, fh, fr)
+                || lost(cb, ch, cr)
+                || lost(ob, oh, or)
+                || lost(pb, ph, pr)
+                || lost(vb, vh, vr)
+                || listed_lost(&ids(sb), &ids(sh), &ids(sr))
+                || keys
+                    .into_iter()
+                    .any(|key| lost(&mb.get(key), &mh.get(key), &mr.get(key)))
+        }
+        _ => lost(b, h, r),
+    }
+}
+
+/// A table's rows, columns and merges by identity, and each cell by its row
+/// and column.
+fn table_lost(b: &TableBody, h: &TableBody, r: &TableBody) -> bool {
+    let merges = |table: &TableBody| -> Vec<super::TableMerge> {
+        let mut merges = table.merges.clone();
+        merges.sort();
+        merges
+    };
+    let mut cells: BTreeSet<(NodeId, NodeId)> = BTreeSet::new();
+    for table in [b, h, r] {
+        for (row, line) in &table.cells {
+            cells.extend(line.keys().map(|column| (*row, *column)));
+        }
+    }
+    listed_lost(&b.rows, &h.rows, &r.rows)
+        || listed_lost(&b.columns, &h.columns, &r.columns)
+        || {
+            let (mb, mh, mr) = (merges(b), merges(h), merges(r));
+            let sets = |m: &[super::TableMerge]| -> BTreeSet<super::TableMerge> {
+                m.iter().copied().collect()
+            };
+            let (sb, sh, sr) = (sets(&mb), sets(&mh), sets(&mr));
+            sh.difference(&sb).any(|m| !sr.contains(m)) || sb.difference(&sh).any(|m| sr.contains(m))
+        }
+        || cells
+            .into_iter()
+            .any(|(row, column)| lost(&b.cell(row, column), &h.cell(row, column), &r.cell(row, column)))
 }
 
 /// The scratch-candidate check before any merge: the fork's actual

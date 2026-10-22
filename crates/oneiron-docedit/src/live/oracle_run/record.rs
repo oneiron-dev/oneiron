@@ -2,6 +2,7 @@
 //! each step's engine cases, and the run manifest the Office half reads.
 
 use super::checks;
+use super::schema::{SchemaEvidence, Validator};
 use super::journal::{self, CaseLine, Header, JOURNAL_SCHEMA, Journal, Line, write_atomic};
 use super::spec::CaseManifest;
 use crate::live::deck_export::{PROJECTOR_VERSION, StepOutcome};
@@ -181,6 +182,9 @@ pub(super) struct Candidate {
     pub(super) steps: Vec<u8>,
     pub(super) trust: Trust,
     pub(super) checks: Vec<OfficeCheck>,
+    /// The schema validator's report on these bytes, or why there is none
+    /// (step 5, FIX 8590).
+    pub(super) schema: SchemaEvidence,
 }
 
 /// An adversarial fixture the Office half classifies against its expected
@@ -302,6 +306,9 @@ pub(super) struct Emit<'a> {
     pub(super) checks: Vec<OfficeCheck>,
     /// The defects its baseline already had: step 5 judges only new ones.
     pub(super) baseline: &'a [String],
+    /// The bytes of the deck it came from: the schema diagnostics those
+    /// already have are not charged to it either.
+    pub(super) origin: &'a [u8],
 }
 
 /// A case in progress: what it recorded since it began, journaled whole
@@ -349,6 +356,12 @@ pub(super) struct Run {
     journal: Option<Journal>,
     /// The cases open now, innermost last; a record lands in the innermost.
     open: Vec<Open>,
+    /// The schema validator step 5 asks; `None` when the run was given no
+    /// schema set.
+    pub(super) schema: Option<Validator>,
+    /// The engine's two-peer Loro merge of one body, for step 4's
+    /// `loro_peers` case; `None` in a runner built without the engine.
+    pub(super) peers: Option<super::PeerMerge>,
 }
 
 impl Run {
@@ -373,6 +386,8 @@ impl Run {
             limits: engine_limits(),
             journal: None,
             open: Vec::new(),
+            schema: None,
+            peers: None,
         })
     }
 
@@ -522,7 +537,17 @@ impl Run {
     pub(super) fn candidate(&mut self, emit: Emit<'_>) -> Res<()> {
         let file = format!("candidates/{}.pptx", emit.id);
         let written = self.write_file(&file, emit.bytes)?;
-        let outcome = checks::corruption(emit.bytes, self.limits, emit.baseline);
+        let schema = match self.schema.as_mut() {
+            Some(validator) => validator.evidence(emit.bytes, &written.sha256, emit.origin),
+            None => SchemaEvidence::absent("the run was given no schema set (--schemas)"),
+        };
+        let outcome = checks::corruption(
+            emit.bytes,
+            self.limits,
+            emit.baseline,
+            &schema,
+            &written.sha256,
+        );
         self.record(emit.lane.step(CORRUPTION), emit.id, outcome);
         self.top().candidates.push(Candidate {
             id: emit.id.to_owned(),
@@ -532,6 +557,7 @@ impl Run {
             steps: emit.steps.to_vec(),
             trust: emit.lane.trust(),
             checks: emit.checks,
+            schema,
         });
         Ok(())
     }
