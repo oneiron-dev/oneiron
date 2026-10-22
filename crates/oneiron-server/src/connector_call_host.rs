@@ -72,6 +72,7 @@ use crate::server::SyncServer;
 mod live_exchange;
 mod presenting;
 mod reply_read;
+mod stream_pump;
 use live_exchange::{Continuation, KeptWire, LiveSession, hand_over, post_json};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
 use reply_read::{Reply, StreamEvent, open_reply, read_reply};
@@ -746,7 +747,10 @@ impl<'a> Exchange<'a> {
                     let round = declared.keep_questions(vec![question], value);
                     // The request's id waits zeroized (FIX 8054).
                     let request_id = KeptWire::keep(request.get("id").unwrap_or(&Value::Null));
-                    let continuation = Continuation::Stream { stream, request_id };
+                    let continuation = Continuation::Stream {
+                        stream: Some(stream),
+                        request_id,
+                    };
                     let body = request.to_string().into_bytes();
                     let kept = value.map(SentValue::keep);
                     return hand_over(declared, round, continuation, live, body, kept);
