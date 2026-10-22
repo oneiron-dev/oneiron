@@ -106,6 +106,11 @@ pub enum LinearEffectAdmission {
     Admitted { gate_ref: String },
     /// The Gate did not admit it.
     Held(LinearEffectHold),
+    /// Both actors' grants allow it, and a Rate window of either actor's
+    /// connector key has no room until `next_eligible_at`, Unix seconds on
+    /// the engine's clock (FIX 8788): nothing was recorded or charged, and
+    /// no press is asked for.
+    Paced { next_eligible_at: u64 },
 }
 
 /// The press `effect`'s actor's admission of `operation_id` spent and kept,

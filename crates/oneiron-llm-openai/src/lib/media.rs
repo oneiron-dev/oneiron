@@ -108,18 +108,21 @@ pub trait OpenAiMediaTransport: Send + Sync {
 }
 
 /// One provider's media client. It serves each engine model it was built
-/// for by the name the provider knows it by.
+/// for by the name the provider knows it by, at the provider's configured
+/// `endpoint` (its base URL).
 pub struct OpenAiMediaBackend<T> {
     transport: T,
     wire_models: BTreeMap<ModelId, String>,
+    endpoint: String,
 }
 
 impl<T> OpenAiMediaBackend<T> {
     #[must_use]
-    pub fn new(transport: T, wire_models: BTreeMap<ModelId, String>) -> Self {
+    pub fn new(transport: T, wire_models: BTreeMap<ModelId, String>, endpoint: String) -> Self {
         Self {
             transport,
             wire_models,
+            endpoint,
         }
     }
 
@@ -402,6 +405,9 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             Value::Array(raws)
         };
         let mut raw_provider = json!({ "usage": raw, "served_model": served });
+        // FIX 8984: what a remote mark of these vectors names when no reply names a device, as
+        // the text endpoint names one: the model as sent, at the configured endpoint.
+        raw_provider["remote_runtime"] = json!(format!("{wire}@{}", self.endpoint));
         // One mark per request, in request order, as the usage is, when any reply named one.
         if marks.iter().any(|mark| !mark.is_null()) {
             raw_provider["provenance"] = if marks.len() == 1 {

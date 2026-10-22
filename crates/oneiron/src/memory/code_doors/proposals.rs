@@ -1,3 +1,7 @@
+//! Code proposal submission and the repository mutation log read.
+//! `Memory::code_proposal_submit_as` and `owner_submission` are its call surface.
+//! `memory::code_doors::types` defines the records these take and return.
+
 use super::*;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION};
 use crate::repo_mutation::proposal::RepoProposalReview;
