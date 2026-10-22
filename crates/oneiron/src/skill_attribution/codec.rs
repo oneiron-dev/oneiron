@@ -224,7 +224,9 @@ pub(crate) fn ground_attempt_receipt(
     let Some(skill) = skill else {
         return Ok(());
     };
-    let Some(record) = vault.get_skill_record(&skill)? else {
+    // The revision the pack loaded, which an in-place update since leaves
+    // retained (FIX 10110), not today's record.
+    let Some(record) = crate::skill::receipt_skill_record(vault, &receipt, &skill)? else {
         return Err(invalid("attribution evidence names an unknown skill"));
     };
     if let Some(resident) = crate::skill::resident_of(&record)? {

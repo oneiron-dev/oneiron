@@ -269,8 +269,8 @@ pub(super) fn require_loaded_skill(
     receipt: &ReceiptRecord,
     skill: EntityId,
 ) -> Result<()> {
-    let record = vault
-        .get_skill_record_in_txn(txn, &skill)?
+    // The revision the pack loaded, retained past an in-place update (FIX 10110).
+    let record = crate::skill::receipt_skill_record_in_txn(vault, txn, receipt, &skill)?
         .ok_or(Error::EntityNotFound)?;
     if !receipt.pack_manifest_skills().is_some_and(|manifest| {
         manifest

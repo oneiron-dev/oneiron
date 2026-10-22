@@ -133,10 +133,12 @@ impl Memory<'_> {
         Ok(receipt)
     }
 
-    /// Every loadable callable helper and its call contract: what an agent
-    /// may call, and what each call takes and returns.
+    /// Every loadable callable helper this handle's bound read admits, and
+    /// its call contract: what an agent may call, and what each call takes
+    /// and returns. An unreadable helper is simply absent (FIX 9958).
     pub fn skill_callables(&self) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
-        Ok(crate::skill::helper::callable_catalog(self.vault)?
+        let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        Ok(crate::skill::helper::callable_catalog(self.vault, &read)?
             .into_iter()
             .map(Into::into)
             .collect())

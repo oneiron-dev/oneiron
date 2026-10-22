@@ -8,7 +8,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::vault::RevisionRef;
 
 use super::cancel::{
     AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelState, AttemptCancellation,
@@ -285,6 +287,10 @@ pub struct ManifestEntry {
     pub version: String,
     /// Unix seconds at which the pack loaded it.
     pub at: u64,
+    /// For a skill load, the entity whose body loaded and its exact retained
+    /// revision, so attribution reads what loaded after an in-place update
+    /// (FIX 10110); `None` for every other row.
+    pub revision: Option<(EntityId, RevisionRef)>,
 }
 
 impl ManifestEntry {
@@ -301,7 +307,15 @@ impl ManifestEntry {
             reference: reference.into(),
             version: version.into(),
             at,
+            revision: None,
         }
+    }
+
+    /// This row bound to the exact revision of `entity` the load read.
+    #[must_use]
+    pub fn with_revision(mut self, entity: EntityId, revision: RevisionRef) -> Self {
+        self.revision = Some((entity, revision));
+        self
     }
 
     /// The `reference@version` wire form the terminal receipt projects.

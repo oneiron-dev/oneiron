@@ -3,10 +3,12 @@
 use serde_json::Value as JsonValue;
 
 mod answer;
+mod json_tokens;
 #[cfg(test)]
 mod tests;
 
 pub use self::answer::CallableSkillAnswer;
+pub(crate) use self::json_tokens::AnswerMemory;
 
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::ClaimSource;
@@ -82,9 +84,16 @@ impl JsCodeModeHost for SkillHost<'_> {
 /// Imported source and local revisions descended from it stay on the foreign
 /// tier. A generated wrapper must not launder imported script into first-party
 /// host imports merely by changing its record's `source` to Generated.
-fn callable_tier(vault: &Vault, record: &crate::skill::SkillRecord) -> Result<SandboxGuestTier> {
+/// The whole fork and optimizer ancestry is walked, however long; only an
+/// ancestor met twice (a cycle) or a missing one fails it (FIX 10150).
+fn callable_tier(
+    vault: &Vault,
+    entity: &EntityId,
+    record: &crate::skill::SkillRecord,
+) -> Result<SandboxGuestTier> {
+    let mut visited = std::collections::HashSet::from([*entity]);
     let mut current = record.clone();
-    for _ in 0..64 {
+    loop {
         if current.source == ClaimSource::Imported {
             return Ok(SandboxGuestTier::Foreign);
         }
@@ -104,38 +113,51 @@ fn callable_tier(vault: &Vault, record: &crate::skill::SkillRecord) -> Result<Sa
         let Some(parent) = parent else {
             return Ok(SandboxGuestTier::FirstPartyDreamer);
         };
+        if !visited.insert(parent) {
+            return Err(invalid("callable ancestry is cyclic"));
+        }
         current = vault
             .get_skill_record(&parent)?
             .ok_or(invalid("callable ancestor is missing"))?;
     }
-    Err(invalid("callable ancestry exceeds sandbox trust bound"))
 }
 
+/// Walks its own stack, so a contract of any depth or width is judged whole
+/// (FIX 10156).
 pub(crate) fn matches_shape(value: &JsonValue, shape: &JsonValue) -> bool {
-    match shape {
-        JsonValue::String(kind) => match kind.as_str() {
-            "string" => value.is_string(),
-            "number" => value.is_number(),
-            "integer" => value.is_i64() || value.is_u64(),
-            "boolean" => value.is_boolean(),
-            "object" => value.is_object(),
-            "array" => value.is_array(),
-            "null" => value.is_null(),
+    let mut pending = vec![(value, shape)];
+    while let Some((value, shape)) = pending.pop() {
+        let matched = match shape {
+            JsonValue::String(kind) => match kind.as_str() {
+                "string" => value.is_string(),
+                "number" => value.is_number(),
+                "integer" => value.is_i64() || value.is_u64(),
+                "boolean" => value.is_boolean(),
+                "object" => value.is_object(),
+                "array" => value.is_array(),
+                "null" => value.is_null(),
+                _ => false,
+            },
+            JsonValue::Object(fields) => value.as_object().is_some_and(|actual| {
+                actual.len() == fields.len()
+                    && fields.iter().all(|(name, kind)| {
+                        actual.get(name).is_some_and(|item| {
+                            pending.push((item, kind));
+                            true
+                        })
+                    })
+            }),
+            JsonValue::Array(items) if items.len() == 1 => value.as_array().is_some_and(|actual| {
+                pending.extend(actual.iter().map(|item| (item, &items[0])));
+                true
+            }),
             _ => false,
-        },
-        JsonValue::Object(fields) => value.as_object().is_some_and(|actual| {
-            actual.len() == fields.len()
-                && fields.iter().all(|(name, kind)| {
-                    actual
-                        .get(name)
-                        .is_some_and(|item| matches_shape(item, kind))
-                })
-        }),
-        JsonValue::Array(items) if items.len() == 1 => value
-            .as_array()
-            .is_some_and(|actual| actual.iter().all(|item| matches_shape(item, &items[0]))),
-        _ => false,
+        };
+        if !matched {
+            return false;
+        }
     }
+    true
 }
 
 /// Loads a callable into the real attempt manifest, resolves its script from
@@ -182,6 +204,7 @@ pub fn execute_callable_skill(
         at,
         &StepCancellation::never(),
         &mut Vec::new(),
+        None,
     )
 }
 
@@ -192,10 +215,12 @@ pub fn execute_callable_skill(
 /// with [`crate::error::CodeError::CodeStepCancelled`] and writes no
 /// success witness. `loaded_from` lists, as each is read, the skill whose
 /// contract admits the call and the entity its load chose: the stored
-/// source the answer, or a refusal after that read, is made from.
+/// source the answer, or a refusal after that read, is made from. `memory`
+/// is the caller's result share, which the answer check holds its buffers
+/// on (FIX 10149); `None` where the caller has no run share.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the caller lends its existing lease, runtime, host, deterministic step identity, step token and source list"
+    reason = "the caller lends its existing lease, runtime, host, deterministic step identity, step token, source list and result share"
 )]
 pub(crate) fn execute_callable_skill_cancellable(
     vault: &std::sync::Arc<Vault>,
@@ -211,6 +236,7 @@ pub(crate) fn execute_callable_skill_cancellable(
     at: u64,
     parent: &StepCancellation,
     loaded_from: &mut Vec<EntityId>,
+    memory: Option<AnswerMemory<'_>>,
 ) -> Result<CallableSkillAnswer> {
     // Validate before appending a manifest entry; failed argument admission
     // must not assert that the body was loaded.
@@ -244,7 +270,7 @@ pub(crate) fn execute_callable_skill_cancellable(
     let cancel = invocation.token();
     let loaded = vault.load_leased_callable_skill_pack(leased, skill, executor, at)?;
     loaded_from.push(loaded.entity);
-    let tier = callable_tier(vault, &loaded.record)?;
+    let tier = callable_tier(vault, &loaded.entity, &loaded.record)?;
     let call = loaded
         .record
         .call
@@ -315,7 +341,7 @@ pub(crate) fn execute_callable_skill_cancellable(
     // not stream) follows what was streamed, as a store host takes it.
     answer.write(outcome.observation.as_bytes())?;
     let digest = answer
-        .check(&call.returns)?
+        .check(&call.returns, memory)?
         .ok_or(invalid("callable skill return differs from its contract"))?;
     // The call has finished: it leaves the live set unless a cancel landed
     // first, which fails it with no success witness.
