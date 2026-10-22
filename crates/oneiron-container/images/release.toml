@@ -243,7 +243,7 @@ pinned_in = "desktop-build-sh"
 [inputs.payloads.checker-rust]
 kind = "rust-toolchain"
 components = ["rustc", "cargo", "rust-std", "rustfmt", "clippy"]
-note = "replaces rustup-init 1.29.1 (checker-dockerfile) with the pinned components themselves"
+note = "replaces rustup-init 1.29.1 (checker-dockerfile) with the pinned components themselves, installed at rustup's toolchain path for 1.96 with /opt/cargo/bin links (the paths .oneiron/checks.json names)"
 
 [inputs.payloads.bun]
 # FIX 8254: the generic agent's JavaScript runtime. The variant builds in phase 3.
@@ -318,7 +318,32 @@ cold_boot = "guest hello <= 1 s"
 ram = "measure agent/VMM overhead separately"
 
 [variants.base.outputs."linux/amd64"]
-state = "unbuilt"
+state = "built-candidate"
+builder_commit = "bb4ebe74a83064f3e4148d022608c9f795ea010d"
+engine_commit = "95afa460192b5a4f8382edc9bf2903cdc5f8bee5"
+host = "kelly"
+tools_tree_sha256 = "133b6c46a144fa74b37376a5406b14295bc088f15692f5888985393828d688e9"
+packages_lock_sha256 = "82820a90df9c02314fb8327ef4bbac02082d558f41a0867f4c717e99a329ec8f"
+oci_index_digest = "sha256:3837bc5dda5bb9e82a1942c1de14f48fb44c69f636c593505dd0ae61e19b90de"
+oci_manifest_digest = "sha256:dd328f127931ac41cfee1970c45cf3a7e77cdd91e0e3c4b2fa22cc351d21e749"
+oci_config_digest = "sha256:cd70efdbf19ba539f3368049b8aa454486ef2465750f68f9b8bf336594344f7d"
+oci_layer_digest = "sha256:c668b15175e4a9a890ff5028d344cb365db0066fcf2ca7beb254ba616f2fd534"
+oci_layer_diff_id = "sha256:961c0137333600a2c70e47a9f6157adb66e4a4cb5de0c03aa12bd049fe922200"
+oci_archive_sha256 = "cbe7336ae7d20319925eae76abeef1ef7ae3552c5e170603b2e05c1fab28b486"
+ext4_sha256 = "8087b85a5363993e125dfbe8e2fc6a7619faf98628f3f48729f68d9d8d4e5087"
+ext4_uuid = "9f06a82c-6775-5a8f-ae15-3345a1766bda"
+rootfs_tar_sha256 = "961c0137333600a2c70e47a9f6157adb66e4a4cb5de0c03aa12bd049fe922200"
+rootfs_members_sha256 = "980400abab1a949387a8b530cd49942b8e376932e6c29209eb7e39cba98242df"
+compressed_bytes = 38901760
+oci_layer_bytes = 38892422
+unpacked_bytes = 110999048
+rootfs_tar_bytes = 113264640
+sparse_capacity_bytes = 234881024
+ext4_allocated_bytes = 137678848
+builder_peak_rss_bytes = 2147622912
+sbom_sha256 = "c3e13417b374438f15d023bab8a5de324228a30afd037209853dd98c0616b6a6"
+provenance_sha256 = "e3258f54bf7dfe8cbb6e615e26dc7ad2ba3e1ab9c2e7486c4c7c0e0e685deb51"
+receipt_sha256 = "39cf4be3308e7f021c0712ca3ffae66e71152f6aa4d5526dba8db3c972c2cc24"
 
 [variants.vault]
 role = "engine plus the vault guest launcher and vsock bridge; no browser, SDK toolchain or foreign workload"
@@ -351,7 +376,32 @@ cold_boot = "CDP usable <= 2 s"
 ram = "2 GiB runtime default retained (crates/oneiron-server/src/config/browser.rs:63-65)"
 
 [variants.browser.outputs."linux/amd64"]
-state = "unbuilt"
+state = "built-candidate"
+builder_commit = "bb4ebe74a83064f3e4148d022608c9f795ea010d"
+engine_commit = "95afa460192b5a4f8382edc9bf2903cdc5f8bee5"
+host = "kelly"
+tools_tree_sha256 = "133b6c46a144fa74b37376a5406b14295bc088f15692f5888985393828d688e9"
+packages_lock_sha256 = "82820a90df9c02314fb8327ef4bbac02082d558f41a0867f4c717e99a329ec8f"
+oci_index_digest = "sha256:55db222a1a1d5015217914dd9cf3c892b69e6508fb5a32a3f074cbf51bb0c812"
+oci_manifest_digest = "sha256:90074501db23fe4fbdb7ae138b450c5c504cd5b365fef92dd2c25c21b5bbde8e"
+oci_config_digest = "sha256:7f65d68d0ec525903ec999bfcef0214b29b7474055fec9251a91cb2ab4339269"
+oci_layer_digest = "sha256:9fff930a1b2daa27ac083ed0124a467b449615afec71591efb69512baa655c8a"
+oci_layer_diff_id = "sha256:3e8bc7d004fd69221fd7fb4842965981db66465b8a4e2ee266612b8ac2fb4a85"
+oci_archive_sha256 = "5d900355867e5eca765deebbe11b141b55982f4c8956d9e57a3ff236b39e033b"
+ext4_sha256 = "345ce5d85a03ec72f4c7d51f81e36a34e0b9ceed54bab07697589e5609af3d94"
+ext4_uuid = "9af7710e-7cba-5288-98fe-44229d7dc98c"
+rootfs_tar_sha256 = "3e8bc7d004fd69221fd7fb4842965981db66465b8a4e2ee266612b8ac2fb4a85"
+rootfs_members_sha256 = "3139c0d76f99144e588c9a6cab8946646dd4324e93a352a0dd9e40dfaaa7a511"
+compressed_bytes = 380180480
+oci_layer_bytes = 380169353
+unpacked_bytes = 1064102555
+rootfs_tar_bytes = 1071441920
+sparse_capacity_bytes = 1258291200
+ext4_allocated_bytes = 1125781504
+builder_peak_rss_bytes = 2264281088
+sbom_sha256 = "2e0a03c54007ec62d8c2bf1cbd026cdec62d5eba79a9b35b13aed20904caf28d"
+provenance_sha256 = "cc95be80e16ae166f98d5743d8d66fa3f14e1611c25fec806a43a321821247af"
+receipt_sha256 = "27f90afb9e2e918d9997de7d88e9fc638b5fd2083a00a479948ab9b3402ecac4"
 
 [variants.desktop-cua]
 role = "guest contract plus the pinned CUA driver, virtual display, session and accessibility buses, window manager, small app set"
@@ -386,7 +436,32 @@ cold_boot = "helper ready <= 2 s; compilation timed separately"
 ram = "32 GiB memory / 16 GiB scratch retained (crates/oneiron-server/src/config/merge_queue.rs:23-36)"
 
 [variants.checker.outputs."linux/amd64"]
-state = "unbuilt"
+state = "built-candidate"
+builder_commit = "bb4ebe74a83064f3e4148d022608c9f795ea010d"
+engine_commit = "95afa460192b5a4f8382edc9bf2903cdc5f8bee5"
+host = "kelly"
+tools_tree_sha256 = "133b6c46a144fa74b37376a5406b14295bc088f15692f5888985393828d688e9"
+packages_lock_sha256 = "82820a90df9c02314fb8327ef4bbac02082d558f41a0867f4c717e99a329ec8f"
+oci_index_digest = "sha256:cfe912123e054c87a84589c50033994761a8e63a87c1bf77904d3b73ff584056"
+oci_manifest_digest = "sha256:6381c4a8221ca85acf3f9a3bd7688ee27d360084122f8a18b4fc7ff4ff35dd33"
+oci_config_digest = "sha256:2277a31fd503ecf9fb91c6e6139c5ef6f81f4eb2c18f280eab5cdf71788a1317"
+oci_layer_digest = "sha256:0c27db93763d1546aacedad6f794e27d9a73f522d36edb144c7627f6e1908a36"
+oci_layer_diff_id = "sha256:b46059648ecf5a5265094152bd23f68ab5dc20130d76bc270840b685662a2c77"
+oci_archive_sha256 = "7875f0b6cc9e4e035d74c7c827c6b4ec6d8c7d6276afb3d8a8b2d7cabae8f2ea"
+ext4_sha256 = "513d6d4e18c0d577b9c0c1e18ec5e26b44c9e1b5d4f828ba5ddb5b4bf8e74fcb"
+ext4_uuid = "f7995abc-fe86-5ffa-a6f2-f2255f803cef"
+rootfs_tar_sha256 = "b46059648ecf5a5265094152bd23f68ab5dc20130d76bc270840b685662a2c77"
+rootfs_members_sha256 = "09ee03f02bf5da19b930dc9f1ac5a08c9439acc79701a0907fda2c475bf99517"
+compressed_bytes = 999905280
+oci_layer_bytes = 999887707
+unpacked_bytes = 2853390894
+rootfs_tar_bytes = 2960578560
+sparse_capacity_bytes = 3372220416
+ext4_allocated_bytes = 3165237248
+builder_peak_rss_bytes = 2208169984
+sbom_sha256 = "e9ded90d4ae42e4215b6102192e9e2375e720db44736ec550601218d2cf3f6c5"
+provenance_sha256 = "9da6b5ec6de0d4dfb301b635c642e2df3fca659a58e98ec0983344109485c06c"
+receipt_sha256 = "8ab05baaaac3d0305bbf6acb02625640644b27ea349d2bfec6531e8377f3c3ad"
 
 [variants.generic-agent]
 role = "shell, CA roots, guest agent and a small pinned Python/JavaScript starter runtime with TypeScript tooling"
@@ -415,4 +490,8 @@ route = "pinned base rootfs layer -> bootstrap tree -> mkosi builds the tools tr
 identity = "the tools tree's content hash (tools_tree_sha256), never the Debian base digest"
 
 [builder.outputs."linux/amd64"]
-state = "unbuilt"
+state = "built-candidate"
+tools_tree_sha256 = "133b6c46a144fa74b37376a5406b14295bc088f15692f5888985393828d688e9"
+builder_commit = "bb4ebe74a83064f3e4148d022608c9f795ea010d"
+host = "kelly"
+mkosi = "27.1"

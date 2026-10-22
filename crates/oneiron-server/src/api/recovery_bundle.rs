@@ -4,20 +4,26 @@
 //! Keyless: each request is signed with the owner anchor of the recovery root
 //! a publisher named for that generation, and the home serves only ciphertext,
 //! only to that root (`oneiron::sync::residence::kit_sealed_bundle_part`).
+//! The kit reads the home's current index of the generations named for its
+//! root the same way (`kit_sealed_bundle_index`, FIX 7106), and a kept pad
+//! object whose bytes the home lacks answers typed, never as missing.
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
+use axum::http::StatusCode;
 use axum::http::header::HOST;
 use axum::http::{HeaderMap, Uri};
-use axum::response::Json;
+use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
 use base64::Engine;
 use oneiron::sync::residence::{
-    KIT_BUNDLE_FETCH_PATH, KitBundleFetch, SealedBundleObject, kit_bundle_fetch_origin,
-    kit_sealed_bundle_part, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    BundlePartRead, KIT_BUNDLE_FETCH_PATH, KIT_PAD_INDEX_FETCH_PATH, KitBundleFetch,
+    KitPadIndexFetch, PadObjectUnavailable, SealedBundleEntry, SealedBundleObject,
+    kit_bundle_fetch_origin, kit_sealed_bundle_index, kit_sealed_bundle_part, sealed_digest_hex,
+    sealed_generation_from_hex, sealed_generation_hex,
 };
 use oneiron::world_keys::RecoveryRootId;
 use serde::{Deserialize, Serialize};
@@ -33,6 +39,7 @@ const MAX_BODY_BYTES: usize = 4 * 1024;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route(KIT_BUNDLE_FETCH_PATH, post(part))
+        .route(KIT_PAD_INDEX_FETCH_PATH, post(index))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 
@@ -80,6 +87,74 @@ pub(super) struct KitBundlePartResponse {
     /// The slice, in standard base64; at most 256 KiB once decoded
     /// (`SEALED_BUNDLE_READ_PART_MAX`).
     part: String,
+}
+
+/// A kept pad object whose bytes the home lacks from the offset asked (FIX
+/// 7106), with its generation's entry as the home keeps it now.
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct KitPadObjectUnavailableResponse {
+    /// Always `PAD_OBJECT_UNAVAILABLE`.
+    outcome: String,
+    /// The generation, 48 hex.
+    generation: String,
+    /// Always `pads`.
+    object: String,
+    /// The pad object's whole length in bytes.
+    total: u64,
+    /// The pad object's BLAKE3 digest, 64 hex.
+    digest: String,
+    /// The order the home committed the generation in.
+    commit_order: u64,
+    /// The byte offset asked for.
+    offset: u64,
+}
+
+/// The kit's signed read of the home's current index: the vault, the kit's
+/// root, `timestamp` and a fresh `nonce`; each in lower-case hex.
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct KitPadIndexRequest {
+    /// The vault, 64 hex.
+    vault_id: String,
+    /// The kit's recovery root, 64 hex.
+    root: String,
+    /// When the kit signed the request, in Unix seconds. The home takes it
+    /// within 300 seconds of its own clock.
+    timestamp: u64,
+    /// 32 fresh random bytes, 64 hex. The home takes each nonce once.
+    nonce: String,
+    /// The root's owner anchor's Ed25519 signature over the request, 128 hex.
+    signature: String,
+}
+
+/// One kept generation named for the kit's root.
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct KitPadIndexEntry {
+    /// The generation, 48 hex.
+    generation: String,
+    /// The order the home committed it in; the newest is the greatest.
+    commit_order: u64,
+    /// The bundle's length in bytes.
+    bundle_length: u64,
+    /// The bundle's BLAKE3 digest, 64 hex.
+    bundle_digest: String,
+    /// The pad object's length in bytes.
+    pads_length: u64,
+    /// The pad object's BLAKE3 digest, 64 hex, as the home keeps it now.
+    pads_digest: String,
+}
+
+/// The generations the home keeps named for the kit's root, newest committed
+/// first, and the revision of the one read that named them.
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct KitPadIndexResponse {
+    /// The revision of the home's read of its kept generations, 64 hex.
+    /// Opaque: it names a read, never an order.
+    retained_revision: String,
+    generations: Vec<KitPadIndexEntry>,
 }
 
 /// The address a request names: the URI's authority (HTTP/2), else the Host
@@ -138,6 +213,7 @@ fn kit_public_urls(server: &SyncServer) -> &[String] {
     ),
     responses(
         (status = 200, description = "The slice.", body = KitBundlePartResponse, content_type = "application/json"),
+        (status = 409, description = "The generation's pad object is kept, and its bytes from the offset are not: the home awaits them again. Never a missing generation or the object's end.", body = KitPadObjectUnavailableResponse, content_type = "application/json"),
         (status = 400, description = "The body does not parse, a field is malformed, or neither the request nor any of the home's configured public URLs names a host.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "The request does not verify, no generation kept for the root matches, or the offset is at or past the object's end. All look the same.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "The sealed bundle read stopped.", body = ApiErrorEnvelope, content_type = "application/json")
@@ -148,7 +224,7 @@ pub(super) async fn part(
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<KitBundlePartResponse>, EnvelopedApiError> {
+) -> Result<Response, EnvelopedApiError> {
     let input: KitBundlePartRequest = serde_json::from_slice(&body)
         .map_err(|_| ApiError::bad_request("the kit fetch does not parse", None))?;
     let bad = |field: &str| ApiError::bad_request("the kit fetch field is malformed", Some(field));
@@ -193,8 +269,15 @@ pub(super) async fn part(
     })
     .await
     .map_err(|_| ApiError::internal_server_error("the sealed bundle read stopped"))?;
-    let Ok(Some((entry, part))) = read else {
+    let Ok(Some((entry, read))) = read else {
         return Err(ApiError::not_found("sealed bundle", None).into());
+    };
+    let part = match read {
+        BundlePartRead::Part(part) => part,
+        BundlePartRead::End => return Err(ApiError::not_found("sealed bundle", None).into()),
+        BundlePartRead::PadObjectUnavailable(unavailable) => {
+            return Ok(pad_object_unavailable(&entry, &unavailable));
+        }
     };
     let (total, digest) = entry.object(object);
     Ok(Json(KitBundlePartResponse {
@@ -205,5 +288,103 @@ pub(super) async fn part(
         offset,
         last: offset.saturating_add(part.len() as u64) == total,
         part: base64::engine::general_purpose::STANDARD.encode(part),
+    })
+    .into_response())
+}
+
+/// The part door's typed answer for a kept pad object whose bytes the home
+/// lacks (FIX 7106).
+fn pad_object_unavailable(
+    entry: &SealedBundleEntry,
+    unavailable: &PadObjectUnavailable,
+) -> Response {
+    let body = KitPadObjectUnavailableResponse {
+        outcome: BundlePartRead::PAD_OBJECT_UNAVAILABLE.to_owned(),
+        generation: sealed_generation_hex(&unavailable.generation),
+        object: SealedBundleObject::Pads.name().to_owned(),
+        total: entry.pads_len,
+        digest: sealed_digest_hex(&unavailable.digest),
+        commit_order: entry.commit_order,
+        offset: unavailable.offset,
+    };
+    (StatusCode::CONFLICT, Json(body)).into_response()
+}
+
+/// `POST /v1/recovery/sealed-bundle/index`: the generations the home keeps
+/// named for the kit's root, newest committed first, with the revision of the
+/// one read that named them (FIX 7106). A request that does not verify and a
+/// root no kept generation names look missing.
+#[utoipa::path(
+    post,
+    path = "/v1/recovery/sealed-bundle/index",
+    operation_id = "recovery_sealed_bundle_index",
+    request_body(
+        content = KitPadIndexRequest,
+        description = "One signed index request. No bearer: the signature is the authentication. It is the owner anchor's, of the recovery root a publisher named for the newest generation kept for it, over the vault, the root, the home's address (as a part request signs it), the method, this path, the time and the nonce.",
+        content_type = "application/json"
+    ),
+    responses(
+        (status = 200, description = "The generations named for the root.", body = KitPadIndexResponse, content_type = "application/json"),
+        (status = 400, description = "The body does not parse, a field is malformed, or neither the request nor any of the home's configured public URLs names a host.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "The request does not verify, or no kept generation names the root. Both look the same.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "The sealed bundle read stopped.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+pub(super) async fn index(
+    State(server): State<Arc<SyncServer>>,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<KitPadIndexResponse>, EnvelopedApiError> {
+    let input: KitPadIndexRequest = serde_json::from_slice(&body)
+        .map_err(|_| ApiError::bad_request("the kit fetch does not parse", None))?;
+    let bad = |field: &str| ApiError::bad_request("the kit fetch field is malformed", Some(field));
+    let mut origins = kit_origins(kit_public_urls(&server), &uri, &headers).into_iter();
+    let fetch = KitPadIndexFetch {
+        vault_id: parse_slip_id(&input.vault_id).map_err(|_| bad("vaultId"))?,
+        root: RecoveryRootId(parse_slip_id(&input.root).map_err(|_| bad("root"))?),
+        origin: origins
+            .next()
+            .ok_or_else(|| ApiError::bad_request("the request names no host", None))?,
+        timestamp: input.timestamp,
+        nonce: parse_slip_id(&input.nonce).map_err(|_| bad("nonce"))?,
+    };
+    let signature: [u8; 64] = parse_signature(&input.signature)
+        .ok()
+        .and_then(|signature| signature.try_into().ok())
+        .ok_or_else(|| bad("signature"))?;
+    let vault = Arc::clone(server.vault());
+    // As for a part: each other address checks a request that did not verify.
+    let read = tokio::task::spawn_blocking(move || {
+        let mut fetch = fetch;
+        let mut read = kit_sealed_bundle_index(&vault, &fetch, &signature);
+        for origin in origins {
+            if read.is_ok() {
+                break;
+            }
+            fetch.origin = origin;
+            read = kit_sealed_bundle_index(&vault, &fetch, &signature);
+        }
+        read
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("the sealed bundle read stopped"))?;
+    let Ok(index) = read else {
+        return Err(ApiError::not_found("sealed bundle", None).into());
+    };
+    Ok(Json(KitPadIndexResponse {
+        retained_revision: sealed_digest_hex(&index.retained_revision),
+        generations: index
+            .entries
+            .iter()
+            .map(|entry| KitPadIndexEntry {
+                generation: sealed_generation_hex(&entry.generation),
+                commit_order: entry.commit_order,
+                bundle_length: entry.bundle_len,
+                bundle_digest: sealed_digest_hex(&entry.bundle_digest),
+                pads_length: entry.pads_len,
+                pads_digest: sealed_digest_hex(&entry.pads_digest),
+            })
+            .collect(),
     }))
 }
