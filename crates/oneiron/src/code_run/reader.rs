@@ -425,7 +425,7 @@ pub struct TaskWaitFailure {
     pub reason: String,
 }
 
-/// One reduction of a wait set over its children.
+/// One reduction of a wait set over its children; an answer adds their steps' type feedback.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskWaitSetResult {
     pub ready: Vec<TaskWaitFinding>,
@@ -437,10 +437,6 @@ pub struct TaskWaitSetResult {
     /// while it is not.
     pub reason: Option<String>,
     pub until: u64,
-    /// The settled children's program steps' type feedback as it stood when
-    /// this answer was given (FIX 8277), beside their findings and never in
-    /// them. Never kept in the wait's first reduction: a later answer reads
-    /// newer feedback, as `vault.code.type_diagnostics` does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub program_steps: Vec<super::ProgramStepFeedback>,
 }

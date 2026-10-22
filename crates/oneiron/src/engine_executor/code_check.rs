@@ -476,7 +476,8 @@ impl StepCell {
         let mut state = lock(&self.state);
         state.landed = Some(landed);
         observe(&mut state, self.key);
-        if !(writes && state.pending_kept && !state.kept) {
+        let owed = writes && state.pending_kept && !state.kept;
+        if !owed {
             return None;
         }
         state.kept = true;
