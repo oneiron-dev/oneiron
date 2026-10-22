@@ -132,7 +132,8 @@ impl Chain<'_> {
     }
 
     /// The run's Hook receipt: the hook, its content hash, the call, the
-    /// duration, the outcome, `now` and the rows read.
+    /// duration, the outcome, `now` and the rows read, and the overrun of a
+    /// run past its budget.
     pub(super) fn receipt(&self, run: &RunRecord<'_>) -> ReceiptRecord {
         let binding = run.binding;
         let mut fields: BTreeMap<String, String> = [
@@ -170,6 +171,11 @@ impl Chain<'_> {
                 fields.insert(name.to_owned(), bounded(value));
             }
         }
+        if let Some(overrun) = &run.budget_overrun {
+            for (name, value) in overrun.receipt_fields() {
+                fields.insert(name.to_owned(), value);
+            }
+        }
         ReceiptRecord {
             receipt_id: store::receipt_id(&run.key),
             receipt_kind: ReceiptKind::Hook,
@@ -202,6 +208,7 @@ impl Chain<'_> {
             reason: run.reason.clone(),
             receipt_id: store::receipt_id(&run.key),
             duration_ms: run.duration_ms,
+            budget_overrun: run.budget_overrun,
             now: self.now,
             committed_at: at,
         }
