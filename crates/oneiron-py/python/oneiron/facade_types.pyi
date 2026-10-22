@@ -7655,13 +7655,13 @@ class SufficiencyInput(TypedDict):
     detectable_effect: NotRequired[float | None]
     set_changed: bool
     rubric_changed: bool
-    canary_diverged: bool
+    canary_diverged: NotRequired[bool | None]
 class UnknownReasonTooFewFamiliesBody(TypedDict):
     slice: str
     families: int
 class UnknownReasonTooFewFamilies(TypedDict):
     too_few_families: UnknownReasonTooFewFamiliesBody
-UnknownReason = Literal["no_retest_noise", "no_interval", "interval_spans_margin", "set_changed", "rubric_changed", "canary_diverged"] | UnknownReasonTooFewFamilies
+UnknownReason = Literal["no_retest_noise", "no_interval", "interval_spans_margin", "set_changed", "rubric_changed", "canary_diverged", "no_canary"] | UnknownReasonTooFewFamilies
 class SufficiencyVerdictUnknown(TypedDict):
     unknown: list[UnknownReason]
 SufficiencyVerdict = Literal["not_worse", "worse"] | SufficiencyVerdictUnknown

@@ -3063,9 +3063,9 @@ export type HeldOutCall = "promote" | "reject" | "escalate_tradeoff"
 /** `oneiron::autoreason_campaign::research::promotion::ConfirmationReceipt` */
 export type ConfirmationReceipt = { cohort: EntityId; consumed_at: number; exposure?: EntityId | null }
 /** `oneiron::skill_optimize::eval_set::sufficiency::SufficiencyInput` */
-export type SufficiencyInput = { families: number; floor_slices: Record<string, number>; min_families_per_slice: number; retest_noise?: number | null; owner_margin?: number | null; paired_interval?: [number, number] | null; detectable_effect?: number | null; set_changed: boolean; rubric_changed: boolean; canary_diverged: boolean }
+export type SufficiencyInput = { families: number; floor_slices: Record<string, number>; min_families_per_slice: number; retest_noise?: number | null; owner_margin?: number | null; paired_interval?: [number, number] | null; detectable_effect?: number | null; set_changed: boolean; rubric_changed: boolean; canary_diverged?: boolean | null }
 /** `oneiron::skill_optimize::eval_set::sufficiency::UnknownReason` */
-export type UnknownReason = "no_retest_noise" | "no_interval" | "interval_spans_margin" | { too_few_families: { slice: string; families: number } } | "set_changed" | "rubric_changed" | "canary_diverged"
+export type UnknownReason = "no_retest_noise" | "no_interval" | "interval_spans_margin" | { too_few_families: { slice: string; families: number } } | "set_changed" | "rubric_changed" | "canary_diverged" | "no_canary"
 /** `oneiron::skill_optimize::eval_set::sufficiency::SufficiencyVerdict` */
 export type SufficiencyVerdict = "not_worse" | "worse" | { unknown: UnknownReason[] }
 /** `oneiron::skill_optimize::eval_set::sufficiency::SufficiencyCard` */
