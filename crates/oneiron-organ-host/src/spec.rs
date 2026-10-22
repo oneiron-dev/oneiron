@@ -37,6 +37,11 @@ pub struct OrganSpec {
     pub verbs: Vec<String>,
     /// The input media types the grant names.
     pub media_types: Vec<String>,
+    /// The typed-body kinds the install grant names, as a pack's `ORGAN.json`
+    /// lists them (FIX 7985): a call whose body is of another kind is refused
+    /// before it is sent. `None` for a spec built in code, whose caller
+    /// vouches for the bodies it sends.
+    pub kinds: Option<Vec<String>>,
     /// Calls the process may run at once.
     pub threads: u16,
     /// The process's memory grant, also its kernel data limit on Linux.
@@ -137,6 +142,7 @@ impl OrganSpec {
             program_hash: None,
             verbs: Vec::new(),
             media_types: Vec::new(),
+            kinds: None,
             threads: 2,
             memory_bytes: 512 * 1024 * 1024,
             call_memory_bytes: 128 * 1024 * 1024,

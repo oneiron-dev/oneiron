@@ -45,14 +45,15 @@ impl MeasuredRate {
 /// One bound pattern skill the planner may run, as the planner card reads
 /// it: the skill revision, the shape it teaches, its `works well for` line,
 /// its estimate per seat model, and the anchored team outcomes per measured
-/// width and seat model, `(wins, losses)`.
+/// width and seat model, `(wins, losses)`: each outcome's mass as its
+/// window fades it at the plan's one evaluation time (FIX 9568).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PatternCandidate {
     pub skill: PatternSkillRef,
     pub pattern: CoordinationPattern,
     pub works_well_for: String,
     pub rates: BTreeMap<ModelId, MeasuredRate>,
-    pub widths: BTreeMap<u32, BTreeMap<ModelId, (u64, u64)>>,
+    pub widths: BTreeMap<u32, BTreeMap<ModelId, (f64, f64)>>,
     /// The vault tree's anchored outcomes a thin project leaf borrows, per
     /// width and seat model, already at the borrow weight, `(wins, losses)`.
     /// Never own runs; empty where nothing is lent.
@@ -72,7 +73,6 @@ impl PatternCandidate {
     /// `rate` pooled with the record at `width` on `model`: own outcomes
     /// count as own runs, borrowed ones as mass alone. With no record at
     /// that width, `rate` as read.
-    #[allow(clippy::cast_precision_loss)]
     pub(super) fn width_rate(
         &self,
         width: u32,
@@ -90,8 +90,7 @@ impl PatternCandidate {
         if own.is_none() && borrowed.is_none() {
             return rate;
         }
-        let (wins, losses) =
-            own.map_or((0.0, 0.0), |(wins, losses)| (*wins as f64, *losses as f64));
+        let (wins, losses) = own.copied().unwrap_or_default();
         let (lent_wins, lent_losses) = borrowed.copied().unwrap_or_default();
         rate.pooled(wins + lent_wins, losses + lent_losses, wins + losses)
     }

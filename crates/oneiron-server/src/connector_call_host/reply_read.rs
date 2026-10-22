@@ -32,6 +32,11 @@ pub(super) struct EventStream {
     deadline: Option<Instant>,
     /// The line being read, kept across a read that timed out (FIX 9286).
     line: String,
+    /// The last event id buffer: the latest `id:` field read (FIX 9157).
+    id_buffer: String,
+    /// The last event id, set from the buffer as each event is dispatched:
+    /// what a reattachment after a restart sends as `Last-Event-ID`.
+    last_event_id: String,
 }
 
 impl EventStream {
@@ -76,6 +81,7 @@ impl EventStream {
             let end = n == 0;
             let trimmed = line.trim_end_matches(['\r', '\n']);
             if end || trimmed.is_empty() {
+                self.last_event_id.clone_from(&self.id_buffer);
                 if !self.data.is_empty() {
                     let event = std::mem::take(&mut self.data);
                     if let Ok(message) = serde_json::from_str::<Value>(&event) {
@@ -97,9 +103,31 @@ impl EventStream {
                     self.data.push('\n');
                 }
                 self.data.push_str(field.strip_prefix(' ').unwrap_or(field));
+            } else if let Some(field) = id_field(trimmed) {
+                field.clone_into(&mut self.id_buffer);
             }
         }
     }
+
+    /// The stream's last event id, once an event that set one was
+    /// dispatched (FIX 9157).
+    pub(super) fn last_event_id(&self) -> Option<&str> {
+        (!self.last_event_id.is_empty()).then_some(self.last_event_id.as_str())
+    }
+}
+
+/// The value of an event-stream `id` field line, its one leading space
+/// dropped; a bare `id` line has the empty value, which clears the id. A
+/// value holding a NUL is ignored, as the format says.
+fn id_field(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("id")?;
+    let value = if rest.is_empty() {
+        rest
+    } else {
+        let value = rest.strip_prefix(':')?;
+        value.strip_prefix(' ').unwrap_or(value)
+    };
+    (!value.contains('\0')).then_some(value)
 }
 
 /// Whether a read failed only because nothing came within the client's
@@ -136,6 +164,8 @@ pub(super) fn open_reply(
             data: String::new(),
             deadline,
             line: String::new(),
+            id_buffer: String::new(),
+            last_event_id: String::new(),
         }));
     }
     let mut bytes = Vec::new();

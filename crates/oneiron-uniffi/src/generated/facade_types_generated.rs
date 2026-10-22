@@ -39844,6 +39844,12 @@ pub struct SpawnIntentRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub budget_cap_units: Option<SpawnAskKnobU64>,
+    #[serde(
+        rename = "balance_free_prompt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub balance_free_prompt: Option<bool>,
 }
 
 /// `oneiron::team::doors::spawn::SpawnIntentReply`.
@@ -66018,6 +66024,12 @@ pub struct AgentSpawnInput {
     pub objectives: Option<Vec<String>>,
     #[serde(rename = "comm", default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<CommReach>,
+    #[serde(
+        rename = "balance_free_prompt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub balance_free_prompt: Option<bool>,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `AgentSpawnInput`.

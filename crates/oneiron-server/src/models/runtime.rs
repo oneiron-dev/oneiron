@@ -265,7 +265,7 @@ impl ModelRuntime {
                 let served = backends
                     .get(&rung.model.provider)
                     .filter(|_| provider.kind.generates())
-                    .filter(|_| !(stays && provider.locality == ModelLocality::ThirdParty))
+                    .filter(|_| config.role_permits(*role, provider.locality))
                     .and_then(|backend| {
                         crate::models::rung(
                             &rung.model.provider,

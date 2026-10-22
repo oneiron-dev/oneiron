@@ -11,10 +11,14 @@
 //! client does not serve is refused, and the next question or the call's
 //! reply is kept for the read after the answer, the pump holding on
 //! meanwhile. A stream that ends or fails while the round waits ends the
-//! exchange: nothing is left to send an answer to.
+//! exchange: nothing is left to send an answer to. Each event comes with the
+//! stream's last event id as it was read, which a round's resume state keeps
+//! (FIX 9157).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
+
+use zeroize::Zeroizing;
 
 use super::live_exchange::{Next, terminal};
 use super::reply_read::EventStream;
@@ -25,8 +29,14 @@ enum Mail {
     Answer(AnswerCommand),
     /// The answers' channel closed: no one is left to answer.
     Closed,
-    /// One event the stream said.
-    Stream(Result<StreamEvent, ()>),
+    Stream(Said),
+}
+
+/// One event the stream said, and its last event id once that event was
+/// read (FIX 9157): what a reattachment after a restart reads on from.
+struct Said {
+    event: Result<StreamEvent, ()>,
+    last_event_id: Option<Zeroizing<String>>,
 }
 
 /// What a pumped worker's wait for its round's answer came to.
@@ -50,7 +60,7 @@ pub(super) struct Pump {
     waiting: Arc<AtomicBool>,
     /// An event read while the round waited, kept for the read after its
     /// answer.
-    early: Option<Result<StreamEvent, ()>>,
+    early: Option<Said>,
     /// The answers' channel closed while a round was read.
     closed: bool,
 }
@@ -109,7 +119,10 @@ impl Pump {
             match self.mail.recv() {
                 Ok(Mail::Answer(command)) => return Waited::Answer(command),
                 Ok(Mail::Closed) | Err(_) => return Waited::Closed,
-                Ok(Mail::Stream(event)) => {
+                Ok(Mail::Stream(Said {
+                    event,
+                    last_event_id,
+                })) => {
                     self.outstanding = false;
                     match event {
                         Ok(StreamEvent::Request(request))
@@ -118,7 +131,10 @@ impl Pump {
                             session.refuse(&request);
                         }
                         event @ Ok(StreamEvent::Request(_) | StreamEvent::Answer(..)) => {
-                            self.early = Some(event);
+                            self.early = Some(Said {
+                                event,
+                                last_event_id,
+                            });
                         }
                         Ok(StreamEvent::End) | Err(()) => return Waited::Ended,
                     }
@@ -129,28 +145,31 @@ impl Pump {
 
     /// Reads the stream on after an answer, within `timeout` of it: the
     /// call's reply ends it, another form `elicitation/create` opens the
-    /// next round under its own request id, and any other server request is
+    /// next round under its own request id and the stream's last event id
+    /// as that request was read (FIX 9157), and any other server request is
     /// refused.
     pub(super) fn read_round(
         &mut self,
         session: &LiveSession,
         request_id: &mut KeptWire,
+        last_event_id: &mut Option<Zeroizing<String>>,
         timeout: Duration,
     ) -> Next {
         let deadline = Instant::now() + timeout;
         loop {
-            let event = match self.early.take() {
-                Some(event) => event,
+            let said = match self.early.take() {
+                Some(said) => said,
                 None => {
                     self.grant();
                     self.next_event(deadline)
                 }
             };
-            match event {
+            match said.event {
                 Ok(StreamEvent::Answer(message, _)) => return Next::Over(terminal(&message)),
                 Ok(StreamEvent::Request(request)) => match stream_question(&request) {
                     Some(question) => {
                         *request_id = KeptWire::keep(request.get("id").unwrap_or(&Value::Null));
+                        *last_event_id = said.last_event_id;
                         return Next::Asked(vec![question]);
                     }
                     None => session.refuse(&request),
@@ -168,13 +187,13 @@ impl Pump {
     /// The stream's next event, read by `deadline`; past it, unreadable. No
     /// answer is taken while a round is read: one that comes finds its
     /// round gone.
-    fn next_event(&mut self, deadline: Instant) -> Result<StreamEvent, ()> {
+    fn next_event(&mut self, deadline: Instant) -> Said {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             match self.mail.recv_timeout(left) {
-                Ok(Mail::Stream(event)) => {
+                Ok(Mail::Stream(said)) => {
                     self.outstanding = false;
-                    return event;
+                    return said;
                 }
                 Ok(Mail::Answer(command)) => {
                     let _ = command.reply.send(WorkerEvent::Failed {
@@ -183,7 +202,12 @@ impl Pump {
                     });
                 }
                 Ok(Mail::Closed) => self.closed = true,
-                Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => return Err(()),
+                Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
+                    return Said {
+                        event: Err(()),
+                        last_event_id: None,
+                    };
+                }
             }
         }
     }
@@ -201,7 +225,14 @@ fn read_stream(
     while credits.recv().is_ok() {
         let event = stream.next_while(CALL_ID, waiting);
         let more = matches!(event, Ok(StreamEvent::Answer(..) | StreamEvent::Request(_)));
-        if post.send(Mail::Stream(event)).is_err() || !more {
+        let last_event_id = stream
+            .last_event_id()
+            .map(|id| Zeroizing::new(id.to_owned()));
+        let said = Said {
+            event,
+            last_event_id,
+        };
+        if post.send(Mail::Stream(said)).is_err() || !more {
             return;
         }
     }
