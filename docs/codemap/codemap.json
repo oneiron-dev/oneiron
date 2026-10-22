@@ -31690,6 +31690,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/record_scope/secret_projection.rs",
+     "purpose": "The masked copy a scoped export carries of a marked repo row (FIX 7608 slice 4, LEAF 4.2; L02 ack 17:2x and…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/federation/record_scope/tests.rs",
@@ -47038,7 +47048,7 @@
      "path": "src/origin/secret_projection/index.rs",
      "purpose": "The copy a repo-derived index or embedding input is made from (FIX 7608 slice 3, ASK 1: search and…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 28
      }
     },
     {
@@ -63542,6 +63552,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/repo_projection.rs",
+     "purpose": "A device's admission of the masked repo copies its home sends (FIX 7608 slice 4, LEAF 4.3)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -64032,7 +64052,7 @@
      "purpose": "Per-entity text documents",
      "surface": {
       "crate-vis": 15,
-      "fn": 14,
+      "fn": 15,
       "re-export": 1,
       "struct": 2
      }
@@ -65523,8 +65543,8 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 14,
-      "re-export": 7
+      "crate-vis": 15,
+      "re-export": 8
      }
     },
     {
@@ -65560,6 +65580,75 @@
      "purpose": "Export scope tables: coreference consent context, per-source facet scope mirror, and per-entity decisions",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection.rs",
+     "purpose": "The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries…",
+     "surface": {
+      "crate-vis": 16,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoCopyAliases"
+     ],
+     "path": "src/sync/selector/secret_projection/documents.rs",
+     "purpose": "A marked repo item's entity document as a sync peer gets it, a peer's edit of it as the source text takes…",
+     "surface": {
+      "crate-vis": 12,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/frames.rs",
+     "purpose": "A window blob as a sync peer gets it, and a peer's blob as this window takes it (FIX 7608 slice 4, part 2)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/history.rs",
+     "purpose": "A window's history as a peer gets it, and a peer's history as the canonical window takes it (CHANGED…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoSyncAdmission"
+     ],
+     "path": "src/sync/selector/secret_projection/release.rs",
+     "purpose": "The host adapters every window release and admission goes through (FIX 7608 slice 4, part 3)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/rows.rs",
+     "purpose": "One entity row as a peer gets it, and one incoming copy row as the canonical store takes it",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -76513,7 +76602,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77227,7 +77316,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 259,
+     "files": 266,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77432,7 +77521,7 @@
    },
    "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5079,
+   "source_files": 5087,
    "test_files": 902
   },
   "oneiron-android": {
@@ -101650,6 +101739,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/handler/window_copy.rs",
+     "purpose": "The masked repo copy generation each socket was last sent of a window (FIX 7608 slice 4, C3 of the s4…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/handler/window_pads.rs",
      "purpose": "The home's side of the window pad envelope (KS-5, FIX 7107)",
      "surface": {
@@ -107486,7 +107585,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -107733,7 +107832,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1258,
+   "source_files": 1259,
    "test_files": 182
   },
   "oneiron-spawn": {
