@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1147 facade rows, 4051 declarations.
+Census: 1147 facade rows, 4053 declarations.
 Inputs: 1082 of 1147 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1033 of 1147 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
@@ -14523,10 +14523,17 @@ ModelRoleInput = ModelRoleInputGenerate | ModelRoleInputEmbed | ModelRoleInputTa
 class ModelRoleInvoke(TypedDict):
     role: ModelRole
     input: ModelRoleInput
+class ReplyAssertionRecord(TypedDict):
+    entity_type: int
+    id: EntityId
+class ReplyAssertions(TypedDict):
+    cited: NotRequired[list[ReplyAssertionRecord]]
+    created: NotRequired[list[ReplyAssertionRecord]]
 class LlmResponse(TypedDict):
     message: LlmMessage
     usage: LlmUsage
     finish_reason: FinishReason
+    reply_assertions: NotRequired[ReplyAssertions]
 class NerSpan(TypedDict):
     message: int
     start: int
@@ -14902,6 +14909,7 @@ class LlmStreamEventDone(TypedDict):
     message: LlmMessage
     usage: LlmUsage
     finish_reason: FinishReason
+    reply_assertions: NotRequired[ReplyAssertions]
 LlmStreamEvent = LlmStreamEventTextStart | LlmStreamEventTextDelta | LlmStreamEventTextEnd | LlmStreamEventReasoningStart | LlmStreamEventReasoningDelta | LlmStreamEventReasoningEnd | LlmStreamEventToolCallStart | LlmStreamEventToolCallDelta | LlmStreamEventToolCallEnd | LlmStreamEventToolResultStart | LlmStreamEventToolResultDelta | LlmStreamEventToolResultEnd | LlmStreamEventImageStart | LlmStreamEventImageDelta | LlmStreamEventImageEnd | LlmStreamEventDone
 class ModelStreamEvents(TypedDict):
     stream_ref: str
