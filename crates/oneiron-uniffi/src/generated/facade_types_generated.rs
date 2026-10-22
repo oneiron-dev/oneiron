@@ -16726,6 +16726,8 @@ pub struct PluginSectionProposal {
 pub struct PluginSectionListRequest {
     #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 /// `oneiron::memory::plugin_sections::PluginSectionPendingRow`.
@@ -16776,6 +16778,18 @@ pub struct PluginSectionPackRow {
 pub struct PluginSectionsView {
     #[serde(rename = "pending")]
     pub pending: Vec<PluginSectionPendingRow>,
+    #[serde(rename = "pending_total")]
+    pub pending_total: u64,
+    #[serde(rename = "pending_remaining")]
+    pub pending_remaining: u64,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "end")]
+    pub end: bool,
     #[serde(rename = "admitted")]
     pub admitted: Vec<PluginSectionAdmittedRow>,
     #[serde(rename = "pack_sections")]

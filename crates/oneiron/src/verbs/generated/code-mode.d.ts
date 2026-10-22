@@ -1113,11 +1113,11 @@ declare namespace Sdk {
   type PluginSectionTargetInput = { kind: "existing_skill"; skill_ref: EntityId } | { kind: "hub_package"; hub_ref: HubRef; target_skill_ref: EntityId };
   type PluginSectionProposeRequest = { manifest: SectionManifestEnvelope; target: PluginSectionTargetInput; turn_ref: string };
   type PluginSectionProposal = { claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; manifest: SectionManifestEnvelope };
-  type PluginSectionListRequest = { limit?: number | null };
+  type PluginSectionListRequest = { limit?: number | null; cursor?: string | null };
   type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean };
   type PluginSectionAdmittedRow = { claim_ref: string; section_id: string; manifest: SectionManifestEnvelope };
   type PluginSectionPackRow = { section_id: string; pack_name: string; source_id: string; content_hash: string; section: PackSection };
-  type PluginSectionsView = { pending: PluginSectionPendingRow[]; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] };
+  type PluginSectionsView = { pending: PluginSectionPendingRow[]; pending_total: number; pending_remaining: number; next_cursor?: string | null; end: boolean; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] };
   type PluginSectionGrantRequest = { claim_ref: string; review_id?: string | null };
   type PluginSectionGrantState = "admitted" | "pending_activation";
   type PluginSectionGrant = { claim_ref: string; state: PluginSectionGrantState; section_id?: string | null; skill_ref: string; settlement_receipt_ref?: string | null; manifest: SectionManifestEnvelope };
@@ -6229,7 +6229,7 @@ declare const vault: Sdk.VaultHost & {
     sections: {
       /** The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent. */
       grant(input: Sdk.PluginSectionGrantRequest): Promise<Sdk.PluginSectionGrant | StoredResult>;
-      /** Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project. */
+      /** Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project. */
       list(input: Sdk.PluginSectionListRequest): Promise<Sdk.PluginSectionsView | StoredResult>;
       /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
       propose(input: Sdk.PluginSectionProposeRequest): Promise<Sdk.PluginSectionProposal | StoredResult>;

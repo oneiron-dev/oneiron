@@ -2191,7 +2191,7 @@ export type PluginSectionProposeRequest = { manifest: SectionManifestEnvelope; t
 /** `oneiron::memory::plugin_sections::PluginSectionProposal` */
 export type PluginSectionProposal = { claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; manifest: SectionManifestEnvelope }
 /** `oneiron::memory::plugin_sections::PluginSectionListRequest` */
-export type PluginSectionListRequest = { limit?: number | null }
+export type PluginSectionListRequest = { limit?: number | null; cursor?: string | null }
 /** `oneiron::memory::plugin_sections::PluginSectionPendingRow` */
 export type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean }
 /** `oneiron::memory::plugin_sections::PluginSectionAdmittedRow` */
@@ -2199,7 +2199,7 @@ export type PluginSectionAdmittedRow = { claim_ref: string; section_id: string; 
 /** `oneiron::memory::plugin_sections::PluginSectionPackRow` */
 export type PluginSectionPackRow = { section_id: string; pack_name: string; source_id: string; content_hash: string; section: PackSection }
 /** `oneiron::memory::plugin_sections::PluginSectionsView` */
-export type PluginSectionsView = { pending: PluginSectionPendingRow[]; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] }
+export type PluginSectionsView = { pending: PluginSectionPendingRow[]; pending_total: number; pending_remaining: number; next_cursor?: string | null; end: boolean; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] }
 /** `oneiron::memory::plugin_sections::PluginSectionGrantRequest` */
 export type PluginSectionGrantRequest = { claim_ref: string; review_id?: string | null }
 /** `oneiron::memory::plugin_sections::PluginSectionGrantState` */
