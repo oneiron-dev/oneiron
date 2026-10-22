@@ -73,11 +73,13 @@ impl LiveQueries {
                             .map(|position| position + 1)
                     };
                     // A retained push that names a row a device-local world
-                    // keeps since is not sent again: the resume falls to a
-                    // gap and a fresh snapshot.
+                    // keeps since, or one its caller no longer reads (FIX
+                    // 9493), is not sent again: the resume falls to a gap and
+                    // a fresh snapshot.
                     if fingerprint(&derived.value)? == sub.current
                         && let Some(tail) = tail
                         && !self.source.withholds(&sub.ring.make_contiguous()[tail..])?
+                        && self.source.readmits(&sub.ring.make_contiguous()[tail..])?
                     {
                         sub.origin = origin;
                         if tail > 0 {
@@ -123,6 +125,7 @@ impl LiveQueries {
             && self.source.can_resume(cursor)?
             && let Some(mut replay) = self.source.replay(&view, channel, cursor)?
             && !self.source.withholds(&replay)?
+            && self.source.readmits(&replay)?
         {
             for push in &mut replay {
                 push.subscription_id = id;
