@@ -79,7 +79,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/deck_export/table.rs` | src | s | 3 crate-vis | — | A table at export, by row and column identity: a bound table's grid rewritten where its rows, columns or… |
 | `src/live/diagram.rs` | src | m | 3 crate-vis | — | SmartArt structure (OF-510, FIX 3697): nodes added, removed, re-levelled or moved, as PowerPoint's text pane… |
 | `src/live/held.rs` | src | m | 13 crate-vis | — | What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a… |
-| `src/live/held/chart.rs` | src | m | 11 crate-vis | — | A chart frame's data as the live model holds it: its chart part, its plots in document order, and each… |
+| `src/live/held/chart.rs` | src | m | 12 crate-vis | — | A chart frame's data as the live model holds it: its chart part, its plots in document order, and each… |
+| `src/live/held/chart/families.rs` | src | s | 4 crate-vis | — | A chart part's family settings as the live model holds them (OF-510, FIX 3493 D9b): each plot's settings… |
 | `src/live/held/table.rs` | src | s | 6 crate-vis | — | A retained table as the live model reads it (ARCH-0077: a table keeps its `a:tbl`, `a:tblGrid`, row heights… |
 | `src/live/mod.rs` | src | s | 1 enum · 3 mod · 4 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
 | `src/live/oracle_run/assets.rs` | src | s | 3 crate-vis | — | The runner's one picture asset, generated rather than shipped |
@@ -98,22 +99,27 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/oracle_run/variants.rs` | src | s | 18 crate-vis | — | Fixture variants derived from a pinned baseline by narrow XML surgery: unknown-XML probes beside the mutated… |
 | `src/live/points.rs` | src | m | 2 struct · 3 enum · 4 crate-vis | Coord, GeomPath, PathCommand, PathFill, PathPoint | A shape's points (OF-510, Edit Points): the paths of its custom geometry (`a:custGeom`), read and written as… |
 | `src/live/pptx.rs` | src | XL | 23 struct · 7 enum · 27 fn · 3 re-export · 8 crate-vis | ApproveScope, AttributionIndex, ChangeKind, Conflict, ConnectorEnd, DeckDiff, DeckFork, DeckNode +22 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
-| `src/live/pptx/chart.rs` | src | m | 2 struct · 4 enum · 2 fn · 1 re-export · 4 crate-vis | ChartEdit, ChartKind, ChartSeries, ChartSource, SeriesBinding, SeriesField | A live chart's model (ARCH-0077, "One deck, one document": "Ordered category and series ids over one… |
+| `src/live/pptx/chart.rs` | src | m | 2 struct · 4 enum · 2 fn · 2 re-export · 4 crate-vis | ChartEdit, ChartKind, ChartSeries, ChartSource, SeriesBinding, SeriesField | A live chart's model (ARCH-0077, "One deck, one document": "Ordered category and series ids over one… |
 | `src/live/pptx/chart/categories.rs` | src | m | 2 struct · 1 enum · 7 fn · 14 crate-vis | CategoryField, ChartCategories, ChartCategory | A chart's categories (ARCH-0077 :597, "Chart categories and series \| Ordered ids over one canonical dataset |
+| `src/live/pptx/chart/families.rs` | src | m | 2 struct · 4 enum · 3 fn · 8 crate-vis | BarDirection, BarShape, ChartPlot, ChartView, PlotGrouping, SizeRepresents | A live chart's families and their settings (OF-510, FIX 3493 D9b): which families draw x values (scatter and… |
 | `src/live/pptx/chart_ops.rs` | src | m | 8 crate-vis | — | Chart edits applied by series and category identity; a whole chart written over the chart a node holds… |
 | `src/live/pptx/chart_ops/categories.rs` | src | s | 4 crate-vis | — | Category edits applied by point identity, a whole set written over the one a chart or series holds lowered… |
 | `src/live/pptx/merge.rs` | src | s | 3 fn | — | The three-way comparison of a fork's base, the head and its proposal, and the merge preflight over the… |
 | `src/live/pptx/table.rs` | src | m | 3 struct · 2 enum · 5 fn · 12 crate-vis | MergeFault, TableBinding, TableBody, TableEdit, TableMerge | A live table (ARCH-0077, "One deck, one document": "Movable lists of stable ids |
 | `src/live/pptx/table_ops.rs` | src | m | 3 fn · 4 crate-vis | — | Table edits applied by identity; a whole table written over the table a node holds (or a whole chart over a… |
-| `src/live/reshape.rs` | src | m | 7 crate-vis | — | Shape changes to a written table or chart at export (OF-510) |
+| `src/live/reshape.rs` | src | m | 8 crate-vis | — | Shape changes to a written table or chart at export (OF-510) |
+| `src/live/reshape/axes.rs` | src | m | 5 crate-vis | — | A rewritten chart's axes: a held x axis turned between a category and a value axis, a new pair of axes, and… |
 | `src/live/reshape/chart.rs` | src | m | 2 crate-vis | — | A written chart's rewrite over its retained part (OF-510, FIX 3492, FIX 3493): its plots, axes and series… |
 | `src/live/reshape/dataset.rs` | src | m | 5 crate-vis | — | A rewritten chart's rebuilt workbook (OF-510, FIX 3493, FIX 6714): the dataset its data sheet holds (each… |
+| `src/live/reshape/families.rs` | src | m | 8 crate-vis | — | A rewritten chart's plots and 3D view (OF-510, FIX 3493 D9b): a kept plot with its series replaced and only… |
 | `src/live/reshape/layout.rs` | src | m | 18 crate-vis | — | How a rewritten chart's live series take its held ones (OF-510, FIX 3492): the plots Change Chart Type lays… |
 | `src/live/reshape/points.rs` | src | s | 4 crate-vis | — | A rewritten chart's category points (OF-510, FIX 3493): a multi-level category slot written from its levels… |
-| `src/live/reshape/series.rs` | src | s | 1 crate-vis | — | A new series' format (OF-510, FIX 3493) |
+| `src/live/reshape/retained.rs` | src | s | 2 crate-vis | — | A surviving series written over its own retained XML (OF-510, FIX 8594), in its own plot or moved to… |
+| `src/live/reshape/series.rs` | src | s | 2 crate-vis | — | A new series' format (OF-510, FIX 3493) |
 | `src/live/reshape/table.rs` | src | m | 1 crate-vis | — | A written table's grid rewritten at export by row and column identity (OF-510) |
 | `src/live/reshape/workbook.rs` | src | m | 4 crate-vis | — | A rewritten chart's own embedded workbook, edited in place (OF-510, FIX 3493) |
 | `src/live/reshape/workbook/range.rs` | src | s | 11 crate-vis | — | A chart reference's cells as the workbook edit reads them: a direct one-row or one-column range on one… |
+| `src/live/reshape/workbook/slots.rs` | src | s | 3 crate-vis | — | A rewritten chart's held and new series planned into its own workbook: each sequence at its own cells, a… |
 | `src/live/svg_fallback.rs` | src | s | 4 crate-vis | — | A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster… |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 5 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/chart/cache.rs` | src | s | 1 crate-vis | — | A series cache written in place (FIX 7987): only the points whose values the write changes, and the count… |

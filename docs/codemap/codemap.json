@@ -79984,7 +79984,17 @@
      "path": "src/live/held/chart.rs",
      "purpose": "A chart frame's data as the live model holds it: its chart part, its plots in document order, and each…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/held/chart/families.rs",
+     "purpose": "A chart part's family settings as the live model holds them (OF-510, FIX 3493 D9b): each plot's settings…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -80235,7 +80245,7 @@
       "crate-vis": 4,
       "enum": 4,
       "fn": 2,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 2
      }
     },
@@ -80253,6 +80263,26 @@
       "crate-vis": 14,
       "enum": 1,
       "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BarDirection",
+      "BarShape",
+      "ChartPlot",
+      "ChartView",
+      "PlotGrouping",
+      "SizeRepresents"
+     ],
+     "path": "src/live/pptx/chart/families.rs",
+     "purpose": "A live chart's families and their settings (OF-510, FIX 3493 D9b): which families draw x values (scatter and…",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 4,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -80323,7 +80353,17 @@
      "path": "src/live/reshape.rs",
      "purpose": "Shape changes to a written table or chart at export (OF-510)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/axes.rs",
+     "purpose": "A rewritten chart's axes: a held x axis turned between a category and a value axis, a new pair of axes, and…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -80350,6 +80390,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/live/reshape/families.rs",
+     "purpose": "A rewritten chart's plots and 3D view (OF-510, FIX 3493 D9b): a kept plot with its series replaced and only…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/live/reshape/layout.rs",
      "purpose": "How a rewritten chart's live series take its held ones (OF-510, FIX 3492): the plots Change Chart Type lays…",
      "surface": {
@@ -80370,10 +80420,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/live/reshape/retained.rs",
+     "purpose": "A surviving series written over its own retained XML (OF-510, FIX 8594), in its own plot or moved to…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/live/reshape/series.rs",
      "purpose": "A new series' format (OF-510, FIX 3493)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -80404,6 +80464,16 @@
      "purpose": "A chart reference's cells as the workbook edit reads them: a direct one-row or one-column range on one…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/workbook/slots.rs",
+     "purpose": "A rewritten chart's held and new series planned into its own workbook: each sequence at its own cells, a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -81052,7 +81122,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 45,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81124,7 +81194,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 138,
+   "source_files": 144,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -101403,6 +101473,8 @@
       "AxisScores",
       "B2bExemption",
       "BandMode",
+      "BarDirection",
+      "BarShape",
       "BaseAgentList",
       "BaseAgentPrincipal",
       "BatchInput",
@@ -101650,8 +101722,10 @@
       "ChartCategory",
       "ChartEdit",
       "ChartKind",
+      "ChartPlot",
       "ChartSeries",
       "ChartSource",
+      "ChartView",
       "ChatCompletionChoice",
       "ChatCompletionMemory",
       "ChatCompletionMessage",
@@ -103629,6 +103703,7 @@
       "PlannedSpawnObservation",
       "PlannedSpawnRead",
       "PlannerRung",
+      "PlotGrouping",
       "PluginSectionAdmittedRow",
       "PluginSectionGrant",
       "PluginSectionGrantRequest",
@@ -104515,6 +104590,7 @@
       "SigningOutcome",
       "SigningPage",
       "SigningStatus",
+      "SizeRepresents",
       "SkillAuthoringReceipt",
       "SkillCallInput",
       "SkillCapabilityView",
@@ -105133,8 +105209,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 972,
-      "struct": 3012
+      "enum": 976,
+      "struct": 3014
      }
     },
     {
