@@ -1,3 +1,7 @@
+//! Encoding and decoding of durable code-run replay records.
+//! The decode entry is `decode_code_run_replay_record`.
+//! `replay` owns the record types; this module owns the codec functions.
+
 use std::collections::HashSet;
 
 use rmpv::Value;

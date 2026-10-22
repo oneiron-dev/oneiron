@@ -1,3 +1,7 @@
+//! Symbol-anchored memory slots, transfers and scoped pulls.
+//! The read entry is `pull_code_memory`.
+//! `implementation` owns every definition re-exported here.
+
 mod implementation;
 
 pub(crate) use implementation::archive_code_memory_tables;
