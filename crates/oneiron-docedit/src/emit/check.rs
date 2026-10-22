@@ -6,9 +6,9 @@
 //! where the plan put it.
 use super::slide::PML;
 use super::{CheckFault, EmitError, EmittedSlide, FitTrace, REL, Unit};
-use crate::deck::{DeckView, ShapeKind, ShapeView};
+use crate::deck::{Ambiguity, DeckView, ShapeKind, ShapeView};
 use crate::design_plan::{Cell, Content, DesignPlan, Destination, Rect};
-use crate::native_patch::{Sequence, chart_data, header, number, serial};
+use crate::native_patch::{Sequence, TableLayout, chart_data, header, number, serial};
 use crate::ooxml::{CONTENT_TYPES, Node, XmlTree};
 use crate::retained_opc::{Package, rels_name};
 use std::collections::BTreeSet;
@@ -134,13 +134,11 @@ pub(super) fn verify(
         }
     }
 
-    // Nothing written restates or requests autofit metrics.
+    // Nothing written restates or requests autofit metrics (FIX 8586): the
+    // solver attributes on a DrawingML `a:normAutofit`, read as XML, not as
+    // bytes; a metric the template's same part already holds is kept.
     for name in &written {
-        let bytes = candidate.part(name)?.unwrap_or_default();
-        if [&b"fontScale"[..], b"lnSpcReduction"]
-            .iter()
-            .any(|word| bytes.windows(word.len()).any(|window| window == *word))
-        {
+        if introduced_metrics(&types, template, &candidate, name)? {
             return fault(name, CheckFault::AutofitMetrics);
         }
     }
@@ -159,7 +157,12 @@ fn reimport(
     let view = DeckView::read(candidate)?;
     let parts: Vec<&str> = view.slides.iter().map(|s| s.part.as_str()).collect();
     let planned: Vec<&str> = plan.slides().iter().map(|s| s.part.as_str()).collect();
-    if parts != planned || !view.ambiguities.is_empty() || slides.len() != planned.len() {
+    // A repeated native slide id is reported, never refused (FIX 7986).
+    let ambiguous = view
+        .ambiguities
+        .iter()
+        .any(|found| !matches!(found, Ambiguity::DuplicateSlideId { .. }));
+    if parts != planned || ambiguous || slides.len() != planned.len() {
         return fault("ppt/presentation.xml", CheckFault::Reimport);
     }
     for ((planned, emitted), read) in plan.slides().iter().zip(slides).zip(&view.slides) {
@@ -235,37 +238,13 @@ fn native_data(
             .collect()
     };
     if matches!(unit.content, Content::Table(_)) {
-        let text = |cell: &Cell, column: usize| match cell {
-            Cell::Missing => dataset.missing.clone().unwrap_or_default(),
-            Cell::Number(value) => dataset
-                .columns
-                .get(column)
-                .map_or_else(|| number(*value), |column| column.display(*value)),
-            Cell::Text(text) | Cell::Date(text) => text.clone(),
+        // Every cell, a covered one too, holds its own displayed text or the
+        // dataset's missing meaning (FIX 8585): the planned values, read
+        // against the candidate's own `a:tr`/`a:tc`/`a:p`/`a:t`.
+        let Ok(planned) = TableLayout::of(dataset, &dataset.merges) else {
+            return Ok(false);
         };
-        // A merge's continuation cells are written empty.
-        let continuation = |row: usize, col: usize| {
-            dataset.merges.iter().any(|merge| {
-                (merge.row..merge.row + merge.rows).contains(&row)
-                    && (merge.col..merge.col + merge.cols).contains(&col)
-                    && (merge.row, merge.col) != (row, col)
-            })
-        };
-        let expected: Vec<Vec<String>> =
-            std::iter::once(dataset.columns.iter().map(header).collect::<Vec<_>>())
-                .chain(dataset.rows.iter().enumerate().map(|(r, row)| {
-                    row.iter()
-                        .enumerate()
-                        .map(|(c, cell)| {
-                            if continuation(r + 1, c) {
-                                String::new()
-                            } else {
-                                text(cell, c)
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                }))
-                .collect();
+        let expected = planned.text;
         let read: Vec<Vec<String>> = inside(&tree, frame)
             .filter(|(_, node)| node.is(DML, "tr"))
             .map(|(row, _)| {
@@ -322,6 +301,98 @@ fn native_data(
             ) && held(&series.categories, &categories)
                 && held(&series.values, &column(at + 1))
         }))
+}
+
+/// Whether a written part holds an autofit solver metric its template part
+/// does not (FIX 8586): `fontScale` or `lnSpcReduction` on a DrawingML
+/// `a:normAutofit`, each with its value, its shape and its path there. Only
+/// parts whose content type is XML are read; text, binary media and another
+/// namespace's attribute of the same spelling are no metric. A new part has
+/// no template, so every metric in it is new.
+fn introduced_metrics(
+    types: &XmlTree,
+    template: &Package,
+    candidate: &Package,
+    name: &str,
+) -> Result<bool, EmitError> {
+    if !declared(types, name).is_some_and(|kind| kind.ends_with("xml")) {
+        return Ok(false);
+    }
+    let Some(bytes) = candidate.part(name)? else {
+        return Ok(false);
+    };
+    let mut found = metrics(&XmlTree::parse(&bytes, candidate.limits().xml)?);
+    if found.is_empty() {
+        return Ok(false);
+    }
+    if let Some(before) = template.part(name)? {
+        for held in metrics(&XmlTree::parse(&before, template.limits().xml)?) {
+            if let Some(at) = found.iter().position(|metric| *metric == held) {
+                found.swap_remove(at);
+            }
+        }
+    }
+    Ok(!found.is_empty())
+}
+
+/// One `a:normAutofit` holding solver metrics: the id of the shape holding
+/// it, its expanded-name path from there (or the root), and its
+/// `fontScale` and `lnSpcReduction`.
+type Metric = (Option<String>, String, Option<String>, Option<String>);
+
+fn metrics(tree: &XmlTree) -> Vec<Metric> {
+    (0..tree.nodes.len())
+        .filter(|&at| tree.nodes[at].is(DML, "normAutofit"))
+        .filter_map(|at| {
+            let node = &tree.nodes[at];
+            let scale = node.attr_ns("", "fontScale").map(str::to_owned);
+            let reduction = node.attr_ns("", "lnSpcReduction").map(str::to_owned);
+            if scale.is_none() && reduction.is_none() {
+                return None;
+            }
+            let (shape, path) = anchor(tree, at);
+            Some((shape, path, scale, reduction))
+        })
+        .collect()
+}
+
+/// The `p:cNvPr/@id` of the nearest shape holding `at`, and the expanded
+/// names from below it down to `at`.
+fn anchor(tree: &XmlTree, at: usize) -> (Option<String>, String) {
+    let mut path = Vec::new();
+    let mut shape = None;
+    let mut cursor = Some(at);
+    while let Some(index) = cursor {
+        if index != at
+            && let Some(id) = shape_id(tree, index)
+        {
+            shape = Some(id);
+            break;
+        }
+        let node = &tree.nodes[index];
+        path.push(format!("{{{}}}{}", node.namespace, node.name));
+        cursor = node.parent;
+    }
+    path.reverse();
+    (shape, path.join("/"))
+}
+
+/// A PresentationML shape element's `p:cNvPr/@id`.
+fn shape_id(tree: &XmlTree, at: usize) -> Option<String> {
+    let node = &tree.nodes[at];
+    if node.namespace != PML {
+        return None;
+    }
+    let nv = node.children.iter().copied().find(|&child| {
+        tree.nodes[child].namespace == PML && tree.nodes[child].name.starts_with("nv")
+    })?;
+    tree.nodes[nv]
+        .children
+        .iter()
+        .copied()
+        .find(|&child| tree.nodes[child].is(PML, "cNvPr"))
+        .and_then(|child| tree.nodes[child].attr("id"))
+        .map(str::to_owned)
 }
 
 /// The elements inside `index`, in document order.

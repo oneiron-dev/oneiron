@@ -88,6 +88,9 @@ pub enum DeckIdentityAmbiguity {
         creation_id: u32,
         slides: Vec<usize>,
     },
+    /// A native `p:sldId/@id` more than one slide holds; reported, never
+    /// repaired.
+    DuplicateSlideId { sld_id: u32, slides: Vec<usize> },
     DuplicateShapeId {
         slide: usize,
         id: u32,
@@ -162,6 +165,10 @@ impl From<&Ambiguity> for DeckIdentityAmbiguity {
                 creation_id: *creation_id,
                 slides: slides.clone(),
             },
+            Ambiguity::DuplicateSlideId { sld_id, slides } => Self::DuplicateSlideId {
+                sld_id: *sld_id,
+                slides: slides.clone(),
+            },
             Ambiguity::DuplicateShapeId { slide, id, shapes } => Self::DuplicateShapeId {
                 slide: *slide,
                 id: *id,
@@ -211,9 +218,12 @@ pub enum DeckTransactionRefusal {
 pub enum DeckStepRefusal {
     /// The target's content fingerprint is not the one the step expects.
     TargetChanged,
-    /// The target names an identity its slide repeats.
+    /// The target names an identity its slide repeats. A connector end's
+    /// repeated shape id names the shapes holding it, so the caller can
+    /// pick; other anchors name none.
     AmbiguousAnchor {
         detail: String,
+        candidates: Vec<DeckAnchorCandidate>,
     },
     AnimatedTextStructureChanged,
     AnimationDependencyUnsupported {
@@ -283,6 +293,16 @@ pub enum DeckStepRefusal {
     Asset {
         detail: String,
     },
+}
+
+/// One shape an ambiguous anchor may mean: its index in the slide's
+/// `shapes` as an inspection lists them, its kind, name and creation id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DeckAnchorCandidate {
+    pub shape: usize,
+    pub kind: DeckShapeKind,
+    pub name: Option<String>,
+    pub creation_id: Option<String>,
 }
 
 /// Why a table cell or chart series write refused.
@@ -383,6 +403,19 @@ impl From<&EditRefusal> for DeckStepRefusal {
             EditRefusal::TargetChanged => Self::TargetChanged,
             EditRefusal::AmbiguousAnchor(text) => Self::AmbiguousAnchor {
                 detail: (*text).to_owned(),
+                candidates: Vec::new(),
+            },
+            EditRefusal::AmbiguousEndpoint { candidates, .. } => Self::AmbiguousAnchor {
+                detail: refusal.to_string(),
+                candidates: candidates
+                    .iter()
+                    .map(|candidate| DeckAnchorCandidate {
+                        shape: candidate.shape,
+                        kind: candidate.kind.into(),
+                        name: candidate.name.clone(),
+                        creation_id: candidate.creation_id.clone(),
+                    })
+                    .collect(),
             },
             EditRefusal::AnimatedTextStructureChanged => Self::AnimatedTextStructureChanged,
             EditRefusal::AnimationDependencyUnsupported(text) => {
