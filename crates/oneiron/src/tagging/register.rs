@@ -67,9 +67,7 @@ pub(super) fn bulk_register_in_txn(
 ) -> Result<TurnInput> {
     let (mut input, text_hash) = match super::input::turn_text_in_txn(vault, txn, turn)? {
         TurnInput::Ready {
-            input,
-            text_hash,
-            ..
+            input, text_hash, ..
         } => (input, text_hash),
         other => return Ok(other),
     };
@@ -197,8 +195,13 @@ fn descendants_in_txn(
     let mut line = Vec::new();
     let mut cursor = *turn;
     for _ in 0..MAX_ANCESTOR_DEPTH {
-        let mut children =
-            store.port_edges(txn, &cursor, EdgeDirection::In, Some(EdgeKind::Parent), None)?;
+        let mut children = store.port_edges(
+            txn,
+            &cursor,
+            EdgeDirection::In,
+            Some(EdgeKind::Parent),
+            None,
+        )?;
         let Some(first) = children.next() else {
             break;
         };

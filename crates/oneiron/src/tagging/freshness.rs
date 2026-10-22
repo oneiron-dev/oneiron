@@ -53,9 +53,7 @@ pub(crate) fn tagging_freshness_in_txn(
 ) -> Result<TaggingFreshness> {
     let current = match turn_input_in_txn(vault, txn, turn)? {
         TurnInput::Ready {
-            hash,
-            text_hash,
-            ..
+            hash, text_hash, ..
         } => {
             let read = &tags.envelope.content_hash;
             *read == hash

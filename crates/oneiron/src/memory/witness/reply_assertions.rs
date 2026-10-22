@@ -81,11 +81,7 @@ pub(crate) fn admitted_reply_assertions_in_txn(
 
 /// The record `id` names, by its stored type; `None` for an id that does not
 /// parse or names no row.
-fn stored_record(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    id: &str,
-) -> Result<Option<ReplyAssertionRecord>> {
+fn stored_record(store: &Store, txn: &RoTxn<'_>, id: &str) -> Result<Option<ReplyAssertionRecord>> {
     let Ok(id) = EntityId::from_hex(id) else {
         return Ok(None);
     };

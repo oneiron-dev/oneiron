@@ -39,11 +39,11 @@ use backbone::{Backbone, Config};
 use heads::{Affect, CharacterBoundary, Coreference};
 use window::{Named, Span, conversation_tokenizer, decode};
 
+pub(crate) use window::InferenceWindows;
 pub(super) use window::{
     CHAR_REFINE_K, CHAR_REFINE_TAU, CharacterFeatures, Characters, DecodeLayers,
     ONEIRONER_DECODE_REVISION, Window, decode_ner,
 };
-pub(crate) use window::InferenceWindows;
 
 /// A span's place in its window: its segment, then its start and end bytes.
 type Coordinates = (usize, usize, usize);

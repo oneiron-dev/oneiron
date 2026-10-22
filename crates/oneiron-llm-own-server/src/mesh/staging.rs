@@ -288,7 +288,8 @@ impl Staging {
         bytes: &[u8],
     ) -> Result<(), String> {
         if offset == 0 && !lock(&self.incoming).contains_key(&named) {
-            let body = BookedBody::room(&self.budget, bytes.len(), entry_cost::<Incoming>()).await?;
+            let body =
+                BookedBody::room(&self.budget, bytes.len(), entry_cost::<Incoming>()).await?;
             let mut incoming = lock(&self.incoming);
             if incoming.contains_key(&named) {
                 return Err("a staged piece out of order".into());
@@ -310,7 +311,10 @@ impl Staging {
             body.bytes
                 .try_reserve(bytes.len())
                 .map_err(|_| "this node has no memory for the body".to_owned())?;
-            let room = body.bytes.capacity().saturating_add(entry_cost::<Incoming>());
+            let room = body
+                .bytes
+                .capacity()
+                .saturating_add(entry_cost::<Incoming>());
             self.budget.charge(&mut body.booking, room);
         }
         body.bytes.extend_from_slice(bytes);

@@ -29,21 +29,17 @@ impl Vault {
         )?;
         let mut released = Vec::with_capacity(rows.len());
         for row in rows {
-            let free = match crate::settings::device_only_withholds(
-                &self.store,
-                &rtxn,
-                &flagged,
-                row,
-            ) {
-                Ok(withheld) => !withheld,
-                Err(error) => {
-                    tracing::warn!(
-                        error_kind = ?error.kind(),
-                        "a pending row's world did not read; it embeds on this device"
-                    );
-                    false
-                }
-            };
+            let free =
+                match crate::settings::device_only_withholds(&self.store, &rtxn, &flagged, row) {
+                    Ok(withheld) => !withheld,
+                    Err(error) => {
+                        tracing::warn!(
+                            error_kind = ?error.kind(),
+                            "a pending row's world did not read; it embeds on this device"
+                        );
+                        false
+                    }
+                };
             released.push(free);
         }
         Ok(released)

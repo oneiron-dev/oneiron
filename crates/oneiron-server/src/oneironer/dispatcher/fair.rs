@@ -60,7 +60,11 @@ impl ClassQueue {
             .tickets
             .iter()
             .any(|other| other.caller == ticket.caller);
-        if let Some(turn) = self.order.iter().position(|caller| *caller == ticket.caller) {
+        if let Some(turn) = self
+            .order
+            .iter()
+            .position(|caller| *caller == ticket.caller)
+        {
             if !more {
                 self.order.remove(turn);
             } else if served

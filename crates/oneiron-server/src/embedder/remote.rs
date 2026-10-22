@@ -82,7 +82,11 @@ impl EgressPredicate for ConfiguredEgress {
 pub(crate) fn configured_egress(
     primary: &EmbedderConfig,
 ) -> oneiron::Result<Option<Arc<dyn EgressPredicate>>> {
-    let Some(policy) = primary.remote.as_ref().and_then(|remote| remote.egress.as_ref()) else {
+    let Some(policy) = primary
+        .remote
+        .as_ref()
+        .and_then(|remote| remote.egress.as_ref())
+    else {
         return Ok(None);
     };
     Ok(Some(Arc::new(ConfiguredEgress::new(policy)?)))

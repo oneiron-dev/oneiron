@@ -151,7 +151,9 @@ impl<'a> Window<'a> {
             None => (live.min(room), 0),
             Some(later) => {
                 let half = room / 2;
-                let before = context.len().min(half.max(room.saturating_sub(later.len())));
+                let before = context
+                    .len()
+                    .min(half.max(room.saturating_sub(later.len())));
                 (before, room - before)
             }
         };
@@ -190,9 +192,13 @@ impl<'a> Window<'a> {
                 continue;
             }
             if end > current_end {
-                let next = encoding.get_offsets().iter().rev().find_map(|&(start, stop)| {
-                    (stop > start && cut + start >= current_end).then_some(cut + start)
-                });
+                let next = encoding
+                    .get_offsets()
+                    .iter()
+                    .rev()
+                    .find_map(|&(start, stop)| {
+                        (stop > start && cut + start >= current_end).then_some(cut + start)
+                    });
                 end = next.filter(|next| *next < end).unwrap_or(current_end);
                 continue;
             }

@@ -284,11 +284,8 @@ fn terminal_write(
                         }
                         // The turn's set, seed and terminal, was admitted in
                         // this write: its receipt keeps it (FIX 10260).
-                        receipt.reply_assertions = admitted_in_txn(
-                            &vault.store,
-                            txn,
-                            &[&turn.assertions],
-                        )?;
+                        receipt.reply_assertions =
+                            admitted_in_txn(&vault.store, txn, &[&turn.assertions])?;
                         storage::finish(vault, txn, seed, &receipt)?;
                         Ok(())
                     },

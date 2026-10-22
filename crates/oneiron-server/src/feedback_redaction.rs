@@ -109,7 +109,9 @@ impl TextFilter for OneironerFilter {
         };
         // Neither a chat turn nor the tag door: a bulk call (FIX 6755).
         let called = catch_unwind(AssertUnwindSafe(|| {
-            encoder.infer_for(&input, ExtractionWork::Bulk, &self.caller).result
+            encoder
+                .infer_for(&input, ExtractionWork::Bulk, &self.caller)
+                .result
         }));
         let output = match called {
             Ok(Ok(output)) => output,
