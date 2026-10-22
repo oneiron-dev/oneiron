@@ -161,7 +161,7 @@ def rootfs_tar(tree: Path, dest: Path, epoch: int, owners: dict) -> dict:
                 kind, body = "h", info.linkname
             else:
                 raise StepFailed(f"{rel}: unexpected file type in the image tree")
-            listing.write(f"{rel}\t{kind}\t{info.mode:04o}\t{info.uid}\t{info.gid}\t"
+            listing.write(f"{rel}\t{kind}\t{info.mode & 0o7777:04o}\t{info.uid}\t{info.gid}\t"
                           f"{info.size if kind == 'f' else 0}\t{info.mtime}\t{body}\n")
     return {"path": str(dest), "sha256": sha256_file(dest), "bytes": dest.stat().st_size,
             "files": files, "dirs": dirs, "symlinks": links, "file_bytes": file_bytes,

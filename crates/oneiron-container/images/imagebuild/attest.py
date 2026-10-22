@@ -67,6 +67,8 @@ def _cargo_tree(path: Path) -> dict[tuple[str, str], str]:
             continue
         package, _, licence = line.partition("|")
         licence = licence.removesuffix("(*)").strip()
+        # Cargo's old `MIT/Apache-2.0` form is not an SPDX expression; it means OR.
+        licence = " OR ".join(part.strip() for part in licence.split("/")) if "/" in licence else licence
         parts = package.split()
         if len(parts) < 2 or not parts[1].startswith("v"):
             continue
