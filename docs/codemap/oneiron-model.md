@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/inference.rs` | src | m | 4 struct · 6 enum · 6 fn · 1 const | InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence, WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode +2 | What a model worker is and what one physical call to it reported (FIX 8314, INFERENCE R1): the worker's… |
 | `src/llm/label_read.rs` | src | s | 3 struct · 1 enum · 1 trait · 4 fn | LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet | Label-read seam: a host model scores a closed label set instead of generating text |
 | `src/llm/limit.rs` | src | m | 6 fn | — | How an adapter reads a provider's refusal as a spent quota or a rate limit, and the reset the refusal names… |
-| `src/llm/media/backend.rs` | src | s | 1 struct · 2 trait | AiMediaDoor, ImageMedia, MediaBackend | Media backends and the host's media door |
+| `src/llm/media/backend.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 fn | AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility | Media backends and the host's media door |
 | `src/llm/media/caps.rs` | src | s | 1 struct · 3 enum · 10 fn · 1 const | AiOperation, MediaCaps, Modality, NativeUnit | Media call operations, modalities and row capabilities |
 | `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 4 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
 | `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 10 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
@@ -52,7 +52,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
 | `src/llm/mod.rs` | src | s | 4 mod · 25 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
-| `src/llm/protocol.rs` | src | m | 7 struct · 5 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest +4 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
+| `src/llm/protocol.rs` | src | m | 7 struct · 6 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage +5 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |
 | `src/llm/safeguard.rs` | src | s | 2 enum · 5 fn · 2 const | SafeguardModelBinding, SafeguardModelBindingError | Safeguard-classifier binding selector with parsing, display, serde, and tier/model projections |
 | `src/llm/scope.rs` | src | s | 1 struct · 1 enum · 4 fn | Scope, ScopeResource | Four-axis branch scope and exact readable/writable resource identities |

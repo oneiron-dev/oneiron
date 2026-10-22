@@ -21847,6 +21847,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dispatch_byoa/host_claim.rs",
+     "purpose": "A run host's own claim of a CLI attempt (FIX 4552): a host that runs the official CLIs on the person's own…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
@@ -72491,7 +72501,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73557,7 +73567,7 @@
    },
    "over_bar": 157,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4742,
+   "source_files": 4743,
    "test_files": 902
   },
   "oneiron-android": {
@@ -75188,7 +75198,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/infer/args.rs",
@@ -75204,7 +75214,7 @@
      "path": "src/infer/arms.rs",
      "purpose": "The two production paths a call takes, each an `LlmBackend` the measurement loop drives the same way",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -75238,7 +75248,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/infer/measure.rs",
@@ -75255,6 +75265,16 @@
      "purpose": "`infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/native.rs",
+     "purpose": "An external EXL3 worker over codec v1",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -75994,7 +76014,7 @@
      "purpose": "Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts"
     },
     "infer": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76073,7 +76093,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 144,
+   "source_files": 145,
    "test_files": 18
   },
   "oneiron-broker": {
@@ -83169,6 +83189,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/media/prepare.rs",
+     "purpose": "The Gemini media calls' pure builders (FIX 8612, FIX 8613): every check a call's send makes on its own…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/stream.rs",
      "purpose": "Gemini typed stream decoding",
      "surface": {
@@ -83214,10 +83244,10 @@
    ],
    "modules": {
     "media": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Gemini API media wires for the `ai.*` calls past text"
     },
     "stream": {
@@ -83251,7 +83281,7 @@
    },
    "over_bar": 0,
    "purpose": "Gemini wire adapter",
-   "source_files": 5,
+   "source_files": 6,
    "test_files": 1
   },
   "oneiron-llm-local": {
@@ -83388,7 +83418,7 @@
      "path": "src/lib/image.rs",
      "purpose": "Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 1,
       "struct": 4,
@@ -83415,6 +83445,16 @@
       "struct": 3,
       "trait": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/media/prepare.rs",
+     "purpose": "The OpenAI-compatible media calls' pure builders (FIX 8614, FIX 8616): every check a call's send makes on…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -83515,7 +83555,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83524,11 +83564,21 @@
    },
    "over_bar": 1,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
-   "source_files": 9,
+   "source_files": 10,
    "test_files": 1
   },
   "oneiron-llm-own-server": {
    "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/emitted.rs",
+     "purpose": "What a checked stream has already shown its caller (FIX 8617): each part in the order it started, its text…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
     {
      "bucket": "m",
      "kind": "src",
@@ -83585,11 +83635,21 @@
      "purpose": "Models on the owner's other nodes (OF-575, owner ruling MESH: \"a phone uses the MacBook's model\")",
      "surface": {
       "const": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mesh/pump.rs",
+     "purpose": "The asking side's stream pump (FIX 8619): a mesh stream's events go to its caller one handoff at a time",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LlmMeshHandler",
@@ -83601,6 +83661,21 @@
       "fn": 2,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "StagingBudget"
+     ],
+     "path": "src/mesh/staging.rs",
+     "purpose": "The bytes the model mesh holds for calls (FIX 8618, FIX 8619): bodies a connection stages either way…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 14,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -83621,8 +83696,15 @@
     }
    ],
    "modules": {
+    "emitted": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What a checked stream has already shown its caller (FIX 8617): each part in the order it started, its text…"
+    },
     "mesh": {
-     "files": 4,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83638,7 +83720,7 @@
    },
    "over_bar": 0,
    "purpose": "Own-server LlmBackend",
-   "source_files": 5,
+   "source_files": 8,
    "test_files": 2
   },
   "oneiron-llm-systemone": {
@@ -84347,11 +84429,14 @@
      "notable": [
       "AiMediaDoor",
       "ImageMedia",
-      "MediaBackend"
+      "MediaBackend",
+      "ReferenceCompatibility"
      ],
      "path": "src/llm/media/backend.rs",
      "purpose": "Media backends and the host's media door",
      "surface": {
+      "enum": 1,
+      "fn": 1,
       "struct": 1,
       "trait": 2
      }
@@ -84469,6 +84554,7 @@
       "ContentPart",
       "FinishReason",
       "ImageContent",
+      "IncompleteReason",
       "LlmInputUsage",
       "LlmMessage",
       "LlmMessageRole",
@@ -84483,7 +84569,7 @@
      "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
      "surface": {
       "const": 1,
-      "enum": 5,
+      "enum": 6,
       "fn": 7,
       "struct": 7
      }
@@ -98011,7 +98097,17 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/http/reply_line.rs",
+     "purpose": "The media-reply line (FIX 8615): the bytes the media replies providers send this server (an image, a clip…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -98120,6 +98216,26 @@
       "crate-vis": 24,
       "fn": 17,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/booked.rs",
+     "purpose": "A media rung's backend with its replies' bytes held (FIX 8615): each of its calls (an answer, a job's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/fit.rs",
+     "purpose": "Whether a media rung takes a call (FIX 8612, FIX 8614, FIX 8627): its row serves the call's operation and…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -99413,7 +99529,7 @@
      "path": "src/runtime/config.rs",
      "purpose": "Resolved runtime config including the 163-line resolution impl",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7,
       "struct": 1
      }
@@ -99523,6 +99639,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_host.rs",
+     "purpose": "The served seat host (FIX 4552, DOOR-124): the run host that runs the official signed-in CLIs (`claude`…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -99559,7 +99685,8 @@
      "purpose": "T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the…",
      "surface": {
       "const": 1,
-      "fn": 5,
+      "crate-vis": 1,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -101385,7 +101512,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 64,
+     "files": 67,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -101441,7 +101568,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -101527,7 +101654,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1111,
+   "source_files": 1115,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -103465,6 +103592,7 @@
       "InboxPointerRow",
       "InboxRunGroupsRequest",
       "InboxSubCluster",
+      "IncompleteReason",
       "InferenceDefaultsReplaceRequest",
       "InputKind",
       "InspectionResolveRequest",
@@ -105718,7 +105846,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 976,
+      "enum": 977,
       "struct": 3014
      }
     },
