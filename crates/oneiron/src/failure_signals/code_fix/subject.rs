@@ -4,7 +4,8 @@
 //! blocked report whose run is no agent dispatch's attempt reads the source
 //! its run's host kept with it. One invocation reads it once, with the
 //! reports and the failing call, into a snapshot every consumer shares
-//! (OF-380 L1).
+//! (OF-380 L1). Where the failing call's capture sits is read before its
+//! bytes, and those only once the Coach's own Grant admits it (FIX 8704).
 
 use std::collections::BTreeSet;
 
@@ -19,6 +20,9 @@ use super::{
 use crate::attempt_queue::AttemptRecord;
 use crate::authority::AuthorityFold;
 use crate::code_run::ReadWorldSnapshot;
+use crate::dreamer_runner::maintenance::code_fix::{
+    CaptureRefs, CoachReplayAdmission, EngineAdmission,
+};
 use crate::failure_ladder::{BlockedReportRef, HealerCase};
 use crate::limit_ask::EngineLimit;
 use crate::self_heal::blocked_reports::{RunWorlds, blocked_source_in};
@@ -41,6 +45,10 @@ pub(crate) struct CodeFixSourceSnapshot {
     pub(crate) reports: Vec<Value>,
     /// The failing call, chosen once.
     pub(crate) replay: CodeFixReplaySelection,
+    /// The Coach's admission to that call's capture, taken before any of it
+    /// was read (FIX 8704), or why there is none: no copy of a capture it
+    /// does not admit was read, and none is replayed.
+    pub(crate) admission: std::result::Result<CoachReplayAdmission, EngineAdmission>,
     /// Every text the verbatim guard compares an invented example with
     /// (`code_fix_verbatim_sources`).
     pub(super) verbatim_sources: Vec<String>,
@@ -57,11 +65,15 @@ impl CodeFixSourceSnapshot {
 
 /// The real failure `source` names, read once for one invocation
 /// ([`CodeFixSourceSnapshot`]); or why a door withholds for want of it, as
-/// it did before.
+/// it did before. The failing call's capture is found first, by where it
+/// sits (the run's worlds and the rows it was taken from), the Coach's
+/// admission to it taken, and only then is a copy of its request read.
 pub(crate) fn code_fix_source_snapshot(
     vault: &Vault,
     source: &CodeFixSource,
 ) -> Result<std::result::Result<CodeFixSourceSnapshot, CodeFixWithheld>> {
+    // Resolved outside any read: resolving it may seed the Coach.
+    let coach = vault.coach_authority()?.entity_ref();
     let found = {
         let txn = vault.store.env.read_txn()?;
         code_fix_subject_in(vault, &txn, source)?
@@ -69,11 +81,13 @@ pub(crate) fn code_fix_source_snapshot(
     let Some(subject) = found else {
         return Ok(Err(CodeFixWithheld::UnknownCase));
     };
-    let (failure, _) = match subject.failure.read() {
+    let (failure, worlds) = match subject.failure.read() {
         Ok(read) => read,
         Err(reason) => return Ok(Err(reason)),
     };
-    let replay = code_fix_replay_selection(vault, source)?;
+    let refs = CaptureRefs::new(source, worlds, failure.source_rows.as_deref());
+    let admission = CoachReplayAdmission::take(vault, coach, source, refs)?;
+    let replay = code_fix_replay_selection(vault, source, admission.as_ref().ok())?;
     let (evidence, reports) = failure_context(vault, subject.case.as_ref(), &subject.reports)?;
     let request = replay.exact.request().map(|exact| &exact.request);
     let verbatim_sources = code_fix_verbatim_sources(&failure, &reports, request);
@@ -83,6 +97,7 @@ pub(crate) fn code_fix_source_snapshot(
         evidence,
         reports,
         replay,
+        admission,
         verbatim_sources,
     }))
 }

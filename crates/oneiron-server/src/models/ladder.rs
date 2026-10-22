@@ -43,6 +43,7 @@ use super::forward::{Ended, forward};
 use super::media::{HeldJob, MediaAnswer, MediaRung, RetryHint, RungVoices};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
+use super::source_admission::{self, SourceAdmission};
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
 
@@ -1025,7 +1026,7 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         wait_budget: Duration,
     ) -> LlmResult<LlmResponse> {
-        self.generate_from(run, request, selector, may_send, wait_budget, true)
+        self.generate_from(run, request, selector, may_send, wait_budget, true, None)
             .await
             .map(|(response, _)| response)
     }
@@ -1059,7 +1060,7 @@ impl OfferLadder {
         if !self.picked || self.rungs.len() != 1 {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        self.generate_from(run, request, selector, may_send, wait_budget, false)
+        self.generate_from(run, request, selector, may_send, wait_budget, false, None)
             .await
             .map(|(response, _)| response)
     }
@@ -1074,7 +1075,7 @@ impl OfferLadder {
         selector: Option<&str>,
     ) -> LlmResult<(LlmResponse, ModelId)> {
         let budget = Duration::from_secs(self.rests.max_wait_secs());
-        self.generate_from(run, request, selector, &|| true, budget, true)
+        self.generate_from(run, request, selector, &|| true, budget, true, None)
             .await
     }
 
@@ -1089,14 +1090,40 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         wait_budget: Duration,
     ) -> LlmResult<(LlmResponse, ModelId)> {
-        self.generate_from(run, request, selector, may_send, wait_budget, true)
+        self.generate_from(run, request, selector, may_send, wait_budget, true, None)
             .await
+    }
+
+    /// [`Self::generate`] for a caller whose request carries sources each
+    /// destination must be admitted to (FIX 8714): every rung the call
+    /// reaches, the first and a picked one included, and the owner's
+    /// fallback, is sent only what `sources` admits for that rung's own
+    /// destination, judged before it is admitted and again right before it
+    /// is sent ([`SourceAdmission`]).
+    pub(crate) async fn generate_admitted(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        sources: &dyn SourceAdmission,
+    ) -> LlmResult<LlmResponse> {
+        let budget = Duration::from_secs(self.rests.max_wait_secs());
+        let sources = Some(sources);
+        self.generate_from(run, request, selector, &|| true, budget, true, sources)
+            .await
+            .map(|(response, _)| response)
     }
 
     /// [`Self::generate_within`]; once every rung has parked, a call whose
     /// parked offer has the owner's fallback goes there, when
     /// `may_fall_back` (a fallback's own call falls back no further). Boxed,
-    /// since a fallback's call is this one again.
+    /// since a fallback's call is this one again. Each rung, the fallback's
+    /// included, is sent what `sources` admits for it, when a caller opted
+    /// in (FIX 8714).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one walk takes its call, its gate, its budget, its fallback and its sources"
+    )]
     fn generate_from<'a>(
         &'a self,
         run: &'a RunAdmission,
@@ -1105,13 +1132,26 @@ impl OfferLadder {
         may_send: &'a (dyn Fn() -> bool + Sync),
         wait_budget: Duration,
         may_fall_back: bool,
+        sources: Option<&'a dyn SourceAdmission>,
     ) -> ServedFuture<'a> {
         Box::pin(async move {
-            self.walk_generate(run, request, selector, may_send, wait_budget, may_fall_back)
-                .await
+            self.walk_generate(
+                run,
+                request,
+                selector,
+                may_send,
+                wait_budget,
+                may_fall_back,
+                sources,
+            )
+            .await
         })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one walk takes its call, its gate, its budget, its fallback and its sources"
+    )]
     async fn walk_generate(
         &self,
         run: &RunAdmission,
@@ -1120,6 +1160,7 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         wait_budget: Duration,
         may_fall_back: bool,
+        sources: Option<&dyn SourceAdmission>,
     ) -> LlmResult<(LlmResponse, ModelId)> {
         self.admits(&request)?;
         // The run is live until this call ends: the host stays awake for it.
@@ -1153,6 +1194,7 @@ impl OfferLadder {
                             may_send,
                             Duration::from_secs(budget),
                             false,
+                            sources,
                         )
                         .await;
                     if fell.is_err() {
@@ -1177,7 +1219,7 @@ impl OfferLadder {
                     break;
                 };
                 sent[index] = true;
-                match self.send(call, index, may_send, &mut walk).await? {
+                match self.send(call, index, may_send, sources, &mut walk).await? {
                     Sent::Answer(response) => {
                         return Ok((response, self.rungs[index].model.clone()));
                     }
@@ -1189,16 +1231,31 @@ impl OfferLadder {
         Err(self.unanswered(call, walk))
     }
 
-    /// Sends the call to the rung at `index`. A failure that ends the call
-    /// is the error.
+    /// Sends the call to the rung at `index`, with what `sources` admits for
+    /// that rung's destination when a caller opted in (FIX 8714). A failure
+    /// that ends the call is the error.
     async fn send(
         &self,
         call: Call<'_>,
         index: usize,
         may_send: &(dyn Fn() -> bool + Sync),
+        sources: Option<&dyn SourceAdmission>,
         walk: &mut Walk,
     ) -> LlmResult<Sent> {
         let rung = &self.rungs[index];
+        // An opted-in caller's sources, admitted for where this rung's offer
+        // sends them, the first and a picked rung's too (FIX 8714).
+        let offered = match source_admission::offered(sources, call.request, &rung.offer) {
+            Ok(offered) => offered,
+            Err(reason) => {
+                self.hold(call, index, walk, reason);
+                return Ok(Sent::Held);
+            }
+        };
+        let call = Call {
+            request: offered.as_ref().unwrap_or(call.request),
+            ..call
+        };
         // Held through the call's settlement or cancellation (FIX 8315).
         let _lease = match self.hold_worker(index).await {
             Ok(lease) => lease,
@@ -1217,6 +1274,12 @@ impl OfferLadder {
         // can change meanwhile: the world is judged again right before the
         // rung is sent.
         if let Some(reason) = self.kept_on_device(index, call.request) {
+            settle_failed(permit);
+            self.hold(call, index, walk, reason);
+            return Ok(Sent::Held);
+        }
+        // So are an opted-in caller's sources, for this rung's destination.
+        if let Some(reason) = source_admission::lapsed(sources, &rung.offer) {
             settle_failed(permit);
             self.hold(call, index, walk, reason);
             return Ok(Sent::Held);

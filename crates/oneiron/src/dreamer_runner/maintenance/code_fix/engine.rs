@@ -2,19 +2,19 @@
 //! 1661, 2144, 6357): one matched pair on the host's shadow runner, dark
 //! until that runner can run a candidate engine (PR-S2a).
 //!
-//! First the Coach's own Grant must read the failing run's scope (FIX 6357):
-//! a live agent Grant whose member is the Coach, from an owner of this vault,
-//! that confers read now and lists every world the run touched. With none
-//! the pair does not run, and is tried again once such a Grant reads that
-//! scope (FIX 7031). Then the failing call's captured executor step is
-//! resolved and kept as its capsule, and read once into one descriptor: its
-//! step, its request's digest (as sent, or as stored masked), its start, the
-//! bodies each arm must be granted, its clock and seed, its sampling seed
-//! and the model and route it went out on. The candidate's arm runs from it
-//! first, bound to a sandbox, then the baseline's, trusted in the host's
-//! process; only the arm id, the target and the isolation differ, and the
-//! runner meters both under the Coach alike. The Grant is checked again
-//! before either arm's bodies are read.
+//! First the Coach's own Grant must admit the failing call's capture (FIX
+//! 6357, 8704, `admission`): taken where the source snapshot found it, and
+//! read again here. With none the pair does not run, and is tried again once
+//! such a Grant admits it (FIX 7031). Then the failing call's captured
+//! executor step is resolved and kept as its capsule, and read once, under
+//! that Grant, into one descriptor: its step, its request's digest (as sent,
+//! or as stored masked), its start, the bodies each arm must be granted, its
+//! clock and seed, its sampling seed and the model and route it went out on.
+//! The candidate's arm runs from it first, bound to a sandbox, then the
+//! baseline's, trusted in the host's process; only the arm id, the target
+//! and the isolation differ, and the runner meters both under the Coach
+//! alike. The Grant is read again before each arm is sent and before each
+//! body of an arm is read.
 //!
 //! A pair is judged only when both arms ran their step to its end on the
 //! target, step, request, start and pins named, the candidate ran sandboxed,
@@ -26,7 +26,7 @@
 
 use serde_json::json;
 
-use super::CodeFixSettled;
+use super::admission::CoachReplayAdmission;
 use super::instruction::{CoachReplay, request_conversation};
 use super::publisher::{
     CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary,
@@ -37,11 +37,11 @@ use crate::code_run::shadow_runner::{
     ShadowIsolation, ShadowIsolationRequired, ShadowMeterContext, ShadowModelPin,
     ShadowRequestDigest, ShadowRunRequest, ShadowRunResult, ShadowSandboxBinding, ShadowScope,
     ShadowSource, ShadowStatus, ShadowStepIdentity, ShadowTarget, ShadowTraceEntry,
-    ShadowTraceKind, ShadowUnavailable, ShadowUnavailableReason, prepare_shadow_step_source,
+    ShadowTraceKind, ShadowUnavailable, ShadowUnavailableReason,
+    prepare_admitted_shadow_step_source,
 };
 use crate::code_run::{CapsuleHost, ExecutorStepStart, StepReplayCapsule, step_replay_capsules};
-use crate::failure_signals::{CodeFixSource, ReplayFidelity, ShadowRun, code_fix_subject_in};
-use crate::federation::ScopeId;
+use crate::failure_signals::{ReplayFidelity, ShadowRun};
 use crate::{ContentPart, EntityId, LlmRequest, LlmResponse, Result, Vault};
 
 /// A pair's part, or why the pair has no verdict.
@@ -113,19 +113,29 @@ impl CoachReplay<'_> {
         let Some(shadow) = self.host.shadow_runner() else {
             return Ok(Err(EngineNotRun::NoRunner));
         };
-        let source = &self.job.origin;
-        // FIX 6357: the Coach's own Grant reads the run's scope before any of
-        // its source is read.
-        match coach_read_grant(self.vault, source)? {
-            Ok(grant) => run.grant = Some(grant),
-            Err(refused) => return Ok(Err(EngineNotRun::Admission(refused))),
+        // FIX 6357, 8704: the Coach's own Grant admits the capture, taken
+        // where the snapshot found it and read again, before any of its
+        // source is read.
+        let admission = match &self.snapshot.admission {
+            Ok(admission) => admission,
+            Err(refused) => return Ok(Err(EngineNotRun::Admission(*refused))),
+        };
+        // A Grant gone since the snapshot is waited for, as one never there.
+        if let Err(refused) = admission.still_admits(self.vault)? {
+            let refused = match refused {
+                EngineAdmission::Lapsed => EngineAdmission::NoGrant,
+                other => other,
+            };
+            return Ok(Err(EngineNotRun::Admission(refused)));
         }
+        run.grant = Some(admission.grant());
         let chosen = self.snapshot.replay.capsule.as_ref();
         let Some(capsule) = failing_capsule(self.vault, chosen)? else {
             return Ok(Err(EngineNotRun::NoCapturedStep));
         };
         run.step = Some(ShadowStepIdentity::of(&capsule));
-        let pair = match PairDescriptor::read(self.vault, &capsule, shadow.arm_meter())? {
+        let meter = shadow.arm_meter();
+        let pair = match PairDescriptor::read(self.vault, &capsule, meter, admission)? {
             Ok(pair) => pair,
             Err(unavailable) => return Ok(Err(EngineNotRun::Source(unavailable))),
         };
@@ -141,12 +151,19 @@ impl CoachReplay<'_> {
             id: candidate_id.to_owned(),
             pin,
         };
+        // The Grant is read again before each arm is sent (FIX 8704).
+        if let Err(reason) = still_admitted(self.vault, admission)? {
+            return Ok(Err(reason));
+        }
         let candidate =
             shadow.run_arm(pair.arm(target.clone(), ShadowIsolationRequired::Sandboxed))?;
         held.hold(&candidate);
         run.arms
             .push(EngineArmSummary::of(EngineArm::Candidate, &candidate));
         if let Err(reason) = ran_step(EngineArm::Candidate, &candidate) {
+            return Ok(Err(reason));
+        }
+        if let Err(reason) = still_admitted(self.vault, admission)? {
             return Ok(Err(reason));
         }
         let baseline = shadow.run_arm(pair.arm(
@@ -172,22 +189,19 @@ impl CoachReplay<'_> {
         if !isolated(&candidate, pin) {
             return Ok(Err(EngineNotRun::NotIsolated));
         }
-        // FIX 6357 again: the Grant still reads the run's scope before any
-        // arm's body is read. A pact lapse keeps its own reason (FIX 7548).
-        match coach_read_grant(self.vault, source)? {
-            Ok(_) => {}
-            Err(EngineAdmission::PactStandingLapsed) => {
-                return Ok(Err(EngineNotRun::Admission(
-                    EngineAdmission::PactStandingLapsed,
-                )));
-            }
-            Err(_) => return Ok(Err(EngineNotRun::Admission(EngineAdmission::Lapsed))),
-        }
-        let after = match read_evidence(shadow, EngineArm::Candidate, &candidate)? {
+        // FIX 6357, 8704 again: the Grant still admits the capture before
+        // each body of either arm is read. A pact lapse keeps its own reason
+        // (FIX 7548).
+        let bodies = ArmBodies {
+            shadow,
+            vault: self.vault,
+            admission,
+        };
+        let after = match bodies.evidence(EngineArm::Candidate, &candidate)? {
             Ok(after) => after,
             Err(reason) => return Ok(Err(reason)),
         };
-        let before = match read_evidence(shadow, EngineArm::Baseline, &baseline)? {
+        let before = match bodies.evidence(EngineArm::Baseline, &baseline)? {
             Ok(before) => before,
             Err(reason) => return Ok(Err(reason)),
         };
@@ -214,84 +228,13 @@ impl CoachReplay<'_> {
     }
 }
 
-/// The Coach's live Grant that reads every world of `source`'s failing run
-/// now (FIX 6357): an agent Grant whose member is the Coach, that an owner of
-/// this vault delegated, that confers read now and is unexpired, and whose
-/// worlds include each world the run touched (its dispatch's scope and its
-/// task's, or the worlds its host scoped it to). The first such Grant, in id
-/// order, whose pact membership, on a shared vault, still stands (FIX 7548:
-/// a lapsed one is passed over for a later one), or why there is none; the
-/// run's worlds are read again at each check. The Grant's world reach is
-/// what admits the pair: its bands, sensitivity and audience are not held to
-/// each row the step's capture holds.
-fn coach_read_grant(
-    vault: &Vault,
-    source: &CodeFixSource,
-) -> Result<std::result::Result<EntityId, EngineAdmission>> {
-    let coach = vault.coach_authority()?.entity_ref();
-    let txn = vault.store.env.read_txn()?;
-    coach_read_grant_in_txn(vault, &txn, source, coach)
-}
-
-/// [`coach_read_grant`] read in `txn`, a queue's or a settlement's own
-/// writer among them, for `coach`, the Coach's id resolved outside any
-/// writer (FIX 7031).
-pub(super) fn coach_read_grant_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    source: &CodeFixSource,
-    coach: EntityId,
-) -> Result<std::result::Result<EntityId, EngineAdmission>> {
-    let Some(subject) = code_fix_subject_in(vault, txn, source)? else {
-        return Ok(Err(EngineAdmission::ScopeUnproved));
-    };
-    let Ok((_, worlds)) = subject.failure.read() else {
-        return Ok(Err(EngineAdmission::ScopeUnproved));
-    };
-    let now = vault.instant_in_txn(txn)?.secs();
-    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
-    let mut lapsed = false;
-    for standing in vault.agent_grants_in_txn(txn)? {
-        let grant = &standing.grant;
-        if !(grant.member_ref == coach
-            && owners.contains(&standing.delegated_by)
-            && grant.confers_at(now)
-            && worlds
-                .iter()
-                .all(|world| grant.authority_scope.worlds.contains(&ScopeId(*world))))
-        {
-            continue;
-        }
-        if standing.pact_standing_lapsed_in_txn(vault, txn) {
-            lapsed = true;
-            continue;
-        }
-        return Ok(Ok(standing.id));
-    }
-    Ok(Err(if lapsed {
-        EngineAdmission::PactStandingLapsed
-    } else {
-        EngineAdmission::NoGrant
-    }))
-}
-
-/// Whether the Coach's Grant now admits a pair of `settled`, the failure
-/// `source`'s runs, that was kept not run for want of one (FIX 7031): the
-/// same admission as the pair's own, read in `txn` only when such a pair is
-/// there; `false` otherwise.
-pub(super) fn read_granted_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    settled: &CodeFixSettled,
-    source: &CodeFixSource,
-    coach: EntityId,
-) -> Result<bool> {
-    let waits = settled.candidates.iter().any(|run| {
-        run.engine
-            .as_ref()
-            .is_some_and(EngineCandidateRun::waits_on_grant)
-    });
-    Ok(waits && coach_read_grant_in_txn(vault, txn, source, coach)?.is_ok())
+/// Whether the Grant `admission` holds still admits the capture now, alone
+/// (FIX 8704); else why the pair cannot read on. A pact lapse keeps its own
+/// reason (FIX 7548), any other is `Lapsed`.
+fn still_admitted(vault: &Vault, admission: &CoachReplayAdmission) -> Result<Outcome<()>> {
+    Ok(admission
+        .still_admits(vault)?
+        .map_err(EngineNotRun::Admission))
 }
 
 /// The failing call's captured executor step, kept as its capsule (FIX
@@ -337,15 +280,17 @@ struct PairDescriptor {
 }
 
 impl PairDescriptor {
-    /// `capsule`'s step, read through the runner's own preparation, with
-    /// `meter` for both arms; or the runner's reason it cannot be read, a
-    /// capture that pinned no answering model or no route among them.
+    /// `capsule`'s step, read through the runner's own preparation while
+    /// `admission` still admits it (FIX 8704), with `meter` for both arms;
+    /// or the runner's reason it cannot be read, a capture that pinned no
+    /// answering model or no route among them.
     fn read(
         vault: &Vault,
         capsule: &StepReplayCapsule,
         meter: ShadowMeterContext,
+        admission: &CoachReplayAdmission,
     ) -> Result<std::result::Result<Self, ShadowUnavailable>> {
-        let prepared = match prepare_shadow_step_source(vault, capsule)? {
+        let prepared = match prepare_admitted_shadow_step_source(vault, capsule, admission)? {
             Ok(prepared) => prepared,
             Err(unavailable) => return Ok(Err(unavailable)),
         };
@@ -470,99 +415,111 @@ fn isolated(result: &ShadowRunResult, pin: EngineArtifactPin) -> bool {
         }
 }
 
-/// One arm's evidence as the questions read it, every body whole and read
-/// under its lease: its model answers, the effects it proposed, the
-/// recorded calls it matched, and the outputs it wrote; or why it cannot be
-/// read whole.
-fn read_evidence(
-    shadow: &dyn CodeFixShadowHost,
-    arm: EngineArm,
-    result: &ShadowRunResult,
-) -> Result<Outcome<String>> {
-    let partial = || -> Result<Outcome<String>> { Ok(Err(EngineNotRun::PartialEvidence { arm })) };
-    let (Some(lease), Some(effect_trace), Some(bridge_trace)) = (
-        result.lease.as_ref(),
-        result.effect_trace.as_ref(),
-        result.bridge_trace.as_ref(),
-    ) else {
-        return partial();
-    };
-    let mut answers = Vec::with_capacity(result.model_receipts.len());
-    for receipt in &result.model_receipts {
-        let Some(response) = &receipt.response else {
+/// What reads an arm's bodies: the host's runner, under the Coach's
+/// admission to the capture they came from, read again before each body
+/// (FIX 8704).
+struct ArmBodies<'a> {
+    shadow: &'a dyn CodeFixShadowHost,
+    vault: &'a Vault,
+    admission: &'a CoachReplayAdmission,
+}
+
+impl ArmBodies<'_> {
+    /// One arm's evidence as the questions read it, every body whole and
+    /// read under its lease: its model answers, the effects it proposed, the
+    /// recorded calls it matched, and the outputs it wrote; or why it cannot
+    /// be read whole.
+    fn evidence(&self, arm: EngineArm, result: &ShadowRunResult) -> Result<Outcome<String>> {
+        let partial =
+            || -> Result<Outcome<String>> { Ok(Err(EngineNotRun::PartialEvidence { arm })) };
+        let (Some(lease), Some(effect_trace), Some(bridge_trace)) = (
+            result.lease.as_ref(),
+            result.effect_trace.as_ref(),
+            result.bridge_trace.as_ref(),
+        ) else {
             return partial();
         };
-        let bytes = match read_whole(shadow, lease, arm, response)? {
+        let mut answers = Vec::with_capacity(result.model_receipts.len());
+        for receipt in &result.model_receipts {
+            let Some(response) = &receipt.response else {
+                return partial();
+            };
+            let bytes = match self.whole(lease, arm, response)? {
+                Ok(bytes) => bytes,
+                Err(reason) => return Ok(Err(reason)),
+            };
+            let Ok(response) = serde_json::from_slice::<LlmResponse>(&bytes) else {
+                return partial();
+            };
+            answers.push(answer_text(&response));
+        }
+        let effects = match self.trace(lease, arm, effect_trace)? {
+            Ok(effects) => effects,
+            Err(reason) => return Ok(Err(reason)),
+        };
+        let matched = match self.trace(lease, arm, bridge_trace)? {
+            Ok(matched) => matched,
+            Err(reason) => return Ok(Err(reason)),
+        };
+        let mut outputs = Vec::with_capacity(result.outputs.len());
+        for output in &result.outputs {
+            let bytes = match self.whole(lease, arm, output)? {
+                Ok(bytes) => bytes,
+                Err(reason) => return Ok(Err(reason)),
+            };
+            outputs.push(json!({
+                "path": output.path,
+                "text": String::from_utf8_lossy(&bytes),
+            }));
+        }
+        let done = matches!(result.status, ShadowStatus::StepComplete { done: true });
+        let effects: Vec<serde_json::Value> = effects.iter().map(trace_state).collect();
+        let matched: Vec<serde_json::Value> = matched.iter().map(trace_state).collect();
+        let evidence = json!({
+            "done": done,
+            "answers": answers,
+            "proposed_effects": effects,
+            "matched_calls": matched,
+            "outputs": outputs,
+        });
+        Ok(Ok(evidence.to_string()))
+    }
+
+    /// The body `body` of the arm `arm`, read whole under its `lease` while
+    /// the Coach's Grant still admits the capture: one its producer did not
+    /// finish is partial, and one the runner cannot read now says why.
+    fn whole(
+        &self,
+        lease: &ShadowArmLease,
+        arm: EngineArm,
+        body: &ShadowBodyRef,
+    ) -> Result<Outcome<Vec<u8>>> {
+        if !body.complete {
+            return Ok(Err(EngineNotRun::PartialEvidence { arm }));
+        }
+        if let Err(reason) = still_admitted(self.vault, self.admission)? {
+            return Ok(Err(reason));
+        }
+        Ok(self
+            .shadow
+            .read_arm_body(lease, body.body)?
+            .map_err(|unavailable| EngineNotRun::Unavailable { arm, unavailable }))
+    }
+
+    /// An arm's trace, read whole and decoded; one that does not decode is
+    /// partial.
+    fn trace(
+        &self,
+        lease: &ShadowArmLease,
+        arm: EngineArm,
+        body: &ShadowBodyRef,
+    ) -> Result<Outcome<Vec<ShadowTraceEntry>>> {
+        let bytes = match self.whole(lease, arm, body)? {
             Ok(bytes) => bytes,
             Err(reason) => return Ok(Err(reason)),
         };
-        let Ok(response) = serde_json::from_slice::<LlmResponse>(&bytes) else {
-            return partial();
-        };
-        answers.push(answer_text(&response));
+        Ok(rmp_serde::from_slice(&bytes).map_err(|_| EngineNotRun::PartialEvidence { arm }))
     }
-    let effects = match read_trace(shadow, lease, arm, effect_trace)? {
-        Ok(effects) => effects,
-        Err(reason) => return Ok(Err(reason)),
-    };
-    let matched = match read_trace(shadow, lease, arm, bridge_trace)? {
-        Ok(matched) => matched,
-        Err(reason) => return Ok(Err(reason)),
-    };
-    let mut outputs = Vec::with_capacity(result.outputs.len());
-    for output in &result.outputs {
-        let bytes = match read_whole(shadow, lease, arm, output)? {
-            Ok(bytes) => bytes,
-            Err(reason) => return Ok(Err(reason)),
-        };
-        outputs.push(json!({
-            "path": output.path,
-            "text": String::from_utf8_lossy(&bytes),
-        }));
-    }
-    let done = matches!(result.status, ShadowStatus::StepComplete { done: true });
-    let effects: Vec<serde_json::Value> = effects.iter().map(trace_state).collect();
-    let matched: Vec<serde_json::Value> = matched.iter().map(trace_state).collect();
-    let evidence = json!({
-        "done": done,
-        "answers": answers,
-        "proposed_effects": effects,
-        "matched_calls": matched,
-        "outputs": outputs,
-    });
-    Ok(Ok(evidence.to_string()))
-}
-
-/// The body `body` of the arm `arm`, read whole under its `lease`: one its
-/// producer did not finish is partial, and one the runner cannot read now
-/// says why.
-fn read_whole(
-    shadow: &dyn CodeFixShadowHost,
-    lease: &ShadowArmLease,
-    arm: EngineArm,
-    body: &ShadowBodyRef,
-) -> Result<Outcome<Vec<u8>>> {
-    if !body.complete {
-        return Ok(Err(EngineNotRun::PartialEvidence { arm }));
-    }
-    Ok(shadow
-        .read_arm_body(lease, body.body)?
-        .map_err(|unavailable| EngineNotRun::Unavailable { arm, unavailable }))
-}
-
-/// An arm's trace, read whole and decoded; one that does not decode is
-/// partial.
-fn read_trace(
-    shadow: &dyn CodeFixShadowHost,
-    lease: &ShadowArmLease,
-    arm: EngineArm,
-    body: &ShadowBodyRef,
-) -> Result<Outcome<Vec<ShadowTraceEntry>>> {
-    let bytes = match read_whole(shadow, lease, arm, body)? {
-        Ok(bytes) => bytes,
-        Err(reason) => return Ok(Err(reason)),
-    };
-    Ok(rmp_serde::from_slice(&bytes).map_err(|_| EngineNotRun::PartialEvidence { arm }))
 }
 
 /// A model answer as the questions read it, every part whole: its text as
