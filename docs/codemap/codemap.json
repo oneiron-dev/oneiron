@@ -1902,29 +1902,16 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
-     "notable": [
-      "ArtifactExportRef",
-      "ArtifactPointer",
-      "ArtifactPointerChannel",
-      "ArtifactPublishVerbOutcome",
-      "ArtifactPublishVerbRequest",
-      "ArtifactPublishVerbStatus",
-      "ArtifactServedFile",
-      "ArtifactSnapshotRef",
-      "ArtifactSnapshotSelector"
-     ],
+     "notable": [],
      "path": "src/artifact_hosting/mod.rs",
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
-      "const": 1,
-      "crate-vis": 4,
-      "enum": 4,
-      "fn": 18,
+      "crate-vis": 3,
+      "fn": 10,
       "mod": 2,
-      "re-export": 2,
-      "struct": 5
+      "re-export": 3
      }
     },
     {
@@ -1978,12 +1965,46 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/serving.rs",
+     "purpose": "Read-only resolution of artifact pointers, snapshots, and served files",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/artifact_hosting/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactExportRef",
+      "ArtifactPointer",
+      "ArtifactPointerChannel",
+      "ArtifactPublishVerbOutcome",
+      "ArtifactPublishVerbRequest",
+      "ArtifactPublishVerbStatus",
+      "ArtifactServedFile",
+      "ArtifactSnapshotRef",
+      "ArtifactSnapshotSelector"
+     ],
+     "path": "src/artifact_hosting/vocabulary.rs",
+     "purpose": "Value types for artifact pointers, immutable exports, and publication",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 5,
+      "struct": 5
+     }
     },
     {
      "bucket": "s",
@@ -73674,9 +73695,9 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 8,
+     "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
@@ -75151,9 +75172,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 146,
+   "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4880,
+   "source_files": 4882,
    "test_files": 902
   },
   "oneiron-android": {
@@ -96340,15 +96361,25 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 7,
-      "fn": 19,
-      "re-export": 2
+      "fn": 2,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/control_commands.rs",
+     "purpose": "Owner control and consent commands for a stopped vault",
+     "surface": {
+      "fn": 7
      }
     },
     {
@@ -96359,6 +96390,16 @@
      "purpose": "`oneiron doctor`: where the vault lives and how it is, read on a stopped vault or beside a running `serve`…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/recovery_commands.rs",
+     "purpose": "Backup, restore, and recovery commands for a stopped vault",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -96394,11 +96435,32 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/secret_commands.rs",
+     "purpose": "Secret scan, custody, and value commands for a stopped vault",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/commands/owner/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/transfer_commands.rs",
+     "purpose": "Export and import commands for a stopped vault",
+     "surface": {
+      "fn": 2
+     }
     },
     {
      "bucket": "m",
@@ -96467,7 +96529,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 10,
       "re-export": 1
      }
     },
@@ -96503,6 +96565,16 @@
      "purpose": "What plain serve stops beside its workers, in its order, once its listeners have stopped or its start failed…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/serve/workers.rs",
+     "purpose": "Startup and ordered shutdown of unmanaged and embedded serve workers",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -96826,7 +96898,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EnvConfig"
@@ -96834,9 +96906,31 @@
      "path": "src/config/merge.rs",
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
-      "crate-vis": 6,
-      "fn": 6,
+      "crate-vis": 5,
+      "fn": 3,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/merge/sections.rs",
+     "purpose": "Environment lookup and application of layered serve sections",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/merge/validation.rs",
+     "purpose": "Schema-key discovery and validation of resolved serve settings",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -98447,9 +98541,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/idempotency.rs",
-     "purpose": "—",
+     "purpose": "Durable HTTP idempotency storage and replay state",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -98468,6 +98562,16 @@
      "notable": [],
      "path": "src/idempotency/reclaim.rs",
      "purpose": "Reclaim of expired idempotency entries (FIX 5951)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/idempotency/request.rs",
+     "purpose": "HTTP request admission, keyed replay, and response capture",
      "surface": {
       "crate-vis": 2
      }
@@ -99011,9 +99115,8 @@
      "purpose": "Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 2,
-      "fn": 3,
       "re-export": 1,
       "struct": 1
      }
@@ -99026,6 +99129,17 @@
      "purpose": "The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/args/resolve.rs",
+     "purpose": "Resolution and validation of the managed argv group",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
      }
     },
     {
@@ -102203,7 +102317,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "VaultUsage"
@@ -102211,7 +102325,7 @@
      "path": "src/runtime/usage.rs",
      "purpose": "Trusted-host attribution of served run settlements to one vault",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1
      }
@@ -102224,6 +102338,16 @@
      "purpose": "The list price an admitted model call is metered at (FIX 2629): the vault's priced catalog row for that…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/usage/settlement.rs",
+     "purpose": "Attribution and durable recording of served run receipts",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -103817,14 +103941,14 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 46,
+     "files": 51,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 55,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103992,11 +104116,11 @@
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through"
     },
     "idempotency": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "—"
+     "purpose": "Durable HTTP idempotency storage and replay state"
     },
     "import_audience": {
      "files": 1,
@@ -104048,7 +104172,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 83,
+     "files": 84,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -104125,7 +104249,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104209,9 +104333,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 41,
+   "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1188,
+   "source_files": 1198,
    "test_files": 182
   },
   "oneiron-spawn": {
