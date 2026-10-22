@@ -61625,7 +61625,7 @@
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 37
      }
     },
     {
@@ -61646,6 +61646,16 @@
      "purpose": "An owner erase that waits (OF-470 C2, C4): the owner's confirmed erase a host order keeps, and the owner's…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/legal_hold/settlement.rs",
+     "purpose": "A door's own refusals, logged in the writer the door already holds (OF-470, FIX 2433, FIX 2435)",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -62568,6 +62578,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sweep/holds.rs",
+     "purpose": "The legal holds a sweep compaction meets (OF-470): a held entity document keeps its bytes and its history…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sweep/mod.rs",
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…",
      "surface": {
@@ -62814,6 +62834,16 @@
       "enum": 1,
       "trait": 2,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/carrier_holds.rs",
+     "purpose": "What a carrier-only tear destroys, read from the carrier itself (OF-470, FIX 3061)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -64147,7 +64177,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 24,
       "re-export": 16
      }
@@ -73995,7 +74025,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 3,
       "re-export": 21,
       "struct": 2
@@ -74156,7 +74186,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -76627,7 +76657,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 148,
+     "files": 149,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76648,14 +76678,14 @@
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)"
     },
     "sweep": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 258,
+     "files": 259,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76860,7 +76890,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5027,
+   "source_files": 5030,
    "test_files": 902
   },
   "oneiron-android": {
