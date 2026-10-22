@@ -330,25 +330,25 @@ fn keep_collection(
     source: Option<&CodeRunRawOutput>,
     diagnostics: TypeDiagnostics,
 ) -> (TypeDiagnostics, Option<CodeRunRawOutput>) {
-    let (TypeDiagnostics::Complete {
-        measures,
-        diagnostics: DiagnosticCollection::Inline { diagnostics: list },
-        ..
-    }
-    | TypeDiagnostics::Failed {
-        measures,
-        diagnostics: DiagnosticCollection::Inline { diagnostics: list },
-        ..
-    }) = &diagnostics
-    else {
+    let past_one_reply = match &diagnostics {
+        TypeDiagnostics::Complete {
+            measures,
+            diagnostics: DiagnosticCollection::Inline { diagnostics: list },
+            ..
+        }
+        | TypeDiagnostics::Failed {
+            measures,
+            diagnostics: DiagnosticCollection::Inline { diagnostics: list },
+            ..
+        } if measures.bytes > RESULT_REPLY_INLINE_BYTES as u64 => Some(list.clone()),
+        _ => None,
+    };
+    let Some(list) = past_one_reply else {
         return (diagnostics, None);
     };
-    if measures.bytes <= RESULT_REPLY_INLINE_BYTES as u64 {
-        return (diagnostics, None);
-    }
     let (run, seq, invocation) = key;
     let kept = storage.code_run_output_sink().and_then(|mut sink| {
-        write_json(&mut sink, list)?;
+        write_json(&mut sink, &list)?;
         let path = type_diagnostics_output_path(seq, invocation);
         let body = storage.publish_code_run_output(path, sink, true, run)?;
         if let Some(source) = source {
