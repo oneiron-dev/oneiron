@@ -410,8 +410,10 @@ pub(super) fn overlay(plot: &ChartPlot, settings: &mut ChartPlot) {
 
 /// Whether the plot a part holds (`have`, read without identities) holds
 /// every compound setting `want` sets: an element drawn or not, up/down
-/// bars' gap and fills, and band fills. Stock prices and custom splits are
-/// compared by identity ([`held::same_named`]).
+/// bars' gap and fills (where it draws up/down bars: a plot drawing none
+/// has no bar to fill, and a write of it writes none), and band fills.
+/// Stock prices and custom splits are compared by identity
+/// ([`held::same_named`]).
 pub(super) fn same(have: Option<&ChartPlot>, want: &ChartPlot) -> bool {
     let on = |value: Option<bool>, have: Option<bool>| {
         value.is_none_or(|on| have.unwrap_or(false) == on)
@@ -422,17 +424,19 @@ pub(super) fn same(have: Option<&ChartPlot>, want: &ChartPlot) -> bool {
             .is_none_or(|rgb| have.is_some_and(|have| have.eq_ignore_ascii_case(rgb)))
     };
     let held = |field: fn(&ChartPlot) -> Option<bool>| have.and_then(field);
+    let bars = held(|plot| plot.up_down_bars).unwrap_or(false);
     on(want.hi_low_lines, held(|plot| plot.hi_low_lines))
         && on(want.up_down_bars, held(|plot| plot.up_down_bars))
         && on(want.ser_lines, held(|plot| plot.ser_lines))
-        && want
-            .up_down_gap_width
-            .is_none_or(|gap| have.and_then(|plot| plot.up_down_gap_width) == Some(gap))
-        && color(&want.up_fill, have.and_then(|plot| plot.up_fill.as_ref()))
-        && color(
-            &want.down_fill,
-            have.and_then(|plot| plot.down_fill.as_ref()),
-        )
+        && (!bars
+            || (want
+                .up_down_gap_width
+                .is_none_or(|gap| have.and_then(|plot| plot.up_down_gap_width) == Some(gap))
+                && color(&want.up_fill, have.and_then(|plot| plot.up_fill.as_ref()))
+                && color(
+                    &want.down_fill,
+                    have.and_then(|plot| plot.down_fill.as_ref()),
+                )))
         && want.bands.iter().flatten().all(|band| {
             let held = have
                 .and_then(|plot| plot.bands.as_ref())
