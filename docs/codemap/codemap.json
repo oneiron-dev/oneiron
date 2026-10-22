@@ -12996,6 +12996,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/card_moves.rs",
+     "purpose": "The notes and steers an agent-health card in a weave keeps (FIX 8536)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -20457,7 +20467,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -20755,7 +20765,7 @@
      "path": "src/conversation_dag/record_admission.rs",
      "purpose": "Who reads a conversation's DAG records (FIX 8153, ARCH-0006a rule 2, Engine 10-22)",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -24697,7 +24707,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 15,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 6,
       "fn": 12,
       "re-export": 11,
@@ -24824,6 +24834,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/erase.rs",
+     "purpose": "What an erase reaches of the Coach's drafts on live agent-health cards (FIX 9221)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AgentHealthLoadedSkill",
       "AgentHealthSkillTarget"
@@ -24911,6 +24931,16 @@
      "surface": {
       "crate-vis": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/sources.rs",
+     "purpose": "The rows a Coach answer on an agent-health card was drafted from (FIX 9220)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -55394,7 +55424,17 @@
      "path": "src/self_heal/issue_work.rs",
      "purpose": "The Coach's Issues work from both of its sources (OF-418 L3; ARCH-0066 §4, §6)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/issue_work/recurrence_index.rs",
+     "purpose": "Each model finding's issue under its recurrence key (FIX 7343): one membership row per issue, written in the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -56463,7 +56503,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/mod.rs",
@@ -56481,10 +56521,18 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_a_b.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/side_table/decls/vault_meta_a_c.rs",
+     "path": "src/side_table/decls/vault_meta_c.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -67631,7 +67679,7 @@
      "path": "src/vault/response_bodies.rs",
      "purpose": "The host's typed writes of its row-held responses (KS-2B2, FIX 5683 part B2): an HTTP idempotency entry and…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -74134,7 +74182,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 97,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74442,7 +74490,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 141,
+     "files": 143,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75114,7 +75162,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -75163,7 +75211,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75466,7 +75514,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4907,
+   "source_files": 4912,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90364,6 +90412,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/stewardship/draft.rs",
+     "purpose": "One follow-up draft: its call over every eligible source and, when that fails, its rescue over the newest…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/stewardship/pace.rs",
+     "purpose": "When a reach-out whose draft failed is drafted again (FIX 9465)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/stewardship/sources.rs",
      "purpose": "What each model a follow-up draft goes to may read of its sources (FIX 8714)",
      "surface": {
@@ -90442,10 +90510,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/training_offer/draft.rs",
+     "purpose": "The offer the Coach's answer names, projected from the brief it read",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/training_offer/pilot.rs",
      "purpose": "Measured per-seat pilot evidence beside the production offer skill's brief",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -92283,7 +92361,7 @@
      "path": "src/api/facade/decision_role_asks.rs",
      "purpose": "OF-516: a role holder's door to the ladder's person asks (Q3 by role)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -93093,7 +93171,7 @@
      "path": "src/api/facade/role_picks.rs",
      "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -95233,7 +95311,7 @@
      "path": "src/api/run_tree.rs",
      "purpose": "The run tree routes: one run's tree of attempts, its observation and the owner's interventions",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -95242,6 +95320,26 @@
      "notable": [],
      "path": "src/api/run_tree/cancel.rs",
      "purpose": "Run-tree cancel through the caller-bound cancel door (FIX 8219)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/run_tree/keyed.rs",
+     "purpose": "Keyed run-tree interventions (FIX 6056)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/run_tree/scoped.rs",
+     "purpose": "The run tree as a caller's current read authority admits it (FIX 8220, 8221): one projector for the…",
      "surface": {
       "crate-vis": 3
      }
@@ -95263,7 +95361,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -98931,7 +99029,7 @@
      "path": "src/idempotency.rs",
      "purpose": "Durable HTTP idempotency storage and replay state",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -98942,6 +99040,16 @@
      "purpose": "The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/idempotency/intent.rs",
+     "purpose": "The intent a keyed mutation keeps before its route runs (FIX 9527, 6056)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -104263,14 +104371,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 83,
+     "files": 86,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 545,
+     "files": 547,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104515,7 +104623,7 @@
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through"
     },
     "idempotency": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -104734,7 +104842,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1201,
+   "source_files": 1207,
    "test_files": 182
   },
   "oneiron-spawn": {
