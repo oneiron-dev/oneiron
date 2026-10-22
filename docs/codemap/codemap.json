@@ -498,6 +498,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/agent_def/codec/value.rs",
+     "purpose": "Agent definition value and field decoding",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/agent_def/decode.rs",
      "purpose": "Per-field MessagePack decoders, the validate_* ladder, and text helpers",
      "surface": {
@@ -794,7 +804,19 @@
      "purpose": "Pinned-key MessagePack codec plus payload/status decode helpers",
      "surface": {
       "crate-vis": 4,
-      "fn": 4
+      "fn": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/codec/decode.rs",
+     "purpose": "Strict pinned-key dispatch input decoding",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -69109,7 +69131,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AdmissionBasis",
@@ -69121,8 +69143,6 @@
       "JoinRefusal",
       "JoinRequest",
       "MembershipConsent",
-      "RoomFunding",
-      "RoomSpend",
       "RoomWork",
       "SpendConsent"
      ],
@@ -69130,10 +69150,36 @@
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
       "crate-vis": 6,
-      "enum": 7,
-      "fn": 7,
-      "re-export": 1,
-      "struct": 6
+      "enum": 6,
+      "fn": 5,
+      "re-export": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/join_consent/admission.rs",
+     "purpose": "Subject, spend and room admission consent",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomFunding",
+      "RoomSpend"
+     ],
+     "path": "src/workspace_roster/join_consent/funding.rs",
+     "purpose": "Room-work funding proved by join receipts",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -69243,7 +69289,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MessageHangs"
@@ -69251,9 +69297,20 @@
      "path": "src/workspace_roster/project/conversion.rs",
      "purpose": "Atomic conversion of a room thread into a project and its origin card",
      "surface": {
-      "crate-vis": 2,
-      "fn": 6,
+      "crate-vis": 1,
+      "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/conversion/views.rs",
+     "purpose": "Thread task binding and conversion views",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4
      }
     },
     {
@@ -70230,7 +70287,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "JoinCause"
@@ -70238,8 +70295,18 @@
      "path": "src/workspace_roster/rooms/participation.rs",
      "purpose": "Thread participants (OF-529): one append-only stream of who took part in a room or one of its threads, how…",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 31,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/participation/admission.rs",
+     "purpose": "Participation standing, admission and speech guards",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -70257,13 +70324,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/replica.rs",
      "purpose": "OF-522: a room's turn rows on the owner's other machines",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/replica/shared.rs",
+     "purpose": "Replicated room join, offer and response merging",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -71959,14 +72036,14 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73457,7 +73534,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 112,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73478,9 +73555,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 161,
+   "over_bar": 157,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4735,
+   "source_files": 4742,
    "test_files": 902
   },
   "oneiron-android": {
