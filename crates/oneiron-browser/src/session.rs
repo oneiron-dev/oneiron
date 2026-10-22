@@ -1221,6 +1221,10 @@ impl BrowserDriver for BrowserSession {
         self.typed_into(target)
     }
 
+    fn viewport_offset(&self) -> Option<(f64, f64)> {
+        self.driver.scroll_now().ok()
+    }
+
     fn withdraw_no_progress(&mut self) {
         self.withdraw(&BatchStopCause::NoProgress);
     }

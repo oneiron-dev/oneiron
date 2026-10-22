@@ -82,13 +82,13 @@ use crate::session::{effect_class, press_for, receipt_class};
 use crate::stop::elapsed_ms;
 use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
-    EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HandoverInput,
-    HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, NoWriter, Observation,
-    ObservationPage, ObserveInput, OpenInput, PartialTree, PointInput, PressMode,
+    EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FieldWriter, FindInput, FindOutput,
+    HandoverInput, HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, NoWriter,
+    Observation, ObservationPage, ObserveInput, OpenInput, PartialTree, PointInput, PressMode,
     ReceiptEvidenceSink, RoutineDecider, Row, RowSecret, ScreenshotInput, ScreenshotOutput,
     ScreenshotTrigger, ScrollInput, SecretCustody, SecretKind, SecretNote, SelectInput, SendPolicy,
-    TakeoverRecord, TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput, WindowSwitch,
-    WindowSwitchCause, WindowsInput, WindowsOutput, ZoomInput,
+    TakeoverRecord, TextProvenance, TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput,
+    WindowSwitch, WindowSwitchCause, WindowsInput, WindowsOutput, ZoomInput,
 };
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
 use serde::{Deserialize, Serialize};
@@ -221,6 +221,12 @@ pub struct DesktopSession {
     receipts: Vec<EffectReceipt>,
     receipt_seq: u64,
     decider: Option<Box<dyn RoutineDecider>>,
+    /// The host's writer of a Fill's text, lent with the decider (FIX
+    /// 8899), as a browser session's is.
+    field_writer: Option<Box<dyn FieldWriter>>,
+    /// Where the text the next type receipt names came from, set by the
+    /// Fill that makes it (FIX 8899); a `type`'s is supplied.
+    provenance: Option<TextProvenance>,
     receipt_sink: Option<Box<dyn ReceiptEvidenceSink>>,
     /// The window the session reads and acts on.
     window: Option<WindowKey>,
@@ -522,6 +528,8 @@ impl DesktopSession {
             receipts: Vec::new(),
             receipt_seq: 0,
             decider: None,
+            field_writer: None,
+            provenance: None,
             receipt_sink: None,
             window: None,
             seq: 0,
@@ -549,6 +557,13 @@ impl DesktopSession {
     /// Gives the session's batches the host's routine decider.
     pub fn set_decider(&mut self, decider: Box<dyn RoutineDecider>) {
         self.decider = Some(decider);
+    }
+
+    /// Gives the session's batches the host's writer of a Fill's text (FIX
+    /// 8899): a desktop Fill that reaches generation asks it, as a browser
+    /// session's does, under the same strict denial.
+    pub fn set_field_writer(&mut self, writer: Box<dyn FieldWriter>) {
+        self.field_writer = Some(writer);
     }
 
     /// Gives the session the host's keeper of receipt screenshots.
@@ -1262,6 +1277,14 @@ impl DesktopSession {
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };
+        // A type's text provenance, before the host keeps the receipt (FIX
+        // 8899): a Fill's own, else supplied.
+        if verb == "type" {
+            let typed = self.provenance.take();
+            typed
+                .unwrap_or_else(TextProvenance::supplied)
+                .stamp(&mut receipt);
+        }
         // The pixels are kept before the receipt is stored, while the
         // session still holds them.
         if let Some(mut sink) = self.receipt_sink.take() {
@@ -2098,6 +2121,18 @@ impl BrowserDriver for DesktopSession {
         Ok(observation)
     }
 
+    fn fill_text(
+        &mut self,
+        input: TypeInput,
+        provenance: TextProvenance,
+    ) -> Result<Observation, BrowserError> {
+        self.provenance = Some(provenance);
+        let typed = self.type_text(input);
+        // A type that failed before its receipt keeps none.
+        self.provenance = None;
+        typed
+    }
+
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
         self.live()?;
@@ -2516,13 +2551,19 @@ impl BrowserDriver for DesktopSession {
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
         let mut decider = self.decider.take();
+        // The host's writer, where it lent one (FIX 8899); with none, a
+        // Fill's generation stops `writer_unavailable`.
+        let writer = self.field_writer.take();
+        let lent: &dyn FieldWriter = match writer.as_deref() {
+            Some(writer) => writer,
+            None => &NoWriter,
+        };
         let output = match decider.as_deref_mut() {
-            // A desktop has no field writer: a Fill's generation stops
-            // `writer_unavailable`.
-            Some(decider) => self.batch_with(input, decider, &NoWriter),
-            None => self.batch_with(input, &mut NoDecider, &NoWriter),
+            Some(decider) => self.batch_with(input, decider, lent),
+            None => self.batch_with(input, &mut NoDecider, lent),
         };
         self.decider = decider;
+        self.field_writer = writer;
         let mut output = output?;
         // The batch's last observation pages as an answer pages it, and its
         // failed step's with a cursor of its own (FIX 8044).

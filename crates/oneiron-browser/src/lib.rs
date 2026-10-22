@@ -267,9 +267,9 @@ pub struct EffectReceipt {
     /// On a `switch_engine` receipt: the switch's record (FIX 6680).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine_switch: Option<EngineSwitchRecord>,
-    /// Where the text a browser's type or Fill step typed came from (CUA
-    /// E6): `supplied` for a `type`, else the Fill's source. Absent on any
-    /// other effect, and on a desktop's.
+    /// Where the text a type or Fill step typed came from (CUA E6; a
+    /// desktop's too, FIX 8899): `supplied` for a `type`, else the Fill's
+    /// source. Absent on any other effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_source: Option<TextSource>,
     /// The typed text's reference: a reference's id, a template's digest
@@ -1446,6 +1446,12 @@ pub trait BrowserDriver: Send {
     /// 8345): a secret by its handle and kind, else its text. None where no
     /// receipt typed there, or the driver keeps no history.
     fn typed_operand(&self, _target: &str) -> Option<TypeOperand> {
+        None
+    }
+
+    /// The viewport's scroll offset now, in CSS pixels, where the driver
+    /// reads one (FIX 8508); none elsewhere.
+    fn viewport_offset(&self) -> Option<(f64, f64)> {
         None
     }
 
