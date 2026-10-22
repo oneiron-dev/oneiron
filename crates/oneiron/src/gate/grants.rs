@@ -161,6 +161,62 @@ pub(crate) fn scoped_read_note_allowed(
     record_allowed_held(policy, actor, record, explicit_scope, Some(note))
 }
 
+/// Whether one applicable policy read Grant, alone, reaches a world the NOTE
+/// in `worlds` is in (FIX-LIST 10726; CALLS NOTE_WORLD, AnyMatchingWorld):
+/// its selector world, its authority worlds, the actor's proof worlds and
+/// the read ceilings `held`, met per Grant, never a union across Grants.
+/// `None` where no applicable Grant names `actor` (the rows
+/// [`record_allowed_held`] judges: a read effector, the actor's own, no
+/// receipt or budget), or where a Grant's selectors do not decode, so the
+/// caller's path stays today's. World axis only: no other selector key, no
+/// position or placement is judged here.
+pub(crate) fn scoped_read_note_world_witness(
+    policy: &PolicyManifestResolution,
+    actor: &ScopedReadActorKey,
+    worlds: &NoteWorlds,
+    held: &[&WorldAxis],
+) -> Option<bool> {
+    let proof = actor.authority_scope().map(|scope| &scope.worlds);
+    let mut applicable = false;
+    for grant in policy.scoped_grants().iter().filter(|grant| {
+        scoped_read_grant_has_read_effector(grant)
+            && scoped_read_actor_matches(grant, actor)
+            && !grant.receipt_required
+            && grant.budget.is_none()
+    }) {
+        let Some(selected) = selector_world_axis(grant.scope.as_ref()) else {
+            continue;
+        };
+        applicable = true;
+        let mut ceilings = vec![&selected, &grant.authority_scope.worlds];
+        ceilings.extend(proof);
+        ceilings.extend_from_slice(held);
+        if worlds.readable_at(&ceilings) {
+            return Some(true);
+        }
+    }
+    applicable.then_some(false)
+}
+
+/// A read Grant's selector world alone, decoded as its full selectors are:
+/// every world with none named, the one it names, `None` where the selectors
+/// or that world do not decode.
+fn selector_world_axis(selectors: Option<&Value>) -> Option<WorldAxis> {
+    let entries = match selectors {
+        None | Some(Value::Nil) => return Some(crate::federation::ScopeAxis::All),
+        Some(Value::Map(entries)) => entries,
+        Some(_) => return None,
+    };
+    let mut axis = crate::federation::ScopeAxis::All;
+    for (key, value) in entries {
+        if matches!(key.as_str(), Some("world" | "world_ref" | "worldRef")) {
+            let one = Value::Map(vec![(key.clone(), value.clone())]);
+            axis = crate::federation::scope_codec::legacy_read_scope(Some(&one))?.worlds;
+        }
+    }
+    Some(axis)
+}
+
 fn record_allowed_held(
     policy: &PolicyManifestResolution,
     actor: &ScopedReadActorKey,
