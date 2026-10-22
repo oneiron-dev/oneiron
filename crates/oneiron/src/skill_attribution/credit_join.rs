@@ -31,10 +31,11 @@ use super::contribution_targets::CheckedEdge;
 use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, LateCreditShare, shares_in_txn};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
-use crate::learning::{LearningCell, LearningEvidence, LearningPredicate, Observation};
+use crate::learning::{LearningCell, LearningEvidence, LearningPredicate, Observation, TypeRef};
 use crate::receipt::{PackAttributionFields, PackLearningContext};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::team::receipt::capture_parents_in_txn;
 use crate::{Result, Vault};
 
 /// Each sealed credit receipt's frozen decay and adjustments. Key: string
@@ -268,7 +269,8 @@ pub(super) fn credit_shares_in_txn(
     shares_in_txn(vault, txn, fields, &origins(fields, direct), decay)
 }
 
-/// The reliability cell `subject`'s credit for an outcome on `axis` lands in.
+/// The reliability cell `subject`'s credit for an outcome on `axis` lands
+/// in, in the run's frozen project (FIX 6038), never the credited subject's.
 pub(super) fn credit_cell(
     fields: &PackAttributionFields,
     axis: &str,
@@ -278,6 +280,26 @@ pub(super) fn credit_cell(
         .executor(fields.executor.clone())
         .type_ref(fields.type_ref.clone())
         .axis(axis.to_owned())
+        .project(fields.project)
+}
+
+/// Records `evidence` in `subject`'s credit cell. A cell with no own head
+/// first keeps the prior its read borrows through `parents`, the stamp's
+/// placed ancestry (FIX 9889), as a team outcome's first result does: the
+/// evidence then adds runs against that weight instead of a shipped head.
+/// A cell with runs or a stored prior keeps what it has.
+pub(super) fn record_credit_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    cell: &LearningCell,
+    parents: &[TypeRef],
+    evidence: &LearningEvidence,
+    now: u64,
+) -> Result<()> {
+    let form = evidence.observation.form();
+    crate::learning::prior::capture_borrowed_prior_in_txn(vault, txn, cell, parents, form)?;
+    crate::learning::record_evidence_in_txn(vault, txn, cell, evidence, now)?;
+    Ok(())
 }
 
 /// One subject's observation of `credit`'s outcome at `weight`, under the
@@ -405,11 +427,12 @@ fn reconcile_in_txn(
     }
     let before = masses(last_direct, last_shares);
     let after = masses(&direct, &shares);
+    let parents = capture_parents_in_txn(vault, txn, fields.project, &fields.type_ref)?;
     for (subject, weight) in &after {
         if before.get(subject) != Some(weight) {
             let cell = credit_cell(&fields, &credit.axis, *subject);
             let evidence = credit_evidence(credit, &fields, true, *weight);
-            crate::learning::record_evidence_in_txn(vault, txn, &cell, &evidence, now)?;
+            record_credit_in_txn(vault, txn, &cell, &parents, &evidence, now)?;
         }
     }
     for subject in before

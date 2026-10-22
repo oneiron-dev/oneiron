@@ -32,6 +32,7 @@ pub mod judge;
 mod pack_erase;
 pub mod prior;
 pub mod project;
+pub(crate) mod ranking;
 pub mod read;
 pub mod retest;
 

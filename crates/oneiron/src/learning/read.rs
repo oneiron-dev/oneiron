@@ -2,7 +2,8 @@
 //! (ARCH-0003 #learning-qualifiers).
 //!
 //! At the requested executor: the task type, then its parents, then any type;
-//! only then the same for any executor. Borrowed runs enter as a `parent` or
+//! only then the same for any executor. A project's cell walks its own scope
+//! first, then the vault's (FIX 6038). Borrowed runs enter as a `parent` or
 //! `carried` prior, never as own evidence, and a borrowed reading is
 //! assembled here at read: it never mints a claim.
 
@@ -119,6 +120,8 @@ pub(crate) fn measured_outcomes_in_txn(
 /// Order: the cell's own head; an explicitly stored prior (an executor swap,
 /// a hub import, a fork); then borrowing at this executor from each parent
 /// type, then any type; then the same at any executor; else the shipped prior.
+/// A project's cell borrows in its own scope first, then from the vault's
+/// same question by that order: its head, its stored prior, its parents.
 ///
 /// # Errors
 ///
@@ -167,58 +170,58 @@ pub(crate) fn read_learning_in_txn(
     let cap =
         learning_setting::setting_value_in_txn(&vault.store, txn, &LEARNING_BORROWED_PRIOR_RUNS)?;
     let subject_cells = cells_for_subject_in_txn(vault, txn, &cell.subject)?;
-    for (ignore_executor, origin) in [(false, PriorOrigin::Parent), (true, PriorOrigin::Carried)] {
-        let mut candidates: Vec<LearningCell> = Vec::new();
-        // The same type at another executor is the carried read's first step.
-        if ignore_executor {
-            candidates.extend(
-                subject_cells
-                    .iter()
-                    .filter(|row| {
-                        row.cell != *cell && row.cell.same_question_modulo(cell, false, true)
-                    })
-                    .map(|row| row.cell.clone()),
-            );
+    let vault_twin = cell.project.is_some().then(|| cell.with_project(None));
+    for scoped in std::iter::once(cell).chain(vault_twin.as_ref()) {
+        // The vault's same question: its own head, then its stored prior.
+        if scoped != cell
+            && let Some(read) = vault_twin_read_in_txn(vault, txn, scoped, cap, window)?
+        {
+            return Ok(read);
         }
-        for parent in type_parents {
-            candidates.extend(
-                subject_cells
-                    .iter()
-                    .filter(|row| {
-                        row.cell.type_ref.as_ref() == Some(parent)
-                            && row.cell.same_question_modulo(cell, true, ignore_executor)
-                    })
-                    .map(|row| row.cell.clone()),
-            );
-        }
-        // Any type last, the richest cell first.
-        let mut any_type: Vec<(f64, LearningCell)> = Vec::new();
-        for row in &subject_cells {
-            if row.cell != *cell
-                && row.cell.same_question_modulo(cell, true, ignore_executor)
-                && let Some(estimate) = own_estimate_in_txn(vault, txn, &row.cell)?
-            {
-                any_type.push((estimate.runs, row.cell.clone()));
+        for (ignore_executor, origin) in
+            [(false, PriorOrigin::Parent), (true, PriorOrigin::Carried)]
+        {
+            let mut candidates: Vec<LearningCell> = Vec::new();
+            // The same type at another executor is the carried read's first step.
+            if ignore_executor {
+                candidates.extend(
+                    subject_cells
+                        .iter()
+                        .filter(|row| {
+                            row.cell != *scoped
+                                && row.cell.same_question_modulo(scoped, false, true)
+                        })
+                        .map(|row| row.cell.clone()),
+                );
             }
-        }
-        any_type.sort_by(|a, b| b.0.total_cmp(&a.0));
-        candidates.extend(any_type.into_iter().map(|(_, c)| c));
+            for parent in type_parents {
+                candidates.extend(
+                    subject_cells
+                        .iter()
+                        .filter(|row| {
+                            row.cell.type_ref.as_ref() == Some(parent)
+                                && row.cell.same_question_modulo(scoped, true, ignore_executor)
+                        })
+                        .map(|row| row.cell.clone()),
+                );
+            }
+            // Any type last, the richest cell first.
+            let mut any_type: Vec<(f64, LearningCell)> = Vec::new();
+            for row in &subject_cells {
+                if row.cell != *scoped
+                    && row.cell.same_question_modulo(scoped, true, ignore_executor)
+                    && let Some(estimate) = own_estimate_in_txn(vault, txn, &row.cell)?
+                {
+                    any_type.push((estimate.runs, row.cell.clone()));
+                }
+            }
+            any_type.sort_by(|a, b| b.0.total_cmp(&a.0));
+            candidates.extend(any_type.into_iter().map(|(_, c)| c));
 
-        for candidate in candidates {
-            if let Some(borrowed) = own_estimate_in_txn(vault, txn, &candidate)? {
-                let weight_runs = (borrowed.runs + borrowed.prior.weight_runs).min(cap);
-                let from = candidate.conflict_key();
-                let prior = Prior {
-                    origin,
-                    value: borrowed.value.clone(),
-                    weight_runs,
-                    from: Some(from),
-                };
-                return Ok(LearningRead {
-                    estimate: Estimate::from_prior(prior, borrowed.of.clone(), window),
-                    own: false,
-                    borrowed_from: Some(candidate),
-                });
+            for candidate in candidates {
+                if let Some(borrowed) = own_estimate_in_txn(vault, txn, &candidate)? {
+                    return Ok(borrowed_read(candidate, &borrowed, origin, cap, window));
+                }
             }
         }
     }
@@ -238,6 +241,58 @@ pub(crate) fn read_learning_in_txn(
         own: false,
         borrowed_from: None,
     })
+}
+
+/// A project cell's read of the vault's same question (FIX 6038): the vault
+/// cell's own head as a `parent` prior, else its stored prior as it was
+/// stored (a hub import's, a pattern's `works well for`). `None` when the
+/// vault cell has neither.
+fn vault_twin_read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    twin: &LearningCell,
+    cap: f64,
+    window: super::estimate::Window,
+) -> Result<Option<LearningRead>> {
+    if let Some(borrowed) = own_estimate_in_txn(vault, txn, twin)? {
+        let read = borrowed_read(twin.clone(), &borrowed, PriorOrigin::Parent, cap, window);
+        return Ok(Some(read));
+    }
+    let digest = twin.digest();
+    let Some(row) = CELL.get(&vault.store, txn, &digest)? else {
+        return Ok(None);
+    };
+    let prior = cell_prior_in_txn(vault, txn, &row, &digest)?;
+    Ok(
+        (prior.origin != PriorOrigin::Shipped).then(|| LearningRead {
+            estimate: Estimate::from_prior(prior, row.of.clone(), window),
+            own: false,
+            borrowed_from: Some(twin.clone()),
+        }),
+    )
+}
+
+/// A zero-run read over `borrowed`, `candidate`'s own head, as an `origin`
+/// prior worth its runs and prior weight, at most `cap`.
+fn borrowed_read(
+    candidate: LearningCell,
+    borrowed: &Estimate,
+    origin: PriorOrigin,
+    cap: f64,
+    window: super::estimate::Window,
+) -> LearningRead {
+    let weight_runs = (borrowed.runs + borrowed.prior.weight_runs).min(cap);
+    let prior = Prior {
+        origin,
+        value: borrowed.value.clone(),
+        weight_runs,
+        from: Some(candidate.conflict_key()),
+    };
+    LearningRead {
+        estimate: Estimate::from_prior(prior, borrowed.of.clone(), window),
+        own: false,
+        borrowed_from: Some(candidate),
+    }
 }
 
 /// The form an unregistered cell reads in: Beta for the success members, a

@@ -6,11 +6,13 @@ use std::collections::BTreeMap;
 use crate::entity_id::EntityId;
 use crate::learning::{Anchor, EvidenceSource, LearningPredicate};
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt};
+use crate::team::receipt::capture_parents_in_txn;
 use crate::{Error, Result, Vault};
 
 use super::codec::evidence_after;
 use super::credit_join::{
-    credit_cell, credit_evidence, credit_shares_in_txn, joined_fields_in_txn, seal_decay_in_txn,
+    credit_cell, credit_evidence, credit_shares_in_txn, joined_fields_in_txn, record_credit_in_txn,
+    seal_decay_in_txn,
 };
 use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, credit_decay_in_txn, receipt_id};
 use super::{
@@ -249,10 +251,15 @@ fn project(
                 observations.entry(subject).or_insert((true, share.weight));
             }
         }
+        let parents = if observations.is_empty() {
+            Vec::new()
+        } else {
+            capture_parents_in_txn(vault, txn, fields.project, &fields.type_ref)?
+        };
         for (subject, (success, weight)) in observations {
             let cell = credit_cell(&fields, &outcome.axis, subject);
             let learning = credit_evidence(&credit, &fields, success, weight);
-            crate::learning::record_evidence_in_txn(vault, txn, &cell, &learning, now)?;
+            record_credit_in_txn(vault, txn, &cell, &parents, &learning, now)?;
         }
         // If facts were unavailable, leave this receipt retryable rather than
         // sealing an empty result before attribution has caught up.

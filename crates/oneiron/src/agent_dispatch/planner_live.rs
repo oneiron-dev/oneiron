@@ -455,17 +455,19 @@ impl AgentDispatcher<'_> {
         tree.validate_current_ref(&need.type_ref)
             .map_err(|_| invalid("spawn type stamp is not in the tree in force"))?;
         let type_ref = TypeRef::from(&need.type_ref);
-        let donor = Donor::for_stamp(self.vault, &txn, &tree, &type_ref);
+        let donor = Donor::for_stamp(self.vault, &txn, &tree, project, &type_ref);
         let parents = TypeTree::from(tree).ancestors(&type_ref);
 
         // Solo is a shape: its rate is the seat AGENT_DEF's own reliability
-        // on this type, read with the ordinary backoff.
+        // on this type in the run's project (FIX 6038), read with the
+        // ordinary backoff.
         let mut reads = Vec::with_capacity(models.len());
         for model in &models {
             let cell = LearningCell::new(LearningPredicate::Reliability, model.agent_def)
                 .executor(model.model.as_str())
                 .type_ref(type_ref.clone())
-                .axis(PAYOFF_AXIS);
+                .axis(PAYOFF_AXIS)
+                .project(project);
             let read = read_learning_in_txn(self.vault, &txn, &cell, &parents)?;
             reads.push((model.model.clone(), cell, read));
         }
@@ -486,6 +488,7 @@ impl AgentDispatcher<'_> {
                 let card = planner_card_in_txn(
                     self.vault,
                     &txn,
+                    project,
                     &type_ref,
                     &parents,
                     &[model.model.as_str().to_owned()],
@@ -498,7 +501,7 @@ impl AgentDispatcher<'_> {
                             .insert(model.model.clone(), measured(&entry.read));
                     }
                 }
-                for ((skill, width), (wins, losses)) in outcomes.folded(&type_ref, &card) {
+                for ((skill, width), (wins, losses)) in outcomes.folded(project, &type_ref, &card) {
                     if let Some(candidate) = admitted(&mut patterns, skill) {
                         let cell = candidate
                             .widths
