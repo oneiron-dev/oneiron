@@ -468,7 +468,9 @@ fn validate(input: &ModelStepSubmit) -> MemoryResult<()> {
         return Err(MemoryError::bad_request("step_key must not be empty"));
     }
     if input.retry.max_attempts == 0 {
-        return Err(MemoryError::bad_request("max_attempts must be at least one"));
+        return Err(MemoryError::bad_request(
+            "max_attempts must be at least one",
+        ));
     }
     Ok(())
 }
