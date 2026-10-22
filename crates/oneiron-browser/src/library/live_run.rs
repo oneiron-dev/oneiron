@@ -220,9 +220,16 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
     input: LibraryRunInput,
 ) -> Result<LibraryRunOutput, BrowserError> {
     let started = std::time::Instant::now();
-    let FiledWorkflow { program, proof } = library
-        .program(&input.workflow)?
-        .ok_or_else(|| BrowserError::NoWorkflow(input.workflow.clone()))?;
+    let Some(FiledWorkflow { program, proof }) = library.program(&input.workflow)? else {
+        // A retire the library's record proves answers its own code (FIX
+        // 8073); a program it holds no record of stays missing.
+        let workflow = input.workflow.clone();
+        return Err(if library.is_retired(&workflow)? {
+            BrowserError::WorkflowRetired(workflow)
+        } else {
+            BrowserError::NoWorkflow(workflow)
+        });
+    };
     let mode = effective_mode(input.mode, &proof);
     let (args, text) = typed_args(&input)?;
     let (steps, checks) = super::secret_slots::as_text(&program, &text).fill(&args)?;

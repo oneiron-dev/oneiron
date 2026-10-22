@@ -284,6 +284,11 @@ pub trait WorkflowLibrary: Send {
         workflow: &str,
         reason: Option<&str>,
     ) -> Result<Option<LibraryCard>, BrowserError>;
+    /// Whether the library's record proves `workflow` retired (FIX 8073);
+    /// false where none does, or the library keeps no retires.
+    fn is_retired(&mut self, _workflow: &str) -> Result<bool, BrowserError> {
+        Ok(false)
+    }
     /// The refusal a proposal's `supersedes` link would meet at its filing,
     /// read before its fresh guest starts (FIX 7876): a ref that does not
     /// parse, or names no program of `site` the proposer may succeed. The

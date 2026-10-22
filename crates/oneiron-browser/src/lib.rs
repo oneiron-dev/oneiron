@@ -1265,6 +1265,10 @@ pub enum BrowserError {
     Decider(String),
     #[error("the library holds no workflow {0}")]
     NoWorkflow(String),
+    /// FIX 8073: the workflow a run named was retired, as the library's
+    /// record of its retire proves; one with no record stays `NoWorkflow`.
+    #[error("the library's workflow {0} was retired")]
+    WorkflowRetired(String),
     #[error("the workflow library failed: {0}")]
     Library(String),
     #[error("this driver does not serve {0}")]
@@ -2145,6 +2149,7 @@ impl BrowserError {
             Self::AskUp(_) => "routine_ask_up",
             Self::Decider(_) => "routine_decider_failed",
             Self::NoWorkflow(_) => "browser_no_workflow",
+            Self::WorkflowRetired(_) => "workflow_retired",
             Self::Library(_) => "browser_library_failed",
             Self::Unsupported(_) => "browser_unsupported",
             Self::TakenOver(_) => "desktop_taken_over",

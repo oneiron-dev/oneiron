@@ -72,6 +72,17 @@ impl WorkflowLibrary for VaultLibrary {
         })
     }
 
+    /// Whether the vault's record of a retire proves `workflow` retired (FIX
+    /// 8073); a ref that does not parse names none.
+    fn is_retired(&mut self, workflow: &str) -> Result<bool, BrowserError> {
+        let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
+            return Ok(false);
+        };
+        oneiron::browser_library::retired_workflow(&self.server.vault, id)
+            .map(|retired| retired.is_some())
+            .map_err(library_failed)
+    }
+
     /// The proposal's `supersedes` link, read before its replay (FIX 7876):
     /// a ref that does not parse, or names no program of `site` the caller
     /// may succeed. The filing's write checks it again.
