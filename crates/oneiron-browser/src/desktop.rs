@@ -123,8 +123,6 @@ const WALK_MS_MOST: u64 = 12_000;
 const WALK_ON_MS_MOST: u64 = 120_000;
 /// Screenshots the session holds for a later image read.
 const MEDIA: usize = 16;
-/// The longest reason a `handover` ask may give, in characters.
-const HANDOVER_REASON_CHARS: usize = 500;
 /// The square a click at a point checks, in screenshot pixels each way from
 /// the point: it must look as it did in the image the point was read from.
 const CLICK_CHECK_RADIUS: u32 = 16;
@@ -705,6 +703,7 @@ impl DesktopSession {
                 taken_at_ms: *taken_at_ms,
                 returned_at_ms,
                 inputs: *inputs,
+                refusal: None,
             },
             Takeover::Held { .. } => return Err(BrowserError::TakenOver("held".to_owned())),
             Takeover::Waiting { reason, .. } => TakeoverRecord {
@@ -713,6 +712,7 @@ impl DesktopSession {
                 taken_at_ms: returned_at_ms,
                 returned_at_ms,
                 inputs: 0,
+                refusal: None,
             },
             Takeover::Agent => {
                 return Err(BrowserError::Input("the agent has the desktop".to_owned()));
@@ -1255,8 +1255,10 @@ impl DesktopSession {
             action: None,
             source_url: None,
             source_origin: None,
+            source_title: None,
             tab: None,
             result_tab: None,
+            result_unread: None,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(started),
         };
@@ -2493,15 +2495,13 @@ impl BrowserDriver for DesktopSession {
 
     fn handover(&mut self, input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
         self.live()?;
-        let reason = input
-            .reason
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        if reason.is_empty() || reason.chars().count() > HANDOVER_REASON_CHARS {
-            return Err(BrowserError::Input(format!(
-                "a handover gives its reason in 1 to {HANDOVER_REASON_CHARS} characters"
-            )));
+        // The reason stands whole, as given (FIX 8012): blankness alone
+        // refuses it, never its length.
+        let reason = input.reason;
+        if reason.trim().is_empty() {
+            return Err(BrowserError::Input(
+                "a handover gives its reason".to_owned(),
+            ));
         }
         let asked_at_ms = now_ms();
         self.takeover = Takeover::Waiting {

@@ -3,6 +3,7 @@
 //! The code_mode_verbs root defines `RunGuests`, `RunBrowser` and `RunDesktop`.
 
 use super::*;
+use oneiron_browser::PressGrants;
 
 /// Starts one run's guest from a pinned image through the engine's tier
 /// selector, behind the run's egress proxy, on `command`, and receipts its
@@ -95,8 +96,14 @@ pub(super) fn drive_run_guest<S: RunGuestSession>(
 /// and a budgeted grant covers that many sends as one reviewed batch.
 /// No grant leaves the floor: a press per send.
 pub(super) fn browser_send_policy(server: &SyncServer) -> SendPolicy {
+    grants_policy(&server.vault)
+}
+
+/// The press policy `vault`'s standing action grants set now, as
+/// [`browser_send_policy`] reads it; the floor where they cannot be read.
+fn grants_policy(vault: &oneiron::Vault) -> SendPolicy {
     let mut policy = SendPolicy::default();
-    let Ok(grants) = server.vault.active_standing_consent_grants() else {
+    let Ok(grants) = vault.active_standing_consent_grants() else {
         return policy;
     };
     for grant in &grants {
@@ -128,6 +135,16 @@ pub(super) fn browser_send_policy(server: &SyncServer) -> SendPolicy {
         }
     }
     policy
+}
+
+/// The vault's grants, read again at each classified browser send (FIX
+/// 4613): a grant revoked during the run covers no later send.
+struct VaultPressGrants(Arc<oneiron::Vault>);
+
+impl PressGrants for VaultPressGrants {
+    fn current(&self) -> SendPolicy {
+        grants_policy(&self.0)
+    }
 }
 
 impl FreshGuest for RunFreshGuest {
@@ -257,6 +274,9 @@ impl RunBrowser {
         if !self.policy_set.swap(true, Ordering::AcqRel) {
             driver.set_policy(self.guest.policy.clone());
         }
+        // Each classified send reads the grants again (FIX 4613); the sends
+        // a budget paid stay on the session every door shares (FIX 4615).
+        driver.set_press_grants(Box::new(VaultPressGrants(Arc::clone(&self.vault))));
         driver.set_decider(Box::new(decider));
         // A Fill's writer (CUA E6): role-bound calls on the caller's run.
         driver.set_field_writer(Box::new(fields));

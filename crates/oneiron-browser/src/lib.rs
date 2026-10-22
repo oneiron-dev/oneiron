@@ -97,7 +97,9 @@ pub use row::{Row, RowFieldGap, RowGapField, RowGapReason};
 pub use secret::{SecretCustody, SecretUse};
 pub use secret_fields::{RowSecret, SecretKind, SecretNote};
 #[cfg(feature = "driver")]
-pub use session::{BrowserGuest, BrowserGuestStarter, BrowserSession, FreshGuest, StartedGuest};
+pub use session::{
+    BrowserGuest, BrowserGuestStarter, BrowserSession, FreshGuest, PressGrants, StartedGuest,
+};
 pub use stop::{
     AskUpReason, BatchStopCause, CheckReceipt, ClockScope, FailedStepReceipt, STRICT_DENIED,
     StrictDenial, StrictDenied,
@@ -287,6 +289,10 @@ pub struct EffectReceipt {
     /// absent on a page with no such origin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_origin: Option<String>,
+    /// That page's title, as an observation shows it (FIX 8011): `url` and
+    /// `title` name the page the act left, its result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_title: Option<String>,
     /// The tab the act acted in, by the browser's stable id for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab: Option<String>,
@@ -294,6 +300,13 @@ pub struct EffectReceipt {
     /// act opened one, or closed its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_tab: Option<String>,
+    /// The act's input was sent, then settling or reading the page it left
+    /// failed (FIX 8010): that failure's stable code, which its verb then
+    /// answered. `url` and `title` name the page as it read after, else
+    /// where the act began; no observation backs the receipt, and the
+    /// input is never sent again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_unread: Option<String>,
     /// How long the effect took, in milliseconds of the monotonic clock:
     /// from its verb's entry through its screenshot and this receipt,
     /// before the host keeps the screenshot.
@@ -1416,6 +1429,13 @@ pub trait BrowserDriver: Send {
     /// step that worked. A driver that keeps no history notes nothing.
     fn note_stop(&mut self, _stop: StepStop) {}
 
+    /// The receipt of the input the last effect verb sent before it failed
+    /// (FIX 8010): its settle or its read after failed, and the effect
+    /// stands. Taken once; a driver that receipts no such input has none.
+    fn sent_receipt(&mut self) -> Option<EffectReceipt> {
+        None
+    }
+
     /// Starts recording a demonstration of the attached browser (CUA E9a):
     /// only a browser session on a Chromium guest records one; any other
     /// driver records none, and never answers an empty recording.
@@ -1722,7 +1742,12 @@ pub trait BrowserDriver: Send {
                         return Ok(progress::handed_up(output, index, page, started));
                     }
                 }
-                Err(stop) => {
+                Err(mut stop) => {
+                    // An input the step sent stands with its receipt (FIX
+                    // 8010), as a Fill's does.
+                    if stop.receipt.is_none() {
+                        stop.receipt = self.sent_receipt();
+                    }
                     stop::noted(self, name, &stop);
                     return Ok(stop::stopped(self, output, index, stop, base, started));
                 }

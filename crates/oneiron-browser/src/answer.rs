@@ -20,6 +20,11 @@ pub struct TakeoverRecord {
     pub taken_at_ms: u64,
     pub returned_at_ms: u64,
     pub inputs: u64,
+    /// The host's refusal of a page request the person's own input made,
+    /// still pending when they handed the browser back (FIX 7409): theirs,
+    /// never the answer to an act of the agent's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<crate::DestinationRefusal>,
 }
 
 /// The desktop's verbs moved to another window (CUA-001): an act opened a

@@ -147,8 +147,10 @@ const SWITCH_ENGINE_VERB: &str = "self.browser.switch_engine";
 /// engine), that verb also its one bare suggestion where they name it (FIX
 /// 6966). They are engine text, never page content. A destination refusal
 /// of the host's request handler (FIX 7122) is worded by the host: its
-/// reason as the code, its message as the words. Every other code is worded
-/// by its code, as before.
+/// reason as the code, its message as the words. A press a control waits on
+/// and a ref that no longer stands carry the error's own words, naming the
+/// control and the ref (FIX 249): a row's name as the read shows it, a
+/// secret by its handle. Every other code is worded by its code, as before.
 pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
     match error {
         BrowserError::Unsupported(_) => {
@@ -168,6 +170,11 @@ pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
             message: refused.message.clone(),
             suggestions: Vec::new(),
         },
+        BrowserError::NeedsPress(_) | BrowserError::StaleRef(_) => AgentVerbRefusalWords {
+            code: error.code().to_owned(),
+            message: error.to_string(),
+            suggestions: Vec::new(),
+        },
         _ => code_words(error.code().to_owned()),
     }
 }
@@ -175,9 +182,9 @@ pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
 /// The words a run's newest browser call was refused with, for the run's
 /// door to copy into the program's answer (FIX 6887): kept where they say
 /// more than their code, as [`refusal_words`] words `browser_unsupported`,
-/// naming the verb that serves what was refused, and a destination refusal
-/// in the host's own words (FIX 7122). A call that answered, or was refused
-/// another way, keeps none.
+/// naming the verb that serves what was refused, a destination refusal in
+/// the host's own words (FIX 7122), and a press's control or a stale ref
+/// (FIX 249). A call that answered, or was refused another way, keeps none.
 #[derive(Default)]
 pub(super) struct KeptRefusal(Mutex<Option<AgentVerbRefusalWords>>);
 

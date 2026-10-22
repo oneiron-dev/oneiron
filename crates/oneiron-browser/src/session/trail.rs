@@ -54,10 +54,12 @@ impl Event {
     }
 }
 
-/// Where an act began: the front page's URL and origin, and its tab.
+/// Where an act began: the front page's URL and origin, its URL and title
+/// as an observation shows them (FIX 8011, 8340), and its tab.
 pub(super) struct Source {
     pub(super) url: Option<String>,
     pub(super) origin: Option<String>,
+    pub(super) shown: Option<(String, String)>,
     pub(super) tab: String,
 }
 
@@ -139,11 +141,12 @@ pub(super) fn typed_action(
 impl BrowserSession {
     /// Where the act about to run begins: the page and the tab in front.
     pub(super) fn source(&self) -> Source {
-        let url = self.driver.url().ok();
+        let (url, shown) = self.driver.page_shown().ok().unzip();
         let origin = url.as_deref().and_then(origin_of);
         Source {
             url,
             origin,
+            shown,
             tab: self.driver.front_target().to_owned(),
         }
     }
@@ -219,6 +222,7 @@ impl BrowserSession {
     ) -> Result<T, BrowserError> {
         let from = self.receipt_seq;
         self.press_refused = None;
+        self.unread = None;
         self.recording_act(from);
         let acted = act(self);
         if let Err(error) = &acted {

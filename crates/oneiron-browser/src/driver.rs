@@ -138,6 +138,9 @@ pub(crate) struct CdpDriver {
     /// A closed tab still in front when it closed, whose snapshots go once
     /// another tab is in front (FIX 7411).
     held_closed: Vec<String>,
+    /// The last act's input was sent (FIX 8010): its effect stands even
+    /// when settling or reading the page after it failed.
+    sent: bool,
 }
 
 /// One page target the driver follows, with its session on it, and the
@@ -254,6 +257,7 @@ impl CdpDriver {
             typed: HashMap::new(),
             secret_nodes: Vec::new(),
             held_closed: Vec::new(),
+            sent: false,
         };
         if driver.pipe.mediated() {
             let deadline = Instant::now() + CALL;
@@ -540,6 +544,19 @@ impl CdpDriver {
     /// The page's URL as it is now.
     pub(crate) fn url(&self) -> Result<String, BrowserError> {
         Ok(self.page_info()?.0)
+    }
+
+    /// The page's URL as it is now, and its URL and title as an
+    /// observation shows them (FIX 8011, 8340).
+    pub(crate) fn page_shown(&self) -> Result<(String, (String, String)), BrowserError> {
+        let (url, title) = self.page_info()?;
+        let shown = self.shown_page(url.clone(), title);
+        Ok((url, shown))
+    }
+
+    /// Whether the last act's input was sent, taken (FIX 8010).
+    pub(crate) fn take_sent(&mut self) -> bool {
+        std::mem::take(&mut self.sent)
     }
 
     /// The page's URL and title as they are now.
@@ -980,6 +997,8 @@ impl CdpDriver {
         let set = setup(self);
         let mark = if set.is_ok() { self.mark(watch) } else { None };
         let acted = set.and_then(|()| act(self));
+        // Sent: a failure from here on leaves the effect standing (FIX 8010).
+        self.sent = acted.is_ok();
         let fact = match (&acted, mark) {
             (Ok(()), Some(mark)) => self.no_effect(&mark, watch, Instant::now()),
             _ => None,
