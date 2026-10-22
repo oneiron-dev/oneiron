@@ -169,6 +169,12 @@ pub struct PermitFacts {
     /// unknown, for a call no such code named them for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_rows: Option<Vec<EntityId>>,
+    /// Who acted to start the call, when its host names one apart from who
+    /// pays (`RunAdmission::initiated_by`, FIX 8970): the person, or the
+    /// designed voice's creator, a paid voice clone runs for. Attribution
+    /// only; `payer` and `payer_person` are unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initiator: Option<EntityId>,
 }
 
 /// Where a run admission writes its receipts. The host persists or ships

@@ -237,6 +237,27 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         }
     }
 
+    /// [`Self::admit_in_line`] whose wait ends at `wait` rather than at the
+    /// line's own (FIX 9110): the same line, order and permit as
+    /// [`Self::admit_blocking_for`], awaited instead of holding a thread. The
+    /// line's own wait is left as it is for every other caller.
+    pub fn admit_in_line_for(
+        &self,
+        key: K,
+        wait: Duration,
+    ) -> impl Future<Output = Result<LinePermit, WaitTimedOut>> + Send + 'static {
+        let entry = self.enter(Some(key));
+        async move {
+            let mut place = match entry {
+                Entry::Admitted(permit) => return Ok(permit),
+                Entry::Queued(place) => place,
+            };
+            let waiter = Arc::clone(&place.waiter);
+            let _ = tokio::time::timeout(wait, waiter.granted()).await;
+            place.settle().ok_or(WaitTimedOut)
+        }
+    }
+
     /// [`Self::admit`] on this thread, for work that runs on its own thread
     /// rather than on a runtime.
     pub fn admit_blocking(&self, key: K) -> Result<LinePermit, WaitTimedOut> {

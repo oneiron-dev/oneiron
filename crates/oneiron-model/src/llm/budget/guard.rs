@@ -130,6 +130,14 @@ impl BudgetGuard {
     /// cap or capacity is read, so a full or exhausted paid line never holds
     /// it. Every other call reserves on the paid line, its purpose's policy
     /// rows capping it.
+    ///
+    /// This low-level door trusts the request it is given (FIX 8998): its
+    /// `envelope.locality` must be host-bound (the seat, route or offer that
+    /// will actually serve the call, stamped by host code before the request
+    /// is hashed or admitted), never a value read from caller JSON. A caller
+    /// that relays a request someone else built inherits that binding, and
+    /// one that cannot vouch for it binds the locality itself before this
+    /// call; this door adds no second check.
     pub fn admit_for_request(&self, request: &LlmRequest) -> Result<BudgetAdmission, BudgetDenied> {
         if request.envelope.locality == ModelLocality::OnDevice {
             return self.admit_local();

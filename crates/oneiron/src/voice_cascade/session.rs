@@ -361,6 +361,10 @@ impl VoiceCascadeSession {
 
     /// Reserve for the active generation before starting its backend. The session
     /// retains the issuing guard, so barge-in cannot settle against a foreign meter.
+    /// A trusted-host seam (FIX 8998): `request`'s `envelope.locality` must be the
+    /// host-bound locality of the backend that serves it, as
+    /// [`crate::llm::BudgetGuard::admit_for_request`] requires; an on-device one is
+    /// admitted unmetered.
     pub fn reserve_generation_budget(
         &mut self,
         generation: GenerationEpoch,

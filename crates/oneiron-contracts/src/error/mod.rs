@@ -44,8 +44,10 @@ pub use self::sync::{
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Stable coarse-grained category for [`Error`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Stable coarse-grained category for [`Error`]. On the wire and in a stored record it
+/// is its snake_case name (FIX 9177), one per category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ErrorKind {
     Storage,

@@ -910,8 +910,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             // A turn demoted after the model answered waits too (FIX 6060),
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
-                if let Err(error) =
-                    resources.accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
+                if let Err(error) = resources
+                    .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
+                    .await
                 {
                     return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
                 }
@@ -923,8 +924,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 candidates,
                 retry_at_ms,
             }) => {
-                if let Err(error) =
-                    resources.accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
+                if let Err(error) = resources
+                    .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
+                    .await
                 {
                     return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
                 }

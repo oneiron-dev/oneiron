@@ -13,7 +13,7 @@ use super::super::store::owned_head;
 use super::{ASKED, ArtifactAskRecord, ArtifactAskStanding, ArtifactAsked, Asking, baseline};
 use crate::edit_roundtrip::ArtifactAskRun;
 use crate::edit_settle::PendingProposalView;
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, ErrorKind, Result, Vault};
 
 impl Asking<'_> {
     /// Runs one ask of `artifact` under an ask id of its own, minted before the ask and
@@ -37,7 +37,7 @@ impl Asking<'_> {
             self.now,
             ask_id.to_hex()
         );
-        let event = |proposal_ref: Option<String>, failed: Option<String>| ArtifactAskEvent {
+        let event = |proposal_ref: Option<String>, failed: Option<ErrorKind>| ArtifactAskEvent {
             ask_id,
             artifact,
             question_version: self.version,
@@ -45,12 +45,13 @@ impl Asking<'_> {
             asked_at: self.now,
             proposal_ref,
             failed,
+            parent_proposal_ref: None,
         };
         let committed = ask(&reference).and_then(|run| {
             vault.with_write_txn_grouped(|wtxn| {
                 let proposed = match &run.proposal {
                     Some(proposal) => Some(vault.retain_edit_proposal_in_txn(
-                        wtxn, &artifact, proposal, None, self.actor, self.now,
+                        wtxn, &artifact, proposal, None, None, self.actor, self.now,
                     )?),
                     None => None,
                 };
@@ -70,8 +71,7 @@ impl Asking<'_> {
             })
         });
         if let Err(error) = &committed {
-            let error_kind = error.kind();
-            let failed = event(None, Some(format!("{error_kind:?}")));
+            let failed = event(None, Some(error.kind()));
             let logged = vault.with_write_txn_grouped(|wtxn| {
                 let principal = self.record.principal;
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, failed)
@@ -100,32 +100,31 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
         proposal_ref: event.proposal_ref.clone(),
         ask_id: Some(event.ask_id),
     };
-    ask_record(vault, event.artifact, &stamp, event.failed.clone())
+    let mut record = ask_record(vault, event.artifact, &stamp, event.failed)?;
+    record
+        .parent_proposal_ref
+        .clone_from(&event.parent_proposal_ref);
+    Ok(record)
 }
 
-/// `stamp`'s ask of `artifact`, with where its answers stand: none held, still waiting
-/// for Keep, kept past the version it asked, or closed.
+/// `stamp`'s ask of `artifact`, with where its answers stand: failed, none held, still
+/// waiting for Keep, kept past the version it asked, or closed. A failed ask is
+/// [`ArtifactAskStanding::Failed`] before its proposal or baseline is read (FIX 9177).
 fn ask_record(
     vault: &Vault,
     artifact: EntityId,
     stamp: &ArtifactAsked,
-    failed: Option<String>,
+    failed: Option<ErrorKind>,
 ) -> Result<ArtifactAskRecord> {
     let asked = stamp
         .versions
         .iter()
         .find(|(id, _)| *id == artifact)
         .map_or(0, |(_, version)| *version);
-    let standing = match (&stamp.proposal_ref, baseline(vault, artifact, stamp)?) {
-        (None, _) => ArtifactAskStanding::Unanswered,
-        (Some(_), None) => ArtifactAskStanding::Waiting,
-        (Some(_), Some(versions)) => versions
-            .iter()
-            .find(|(id, _)| *id == artifact)
-            .filter(|(_, kept)| *kept > asked)
-            .map_or(ArtifactAskStanding::Closed, |(_, kept)| {
-                ArtifactAskStanding::Kept { version: *kept }
-            }),
+    let standing = if failed.is_some() {
+        ArtifactAskStanding::Failed
+    } else {
+        settled_standing(vault, artifact, stamp, asked)?
     };
     Ok(ArtifactAskRecord {
         artifact,
@@ -135,8 +134,41 @@ fn ask_record(
         proposal_ref: stamp.proposal_ref.clone(),
         standing,
         ask_id: stamp.ask_id,
-        failed,
+        failed: failed.map(error_kind_wire_name),
+        parent_proposal_ref: None,
     })
+}
+
+/// `kind`'s stable snake_case wire name (FIX 9177), as a failed ask's record
+/// carries it. A string, not the enum, so the facade mirrors (UniFFI caps an enum
+/// at 256 variants) need not copy every error category.
+fn error_kind_wire_name(kind: ErrorKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{kind:?}"))
+}
+
+/// Where a completed ask's answers stand, by the walk the next ask's baseline takes.
+fn settled_standing(
+    vault: &Vault,
+    artifact: EntityId,
+    stamp: &ArtifactAsked,
+    asked: u64,
+) -> Result<ArtifactAskStanding> {
+    Ok(
+        match (&stamp.proposal_ref, baseline(vault, artifact, stamp)?) {
+            (None, _) => ArtifactAskStanding::Unanswered,
+            (Some(_), None) => ArtifactAskStanding::Waiting,
+            (Some(_), Some(versions)) => versions
+                .iter()
+                .find(|(id, _)| *id == artifact)
+                .filter(|(_, kept)| *kept > asked)
+                .map_or(ArtifactAskStanding::Closed, |(_, kept)| {
+                    ArtifactAskStanding::Kept { version: *kept }
+                }),
+        },
+    )
 }
 
 /// Every ask the caller's standing question has made of its artifacts, across its

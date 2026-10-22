@@ -8,7 +8,9 @@
 //! reads the queued CLI attempts it can run and claims each by id through
 //! the queue's existing lease ([`ByoaDispatcher::claim_host_cli_attempt`]),
 //! so an attempt another runner leased keeps its lease and nothing runs
-//! twice. For each claim it:
+//! twice. It claims only attempts whose seat names no machine or names this
+//! install's machine id (the vault's own `host`), so an attempt aimed at
+//! another machine's runner stays for that runner. For each claim it:
 //!
 //! 1. registers the run's T1 destinations on the server's
 //!    [`SecretDestinations`], keyed by the leased attempt, from the
@@ -120,8 +122,9 @@ impl SyncServer {
 
     /// The CLI attempts this host can run now. Blocking.
     fn ready_seat_runs(&self) -> Vec<AttemptId> {
+        let machine = self.seat_host_machine();
         ByoaDispatcher::new(self.vault(), NoEndpoints, NoEgress)
-            .ready_host_cli_attempts(now_ts(), runs_here)
+            .ready_host_cli_attempts(now_ts(), machine.as_deref(), runs_here)
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "the seat host cannot read its attempts; it retries");
                 Vec::new()
@@ -134,7 +137,15 @@ impl SyncServer {
         let vault: &Vault = self.vault();
         let mut dispatcher = ByoaDispatcher::new(vault, NoEndpoints, NoEgress)
             .with_input_stager(CheckoutStager { vault });
-        let fence = match dispatcher.claim_host_cli_attempt(id, LEASE_OWNER, now_ts(), runs_here) {
+        let machine = self.seat_host_machine();
+        let claimed = dispatcher.claim_host_cli_attempt(
+            id,
+            LEASE_OWNER,
+            now_ts(),
+            machine.as_deref(),
+            runs_here,
+        );
+        let fence = match claimed {
             Ok(Some(fence)) => fence,
             Ok(None) => return,
             Err(error) => {
@@ -180,6 +191,21 @@ impl SyncServer {
         });
         if let Err(error) = captured {
             tracing::warn!(%error, "a seat run's exhaust was not captured");
+        }
+    }
+}
+
+impl SyncServer {
+    /// This host's machine label for a seat's `machine_ref` (FIX 4552): this
+    /// install's machine id, as the vault reports its `host`. `None` before
+    /// one is minted, so the host then claims only attempts naming no machine.
+    fn seat_host_machine(&self) -> Option<String> {
+        match self.vault().local_machine() {
+            Ok(machine) => machine.map(|machine| machine.id.to_hex()),
+            Err(error) => {
+                tracing::warn!(%error, "the seat host cannot read its machine id");
+                None
+            }
         }
     }
 }

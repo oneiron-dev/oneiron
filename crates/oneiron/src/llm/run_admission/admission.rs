@@ -59,6 +59,9 @@ pub struct RunAdmission {
     /// assembled from, as the host code that assembled it named them
     /// ([`Self::sourced`], FIX 5760); `None`, unknown, on the run itself.
     sources: Option<Vec<crate::EntityId>>,
+    /// Who acted to start the calls admitted through this handle
+    /// ([`Self::initiated_by`], FIX 8970); `None` on the run itself.
+    initiator: Option<crate::EntityId>,
 }
 
 pub(super) struct RunInner {
@@ -213,6 +216,7 @@ impl RunAdmission {
                 paid: Mutex::new(BTreeSet::new()),
             }),
             sources: None,
+            initiator: None,
         }
     }
 
@@ -244,7 +248,26 @@ impl RunAdmission {
         Self {
             inner: Arc::clone(&self.inner),
             sources: rows,
+            initiator: self.initiator,
         }
+    }
+
+    /// This run, for calls `actor` acted to start (FIX 8970): every permit
+    /// admitted through the handle names it as its initiator, in its facts
+    /// and on its `Admitted` receipt. Attribution only: who pays, the line
+    /// and every admission rule are the run's, unchanged.
+    #[must_use]
+    pub fn initiated_by(&self, actor: Option<crate::EntityId>) -> Self {
+        Self {
+            initiator: actor,
+            ..self.clone()
+        }
+    }
+
+    /// `permit` naming this handle's initiator.
+    fn initiated(&self, mut permit: RunPermit) -> RunPermit {
+        permit.facts.initiator = self.initiator;
+        permit
     }
 
     /// The run's budget line as its meter reads now.
@@ -346,13 +369,16 @@ impl RunAdmission {
             ..call
         };
         let (revision, declaration) = self.inner.snapshot();
-        let admitted = self.inner.admit_model(
-            &declaration,
-            revision,
-            call,
-            request_digest,
-            self.sources.clone(),
-        );
+        let admitted = self
+            .inner
+            .admit_model(
+                &declaration,
+                revision,
+                call,
+                request_digest,
+                self.sources.clone(),
+            )
+            .map(|permit| self.initiated(permit));
         self.inner.receipt_for(
             revision,
             call.selector,
@@ -370,13 +396,16 @@ impl RunAdmission {
         quantity: u64,
     ) -> Result<RunPermit, RunDenied> {
         let (revision, declaration) = self.inner.snapshot();
-        let admitted = self.inner.admit_connector(
-            &declaration,
-            revision,
-            connector,
-            quantity,
-            self.sources.clone(),
-        );
+        let admitted = self
+            .inner
+            .admit_connector(
+                &declaration,
+                revision,
+                connector,
+                quantity,
+                self.sources.clone(),
+            )
+            .map(|permit| self.initiated(permit));
         self.inner
             .receipt_for(revision, None, &connector.connector, admitted, None)
     }
@@ -431,9 +460,10 @@ impl RunAdmission {
         };
         let (revision, declaration) = self.inner.snapshot();
         let declaration = declaration.with_reserve(reserve_units);
-        let admitted =
-            self.inner
-                .admit_model(&declaration, revision, call, None, self.sources.clone());
+        let admitted = self
+            .inner
+            .admit_model(&declaration, revision, call, None, self.sources.clone())
+            .map(|permit| self.initiated(permit));
         self.inner.receipt_for(
             revision,
             selector,

@@ -321,21 +321,45 @@ impl Vault {
 
     /// [`Self::retain_edit_proposal`] in the caller's own write transaction, for a
     /// writer that commits the proposal beside rows of its own (a standing question's
-    /// ask and its stamp, FIX 2337). No read reaches this rail, so a named made_by
-    /// that names any row but its writer is refused (FIX 1229).
+    /// ask and its stamp, FIX 2337; a wake's re-ask and its marks, FIX 9174). A named
+    /// made_by is admitted here through `lane`, which [`Self::edit_retention_lane`]
+    /// settled before the transaction opened; with none, one that names any row but
+    /// its writer is refused (FIX 1229).
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn retain_edit_proposal_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         artifact_id: &EntityId,
         proposal: &EditProposal,
         made_by: Option<&MadeBy>,
+        lane: Option<&crate::claim::ScopedRead<'_>>,
         actor: WriteActor,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
-        admission::retention_lane(artifact_id, made_by, actor.entity_ref(), None)?;
+        match (lane, made_by) {
+            (Some(lane), Some(made_by)) => {
+                admission::admit_made_by_in_txn(self, wtxn, lane, made_by, actor.entity_ref())?;
+            }
+            _ => {
+                admission::retention_lane(artifact_id, made_by, actor.entity_ref(), None)?;
+            }
+        }
         let row = edit_pending_row(proposal, made_by, actor, retained_at)?;
         self.put_pending_in_txn(wtxn, artifact_id, &row)?;
         Ok(row.view(*artifact_id))
+    }
+
+    /// The lane a retention in the caller's own transaction admits `made_by` through
+    /// under `reader` (FIX 1229, 9174), settled before that transaction opens, since a
+    /// lane's grant clock commits on its own. `None` when nothing needs admitting.
+    pub(crate) fn edit_retention_lane<'v>(
+        &self,
+        artifact_id: &EntityId,
+        made_by: Option<&MadeBy>,
+        actor: WriteActor,
+        reader: Option<MadeByReader<'v>>,
+    ) -> Result<Option<crate::claim::ScopedRead<'v>>> {
+        admission::retention_lane(artifact_id, made_by, actor.entity_ref(), reader)
     }
 
     /// Offers one native organ result to an artifact as a waiting proposal,

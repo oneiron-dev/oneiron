@@ -104,6 +104,8 @@ pub use oneiron_model::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence,
     WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode, WorkerReadiness, WorkerStatus,
 };
+// FIX 9065: what each physical request measured, published on its lease while it runs.
+pub use oneiron_model::llm::{InferenceCallObservation, InferenceObservationId};
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use oneiron_model::llm::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 

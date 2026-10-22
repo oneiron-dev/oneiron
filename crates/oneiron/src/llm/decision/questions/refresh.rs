@@ -2,8 +2,10 @@
 //! then atomically recheck source, authority, version and pause before settling claims.
 
 mod asker;
+mod manual;
 
 pub(crate) use self::asker::{standing_asker, standing_asker_for_question};
+pub use self::manual::refresh_standing_question_with;
 
 use super::backfill::{BackfillAtKey, QUESTION_BACKFILL_AT};
 use super::graph_ask::{self, GraphAnswerer, GraphDecision, GraphUnitContext};

@@ -28,6 +28,9 @@ pub use artifact_refresh::{
     refresh_due_artifact_questions, refresh_due_artifact_questions_while,
 };
 pub(crate) use ask_history::erase_ask_history_actor_in_txn;
+pub(crate) use ask_history::{
+    StandingReask, record_failed_standing_reask, record_standing_reask_in_txn,
+};
 pub use backfill::schedule_backfill;
 pub use graph_ask::validate_decision as validate_unit_decision;
 pub use graph_ask::{
@@ -51,7 +54,7 @@ pub(crate) use refresh::answer_records_in_txn;
 pub use refresh::{
     RefreshBatch, RefreshFailure, answer_records, refresh_due_questions,
     refresh_due_questions_by_role, refresh_due_questions_by_role_while, refresh_due_questions_with,
-    refresh_question, refresh_question_with, standing_ask_route,
+    refresh_question, refresh_question_with, refresh_standing_question_with, standing_ask_route,
 };
 pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};

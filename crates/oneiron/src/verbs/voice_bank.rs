@@ -8,9 +8,9 @@
 //! person proof, owner of the vault or not, or a designed (synthetic) voice's
 //! creator on its credential, the owner by default; it is the voice's subject
 //! or creator and the decision's recorder, so no input names either, and the
-//! bank refuses another's voice. Only the pack put runs on an embedded
-//! handle: the rest need a host's clone wires, their localities and their
-//! paid runs.
+//! bank refuses another's voice. The pack put and the lineage read run on an
+//! embedded handle (FIX 8973): the rest need a host's clone wires, their
+//! localities and their paid runs.
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
@@ -337,4 +337,20 @@ pub fn read_voice_render_lineage_as(
     input: &VoiceRenderLineageRequest,
 ) -> MemoryResult<Vec<VoiceRenderEventView>> {
     Ok(vault.voice_render_lineage_as(actor, &input.voice_id)?)
+}
+
+/// `vault.voices.lineage` on an embedded handle (FIX 8973): as the vault's
+/// embedded owner when the handle is theirs, else as a designed voice's
+/// creator, the handle's bound actor on its read key, as the pack put picks
+/// its actor. Metadata only: the bank reads the actor's own voice, and no
+/// provider or locality is asked.
+pub fn read_voice_render_lineage(
+    memory: &Memory<'_>,
+    input: VoiceRenderLineageRequest,
+) -> MemoryResult<Vec<VoiceRenderEventView>> {
+    let actor = match memory.embedded_owner("vault.voices.lineage") {
+        Ok(owner) => VoiceBankActor::Person(owner),
+        Err(_) => VoiceBankActor::creator(memory)?,
+    };
+    read_voice_render_lineage_as(memory.vault(), &actor, &input)
 }

@@ -385,6 +385,10 @@ the response says it was clamped.
 On a self-hosted local vault, the server claims the queued official CLI
 attempts (claude, codex, opencode) and runs them itself (FIX 4552).
 `[runtime] seat_host = false` leaves them to another runner, as before.
+A seat whose `machine_ref` names a machine is run only by the host whose
+install machine id it names (the 32-hex `host` the owner origin reports);
+everywhere else its attempts stay for that machine's runner. A seat that
+names no machine is run by any seat host.
 `[runtime.host_destinations]` binds an environment variable to the effector
 the owner's secret binding names, for the processes such a run starts. It is
 empty by default, so no run is offered a T1 destination.
