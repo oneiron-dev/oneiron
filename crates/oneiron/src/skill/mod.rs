@@ -40,8 +40,8 @@ pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 pub use self::pack_load::LoadedSkillPack;
 pub(crate) use self::pack_load::skill_loadable;
 pub use self::record::{
-    SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
-    SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
+    SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_RECORD_BODY_KEYS,
+    SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
 };
 pub(crate) use self::resident::resident_of;
 pub use self::role::{SkillCallContract, SkillRole};
