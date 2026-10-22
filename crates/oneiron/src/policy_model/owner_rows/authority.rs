@@ -95,8 +95,9 @@ fn personal_owner_with(
     })
 }
 
-/// `None` for a personal vault. A shared vault whose creating owner holds no
-/// live Owner grant fails closed.
+/// `None` for a personal vault. A shared vault with no live Owner fails
+/// closed; a completed transfer or removal of its creating owner does not
+/// (FIX 10030).
 fn live_shared_members_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<LiveMembers>> {
     shared_members_in_txn(vault, txn, true)
 }
@@ -175,7 +176,12 @@ fn shared_members_with(
         .filter(|g| g.role == FederationGrantRole::Owner)
         .map(|g| g.member_ref)
         .collect();
-    if !owners.contains(&EntityId::from_hex(&creation.owner_ref).map_err(|_| invalid())?) {
+    // The creation record must still read as one; its creator is history,
+    // not a standing requirement. Ownership is the CURRENT conferring Owner
+    // grants, so a vault whose creator transferred or left keeps its other
+    // live Owners, and one with no live Owner at all fails closed (FIX 10030).
+    EntityId::from_hex(&creation.owner_ref).map_err(|_| invalid())?;
+    if owners.is_empty() {
         return Err(invalid());
     }
     Ok(Some(LiveMembers { grants, owners }))
