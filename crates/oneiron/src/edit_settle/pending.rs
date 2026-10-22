@@ -143,6 +143,9 @@ pub enum PendingProposalKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PendingProposalView {
     pub artifact_id: EntityId,
+    /// The artifact as a typed record ref (OF-063), built from its id with
+    /// no read.
+    pub artifact: crate::lens::RecordRef,
     pub proposal_ref: String,
     pub kind: PendingProposalKind,
     pub base_version: Option<u64>,
@@ -190,6 +193,11 @@ impl PendingRow {
         };
         PendingProposalView {
             artifact_id,
+            artifact: crate::lens::RecordRef::from_id(
+                crate::registry::ENTITY_TYPE_BLOB_ARTIFACT,
+                &artifact_id,
+                None,
+            ),
             proposal_ref: self.proposal_ref.clone(),
             kind: match self.body {
                 PendingBody::Edit { .. } => PendingProposalKind::Edit,

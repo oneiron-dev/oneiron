@@ -14,20 +14,22 @@ use super::{
 use super::{DeckProposeRejection, DeckTransaction};
 use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
-use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
+use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
-    REVIEW_IMAGE, SlideRenderer, SlideReviewError, SlideReviewImage, SlideReviewLabels,
-    SlideReviewRequest, SlideReviewUnit,
+    REVIEW_IMAGE, SlideAbstention, SlideJudgment, SlideRenderer, SlideReviewError,
+    SlideReviewImage, SlideReviewLabels, SlideReviewRequest, SlideReviewUnit,
+    SlideUnitRefusalReason,
 };
 use crate::edit_roundtrip::{
-    ArtifactAsk, DeckEditContext, DeckEditOutcome, FolderAsk, FolderItem, ParagraphAsk, RangeRef,
-    SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
+    ArtifactAsk, DeckEditContext, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk,
+    RangeRef, SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
 };
 use crate::edit_settle::{
     KeepUndo, MadeByReader, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::lens::RecordRef;
 use crate::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
     TypedDecision,
@@ -101,6 +103,9 @@ pub struct BornFromRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BornFromView {
     pub born: Vec<EntityId>,
+    /// `born` as typed record refs (OF-063), each of the kind its row is: a
+    /// source's births are any rows it made, not only artifacts.
+    pub born_records: Vec<RecordRef>,
     pub versions: Vec<BornFromArtifact>,
 }
 
@@ -140,8 +145,9 @@ pub struct NativeOutputRequest {
     pub content_base64: String,
     #[serde(default)]
     pub report: serde_json::Value,
+    /// The envelope Keep gives the version; absent gives the writer's own.
     #[serde(default)]
-    pub made_by: Option<serde_json::Value>,
+    pub made_by: Option<MadeBy>,
 }
 
 /// Keep, Discard or Undo of one proposal by its ref.
@@ -173,13 +179,13 @@ pub struct SlideReviewSubmit {
     /// `DecisionQuestion` (`{id, version, text, class, contract,
     /// accept_type}`), the same shape `vault.graph.ask` takes.
     pub question: DecisionQuestion,
-    /// Who the comments are by (`PptxAuthor`), as JSON.
-    pub author: serde_json::Value,
-    /// The display words, severity words included (`SlideReviewLabels`), as JSON.
-    pub labels: serde_json::Value,
+    /// Who the comments are by.
+    pub author: PptxAuthor,
+    /// The display words, severity words included.
+    pub labels: SlideReviewLabels,
     /// `reversible_read` (the default) or `outbound_effect`.
     #[serde(default)]
-    pub reversibility: Option<serde_json::Value>,
+    pub reversibility: Option<Reversibility>,
     /// Access-checked evidence beside the deck, by ref.
     #[serde(default)]
     pub evidence_refs: Vec<String>,
@@ -189,12 +195,12 @@ pub struct SlideReviewSubmit {
     /// The whole review's deadline from now; five minutes when absent.
     #[serde(default)]
     pub deadline_ms: Option<u64>,
-    /// The made_by envelope Keep gives the version, as JSON.
+    /// The made_by envelope Keep gives the version.
     #[serde(default)]
-    pub made_by: Option<serde_json::Value>,
+    pub made_by: Option<MadeBy>,
 }
 
-/// One unit to judge: a slide or a shape (`PptxCommentTarget`, as JSON),
+/// One unit to judge: a slide or a shape (its `PptxCommentTarget`),
 /// its rendered image and the renderer that made it. The image is at most
 /// one of `review_image`, the PNG or JPEG bytes in base64, or
 /// `review_image_ref`, a stored image's view handle (`<asset>@<hash>`) read
@@ -204,7 +210,7 @@ pub struct SlideReviewSubmit {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlideReviewUnitInput {
-    pub target: serde_json::Value,
+    pub target: PptxCommentTarget,
     #[serde(default)]
     pub review_image: Option<String>,
     #[serde(default)]
@@ -213,11 +219,20 @@ pub struct SlideReviewUnitInput {
 }
 
 /// What a review did: the proposal held for Keep (none when no unit was
-/// answered), the units the ladder left unanswered, and those it refused.
+/// answered), each answered unit's judgment and the comment it became, as
+/// that proposal's manifest keeps them, the units the ladder left
+/// unanswered, and those it refused.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlideReviewOutcome {
     pub proposed: Option<PendingProposalView>,
-    pub abstained: Vec<serde_json::Value>,
+    /// Each answered unit's judgment: its decision and receipt, the managed
+    /// anchor, the located answer, the comment text and its words.
+    pub judgments: Vec<SlideJudgment>,
+    /// The comment each answer became, with the asker, the answerer and the
+    /// displayed author it keeps apart.
+    pub comments: Vec<PptxCommentPatch>,
+    /// Each unit the ladder left unanswered, with its decision when one ran.
+    pub abstained: Vec<SlideAbstention>,
     pub refused: Vec<SlideUnitRefused>,
 }
 
@@ -225,9 +240,9 @@ pub struct SlideReviewOutcome {
 /// instead, if any.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlideUnitRefused {
-    pub target: serde_json::Value,
-    pub reason: String,
-    pub offer: Option<serde_json::Value>,
+    pub target: PptxCommentTarget,
+    pub reason: SlideUnitRefusalReason,
+    pub offer: Option<PptxCommentTarget>,
 }
 
 /// One typed question over an artifact's units (ARCH-0076 §2): rows of a
@@ -532,13 +547,25 @@ impl Memory<'_> {
                 .into());
             }
         };
+        let vault = self.vault();
         let born = match &source {
-            BornFromSource::Trigger(trigger) => self.vault().rows_born_from(&trigger.row())?,
+            BornFromSource::Trigger(trigger) => vault.rows_born_from(&trigger.row())?,
             BornFromSource::AgentRun(_) => Vec::new(),
         };
+        // Each born row is named by the kind its row is; one whose kind no
+        // longer reads is listed in `born` alone.
+        let born_records = born
+            .iter()
+            .filter_map(|id| match vault.get_entity_type(id) {
+                Ok(Some(kind)) => Some(Ok(RecordRef::from_id(kind, id, None))),
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<crate::Result<Vec<_>>>()?;
         Ok(BornFromView {
             born,
-            versions: self.vault().artifacts_born_from(&source)?,
+            born_records,
+            versions: vault.artifacts_born_from(&source)?,
         })
     }
 
@@ -622,24 +649,10 @@ impl Memory<'_> {
         renderer: Option<&dyn SlideRenderer>,
     ) -> MemoryResult<SlideReviewOutcome> {
         let artifact = entity(&input.artifact_ref)?;
-        let required =
-            |value: &serde_json::Value, field: &str| -> MemoryResult<serde_json::Value> {
-                if value.is_null() {
-                    return Err(invalid(&format!("a slide review names its {field}")).into());
-                }
-                Ok(value.clone())
-            };
         let question = input.question.clone();
         question.validate()?;
-        let author: PptxAuthor = json_field(Some(required(&input.author, "author")?), "author")?
-            .ok_or_else(|| invalid("a slide review names its author"))?;
-        let labels: SlideReviewLabels =
-            json_field(Some(required(&input.labels, "labels")?), "labels")?
-                .ok_or_else(|| invalid("a slide review names its labels"))?;
-        let reversibility: Reversibility =
-            json_field(input.reversibility.clone(), "reversibility")?
-                .unwrap_or(Reversibility::ReversibleRead);
-        let made_by: Option<MadeBy> = json_field(input.made_by.clone(), "made_by")?;
+        let reversibility = input.reversibility.unwrap_or(Reversibility::ReversibleRead);
+        let made_by = input.made_by.as_ref();
         // A stored image is read, and its pull recorded, through the caller's
         // own lane before any rung is asked.
         let lane = input
@@ -652,8 +665,7 @@ impl Memory<'_> {
             .units
             .iter()
             .map(|unit| {
-                let target: PptxCommentTarget = json_field(Some(unit.target.clone()), "target")?
-                    .ok_or_else(|| invalid("a slide review unit names its target"))?;
+                let target = unit.target.clone();
                 let image = match (&unit.review_image, &unit.review_image_ref, &lane) {
                     (Some(encoded), None, _) => Some(SlideReviewImage::Rendered(
                         base64::engine::general_purpose::STANDARD
@@ -720,14 +732,14 @@ impl Memory<'_> {
             question: &question,
             principal: actor.entity_ref(),
             answered_by: actor.entity_ref(),
-            author: &author,
+            author: &input.author,
             dial,
             resident_dial: None,
             // The vault re-imposes its stored policy's limits.
             limits: SlideReviewLimits::default(),
             policy,
             reversibility,
-            labels: &labels,
+            labels: &input.labels,
             decider,
             evidence: &evidence,
             budget: std::time::Duration::from_millis(input.unit_budget_ms.unwrap_or(30_000)),
@@ -750,35 +762,43 @@ impl Memory<'_> {
             Some(proposal) => Some(self.vault().retain_edit_proposal(
                 &artifact,
                 proposal,
-                made_by.as_ref(),
-                self.made_by_reader(made_by.as_ref())?,
+                made_by,
+                self.made_by_reader(made_by)?,
                 actor,
                 at,
             )?),
             None => None,
         };
-        let target_json = |target: &PptxCommentTarget| {
-            serde_json::to_value(target).unwrap_or(serde_json::Value::Null)
-        };
+        // Each answered unit's judgment and comment, from the manifest the
+        // held proposal keeps.
+        let (judgments, comments) = run
+            .proposal
+            .as_ref()
+            .map(|proposal| {
+                let comments = proposal
+                    .manifest
+                    .ops
+                    .iter()
+                    .filter_map(|op| match op {
+                        EditOp::PptxComment { patch } => Some(patch.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                (proposal.manifest.slide_judgments.clone(), comments)
+            })
+            .unwrap_or_default();
         Ok(SlideReviewOutcome {
             proposed,
-            abstained: run
-                .abstained
-                .iter()
-                .map(|unit| {
-                    serde_json::json!({
-                        "target": target_json(&unit.target),
-                        "decision": unit.decision,
-                    })
-                })
-                .collect(),
+            judgments,
+            comments,
+            abstained: run.abstained,
             refused: run
                 .refused
-                .iter()
+                .into_iter()
                 .map(|unit| SlideUnitRefused {
-                    target: target_json(&unit.target),
-                    reason: format!("{:?}", unit.reason),
-                    offer: unit.offer.as_ref().map(target_json),
+                    target: unit.target,
+                    reason: unit.reason,
+                    offer: unit.offer,
                 })
                 .collect(),
         })
@@ -1062,7 +1082,7 @@ impl Memory<'_> {
             media_type: input.media_type.clone(),
             bytes,
             report: input.report.clone(),
-            made_by: json_field(input.made_by.clone(), "made_by")?,
+            made_by: input.made_by.clone(),
         };
         Ok(self.vault().propose_native_output(
             &entity(&input.artifact_ref)?,

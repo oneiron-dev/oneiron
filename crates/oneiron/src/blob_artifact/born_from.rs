@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::lens::RecordRef;
 use crate::provenance::made_by::MadeByTrigger;
+use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
@@ -86,6 +88,12 @@ pub struct BornFromArtifact {
     pub artifact_id: EntityId,
     pub version: u64,
     pub at: u64,
+    /// The artifact as a typed record ref (OF-063), built from its id with
+    /// no read.
+    pub artifact: RecordRef,
+    /// The version's `blob.version` LEDGER claim as a typed record ref, from
+    /// the version record the listing reads.
+    pub claim: RecordRef,
 }
 
 /// Indexes one freshly appended version under each source it names.
@@ -131,11 +139,15 @@ impl Vault {
         let mut out = Vec::new();
         for row in BORN_FROM.iter_from(&self.store, &rtxn, &source.key())? {
             let ((_, artifact_id, version), row) = row?;
-            if live_version_names(&self.store, &rtxn, &artifact_id, version, source)? {
+            if let Some(claim) =
+                live_version_claim(&self.store, &rtxn, &artifact_id, version, source)?
+            {
                 out.push(BornFromArtifact {
                     artifact_id,
                     version,
                     at: row.at,
+                    artifact: RecordRef::from_id(ENTITY_TYPE_BLOB_ARTIFACT, &artifact_id, None),
+                    claim: RecordRef::from_id(ENTITY_TYPE_CLAIM, &claim, None),
                 });
             }
         }
@@ -156,16 +168,19 @@ impl Vault {
     }
 }
 
-fn live_version_names(
+/// The version's LEDGER claim when the version still exists and names
+/// `source`; `None` otherwise.
+fn live_version_claim(
     store: &Store,
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
     version: u64,
     source: &BornFromSource,
-) -> Result<bool> {
+) -> Result<Option<EntityId>> {
     Ok(VERSIONS
         .get(store, rtxn, &(*artifact_id, version))?
-        .is_some_and(|record| BornFromSource::of_version(&record).contains(source)))
+        .filter(|record| BornFromSource::of_version(record).contains(source))
+        .map(|record| record.claim_id))
 }
 
 /// OF-222 (FIX 2768) archive seam: the born-from projection a whole-vault archive carries
