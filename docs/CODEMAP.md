@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4800 | 902 | 149 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4821 | 902 | 146 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 47 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 145 | 18 | 0 |
@@ -88,18 +88,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `channel_identity_manifest` | file | 1 | s | — | Channel identity capability manifests (OF-347 CID-4) |
 | `channel_identity_provider` | dir | 25 | L | yes | Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3) |
 | `channel_identity_selection` | dir | 7 | m | yes | Relationship-context channel-identity selection law (ONE-1826) |
-| `checkout` | file+dir | 13 | m | — | — |
+| `checkout` | file+dir | 13 | m | — | Checkout leases and optional repository environment plans |
 | `claim` | dir | 94 | XL | yes | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
 | `cluster` | file+dir | 2 | m | — | Pure, deterministic claim clustering — a PROPOSE-ONLY tool |
 | `code_artifact` | file | 1 | m | yes | — |
 | `code_document` | dir | 14 | m | yes | Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested… |
-| `code_memory` | file+dir | 7 | m | — | — |
-| `code_revision` | dir | 24 | m | yes | — |
-| `code_run` | dir | 139 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
+| `code_memory` | file+dir | 7 | m | — | Symbol-anchored memory slots, transfers and scoped pulls |
+| `code_revision` | dir | 24 | m | yes | Code revisions, tested forks and reviewed import promotion |
+| `code_run` | dir | 151 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
 | `code_sandbox` | dir | 47 | L | yes | Sandbox boundary contract for code-mode execution |
-| `code_symbol` | dir | 12 | m | yes | — |
+| `code_symbol` | dir | 12 | m | yes | Code-symbol manifests, semantic changes and producing-operation views |
 | `code_view` | dir | 4 | m | — | Per-agent file views over codebase blobs, with one owned shared service set |
-| `codebase` | dir | 15 | m | yes | — |
+| `codebase` | dir | 15 | m | yes | Repository snapshot ingestion, storage and file access |
 | `comm` | dir | 14 | m | yes | Communication standing-state claims and the ARCH-0035 projector |
 | `commitment` | dir | 7 | m | yes | Commitment claim substrate (CMT-1) |
 | `commitment_ledger` | file | 1 | s | yes | Counterparty commitment ledger projection (CMT-5) |
@@ -141,7 +141,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `edit_roundtrip` | dir | 38 | m | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `edit_settle` | dir | 14 | L | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 20 | L | yes | — |
-| `engine_executor` | dir | 33 | XL | — | Engine-native JS code-mode executor |
+| `engine_executor` | dir | 42 | L | — | Engine-native JS code-mode executor |
 | `entity_doc` | dir | 26 | L | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `entity_id` | file | 1 | s | — | Entity ids, world ids and the presentation-id grammar |
 | `error` | file | 1 | s | — | The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind` |
@@ -213,7 +213,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `receipt` | dir | 34 | m | yes | Unified receipt-family query surface over existing receipt emitters |
 | `recovery` | file+dir | 83 | L | yes | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
 | `registry` | dir | 8 | m | yes | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
-| `repo_mutation` | dir | 41 | m | yes | — |
+| `repo_mutation` | dir | 41 | m | yes | Queued repository mutations, recovery snapshots and reviewed proposals |
 | `rerank` | file+dir | 4 | m | — | RET-010 host-injected top-N rerank seam (1186-D1/D2) |
 | `result_body` | dir | 5 | s | yes | Result body lifetime (OF-597): reader pins, the collector of released and orphan body files, and the copy of… |
 | `result_memory` | file | 1 | s | — | The memory code-mode result bodies may hold (OF-190 B++) |
