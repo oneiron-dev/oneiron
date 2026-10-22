@@ -41,10 +41,6 @@ use crate::authority::{
 use crate::sync::client::SyncClientConfig;
 use crate::sync::transport::TransportError;
 
-/// The most attestations one countersign reply carries: one for each root
-/// the home holds.
-const COUNTERSIGN_REPLY_MAX: usize = 16;
-
 /// The home's checkpoint head and the roots on either side of it.
 #[derive(Deserialize)]
 struct RootsReply {
@@ -294,10 +290,9 @@ async fn ask_home_countersign(
     let Some(reply) = last else {
         return Ok(0);
     };
+    // Every attestation the home returns is verified on its own: a quorum
+    // may name more roots than any fixed count (FIX 8090).
     let reply: CountersignReply = serde_json::from_value(reply).map_err(|_| refused())?;
-    if reply.attestations.len() > COUNTERSIGN_REPLY_MAX {
-        return Err(refused());
-    }
     let home = rpc.home;
     let vault = Arc::clone(vault);
     tokio::task::spawn_blocking(move || {

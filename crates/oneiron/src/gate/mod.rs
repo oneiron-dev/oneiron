@@ -60,6 +60,7 @@ pub(crate) mod proposal_observation;
 pub(crate) mod record_references;
 mod repair;
 mod replicated_confirm;
+mod residence_budgets;
 mod resolution;
 mod tracker_limits;
 pub use self::dreamer_grant::DreamerWeaveReach;

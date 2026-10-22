@@ -10,6 +10,7 @@ mod index;
 mod kit_fetch;
 mod machine_history;
 mod promoted_pads;
+mod search;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub(crate) use bundle::relay_sealed_bundle;
 pub use bundle::{PadAdmissionReport, SealedBundleRelay};
@@ -1010,11 +1011,7 @@ pub(crate) async fn search_resident(
         return Err(refused());
     }
     let budgets = residence_budgets(vault)?;
-    if query.trim().is_empty()
-        || query.len() > budgets.search_query_max_bytes
-        || limit == 0
-        || limit > budgets.search_limit
-    {
+    if query.trim().is_empty() || query.len() > budgets.search_query_max_bytes || limit == 0 {
         return Err(refused());
     }
     let selector = config.residence_selector.as_ref().ok_or_else(refused)?;
@@ -1041,6 +1038,10 @@ pub(crate) async fn search_resident(
         params["machine_proof"] = serde_json::to_value(machine).map_err(|_| refused())?;
     }
     match ResidenceRpc::connect(vault, config, budgets).await? {
+        // More hits than one page carries come a page at a time (FIX 8865).
+        Some(mut rpc) if limit > budgets.search_limit => {
+            search::search_pages(vault, &mut rpc, query, limit, &selector_wire, scope, caller).await
+        }
         Some(mut rpc) => {
             let reply: SearchReply =
                 serde_json::from_value(rpc.request("residence.search", params).await?)

@@ -3,12 +3,19 @@
 //! machine's capsule does not open, as one sealed before it was admitted,
 //! opens with a grant an old reader or the kit sealed to it (FIX 4271), or
 //! with a kit the owner hands one sweep.
+//!
+//! A finished sweep records the home's list it was made against (FIX 8885):
+//! each kept generation, its commit order and its pad object's digest. A
+//! slot may take more than one generation, and one may land after a sweep,
+//! so each connected upkeep lists the home again and owes a world anew once
+//! the list moved. That re-check never holds back a sweep that was due, nor
+//! a publication or a read; 02A's exact-key proofs replace it.
 
 use std::collections::BTreeSet;
 
 use super::access::{self, OwnAsks};
 use super::{
-    PartSource, ResidenceRpc, SealedBundleRelay, list_generations, read_object, refused,
+    PartSource, ResidenceRpc, SealedBundleRelay, entries, list_generations, read_object, refused,
     replace_pads, storage,
 };
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -17,8 +24,9 @@ use crate::sync::transport::TransportError;
 use crate::world_keys::{OpenedKeyPads, RecoveryRootSeed, SealedBundleGeneration, SealedKeyPads};
 use crate::{EntityId, Vault};
 
-/// Each erased world this machine swept from the home's pad objects, or the
-/// slot a pad object that did not open here held it back in.
+/// Each erased world this machine swept from the home's pad objects, with the
+/// fingerprint of the home's list it was swept against (empty when none was
+/// read), or the slot a pad object that did not open here held it back in.
 const SWEPT: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_SWEPT);
 
@@ -45,7 +53,7 @@ pub(super) fn erased_due(vault: &Vault, now_slot: u64) -> crate::error::Result<V
         };
         let owed = match SWEPT.get(&vault.store, &txn, &HexId(world))? {
             None => true,
-            Some(raw) if raw.is_empty() => false,
+            Some(raw) if raw.is_empty() || raw.len() == 32 => false,
             Some(raw) => {
                 <[u8; 8]>::try_from(raw).map_or(true, |slot| u64::from_be_bytes(slot) < now_slot)
             }
@@ -67,6 +75,71 @@ fn mark_swept(
         .map(|slot| slot.to_be_bytes().to_vec())
         .unwrap_or_default();
     vault.with_write_txn_grouped(|wtxn| SWEPT.put(&vault.store, wtxn, &HexId(world), &raw))
+}
+
+/// Marks each of `worlds` swept against the home's list `fingerprint` names.
+fn mark_swept_against(
+    vault: &Vault,
+    worlds: &[EntityId],
+    fingerprint: &[u8; 32],
+) -> crate::error::Result<()> {
+    vault.with_write_txn_grouped(|wtxn| {
+        for world in worlds {
+            SWEPT.put(&vault.store, wtxn, &HexId(*world), &fingerprint.to_vec())?;
+        }
+        Ok(())
+    })
+}
+
+/// Each erased world a sweep finished, with the list fingerprint it was
+/// swept against, `None` when it read none.
+fn swept_worlds(vault: &Vault) -> crate::error::Result<Vec<(EntityId, Option<[u8; 32]>)>> {
+    let destroyed = vault.world_key_destructions()?;
+    let txn = vault.store.env.read_txn()?;
+    let mut swept: Vec<(EntityId, Option<[u8; 32]>)> = Vec::new();
+    for receipt in destroyed {
+        let Ok(world) = EntityId::from_hex(&receipt.world) else {
+            continue;
+        };
+        if swept.iter().any(|(held, _)| *held == world) {
+            continue;
+        }
+        match SWEPT.get(&vault.store, &txn, &HexId(world))? {
+            Some(raw) if raw.is_empty() => swept.push((world, None)),
+            Some(raw) => {
+                if let Ok(fingerprint) = <[u8; 32]>::try_from(raw) {
+                    swept.push((world, Some(fingerprint)));
+                }
+            }
+            None => {}
+        }
+    }
+    Ok(swept)
+}
+
+/// `erased`, with each world a sweep finished against another list than the
+/// home's now, or against none read, owed again (FIX 8885). A connected
+/// upkeep asks; a list or a read that fails adds nothing, so nothing that
+/// was due waits on it.
+pub(super) async fn with_reowed(
+    vault: &Vault,
+    rpc: &mut ResidenceRpc,
+    mut erased: Vec<EntityId>,
+) -> Vec<EntityId> {
+    let swept = match swept_worlds(vault) {
+        Ok(swept) if !swept.is_empty() => swept,
+        _ => return erased,
+    };
+    let Ok(listed) = entries::list_entries(rpc, None).await else {
+        return erased;
+    };
+    let fingerprint = entries::list_fingerprint(&listed);
+    for (world, against) in swept {
+        if against != Some(fingerprint) && !erased.contains(&world) {
+            erased.push(world);
+        }
+    }
+    erased
 }
 
 /// The worlds whose pads `opened` holds.
@@ -187,6 +260,12 @@ pub(super) async fn sweep_erased(
             relay.erased += 1;
         }
         mark_swept(vault, *world, None).map_err(storage)?;
+    }
+    // The list the sweep leaves, read again once it finished: a later one
+    // owes each world anew. One that does not come back leaves them swept
+    // against none, owed once more on a later upkeep.
+    if let Ok(listed) = entries::list_entries(rpc, None).await {
+        mark_swept_against(vault, erased, &entries::list_fingerprint(&listed)).map_err(storage)?;
     }
     Ok(())
 }

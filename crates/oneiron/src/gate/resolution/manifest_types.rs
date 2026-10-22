@@ -374,6 +374,9 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(crate) residence_operation_budgets: ResidenceOperationBudgetLimits,
+    /// The trusted residence rows met so far, whose resolution is
+    /// `residence_operation_budgets` (FIX 8783).
+    pub(super) residence_budget_fold: crate::gate::residence_budgets::ResidenceBudgetFold,
     pub(crate) livequery_tracker_limits: Option<crate::gate::tracker_limits::PolicyTrackerLimits>,
     pub(in crate::gate) teacher_probe_trusted: bool,
     pub(in crate::gate) teacher_probe_vault_min: Option<u32>,
@@ -485,9 +488,11 @@ impl PolicyManifestResolution {
     }
 }
 
-/// Hard-bounded residence-operation limits carried by a typed policy map.
+/// Residence-operation limits carried by a typed policy map.
 ///
-/// `Default` is the shipped vault ceiling. Manifest maps can only narrow it.
+/// `Default` is the shipped vault default: an authored vault value replaces
+/// it, and a holder value only narrows the vault's (FIX 8750, FIX 8783). The
+/// counts are work slices, never admission ceilings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ResidenceOperationBudgetLimits {
     pub(crate) rpc_timeout_ms: u64,
@@ -504,7 +509,6 @@ pub(crate) struct ResidenceOperationBudgetLimits {
 
 impl ResidenceOperationBudgetLimits {
     pub(crate) const DEFAULT_RPC_TIMEOUT_MS: u64 = 12_000;
-    pub(crate) const MAX_RPC_TIMEOUT_MS: u64 = 60_000;
     pub(crate) const DEFAULT_INDEX_PAGE_LIMIT: usize = 256;
     pub(crate) const DEFAULT_MAX_INDEX_PAGES: usize = 1_024;
     pub(crate) const DEFAULT_CURRENT_WINDOW_COUNT: usize = 2;
@@ -514,9 +518,8 @@ impl ResidenceOperationBudgetLimits {
     pub(crate) const DEFAULT_OFFLINE_CANDIDATE_MULTIPLIER: usize = 10;
     pub(crate) const DEFAULT_ACK_TIMEOUT_MS: u64 = 30_000;
     pub(crate) const DEFAULT_INDEX_CACHE_BYTES: usize = 16 * 1024 * 1024;
-    pub(crate) const MAX_INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
-    /// Restrictive composition. Policy rows never raise a shipped limit.
+    /// Restrictive composition, field by field.
     pub(crate) fn restrict(&mut self, other: Self) {
         self.rpc_timeout_ms = self.rpc_timeout_ms.min(other.rpc_timeout_ms);
         self.index_page_limit = self.index_page_limit.min(other.index_page_limit);
@@ -554,15 +557,16 @@ impl Default for ResidenceOperationBudgetLimits {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum ResidenceOperationBudgetPrecedence {
-    /// Holder-level budgets can narrow, but never widen, the vault-level cap.
+    /// Holder-level budgets can narrow, but never widen, the vault-level value.
     #[default]
     NestedNarrowing,
 }
 
-/// One manifest's optional vault and holder narrowing maps.
+/// One manifest's vault map and optional holder narrowing map, each naming
+/// only the fields it sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ResidenceOperationBudgetRow {
     pub(crate) precedence: ResidenceOperationBudgetPrecedence,
-    pub(crate) vault: ResidenceOperationBudgetLimits,
-    pub(crate) holder: Option<ResidenceOperationBudgetLimits>,
+    pub(crate) vault: crate::gate::residence_budgets::ResidenceBudgetPatch,
+    pub(crate) holder: Option<crate::gate::residence_budgets::ResidenceBudgetPatch>,
 }

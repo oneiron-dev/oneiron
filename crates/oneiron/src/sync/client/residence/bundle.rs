@@ -27,6 +27,7 @@
 
 mod access;
 mod attempt;
+mod entries;
 mod publication;
 mod sweep;
 mod turn;
@@ -54,8 +55,8 @@ use crate::sync::residence::{
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
-    RecoveryRootId, RecoveryRootSeed, SEALED_BUNDLE_KEEP, SealedBundleGeneration, SealedKeyPads,
-    SealedVaultBundle, sealed_bundle_slot,
+    RecoveryRootId, RecoveryRootSeed, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
+    sealed_bundle_slot,
 };
 
 /// The slot this machine last finished and the generation it last took in.
@@ -139,16 +140,6 @@ pub struct SealedBundleRelay {
     /// Erased worlds held back, unswept, while a kept pad object opens with
     /// no key here.
     pub pending_erases: usize,
-}
-
-#[derive(Deserialize)]
-struct BundleListReply {
-    generations: Vec<BundleListEntry>,
-}
-
-#[derive(Deserialize)]
-struct BundleListEntry {
-    generation: String,
 }
 
 /// The entry a commit's reply names: what the home acknowledged.
@@ -340,6 +331,8 @@ pub(crate) async fn relay_sealed_bundle(
         }
         return Ok(relay);
     }
+    // A sweep made against another list of the home's is owed again (FIX 8885).
+    let erased = sweep::with_reowed(vault, &mut rpc, erased).await;
     if !erased.is_empty() {
         sweep::sweep_erased(vault, &mut rpc, &erased, now_slot, None, &mut relay).await?;
     }
@@ -392,10 +385,13 @@ impl SlotRelay<'_> {
         let mut retries = 0;
         let mut refusals = 0;
         loop {
-            let latest = list_generations(rpc).await?.first().copied();
-            if let Some(newest) =
-                latest.filter(|newest| cursor.taken.is_none_or(|taken| *newest > taken))
-            {
+            let listed = list_generations(rpc).await?;
+            let latest = listed.first().copied();
+            if let Some(newest) = latest.filter(|newest| {
+                cursor
+                    .taken
+                    .is_none_or(|taken| entries::newer_than_taken(newest, taken, &listed))
+            }) {
                 let (bundle, pads) = fetch_generation(&mut PartSource::Machine(rpc), Some(newest))
                     .await?
                     .ok_or_else(refused)?;
@@ -540,29 +536,17 @@ async fn list_generations(
 }
 
 /// [`list_generations`], naming the owner's `request` this install is asked
-/// to publish for, which the home admits it under in any role.
+/// to publish for, which the home admits it under in any role. Newest first
+/// by commit order (FIX 8885).
 async fn list_generations_for(
     rpc: &mut ResidenceRpc,
     request: Option<AuthorityEntryHash>,
 ) -> Result<Vec<SealedBundleGeneration>, TransportError> {
-    let mut params = json!({});
-    if let Some(request) = request {
-        params["request"] = json!(sealed_digest_hex(&request));
-    }
-    let reply = rpc.request("residence.bundle.list", params).await?;
-    let list: BundleListReply = serde_json::from_value(reply).map_err(|_| refused())?;
-    if list.generations.len() > SEALED_BUNDLE_KEEP {
-        return Err(refused());
-    }
-    let generations = list
-        .generations
-        .iter()
-        .map(|entry| sealed_generation_from_hex(&entry.generation).ok_or_else(refused))
-        .collect::<Result<Vec<_>, _>>()?;
-    if !generations.windows(2).all(|pair| pair[0] > pair[1]) {
-        return Err(refused());
-    }
-    Ok(generations)
+    Ok(entries::list_entries(rpc, request)
+        .await?
+        .into_iter()
+        .map(|entry| entry.generation)
+        .collect())
 }
 
 /// Where a read's slices come from: this machine's residence socket, or the

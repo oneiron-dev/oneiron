@@ -51,8 +51,8 @@ fn request_hash(hex: &str) -> Result<[u8; 32], AppError> {
 }
 
 /// Commits the generation the machine staged whole as the vault's newest,
-/// while the newest is still the parent it names (FIX 922): one generation per
-/// slot. The root it names is kept for the kit door, and the request it names
+/// while the newest is still the parent it names (FIX 922); a slot may take
+/// more than one, each with its commit order (FIX 8885). The root it names is kept for the kit door, and the request it names
 /// gets the commit recorded (FIX 4787). A refused machine, parent, root or
 /// upload looks missing.
 pub(super) fn bundle_commit(

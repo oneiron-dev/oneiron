@@ -6,6 +6,7 @@ mod entity_rank;
 mod post_blend;
 mod ppr_expand;
 mod rerank;
+mod residence_page;
 mod text;
 mod trace_assembly;
 mod turn_fold;

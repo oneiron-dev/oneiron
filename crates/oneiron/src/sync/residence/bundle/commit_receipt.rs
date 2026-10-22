@@ -25,8 +25,8 @@
 use super::super::bundle_turn::{hold_turn_in, published_in};
 use super::{
     Asked, GENERATIONS, SealedBundleEntry, SealedBundleKitRoot, SealedBundleObject, denied,
-    drop_stage_in, entries_in, owner_machine, put_object_in, retire_in, sealed_digest_hex,
-    sealed_generation_hex, stage_key, staged_whole,
+    drop_stage_in, entries_in, entry_in, order, owner_machine, put_object_in, retire_in,
+    sealed_digest_hex, sealed_generation_hex, stage_key, staged_whole,
 };
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, AuthorityFold, OwnerWorkBody, PeerMachine};
@@ -249,8 +249,9 @@ pub(super) fn commit(
     {
         return Err(denied());
     }
-    let entry = SealedBundleEntry {
+    let mut entry = SealedBundleEntry {
         generation,
+        commit_order: 0,
         bundle_len: bundle_stage.total,
         bundle_digest: bundle_stage.digest,
         pads_len: pads_stage.total,
@@ -258,18 +259,22 @@ pub(super) fn commit(
         kit,
     };
     vault.with_write_txn_grouped(|wtxn| {
-        let latest = entries_in(vault, wtxn)?
-            .last()
-            .map(|entry| entry.generation);
+        let kept = entries_in(vault, wtxn)?;
+        let latest = kept.last().map(|entry| entry.generation);
         let now = vault.instant_in_txn(wtxn)?.secs();
         let now_slot = sealed_bundle_slot(now);
+        // A fresh generation of the newest's own slot is taken (FIX 8885):
+        // the parent, the slot order and the clock are what refuse, never a
+        // count. A generation kept already is never written over.
         if latest != parent
-            || latest.is_some_and(|latest| generation.slot <= latest.slot)
+            || latest.is_some_and(|latest| generation.slot < latest.slot)
             || generation.slot > now_slot
+            || entry_in(vault, wtxn, &generation)?.is_some()
             || !hold_turn_in(vault, wtxn, machine, now)?
         {
             return Err(denied());
         }
+        entry.commit_order = order::next_commit_order(&kept);
         put_object_in(
             vault,
             wtxn,
