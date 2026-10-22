@@ -93,10 +93,9 @@ pub(super) const KEY_COMM: &str = AGENT_DISPATCH_INPUT_KEYS[21];
 /// OF-541: a direct spawn's whole ask and what it left unapplied. Required.
 pub(super) const KEY_DIRECT_SPAWN: &str = AGENT_DISPATCH_INPUT_KEYS[22];
 
-/// The configured compatibility cap for a parent whose persisted depth is
-/// absent or unreadable — a schema-v1 row, or an attempt that is not an
-/// agent dispatch at all. Such a parent yields children at `cap - 1`, so a
-/// legacy lineage is bounded rather than unbounded.
+/// The depth a lineage with no explicit slice once stopped at. Such a
+/// lineage spends no depth (FIX 9560): past this many ancestors its walk
+/// asks whether everything is okay, and the spawn goes on.
 pub const AGENT_DISPATCH_COMPAT_DEPTH_CAP: u8 = 4;
 
 /// Domain separator for the deterministic attenuated-fork row id.
@@ -146,7 +145,9 @@ pub struct AgentDispatchInput {
     /// spawning parent attempt and run; deliberately kept separate from
     /// `context_spec`, because panel blindness relies on the separation.
     pub context_from: Vec<EntityId>,
-    /// Additive/defaulted v1 compatibility field; every new root writes `Some`.
+    /// The explicit depth slice this dispatch may still spend: an
+    /// authorized owner depth setting's, or the one its spawn asked for.
+    /// `None` where neither binds, which spends nothing (FIX 9560).
     /// LOAD-BEARING: [`AgentDispatcher::dispatch`](crate::agent_dispatch::AgentDispatcher::dispatch) refuses to enqueue a child
     /// under a parent whose stored value is `Some(0)`.
     pub depth_remaining: Option<u64>,
@@ -623,10 +624,19 @@ pub struct SpawnNeed {
     pub width: Option<SpawnOverride<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern: Option<SpawnOverride<super::team_shape::CoordinationPattern>>,
-    /// Hard spend cap for the whole spawn, in lease units. A seed or pin
-    /// here only ever narrows the caller's budget, never widens it.
+    /// The whole spawn's budget, in lease units. A pin is the cap exactly;
+    /// a seed is a prior worth its `weight_runs`, which the planner weighs
+    /// against the launch's learned spend before it fits the plan (FIX
+    /// 9561). Either is met with the caller's and parent's caps, never
+    /// widens them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_cap_units: Option<SpawnOverride<u64>>,
+    /// Leave the balance (`available_units`) out of the cost envelope the
+    /// pattern run's model reads (FIX 9536). Off by default: the model reads
+    /// the whole envelope. The host enforces, and the owner's receipts show,
+    /// the full envelope either way.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub balance_free_prompt: bool,
 }
 
 impl SpawnNeed {
@@ -641,6 +651,7 @@ impl SpawnNeed {
             width: None,
             pattern: None,
             budget_cap_units: None,
+            balance_free_prompt: false,
         }
     }
 

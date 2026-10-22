@@ -112,7 +112,7 @@ impl Book {
                 .package
                 .part(&rel.target)?
                 .ok_or(refused("a workbook part is missing"))?;
-            let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+            let tree = XmlTree::parse(&bytes, self.package.resources())?;
             let root = &tree.nodes[0];
             if root
                 .attr("displayName")

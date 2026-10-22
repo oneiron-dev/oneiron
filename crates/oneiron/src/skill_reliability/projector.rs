@@ -100,7 +100,10 @@ pub fn project_skill_reliability(
         // The subject of a defect verdict is a SKILL by SK-04's routing, but a
         // projector that trusts that without checking would mint a reliability
         // claim on whatever entity a malformed row named.
-        let Some(record) = vault.get_skill_record(&judgment.subject)? else {
+        let Some(subject) = judgment.subject else {
+            continue;
+        };
+        let Some(record) = vault.get_skill_record(&subject)? else {
             continue;
         };
         // A callable's loss belongs to the executors that invoked it, which
@@ -132,10 +135,10 @@ pub fn project_skill_reliability(
         let executor = receipt_executor(&receipt).map(str::to_owned);
         match batches
             .iter_mut()
-            .find(|(id, model, _)| *id == judgment.subject && *model == executor)
+            .find(|(id, model, _)| *id == subject && *model == executor)
         {
             Some((_, _, rows)) => rows.push(judgment),
-            None => batches.push((judgment.subject, executor, vec![judgment])),
+            None => batches.push((subject, executor, vec![judgment])),
         }
     }
 
@@ -236,7 +239,9 @@ pub(super) fn project_in_txn(
         .collect();
     let mut judges = BTreeMap::new();
     for judgment in crate::skill_attribution::attribution_judgments_in_txn(vault, txn)? {
-        if subjects.contains(&judgment.subject)
+        if judgment
+            .subject
+            .is_some_and(|subject| subjects.contains(&subject))
             && judgment.verdict == AttributionVerdict::SkillDefect
         {
             let judge =

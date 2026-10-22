@@ -156,11 +156,13 @@ pub(crate) fn read_with_limits(
             "invalid docx archive limits",
         )));
     }
+    // The DOCX entry count is an observation, never a refusal (FIX 8570):
+    // the byte ceilings and the ZIP64 sentinels still bound this reader.
     read_bounded(
         bytes,
         limits.max_part_bytes,
         limits.max_total_bytes,
-        limits.max_entries,
+        usize::MAX,
     )
 }
 

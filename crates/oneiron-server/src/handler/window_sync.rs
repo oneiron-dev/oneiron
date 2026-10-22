@@ -420,9 +420,17 @@ pub(super) async fn handle_window_sync(
             // appended to sync_state (u:w:*) explicitly, in the transaction
             // that rechecks the Write credential. A refused or failed append
             // closes the connection with nothing imported, applied or relayed.
+            // Its pads persist by reference where this home's custody holds
+            // them; it imports and fans out as it came (FIX 7107).
             let before = doc.oplog_vv();
+            let persisted = oneiron::sync::window::persisted_window_pads(
+                server.vault(),
+                &key,
+                update,
+                Some(&doc),
+            );
             server
-                .persist_imported_update(&key, update, write_auth)
+                .persist_imported_update(&key, &persisted, write_auth)
                 .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             // Client sending Loro update bytes — import with origin for echo suppression
             let origin = format!("conn:{conn_id}");

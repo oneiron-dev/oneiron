@@ -29,8 +29,9 @@ use crate::sync::transport::{
 };
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    PreparedWindowPads, UpdateVerdict, WINDOW_PAD_PART_REPAIR, WindowPadPartRepair,
-    admit_window_pads, carrier_window_pads, prepare_window_pads,
+    PreparedWindowPads, UpdateVerdict, WINDOW_PAD_PART_REPAIR, WINDOW_PAD_RECEIPT_WITNESS,
+    WindowPadPartRepair, WindowPadReceiptWitness, admit_window_pads, carrier_window_pads,
+    prepare_window_pads,
 };
 
 /// A send held for the home's receipt.
@@ -155,12 +156,17 @@ impl SyncClient {
     }
 
     /// Whether a sealed update of `window_key` the home has not answered is
-    /// held: the window has not converged while it is.
+    /// held and its window's convergence waits on it: only when the owner
+    /// turned the wait on ([`WINDOW_PAD_RECEIPT_WITNESS`]).
     pub(crate) fn window_pads_owed(&self, window_key: &str) -> bool {
-        self.window_pad_ledger()
-            .sent
-            .keys()
-            .any(|key| matches!(key, SentKey::Update(window, _) if window == window_key))
+        match WINDOW_PAD_RECEIPT_WITNESS {
+            WindowPadReceiptWitness::Off => false,
+            WindowPadReceiptWitness::On => self
+                .window_pad_ledger()
+                .sent
+                .keys()
+                .any(|key| matches!(key, SentKey::Update(window, _) if window == window_key)),
+        }
     }
 
     /// The home's receipt `payload` for a send of `window_key`, under

@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1157 facade rows, 4112 generated types.
+// UniFFI census: 1157 facade rows, 4116 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1109.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -3498,6 +3498,13 @@ pub enum ShapeItemState {
     },
 }
 
+/// `oneiron::vault_shape::approval::ShapeApprovalDependencies`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeApprovalDependencies {
+    #[serde(rename = "digest")]
+    pub digest: String,
+}
+
 /// `oneiron::vault_shape::apply::ShapeApplyItem`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ShapeApplyItem {
@@ -3505,6 +3512,8 @@ pub struct ShapeApplyItem {
     pub item: ShapePlanItem,
     #[serde(rename = "state")]
     pub state: ShapeItemState,
+    #[serde(rename = "approval", default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ShapeApprovalDependencies>,
 }
 
 /// `oneiron::vault_shape::run::ShapeApplyRun`.
@@ -29769,8 +29778,8 @@ pub struct PackAttributionFields {
     pub type_ref: CellTypeRef,
     #[serde(rename = "executor")]
     pub executor: String,
-    #[serde(rename = "judge")]
-    pub judge: String,
+    #[serde(rename = "judge", default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<String>,
     #[serde(rename = "pattern")]
     pub pattern: String,
     #[serde(rename = "team_shape")]
@@ -29908,16 +29917,16 @@ pub struct LearningProjectionRequest {
 /// `oneiron::skill_attribution::late_credit::LateCreditShare`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LateCreditShare {
-    #[serde(rename = "subject")]
-    pub subject: String,
+    #[serde(rename = "subject", default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     #[serde(
         rename = "origin_skill",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub origin_skill: Option<String>,
-    #[serde(rename = "chain")]
-    pub chain: Vec<UsedProvenanceEdge>,
+    #[serde(rename = "chain", default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<Vec<UsedProvenanceEdge>>,
     #[serde(rename = "decay")]
     pub decay: f64,
     #[serde(rename = "weight")]
@@ -29947,10 +29956,14 @@ pub struct LateCreditReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub goal_revision: Option<String>,
-    #[serde(rename = "attribution")]
-    pub attribution: PackAttributionFields,
+    #[serde(
+        rename = "attribution",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attribution: Option<PackAttributionFields>,
     #[serde(rename = "direct_subjects")]
-    pub direct_subjects: Vec<String>,
+    pub direct_subjects: Vec<Option<String>>,
     #[serde(rename = "shares")]
     pub shares: Vec<LateCreditShare>,
 }
@@ -30081,6 +30094,8 @@ pub struct SealCheckReceipt {
 pub struct SealedAttemptReceipt {
     #[serde(rename = "confession")]
     pub confession: AttemptConfession,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     #[serde(rename = "executor")]
     pub executor: String,
     #[serde(rename = "result_ref")]
@@ -34246,6 +34261,71 @@ pub struct ProgramStepFeedback {
     pub preparation_note: Option<ProgramPreparationNote>,
     #[serde(rename = "type_diagnostics")]
     pub type_diagnostics: TypeDiagnostics,
+}
+
+/// `oneiron::code_run::type_diagnostics::TypeCheckState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TypeCheckState {
+    #[serde(rename = "complete")]
+    Complete,
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "unavailable")]
+    Unavailable,
+}
+
+/// `oneiron::code_run::type_diagnostics::FeedbackWithheldReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FeedbackWithheldReason {
+    #[serde(rename = "recipient")]
+    Recipient,
+    #[serde(rename = "placement")]
+    Placement,
+    #[serde(rename = "producers_unknown")]
+    ProducersUnknown,
+    #[serde(rename = "conflicted_root")]
+    ConflictedRoot,
+    #[serde(rename = "release_check_failed")]
+    ReleaseCheckFailed,
+}
+
+/// `oneiron::code_run::type_diagnostics::ProgramStepFeedbackRelease`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "release")]
+pub enum ProgramStepFeedbackRelease {
+    #[serde(rename = "released")]
+    Released(ProgramStepFeedback),
+    #[serde(rename = "withheld")]
+    Withheld {
+        #[serde(rename = "step")]
+        step: ProgramStepIdentity,
+        #[serde(rename = "check_ref")]
+        check_ref: String,
+        #[serde(rename = "state")]
+        state: TypeCheckState,
+        #[serde(rename = "check", default, skip_serializing_if = "Option::is_none")]
+        check: Option<TypeCheckFacts>,
+        #[serde(rename = "failure", default, skip_serializing_if = "Option::is_none")]
+        failure: Option<String>,
+        #[serde(
+            rename = "unavailable",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        unavailable: Option<String>,
+        #[serde(rename = "measures", default, skip_serializing_if = "Option::is_none")]
+        measures: Option<DiagnosticMeasures>,
+        #[serde(
+            rename = "preparation_code",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        preparation_code: Option<String>,
+        #[serde(rename = "reason")]
+        reason: FeedbackWithheldReason,
+    },
 }
 
 /// `oneiron::memory::code_wait_doors::types::CodeWaitTarget`.
@@ -39844,6 +39924,12 @@ pub struct SpawnIntentRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub budget_cap_units: Option<SpawnAskKnobU64>,
+    #[serde(
+        rename = "balance_free_prompt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub balance_free_prompt: Option<bool>,
 }
 
 /// `oneiron::team::doors::spawn::SpawnIntentReply`.
@@ -46857,8 +46943,8 @@ pub struct AttemptJudgmentView {
     pub sequence: u64,
     #[serde(rename = "verdict")]
     pub verdict: AttributionLabel,
-    #[serde(rename = "subject")]
-    pub subject: String,
+    #[serde(rename = "subject", default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     #[serde(rename = "evidence_receipts")]
     pub evidence_receipts: Vec<String>,
     #[serde(rename = "at")]
@@ -62091,6 +62177,12 @@ pub struct FoldHistoryStep {
         skip_serializing_if = "Option::is_none"
     )]
     pub preparation_note: Option<ProgramPreparationNote>,
+    #[serde(
+        rename = "type_feedback",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub type_feedback: Option<ProgramStepFeedbackRelease>,
 }
 
 /// `oneiron::engine_executor::history::FoldHistory`.
@@ -66018,6 +66110,12 @@ pub struct AgentSpawnInput {
     pub objectives: Option<Vec<String>>,
     #[serde(rename = "comm", default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<CommReach>,
+    #[serde(
+        rename = "balance_free_prompt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub balance_free_prompt: Option<bool>,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `AgentSpawnInput`.

@@ -2,11 +2,15 @@
 
 The mirror is content-addressed where the input has a single file
 (blobs/sha256/<hex>: the base layer, the mkosi archive, the Rust components,
-payloads). Debian packages stay in mkosi's package cache layout
+payloads and source archives; blobs/sha512/<hex> for an npm tarball, whose
+pin is its SRI integrity). Debian packages stay in mkosi's package cache layout
 (pkgcache/cache/apt/archives) and are content-addressed through
 packages.lock.toml; the signed apt metadata they were verified against stays
-in mkosi-cache. The Cargo closure is a clean CARGO_HOME (cargo-home/) that
-`cargo fetch --locked` filled; Cargo.lock's checksums pin it.
+in mkosi-cache. The engine's Cargo closure is a clean CARGO_HOME (cargo-home/)
+that `cargo fetch --locked` filled; Cargo.lock's checksums pin it. An external
+source build has a store of its own (cargo-home-<pin>/), filled the same way
+from that source's own Cargo.lock, so no crate of it reaches the engine store
+the checker image ships.
 
 The fetch runs the pinned cargo in a root of its own (fetch_root): a tmpfs
 holding the pinned base layer's userspace, the engine source at /src and the
@@ -18,12 +22,14 @@ repo config) and an empty /.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import shlex
 import shutil
 import subprocess
 import tarfile
 import urllib.parse
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .model import Model
 from .util import (
@@ -52,6 +58,13 @@ class Mirror:
 
     def blob(self, sha: str) -> Path:
         return self.blobs / sha
+
+    def sri_blob(self, integrity: str) -> Path:
+        return self.root / "blobs" / "sha512" / sri_hex(integrity)
+
+    def source_store(self, pin: str) -> Path:
+        """The Cargo store of one external source build, apart from cargo_home."""
+        return self.root / f"cargo-home-{pin}"
 
     @property
     def pkgcache(self) -> Path:
@@ -94,6 +107,44 @@ def fetch_blob(mirror: Mirror, url: str, sha: str | None, *, learn: bool, what: 
     mirror.blobs.mkdir(parents=True, exist_ok=True)
     temp.replace(mirror.blob(got))
     return got
+
+
+def sri_hex(integrity: str) -> str:
+    """The hex digest an npm `sha512-<base64>` integrity names."""
+    algorithm, _, value = integrity.partition("-")
+    raw = base64.b64decode(value, validate=True) if algorithm == "sha512" else b""
+    if len(raw) != 64:
+        raise PinMismatch(f"{integrity!r} is not a sha512 SRI integrity")
+    return raw.hex()
+
+
+def _sha512_file(path: Path) -> str:
+    digest = hashlib.sha512()
+    with open(path, "rb") as stream:
+        while block := stream.read(1 << 20):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def fetch_npm(mirror: Mirror, url: str, integrity: str, *, what: str) -> Path:
+    """Puts an npm tarball at blobs/sha512/<hex>, checked against its SRI
+    integrity on the download and again on every mirror hit."""
+    want = sri_hex(integrity)
+    dest = mirror.sri_blob(integrity)
+    if dest.exists():
+        if _sha512_file(dest) == want:
+            log(f"{what}: mirror hit sha512 {want[:12]}")
+            return dest
+        dest.unlink()
+    temp = mirror.root / "incoming" / Path(urllib.parse.urlparse(url).path).name
+    fetch_url(url, temp)
+    got = _sha512_file(temp)
+    if got != want:
+        temp.unlink()
+        raise PinMismatch(f"{what}: {url} has sha512 {got}, release.toml pins {integrity}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    temp.replace(dest)
+    return dest
 
 
 def fetch_base_layer(model: Model, mirror: Mirror) -> Path:
@@ -150,20 +201,22 @@ def mkosi_source(model: Model, mirror: Mirror, work: Path, *, learn: bool) -> Pa
     return tops[0]
 
 
-def fetch_rust(model: Model, mirror: Mirror, names) -> dict[str, Path]:
-    comps = model.inputs("rust", "components")
+def fetch_rust(model: Model, mirror: Mirror, names, comps: dict | None = None) -> dict[str, Path]:
+    """The named dist components: release.toml's [inputs.rust] ones, or comps
+    (a source build's own toolchain pins)."""
+    comps = model.inputs("rust", "components") if comps is None else comps
     out = {}
     for name in names:
         if name not in comps:
-            raise MissingPin(f"no [inputs.rust.components.{name}] pin")
+            raise MissingPin(f"no pin for the rust {name} component")
         sha = fetch_blob(mirror, comps[name]["url"], comps[name]["sha256"], learn=False, what=f"rust {name}")
         out[name] = mirror.blob(sha)
     return out
 
 
-def install_rust(model: Model, mirror: Mirror, names, prefix: Path) -> Path:
+def install_rust(model: Model, mirror: Mirror, names, prefix: Path, comps: dict | None = None) -> Path:
     """Installs dist components the way their install.sh does (manifest.in), without running it."""
-    archives = fetch_rust(model, mirror, names)
+    archives = fetch_rust(model, mirror, names, comps)
     if prefix.exists():
         shutil.rmtree(prefix)
     prefix.mkdir(parents=True)
@@ -313,14 +366,85 @@ def fetch_root(work: Path, bootstrap: Path, *, engine: Path, cargo_home: Path, r
          "/usr/bin/env", "-i", *env, "/bin/sh", "-c", inner])
 
 
-def cargo_fetch(mirror: Mirror, engine: Path, rust: Path, *, bootstrap: Path, work: Path) -> None:
+def _clean_store(cargo_home: Path, bootstrap: Path) -> None:
     for leaked in ("config", "config.toml", "credentials", "credentials.toml"):
-        if (mirror.cargo_home / leaked).exists():
-            raise HostRefusal(f"the mirror CARGO_HOME holds {leaked}; it must stay clean")
+        if (cargo_home / leaked).exists():
+            raise HostRefusal(f"the mirror CARGO_HOME {cargo_home.name} holds {leaked}; it must stay clean")
     if (bootstrap / ".cargo").exists() or (bootstrap / "root" / ".cargo").exists():
         raise HostRefusal("the bootstrap tree holds a .cargo directory; the pinned base layer has none")
+
+
+def cargo_fetch(mirror: Mirror, engine: Path, rust: Path, *, bootstrap: Path, work: Path) -> None:
+    _clean_store(mirror.cargo_home, bootstrap)
     log(f"cargo config walk: {FETCH_SRC}/.cargo/config.toml (inputs.files.cargo-config), then an empty /")
     fetch_root(work, bootstrap, engine=engine, cargo_home=mirror.cargo_home, rust=rust,
+               command=["cargo", "fetch", "--locked", "--target", RUST_TARGET])
+
+
+# -- external source builds ----------------------------------------------------
+
+
+def source_tree(model: Model, mirror: Mirror, pin: str, work: Path) -> Path:
+    """A source build's pinned archive, unpacked to work/sources/<pin>: only
+    its `extract` paths, regular files and directories only, the archive's one
+    top directory stripped; then its Cargo.lock and toolchain file checked."""
+    payload = model.payload(pin)
+    sha = fetch_blob(mirror, payload["archive_url"], payload["archive_sha256"], learn=False,
+                     what=f"source {pin}")
+    dest = work / "sources" / pin
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    keep = [PurePosixPath(p) for p in payload["extract"]]
+    taken = set()
+    with tarfile.open(mirror.blob(sha), "r:gz") as tar:
+        for member in tar:
+            parts = PurePosixPath(member.name).parts
+            if len(parts) < 2 or ".." in parts or member.name.startswith("/"):
+                continue
+            rel = PurePosixPath(*parts[1:])
+            hit = next((k for k in keep if rel == k or k in rel.parents), None)
+            if hit is None:
+                continue
+            if not (member.isreg() or member.isdir()):
+                raise StepFailed(f"source {pin}: {rel} is not a regular file or directory")
+            taken.add(hit)
+            target = dest / rel
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tar.extractfile(member) as src, open(target, "wb") as out:
+                shutil.copyfileobj(src, out)
+            target.chmod(0o755 if member.mode & 0o111 else 0o644)
+    missing = sorted(str(k) for k in keep if k not in taken)
+    if missing:
+        raise PinMismatch(f"source {pin}: the archive holds none of {missing}")
+    workdir = dest / payload["workdir"]
+    got = sha256_file(workdir / "Cargo.lock")
+    if got != payload["cargo_lock_sha256"]:
+        raise PinMismatch(f"source {pin}: Cargo.lock has sha256 {got}, release.toml pins {payload['cargo_lock_sha256']}")
+    rust = payload["rust"]
+    if sha256_file(dest / rust["toolchain_file"]) != rust["toolchain_file_sha256"]:
+        raise PinMismatch(f"source {pin}: {rust['toolchain_file']} differs from its pin")
+    return dest
+
+
+def source_rust(model: Model, mirror: Mirror, pin: str, work: Path) -> Path:
+    """The toolchain a source build pins for itself, installed at work/rust-<pin>."""
+    rust = model.payload(pin)["rust"]
+    return install_rust(model, mirror, ("rustc", "cargo", "rust-std"), work / f"rust-{pin}", rust["components"])
+
+
+def source_fetch(model: Model, mirror: Mirror, pin: str, source: Path, rust: Path, *, bootstrap: Path,
+                 work: Path) -> None:
+    """`cargo fetch --locked` of the source's own lock into its own store."""
+    store = mirror.source_store(pin)
+    store.mkdir(parents=True, exist_ok=True)
+    _clean_store(store, bootstrap)
+    workdir = f"{FETCH_SRC}/{model.payload(pin)['workdir']}"
+    log(f"source {pin}: cargo fetch in {workdir} into {store.name}")
+    fetch_root(work, bootstrap, engine=source, cargo_home=store, rust=rust, cwd=workdir,
                command=["cargo", "fetch", "--locked", "--target", RUST_TARGET])
 
 

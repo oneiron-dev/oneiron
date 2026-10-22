@@ -159,8 +159,8 @@ pub fn scratchpad_recall_reply(
 
 /// `self.focus.scratchpad.append`: one line on the bound actor's session
 /// pad through [`Memory::scratchpad_append`], which checks the session and
-/// the line, refuses a sealed pad, and opens the pad (sealing the actor's
-/// prior one) on the session's first line.
+/// the line, refuses a sealed pad, and opens the session's own pad on its
+/// first line, sealing no other session's.
 pub fn scratchpad_append_reply(
     memory: &Memory<'_>,
     input: &ScratchpadAppendRequest,

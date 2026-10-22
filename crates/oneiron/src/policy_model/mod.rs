@@ -41,7 +41,8 @@
 //! Every pass that carries a signal is receipted with the ids of the patterns
 //! that fired, the role that acted, how the verdict was reached, and — under a
 //! rationale-bearing output contract — the model's own rule ids, confidence and
-//! stated reason. That is what a substrate owner reads to find the pattern that
+//! a digest of its stated reason, never the reason's text (FIX 10035). That is
+//! what a substrate owner reads to find the pattern that
 //! keeps escalating clean content and the definition their document left vague.
 //! Aggregating and retaining those rows is the host's concern; the engine
 //! writes them and stops there.
@@ -82,6 +83,7 @@
 mod binding;
 mod classifier_lease;
 mod classify;
+mod clock;
 
 pub(crate) use classify::stateless_owner_classification;
 mod concurrent;
@@ -98,7 +100,7 @@ pub use crate::batch::secret_scan::SecretScanMode;
 pub use crate::batch::secret_scan::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
     SecretLiftClose, SecretLiftHistoryProposal, SecretLiftProgress, SecretLiftReceipt,
-    SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner,
+    SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner, secret_lift_as_owner_toward,
 };
 pub use crate::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource};
 pub(crate) use notice::trusted_contact_notices;
@@ -138,7 +140,7 @@ pub use pattern::{
 };
 pub use planes::{
     HostedLegalAction, HostedLegalPolicy, HostedLegalRow, POLICY_DOCUMENT_MAX_LEN,
-    POLICY_HOSTED_CATEGORY_MAX_LEN, POLICY_HOSTED_ROWS_MAX, PolicyPlane, PolicyRubricRow,
+    POLICY_HOSTED_CATEGORY_MAX_LEN, PolicyPlane, PolicyRubricRow,
 };
 pub use prompt::PolicyClassifyPrompt;
 pub use relay::{

@@ -81,6 +81,10 @@ pub struct DecisionReadDoor {
     think_threshold: Option<f64>,
     /// The recipe the reader renders with, when it is this server's own.
     recipe: Option<Arc<DecisionReadRecipe>>,
+    /// Whether the rung's locality is one `local_reasoner` permits
+    /// (`DecisionReadSettings::permitted`, FIX 9481). A door a host builds
+    /// over its own reader is permitted.
+    permitted: bool,
 }
 
 impl DecisionReadDoor {
@@ -99,7 +103,16 @@ impl DecisionReadDoor {
             person_threshold,
             think_threshold: None,
             recipe: None,
+            permitted: true,
         }
+    }
+
+    /// Whether this door may read: false when the `local_reasoner` rung is a
+    /// third-party one under `leave_device = "never"` (FIX 9481). A door
+    /// that may not is unavailable; nothing falls back for it.
+    #[must_use]
+    pub fn permitted(&self) -> bool {
+        self.permitted
     }
 
     /// What one read of `request` may reserve: each question's prompt as the
@@ -174,7 +187,8 @@ impl DecisionReadDoor {
 
 /// The door `config` describes, its reads sent on `runtime`, its answers'
 /// launch aliases resolved through `identities`. `None` without
-/// `[models.decision_read]`.
+/// `[models.decision_read]`, or when its rung is one `local_reasoner` does not
+/// permit (FIX 9481): that reader is unavailable, and no other rung reads.
 pub(super) fn bind(
     config: &ModelsConfig,
     runtime: tokio::runtime::Handle,
@@ -183,6 +197,12 @@ pub(super) fn bind(
     let Some(settings) = &config.decision_read else {
         return Ok(None);
     };
+    if !settings.permitted {
+        tracing::warn!(
+            "decision read unavailable: roles.local_reasoner keeps its work on this device (leave_device = \"never\") and its rung is third-party"
+        );
+        return Ok(None);
+    }
     // `[models.decision_read]` resolved only with one rung here.
     let rung = config
         .roles
@@ -210,6 +230,7 @@ pub(super) fn bind(
     );
     door.think_threshold = Some(settings.think_threshold);
     door.recipe = Some(Arc::clone(&settings.recipe));
+    door.permitted = settings.permitted;
     Ok(Some(door))
 }
 
@@ -262,6 +283,9 @@ struct DecisionReader {
     /// revision, so the ids hold for its life.
     ids: Mutex<Option<Arc<TokenIds>>>,
     identities: Arc<LlamaIdentityResolver>,
+    /// `DecisionReadSettings::permitted` (FIX 9481): a reader whose rung its
+    /// role does not permit refuses every read before any render or I/O.
+    permitted: bool,
 }
 
 impl DecisionReader {
@@ -287,6 +311,7 @@ impl DecisionReader {
             runtime,
             ids: Mutex::new(None),
             identities,
+            permitted: settings.permitted,
         })
     }
 
@@ -452,6 +477,10 @@ impl LabelReadModel for DecisionReader {
         request: &LabelReadRequest<'_>,
         _lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
+        // Before the state renders or the tokenizer and completion are asked.
+        if !self.permitted {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
         if request.questions.is_empty() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
