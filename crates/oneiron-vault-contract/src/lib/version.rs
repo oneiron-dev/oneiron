@@ -405,7 +405,8 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// `unknown_currency`: rates with a `null` currency that are not zero
 /// throughout, kept with their snapshot, and no amount. Only the installed
 /// first-party model pack's rows, which have always quoted US dollars, read
-/// a missing `currency` as `USD`, at that pack's decode alone. It carries a
+/// a missing `currency` as `USD`: at that pack's decode, and at the decode of
+/// a stored registry row whose source rows name that pack. It carries a
 /// build floor, at the engine revision it merged in, with no `Ping` field: a
 /// reader or writer of catalog rows or usage events runs at or after the
 /// floor, and no other missing-field default or reader of a row without it
