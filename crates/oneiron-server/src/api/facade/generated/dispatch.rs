@@ -36704,10 +36704,10 @@ async fn self_focus_unsubscribe(
 const NESTED_READABLE: &[(&str, &[&str])] = &[];
 /// [`NESTED_READABLE`]'s paths for `verb`; none for a row that declares none.
 pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {
-    NESTED_READABLE
-        .iter()
-        .find(|(row, _)| *row == verb)
-        .map_or(&[], |(_, paths)| paths)
+    match NESTED_READABLE.iter().find(|(row, _)| *row == verb) {
+        Some((_, paths)) => *paths,
+        None => &[],
+    }
 }
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run

@@ -1624,7 +1624,7 @@ def facade_dispatch(facade_rows):
                  'const NESTED_READABLE: &[(&str, &[&str])] = &[' + ''.join(f'({json.dumps(verb)}, &[{", ".join(json.dumps(path) for path in paths)}]),' for verb, paths in nested if paths) + '];\n'
                  '/// [`NESTED_READABLE`]\'s paths for `verb`; none for a row that declares none.\n'
                  "pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {\n"
-                 'NESTED_READABLE.iter().find(|(row, _)| *row == verb).map_or(&[], |(_, paths)| paths)\n}\n')
+                 'match NESTED_READABLE.iter().find(|(row, _)| *row == verb) { Some((_, paths)) => *paths, None => &[] }\n}\n')
     dispatch += f'''/// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
