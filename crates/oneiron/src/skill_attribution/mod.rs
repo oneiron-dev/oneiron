@@ -59,6 +59,13 @@ pub use contribution::{
 mod contribution_admission;
 pub(crate) use contribution_admission::erase_contribution_checks_in_txn;
 pub use contribution_admission::{ContributionRecord, UnmatchedReason};
+mod contribution_targets;
+pub(crate) use contribution_targets::Experiment;
+pub use contribution_targets::{CheckedEdge, ContributionTarget};
+mod credit_join;
+pub(crate) use credit_join::erase_credit_adjustments_in_txn;
+pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
+mod decay_fit;
 mod late_credit;
 mod pack_learning;
 pub(crate) use late_credit::erase_late_credit_in_txn;
