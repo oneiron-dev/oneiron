@@ -296,6 +296,9 @@ pub struct OfficialCliSeatExecutor {
     /// past memory (the server's `DiskFloor`): a write that would go below it
     /// stops the run with [`ByoaError::SpoolAtDiskFloor`]. `None` keeps none.
     pub floor: Option<Arc<dyn SpillFloor>>,
+    /// Raised by the host when the run's claim is lost under it (FIX 9320):
+    /// the run's process is to stop. `None` watches nothing.
+    pub stop: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl std::fmt::Debug for OfficialCliSeatExecutor {
