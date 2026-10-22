@@ -3673,7 +3673,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 35,
-      "re-export": 60
+      "re-export": 61
      }
     },
     {
@@ -4713,6 +4713,22 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AdminStepUp",
+      "AuthenticatedWeaveAdmin"
+     ],
+     "path": "src/authority/weave_admin.rs",
+     "purpose": "OF-499 A3: a real, current Admin proof for the weave, behind an MFA step-up witness",
+     "surface": {
+      "const": 2,
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -12345,7 +12361,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 43,
       "enum": 1,
       "fn": 10,
       "struct": 1
@@ -12483,7 +12499,7 @@
      "path": "src/claim/scoped_read/loop_decision_read.rs",
      "purpose": "An authorised read of loop admissions and rejections for the weave (OF-499 A2): the gate decisions a Dreamer…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -12748,11 +12764,21 @@
      "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 10,
       "re-export": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/acknowledgements.rs",
+     "purpose": "FIX 5778: an agent acting for the owner inside its Grant acknowledges his weave digest's due notice, and…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -12819,6 +12845,16 @@
      "purpose": "A hard delete inside a saved weave period (FIX 7693, 8672)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/scheduled_owner.rs",
+     "purpose": "FIX 1259: a due Owner schedule renders the Owner report with no present opener",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -12902,7 +12938,7 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "enum": 3,
       "fn": 2,
       "struct": 3
@@ -12916,6 +12952,16 @@
      "purpose": "A weave report's Admissions section reads the loop decisions (OF-499 A2): the gate decisions a Dreamer or…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_report/projection.rs",
+     "purpose": "The live weave projection (OF-499; FIX 1259): the one core every weave report runs, a reader's live read, a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -33056,7 +33102,7 @@
      "path": "src/gate/weave_policy.rs",
      "purpose": "Trusted manifest rows for the weave lens: nested narrowing, never read authority",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -73344,7 +73390,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 195,
+     "files": 196,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73477,7 +73523,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 94,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74809,7 +74855,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4848,
+   "source_files": 4852,
    "test_files": 902
   },
   "oneiron-android": {
