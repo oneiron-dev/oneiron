@@ -138,7 +138,7 @@ fn run(
     let outcome = if attempt.attempt_count > 1 {
         ProgramAdmissionOutcome::Interrupted { filed: None }
     } else {
-        outcome(server, runtime, attempt, job_id, &job)
+        job_outcome(server, runtime, attempt, job_id, &job)
     };
     let now = server.vault.now_recorded_at();
     let receipt = record_program_admission(&server.vault, job_id, &job, &outcome, now)
@@ -152,7 +152,7 @@ fn run(
 
 /// What job `job` comes to: its sources and their caller as they stand
 /// now, what its proposal lacks, then its run as that caller.
-fn outcome(
+fn job_outcome(
     server: &Arc<SyncServer>,
     runtime: &tokio::runtime::Handle,
     attempt: &AttemptRecord,
