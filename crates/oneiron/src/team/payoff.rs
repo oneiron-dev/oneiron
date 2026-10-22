@@ -110,23 +110,6 @@ pub fn payoff_table(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<Pay
     payoff_rows_in_txn(vault, &rtxn, ReceiptScan::AllScopes(type_ref), true)
 }
 
-/// The payoff table's outcome counts for `type_ref` in `project`'s scope
-/// (`None`, the vault's alone), in the caller's snapshot: the same rows,
-/// with no coordination-cost diagnostic read (its wait, reuse and
-/// duplicate columns stay empty).
-///
-/// # Errors
-///
-/// Storage errors.
-pub(crate) fn payoff_outcomes_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    project: Option<EntityId>,
-    type_ref: &TypeRef,
-) -> Result<Vec<PayoffRow>> {
-    payoff_rows_in_txn(vault, txn, ReceiptScan::Scoped(project, type_ref), false)
-}
-
 /// The payoff rows of the receipts `scan` keeps in `txn`, each team's
 /// coordination cost read beside its outcome when `costs` asks for it.
 fn payoff_rows_in_txn(

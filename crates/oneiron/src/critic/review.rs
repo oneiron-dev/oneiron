@@ -77,7 +77,9 @@ pub struct ReviewRequest {
     pub spawn_attempt: Option<EntityId>,
     /// The project the caller declares the reviewed run works in: the
     /// scope of the critics' reliability cells (FIX 6038); `None` is the
-    /// vault. Part of the review's identity when set.
+    /// vault. Like the spawn attempt, not part of the review's identity: no
+    /// stored key derives from it, and a replayed review keeps the project
+    /// first declared for it.
     pub project: Option<EntityId>,
 }
 

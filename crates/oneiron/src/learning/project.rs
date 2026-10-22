@@ -470,7 +470,7 @@ pub(crate) fn active_heads_in_txn(
     Ok(rows)
 }
 
-fn entity_header(
+pub(super) fn entity_header(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
