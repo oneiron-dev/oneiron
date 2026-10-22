@@ -8,9 +8,10 @@ use rmpv::Value;
 use super::types::{
     FINGERPRINT_HEX_LEN, KEY_ARTIFACT_FINGERPRINT, KEY_AUDIENCE_REF, KEY_COMPILED_AT_SECS,
     KEY_COMPILED_FINGERPRINT, KEY_EXPORTED_AT_SECS, KEY_GRANTED_AT_SECS, KEY_GRANTED_BY,
-    KEY_IDENTITY_LINE, KEY_INCLUDED_ROW_IDS, KEY_SCHEMA_VERSION, KEY_STALE_AFTER_SECS,
-    KEY_STRUCK_ROW_IDS, KEY_SUBJECT_REF, KEY_TAKES_INCLUDED, PERSONA_SNAPSHOT_EXPORT_BODY_KEYS,
-    PERSONA_SNAPSHOT_EXPORT_SCHEMA_VERSION, PersonaSnapshotExportRecord,
+    KEY_IDENTITY_LINE, KEY_INCLUDED_ROW_IDS, KEY_OMITTED_REFS, KEY_SCHEMA_VERSION,
+    KEY_STALE_AFTER_SECS, KEY_STRUCK_ROW_IDS, KEY_SUBJECT_REF, KEY_TAKES_INCLUDED,
+    PERSONA_SNAPSHOT_EXPORT_BODY_KEYS, PERSONA_SNAPSHOT_EXPORT_SCHEMA_VERSION,
+    PersonaSnapshotExportRecord,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, RecordError, Result};
@@ -57,7 +58,7 @@ pub fn encode_persona_snapshot_export_body(
         .audience_ref
         .as_deref()
         .map_or(Value::Nil, Value::from);
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(PERSONA_SNAPSHOT_EXPORT_SCHEMA_VERSION),
@@ -111,7 +112,16 @@ pub fn encode_persona_snapshot_export_body(
             Value::from(KEY_ARTIFACT_FINGERPRINT),
             Value::from(record.artifact_fingerprint.as_str()),
         ),
-    ]);
+    ];
+    // Only a copy made without its vault refs stores the optional key, so a
+    // copy that carries them keeps the pinned 14-key body byte for byte.
+    if !record.omitted_refs.is_empty() {
+        entries.push((
+            Value::from(KEY_OMITTED_REFS),
+            encode_row_ids(&record.omitted_refs),
+        ));
+    }
+    let value = Value::Map(entries);
 
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value).map_err(|_| {
@@ -138,7 +148,11 @@ fn decode_persona_snapshot_export_value(value: &Value) -> Result<PersonaSnapshot
     let Value::Map(entries) = value else {
         return Err(invalid_snapshot("body must be a MessagePack map"));
     };
-    validate_keys(entries, &PERSONA_SNAPSHOT_EXPORT_BODY_KEYS)?;
+    validate_keys(
+        entries,
+        &PERSONA_SNAPSHOT_EXPORT_BODY_KEYS,
+        &[KEY_OMITTED_REFS],
+    )?;
 
     if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
         != Some(PERSONA_SNAPSHOT_EXPORT_SCHEMA_VERSION)
@@ -162,6 +176,10 @@ fn decode_persona_snapshot_export_value(value: &Value) -> Result<PersonaSnapshot
         included_row_ids: decode_row_ids(required_value(entries, KEY_INCLUDED_ROW_IDS)?)?,
         struck_row_ids: decode_row_ids(required_value(entries, KEY_STRUCK_ROW_IDS)?)?,
         artifact_fingerprint: decode_text(required_value(entries, KEY_ARTIFACT_FINGERPRINT)?)?,
+        omitted_refs: match optional_value(entries, KEY_OMITTED_REFS) {
+            Some(value) => decode_row_ids(value)?,
+            None => Vec::new(),
+        },
     };
 
     record.validate()?;
@@ -211,13 +229,15 @@ fn decode_u64(value: &Value) -> Result<u64> {
         .ok_or_else(|| invalid_snapshot("field must be an unsigned integer"))
 }
 
-fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
+/// Every one of `keys` is present once; each of `optional` at most once;
+/// nothing else.
+fn validate_keys(entries: &[(Value, Value)], keys: &[&str], optional: &[&str]) -> Result<()> {
+    let mut seen = vec![false; keys.len() + optional.len()];
     for (key, _) in entries {
         let key = key
             .as_str()
             .ok_or_else(|| invalid_snapshot("body keys must be strings"))?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
+        let Some(index) = keys.iter().chain(optional).position(|known| *known == key) else {
             return Err(invalid_snapshot(
                 "body key is not in the pinned PERSONA_SNAPSHOT_EXPORT_BODY_KEYS set",
             ));
@@ -227,7 +247,7 @@ fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
         }
         seen[index] = true;
     }
-    if seen.into_iter().all(|value| value) {
+    if seen[..keys.len()].iter().all(|value| *value) {
         Ok(())
     } else {
         Err(invalid_snapshot("missing required export record field"))
@@ -235,10 +255,14 @@ fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
+    optional_value(entries, key)
+        .ok_or_else(|| invalid_snapshot("missing required export record field"))
+}
+
+fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
     entries
         .iter()
         .find_map(|(entry_key, value)| (entry_key.as_str() == Some(key)).then_some(value))
-        .ok_or_else(|| invalid_snapshot("missing required export record field"))
 }
 
 pub(super) fn invalid_snapshot(reason: &'static str) -> Error {

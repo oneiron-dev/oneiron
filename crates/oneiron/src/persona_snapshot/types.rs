@@ -55,8 +55,25 @@ pub(crate) const PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD: &[&str] = &[
     "exportedAtSecs",
 ];
 
-/// Full projection: every pinned body key.
-pub(crate) const PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL: &[&str] = &PERSONA_SNAPSHOT_EXPORT_BODY_KEYS;
+/// Full projection: every pinned body key, then the optional `omittedRefs`
+/// key a copy made without its vault refs stores.
+pub(crate) const PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL: &[&str] = &[
+    "schemaVersion",
+    "subjectRef",
+    "audienceRef",
+    "identityLine",
+    "compiledAtSecs",
+    "staleAfterSecs",
+    "compiledFingerprint",
+    "takesIncluded",
+    "grantedBy",
+    "grantedAtSecs",
+    "exportedAtSecs",
+    "includedRowIds",
+    "struckRowIds",
+    "artifactFingerprint",
+    KEY_OMITTED_REFS,
+];
 
 /// Default cap on top-salience subject claim rows in a compile.
 pub const DEFAULT_PERSONA_SNAPSHOT_MAX_CLAIM_ROWS: usize = 12;
@@ -119,6 +136,11 @@ pub(super) const KEY_INCLUDED_ROW_IDS: &str = "includedRowIds";
 pub(super) const KEY_STRUCK_ROW_IDS: &str = "struckRowIds";
 
 pub(super) const KEY_ARTIFACT_FINGERPRINT: &str = "artifactFingerprint";
+
+/// Optional body key, outside the pinned set: the vault ref slots a copy
+/// made without its refs left out (FIX 1199). A copy that carries its refs
+/// stores no such key.
+pub(super) const KEY_OMITTED_REFS: &str = "omittedRefs";
 
 /// Row kind on a compiled persona snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -356,6 +378,9 @@ pub struct PersonaSnapshotExportRecord {
     pub struck_row_ids: Vec<String>,
     /// blake3 hex fingerprint over both renders.
     pub artifact_fingerprint: String,
+    /// The vault ref slots both renders left out, for a copy made without
+    /// its refs (FIX 1199); empty, and not stored, for one that carries them.
+    pub omitted_refs: Vec<String>,
 }
 
 impl PersonaSnapshotExportRecord {

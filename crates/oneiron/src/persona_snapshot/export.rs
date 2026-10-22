@@ -8,6 +8,9 @@ use super::codec::{
     invalid_snapshot,
 };
 use super::compile::{markdown_code_span, markdown_safe_line, verify_compile_against_stamp};
+use super::export_omit::{
+    omitted_ref_slots, render_markdown_card_omit, render_memory_pack_lite_omit,
+};
 use super::types::{
     MEMORY_PACK_LITE_SCHEMA_VERSION, PersonaSnapshotArtifact, PersonaSnapshotCompile,
     PersonaSnapshotExportConsent, PersonaSnapshotExportRecord, PersonaSnapshotRow,
@@ -18,6 +21,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT;
+use crate::share_travel::CopyRefs;
 use crate::temporal::TimeRange;
 
 impl crate::Vault {
@@ -71,12 +75,21 @@ impl crate::Vault {
         owner: Option<&AuthenticatedOwner>,
     ) -> Result<PersonaSnapshotArtifact> {
         let mut txn = self.store.env.write_txn()?;
-        let artifact =
-            self.export_persona_snapshot_in_txn(&mut txn, compile, strikes, consent, owner)?;
+        let artifact = self.export_persona_snapshot_in_txn(
+            &mut txn,
+            compile,
+            strikes,
+            consent,
+            owner,
+            CopyRefs::Preserve,
+        )?;
         txn.commit()?;
         Ok(artifact)
     }
 
+    /// `refs` picks the renders: `Preserve` is today's pair; `Omit` renders
+    /// both without vault refs, and the export record names what they left
+    /// out. Either way the record fingerprints the bytes actually rendered.
     pub(super) fn export_persona_snapshot_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -84,6 +97,7 @@ impl crate::Vault {
         strikes: &PersonaSnapshotStrikeList,
         consent: &PersonaSnapshotExportConsent,
         owner: Option<&AuthenticatedOwner>,
+        refs: CopyRefs,
     ) -> Result<PersonaSnapshotArtifact> {
         if let Some(owner) = owner {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
@@ -133,8 +147,16 @@ impl crate::Vault {
         let identity_included = included
             .iter()
             .any(|row| row.kind == PersonaSnapshotRowKind::Identity);
-        let memory_pack_json = render_memory_pack_lite(compile, &included, identity_included);
-        let markdown = render_markdown_card(compile, &included, identity_included);
+        let (memory_pack_json, markdown) = match refs {
+            CopyRefs::Preserve => (
+                render_memory_pack_lite(compile, &included, identity_included),
+                render_markdown_card(compile, &included, identity_included),
+            ),
+            CopyRefs::Omit => (
+                render_memory_pack_lite_omit(compile, &included, identity_included),
+                render_markdown_card_omit(compile, &included, identity_included),
+            ),
+        };
 
         let mut artifact_bytes = Vec::new();
         artifact_bytes.extend_from_slice(memory_pack_json.as_bytes());
@@ -164,6 +186,7 @@ impl crate::Vault {
             included_row_ids: included_row_ids.clone(),
             struck_row_ids: struck_row_ids.clone(),
             artifact_fingerprint,
+            omitted_refs: omitted_ref_slots(refs),
         };
         let export_id = self.store.clock.entity_id()?;
         self.put_persona_snapshot_export_in_txn(txn, &export_id, &record)?;

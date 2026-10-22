@@ -114,6 +114,7 @@ pub(crate) fn export(
         stamp: request.stamp.clone(),
         strike: request.strike.iter().cloned().collect(),
         unstrike: request.unstrike.iter().cloned().collect(),
+        travel: None,
     };
     let artifact = vault
         .export_persona_snapshot_copy_as(owner, &copy, destination)
