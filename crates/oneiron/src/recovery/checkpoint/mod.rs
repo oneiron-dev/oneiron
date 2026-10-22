@@ -25,11 +25,13 @@ mod commitment;
 mod credential_custody;
 mod custody_head;
 mod decisions;
+mod epochs;
 mod host_holds;
 mod image;
 mod landing;
 mod landing_lengths;
 mod pad_custody;
+mod pad_reopen;
 mod payload;
 mod rebuild;
 mod response_rows;
@@ -57,9 +59,11 @@ pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey, CheckpointSeque
 pub use commitment::CheckpointSigner;
 pub use credential_custody::CredentialRestoreNote;
 pub use custody_head::*;
+pub use epochs::RestorePadState;
 pub use host_holds::{BackupHoldVisibility, BackupHolds, HostOrderHolds};
 use image::{CheckpointImage, read_image, read_image_required};
 pub use pad_custody::PadRestoreNote;
+pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -265,6 +269,10 @@ pub struct RestoreEpoch {
     pub checkpoint_id: String,
     pub restored_at: u64,
     pub reason: RestoreReason,
+    /// What it still owes of the world key pads its image names (PAD-2):
+    /// absent from a row that owes and says nothing.
+    #[serde(default, skip_serializing_if = "RestorePadState::is_empty")]
+    pub pad_recovery: RestorePadState,
 }
 /// Source checkpoint identity and newly rebuilt engine indexes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -610,6 +618,7 @@ impl Vault {
         let (dropped_gate_decisions, erased_pads, credentials) =
             archive.store.activate_archived(&live)?;
         let restored_at = archive.now_recorded_at();
+        let pad_notes: Vec<_> = erased_pads.iter().map(PadRestoreNote::erased).collect();
         drop(archive);
         // Reopened, it reads what it holds under its own custody.
         let vault = Self::open_owned(path, config)?;
@@ -618,6 +627,7 @@ impl Vault {
                 checkpoint_id: String::new(),
                 restored_at,
                 reason: RestoreReason::Activate,
+                pad_recovery: RestorePadState::settled(pad_notes.clone()),
             },
             rebuilt_entities: 0,
             rebuilt_text_documents: 0,
@@ -626,7 +636,7 @@ impl Vault {
             custody_note: vault.activation_custody_note(),
             training_note: vault.training_link_restore_notice(),
             home_table_notes: Vec::new(),
-            pad_notes: erased_pads.iter().map(PadRestoreNote::erased).collect(),
+            pad_notes,
             checkpoint_sequence: None,
             opaque_responses: 0,
             credential_notes: credential_custody::notes(&vault.store, credentials),
