@@ -3869,7 +3869,7 @@ export type MeasuredLearningPredicate = "learning.reliability" | "learning.edit_
 /** `oneiron::learning::cell::TypeRef` */
 export type CellTypeRef = { node_id: string; tree_version: number }
 /** `oneiron::learning::doors::LearningCellKey` */
-export type LearningCellKey = { subject: string; predicate: MeasuredLearningPredicate; executor?: string | null; typeRef?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null }
+export type LearningCellKey = { subject: string; predicate: MeasuredLearningPredicate; executor?: string | null; typeRef?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null; project?: string | null }
 /** `oneiron::learning::doors::LearningReadRequest` */
 export type LearningReadRequest = { cell: LearningCellKey; project_ref?: string | null }
 /** `oneiron::learning::doors::LearningBetaValue` */
@@ -4427,7 +4427,7 @@ export type CodeProposalResolveRequest = { change: CodeProposalSubmitRequest; br
 /** `oneiron::learning::cell::LearningPredicate` */
 export type LearningPredicate = "reliability" | "edit_cost" | "retest_noise" | "setting"
 /** `oneiron::learning::cell::LearningCell` */
-export type LearningCell = { predicate: LearningPredicate; subject: EntityId; executor?: string | null; type_ref?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null }
+export type LearningCell = { predicate: LearningPredicate; subject: EntityId; executor?: string | null; type_ref?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null; project?: EntityId | null }
 /** `oneiron::critic::CritiqueVerdict` */
 export type CritiqueVerdict = "accept" | "revise" | "discard"
 /** `oneiron::critic::CritiqueSeverity` */
@@ -5163,9 +5163,9 @@ export type CriticAssociation = "branch_attempt" | "canonical_run_ref" | "declar
 /** `oneiron::team::doors::CriticObservation` */
 export type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; declared_attempt_ref?: EntityId | null; review_verdict_ref?: EntityId | null; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string }
 /** `oneiron::team::doors::LearningCellView` */
-export type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string }
+export type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string; project?: EntityId | null }
 /** `oneiron::team::doors::BorrowedCellView` */
-export type BorrowedCellView = { predicate: string; subject: EntityId; executor?: string | null; type_ref?: TypeStamp | null; axis?: string | null }
+export type BorrowedCellView = { predicate: string; subject: EntityId; executor?: string | null; type_ref?: TypeStamp | null; axis?: string | null; project?: EntityId | null }
 /** `oneiron::team::doors::LearningEvidenceView` */
 export type DoorsLearningEvidenceView = { receipt_ref: string; at: number; anchor_kind: string; weight: number }
 /** `oneiron::team::doors::LearningObservation` */
@@ -5343,7 +5343,7 @@ export type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDeci
 /** `oneiron::critic::review::submit::CriticBinding` */
 export type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number }
 /** `oneiron::critic::review::submit::CriticReviewSubmit` */
-export type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[]; spawn_attempt_ref?: string | null }
+export type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[]; spawn_attempt_ref?: string | null; project_ref?: string | null }
 /** `oneiron::critic::CritiqueTriageScores` */
 export type CritiqueTriageScores = { accept: number; revise: number; discard: number }
 /** `oneiron::critic::findings::MergedFinding` */
