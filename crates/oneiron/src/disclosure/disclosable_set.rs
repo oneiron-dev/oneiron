@@ -214,8 +214,13 @@ impl WordClosure<'_> {
             return Ok(None);
         }
         let store = &self.vault.store;
-        if !crate::federation::record_scope::scope_for_blob(store, self.txn, id, raw)?
-            .is_some_and(|record| admits(self.scope, &record))
+        // A NOTE sits at one world it is in that the clearance holds
+        // (FIX-LIST 9433).
+        let held = [&self.scope.worlds];
+        if !crate::federation::record_scope::note_world::blob_scope_held_at(
+            store, self.txn, id, raw, &held,
+        )?
+        .is_some_and(|record| admits(self.scope, &record))
         {
             return Ok(None);
         }

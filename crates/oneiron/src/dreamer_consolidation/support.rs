@@ -1,3 +1,7 @@
+//! Consolidation constants, hash domains and shared codec helpers.
+//! Entry: `invalid_consolidation`, the module's validation error builder.
+//! Definitions are local to this module.
+
 use std::io::Cursor;
 
 use rmpv::Value;

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4189 declarations.
+// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4190 declarations.
 // Replies: 1085 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
@@ -219,7 +219,8 @@ declare namespace Sdk {
   type ShapeItemClass = "receipted" | "widening" | "authority";
   type ShapePlanItem = { seq: number; target: ShapeTarget; change: ShapeChange; class: ShapeItemClass; before?: ShapeRow | null; after?: ShapeRow | null; door?: string | null };
   type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
-  type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState };
+  type ShapeApprovalDependencies = { digest: string };
+  type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState; approval?: ShapeApprovalDependencies | null };
   type ShapeApplyRun = { run_id: string; root: string; items: string[] };
   type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean; run: ShapeApplyRun };
   type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
@@ -1225,7 +1226,7 @@ declare namespace Sdk {
   type SlimDropRequest = { cause: ShedCause; waited_secs: number };
   type HeapDropReport = { sync_windows: number; ppr_cache_rows: number; ppr_dependency_rows: number; hnsw_nodes: number; estimated_reclaimed_bytes: number };
   type ShedBlocker = { kind: "no_pending_outbound_step" } | { kind: "multiple_pending_outbound_steps"; count: number } | { kind: "sync_window_busy"; window_key: string; outstanding_handles: number } | { kind: "already_slim_for_different_step" };
-  type SlimDropOutcome = { status: "entered"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "already_slim"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "refused"; blocker: ShedBlocker };
+  type SlimDropOutcome = { status: "entered"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "already_slim"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "refused"; blocker: ShedBlocker } | { status: "nothing_pending" };
   type SlimDropReceipt = { process_id: number; outcome: SlimDropOutcome };
   type SlimResumeOutcome = { status: "already_full" } | { status: "resumed"; residue: SlimResidueView };
   type SlimResumeReceipt = { process_id: number; outcome: SlimResumeOutcome };
@@ -1969,7 +1970,7 @@ declare namespace Sdk {
   type SkillContribution = { skill: EntityId; check: ContributionCheck };
   type UsedProvenanceEdge = { derived: EntityId; source: EntityId; check?: ContributionCheck | null };
   type CreditOptions = { enabled: boolean; depth_cap?: number | null; check_every_hop: boolean };
-  type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge: string; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
+  type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
   type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields };
   type EvidenceRow = { at: number; anchor: Anchor; observation: Observation; weight: number; judge?: string | null; on_judge_model?: boolean; outcome_label?: string | null; pack_attribution?: PackLearningContext | null; goal_revision?: string | null };
   type LearningEvidenceView = { receipt: string; evidence: EvidenceRow };
@@ -1977,10 +1978,10 @@ declare namespace Sdk {
   type MeasuredLearningView = { estimate: MeasuredLearningEstimate; own: boolean; borrowed_from?: LearningCellKey | null; attributed_outcome_receipts: string[]; provenance: LearningProvenanceView; prior_provenance?: LearningProvenanceView | null };
   type LearningCellView = { cell: LearningCellKey; view: MeasuredLearningView };
   type LearningProjectionRequest = { attempt_receipt: string; outcome_receipt: string; axis: string };
-  type LateCreditShare = { subject: EntityId; origin_skill?: EntityId | null; chain: UsedProvenanceEdge[]; decay: number; weight: number };
-  type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution: PackAttributionFields; direct_subjects: EntityId[]; shares: LateCreditShare[] };
+  type LateCreditShare = { subject?: EntityId | null; origin_skill?: EntityId | null; chain?: UsedProvenanceEdge[] | null; decay: number; weight: number };
+  type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution?: PackAttributionFields | null; direct_subjects: (EntityId | null)[]; shares: LateCreditShare[] };
   type LearningProjectionView = { receipt?: LateCreditReceipt | null };
-  type ObjectiveConfession = { objective: string; met: boolean; flaw?: string | null; uncertainty?: string | null };
+  type ObjectiveConfession = { objective: string; met?: boolean | null; flaw?: string | null; uncertainty?: string | null };
   type AttemptConfession = { attempt: AttemptId; subject: EntityId; type_ref: CellTypeRef; objectives: ObjectiveConfession[] };
   type AuditDraw = { rate: number; sample: number; at: number };
   type SealCheckKind = "confession_recheck" | "random_audit";
@@ -1988,7 +1989,7 @@ declare namespace Sdk {
   type ObjectiveFinding = { objective: string; flaw_present: boolean; evidence_ref: string };
   type SealCheckOutcome = { judge_revision: string; checked_at: number; findings: ObjectiveFinding[] };
   type SealCheckReceipt = { request: SealCheckRequest; outcome?: SealCheckOutcome | null; last_asked_at?: number | null };
-  type SealedAttemptReceipt = { confession: AttemptConfession; executor: string; result_ref: string; sealed_at: number; passing: boolean; draw?: AuditDraw | null; checks: SealCheckReceipt[] };
+  type SealedAttemptReceipt = { confession: AttemptConfession; project?: EntityId | null; executor: string; result_ref: string; sealed_at: number; passing: boolean; draw?: AuditDraw | null; checks: SealCheckReceipt[] };
   type SealAssessment = { weighted_flaws: number; weighted_hidden_flaws: number; confirmed_confessions: number; false_confessions: number };
   type SealReceiptView = { receipt: SealedAttemptReceipt; assessment: SealAssessment; honesty_reward: number };
   type SealAttemptRequest = { attempt: AttemptId };
@@ -3011,7 +3012,7 @@ declare namespace Sdk {
   type AttributionEvidenceRequest = { receipt_ref: string; actor: EntityId; skill?: EntityId | null; outcome: string; followed_skill?: boolean | null; followed_state?: FollowedStateInput | null; skill_covered_step?: boolean | null; at: number };
   type AttributionEvidenceReceipt = { sequence: number };
   type AttributionProjectRequest = { since_cursor?: number | null };
-  type AttemptJudgmentView = { sequence: number; verdict: AttributionLabel; subject: EntityId; evidence_receipts: string[]; at: number };
+  type AttemptJudgmentView = { sequence: number; verdict: AttributionLabel; subject?: EntityId | null; evidence_receipts: string[]; at: number };
   type PositiveProposalView = { evidence_sequence: number; skill: EntityId; actor: EntityId; finding: string; reason?: string | null; evidence_receipts: string[]; at: number };
   type SkillEditProposalView = { judgment_sequence: number; skill: EntityId; evidence_receipts: string[]; at: number };
   type AttributionProjection = { cursor: number; judgments: AttemptJudgmentView[]; positive_proposals: PositiveProposalView[]; pending_edit_proposals: SkillEditProposalView[] };
@@ -4642,7 +4643,7 @@ declare namespace self {
     members(input: Sdk.SavedQueryMembersRequest): Promise<Sdk.SavedQueryMembershipPageView | StoredResult>;
     /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
     read(input: Sdk.SavedQueryReadRequest): Promise<Sdk.SavedQueryReadResult | StoredResult>;
-    /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+    /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it. */
     update(input: Sdk.SavedQueryUpdateRequest): Promise<Sdk.SavedQueryRecordView | StoredResult>;
   };
   const secrets: {
@@ -6321,7 +6322,7 @@ declare const vault: Sdk.VaultHost & {
       };
     };
     relay: {
-      /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
+      /** Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer. */
       decide(input: Sdk.PolicyOutboundRequest): Promise<Sdk.HostedRelayDecision | StoredResult>;
     };
   };
@@ -6780,11 +6781,11 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   shape: {
-    /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+    /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan. */
     apply(input: Sdk.ShapeApplyRequest): Promise<Sdk.ShapeApplyReceipt | StoredResult>;
-    /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+    /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing. */
     plan(input: Sdk.ShapePlanRequest): Promise<Sdk.ShapePlan | StoredResult>;
-    /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+    /** The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read. */
     read(input: Sdk.EmptyRequest): Promise<Sdk.ShapeRead | StoredResult>;
   };
   shared: {

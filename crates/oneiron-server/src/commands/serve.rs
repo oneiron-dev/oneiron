@@ -144,6 +144,14 @@ pub(super) async fn serve_anchored(
             // A wake pass keeps a plugged-in laptop awake until it ends; on battery
             // normal idle sleep holds (ruled 2026-10-08).
             let awake = awake_host.keep_awake(AwakePolicy::default());
+            // It follows the power source while held; a host whose changes
+            // cannot be observed says so once (FIX 9547).
+            awake.on_unobserved(|| {
+                tracing::warn!(
+                    reason = "power_source_unobserved",
+                    "power-source changes are not observed; a wake assertion follows the source sampled as its holds began"
+                );
+            });
             // A live model run holds the same assertion through each admitted call,
             // not only a wake pass (Docs Q18).
             oneiron_vault_contract::host_adapters::hold_awake_for_runs({

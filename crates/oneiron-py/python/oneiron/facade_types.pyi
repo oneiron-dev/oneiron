@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1157 facade rows, 4134 declarations.
+Census: 1157 facade rows, 4135 declarations.
 Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -1099,9 +1099,12 @@ class ShapeItemStateRefused(TypedDict):
     state: Literal["refused"]
     reason: str
 ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+class ShapeApprovalDependencies(TypedDict):
+    digest: str
 class ShapeApplyItem(TypedDict):
     item: ShapePlanItem
     state: ShapeItemState
+    approval: NotRequired[ShapeApprovalDependencies | None]
 class ShapeApplyRun(TypedDict):
     run_id: str
     root: str
@@ -6121,7 +6124,9 @@ class SlimDropOutcomeAlreadySlim(TypedDict):
 class SlimDropOutcomeRefused(TypedDict):
     status: Literal["refused"]
     blocker: ShedBlocker
-SlimDropOutcome = SlimDropOutcomeEntered | SlimDropOutcomeAlreadySlim | SlimDropOutcomeRefused
+class SlimDropOutcomeNothingPending(TypedDict):
+    status: Literal["nothing_pending"]
+SlimDropOutcome = SlimDropOutcomeEntered | SlimDropOutcomeAlreadySlim | SlimDropOutcomeRefused | SlimDropOutcomeNothingPending
 class SlimDropReceipt(TypedDict):
     process_id: int
     outcome: SlimDropOutcome
@@ -9662,7 +9667,7 @@ class CreditOptions(TypedDict):
 class PackAttributionFields(TypedDict):
     typeRef: CellTypeRef
     executor: str
-    judge: str
+    judge: NotRequired[str | None]
     pattern: EntityId
     team_shape: list[str]
     decider: EntityId
@@ -9707,9 +9712,9 @@ class LearningProjectionRequest(TypedDict):
     outcome_receipt: str
     axis: str
 class LateCreditShare(TypedDict):
-    subject: EntityId
+    subject: NotRequired[EntityId | None]
     origin_skill: NotRequired[EntityId | None]
-    chain: list[UsedProvenanceEdge]
+    chain: NotRequired[list[UsedProvenanceEdge] | None]
     decay: float
     weight: float
 class LateCreditReceipt(TypedDict):
@@ -9721,14 +9726,14 @@ class LateCreditReceipt(TypedDict):
     axis: str
     at: int
     goal_revision: NotRequired[str | None]
-    attribution: PackAttributionFields
-    direct_subjects: list[EntityId]
+    attribution: NotRequired[PackAttributionFields | None]
+    direct_subjects: list[EntityId | None]
     shares: list[LateCreditShare]
 class LearningProjectionView(TypedDict):
     receipt: NotRequired[LateCreditReceipt | None]
 class ObjectiveConfession(TypedDict):
     objective: str
-    met: bool
+    met: NotRequired[bool | None]
     flaw: NotRequired[str | None]
     uncertainty: NotRequired[str | None]
 class AttemptConfession(TypedDict):
@@ -9763,6 +9768,7 @@ class SealCheckReceipt(TypedDict):
     last_asked_at: NotRequired[int | None]
 class SealedAttemptReceipt(TypedDict):
     confession: AttemptConfession
+    project: NotRequired[EntityId | None]
     executor: str
     result_ref: str
     sealed_at: int
@@ -15041,7 +15047,7 @@ class AttributionProjectRequest(TypedDict):
 class AttemptJudgmentView(TypedDict):
     sequence: int
     verdict: AttributionLabel
-    subject: EntityId
+    subject: NotRequired[EntityId | None]
     evidence_receipts: list[str]
     at: int
 class PositiveProposalView(TypedDict):

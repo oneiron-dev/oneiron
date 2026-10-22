@@ -229,7 +229,7 @@ pub(crate) fn optimize_brief_bound_at(
     let mut defect_receipts = Vec::new();
     for judgment in attribution_judgments(vault)? {
         if judgment.verdict != AttributionVerdict::SkillDefect
-            || judgment.subject != candidate.skill
+            || judgment.subject != Some(candidate.skill)
         {
             continue;
         }

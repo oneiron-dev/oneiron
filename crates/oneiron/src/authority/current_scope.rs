@@ -319,10 +319,15 @@ impl Vault {
         let Some(current) = self.guest_view_narrowed_in_txn(txn, claims) else {
             return true;
         };
-        position()
-            .ok()
-            .flatten()
-            .is_none_or(|position| within(&position, &current))
+        // A NOTE in several worlds stands inside at one `current` holds
+        // (FIX-LIST 9433).
+        position().ok().flatten().is_none_or(|position| {
+            let position = crate::federation::record_scope::note_world::any_world_at(
+                &position,
+                &current.worlds,
+            );
+            within(&position, &current)
+        })
     }
 
     /// A slip verified in `txn`: its grant, invitation and delegation still

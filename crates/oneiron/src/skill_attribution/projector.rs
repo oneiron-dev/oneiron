@@ -92,7 +92,6 @@ pub fn run_attribution_projector_with_decisions(
     decisions: Option<&AttributionDecisions<'_>>,
 ) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
-    let (floor, floor_rows) = unclear_floor_sourced(vault)?;
     let mut judgments = Vec::new();
     let mut revisions = Vec::new();
     let mut unclear = Vec::new();
@@ -100,10 +99,13 @@ pub fn run_attribution_projector_with_decisions(
     let mut highest = since_cursor;
     for (sequence, evidence) in pending {
         highest = highest.max(sequence);
+        // The floor where this outcome ran, at its receipt's project and
+        // type (FIX 2957).
+        let (floor, floor_rows) = unclear_floor_sourced(vault, Some(&evidence.receipt_ref))?;
         // The rows a model-tier note reads (FIX 7101); the rule tier writes
         // no note, so it reads none.
         let sources = if decisions.is_some() {
-            union_source_rows([evidence_rows(vault, &evidence), floor_rows.clone()])
+            union_source_rows([evidence_rows(vault, &evidence), floor_rows])
         } else {
             None
         };
@@ -150,7 +152,7 @@ pub fn run_attribution_projector_with_decisions(
         judgments.push(AttributionJudgment {
             sequence,
             verdict,
-            subject,
+            subject: Some(subject),
             evidence_receipts: vec![evidence.receipt_ref.clone()],
             at: evidence.at,
         });
@@ -166,6 +168,11 @@ pub fn run_attribution_projector_with_decisions(
             }
         }
         for (judgment, revision) in judgments.iter().zip(&revisions) {
+            // An erase since this pass read the evidence left it naming no
+            // one: its judgment is not made (FIX 8988).
+            if !still_names_in_txn(vault, wtxn, judgment)? {
+                continue;
+            }
             if let Some(revision) = revision {
                 super::judge_supersession::ensure_current_attribution_judge_in_txn(
                     vault, &*wtxn, revision,
@@ -203,6 +210,10 @@ pub fn run_attribution_projector_with_decisions(
         // In the cursor's write: a cause that fails to land leaves its
         // evidence for the next pass.
         for (sequence, evidence, label, share, revision) in &causes {
+            // The evidence as it stands in this write, so an erase since the
+            // read is not undone (FIX 8988).
+            let current = EVIDENCE.get(&vault.store, wtxn, sequence)?;
+            let evidence = current.as_ref().map_or(evidence, |row| &row.evidence);
             super::causes::put_attribution_cause_in_txn(
                 vault,
                 wtxn,
@@ -300,15 +311,33 @@ pub(crate) fn withdraw_edit_proposal_in_txn(
 /// The proposal a judgment mints, or `None` when its verdict routes to a
 /// claim instead (§4: only discovery becomes an edit proposal).
 fn edit_proposal_for(judgment: &AttributionJudgment) -> Option<SkillEditProposal> {
+    let skill = judgment.subject?;
     judgment
         .verdict
         .mints_edit_proposal()
         .then(|| SkillEditProposal {
             judgment_sequence: judgment.sequence,
-            skill: judgment.subject,
+            skill,
             evidence_receipts: judgment.evidence_receipts.clone(),
             at: judgment.at,
         })
+}
+
+/// Whether the evidence `judgment` was routed from still names its subject
+/// in `txn`, as its skill or its actor.
+fn still_names_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    judgment: &AttributionJudgment,
+) -> Result<bool> {
+    let Some(subject) = judgment.subject else {
+        return Ok(false);
+    };
+    Ok(EVIDENCE
+        .get(&vault.store, txn, &judgment.sequence)?
+        .is_some_and(|row| {
+            row.evidence.skill == Some(subject) || row.evidence.actor == Some(subject)
+        }))
 }
 
 /// The rows `evidence`'s terminal pack receipt stands on, as the receipt

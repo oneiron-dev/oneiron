@@ -1,7 +1,8 @@
 //! Entity documents the historical lift sweep reads again (OF-067, Engine
 //! ruling G2 = b). A record's prose lives in its document, whose operation
-//! history and revisions keep what each edit wrote, so no door rewrites it,
-//! and a new write that brings a key into it is refused. The sweep marks the
+//! history and revisions keep what each edit wrote, so no door rewrites it;
+//! a new write's prose is admitted before any operation holds it, each key
+//! as its handle (FIX 2371, `verbs::admitted_text_in_txn`). The sweep marks the
 //! keys of the live text (owner ruling C2), under its hash: each key goes to
 //! custody, the record naming where it was found, and its text, operations,
 //! revisions and hashes stay as they are. A reader other than the owner reads
