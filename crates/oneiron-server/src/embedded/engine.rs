@@ -193,18 +193,44 @@ struct Serving {
     wake: Arc<Notify>,
     stop: Arc<Notify>,
     done: oneshot::Receiver<anyhow::Result<()>>,
+    /// Asked to stop: it is draining, takes no new connection, and the next
+    /// stop, close or wake joins it rather than start another (FIX 9484).
+    stopping: bool,
 }
 
 impl Serving {
-    /// Stops serving and waits out the ordered drain and worker shutdown.
-    async fn finish(self) -> anyhow::Result<()> {
-        self.stop.notify_one();
-        super::runtime::served(self.done).await
+    /// Asks the run to stop, once; the drain goes on without a waiter.
+    fn signal_stop(&mut self) {
+        if !self.stopping {
+            self.stop.notify_one();
+            self.stopping = true;
+        }
     }
 
     /// The serve body returned, or is returning: it takes no connection.
     fn ended(&self) -> bool {
         self.connector.is_closed()
+    }
+}
+
+/// Stops a serve run whose start was dropped before its app was ready
+/// (FIX 9483): held across startup and disarmed only once the run is
+/// handed to its [`Serving`], so a cancelled start or restarting wake
+/// leaves no serve thread holding the vault open.
+struct StartupStop(Option<Arc<Notify>>);
+
+impl StartupStop {
+    /// The run is ready: its [`Serving`] owns its stop from here.
+    fn disarm(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for StartupStop {
+    fn drop(&mut self) {
+        if let Some(stop) = self.0.take() {
+            stop.notify_one();
+        }
     }
 }
 
@@ -227,6 +253,7 @@ async fn serve_on<A: AppHost + 'static>(
     let mut done = super::runtime::spawn_serving(serve_workers, move || {
         super::serve_prepared(host, vault, config, Some(artifact_streams), owner_host)
     })?;
+    let startup = StartupStop(Some(Arc::clone(&stop)));
     let ready = tokio::select! {
         biased;
         ready = &mut readied => ready.is_ok(),
@@ -235,12 +262,14 @@ async fn serve_on<A: AppHost + 'static>(
     if !ready {
         return Err(startup_failure(done.await));
     }
+    startup.disarm();
     Ok(Serving {
         connector,
         artifacts,
         wake,
         stop,
         done,
+        stopping: false,
     })
 }
 
@@ -266,6 +295,26 @@ fn startup_failure(served: Result<anyhow::Result<()>, oneshot::error::RecvError>
 struct State<A> {
     app: A,
     serving: Option<Serving>,
+}
+
+impl<A> State<A> {
+    /// Stops the serving run, if any, and waits out its ordered drain in
+    /// place (FIX 9484): the run stays here, stopping, until its completion
+    /// arrives, so a stop, close or wake dropped mid-drain leaves it for the
+    /// next one to join, and none declares the engine stopped before it is.
+    async fn join_serving(&mut self) -> anyhow::Result<()> {
+        let Some(serving) = self.serving.as_mut() else {
+            return Ok(());
+        };
+        serving.signal_stop();
+        let finished = (&mut serving.done).await;
+        self.serving = None;
+        finished.unwrap_or_else(|_| {
+            Err(anyhow::anyhow!(
+                "the embedded engine's serve thread panicked"
+            ))
+        })
+    }
 }
 
 /// The engine inside an app's process, over the one vault it opened.
@@ -414,6 +463,7 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
             .await
             .serving
             .as_ref()
+            .filter(|serving| !serving.stopping)
             .map(|serving| match origin {
                 Origin::Api => serving.connector.clone(),
                 Origin::Artifacts => serving.artifacts.clone(),
@@ -433,12 +483,15 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
         let mut state = self.state.lock().await;
         if let Some(serving) = &state.serving
             && !serving.ended()
+            && !serving.stopping
         {
             serving.wake.notify_one();
             return Ok(());
         }
-        if let Some(ended) = state.serving.take()
-            && let Err(error) = ended.finish().await
+        // An ended run, or one a dropped stop left draining, is joined
+        // before the next one starts (FIX 9484).
+        if state.serving.is_some()
+            && let Err(error) = state.join_serving().await
         {
             tracing::warn!(%error, "the embedded engine had stopped serving on its own");
         }
@@ -462,10 +515,16 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
     /// ones, stop every worker, and return once they have. The vault stays
     /// open for the next [`Self::wake`].
     pub async fn stop(&self) -> anyhow::Result<()> {
-        let mut state = self.state.lock().await;
-        match state.serving.take() {
-            Some(serving) => serving.finish().await,
-            None => Ok(()),
+        self.state.lock().await.join_serving().await
+    }
+
+    /// Asks serving to stop without waiting for its drain (FIX 9485): a
+    /// [`super::BlockingEngine`]'s close signals first, so the drain ends the
+    /// calls that hold its engine before it waits to take the engine for
+    /// the ordered stop, which joins this same run.
+    pub(super) async fn signal_stop(&self) {
+        if let Some(serving) = self.state.lock().await.serving.as_mut() {
+            serving.signal_stop();
         }
     }
 
