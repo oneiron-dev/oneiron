@@ -293,24 +293,51 @@ impl TasksSectionRows {
     /// whose task is not on the board rides as its own row), and lists who
     /// `fits:` each open, unassigned task: the persons who finished tasks of
     /// the same type, most often first.
+    ///
+    /// Every child rides here. A host whose reader or destination is
+    /// narrower than the actor uses [`Self::attach_people_admitted`].
     pub fn attach_people(
         &mut self,
         people: &crate::context_board::PeopleView<'_>,
         children: &[crate::context_board::ChildState],
     ) {
+        let Ok(()) = self.attach_people_admitted(people, children, |_| {
+            Ok::<_, std::convert::Infallible>(true)
+        });
+    }
+
+    /// [`Self::attach_people`], with each child whose task is not among
+    /// these rows judged by `admit` first (FIX 9755): its backing TASK under
+    /// the caller's read and destination ([`Self::task_admitted`]), or, with
+    /// no backing TASK, the child itself. A child `admit` refuses never
+    /// renders, so a TASK the caller's read or destination withheld does not
+    /// come back through its child as a bare row. A child on a task among
+    /// these rows rides that task, which already passed both.
+    pub fn attach_people_admitted<E>(
+        &mut self,
+        people: &crate::context_board::PeopleView<'_>,
+        children: &[crate::context_board::ChildState],
+        mut admit: impl FnMut(&crate::context_board::ChildState) -> std::result::Result<bool, E>,
+    ) -> std::result::Result<(), E> {
         for intent in &mut self.intents {
             intent.who_label = intent.who.map(|who| people.label(who));
         }
         for child in children {
             let task = child.task_ref.as_deref();
             match task.and_then(|task| self.intents.iter_mut().find(|intent| intent.id == task)) {
-                Some(intent) => intent.children.push(child.token(people)),
-                None => self.bare_jobs.push(JobPresence {
-                    id: child.attempt.clone(),
-                    kind: format!("child {}", child.token(people)),
-                    status: child_board_status(child.status),
-                    cancel_pathology: None,
-                }),
+                Some(intent) => intent
+                    .children
+                    .push((child.attempt.clone(), child.token(people))),
+                None => {
+                    if admit(child)? {
+                        self.bare_jobs.push(JobPresence {
+                            id: child.attempt.clone(),
+                            kind: format!("child {}", child.token(people)),
+                            status: child_board_status(child.status),
+                            cancel_pathology: None,
+                        });
+                    }
+                }
             }
         }
         let mut done: std::collections::BTreeMap<
@@ -353,6 +380,28 @@ impl TasksSectionRows {
         for (intent, fits) in self.intents.iter_mut().zip(fits) {
             intent.fits = fits;
         }
+        Ok(())
+    }
+
+    /// Whether `task` passes the reader and destination the TASKS rows pass
+    /// (FIX 9755): toward `memory`'s destination off this device, a TASK a
+    /// world keeps off that machine is withheld, as the board's TASK scan
+    /// passes it over; then `read` judges it as the host's row cut does.
+    pub fn task_admitted(
+        memory: &crate::memory::Memory<'_>,
+        read: &crate::claim::ScopedRead<'_>,
+        task: EntityId,
+    ) -> Result<bool> {
+        let destination = memory.destination();
+        if destination.is_off_device()
+            && memory
+                .vault()
+                .off_device_readable_for(vec![task], destination)?
+                .is_empty()
+        {
+            return Ok(false);
+        }
+        read.is_entity_readable(&task)
     }
 }
 
@@ -487,8 +536,9 @@ pub struct TaskIntentPresence {
     /// Persons who did this type of task before, as this reader's board
     /// names them.
     pub fits: Vec<String>,
-    /// Live children realizing this task, as `<agent>:<status>[:lead]`.
-    pub children: Vec<String>,
+    /// Live children realizing this task: each one's attempt id and its
+    /// `<agent>:<status>[:lead]` token, in the order they were attached.
+    pub children: Vec<(String, String)>,
 }
 
 impl TaskIntentPresence {

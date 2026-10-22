@@ -112,7 +112,7 @@ pub(crate) fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
             intent
                 .children
                 .iter()
-                .map(|child| single_token(child))
+                .map(|(_, child)| single_token(child))
                 .collect::<Vec<_>>()
                 .join(",")
         ));

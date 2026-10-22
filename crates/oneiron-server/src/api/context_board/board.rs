@@ -277,7 +277,19 @@ pub(super) fn board_parts(
                 ),
                 None => (Vec::new(), Vec::new()),
             };
-            rows.attach_people(people, &children);
+            // A child joins only under the reader and destination its TASK
+            // rows passed (FIX 9755): one whose TASK they withheld never
+            // renders as a bare row. A child with no TASK is an attempt no
+            // entity read proves, kept exactly where the bare jobs are.
+            rows.attach_people_admitted(people, &children, |child| {
+                match child.task_ref.as_deref().map(EntityId::from_hex) {
+                    Some(Ok(task)) => {
+                        oneiron::context_board::TasksSectionRows::task_admitted(memory, read, task)
+                    }
+                    _ => Ok(auth.verified_slip().is_none()),
+                }
+            })
+            .map_err(|error| core_engine_error("board children failed", error))?;
             let you = oneiron::context_board::render_you_line(&forks, &rows.intents);
             let mut tasks = rows.render();
             tasks.pin_hook_tasks(&rows.intents, hook_pins);
