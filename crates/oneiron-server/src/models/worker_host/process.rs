@@ -1,6 +1,8 @@
 //! One running worker process in its supervisor's custody: started in a
 //! process group of its own, reaped by one task, checked for liveness on its
-//! health route, and stopped by signals to that group alone.
+//! health route, asked what it holds on its native socket when it has one,
+//! and stopped by signals to that group alone.
+use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron_driver::{LauncherFuture, RunningWorker, WorkerActivity, WorkerExit};
@@ -18,6 +20,8 @@ pub(super) struct ProcessWorker {
     exit: watch::Receiver<Option<WorkerExit>>,
     health: String,
     client: reqwest::Client,
+    /// The worker's native socket, where its stats are read (FIX 9190).
+    native: Option<PathBuf>,
 }
 
 impl ProcessWorker {
@@ -28,6 +32,7 @@ impl ProcessWorker {
     pub(super) fn spawn(
         mut command: tokio::process::Command,
         health: String,
+        native: Option<PathBuf>,
     ) -> std::io::Result<Self> {
         command.process_group(0).kill_on_drop(false);
         #[cfg(target_os = "linux")]
@@ -65,6 +70,7 @@ impl ProcessWorker {
             exit,
             health,
             client,
+            native,
         })
     }
 
@@ -105,8 +111,15 @@ impl RunningWorker for ProcessWorker {
     }
 
     fn activity(&self) -> LauncherFuture<'_, Option<WorkerActivity>> {
-        // Neither house server reports its queued and active work yet.
-        Box::pin(async { None })
+        // An EXL3 worker reports its queue, its open calls and its allocator
+        // reservation on its native socket (a cheap `stats`, never a walk of
+        // its tensors); a worker without one reports nothing.
+        Box::pin(async move {
+            match &self.native {
+                Some(socket) => super::super::native_exl3::activity(socket).await,
+                None => None,
+            }
+        })
     }
 
     fn terminate(&self, grace: Duration) -> LauncherFuture<'_, WorkerExit> {

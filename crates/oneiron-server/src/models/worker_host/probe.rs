@@ -6,7 +6,10 @@
 //! identity and how its build is known; a managed launch's answer must also
 //! echo the digest of the launch manifest this supervisor gave it. A
 //! version-string runtime is reported, never verified, so an EXL3 worker
-//! started without a launch manifest is unverified.
+//! started without a launch manifest is unverified. A launch with a native
+//! socket is qualified there (DESIGN-V2 R1): its `hello`, then the same one
+//! input, sent once per incarnation with the epoch the hello named; the hello
+//! must name the answer's epoch, the wire model and this launch's manifest.
 //!
 //! llama.cpp: health is liveness only. The answer's `model` must be a launch
 //! alias (one parse, `parse_llama_alias`), for a managed worker the one this
@@ -19,6 +22,7 @@
 //! A pinned value the answer contradicts is `Failed`; a pin or a piece of
 //! evidence that is missing is `Unverified`; no answer is `Unreachable`.
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::PoisonError;
 
@@ -114,9 +118,26 @@ impl HouseProbe {
         Ok(reply.body)
     }
 
+    /// The qualification answer: over the launch's native socket when it
+    /// has one, with the worker's `hello` beside it, else over HTTP.
+    async fn exl3_answer(
+        &self,
+        http: &ProviderHttp,
+        launch: Option<&LaunchRecord>,
+    ) -> Result<(JsonValue, Option<JsonValue>), WorkerReadiness> {
+        match launch.and_then(|launch| launch.native_socket.as_deref()) {
+            Some(socket) => native_answer(socket, &qualification_request(&self.wire_model))
+                .await
+                .map(|(hello, body)| (body, Some(hello)))
+                .map_err(|failure| failed(failure, None)),
+            None => self.answer(http).await.map(|body| (body, None)),
+        }
+    }
+
     async fn exl3(&self, http: &ProviderHttp, expected: &WorkerSpec) -> WorkerReadiness {
-        let body = match self.answer(http).await {
-            Ok(body) => body,
+        let launch = self.launch();
+        let (body, hello) = match self.exl3_answer(http, launch.as_ref()).await {
+            Ok(answer) => answer,
             Err(readiness) => return readiness,
         };
         let worker = body
@@ -134,7 +155,6 @@ impl HouseProbe {
         if body.get("model").and_then(JsonValue::as_str) != Some(self.wire_model.as_str()) {
             return failed(WorkerFailure::ModelMismatch, Some(observed));
         }
-        let launch = self.launch();
         if let Some(launch) = &launch {
             let echoed = body
                 .pointer("/usage")
@@ -151,6 +171,11 @@ impl HouseProbe {
                 }
                 Some(_) => {}
             }
+        }
+        if let Some(hello) = &hello
+            && !hello_agrees(hello, &observed, &self.wire_model, launch.as_ref())
+        {
+            return failed(WorkerFailure::BuildMismatch, Some(observed));
         }
         judge(observed, &expected.expected, launch.as_ref())
     }
@@ -230,6 +255,49 @@ fn epoch_only(epoch: CacheEpoch) -> WorkerDescriptor {
         },
         build_evidence: WorkerBuildEvidence::Unknown,
     }
+}
+
+/// One qualification over the worker's native socket
+/// (`models/native_exl3`): its `hello`, and its answer in the HTTP reply's
+/// shape.
+#[cfg(unix)]
+async fn native_answer(
+    socket: &Path,
+    request: &JsonValue,
+) -> Result<(JsonValue, JsonValue), WorkerFailure> {
+    super::super::native_exl3::qualify(socket, request).await
+}
+
+#[cfg(not(unix))]
+async fn native_answer(
+    socket: &Path,
+    request: &JsonValue,
+) -> Result<(JsonValue, JsonValue), WorkerFailure> {
+    let _ = (socket, request);
+    Err(WorkerFailure::Unreachable)
+}
+
+/// Whether a native `hello` names the worker its answer did: an EXL3
+/// worker, the answer's epoch, the configured wire model, and this launch's
+/// manifest when the supervisor gave one. A worker whose channel and answer
+/// disagree is not the launch this host started.
+fn hello_agrees(
+    hello: &JsonValue,
+    observed: &WorkerDescriptor,
+    wire_model: &str,
+    launch: Option<&LaunchRecord>,
+) -> bool {
+    let kind = hello
+        .pointer("/worker/kind")
+        .and_then(|kind| WorkerKind::deserialize(kind).ok());
+    let epoch = hello.get("epoch").and_then(JsonValue::as_str);
+    let answered = observed.identity.backend_epoch.as_ref();
+    let manifest = hello.get(LAUNCH_MANIFEST_KEY).and_then(JsonValue::as_str);
+    kind == Some(WorkerKind::Exl3)
+        && epoch.is_some()
+        && epoch == answered.map(CacheEpoch::as_str)
+        && hello.get("model").and_then(JsonValue::as_str) == Some(wire_model)
+        && launch.is_none_or(|launch| manifest == Some(launch.manifest_sha256.as_str()))
 }
 
 fn failed(failure: WorkerFailure, observed: Option<WorkerDescriptor>) -> WorkerReadiness {

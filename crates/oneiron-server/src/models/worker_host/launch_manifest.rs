@@ -82,12 +82,14 @@ pub(super) const fn schema_version() -> u64 {
 
 /// What one launch must answer with: the digest of the manifest it was
 /// given, the alias a llama.cpp launch was given, and the identity its
-/// verified bytes give.
+/// verified bytes give; and where an EXL3 launch answers natively, when it
+/// was given a socket.
 #[derive(Clone, Debug)]
 pub(super) struct LaunchRecord {
     pub(super) manifest_sha256: String,
     pub(super) llama_alias: Option<String>,
     pub(super) pins: CacheIdentity,
+    pub(super) native_socket: Option<PathBuf>,
 }
 
 /// The current launch's record, shared by a worker's launcher, which fills

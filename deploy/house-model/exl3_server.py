@@ -36,6 +36,22 @@ model worker supervisor, it is given `--launch-manifest`: each receipt then
 echoes that manifest's digest beside the Generator's epoch, names the build
 the supervisor verified as its runtime, and says verified artifacts
 (FIX 8315). Without one the build stays reported.
+
+Each receipt also carries the R3 counters (FIX 8317): the request's
+first-token time, from its acceptance (before it is rendered) to the first
+token the Generator samples for it, reasoning or answer; its native end; its
+native output count; and its drafts proposed and accepted, a total only when
+every pass reported both. A count a Job's final leaves out stays out of the
+receipt, never zero (FIX 8896).
+
+A request's `tools` reach the chat template, and a tool call the model
+writes comes back as OpenAI `tool_calls`, buffered or streamed
+(`exl3_tools.py`, FIX 8328). A reply with no tool call is unchanged.
+
+Started with `--native-socket`, the server also answers the host over a Unix
+socket (`exl3_ipc.py`, DESIGN-V2 R1): the same scheduler, with streamed
+events, an acknowledged cancel, allocator stats (`exl3_stats.py`), drain and
+shutdown. The HTTP routes stay as they are.
 """
 import argparse
 import collections
@@ -50,6 +66,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import cache_usage
+import exl3_ipc
+import exl3_stats
+import exl3_tools
 import weights_manifest
 from body_codec import UnsupportedEncoding, decode_body
 from jinja2 import Environment
@@ -99,6 +118,44 @@ class RequestError(ValueError):
 
 class ClientGone(Exception):
     """The client closed its connection before its reply was complete."""
+
+
+class Draining(RuntimeError):
+    """The server takes no new call: it drains or shuts down."""
+
+
+class TimedJob(Job):
+    """A Job that tells its request when it samples its first token (R3):
+    after the first increment of its generated count, on the plain and the
+    speculative decode paths alike, which both sample through
+    `receive_sample`. A requeue runs `__init__` again on the same object, so
+    the hook is kept, never reset; it fires once."""
+
+    def __init__(self, *args, on_first_token=None, **kwargs):
+        hook = on_first_token if on_first_token is not None else getattr(self, "on_first_token", None)
+        super().__init__(*args, **kwargs)
+        self.on_first_token = hook
+
+    def receive_sample(self, *args, **kwargs):
+        result = super().receive_sample(*args, **kwargs)
+        hook = self.on_first_token
+        if hook is not None and self.new_tokens >= 1:
+            self.on_first_token = None
+            hook()
+        return result
+
+
+def cuda_devices(*models):
+    """The CUDA devices the models' modules were placed on, by name."""
+    devices = set()
+    for model in models:
+        if model is None:
+            continue
+        for module in model.modules:
+            device = str(getattr(module, "device", None))
+            if device.startswith("cuda"):
+                devices.add(device)
+    return sorted(devices)
 
 
 def raise_template_error(message):
@@ -242,9 +299,13 @@ def load(args):
         ids = tokenizer.encode(spelling, encode_special_tokens=True).flatten().tolist()
         if len(ids) == 1:
             stop_ids.add(int(ids[0]))
+    # The allocator's peaks start again here: from now on they are serving
+    # peaks, and the load's are kept apart (exl3_stats.py).
+    memory = exl3_stats.Memory(target, target_cache, generator, cuda_devices(target, draft))
+    memory.reset_peaks()
     print(f"SERVER_READY model={args.model_id} context={args.context} cache_tokens={cache_tokens} "
           f"in_flight={batch} depth={depth} stop_ids={sorted(stop_ids)}", flush=True)
-    return Server(args, tokenizer, template, generator, sorted(stop_ids), identity)
+    return Server(args, tokenizer, template, generator, sorted(stop_ids), identity, memory)
 
 
 def make_sampler(body):
@@ -333,13 +394,22 @@ class Request:
     The handler fills the inputs before `Scheduler.submit` and never changes
     them; from then on only the scheduler thread touches the phase and
     accounting fields. The two sides meet in `events` (scheduler to handler:
-    reasoning and content pieces, then one of done, error or cancelled) and in
-    `cancelled` (handler to scheduler). `ended` is the handler's own: it saw
-    the terminal event."""
+    reasoning and content pieces and the first-token mark, then one of done,
+    error or cancelled) and in `cancelled` (handler to scheduler). `ended` is
+    the handler's own: it saw the terminal event. A request that ends in
+    error or cancelled carries the receipt of what it completed in
+    `partial_usage`, and the scheduler's cheap stats at its end in
+    `final_stats`, both set before its terminal event."""
 
-    def __init__(self, request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo):
+    def __init__(self, request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo,
+                 accepted_ns=None, tools=None):
         # Inputs.
         self.request_id = request_id
+        # When the worker accepted the request, before it was rendered
+        # (monotonic ns): the start of its first-token time (R3).
+        self.accepted_ns = accepted_ns
+        # The request's tool specs, which its reply is read for (FIX 8328).
+        self.tools = tools or []
         # Runs alone: admitted once nothing else is in flight, with nothing
         # admitted beside it until it ends.
         self.solo = solo
@@ -370,6 +440,7 @@ class Request:
         self.ended = False
         # The scheduler's.
         self.submitted = None
+        self.admitted = False
         self.admission_wait = 0.0
         self.phase = None
         self.job = None
@@ -383,9 +454,33 @@ class Request:
         self.leading = True
         self.peak = 0
         self.released = False
-        self.timings = {"prefill": 0.0, "generate": 0.0, "enqueued": 0.0, "accepted": 0, "rejected": 0}
+        # Each ended Job's native measurements, totalled while every pass
+        # reports them (cache_usage.pass_totals); None before the first.
+        self.totals = None
+        # The last ended Job's native end.
+        self.eos_reason = None
+        # When the first generated token was sampled (monotonic ns).
+        self.first_token_ns = None
+        self.partial_usage = None
+        self.final_stats = None
         # Each ended Job's pass, from its final event, in order (FIX 6567).
         self.passes = []
+
+    def mark_first_token(self):
+        """Notes the request's first sampled token, once, from the scheduler
+        thread, and tells the handler."""
+        if self.first_token_ns is not None:
+            return
+        self.first_token_ns = time.monotonic_ns()
+        phase = "reasoning" if self.phase == "reason" else "content"
+        self.events.put(("first_token", {"ttft_us": self.ttft_us(), "phase": phase}))
+
+    def ttft_us(self):
+        """Acceptance to the first sampled token, in whole microseconds; None
+        before a token, or without an acceptance time."""
+        if self.accepted_ns is None or self.first_token_ns is None:
+            return None
+        return max(0, self.first_token_ns - self.accepted_ns) // 1000
 
 
 class Scheduler:
@@ -401,15 +496,20 @@ class Scheduler:
     passes: the answer job is enqueued when the reasoning job ends, never
     beside it, and no new request is admitted while an answer waits. A solo
     request at the head of the queue stops admission until what is in flight
-    has ended, then goes in alone; the requests behind it wait for it."""
+    has ended, then goes in alone; the requests behind it wait for it.
 
-    def __init__(self, generator, tokenizer, encode, stop_ids, max_in_flight, identity):
+    Both transports feed it: an HTTP handler and a native call alike count
+    their call from acceptance to its end (`accept`, `settle`), which is what
+    a drain waits on, and ask the owner thread for its stats (`snapshot`)."""
+
+    def __init__(self, generator, tokenizer, encode, stop_ids, max_in_flight, identity, memory=None):
         self.generator = generator
         self.tokenizer = tokenizer
         self.encode = encode
         self.stop_ids = stop_ids
         self.max_in_flight = max_in_flight
         self.identity = identity
+        self.memory = memory
         self.depth = int(generator.num_draft_tokens)
         self.pool_pages = int(generator.pagetable.max_pages)
         # Shared with the handlers, under `cond`.
@@ -417,6 +517,12 @@ class Scheduler:
         self.ingress = collections.deque()
         self.pokes = 0
         self.closing = False
+        # Submits waiting for an ingress place; calls accepted and not yet
+        # ended; whether the worker drains; snapshots asked of the owner.
+        self.blocked = 0
+        self.open_calls = 0
+        self.draining = False
+        self.asks = collections.deque()
         # The owner thread's alone.
         self.active = []
         self.by_serial = {}
@@ -435,17 +541,22 @@ class Scheduler:
         req.need = min(pages_for(need, req.max_tokens, self.depth), self.pool_pages)
         req.submitted = time.monotonic()
         with self.cond:
-            while len(self.ingress) >= INGRESS_CAPACITY and not self.closing:
-                self.cond.wait(DISCONNECT_POLL_S)
-                if len(self.ingress) >= INGRESS_CAPACITY and gone():
-                    raise ClientGone()
+            # Counted while it waits for a place: part of the queue depth.
+            self.blocked += 1
+            try:
+                while len(self.ingress) >= INGRESS_CAPACITY and not self.closing:
+                    self.cond.wait(DISCONNECT_POLL_S)
+                    if len(self.ingress) >= INGRESS_CAPACITY and gone():
+                        raise ClientGone()
+            finally:
+                self.blocked -= 1
             if self.closing:
                 raise RuntimeError("the server is shutting down")
             self.ingress.append(req)
             self.pokes += 1
             self.cond.notify_all()
 
-    def wait(self, req, gone, on_reasoning, on_content):
+    def wait(self, req, gone, on_reasoning, on_content, on_first_token=None):
         """Hands `req`'s pieces to the callbacks as they come and returns its
         result. Raises the request's error, or ClientGone once the client has
         left."""
@@ -459,6 +570,9 @@ class Scheduler:
                 on_reasoning(value)
             elif kind == "content":
                 on_content(value)
+            elif kind == "first_token":
+                if on_first_token is not None:
+                    on_first_token(value)
             elif kind is not None:
                 req.ended = True
                 if kind == "done":
@@ -477,6 +591,55 @@ class Scheduler:
         with self.cond:
             self.pokes += 1
             self.cond.notify_all()
+
+    def accept(self):
+        """Counts one call from its acceptance to its `settle`; False, and
+        nothing counted, once the worker drains or shuts down."""
+        with self.cond:
+            if self.draining or self.closing:
+                return False
+            self.open_calls += 1
+            return True
+
+    def settle(self):
+        """Ends one counted call."""
+        with self.cond:
+            self.open_calls -= 1
+            self.cond.notify_all()
+
+    def drain(self):
+        """Takes no new call, and returns once every call accepted before
+        has ended: queued and in-flight work finishes, with no deadline.
+        True when drained, False when the server shut down first."""
+        with self.cond:
+            self.draining = True
+            self.cond.notify_all()
+            while self.open_calls > 0 and not self.closing:
+                self.cond.wait()
+            return not self.closing
+
+    def queue_counts(self):
+        """The queue as the scheduler counts it: its depth is the submits
+        waiting for a place plus the ingress queue."""
+        with self.cond:
+            ingress, blocked = len(self.ingress), self.blocked
+            open_calls, draining = self.open_calls, self.draining
+        return {"queue_depth": ingress + blocked, "ingress": ingress, "blocked_submits": blocked,
+                "in_flight": len(self.active), "open_calls": open_calls, "draining": draining}
+
+    def snapshot(self, full):
+        """A stats snapshot the owner thread takes between passes, full
+        (with exllamav3's category walk) or cheap; None once the scheduler
+        is closing or the snapshot failed."""
+        ask = {"full": bool(full), "done": threading.Event(), "value": None}
+        with self.cond:
+            if self.closing:
+                return None
+            self.asks.append(ask)
+            self.pokes += 1
+            self.cond.notify_all()
+        ask["done"].wait()
+        return ask["value"]
 
     def close(self, timeout=10.0):
         with self.cond:
@@ -527,8 +690,13 @@ class Scheduler:
                     self.ingress.remove(req)
                 if dropped:
                     self.cond.notify_all()
+                asks = list(self.asks)
+                self.asks.clear()
             try:
+                for ask in asks:
+                    self._answer(ask)
                 for req in dropped:
+                    self._settle_partial(req, "cancelled")
                     req.events.put(("cancelled", None))
                 self._pass()
             except Exception as e:
@@ -568,10 +736,41 @@ class Scheduler:
 
     def _reap_cancelled(self):
         for req in [req for req in self.active if req.cancelled.is_set()]:
+            # The Generator's own cancel releases the job's pages and its
+            # recurrent slot; the request's place and reservation go next.
+            # Only then is the cancel told: a native caller's `released`.
             self._drop_job(req)
             self._release(req)
+            self._settle_partial(req, "cancelled")
             # Cancelling a job emits no end event: wake the handler here.
             req.events.put(("cancelled", None))
+
+    def _answer(self, ask):
+        """Takes one asked-for snapshot, here on the owner thread."""
+        try:
+            ask["value"] = exl3_stats.snapshot(self.memory, self.queue_counts(), self.identity.epoch,
+                                               ask["full"])
+        except Exception as e:  # stats never stop the scheduler
+            print(f"SCHEDULER_STATS_ERROR {type(e).__name__}: {e}", flush=True)
+        finally:
+            ask["done"].set()
+
+    def _cheap_stats(self):
+        try:
+            return exl3_stats.snapshot(self.memory, self.queue_counts(), self.identity.epoch, False)
+        except Exception as e:  # stats never stop the scheduler
+            print(f"SCHEDULER_STATS_ERROR {type(e).__name__}: {e}", flush=True)
+            return None
+
+    def _settle_partial(self, req, end):
+        """Keeps the receipt of what `req` completed before it ended in error
+        or was cancelled, and the stats at its end. A receipt that cannot be
+        built is left out; it never stops the end."""
+        try:
+            req.partial_usage = self._usage(req, end)
+        except Exception as e:
+            print(f"SCHEDULER_RECEIPT_ERROR {type(e).__name__}: {e}", flush=True)
+        req.final_stats = self._cheap_stats()
 
     def _admit(self):
         """Admits requests from the head of the ingress queue, in order, while
@@ -589,6 +788,7 @@ class Scheduler:
         now = time.monotonic()
         for req in admitted:
             req.admission_wait = now - req.submitted
+            req.admitted = True
             self.active.append(req)
             if req.solo:
                 # The id and the wait only: never the prompt.
@@ -608,7 +808,7 @@ class Scheduler:
     def _enqueue(self, req, phase, ids, max_new_tokens, stops, filters):
         req.phase = phase
         try:
-            job = Job(
+            job = TimedJob(
                 input_ids=ids,
                 max_new_tokens=max_new_tokens,
                 seed=req.seed,
@@ -617,6 +817,7 @@ class Scheduler:
                 decode_special_tokens=False,
                 filters=filters,
                 identifier=(req.request_id, phase),
+                on_first_token=req.mark_first_token,
             )
             serial = self.generator.enqueue(job)
         except Exception as e:
@@ -628,7 +829,8 @@ class Scheduler:
     def _begin_answer(self, req):
         left = req.max_tokens - req.spent
         if left < 1:
-            self._finish(req, "length")
+            # The thought closed on its own with no token left for an answer.
+            self._finish(req, "length", end="length")
             return
         if req.answer_ids is None:
             req.answer_ids = self.encode(req.answer_prompt)
@@ -699,14 +901,16 @@ class Scheduler:
 
     def _end_phase(self, req, final):
         req.passes.append(cache_usage.job_pass(req.phase, req.thinking, final))
-        req.spent += int(final.get("new_tokens", 0))
-        timings = req.timings
-        timings["prefill"] += float(final.get("time_prefill", 0.0))
-        timings["generate"] += float(final.get("time_generate", 0.0))
-        timings["enqueued"] += float(final.get("time_enqueued", 0.0))
-        timings["accepted"] += int(final.get("accepted_draft_tokens", 0))
-        timings["rejected"] += int(final.get("rejected_draft_tokens", 0))
+        req.totals = cache_usage.pass_totals(req.totals, final)
+        # What the request has spent of its cap, for scheduling alone: a pass
+        # whose final names no count is taken to have spent all it was
+        # allowed, never nothing. The receipt reads only native counts.
+        spent = cache_usage.native_count(final, "new_tokens")
+        if spent is None:
+            spent = req.cap if req.phase == "reason" else req.left
+        req.spent += spent
         reason = final.get("eos_reason")
+        req.eos_reason = reason if isinstance(reason, str) else None
         if req.phase == "reason":
             if reason == "stop_string":
                 req.answer_prompt = req.prompt + "".join(req.reasoning) + THINK_CLOSE
@@ -721,39 +925,64 @@ class Scheduler:
             return
         self._finish(req, "length" if reason == "max_new_tokens" else "stop")
 
-    def _finish(self, req, finish):
-        timings = req.timings
+    def _usage(self, req, end):
+        """`req`'s usage with its receipt (cache_usage.py), from the passes it
+        completed; `end` is its end in the receipt's closed set, or None."""
         prompt_tokens = req.prompt_tokens
         spent = req.spent
         usage = {"prompt_tokens": prompt_tokens, "completion_tokens": spent,
                  "total_tokens": prompt_tokens + spent}
+        totals = req.totals
+        enqueued = totals["time_enqueued"] if totals is not None else None
+        proposed, accepted = cache_usage.drafts(totals)
         cache_usage.add_evidence(usage, prompt_tokens, req.passes, self.identity.record(req.execution_mode),
-                                 worker_wait_s=req.admission_wait,
-                                 engine_wait_s=timings["enqueued"] + req.page_wait,
+                                 worker_wait_s=req.admission_wait if req.admitted else None,
+                                 engine_wait_s=None if enqueued is None else enqueued + req.page_wait,
                                  build_evidence=self.identity.build_evidence,
-                                 launch_manifest=self.identity.launch_manifest)
+                                 launch_manifest=self.identity.launch_manifest,
+                                 ttft_us=req.ttft_us(), end=end,
+                                 output_tokens=totals["new_tokens"] if totals is not None else None,
+                                 drafts_proposed=proposed, drafts_accepted=accepted)
+        return usage
+
+    def _finish(self, req, finish, end=None):
+        """Ends `req` with its answer. `end` is the receipt's end when the
+        scheduler itself ended it; otherwise its last Job's native end."""
+        if end is None:
+            end = cache_usage.end_reason(req.eos_reason)
+        usage = self._usage(req, end)
+        prompt_tokens = req.prompt_tokens
+        totals = req.totals or {}
+        prefill, generate = totals.get("time_prefill"), totals.get("time_generate")
+        enqueued = totals.get("time_enqueued")
+        output = totals.get("new_tokens")
+        proposed, accepted = cache_usage.drafts(req.totals)
         stats = {
             "prompt_n": prompt_tokens,
-            "prompt_per_second": prompt_tokens / timings["prefill"] if timings["prefill"] > 0 else None,
-            "predicted_n": spent,
-            "predicted_per_second": spent / timings["generate"] if timings["generate"] > 0 else None,
-            "draft_n": timings["accepted"] + timings["rejected"],
-            "draft_n_accepted": timings["accepted"],
+            "prompt_per_second": prompt_tokens / prefill if prefill else None,
+            "predicted_n": output,
+            "predicted_per_second": output / generate if output is not None and generate else None,
+            "draft_n": proposed,
+            "draft_n_accepted": accepted,
             # Submitted to admitted, including any wait for an ingress place.
             "admission_wait_ms": req.admission_wait * 1000.0,
             # Each job's own enqueue-to-start, and the answer's wait for pages.
-            "enqueue_wait_ms": (timings["enqueued"] + req.page_wait) * 1000.0,
+            "enqueue_wait_ms": None if enqueued is None else (enqueued + req.page_wait) * 1000.0,
             "draft_depth": self.depth,
             "max_in_flight": self.max_in_flight,
             # The most requests in flight at once while this one was.
             "peak_in_flight": req.peak,
         }
+        # A measure no final gave is left out, never zero (FIX 8896).
+        stats = {key: value for key, value in stats.items() if value is not None}
         self._release(req)
+        req.final_stats = self._cheap_stats()
         req.events.put(("done", {"usage": usage, "timings": stats, "finish_reason": finish}))
 
     def _fail(self, req, error):
         self._drop_job(req)
         self._release(req)
+        self._settle_partial(req, "error")
         req.events.put(("error", error))
 
     def _drop_job(self, req):
@@ -785,7 +1014,12 @@ class Scheduler:
         with self.cond:
             waiting = list(self.ingress)
             self.ingress.clear()
+            asks = list(self.asks)
+            self.asks.clear()
+        for ask in asks:
+            ask["done"].set()
         for req in waiting:
+            self._settle_partial(req, "error")
             req.events.put(("error", error))
         try:
             self.generator.close()
@@ -794,31 +1028,44 @@ class Scheduler:
 
 
 class Server:
-    def __init__(self, args, tokenizer, template, generator, stop_ids, identity):
+    def __init__(self, args, tokenizer, template, generator, stop_ids, identity, memory=None):
         self.model_id = args.model_id
         self.context = args.context
         self.default_max_tokens = args.default_max_tokens
         self.tokenizer = tokenizer
         self.template = template
         self.identity = identity
-        self.scheduler = Scheduler(generator, tokenizer, self.encode, stop_ids, args.max_in_flight, identity)
+        self.scheduler = Scheduler(generator, tokenizer, self.encode, stop_ids, args.max_in_flight, identity,
+                                   memory)
+        # Stops the HTTP server, when it runs: the native shutdown's way out.
+        self.stop_serving = None
+        # What a cancelled wait raises, for the native calls (exl3_ipc.py),
+        # which cannot import this module: it runs as `__main__`.
+        self.client_gone = ClientGone
 
     def encode(self, text):
         return self.tokenizer.encode(text, encode_special_tokens=True, add_bos=False).cpu()
 
-    def prepare(self, body, request_id):
-        """Renders, tokenizes and checks one request, in its handler's thread."""
+    def prepare(self, body, request_id, accepted_ns=None):
+        """Renders, tokenizes and checks one request, in its handler's thread.
+        `accepted_ns` is when the worker accepted it (monotonic ns)."""
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
             raise RequestError("messages must be a non-empty list")
         template_kwargs = body.get("chat_template_kwargs") or {}
         if not isinstance(template_kwargs, dict):
             raise RequestError("chat_template_kwargs must be an object")
+        try:
+            tools = exl3_tools.tool_specs(body)
+        except ValueError as e:
+            raise RequestError(str(e)) from None
+        # A replayed tool round's arguments go in as the object the template
+        # iterates, and the request's own tools reach it (FIX 8328).
         prompt = self.template.render(
-            messages=messages,
+            messages=exl3_tools.normalize_history(messages),
             add_generation_prompt=True,
             add_vision_id=False,
-            tools=[],
+            tools=tools,
             **template_kwargs,
         )
         ids = self.encode(prompt)
@@ -842,7 +1089,8 @@ class Server:
         if not isinstance(solo, bool):
             raise RequestError(f"{SOLO_FIELD} must be true or false")
         samplers = {"reason": make_sampler(body), "answer": make_sampler(body)}
-        req = Request(request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo)
+        req = Request(request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo,
+                      accepted_ns=accepted_ns, tools=tools)
         req.execution_mode = self.identity.execution_mode(template_kwargs, solo)
         if not req.thinking:
             req.answer_prompt = prompt
@@ -851,6 +1099,13 @@ class Server:
             req.answer_prompt = prompt + FORCED_CLOSE
             req.answer_ids = self.encode(req.answer_prompt)
         return req
+
+    def shutdown(self):
+        """Stops serving: the HTTP server's loop ends, and with it the
+        scheduler, which fails what is left. Returns at once."""
+        stop = self.stop_serving
+        if stop is not None:
+            threading.Thread(target=stop, name="exl3-shutdown", daemon=True).start()
 
 
 def serve(args, state):
@@ -892,12 +1147,19 @@ def serve(args, state):
                 return
             headers_sent = False
             req = None
+            counted = False
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 body = json.loads(decode_body(self.headers.get("Content-Encoding"),
                                               self.rfile.read(length)))
                 if not isinstance(body, dict):
                     raise RequestError("the body must be a JSON object")
+                # Accepted: the first-token time starts here, before the
+                # request is rendered, and a drain waits for it from here.
+                accepted_ns = time.monotonic_ns()
+                counted = state.scheduler.accept()
+                if not counted:
+                    raise Draining("the server is draining")
                 streaming = bool(body.get("stream", False))
                 request_id = "chatcmpl-" + uuid.uuid4().hex
                 created = int(time.time())
@@ -912,36 +1174,49 @@ def serve(args, state):
                     self.end_headers()
                     headers_sent = True
 
-                def delta(field, sink):
+                def chunk(delta, finish=None):
+                    return {"id": request_id, "object": "chat.completion.chunk", "created": created,
+                            "model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+
+                req = state.prepare(body, request_id, accepted_ns)
+                # A streamed answer to a request with tools is held from its
+                # first tool-call marker on (FIX 8328).
+                splitter = exl3_tools.StreamSplitter(req.tools) if streaming and req.tools else None
+
+                def delta(field, sink, split=None):
                     def emit(piece):
                         sink.append(piece)
                         if streaming:
-                            self._sse({"id": request_id, "object": "chat.completion.chunk", "created": created,
-                                       "model": model,
-                                       "choices": [{"index": 0, "delta": {field: piece}, "finish_reason": None}]})
+                            out = piece if split is None else split.feed(piece)
+                            if out:
+                                self._sse(chunk({field: out}))
                     return emit
 
-                req = state.prepare(body, request_id)
                 state.scheduler.submit(req, self._gone)
                 result = state.scheduler.wait(req, self._gone, delta("reasoning_content", reasoning),
-                                              delta("content", content))
+                                              delta("content", content, splitter))
+                finish = result["finish_reason"]
                 if streaming:
-                    self._sse({"id": request_id, "object": "chat.completion.chunk", "created": created,
-                               "model": model,
-                               "choices": [{"index": 0, "delta": {}, "finish_reason": result["finish_reason"]}],
-                               "usage": result["usage"], "timings": result["timings"]})
+                    if splitter is not None:
+                        tail, calls = splitter.finish(finish == "stop")
+                        if tail:
+                            self._sse(chunk({"content": tail}))
+                        if calls:
+                            self._sse(chunk({"tool_calls": exl3_tools.stream_deltas(calls)}))
+                            finish = "tool_calls"
+                    final = chunk({}, finish)
+                    final["usage"] = result["usage"]
+                    final["timings"] = result["timings"]
+                    self._sse(final)
                     self._chunk(b"data: [DONE]\n\n")
                     self.wfile.write(b"0\r\n\r\n")
                     self.wfile.flush()
                     self.close_connection = True
                 else:
-                    message = {"role": "assistant", "content": "".join(content)}
-                    if reasoning:
-                        message["reasoning_content"] = "".join(reasoning)
+                    message, finish = exl3_tools.answer_message(reasoning, content, req.tools, finish)
                     self._json(200, {"id": request_id, "object": "chat.completion", "created": created,
                                      "model": model,
-                                     "choices": [{"index": 0, "message": message,
-                                                  "finish_reason": result["finish_reason"]}],
+                                     "choices": [{"index": 0, "message": message, "finish_reason": finish}],
                                      "usage": result["usage"], "timings": result["timings"]})
             except UnsupportedEncoding as e:
                 self._json(415, {"error": {"message": f"Content-Encoding {e} is not supported",
@@ -968,13 +1243,22 @@ def serve(args, state):
                 # reason, takes the request out of the scheduler.
                 if req is not None and not req.ended:
                     state.scheduler.cancel(req)
+                if counted:
+                    state.scheduler.settle()
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
+    state.stop_serving = server.shutdown
+    native = None
     try:
+        if args.native_socket:
+            native = exl3_ipc.NativeServer(args.native_socket, state)
+            native.start()
         server.serve_forever()
     finally:
         server.server_close()
+        if native is not None:
+            native.close()
         state.scheduler.close()
 
 
@@ -1005,6 +1289,10 @@ def main():
     p.add_argument("--launch-manifest", default=None,
                    help="the supervisor's launch manifest (FIX 8315); its digest is echoed in every receipt "
                         "and its runtime is the build, verified, when it reads")
+    p.add_argument("--native-socket", default=None,
+                   help="a Unix socket path the host's native calls come in on (exl3_ipc.py): its folder is "
+                        "made this user's alone, the socket 0600, and only this user's processes are answered; "
+                        "the HTTP routes stay")
     args = p.parse_args()
     serve(args, load(args))
 
