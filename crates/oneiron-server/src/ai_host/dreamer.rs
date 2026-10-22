@@ -52,6 +52,7 @@ use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkSt
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, RunBackend, Seat};
+use crate::runtime::wall_clock_ms as now_ms;
 
 /// Stamped on every admission and park this server makes.
 pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
@@ -419,14 +420,6 @@ fn claim_home_node(vault: &Vault, device: bool) -> oneiron::Result<u64> {
         store.elect_home_node(&[candidate], now_ms() / 1_000)?;
     }
     Ok(node_id)
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 /// The run a Dreamer pass's model calls are admitted under.

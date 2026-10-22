@@ -4,7 +4,7 @@
 //! Semantic links across children are judged after the merge lands, by its
 //! own link continuations (OF-498d, `super::nightly_links`), proposals only.
 
-use super::call_labels::{CallLabel, CallLabelMap, LabelKind};
+use super::call_labels::{CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
 use super::nightly_links::NightlyLinkProposal;
 use super::roles::{DREAMER_NARRATIVE_ROLE, RoleCall};
@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod chunks;
 mod narrative_labels;
 mod write;
+pub(super) use super::call_labels::subject_label;
 use chunks::retry_chunks_in_txn;
 pub(super) use write::{Draft, NightlyWrite, landed_units_in_txn, recheck_in_txn, scoped_draft};
 
@@ -614,26 +615,4 @@ fn check_narrative_reply(response: &LlmResponse) -> std::result::Result<(), Stri
         return Ok(());
     }
     narrative_text(response).map(|_| ()).map_err(str::to_owned)
-}
-
-/// A proposal's subject as its narrative call names it: an entity by its
-/// label (a proposal's own `C<n>` when it is one, else `P<n>`), an edge as
-/// `<kind>(<source>,<target>)` over its endpoints' labels.
-pub(super) fn subject_label(labels: &mut CallLabelMap, subject: &ClaimSubject) -> String {
-    let mut label = |id: EntityId| -> CallLabel {
-        labels
-            .label(LabelKind::Claim, id)
-            .unwrap_or_else(|| labels.assign(LabelKind::Entity, id))
-    };
-    match *subject {
-        ClaimSubject::Entity(id) => label(id).to_string(),
-        ClaimSubject::Edge {
-            source,
-            kind,
-            target,
-        } => {
-            let (source, target) = (label(source), label(target));
-            format!("{}({source},{target})", kind.name())
-        }
-    }
 }

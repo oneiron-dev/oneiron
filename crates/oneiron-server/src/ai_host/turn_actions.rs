@@ -24,6 +24,8 @@
 //! attempt claimed a second time was cut off when the process stopped under
 //! it: it is failed and never run again, so its reply stays as saved until
 //! someone asks again.
+//!
+//! [`CONTINUE_INSTRUCTION`]: crate::api::ai::chat::CONTINUE_INSTRUCTION
 use std::sync::{Arc, Weak};
 
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
@@ -31,21 +33,24 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt,
     ManifestEntry,
 };
-use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt};
+use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
 use oneiron::memory::{MessageWriteMode, WitnessAuthor};
-use oneiron::{EntityId, LlmCapability, LlmMessage, LlmMessageRole, Vault, WriteActor};
+use oneiron::{EntityId, LlmMessage, LlmMessageRole, Vault, WriteActor};
 use tokio::sync::{broadcast, watch};
 
+use super::AiHandle;
 use super::payer_funding::room_launch_funding;
 use super::resident_craft::{place_craft, snapshot_craft_scoped};
-use super::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
-    Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, ReplyAssertionCollector,
-    TurnCredential, after_turn, begin_answer, chat_request, keepalive_every, live_fork_unavailable,
-    reuse_chat_breakpoint, text_message, turn_generate_pre, witness_turn,
+    Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, TurnCredential, after_turn,
+    begin_answer, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint, text_message,
+    turn_generate_pre,
 };
 use crate::api::{action_board, freeze_chat_context, record_action_answer};
 use crate::server::{SyncServer, blocking};
+
+mod phases;
+use phases::{ActionText, admit_action, answer_open};
 
 const LEASE_OWNER: &str = "oneiron-server-turn-actions";
 /// Recorded on an attempt whose reason does not fit the queue's bound.
@@ -249,56 +254,11 @@ async fn act(
     if let Some(craft) = shown {
         place_craft(&mut messages, lead, craft, layout);
     }
-    let admit = |messages| {
-        ai.admit_role(vault, CHAT_ROLE, chat_request(&seat, messages))
-            .map_err(|refusal| refusal.to_string())
+    let text = ActionText {
+        saved: context.saved,
+        answers,
     };
-    // An empty saved reply is an honest empty prefix: the reply is generated
-    // afresh on the same MESSAGE.
-    let continues = action.action == TurnAction::Continue && !context.saved.is_empty();
-    let request = |mut messages: Vec<LlmMessage>| {
-        let mut admitted = admit(messages.clone())?;
-        if continues {
-            let prefill = admitted
-                .ladder
-                .supports(&admitted.request.model, &LlmCapability::AssistantPrefill);
-            messages.push(text_message(
-                LlmMessageRole::Assistant,
-                context.saved.clone(),
-            ));
-            if !prefill {
-                messages.push(text_message(
-                    LlmMessageRole::User,
-                    CONTINUE_INSTRUCTION.to_owned(),
-                ));
-            }
-            admitted = admit(messages)?;
-        }
-        Ok::<_, String>(admitted)
-    };
-    // A call its role does not admit with the board, first or with its
-    // suffix, is admitted exactly as it always was, and so is the final call
-    // admitted where the board may not go (FIX 7257), never sent with it.
-    let (admitted, board_context) = match board {
-        Some(board) => {
-            let mut framed = messages.clone();
-            framed.insert(
-                answers,
-                text_message(LlmMessageRole::User, board.board.block.clone()),
-            );
-            match request(framed) {
-                Ok(admitted) if board.rides(vault, &admitted) => (admitted, board.board.context),
-                Ok(_) => (request(messages)?, None),
-                Err(_) => {
-                    tracing::info!(
-                        "a turn action's call was not admitted with its context board; it goes without it"
-                    );
-                    (request(messages)?, None)
-                }
-            }
-        }
-        None => (request(messages)?, None),
-    };
+    let (admitted, board_context) = admit_action(vault, ai, &seat, &action, text, messages, board)?;
     // FIX 7145: what the admitted board showed, frozen against the call it
     // rides in.
     let board_context =
@@ -340,24 +300,7 @@ async fn act(
     )
     .map_err(|error| error.to_string())?
     .map_err(|stop| stop.to_string())?;
-    let open = match action.action {
-        TurnAction::Continue => AnswerOpen::Continue(action.message),
-        // The reply's TURN lands with its MESSAGE, in the reply's terminal
-        // write (FIX 3152): on a DAG conversation a sibling of the old one
-        // that leaves HEAD where it is, in a project room an answer to the
-        // same claimed turn (FIX 3149), elsewhere the TURN the stream mints.
-        // A Retry never admitted leaves neither.
-        TurnAction::Retry => AnswerOpen::Retry {
-            turn: witness_turn(
-                &action.conversation.to_hex(),
-                None,
-                WitnessAuthor::Companion,
-                String::new(),
-                vault.now_recorded_at(),
-            ),
-            action: Box::new(action.clone()),
-        },
-    };
+    let open = answer_open(vault, &action);
     let answering = begin_answer(
         ai,
         Answer {
