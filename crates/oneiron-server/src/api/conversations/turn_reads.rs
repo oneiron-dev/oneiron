@@ -51,7 +51,8 @@ pub(super) fn core_turn_for_read(
     let row = if owner {
         owner_row.filter(|(entity_type, _, _)| *entity_type == ENTITY_TYPE_TURN)
     } else {
-        read.get_entity_parts_with_receipt(id, None)
+        read
+            .get_entity_parts_with_receipt(id, None)
             .map_err(failed)?
             .value
     };
