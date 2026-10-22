@@ -30276,7 +30276,7 @@
      "path": "src/federation/git_push/caller.rs",
      "purpose": "The receive-pack decision's values (FIX 6867, G1-PUSH): the pusher a host transport authenticated, the…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -33586,13 +33586,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/git_wire/projected_checkout.rs",
      "purpose": "A lease's checkout of a masked copy (FIX 7608 slice 2b-i): the constructors a later slice selects, with no…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/projected_ingress.rs",
+     "purpose": "A masked copy's private ingress (FIX 7608 slice 2b-ii-B2, ASK S): the writable bare store a projection-bound…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -44695,7 +44705,7 @@
      "path": "src/origin/document_candidates/files.rs",
      "purpose": "A candidate's file set (G4 PR2): every changed path of one accepted push against its exact base, with its…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -44716,10 +44726,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/document_candidates/projected_clearance.rs",
+     "purpose": "A projected candidate's clearance (FIX 7608 slice 2b-ii-B2, CALL H, ASK E, CHANGED 4): the one adapter every…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/document_candidates/projected_decide.rs",
+     "purpose": "A push received into a masked copy's private ingress, matched as the canonical store's candidate (FIX 7608…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/document_candidates/projected_files.rs",
      "purpose": "A projected candidate's files translated onto the ORIGINAL (FIX 7608 slice 2b-ii-A, ASK E VisibleDiff, CALL H)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/document_candidates/projected_join.rs",
+     "purpose": "A received row's projection join (FIX 7608 slice 2b-ii-B2): which copy and canonical store a row received…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -44736,10 +44776,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/document_candidates/projected_tree.rs",
+     "purpose": "A projected candidate's canonical files and target tree (FIX 7608 slice 2b-ii-B2): the trees and bytes it…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/document_candidates/reads.rs",
      "purpose": "The candidate leaf's pure reads (G4 PR2): retained received refs, their admitting publication, a candidate's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -45514,7 +45564,17 @@
      "path": "src/origin/secret_projection.rs",
      "purpose": "Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/checkout.rs",
+     "purpose": "A checkout lease's masked copy (FIX 7608 slice 2b-ii-B2)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -45524,7 +45584,17 @@
      "path": "src/origin/secret_projection/claims.rs",
      "purpose": "A masked Git copy's record (FIX 7608 slice 2b-i, CALL M): value-free `repo.secret_projection` claims at…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/claims/lookup.rs",
+     "purpose": "Strict readers of a masked copy's records (FIX 7608 slice 2b-ii-B2): a checkout binding found from its…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -45539,6 +45609,16 @@
       "crate-vis": 8,
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/disposal.rs",
+     "purpose": "Disposal of masked Git copies (FIX 7608 slice 2b-ii-B2, FIX 9107)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -45558,7 +45638,7 @@
      "path": "src/origin/secret_projection/git.rs",
      "purpose": "The Git side of a marked repo's projection",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 24
      }
     },
     {
@@ -45814,6 +45894,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/smart_http/intent/projection.rs",
+     "purpose": "The receive seams of a projection-bound push (FIX 7608 slice 2b-ii-B2)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/smart_http/intent/push_admission.rs",
      "purpose": "The push authority on a receive-pack intent (FIX 6867, G1-PUSH): the final writer takes the stamp's…",
      "surface": {
@@ -45911,7 +46001,7 @@
      "path": "src/origin/smart_http/mod.rs",
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 15
      }
     },
@@ -45935,6 +46025,16 @@
       "const": 11,
       "crate-vis": 18,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/projected_serve.rs",
+     "purpose": "The masked selection of one Git exchange (FIX 7608 slice 2b-ii-B2, ASK 1, ASK S): after the SAME push…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -45973,7 +46073,7 @@
      "path": "src/origin/smart_http/push_projection.rs",
      "purpose": "A push from a masked copy, received into its own private ingress (FIX 7608 slice 2b-ii-A, ASK S)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -52262,7 +52362,7 @@
      "path": "src/repo_mutation/received_file.rs",
      "purpose": "A received push bundle (FIX 6869, G4 PR2): every file of ONE accepted pushed ref update as one reviewed…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -74052,7 +74152,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -74283,7 +74383,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 125,
+     "files": 134,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74929,7 +75029,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4858,
+   "source_files": 4868,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92853,7 +92953,7 @@
      "path": "src/api/git_http/projection.rs",
      "purpose": "The Git read recipient a host binds, apart from its push caller (FIX 7608 slice 2b-ii-A, ASK 1)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
