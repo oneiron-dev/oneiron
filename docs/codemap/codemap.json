@@ -38015,7 +38015,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 11,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -42342,7 +42342,7 @@
      "path": "src/memory/witness/program.rs",
      "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -42352,7 +42352,7 @@
      "path": "src/memory/witness/program/execute.rs",
      "purpose": "The witness program's run: request shape, target, plan, then one write transaction per landing",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -42362,7 +42362,7 @@
      "path": "src/memory/witness/program/planning.rs",
      "purpose": "Witness planning and the in-transaction admission both landings share",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -42464,7 +42464,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/stream/lifecycle/terminal.rs",
@@ -42515,6 +42515,16 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/stream/reply_assertions.rs",
+     "purpose": "A model stream's reply assertions at its terminal (OF-063, FIX 3416)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -73960,7 +73970,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 271,
+     "files": 272,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74648,7 +74658,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4835,
+   "source_files": 4836,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85757,7 +85767,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -85810,6 +85820,20 @@
      "path": "src/llm/protocol/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReplyAssertionRecord",
+      "ReplyAssertions"
+     ],
+     "path": "src/llm/reply_assertions.rs",
+     "purpose": "The typed records one reply cited or created (OF-063, FIX 3416), carried on its terminal",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -85883,7 +85907,7 @@
      "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 44,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85892,7 +85916,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 43,
+   "source_files": 44,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -89582,7 +89606,17 @@
      "path": "src/api/ai/chat.rs",
      "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/assertions.rs",
+     "purpose": "A chat reply's typed assertions (OF-063, FIX 3416, Engine ruling (a)): the records the reply cited or…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -102665,7 +102699,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 511,
+     "files": 512,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -103129,7 +103163,7 @@
    },
    "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1138,
+   "source_files": 1139,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -106151,6 +106185,8 @@
       "RendererKind",
       "ReplayAction",
       "ReplayGuest",
+      "ReplyAssertionRecord",
+      "ReplyAssertions",
       "ReplyCode",
       "ReplyDisposition",
       "ReplyRouteRule",
@@ -107398,7 +107434,7 @@
      "purpose": "—",
      "surface": {
       "enum": 997,
-      "struct": 3070
+      "struct": 3072
      }
     },
     {
