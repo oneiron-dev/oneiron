@@ -4847,9 +4847,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_encoding.rs` | src | s | 3 fn · 4 crate-vis | — | Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and… |
 | `src/store/known_history.rs` | src | m | 16 crate-vis | — | The known-value index's custody client (KS-3, FIX 5684 = FIX 5503 card A; owner KEY STORE = A): the index's… |
 | `src/store/legal_hold/events.rs` | src | s | 5 crate-vis | — | The two hold logs (C2, C3): customer holds' and the host-only one |
-| `src/store/legal_hold/mod.rs` | src | L | 35 crate-vis | — | The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold) |
+| `src/store/legal_hold/mod.rs` | src | L | 37 crate-vis | — | The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold) |
 | `src/store/legal_hold/notice.rs` | src | s | 5 crate-vis | — | What a hold's refusals tell the owner (WILL-PLAN L01 rows 01 and 03) |
 | `src/store/legal_hold/pending.rs` | src | s | 9 crate-vis | — | An owner erase that waits (OF-470 C2, C4): the owner's confirmed erase a host order keeps, and the owner's… |
+| `src/store/legal_hold/settlement.rs` | src | s | 11 crate-vis | — | A door's own refusals, logged in the writer the door already holds (OF-470, FIX 2433, FIX 2435) |
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/store/local_replica.rs` | src | m | 6 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
 | `src/store/local_replica/left_env.rs` | src | m | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
@@ -4931,6 +4932,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sweep/compact.rs` | src | L | 5 crate-vis | — | Window shallow-snapshot compaction and erased-id scrub |
 | `src/sweep/corrupt.rs` | src | s | 1 crate-vis | — | The full-carrier pass a corrupt CLAIM's erase asks of the sweep (FIX 7800, ARCH-0038) |
 | `src/sweep/finalize.rs` | src | m | 5 crate-vis | — | Job finalize, retry rewrite, and dropped-obligation audit |
+| `src/sweep/holds.rs` | src | s | 3 crate-vis | — | The legal holds a sweep compaction meets (OF-470): a held entity document keeps its bytes and its history… |
 | `src/sweep/mod.rs` | src | s | 3 crate-vis | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
 | `src/sweep/owed.rs` | src | s | 4 crate-vis | — | Window compactions an erase owes (FIX 6387) |
 | `src/sweep/run.rs` | src | m | 13 crate-vis | — | Sweep driver, run state, and race-injection hooks |
@@ -4955,6 +4957,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/bridge/tests/resident.rs` | test | s | — | — | — |
 | `src/sync/bridge/tombstones.rs` | src | m | 1 crate-vis | — | Observer B's tombstone driver: classification through the shared ingest entry, then one batch transaction… |
 | `src/sync/carrier.rs` | src | s | 1 enum · 2 trait · 1 type · 2 crate-vis | SyncDialer, SyncIo, SyncStream | What a sync socket rides on (OF-535): TCP to the home's URL, or a stream a [`SyncDialer`] opens, such as a… |
+| `src/sync/carrier_holds.rs` | src | s | 3 crate-vis | — | What a carrier-only tear destroys, read from the carrier itself (OF-470, FIX 3061) |
 | `src/sync/carrier_parts.rs` | src | s | 11 crate-vis | — | Linked parts for a window carrier too large for one map value (Rule 5) |
 | `src/sync/checkpoint_payload/frame.rs` | src | s | 2 crate-vis | — | A window carrier's own spelling (KS7-3b): what KS7-5 keeps of a split window under the image's outer seal |
 | `src/sync/checkpoint_payload/mod.rs` | src | m | 38 crate-vis | — | The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary… |
@@ -5073,7 +5076,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/mesh_path.rs` | src | s | 1 struct · 3 enum · 4 fn · 2 const | MeshPathDirection, MeshPathKind, MeshPathOutcome, MeshPathReceipt | Path receipts for paired-machine mesh connections (OF-535) |
 | `src/sync/message_docs.rs` | src | m | 9 crate-vis | — | FIX 853 (OF-460): a MESSAGE's document on the window plane |
 | `src/sync/message_docs/checkpoint.rs` | src | s | 2 crate-vis | — | A MESSAGE document in a checkpoint (KS7-3a), read with the head codec and filed under its message: the head… |
-| `src/sync/mod.rs` | src | s | 24 mod · 16 re-export · 18 crate-vis | — | CRDT sync layer for Oneiron |
+| `src/sync/mod.rs` | src | s | 24 mod · 16 re-export · 19 crate-vis | — | CRDT sync layer for Oneiron |
 | `src/sync/note.rs` | src | s | 8 crate-vis | — | Native NOTE carriers for ordinary window sync, distinct from history-free recovery |
 | `src/sync/note/checkpoint.rs` | src | s | 3 crate-vis | — | The native NOTE carriers' values in a checkpoint (KS7-3a, KS7-3b), read with the NOTE sync codecs: a… |
 | `src/sync/note/codec.rs` | src | s | 3 crate-vis | — | Binding validation of untrusted NOTE proposal values and workflow metadata |
@@ -5802,7 +5805,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/doors/provenance.rs` | src | s | 1 crate-vis | — | A key record's provenance, under its signature (CALLS WORLD_KEY_WRAP_AUTH): the owner work request it does… |
 | `src/world_keys/kit.rs` | src | m | 7 struct · 5 fn · 1 const · 11 crate-vis | ConfirmedWorldKit, IssuedWorldKit, IssuingRequest, StoredCost, StoredKit, WorldKitRestore, WorldKitStatus | The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of… |
 | `src/world_keys/machine.rs` | src | s | 2 fn · 2 crate-vis | — | This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid… |
-| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 21 re-export · 24 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
+| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 21 re-export · 25 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
 | `src/world_keys/owner_work/diagnostics.rs` | src | m | 8 struct · 8 enum · 3 fn · 5 crate-vis | BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead, OwnerWorkDiagnostics, PublicationDiagnostics +8 | What blocks one pending owner work request, as its executor observes it (FIX 4686, 4784, 4785, 4786, 4787)… |
 | `src/world_keys/owner_work/diagnostics/key_plan.rs` | src | s | 2 crate-vis | — | A world's keys and its ensure step on their executor, through the holder's own read checks and the writer's… |
 | `src/world_keys/owner_work/mod.rs` | src | m | 2 struct · 3 enum · 4 fn · 2 re-export · 4 crate-vis | OwnerWorkCancelNote, OwnerWorkCancelState, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned | The owner's work an install records for another to do, and what the named install did with it (owner work… |
@@ -5814,7 +5817,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/pad_custody/reference.rs` | src | m | 9 crate-vis | — | A world key pad row as its reference alone, for the bytes that persist (KS-5, the 02A projector agreed with… |
 | `src/world_keys/pad_erase.rs` | src | s | 1 crate-vis | — | A local hard erase of one world key pad row alone (KS-5, FIX 7192): its key's custody entry retires, as a… |
 | `src/world_keys/pad_image.rs` | src | s | 9 crate-vis | — | A world key pad in a physical image (KS-5, FIX 5686 part 2): a checkpoint or backup image and a Layer-1… |
-| `src/world_keys/pads.rs` | src | m | 2 struct · 1 enum · 2 fn · 25 crate-vis | PromotedWorldPad, WorldKeyDestroyCause, WorldKeyDestruction | A world key's erasable half, and the world erase that destroys it (world privacy fix 7) |
+| `src/world_keys/pads.rs` | src | m | 2 struct · 1 enum · 2 fn · 26 crate-vis | PromotedWorldPad, WorldKeyDestroyCause, WorldKeyDestruction | A world key's erasable half, and the world erase that destroys it (world privacy fix 7) |
 | `src/world_keys/page_seal.rs` | src | L | 2 struct · 15 fn · 1 const · 16 crate-vis | SealedSwap, VaultPageSeal | The maximum tier (OF-570): every LMDB page of a vault sealed under a page key |
 | `src/world_keys/page_seal/read_only.rs` | src | s | 3 crate-vis | — | The read-only door to a sealed vault (OF-570 maximum tier): the page key a reader that opens no `Vault`… |
 | `src/world_keys/reassert.rs` | src | s | 1 fn · 1 crate-vis | — | The owner's re-assertion of one world after a pin change (contract §4) |
