@@ -346,8 +346,8 @@ impl ScopedRead<'_> {
     ) -> Vec<WeaveItem> {
         match bound.projector {
             Projector::Reader(reader) => self.weave_loop_decisions_in_txn(txn, reader),
-            Projector::ScheduledOwner(_) => self
-                .authorised_loop_decisions_for_recorded_owner_in_txn(txn, bound.id)
+            Projector::ScheduledOwner(owner) => self
+                .authorised_loop_decisions_for_recorded_owner_in_txn(txn, owner.owner())
                 .into_iter()
                 .map(loop_decision_item)
                 .collect(),

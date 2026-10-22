@@ -61,6 +61,11 @@ impl ScheduledOwner {
         )
     }
 
+    /// The Owner the schedule row names: never a proof by itself.
+    pub(in crate::claim::scoped_read) fn owner(&self) -> EntityId {
+        self.owner
+    }
+
     /// The recorded Owner, while he still holds in `txn`: `read` is his own
     /// lane, his schedule row is still exactly the bytes recorded, and the
     /// live-owner census counts him.
